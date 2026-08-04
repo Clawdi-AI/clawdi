@@ -52,6 +52,9 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).not.toContain("data-agent-paired-chats");
 		expect(agentDetail).toContain("data-agent-add-custom-bot");
 		expect(agentDetail).toContain('linking ? "Linking…" : "Link"');
+		expect(agentDetail).toContain('state={unavailableReason ?? "Available"}');
+		expect(agentDetail).not.toContain("Replaces current link");
+		expect(agentDetail).toContain('confirmLabel="Delete custom bot"');
 		expect(agentDetail).toContain('creatingPairCode ? "Generating…" : "Pair"');
 		expect(agentDetail).not.toContain("Pair Telegram");
 		expect(agentDetail).not.toContain("Pair Discord");
@@ -81,6 +84,7 @@ describe("channel IA boundary", () => {
 		expect(connectDialog).toContain('onConfirm={() => submit("replace")}');
 		expect(replacementConfirm).toContain('label: "Add without linking"');
 		expect(replacementConfirm).toContain("? `How should this ");
+		expect(replacementConfirm).toContain("This Agent can link only one");
 		expect(replacementConfirm).toContain(": `Replace this Agent’s ");
 		expect(replacementConfirm).toContain("destructive");
 		expect(connectDialog).toContain("Add custom bot");

@@ -1473,6 +1473,9 @@ type HostedApiStubOptions = {
 	createChannelRequests?: string[];
 	createChannelResponse?: unknown;
 	createChannelResponses?: StubResponse[];
+	deleteChannelRequests?: string[];
+	deleteChannelResponses?: StubResponse[];
+	onDeleteChannel?: (accountId: string) => void;
 	deleteBindingRequests?: string[];
 	deleteBindingResponses?: StubResponse[];
 	onCreateChannel?: (response: unknown) => void;
@@ -2332,6 +2335,15 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					? links.filter((link) => isRecord(link) && link.agent_id === requestedAgentId)
 					: links,
 			);
+		}
+		if (p.match(/^\/v1\/channels\/[^/]+$/) && r.request().method() === "DELETE") {
+			const accountId = decodeURIComponent(p.slice(p.lastIndexOf("/") + 1));
+			options.deleteChannelRequests?.push(accountId);
+			const response = options.deleteChannelResponses?.shift() ?? { body: null, status: 204 };
+			if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			if (response.status < 400) options.onDeleteChannel?.(accountId);
+			if (response.status === 204) return r.fulfill({ status: 204, body: "" });
+			return fulfillJson(r, response.body, response.status);
 		}
 		if (p.match(/^\/v1\/channels\/[^/]+$/) && r.request().method() === "GET") {
 			return fulfillJson(r, options.channelAccount ?? { detail: "Channel not found" }, 200);
@@ -9474,6 +9486,127 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	expect(errors, `Channels inventory browser errors: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("Custom bot cards delete inventory without conflating Agent unlink", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const agentId = missingProjectionEnvironmentId;
+	const firstId = "10f11111-1111-4111-8111-111111111111";
+	const secondId = "10f22222-2222-4222-8222-222222222222";
+	const publicId = "10f33333-3333-4333-8333-333333333333";
+	const firstName = "Delete from inventory";
+	const secondName = "Delete from Agent";
+	const accounts: unknown[] = [
+		{
+			id: firstId,
+			provider: "telegram",
+			name: firstName,
+			status: "active",
+			visibility: "private",
+			has_provider_token: true,
+			webhook_url: "https://cloud.example.test/channels/delete-inventory",
+			created_at: "2026-08-04T00:00:00Z",
+		},
+		{
+			id: secondId,
+			provider: "telegram",
+			name: secondName,
+			status: "active",
+			visibility: "private",
+			has_provider_token: true,
+			webhook_url: "https://cloud.example.test/channels/delete-agent",
+			created_at: "2026-08-04T00:01:00Z",
+		},
+	];
+	const publicBot = {
+		id: publicId,
+		provider: "telegram",
+		name: "Clawdi public bot",
+		status: "active",
+		visibility: "public",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/public-delete-boundary",
+		created_at: "2026-08-04T00:02:00Z",
+		access: "public",
+		capabilities: {
+			link_agent: true,
+			pair_chat: true,
+			send_message: true,
+			manage_account: false,
+			sync_commands: false,
+		},
+		link_count: 0,
+		max_links: null,
+		available: true,
+	};
+	const deleteChannelRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		channelAccounts: accounts,
+		channelAgentLinks: [],
+		channelBotPool: { providers: { telegram: [publicBot] } },
+		deleteChannelRequests,
+		deleteChannelResponses: [
+			{ status: 503, body: { detail: "Custom bot deletion temporarily unavailable" } },
+			{ status: 204, body: null },
+			{ status: 204, body: null },
+		],
+		onDeleteChannel: (accountId) => {
+			const index = accounts.findIndex((account) => isRecord(account) && account.id === accountId);
+			if (index >= 0) accounts.splice(index, 1);
+		},
+	});
+
+	await page.goto("/channels");
+	const firstCard = page.locator(`[data-channel-account-id="${firstId}"]`);
+	const publicCard = page.locator(`[data-shared-channel-account-id="${publicId}"]`);
+	await expect(firstCard).toBeVisible();
+	await expect(publicCard.getByRole("button", { name: /Delete/ })).toHaveCount(0);
+	await firstCard.getByRole("button", { name: `Delete ${firstName}`, exact: true }).click();
+	let deleteDialog = page.getByRole("alertdialog", { name: `Delete ${firstName}?` });
+	await expect(deleteDialog).toContainText(
+		"This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone.",
+	);
+	await deleteDialog.getByRole("button", { name: "Delete custom bot", exact: true }).click();
+	await expect.poll(() => deleteChannelRequests).toEqual([firstId]);
+	await expect(deleteDialog).toBeVisible();
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "Couldn't delete Custom bot" }),
+	).toBeVisible();
+	await expect(
+		deleteDialog.getByRole("button", { name: "Delete custom bot", exact: true }),
+	).toBeEnabled();
+	await deleteDialog.getByRole("button", { name: "Delete custom bot", exact: true }).click();
+	await expect.poll(() => deleteChannelRequests).toEqual([firstId, firstId]);
+	await expect(firstCard).toHaveCount(0);
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "Custom bot deleted" }),
+	).toBeVisible();
+
+	await page.goto(
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	const customCard = page.locator(`[data-agent-channel-account-id="${secondId}"]`);
+	const clawdiCard = page.locator(`[data-agent-channel-account-id="${publicId}"]`);
+	await expect(customCard.getByText("Available", { exact: true })).toBeVisible();
+	await expect(customCard).not.toContainText("Replaces current link");
+	await expect(clawdiCard.getByRole("button", { name: /Delete/ })).toHaveCount(0);
+	const deleteFromAgent = customCard.getByRole("button", {
+		name: `Delete ${secondName}`,
+		exact: true,
+	});
+	expect((await deleteFromAgent.boundingBox())?.width).toBeLessThanOrEqual(96);
+	await deleteFromAgent.click();
+	deleteDialog = page.getByRole("alertdialog", { name: `Delete ${secondName}?` });
+	await deleteDialog.getByRole("button", { name: "Delete custom bot", exact: true }).click();
+	await expect.poll(() => deleteChannelRequests).toEqual([firstId, firstId, secondId]);
+	await expect(customCard).toHaveCount(0);
+
+	const unexpectedErrors = errors.filter((error) => !error.includes("status of 503"));
+	expect(
+		unexpectedErrors,
+		`Custom bot deletion browser errors: ${unexpectedErrors.join(" | ")}`,
+	).toEqual([]);
+});
+
 test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", async ({
 	page,
 }, testInfo) => {
@@ -10336,10 +10469,9 @@ test("Add channel offers inventory-only creation and atomic provider replacement
 		name: "How should this Telegram bot be added?",
 	});
 	await expect(replacementDialog).toBeVisible();
-	await expect(replacementDialog).toContainText("one Telegram bot at a time");
-	await expect(replacementDialog).toContainText("Additional Telegram");
-	await expect(replacementDialog).toContainText("keep the current bot and its paired chats");
-	await expect(replacementDialog).toContainText("will be added to Custom bots only");
+	await expect(replacementDialog).toContainText(
+		"This Agent can link only one Telegram bot. Add Additional Telegram without linking, or replace the current bot and remove its paired chats.",
+	);
 	await expect(
 		replacementDialog.getByRole("button", { name: "Add without linking", exact: true }),
 	).toBeVisible();
@@ -10449,7 +10581,9 @@ test("Add channel offers inventory-only creation and atomic provider replacement
 	replacementDialog = page.getByRole("alertdialog", {
 		name: "How should this Discord bot be added?",
 	});
-	await expect(replacementDialog).toContainText("remove the current bot's paired chats");
+	await expect(replacementDialog).toContainText(
+		"This Agent can link only one Discord bot. Add Additional Discord without linking, or replace the current bot and remove its paired chats.",
+	);
 	await expect(
 		replacementDialog.getByRole("button", { name: "Add without linking", exact: true }),
 	).toBeVisible();
@@ -10736,7 +10870,7 @@ test("Agent bot groups keep every bot visible and confirm provider replacement",
 	await expect(customSection.getByText("Custom bots", { exact: true })).toBeVisible();
 	await expect(linkedTelegramRow).toBeVisible();
 	await expect(replacementTelegramRow).toBeVisible();
-	await expect(replacementTelegramRow).toContainText("Replaces current link");
+	await expect(replacementTelegramRow.getByText("Available", { exact: true })).toBeVisible();
 	await expect(
 		replacementTelegramRow.getByRole("button", { name: "Link", exact: true }),
 	).toBeEnabled();
@@ -10758,8 +10892,8 @@ test("Agent bot groups keep every bot visible and confirm provider replacement",
 	await expect(unlinkedDiscordHeader.getByText("Available", { exact: true })).toBeVisible();
 	await expect(unlinkedDiscordHeader).not.toContainText("1 chat");
 	await expect(unlinkedDiscordHeader).not.toContainText("Paired");
-	await expect(unavailableTelegramHeader).toContainText("Replaces current link");
-	await expect(unavailableTelegramHeader).not.toContainText("Available");
+	await expect(unavailableTelegramHeader.getByText("Available", { exact: true })).toBeVisible();
+	await expect(unavailableTelegramHeader).not.toContainText("Replaces current link");
 	await expect(linkedTelegramChats).toHaveAccessibleName("1 paired chat");
 	const desktopPairedChatLabel = linkedTelegramChats.locator("[data-agent-paired-chats-label]");
 	await expect(desktopPairedChatLabel).toHaveText("1 paired chat");
@@ -10859,11 +10993,14 @@ test("Agent bot groups keep every bot visible and confirm provider replacement",
 		name: "Link",
 		exact: true,
 	});
+	expect((await replaceLinkButton.boundingBox())?.width).toBeLessThanOrEqual(96);
 	await replaceLinkButton.click();
 	let replacementDialog = page.getByRole("alertdialog", {
 		name: "Replace this Agent’s Telegram link?",
 	});
-	await expect(replacementDialog).toContainText("Replacement Telegram");
+	await expect(replacementDialog).toContainText(
+		"This Agent can link only one Telegram bot. Linking Replacement Telegram will replace the current bot and remove its paired chats.",
+	);
 	await expect(
 		replacementDialog.getByRole("button", { name: "Add without linking", exact: true }),
 	).toHaveCount(0);
@@ -12109,12 +12246,14 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	expect(telegramPairColors).toEqual(discordPairColors);
 	expect(telegramPairBox?.height).toBe(discordPairBox?.height);
 	expect(telegramPairBox?.height).toBe(32);
+	expect(telegramPairBox?.width).toBeLessThanOrEqual(96);
+	expect(unlinkBox?.width).toBeLessThanOrEqual(96);
 	const readyCard = clawdiSection.locator(`[data-agent-channel-account-id="${readyId}"]`);
 	const ownedCard = customSection.locator(`[data-agent-channel-account-id="${ownedId}"]`);
 	await expect(readyCard).toBeVisible();
 	await expect(ownedCard).toBeVisible();
-	await expect(readyCard).toContainText("Replaces current link");
-	await expect(ownedCard).toContainText("Replaces current link");
+	await expect(readyCard.getByText("Available", { exact: true })).toBeVisible();
+	await expect(ownedCard.getByText("Available", { exact: true })).toBeVisible();
 	await expect(readyCard.getByRole("button", { name: "Link", exact: true })).toBeEnabled();
 	await expect(ownedCard.getByRole("button", { name: "Link", exact: true })).toBeEnabled();
 	await expect(page.getByRole("button", { name: /^Access .* Dashboard$/ })).toHaveCount(0);

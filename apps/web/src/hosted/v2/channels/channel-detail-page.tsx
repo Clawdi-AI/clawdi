@@ -265,13 +265,13 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				}
 				actions={
 					<ConfirmAction
-						title={`${disconnectsWhatsApp ? "Disconnect" : "Remove"} ${ch.name}?`}
+						title={`${disconnectsWhatsApp ? "Disconnect" : "Delete"} ${ch.name}?`}
 						description={
 							disconnectsWhatsApp
 								? "This logs out Clawdi as a linked device and removes the Custom bot. Linked Agents will stop sending and receiving."
-								: "Agents linked to this channel will stop sending and receiving. This can't be undone."
+								: "This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
 						}
-						confirmLabel={disconnectsWhatsApp ? "Disconnect and remove" : "Remove channel"}
+						confirmLabel={disconnectsWhatsApp ? "Disconnect and remove" : "Delete custom bot"}
 						destructive
 						onConfirm={removeChannel}
 					>
@@ -287,7 +287,13 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 							) : (
 								<Trash2 className="size-4" />
 							)}
-							{removing ? "Removing…" : disconnectsWhatsApp ? "Disconnect" : "Remove"}
+							{removing
+								? disconnectsWhatsApp
+									? "Disconnecting…"
+									: "Deleting…"
+								: disconnectsWhatsApp
+									? "Disconnect"
+									: "Delete"}
 						</Button>
 					</ConfirmAction>
 				}
@@ -296,7 +302,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			{providerUnavailable ? (
 				<InfoCard icon={TriangleAlert} title="Provider unavailable">
 					This provider is no longer available for new native channels. Existing channel data
-					remains visible, and you can remove the channel.
+					remains visible, and you can delete the Custom bot.
 				</InfoCard>
 			) : null}
 			{ch.provider === "discord" && !providerUnavailable ? (
