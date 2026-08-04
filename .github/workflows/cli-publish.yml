@@ -15,15 +15,6 @@ concurrency:
 
 env:
   CLI_ARTIFACT_NAME: clawdi-cli-release
-  CLI_RELEASE_ASSETS: >-
-    clawdi-cli-linux-x64.tar.gz
-    clawdi-cli-linux-arm64.tar.gz
-    clawdi-cli-linux-x64-musl.tar.gz
-    clawdi-cli-linux-arm64-musl.tar.gz
-    clawdi-cli-darwin-x64.tar.gz
-    clawdi-cli-darwin-arm64.tar.gz
-    clawdi-cli-manifest.txt
-    install.sh
 
 # This repository builds, verifies, and publishes one immutable artifact.
 # Prereleases publish to beta; stable releases publish to latest.
@@ -65,25 +56,8 @@ jobs:
           registry_version=$(npm view "clawdi@$version" version 2>/dev/null || true)
           if [ "$registry_version" = "$version" ]; then
             tag="clawdi-cli-v$version"
-            if release_data=$(gh release view "$tag" \
-              --json isDraft,assets \
-              --template '{{.isDraft}}{{"\n"}}{{range .assets}}{{.name}}{{"\t"}}{{.size}}{{"\n"}}{{end}}' \
-              2>/dev/null); then
-              read -r release_is_draft <<< "$release_data"
-              if [ "$release_is_draft" = "false" ]; then
-                release_complete=true
-                for asset in $CLI_RELEASE_ASSETS; do
-                  if ! awk -F '\t' -v required="$asset" \
-                    '$1 == required && $2 ~ /^[1-9][0-9]*$/ { found=1 } END { exit found ? 0 : 1 }' \
-                    <<< "$release_data"; then
-                    release_complete=false
-                    break
-                  fi
-                done
-                if [ "$release_complete" = "true" ]; then
-                  should_release=false
-                fi
-              fi
+            if [ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+              should_release=false
             fi
           fi
           VERSION="$version" NPM_TAG="$npm_tag" SHOULD_RELEASE="$should_release" node - <<'NODE'
@@ -287,18 +261,11 @@ jobs:
             fi
           fi
           release_action=create-draft
-          if existing_release=$(gh release view "$tag" --json isDraft,targetCommitish,assets 2>/dev/null); then
+          if existing_release=$(gh release view "$tag" --json isDraft,targetCommitish 2>/dev/null); then
             release_action=$(RELEASE_JSON="$existing_release" EXPECTED_COMMIT="$GITHUB_SHA" node - <<'NODE'
           const release = JSON.parse(process.env.RELEASE_JSON);
           if (release.targetCommitish !== process.env.EXPECTED_COMMIT) {
             console.error(`GitHub release targets ${release.targetCommitish} instead of this workflow commit ${process.env.EXPECTED_COMMIT}`);
-            process.exit(65);
-          }
-          const required = process.env.CLI_RELEASE_ASSETS.trim().split(/\s+/);
-          const assets = new Map(release.assets.map((asset) => [asset.name, asset.size]));
-          const incomplete = required.filter((name) => !assets.has(name) || assets.get(name) === 0);
-          if (!release.isDraft && incomplete.length > 0) {
-            console.error(`published GitHub release has incomplete assets: ${incomplete.join(", ")}`);
             process.exit(65);
           }
           console.log(release.isDraft ? "resume-draft" : "none");

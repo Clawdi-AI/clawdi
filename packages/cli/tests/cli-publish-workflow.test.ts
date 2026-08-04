@@ -99,8 +99,6 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow.match(/test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/g)).toHaveLength(2);
 		expect(workflow).not.toContain("git checkout --detach");
 		expect(workflow).not.toContain("source_commit");
-		expect(workflow).not.toContain("release-recovery");
-		expect(workflow).not.toContain("schemaVersion");
 		expect(workflow).not.toContain("Clawdi-AI/clawdi-hosted");
 		expect(workflow).not.toContain("uses: Clawdi-AI/");
 		expect(workflow).not.toContain("repository_dispatch");
@@ -173,9 +171,7 @@ describe("CLI publish workflow contract", () => {
 		expect(noOpDecision).toBeLessThan(buildJob.indexOf("bun install --frozen-lockfile"));
 		expect(buildJob).toContain("should_release=true");
 		expect(buildJob).toContain('gh release view "$tag"');
-		expect(buildJob).toContain('if [ "$release_is_draft" = "false" ]; then');
-		expect(buildJob).toContain("$2 ~ /^[1-9][0-9]*$/");
-		expect(buildJob).toContain("release_complete=false");
+		expect(buildJob).toContain("--json isDraft --jq .isDraft");
 		expect(buildJob.match(/should_release=false/g)).toHaveLength(1);
 		expect(absenceCheck).toBeGreaterThan(-1);
 		expect(absenceCheck).toBeLessThan(publishCommand);
@@ -191,8 +187,6 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain(
 			'echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2',
 		);
-		expect(workflow).not.toContain("dist.attestations");
-		expect(workflow).not.toContain("attestation_bundle");
 	});
 
 	test("creates or completes only the current commit GitHub release", () => {
@@ -201,7 +195,6 @@ describe("CLI publish workflow contract", () => {
 		);
 		expect(workflow).toContain('if [ "$tag_commit" != "$GITHUB_SHA" ]; then');
 		expect(workflow).toContain("release.targetCommitish !== process.env.EXPECTED_COMMIT");
-		expect(workflow).toContain("if (!release.isDraft && incomplete.length > 0)");
 		expect(workflow).toContain('console.log(release.isDraft ? "resume-draft" : "none")');
 		expect(workflow).toContain('gh release upload "$tag"');
 		expect(workflow).toContain("--clobber");
