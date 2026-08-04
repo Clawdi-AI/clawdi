@@ -1,12 +1,11 @@
+import type { DeployComponents } from "@clawdi/shared/api";
 import type { SkillCardEntity } from "@/components/skills/skill-card";
-import type {
-	HostedSkillCatalogItem,
-	HostedSkillInstallResponse,
-	HostedSkillStatusItem,
-} from "@/hosted/billing/contracts";
 import type { components } from "@/lib/api-schemas";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type HostedSkillCatalogItem = DeployComponents["schemas"]["V1SkillCatalogItem"];
+type HostedSkillInstallResponse = DeployComponents["schemas"]["V1SkillInstallResponse"];
+type HostedSkillStatusItem = DeployComponents["schemas"]["V1SkillStatusItem"];
 
 export type WorkspaceRuntimeSkill = {
 	entity: SkillCardEntity;

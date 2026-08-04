@@ -33,16 +33,7 @@ import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
-export function HostedWorkspaceSkillsPanel({
-	agentId,
-	projectId,
-	routeSearch,
-	deploymentSelector,
-	projections,
-	projectionsLoading,
-	projectionError,
-	onRetryProjections,
-}: {
+type HostedWorkspaceSkillsPanelProps = {
 	agentId: string;
 	projectId: string;
 	routeSearch?: AgentRouteQuery;
@@ -51,7 +42,26 @@ export function HostedWorkspaceSkillsPanel({
 	projectionsLoading: boolean;
 	projectionError?: unknown;
 	onRetryProjections?: () => void;
-}) {
+};
+
+export function HostedWorkspaceSkillsPanel(props: HostedWorkspaceSkillsPanelProps) {
+	return (
+		<div data-hosted="true" className="contents">
+			<HostedWorkspaceSkillsPanelContent {...props} />
+		</div>
+	);
+}
+
+function HostedWorkspaceSkillsPanelContent({
+	agentId,
+	projectId,
+	routeSearch,
+	deploymentSelector,
+	projections,
+	projectionsLoading,
+	projectionError,
+	onRetryProjections,
+}: HostedWorkspaceSkillsPanelProps) {
 	const billingClient = useBillingClient();
 	const queryClient = useQueryClient();
 	const actionLockedRef = useRef(false);

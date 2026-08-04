@@ -21,6 +21,7 @@ const COMPLETION_ONLY = [
 	"components/command-palette.tsx",
 	"components/connectors/credentials-dialog.tsx",
 	"components/dashboard/agent-projects-tab.tsx",
+	"components/dashboard/workspace-skills-panel.tsx",
 	"components/memories/memories-surface.tsx",
 	"components/skills/send-skill-dialog.tsx",
 	"components/ui/confirm-action.tsx",
