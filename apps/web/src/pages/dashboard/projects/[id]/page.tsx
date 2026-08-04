@@ -475,9 +475,7 @@ export default function ProjectDetailPage({
 				}
 				description={
 					isAgentScope
-						? scopedBinding?.binding_type === "primary"
-							? "Skills and Vaults available to this Agent through its Default Project."
-							: "Skills and Vaults available to this Agent through this Project."
+						? "Skills and Vaults available to this Agent through this Project."
 						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
 				}
 				status={<span className="font-mono text-xs text-muted-foreground">{project.slug}</span>}

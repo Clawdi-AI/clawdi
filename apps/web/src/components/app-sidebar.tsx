@@ -35,7 +35,7 @@ import {
 	MessageCircle,
 	Search,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -162,7 +162,7 @@ type SidebarNavItem = {
 	prefetch?: () => void;
 };
 
-type AgentDefaultProjectShortcut = {
+type AgentPrimaryProjectNavigation = {
 	id: string;
 	name: string;
 };
@@ -329,7 +329,7 @@ function AgentSectionList({
 	variant,
 	visibleSectionIds,
 	activeSection,
-	defaultProject,
+	primaryProject,
 	extraPrimaryItems = [],
 	onNavigate,
 }: {
@@ -337,69 +337,83 @@ function AgentSectionList({
 	variant: AgentNavigationVariant;
 	visibleSectionIds?: readonly AgentSectionId[];
 	activeSection: AgentSectionId;
-	defaultProject?: AgentDefaultProjectShortcut | null;
+	primaryProject?: AgentPrimaryProjectNavigation | null;
 	extraPrimaryItems?: SidebarNavItem[];
 	onNavigate?: () => void;
 }) {
-	const pathname = useLocation({ select: (location) => location.pathname });
-	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const { pathname, searchStr, hash } = useLocation({
+		select: (location) => ({
+			pathname: location.pathname,
+			searchStr: location.searchStr,
+			hash: location.hash.replace(/^#/, ""),
+		}),
+	});
 	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
 	const groups = agentNavigationGroups(variant, visibleSectionIds);
 	const activeAgentRoute = parseAgentPathname(pathname);
-	const defaultProjectActive = Boolean(
-		defaultProject && agentRouteIdsEqual(activeAgentRoute?.projectId, defaultProject.id),
+	const primaryProjectRouteActive = Boolean(
+		primaryProject && agentRouteIdsEqual(activeAgentRoute?.projectId, primaryProject.id),
 	);
+	const activePrimaryProjectResource =
+		primaryProjectRouteActive && (hash === "skills" || hash === "vaults") ? hash : null;
 	const normalizedActiveSection = groups.some((group) =>
 		group.items.some((item) => item.id === activeSection),
 	)
 		? activeSection
 		: "overview";
+	const primaryProjectItems = primaryProject
+		? (["skills", "vaults"] as const).map((section): SidebarNavItem => {
+				const item = AGENT_SECTION_NAVIGATION_ITEMS[section];
+				return {
+					id: `primary-project-${section}`,
+					label: item.label,
+					href: `${agentProjectDetailHref(agentId, primaryProject.id, routeQuery)}#${section}`,
+					icon: item.icon,
+					tint: item.tint,
+					tooltip: `${item.label} — ${primaryProject.name}`,
+					active: activePrimaryProjectResource === section,
+				};
+			})
+		: [];
 
 	return (
 		<>
 			{groups.map((group) => (
-				<SidebarNavSection
-					key={group.id}
-					label={group.label}
-					items={[
-						...group.items.flatMap((item): SidebarNavItem[] => {
-							const navigationItem: SidebarNavItem = {
-								id: item.id,
-								label: item.label,
-								href: agentSectionHref(agentId, item.id, routeQuery),
-								icon: item.icon,
-								tint: item.tint,
-								tooltip: item.tooltip,
-								active:
-									normalizedActiveSection === item.id &&
-									!(item.id === "projects" && defaultProjectActive),
-								prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
-							};
-							if (group.id !== "resources" || item.id !== "projects" || !defaultProject) {
-								return [navigationItem];
-							}
-							return [
-								navigationItem,
-								{
-									id: "default-project",
-									label: "Default Project",
-									href: agentProjectDetailHref(agentId, defaultProject.id, routeQuery),
+				<Fragment key={group.id}>
+					<SidebarNavSection
+						label={group.label}
+						items={[
+							...group.items.map((item): SidebarNavItem => {
+								return {
+									id: item.id,
+									label: item.label,
+									href: agentSectionHref(agentId, item.id, routeQuery),
 									icon: item.icon,
 									tint: item.tint,
-									tooltip: `Default Project — ${defaultProject.name}`,
-									active: defaultProjectActive,
-								},
-							];
-						}),
-						...(group.id === "primary" ? extraPrimaryItems : []),
-					]}
-					separated={group.separated}
-					ariaLabel={
-						group.label ?? (group.id === "settings" ? "Agent settings" : "Primary navigation")
-					}
-					onNavigate={onNavigate}
-				/>
+									tooltip: item.tooltip,
+									active:
+										normalizedActiveSection === item.id &&
+										!(item.id === "projects" && activePrimaryProjectResource),
+									prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
+								};
+							}),
+							...(group.id === "primary" ? extraPrimaryItems : []),
+						]}
+						separated={group.separated}
+						ariaLabel={
+							group.label ?? (group.id === "settings" ? "Agent settings" : "Primary navigation")
+						}
+						onNavigate={onNavigate}
+					/>
+					{group.id === "resources" && primaryProject ? (
+						<SidebarNavSection
+							label={primaryProject.name}
+							items={primaryProjectItems}
+							onNavigate={onNavigate}
+						/>
+					) : null}
+				</Fragment>
 			))}
 		</>
 	);
@@ -409,13 +423,13 @@ function AgentFocusSections({
 	agentId,
 	kind,
 	activeSection,
-	defaultProject,
+	primaryProject,
 	onNavigate,
 }: {
 	agentId: string;
 	kind: Exclude<AgentChromeKind, "unresolved">;
 	activeSection: AgentSectionId;
-	defaultProject?: AgentDefaultProjectShortcut | null;
+	primaryProject?: AgentPrimaryProjectNavigation | null;
 	onNavigate?: () => void;
 }) {
 	const legacyDashboardHref = kind === "legacy" ? legacyHostedDashboardUrl() : null;
@@ -438,7 +452,7 @@ function AgentFocusSections({
 			agentId={agentId}
 			variant={kind === "cloud" ? "hosted" : "connected"}
 			activeSection={activeSection}
-			defaultProject={defaultProject}
+			primaryProject={primaryProject}
 			extraPrimaryItems={extraPrimaryItems}
 			onNavigate={onNavigate}
 		/>
@@ -521,7 +535,7 @@ function SidebarMainNavigation({
 	activeAgentKind,
 	agentsLoaded,
 	activeSection,
-	defaultProject,
+	primaryProject,
 	onNavigate,
 }: {
 	pathname: string;
@@ -531,7 +545,7 @@ function SidebarMainNavigation({
 	activeAgentKind: AgentChromeKind;
 	agentsLoaded: boolean;
 	activeSection: AgentSectionId;
-	defaultProject?: AgentDefaultProjectShortcut | null;
+	primaryProject?: AgentPrimaryProjectNavigation | null;
 	onNavigate?: () => void;
 }) {
 	if (activeAgentId && activeAgentTile && activeAgentKind !== "unresolved") {
@@ -540,7 +554,7 @@ function SidebarMainNavigation({
 				agentId={activeAgentId}
 				kind={activeAgentKind}
 				activeSection={activeSection}
-				defaultProject={defaultProject}
+				primaryProject={primaryProject}
 				onNavigate={onNavigate}
 			/>
 		);
@@ -593,7 +607,7 @@ type FocusNavigationPaneProps = {
 	activeAgentKind: AgentChromeKind;
 	agentsLoaded: boolean;
 	activeSection: AgentSectionId;
-	defaultProject?: AgentDefaultProjectShortcut | null;
+	primaryProject?: AgentPrimaryProjectNavigation | null;
 	onNavigate?: () => void;
 };
 
@@ -607,7 +621,7 @@ function FocusNavigationPane({
 	activeAgentKind,
 	agentsLoaded,
 	activeSection,
-	defaultProject,
+	primaryProject,
 	onNavigate,
 }: FocusNavigationPaneProps) {
 	return (
@@ -629,7 +643,7 @@ function FocusNavigationPane({
 					activeAgentKind={activeAgentKind}
 					agentsLoaded={agentsLoaded}
 					activeSection={activeSection}
-					defaultProject={defaultProject}
+					primaryProject={primaryProject}
 					onNavigate={onNavigate}
 				/>
 			</SidebarContent>
@@ -1551,13 +1565,19 @@ export function AppSidebar({
 		{},
 		{ enabled: hydrated && Boolean(activeAgent?.default_project_id) },
 	);
-	const resolvedDefaultProject = resolveAgentDefaultProject(
-		defaultProjectBindings.data ?? [],
-		navigableProjects.data ?? [],
-		activeAgent?.default_project_id,
-	);
-	const defaultProject = resolvedDefaultProject
-		? { id: resolvedDefaultProject.id, name: displayProjectName(resolvedDefaultProject) }
+	const resolvedPrimaryProject =
+		defaultProjectBindings.isLoading ||
+		defaultProjectBindings.error ||
+		navigableProjects.isLoading ||
+		navigableProjects.error
+			? null
+			: resolveAgentDefaultProject(
+					defaultProjectBindings.data ?? [],
+					navigableProjects.data ?? [],
+					activeAgent?.default_project_id,
+				);
+	const primaryProject = resolvedPrimaryProject
+		? { id: resolvedPrimaryProject.id, name: displayProjectName(resolvedPrimaryProject) }
 		: null;
 	const classifiedActiveAgentKind = useAgentChromeKind(activeAgent, activeAgentTile);
 	const activeAgentKind =
@@ -1644,7 +1664,7 @@ export function AppSidebar({
 						activeAgentKind={activeAgentKind}
 						agentsLoaded={agentsLoaded}
 						activeSection={activeSection}
-						defaultProject={defaultProject}
+						primaryProject={primaryProject}
 					/>
 				) : null}
 
@@ -1680,7 +1700,7 @@ export function AppSidebar({
 							activeAgentKind={activeAgentKind}
 							agentsLoaded={agentsLoaded}
 							activeSection={activeSection}
-							defaultProject={defaultProject}
+							primaryProject={primaryProject}
 							onNavigate={closeMobileSidebar}
 						/>
 						<SidebarGlobalControlsBar

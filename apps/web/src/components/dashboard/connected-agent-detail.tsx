@@ -23,7 +23,6 @@ import {
 	useOverviewMemoriesModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
-import { resolveAgentDefaultProject } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
@@ -31,7 +30,6 @@ import { DetailNotFound } from "@/components/detail/layout";
 import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import {
 	OverviewSessionList,
 	OverviewSessionListSkeleton,
@@ -91,18 +89,6 @@ export function ConnectedAgentDetail({
 	const projectBindings = overviewProjects.data;
 	const projectBindingsLoading = overviewProjects.isLoading;
 	const projectBindingsError = overviewProjects.error;
-	const overviewProjectRows = $api.useQuery(
-		"get",
-		"/v1/projects",
-		{},
-		{ enabled: overviewEnabled && Boolean(agent?.default_project_id) },
-	);
-	const defaultProject = resolveAgentDefaultProject(
-		projectBindings ?? [],
-		overviewProjectRows.data ?? [],
-		agent?.default_project_id,
-	);
-
 	const {
 		data: overviewSessionsPage,
 		isLoading: overviewSessionsLoading,
@@ -271,11 +257,6 @@ export function ConnectedAgentDetail({
 								agentId={id}
 								variant="connected"
 								routeSearch={routeSearch}
-								defaultProject={
-									defaultProject
-										? { id: defaultProject.id, name: displayProjectName(defaultProject) }
-										: null
-								}
 								content={{
 									projects: overviewProjectsModule({
 										bindings: {

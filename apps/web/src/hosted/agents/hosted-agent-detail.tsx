@@ -44,7 +44,6 @@ import {
 	useOverviewMemoriesModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
-import { resolveAgentDefaultProject } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailPanel } from "@/components/detail/layout";
@@ -59,7 +58,6 @@ import { IconChip } from "@/components/icon-chip";
 import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { SectionLabel } from "@/components/section-label";
 import { OverviewSessionList, SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
@@ -1076,7 +1074,6 @@ function OverviewTab({
 	};
 	deploymentTransitionTimedOut: boolean;
 }) {
-	const $api = useOpenApi();
 	const spec = deployment.resource.spec;
 	const primaryModel = spec.runtime_configuration.primary_model;
 	const bindingProvider =
@@ -1104,17 +1101,6 @@ function OverviewTab({
 		tone: runtimeStatusPresentation.tone,
 	};
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
-	const projectRows = $api.useQuery(
-		"get",
-		"/v1/projects",
-		{},
-		{ enabled: Boolean(agent?.default_project_id) },
-	);
-	const defaultProject = resolveAgentDefaultProject(
-		projectBindings.data ?? [],
-		projectRows.data ?? [],
-		agent?.default_project_id,
-	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
@@ -1196,11 +1182,6 @@ function OverviewTab({
 				agentId={agentId}
 				variant="hosted"
 				routeSearch={routeSearch}
-				defaultProject={
-					defaultProject
-						? { id: defaultProject.id, name: displayProjectName(defaultProject) }
-						: null
-				}
 				content={{
 					projects: overviewProjectsModule({
 						bindings: {

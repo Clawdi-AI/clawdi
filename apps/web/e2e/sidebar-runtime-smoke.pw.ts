@@ -860,12 +860,29 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
 		{ label: null, items: ["Overview", "Sessions"] },
-		{
-			label: "Resources",
-			items: ["Projects", "Default Project", "Memories", "Connectors"],
-		},
+		{ label: "Resources", items: ["Projects", "Memories", "Connectors"] },
+		{ label: "Smoke Project", items: ["Skills", "Vaults"] },
 		{ label: null, items: ["Settings"] },
 	]);
+});
+
+test("connected primary Project navigation stays hidden until scope resolves", async ({ page }) => {
+	let releaseBindings: (() => void) | undefined;
+	const projectBindingsGate = new Promise<void>((resolve) => {
+		releaseBindings = resolve;
+	});
+	await stubDashboardApi(page, [], { projectBindingsGate });
+
+	await page.goto("/agents/agent-smoke-1");
+	const sidebar = page.getByTestId("app-sidebar");
+	await expect(sidebar.getByRole("group", { name: "Resources", exact: true })).toBeVisible();
+	await expect(sidebar.getByRole("group", { name: "Smoke Project", exact: true })).toHaveCount(0);
+
+	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
+	releaseBindings();
+	const projectGroup = sidebar.getByRole("group", { name: "Smoke Project", exact: true });
+	await expect(projectGroup).toBeVisible();
+	await expect(projectGroup.getByRole("link")).toHaveText(["Skills", "Vaults"]);
 });
 
 test("connected agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
@@ -922,19 +939,19 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(4);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(3);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(4);
+	).toHaveCount(3);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0, 0]);
+	).toEqual([0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		4,
+		3,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -948,7 +965,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "default-project", "memories", "connectors"]);
+	).toEqual(["projects", "memories", "connectors"]);
 	expect(
 		await page
 			.locator("#connected-recent-sessions, #agent-overview-resources")
@@ -958,12 +975,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Smoke Project",
 	);
-	await expect(overview.locator('[data-overview-module="default-project"]')).toContainText(
-		"Smoke Project",
-	);
-	await expect(
-		overview.locator('[data-overview-module="default-project"]').getByRole("link"),
-	).toHaveAttribute("href", "/agents/agent-smoke-1/project-access/project-smoke");
+	await expect(overview.getByText("Default Project", { exact: true })).toHaveCount(0);
 	await expect(overview.getByTestId("agent-project-grid")).toHaveCount(0);
 	expect(projectRequests).toHaveLength(1);
 	expect(skillRequests).toEqual([]);
@@ -1053,18 +1065,35 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(sidebar.getByText("Paused", { exact: true })).toBeVisible();
 	await expect(sidebar.getByText(/last seen/i)).toBeVisible();
 	await expectInlineSidebarStatus(sidebar, "connected");
-	for (const section of ["Projects", "Default Project", "Memories", "Connectors"]) {
+	for (const section of ["Projects", "Memories", "Connectors", "Skills", "Vaults"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
 	}
-	await expect(sidebar.getByRole("link", { name: "Skills", exact: true })).toHaveCount(0);
-	await expect(sidebar.getByRole("link", { name: "Vaults", exact: true })).toHaveCount(0);
+	const projectGroup = sidebar.getByRole("group", { name: "Smoke Project", exact: true });
+	const skillsLink = projectGroup.getByRole("link", { name: "Skills", exact: true });
+	const vaultsLink = projectGroup.getByRole("link", { name: "Vaults", exact: true });
+	await expect(skillsLink).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/project-access/project-smoke#skills",
+	);
+	await expect(vaultsLink).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/project-access/project-smoke#vaults",
+	);
+	await skillsLink.focus();
+	await expect(skillsLink).toBeFocused();
+	await skillsLink.click();
+	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access/project-smoke#skills");
+	await expect(skillsLink).toHaveAttribute("data-active", "");
+	await expect(vaultsLink).not.toHaveAttribute("data-active", "");
+	await page.goto("/agents/agent-smoke-1");
+	await expect(overview.locator("[data-overview-module]")).toHaveCount(3);
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	const resourceGrid = overview.locator('[data-overview-layout="three-column"]');
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(4);
+	expect(resourceGeometry).toHaveLength(3);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -1086,15 +1115,15 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await resourceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "default-project", "memories", "connectors"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3, 1]);
+	).toEqual(["projects", "memories", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3]);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 2]);
+	await expectOverviewResourceGeometry(resourceGrid, [2, 1]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
@@ -1749,9 +1778,27 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		"href",
 		"/agents/agent-smoke-1/vaults/scoped-vault?project=project-smoke&vault=vault-scoped",
 	);
+	await page.goto("/agents/agent-smoke-1/project-access/project-smoke#skills");
+	await expect(main.getByRole("heading", { name: "Smoke Project", level: 1 })).toBeVisible();
 	await main.screenshot({ path: testInfo.outputPath("connected-agent-project-hub-mobile.png") });
+	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
+	const mobileProjectSidebar = page.getByRole("dialog");
+	await expect(mobileProjectSidebar).toBeVisible();
+	await expect(
+		mobileProjectSidebar.getByRole("link", { name: "Skills", exact: true }),
+	).toHaveAttribute("data-active", "");
+	await page.waitForTimeout(250);
+	await page.screenshot({
+		path: testInfo.outputPath("connected-agent-project-hub-navigation-mobile.png"),
+		fullPage: true,
+	});
+	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 1280, height: 1200 });
 	await main.screenshot({ path: testInfo.outputPath("connected-agent-project-hub-desktop.png") });
+	await page.screenshot({
+		path: testInfo.outputPath("connected-agent-project-hub-navigation-desktop.png"),
+		fullPage: true,
+	});
 
 	await page.goto("/agents/agent-smoke-1/project-access/project-context-first");
 	await expect(main.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();

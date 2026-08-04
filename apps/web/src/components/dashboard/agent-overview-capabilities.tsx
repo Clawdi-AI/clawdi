@@ -1,16 +1,12 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
-import { Fragment, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type AgentOverviewModuleId, agentOverviewGroups } from "@/lib/agent-capabilities";
-import {
-	type AgentRouteSearch,
-	agentProjectDetailLink,
-	agentSectionLink,
-} from "@/lib/agent-routes";
+import { type AgentRouteSearch, agentSectionLink } from "@/lib/agent-routes";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	type AgentNavigationVariant,
@@ -19,11 +15,6 @@ import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
-};
-
-export type AgentOverviewDefaultProject = {
-	id: string;
-	name: string;
 };
 
 type OverviewLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
@@ -120,13 +111,11 @@ export function AgentOverviewCapabilities({
 	variant,
 	routeSearch,
 	content,
-	defaultProject,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	routeSearch: AgentRouteSearch;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
-	defaultProject?: AgentOverviewDefaultProject | null;
 }) {
 	const groups = agentOverviewGroups(variant);
 	return (
@@ -153,26 +142,15 @@ export function AgentOverviewCapabilities({
 							if (!moduleContent) return null;
 							const title = module.id === "model-provider" ? "Model & Provider" : item.label;
 							return (
-								<Fragment key={module.id}>
-									<OverviewNavigationCard
-										id={module.id}
-										title={title}
-										description={moduleContent.description}
-										icon={item.icon}
-										tint={item.tint}
-										link={agentSectionLink(agentId, module.section, routeSearch)}
-									/>
-									{module.id === "projects" && defaultProject ? (
-										<OverviewNavigationCard
-											id="default-project"
-											title="Default Project"
-											description={defaultProject.name}
-											icon={item.icon}
-											tint={item.tint}
-											link={agentProjectDetailLink(agentId, defaultProject.id, routeSearch)}
-										/>
-									) : null}
-								</Fragment>
+								<OverviewNavigationCard
+									key={module.id}
+									id={module.id}
+									title={title}
+									description={moduleContent.description}
+									icon={item.icon}
+									tint={item.tint}
+									link={agentSectionLink(agentId, module.section, routeSearch)}
+								/>
 							);
 						})}
 					</div>

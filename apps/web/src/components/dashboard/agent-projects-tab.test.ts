@@ -81,18 +81,26 @@ describe("agent Projects presentation", () => {
 		expect(source).toContain('invalidateQueries({ queryKey: ["get", "/v1/projects"] })');
 	});
 
-	test("adds a fail-closed Default Project shortcut to existing navigation tile families", () => {
+	test("adds a fail-closed primary Project group without changing Overview cards", () => {
 		const sidebar = readFileSync(new URL("../app-sidebar.tsx", import.meta.url), "utf8");
 		const overview = readFileSync(
 			new URL("./agent-overview-capabilities.tsx", import.meta.url),
 			"utf8",
 		);
 
-		expect(sidebar).toContain('label: "Default Project"');
 		expect(sidebar).toContain("resolveAgentDefaultProject(");
-		expect(sidebar).toContain("agentProjectDetailHref(agentId, defaultProject.id, routeQuery)");
-		expect(overview).toContain('title="Default Project"');
-		expect(overview).toContain("agentProjectDetailLink(");
+		expect(sidebar).toContain("label={primaryProject.name}");
+		expect(sidebar).toContain('["skills", "vaults"] as const');
+		expect(sidebar).toMatch(
+			/agentProjectDetailHref\(agentId, primaryProject\.id, routeQuery\)\}#\$\{section\}/,
+		);
+		expect(sidebar).toContain("defaultProjectBindings.isLoading ||");
+		expect(sidebar).toContain("defaultProjectBindings.error ||");
+		expect(sidebar).toContain("navigableProjects.isLoading ||");
+		expect(sidebar).toContain("navigableProjects.error");
+		expect(sidebar).not.toContain('label: "Default Project"');
+		expect(overview).not.toContain('title="Default Project"');
+		expect(overview).not.toContain("agentProjectDetailLink(");
 		expect(overview).toContain("<OverviewNavigationCard");
 		expect(overview).not.toContain("ProjectResourceCard");
 	});
