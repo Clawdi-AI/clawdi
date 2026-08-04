@@ -4,7 +4,9 @@ import { resolve } from "node:path";
 import { parse } from "yaml";
 
 interface WorkflowJob {
+	if?: string;
 	needs?: unknown;
+	outputs?: Record<string, string>;
 	permissions?: Record<string, string>;
 	steps?: Array<Record<string, unknown>>;
 }
@@ -39,7 +41,7 @@ const cliPackage = JSON.parse(
 ) as { version: string; publishConfig?: { access?: string; tag?: unknown } };
 
 describe("CLI publish workflow contract", () => {
-	test("keeps recovery decisions inside the protected publish topology", () => {
+	test("keeps current-run release decisions inside the protected publish topology", () => {
 		const build = workflowDocument.jobs["build-immutable-artifact"];
 		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
 
@@ -49,7 +51,9 @@ describe("CLI publish workflow contract", () => {
 		]);
 		expect(build.permissions).toEqual({ contents: "read" });
 		expect(publish.needs).toBe("build-immutable-artifact");
+		expect(publish.if).toBe("needs['build-immutable-artifact'].outputs.should_release == 'true'");
 		expect(publish.permissions).toEqual({ contents: "write", "id-token": "write" });
+		expect(build.outputs?.should_release).toBe(`\${{ steps.check.outputs.should_release }}`);
 		expect(build.steps?.find((step) => step.id === "check")?.["working-directory"]).toBe(
 			"packages/cli",
 		);
@@ -62,6 +66,9 @@ describe("CLI publish workflow contract", () => {
 			expect(build.steps?.find((step) => step.id === stepId)?.["working-directory"]).toBe(
 				"packages/cli",
 			);
+		}
+		for (const step of build.steps?.slice(3) ?? []) {
+			expect(step.if).toBe("steps.check.outputs.should_release == 'true'");
 		}
 		expect(publish.steps?.map((step) => step.id).filter(Boolean)).toEqual([
 			"verify_release",
@@ -89,6 +96,11 @@ describe("CLI publish workflow contract", () => {
 		expect(publishJob).toContain('node-version: "24"');
 		expect(publishJob).toContain("npm install --global npm@11.5.1");
 		expect(publishJob).toContain('test "$(npm --version)" = "11.5.1"');
+		expect(workflow.match(/test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/g)).toHaveLength(2);
+		expect(workflow).not.toContain("git checkout --detach");
+		expect(workflow).not.toContain("source_commit");
+		expect(workflow).not.toContain("release-recovery");
+		expect(workflow).not.toContain("schemaVersion");
 		expect(workflow).not.toContain("Clawdi-AI/clawdi-hosted");
 		expect(workflow).not.toContain("uses: Clawdi-AI/");
 		expect(workflow).not.toContain("repository_dispatch");
@@ -138,62 +150,67 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).not.toContain("NPM_TOKEN");
 	});
 
-	test("separates fresh publish authority from existing-version recovery", () => {
-		const publishJob = workflow.slice(workflow.indexOf("  publish-immutable-artifact-with-oidc:"));
-		const boundaryCheck = publishJob.indexOf(
-			'if [ "$NPM_ACTION" = "publish" ] && npm_release_visible; then',
+	test("skips complete exact releases and otherwise verifies artifact integrity", () => {
+		const buildJob = workflow.slice(
+			workflow.indexOf("  build-immutable-artifact:"),
+			workflow.indexOf("  publish-immutable-artifact-with-oidc:"),
 		);
-		const publishDecision = publishJob.indexOf('case "$NPM_ACTION" in');
+		const publishJob = workflow.slice(workflow.indexOf("  publish-immutable-artifact-with-oidc:"));
+		const noOpDecision = buildJob.indexOf(
+			'registry_version=$(npm view "clawdi@$version" version 2>/dev/null || true)',
+		);
+		const absenceCheck = publishJob.indexOf("if ! npm_release_visible; then");
 		const publishCommand = publishJob.indexOf("npm publish ");
-		const freshEvidence = publishJob.indexOf('publication_evidence_mode="fresh-publish"');
-		const existingEvidence = publishJob.indexOf('publication_evidence_mode="existing-version"');
-		const visibilityWait = publishJob.indexOf("for attempt in $(seq 1 12); do", publishDecision);
+		const visibilityWait = publishJob.indexOf("for attempt in $(seq 1 12); do", publishCommand);
 		const versionRead = publishJob.indexOf(
 			'registry_version=$(npm view "clawdi@$VERSION" version)',
 		);
 		const integrityRead = publishJob.indexOf(
 			'published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)',
 		);
-		const provenanceGuard = publishJob.indexOf(
-			'if [ "$publication_evidence_mode" = "existing-version" ]; then',
-		);
-		const provenanceRead = publishJob.indexOf(
-			'attestations=$(npm view "clawdi@$VERSION" dist.attestations --json)',
-		);
 
-		expect(boundaryCheck).toBeGreaterThan(-1);
-		expect(boundaryCheck).toBeLessThan(publishDecision);
-		expect(publishCommand).toBeGreaterThan(publishDecision);
-		expect(freshEvidence).toBeGreaterThan(publishCommand);
-		expect(existingEvidence).toBeGreaterThan(freshEvidence);
-		expect(visibilityWait).toBeGreaterThan(publishDecision);
+		expect(noOpDecision).toBeGreaterThan(-1);
+		expect(noOpDecision).toBeLessThan(buildJob.indexOf("bun install --frozen-lockfile"));
+		expect(buildJob).toContain("should_release=true");
+		expect(buildJob).toContain('gh release view "$tag"');
+		expect(buildJob).toContain('if [ "$release_is_draft" = "false" ]; then');
+		expect(buildJob).toContain("$2 ~ /^[1-9][0-9]*$/");
+		expect(buildJob).toContain("release_complete=false");
+		expect(buildJob.match(/should_release=false/g)).toHaveLength(1);
+		expect(absenceCheck).toBeGreaterThan(-1);
+		expect(absenceCheck).toBeLessThan(publishCommand);
+		expect(visibilityWait).toBeGreaterThan(publishCommand);
 		expect(visibilityWait).toBeLessThan(versionRead);
 		expect(versionRead).toBeLessThan(integrityRead);
-		expect(integrityRead).toBeLessThan(provenanceGuard);
-		expect(provenanceGuard).toBeLessThan(provenanceRead);
 		expect(publishJob).toContain('test "$registry_version" = "$VERSION"');
-		expect(publishJob).toContain("publicationEvidence,");
-		expect(publishJob).toContain('mode: "fresh-publish"');
-		expect(publishJob).toContain('mode: "existing-version"');
+		expect(publishJob).toContain('if [ "$published_integrity" != "$local_integrity" ]; then');
+		expect(publishJob).toContain(
+			'echo "clawdi@$VERSION registry integrity does not match this workflow artifact" >&2',
+		);
 		expect(workflow).toContain('if [ "$attempt" -lt 12 ]; then sleep 5; fi');
 		expect(workflow).toContain(
 			'echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2',
 		);
-		expect(workflow.match(/attestation_bundle=\$\(curl --fail --silent --location/g)).toHaveLength(
-			2,
-		);
-		expect(workflow).toContain(
-			'echo "clawdi@$VERSION provenance was not visible after 60 seconds" >&2',
-		);
-		expect(workflow).toContain(
-			'echo "clawdi@$version provenance was not visible after 60 seconds" >&2',
-		);
+		expect(workflow).not.toContain("dist.attestations");
+		expect(workflow).not.toContain("attestation_bundle");
 	});
 
-	test("creates the CLI release only after publishing", () => {
+	test("creates or completes only the current commit GitHub release", () => {
 		expect(workflow.indexOf("npm publish ")).toBeLessThan(
 			workflow.indexOf('release create "$tag"'),
 		);
+		expect(workflow).toContain('if [ "$tag_commit" != "$GITHUB_SHA" ]; then');
+		expect(workflow).toContain("release.targetCommitish !== process.env.EXPECTED_COMMIT");
+		expect(workflow).toContain("if (!release.isDraft && incomplete.length > 0)");
+		expect(workflow).toContain('console.log(release.isDraft ? "resume-draft" : "none")');
+		expect(workflow).toContain('gh release upload "$tag"');
+		expect(workflow).toContain("--clobber");
+		expect(workflow).toContain('--target "$GITHUB_SHA"');
+		expect(workflow).toContain("--draft");
+		expect(workflow).toContain('gh release edit "$tag" --draft=false');
+		expect(workflow.match(/gh release upload /g)).toHaveLength(1);
+		expect(workflow.match(/gh release edit "\$tag" --draft=false/g)).toHaveLength(2);
+		expect(workflow.match(/release create "\$tag"/g)).toHaveLength(1);
 		expect(workflow).toContain('case "$NPM_TAG" in');
 		expect(workflow).toContain("args+=(--prerelease)");
 		expect(workflow).toContain("latest) ;;");

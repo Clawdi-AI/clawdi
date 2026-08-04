@@ -15,6 +15,15 @@ concurrency:
 
 env:
   CLI_ARTIFACT_NAME: clawdi-cli-release
+  CLI_RELEASE_ASSETS: >-
+    clawdi-cli-linux-x64.tar.gz
+    clawdi-cli-linux-arm64.tar.gz
+    clawdi-cli-linux-x64-musl.tar.gz
+    clawdi-cli-linux-arm64-musl.tar.gz
+    clawdi-cli-darwin-x64.tar.gz
+    clawdi-cli-darwin-arm64.tar.gz
+    clawdi-cli-manifest.txt
+    install.sh
 
 # This repository builds, verifies, and publishes one immutable artifact.
 # Prereleases publish to beta; stable releases publish to latest.
@@ -24,27 +33,21 @@ jobs:
     permissions:
       contents: read
     outputs:
-      should_release: ${{ steps.check.outputs.should_release }}
       version: ${{ steps.check.outputs.version }}
       npm_tag: ${{ steps.check.outputs.npm_tag }}
-      npm_action: ${{ steps.check.outputs.npm_action }}
       cli_tarball_filename: ${{ steps.check.outputs.cli_tarball_filename }}
-      source_commit: ${{ steps.check.outputs.source_commit }}
+      should_release: ${{ steps.check.outputs.should_release }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
 
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Check whether the exact release needs completing
+      - name: Resolve exact release identity and fast no-op
         id: check
         working-directory: packages/cli
         env:
@@ -52,106 +55,53 @@ jobs:
         run: |
           package_name=$(node -p "require('./package.json').name")
           version=$(node -p "require('./package.json').version")
-          tag="clawdi-cli-v$version"
-          npm_exists=false
-          published_integrity=""
-          attestations=""
-          attestation_bundle=""
-          if npm view "clawdi@$version" version >/dev/null 2>&1; then
-            npm_exists=true
-            published_integrity=$(npm view "clawdi@$version" dist.integrity)
-            attestations=$(npm view "clawdi@$version" dist.attestations --json)
-            attestation_url=$(ATTESTATIONS="$attestations" node - <<'NODE'
-          const attestations = JSON.parse(process.env.ATTESTATIONS);
-          const url = new URL(attestations.url);
-          if (url.origin !== "https://registry.npmjs.org") process.exit(1);
-          console.log(attestations.url);
-          NODE
-            )
-            attestation_bundle=""
-            for attempt in $(seq 1 12); do
-              if attestation_bundle=$(curl --fail --silent --location "$attestation_url"); then
-                break
+          test "$package_name" = "clawdi"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          case "$version" in
+            *-*) npm_tag=beta ;;
+            *) npm_tag=latest ;;
+          esac
+          should_release=true
+          registry_version=$(npm view "clawdi@$version" version 2>/dev/null || true)
+          if [ "$registry_version" = "$version" ]; then
+            tag="clawdi-cli-v$version"
+            if release_data=$(gh release view "$tag" \
+              --json isDraft,assets \
+              --template '{{.isDraft}}{{"\n"}}{{range .assets}}{{.name}}{{"\t"}}{{.size}}{{"\n"}}{{end}}' \
+              2>/dev/null); then
+              read -r release_is_draft <<< "$release_data"
+              if [ "$release_is_draft" = "false" ]; then
+                release_complete=true
+                for asset in $CLI_RELEASE_ASSETS; do
+                  if ! awk -F '\t' -v required="$asset" \
+                    '$1 == required && $2 ~ /^[1-9][0-9]*$/ { found=1 } END { exit found ? 0 : 1 }' \
+                    <<< "$release_data"; then
+                    release_complete=false
+                    break
+                  fi
+                done
+                if [ "$release_complete" = "true" ]; then
+                  should_release=false
+                fi
               fi
-              if [ "$attempt" -lt 12 ]; then sleep 5; fi
-            done
-            if [ -z "$attestation_bundle" ]; then
-              echo "clawdi@$version provenance was not visible after 60 seconds" >&2
-              exit 69
             fi
           fi
-          release_json=null
-          if existing_release=$(gh release view "$tag" --json isDraft,targetCommitish,assets 2>/dev/null); then
-            release_json="$existing_release"
-          fi
-          tag_commit=null
-          if resolved_tag=$(git rev-list -n 1 "$tag" 2>/dev/null); then
-            tag_commit="\"$resolved_tag\""
-          fi
-          recovery_input=$(PACKAGE_NAME="$package_name" VERSION="$version" NPM_EXISTS="$npm_exists" \
-            PUBLISHED_INTEGRITY="$published_integrity" ATTESTATIONS="$attestations" \
-            ATTESTATION_BUNDLE="$attestation_bundle" RELEASE_JSON="$release_json" \
-            TAG_COMMIT="$tag_commit" node - <<'NODE'
-          const npm = process.env.NPM_EXISTS === "true"
-            ? {
-                exists: true,
-                distIntegrity: process.env.PUBLISHED_INTEGRITY,
-                attestations: JSON.parse(process.env.ATTESTATIONS),
-                attestationBundle: JSON.parse(process.env.ATTESTATION_BUNDLE),
-              }
-            : { exists: false };
-          console.log(JSON.stringify({
-            schemaVersion: "clawdi.cliReleaseRecoveryInput.v2",
-            mode: "plan",
-            package: { name: process.env.PACKAGE_NAME, version: process.env.VERSION },
-            repository: {
-              url: `https://github.com/${process.env.GITHUB_REPOSITORY}`,
-              workflowPath: ".github/workflows/cli-publish.yml",
-            },
-            currentCommit: process.env.GITHUB_SHA,
-            requiredAssets: [
-              "clawdi-cli-linux-x64.tar.gz",
-              "clawdi-cli-linux-arm64.tar.gz",
-              "clawdi-cli-linux-x64-musl.tar.gz",
-              "clawdi-cli-linux-arm64-musl.tar.gz",
-              "clawdi-cli-darwin-x64.tar.gz",
-              "clawdi-cli-darwin-arm64.tar.gz",
-              "clawdi-cli-manifest.txt",
-              "install.sh",
-            ],
-            npm,
-            github: {
-              release: JSON.parse(process.env.RELEASE_JSON),
-              tagCommit: JSON.parse(process.env.TAG_COMMIT),
-            },
-          }));
-          NODE
-          )
-          recovery=$(node scripts/release-recovery.mjs <<< "$recovery_input")
-          RECOVERY="$recovery" node - <<'NODE'
+          VERSION="$version" NPM_TAG="$npm_tag" SHOULD_RELEASE="$should_release" node - <<'NODE'
           const fs = require("node:fs");
-          const decision = JSON.parse(process.env.RECOVERY);
           const outputs = {
-            should_release: decision.shouldRelease,
-            version: decision.version,
-            npm_tag: decision.npmTag,
-            npm_action: decision.npmAction,
-            cli_tarball_filename: decision.tarballFilename,
-            source_commit: decision.sourceCommit,
+            version: process.env.VERSION,
+            npm_tag: process.env.NPM_TAG,
+            cli_tarball_filename: `clawdi-${process.env.VERSION}.tgz`,
+            should_release: process.env.SHOULD_RELEASE,
           };
           fs.appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs)
             .map(([key, value]) => `${key}=${value}\n`).join(""));
           NODE
 
-      - name: Checkout immutable CLI source
+      - uses: oven-sh/setup-bun@v2
         if: steps.check.outputs.should_release == 'true'
-        env:
-          SOURCE_COMMIT: ${{ steps.check.outputs.source_commit }}
-          VERSION: ${{ steps.check.outputs.version }}
-        run: |
-          git cat-file -e "$SOURCE_COMMIT^{commit}"
-          git checkout --detach "$SOURCE_COMMIT"
-          test "$(node -p "require('./packages/cli/package.json').version")" = "$VERSION"
+        with:
+          bun-version: "1.3.14"
 
       - name: Install workspace dependencies
         if: steps.check.outputs.should_release == 'true'
@@ -223,8 +173,8 @@ jobs:
           retention-days: 7
 
   publish-immutable-artifact-with-oidc:
-    if: needs['build-immutable-artifact'].outputs.should_release == 'true'
     needs: build-immutable-artifact
+    if: needs['build-immutable-artifact'].outputs.should_release == 'true'
     # npm trusted publishing supports GitHub-hosted runners, not self-hosted runners.
     runs-on: ubuntu-latest
     environment: npm
@@ -245,13 +195,11 @@ jobs:
         with:
           bun-version: "1.3.14"
 
-      - name: Checkout immutable CLI source for verification
+      - name: Verify current workflow source
         env:
-          SOURCE_COMMIT: ${{ needs['build-immutable-artifact'].outputs.source_commit }}
           VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
         run: |
-          git cat-file -e "$SOURCE_COMMIT^{commit}"
-          git checkout --detach "$SOURCE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(node -p "require('./packages/cli/package.json').version")" = "$VERSION"
 
       - name: Install immutable verification dependencies
@@ -293,161 +241,70 @@ jobs:
       - name: Publish or verify immutable tarball
         id: publish
         env:
-          GH_TOKEN: ${{ github.token }}
           CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
           NPM_TAG: ${{ needs['build-immutable-artifact'].outputs.npm_tag }}
-          NPM_ACTION: ${{ needs['build-immutable-artifact'].outputs.npm_action }}
           VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
-          SOURCE_COMMIT: ${{ needs['build-immutable-artifact'].outputs.source_commit }}
         run: |
           local_integrity=$(node -e 'const { createHash }=require("node:crypto"); const { readFileSync }=require("node:fs"); console.log(`sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`)' "./release/$CLI_TARBALL_FILENAME")
-          local_sha512=$(node -e 'const { createHash }=require("node:crypto"); const { readFileSync }=require("node:fs"); console.log(createHash("sha512").update(readFileSync(process.argv[1])).digest("hex"))' "./release/$CLI_TARBALL_FILENAME")
           npm_release_visible() {
             test "$(npm view "clawdi@$VERSION" version 2>/dev/null)" = "$VERSION"
           }
-          # Re-evaluate the immutable registry boundary in this job. A failed-job
-          # rerun can inherit an earlier publish decision after npm accepted the
-          # package, and another release job may win the same race.
-          if [ "$NPM_ACTION" = "publish" ] && npm_release_visible; then
-            NPM_ACTION=verify
-          fi
-          publication_evidence_mode=""
-          case "$NPM_ACTION" in
-            publish)
-              npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"
-              publication_evidence_mode="fresh-publish"
-              ;;
-            verify)
-              publication_evidence_mode="existing-version"
-              ;;
-            *)
-              echo "unsupported npm recovery action: $NPM_ACTION" >&2
-              exit 64
-              ;;
-          esac
-          # Confirm the exact immutable registry artifact for both evidence modes.
-          # Only an existing-version recovery must re-read registry provenance;
-          # this job's successful --provenance publish is its provenance authority.
-          registry_visible=false
-          for attempt in $(seq 1 12); do
-            if npm_release_visible; then
-              registry_visible=true
-              break
-            fi
-            if [ "$attempt" -lt 12 ]; then sleep 5; fi
-          done
-          if [ "$registry_visible" != "true" ]; then
-            echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2
-            exit 69
-          fi
-          registry_version=$(npm view "clawdi@$VERSION" version)
-          test "$registry_version" = "$VERSION"
-          published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)
-          attestations=""
-          attestation_bundle=""
-          if [ "$publication_evidence_mode" = "existing-version" ]; then
-            attestations=$(npm view "clawdi@$VERSION" dist.attestations --json)
-            attestation_url=$(ATTESTATIONS="$attestations" node - <<'NODE'
-          const attestations = JSON.parse(process.env.ATTESTATIONS);
-          const url = new URL(attestations.url);
-          if (url.origin !== "https://registry.npmjs.org") process.exit(1);
-          console.log(attestations.url);
-          NODE
-            )
+          if ! npm_release_visible; then
+            npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"
+            registry_visible=false
             for attempt in $(seq 1 12); do
-              if attestation_bundle=$(curl --fail --silent --location "$attestation_url"); then
+              if npm_release_visible; then
+                registry_visible=true
                 break
               fi
               if [ "$attempt" -lt 12 ]; then sleep 5; fi
             done
-            if [ -z "$attestation_bundle" ]; then
-              echo "clawdi@$VERSION provenance was not visible after 60 seconds" >&2
+            if [ "$registry_visible" != "true" ]; then
+              echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2
               exit 69
             fi
           fi
-          tag="clawdi-cli-v$VERSION"
-          release_json=null
-          if existing_release=$(gh release view "$tag" --json isDraft,targetCommitish,assets 2>/dev/null); then
-            release_json="$existing_release"
+          registry_version=$(npm view "clawdi@$VERSION" version)
+          test "$registry_version" = "$VERSION"
+          published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)
+          if [ "$published_integrity" != "$local_integrity" ]; then
+            echo "clawdi@$VERSION registry integrity does not match this workflow artifact" >&2
+            exit 65
           fi
-          tag_commit=null
-          if resolved_tag=$(git rev-list -n 1 "$tag" 2>/dev/null); then
-            tag_commit="\"$resolved_tag\""
-          fi
-          recovery_input=$(PUBLICATION_EVIDENCE_MODE="$publication_evidence_mode" \
-            REGISTRY_VERSION="$registry_version" PUBLISHED_INTEGRITY="$published_integrity" \
-            ATTESTATIONS="$attestations" \
-            ATTESTATION_BUNDLE="$attestation_bundle" LOCAL_INTEGRITY="$local_integrity" \
-            LOCAL_SHA512="$local_sha512" RELEASE_JSON="$release_json" TAG_COMMIT="$tag_commit" \
-            node - <<'NODE'
-          const publicationEvidence = process.env.PUBLICATION_EVIDENCE_MODE === "fresh-publish"
-            ? {
-                mode: "fresh-publish",
-                registryVersion: process.env.REGISTRY_VERSION,
-                distIntegrity: process.env.PUBLISHED_INTEGRITY,
-              }
-            : {
-                mode: "existing-version",
-                registryVersion: process.env.REGISTRY_VERSION,
-                distIntegrity: process.env.PUBLISHED_INTEGRITY,
-                attestations: JSON.parse(process.env.ATTESTATIONS),
-                attestationBundle: JSON.parse(process.env.ATTESTATION_BUNDLE),
-              };
-          console.log(JSON.stringify({
-            schemaVersion: "clawdi.cliReleaseRecoveryInput.v2",
-            mode: "complete",
-            package: { name: "clawdi", version: process.env.VERSION },
-            repository: {
-              url: `https://github.com/${process.env.GITHUB_REPOSITORY}`,
-              workflowPath: ".github/workflows/cli-publish.yml",
-            },
-            expectedSourceCommit: process.env.SOURCE_COMMIT,
-            requiredAssets: [
-              "clawdi-cli-linux-x64.tar.gz",
-              "clawdi-cli-linux-arm64.tar.gz",
-              "clawdi-cli-linux-x64-musl.tar.gz",
-              "clawdi-cli-linux-arm64-musl.tar.gz",
-              "clawdi-cli-darwin-x64.tar.gz",
-              "clawdi-cli-darwin-arm64.tar.gz",
-              "clawdi-cli-manifest.txt",
-              "install.sh",
-            ],
-            localArtifact: {
-              integrity: process.env.LOCAL_INTEGRITY,
-              sha512: process.env.LOCAL_SHA512,
-            },
-            publicationEvidence,
-            github: {
-              release: JSON.parse(process.env.RELEASE_JSON),
-              tagCommit: JSON.parse(process.env.TAG_COMMIT),
-            },
-          }));
-          NODE
-          )
-          recovery=$(node packages/cli/scripts/release-recovery.mjs <<< "$recovery_input")
-          RECOVERY="$recovery" node - <<'NODE'
-          const fs = require("node:fs");
-          const decision = JSON.parse(process.env.RECOVERY);
-          const outputs = {
-            release_target: decision.releaseTarget,
-            release_action: decision.releaseAction,
-            finalize: decision.finalize,
-          };
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs)
-            .map(([key, value]) => `${key}=${value}\n`).join(""));
-          NODE
 
-      - name: Create GitHub release
+      - name: Create or complete GitHub release
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
           NPM_TAG: ${{ needs['build-immutable-artifact'].outputs.npm_tag }}
-          RELEASE_TARGET: ${{ steps.publish.outputs.release_target }}
-          RELEASE_ACTION: ${{ steps.publish.outputs.release_action }}
-          FINALIZE_RELEASE: ${{ steps.publish.outputs.finalize }}
         run: |
           tag="clawdi-cli-v$VERSION"
+          if tag_commit=$(git rev-list -n 1 "$tag" 2>/dev/null); then
+            if [ "$tag_commit" != "$GITHUB_SHA" ]; then
+              echo "$tag points to $tag_commit instead of this workflow commit $GITHUB_SHA" >&2
+              exit 65
+            fi
+          fi
+          release_action=create-draft
+          if existing_release=$(gh release view "$tag" --json isDraft,targetCommitish,assets 2>/dev/null); then
+            release_action=$(RELEASE_JSON="$existing_release" EXPECTED_COMMIT="$GITHUB_SHA" node - <<'NODE'
+          const release = JSON.parse(process.env.RELEASE_JSON);
+          if (release.targetCommitish !== process.env.EXPECTED_COMMIT) {
+            console.error(`GitHub release targets ${release.targetCommitish} instead of this workflow commit ${process.env.EXPECTED_COMMIT}`);
+            process.exit(65);
+          }
+          const required = process.env.CLI_RELEASE_ASSETS.trim().split(/\s+/);
+          const assets = new Map(release.assets.map((asset) => [asset.name, asset.size]));
+          const incomplete = required.filter((name) => !assets.has(name) || assets.get(name) === 0);
+          if (!release.isDraft && incomplete.length > 0) {
+            console.error(`published GitHub release has incomplete assets: ${incomplete.join(", ")}`);
+            process.exit(65);
+          }
+          console.log(release.isDraft ? "resume-draft" : "none");
+          NODE
+            )
+          fi
           previous=$(git tag --list 'clawdi-cli-v*' --sort=-version:refname | grep -Fxv "$tag" | head -n 1 || true)
           notes=$(cat <<EOF
           ## Package
@@ -465,22 +322,20 @@ jobs:
           \`clawdi-YYYY-MM-DD[-N]\` releases.
           EOF
           )
-          if [ "$RELEASE_ACTION" = "resume-draft" ]; then
+          if [ "$release_action" = "resume-draft" ]; then
             gh release upload "$tag" \
               release/clawdi-cli-*.tar.gz \
               release/clawdi-cli-manifest.txt \
               release/install.sh \
               --clobber
-            if [ "$FINALIZE_RELEASE" = true ]; then
-              gh release edit "$tag" --draft=false
-            fi
+            gh release edit "$tag" --draft=false
             exit 0
           fi
-          if [ "$RELEASE_ACTION" = "none" ]; then
+          if [ "$release_action" = "none" ]; then
             exit 0
           fi
-          if [ "$RELEASE_ACTION" != "create-draft" ]; then
-            echo "unsupported GitHub release recovery action: $RELEASE_ACTION" >&2
+          if [ "$release_action" != "create-draft" ]; then
+            echo "unsupported GitHub release action: $release_action" >&2
             exit 64
           fi
           args=(
@@ -488,7 +343,7 @@ jobs:
             release/clawdi-cli-*.tar.gz
             release/clawdi-cli-manifest.txt
             release/install.sh
-            --target "$RELEASE_TARGET"
+            --target "$GITHUB_SHA"
             --title "Clawdi CLI v$VERSION"
             --notes "$notes"
             --generate-notes
@@ -509,6 +364,4 @@ jobs:
             args+=(--notes-start-tag "$previous")
           fi
           gh "${args[@]}"
-          if [ "$FINALIZE_RELEASE" = true ]; then
-            gh release edit "$tag" --draft=false
-          fi
+          gh release edit "$tag" --draft=false
