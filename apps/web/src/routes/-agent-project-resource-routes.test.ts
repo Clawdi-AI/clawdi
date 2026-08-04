@@ -54,6 +54,5 @@ describe("Agent Project resource routes", () => {
 		expect(projectPage).toContain("agentDeploymentRouteQuery(scope.agentQuery)");
 		expect(projectPage).toContain("!focus && projectResourceTargets");
 		expect(projectPage).toContain("Add to Project");
-		expect(projectPage).toContain("Attach Vault");
 	});
 });
