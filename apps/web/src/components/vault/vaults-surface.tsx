@@ -3,7 +3,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
-import { type ReactElement, useMemo, useState } from "react";
+import { parseAsString, useQueryState } from "nuqs";
+import { type ReactElement, type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -31,13 +32,18 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
-import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
+import { vaultsForSelectedProject } from "@/components/vault/vault-scope";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+	vaultDetailLink,
+} from "@/lib/resource-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -50,13 +56,27 @@ const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
 export function VaultsSurface({
 	embedded = false,
 	agentProjectIds,
+	navigationScope = LIBRARY_RESOURCE_SCOPE,
 }: {
 	embedded?: boolean;
 	agentProjectIds?: readonly string[];
+	navigationScope?: ResourceNavigationScope;
 }) {
 	const $api = useOpenApi();
 	const [search, setSearch] = useState("");
-	const [projectFilter, setProjectFilter] = useState<string>("all");
+	const [projectParam, setProjectParam] = useQueryState(
+		"project",
+		parseAsString.withDefault("all").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
+	const [embeddedProjectFilter, setEmbeddedProjectFilter] = useState("all");
+	const projectFilter = embedded ? embeddedProjectFilter : projectParam;
+	const setProjectFilter = (projectId: string) => {
+		if (embedded) {
+			setEmbeddedProjectFilter(projectId);
+			return;
+		}
+		void setProjectParam(projectId);
+	};
 
 	const accountVaults = $api.useQuery(
 		"get",
@@ -97,10 +117,7 @@ export function VaultsSurface({
 	const hasActiveFilter = search.trim().length > 0 || projectFilter !== "all";
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
-		let rows = items;
-		if (projectFilter !== "all") {
-			rows = rows.filter((v) => (v.project_ids ?? []).includes(projectFilter));
-		}
+		const rows = vaultsForSelectedProject(items, projectFilter);
 		if (!q) return rows;
 		return rows.filter((v) => [v.name, v.slug].join(" ").toLowerCase().includes(q));
 	}, [items, search, projectFilter]);
@@ -119,13 +136,13 @@ export function VaultsSurface({
 	}, [items, visibleProjectIds]);
 	const filterableProjects = useMemo(() => {
 		return (projects.data ?? [])
-			.filter((p) => (vaultCountByProject.get(p.id) ?? 0) > 0)
+			.filter((p) => (vaultCountByProject.get(p.id) ?? 0) > 0 || p.id === projectFilter)
 			.sort(
 				(a, b) =>
 					(vaultCountByProject.get(b.id) ?? 0) - (vaultCountByProject.get(a.id) ?? 0) ||
 					a.name.localeCompare(b.name),
 			);
-	}, [projects.data, vaultCountByProject]);
+	}, [projectFilter, projects.data, vaultCountByProject]);
 	// Busiest vaults first — same ranking rule as the project tabs.
 	// The grab-bag default vault usually tops the list, which is exactly
 	// where the curation work starts.
@@ -239,6 +256,7 @@ export function VaultsSurface({
 								projectNameById={projectNameById}
 								projectNamesUnavailable={projectNamesUnavailable}
 								visibleProjectIds={visibleProjectIds}
+								navigationScope={navigationScope}
 							/>
 						))}
 					</div>
@@ -256,6 +274,7 @@ export function VaultsSurface({
 										projectNameById={projectNameById}
 										projectNamesUnavailable={projectNamesUnavailable}
 										visibleProjectIds={visibleProjectIds}
+										navigationScope={navigationScope}
 										shared
 									/>
 								))}
@@ -268,18 +287,22 @@ export function VaultsSurface({
 	);
 }
 
-function VaultCard({
+export function VaultCard({
 	vault,
 	projectNameById,
 	projectNamesUnavailable,
 	visibleProjectIds,
+	navigationScope,
 	shared = false,
+	actions,
 }: {
 	vault: VaultSummary;
 	projectNameById: ReadonlyMap<string, string>;
 	projectNamesUnavailable: boolean;
 	visibleProjectIds: ReadonlySet<string> | null;
+	navigationScope: ResourceNavigationScope;
 	shared?: boolean;
+	actions?: ReactNode;
 }) {
 	const api = useApi();
 	const itemProjectId =
@@ -345,17 +368,14 @@ function VaultCard({
 					"not in any Project yet"
 				),
 			]}
-			link={{
-				to: "/vault/$slug",
-				params: { slug: vault.slug },
-				search: vaultDetailSearch(vault),
-			}}
+			actions={actions}
+			link={vaultDetailLink(navigationScope, vault.slug, vault.id)}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>
 	);
 }
 
-function VaultCardSkeleton() {
+export function VaultCardSkeleton() {
 	return (
 		<div className={cn(HERO_CARD_BASE, "flex min-h-36 flex-col gap-3")}>
 			<Skeleton className="size-10 rounded-lg" />
@@ -436,7 +456,7 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 			setOpen(false);
 			toast.success("Vault created", { description: "Add keys, then share it through a Project." });
 			void router.navigate({
-				to: "/vault/$slug",
+				to: "/vaults/$slug",
 				params: { slug },
 				search: { vault: created.id },
 			});

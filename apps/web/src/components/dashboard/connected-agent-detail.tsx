@@ -19,17 +19,12 @@ import {
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
 	overviewProjectsModule,
-	overviewSkillsModule,
 	useOverviewConnectorsModule,
 	useOverviewMemoriesModule,
-	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
-import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
-import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
-import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { DetailNotFound } from "@/components/detail/layout";
 import { MemoriesSurface } from "@/components/memories/memories-surface";
@@ -58,18 +53,11 @@ import { isApiNotFoundError } from "@/lib/api-errors";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
-type AgentTab =
-	| "overview"
-	| "sessions"
-	| "memories"
-	| "connectors"
-	| "projects"
-	| "skills"
-	| "vaults"
-	| "settings";
+type AgentTab = "overview" | "sessions" | "memories" | "connectors" | "projects" | "settings";
 
 export function ConnectedAgentDetail({
 	environmentId,
@@ -101,7 +89,6 @@ export function ConnectedAgentDetail({
 	const projectBindings = overviewProjects.data;
 	const projectBindingsLoading = overviewProjects.isLoading;
 	const projectBindingsError = overviewProjects.error;
-
 	const {
 		data: overviewSessionsPage,
 		isLoading: overviewSessionsLoading,
@@ -122,18 +109,8 @@ export function ConnectedAgentDetail({
 		enabled: activeTab === "sessions" && Boolean(agent),
 	});
 
-	const agentProjectId = agent?.default_project_id;
-	const {
-		skills: skillsForThisEnv,
-		isLoading: skillsLoading,
-		error: skillsError,
-	} = useAgentProjectSkills(id, agentProjectId, id, false, overviewEnabled);
-
 	const blockingAgentError =
 		isApiNotFoundError(error) || shouldBlockQueryError(error, agent) ? error : null;
-	const blockingSkillsError = shouldBlockQueryError(skillsError, skillsForThisEnv)
-		? skillsError
-		: null;
 	const blockingProjectBindingsError = shouldBlockQueryError(projectBindingsError, projectBindings)
 		? projectBindingsError
 		: null;
@@ -169,17 +146,9 @@ export function ConnectedAgentDetail({
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});
+	const resourceScope = agentResourceScope(id, routeSearch);
 	const memoriesModule = useOverviewMemoriesModule({ enabled: overviewEnabled });
 	const connectorsModule = useOverviewConnectorsModule({ enabled: overviewEnabled });
-	const vaultsModule = useOverviewVaultsModule({
-		projectIds: effectiveAgentProjectIds(projectBindings ?? []),
-		resolution: projectBindingsLoading
-			? "loading"
-			: blockingProjectBindingsError
-				? "unavailable"
-				: "ready",
-		enabled: overviewEnabled,
-	});
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
 			{blockingAgentError ? (
@@ -296,13 +265,7 @@ export function ConnectedAgentDetail({
 											error: blockingProjectBindingsError,
 										},
 									}),
-									skills: overviewSkillsModule({
-										items: (skillsForThisEnv ?? []).map((skill) => skill.name),
-										isLoading: skillsLoading,
-										error: blockingSkillsError,
-									}),
 									memories: memoriesModule,
-									vaults: vaultsModule,
 									connectors: connectorsModule,
 								}}
 							/>
@@ -329,22 +292,13 @@ export function ConnectedAgentDetail({
 						)
 					) : null}
 
-					{activeTab === "memories" ? <MemoriesSurface /> : null}
+					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 
-					{activeTab === "skills" ? (
-						<AgentSkillsTab
-							agentId={id}
-							agentProjectId={agentProjectId}
-							routeSearch={routeSearch}
-							isResolvingAgentProject={isLoading}
-						/>
+					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
+
+					{activeTab === "projects" ? (
+						<AgentProjectsTab agentId={id} routeSearch={routeSearch} />
 					) : null}
-
-					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
-
-					{activeTab === "projects" ? <AgentProjectsTab agentId={id} /> : null}
-
-					{activeTab === "vaults" ? <AgentVaultsTab agentId={id} /> : null}
 
 					{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
 				</section>

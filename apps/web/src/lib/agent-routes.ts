@@ -11,6 +11,7 @@ export type AgentRouteSearch = Record<string, unknown> & {
 	d?: string;
 	tab?: string;
 	project?: string;
+	vault?: string;
 };
 export type AgentRouteQuery =
 	| string
@@ -48,7 +49,14 @@ export type ParsedAgentPathname = {
 	section: AgentSectionId;
 	sessionId?: string;
 	skillKey?: string;
+	projectId?: string;
+	projectResource?: AgentProjectResourceSection;
+	vaultSlug?: string;
+	memoryId?: string;
+	connectorName?: string;
 };
+
+export type AgentProjectResourceSection = "skills" | "vaults";
 
 export function agentSectionSegment(section: AgentSectionId): string {
 	return AGENT_SECTION_SEGMENTS[section];
@@ -81,19 +89,41 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 	if (section === "sessions" && parts.length > 4) return null;
 	if (
 		section !== "overview" &&
-		section !== "sessions" &&
-		section !== "skills" &&
-		parts.length !== 3
+		!["sessions", "skills", "projects", "vaults", "memories", "connectors"].includes(section)
 	) {
-		return null;
+		if (parts.length !== 3) return null;
 	}
+	if (["vaults", "memories", "connectors"].includes(section) && parts.length > 4) return null;
+	if (section === "projects" && parts.length > 5) return null;
 	const sessionId =
 		section === "sessions" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	const skillKey =
 		section === "skills" && parts[3]
 			? parts.slice(3).map(safeDecodeURIComponent).join("/")
 			: undefined;
-	return { agentId, section, sessionId, skillKey };
+	const projectId =
+		section === "projects" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	const projectResource =
+		section === "projects" && parts[4] && (parts[4] === "skills" || parts[4] === "vaults")
+			? parts[4]
+			: undefined;
+	if (section === "projects" && parts[4] && !projectResource) return null;
+	const vaultSlug = section === "vaults" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	const memoryId =
+		section === "memories" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	const connectorName =
+		section === "connectors" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	return {
+		agentId,
+		section,
+		sessionId,
+		skillKey,
+		...(projectId ? { projectId } : {}),
+		...(projectResource ? { projectResource } : {}),
+		...(vaultSlug ? { vaultSlug } : {}),
+		...(memoryId ? { memoryId } : {}),
+		...(connectorName ? { connectorName } : {}),
+	};
 }
 
 /**
@@ -120,7 +150,12 @@ export function agentRouteOwnsSection(
 		agentRouteIdsEqual(route?.agentId, agentId) &&
 		route?.section === section &&
 		!route.sessionId &&
-		!route.skillKey
+		!route.skillKey &&
+		!route.projectId &&
+		!route.projectResource &&
+		!route.vaultSlug &&
+		!route.memoryId &&
+		!route.connectorName
 	);
 }
 
@@ -167,6 +202,7 @@ export function validateAgentRouteSearch(search: Record<string, unknown>): Agent
 		d: optionalSearchString(search.d),
 		tab: optionalSearchString(search.tab),
 		project: optionalSearchString(search.project),
+		vault: optionalSearchString(search.vault),
 	};
 }
 
@@ -328,6 +364,122 @@ export function agentSkillDetailLink(
 		to: "/agents/$id/skills/$",
 		params: { id: agentId, _splat: skillKey },
 		search: Object.keys(search).length > 0 ? search : undefined,
+	});
+}
+
+export function agentProjectDetailHref(
+	agentId: string,
+	projectId: string,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "projects")}/${encodeURIComponent(projectId)}`;
+	return agentDetailHref(path, query);
+}
+
+export function agentProjectResourceHref(
+	agentId: string,
+	projectId: string,
+	resource: AgentProjectResourceSection,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "projects")}/${encodeURIComponent(projectId)}/${resource}`;
+	return agentDetailHref(path, query);
+}
+
+/** Typed TanStack Router options for an agent-scoped Project detail link. */
+export function agentProjectDetailLink(
+	agentId: string,
+	projectId: string,
+	query?: AgentRouteQuery,
+) {
+	return linkOptions({
+		to: "/agents/$id/project-access/$projectId",
+		params: { id: agentId, projectId },
+		search: agentRouteSearch(query),
+	});
+}
+
+/** Typed TanStack Router options for a Project-scoped Agent resource collection. */
+export function agentProjectResourceLink(
+	agentId: string,
+	projectId: string,
+	resource: AgentProjectResourceSection,
+	query?: AgentRouteQuery,
+) {
+	const options = {
+		params: { id: agentId, projectId },
+		search: agentRouteSearch(query),
+	};
+	return resource === "skills"
+		? linkOptions({ ...options, to: "/agents/$id/project-access/$projectId/skills" })
+		: linkOptions({ ...options, to: "/agents/$id/project-access/$projectId/vaults" });
+}
+
+export function agentVaultDetailHref(
+	agentId: string,
+	vaultSlug: string,
+	vaultId?: string | null,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "vaults")}/${encodeURIComponent(vaultSlug)}`;
+	const search = agentRouteSearch(query) ?? {};
+	if (vaultId) search.vault = vaultId;
+	return agentDetailHref(path, search);
+}
+
+/** Typed TanStack Router options for an agent-scoped Vault detail link. */
+export function agentVaultDetailLink(
+	agentId: string,
+	vaultSlug: string,
+	vaultId?: string | null,
+	query?: AgentRouteQuery,
+) {
+	const search = agentRouteSearch(query) ?? {};
+	if (vaultId) search.vault = vaultId;
+	return linkOptions({
+		to: "/agents/$id/vaults/$slug",
+		params: { id: agentId, slug: vaultSlug },
+		search: Object.keys(search).length > 0 ? search : undefined,
+	});
+}
+
+export function agentMemoryDetailHref(
+	agentId: string,
+	memoryId: string,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "memories")}/${encodeURIComponent(memoryId)}`;
+	return agentDetailHref(path, query);
+}
+
+/** Typed TanStack Router options for a Memory viewed in the Agent shell. */
+export function agentMemoryDetailLink(agentId: string, memoryId: string, query?: AgentRouteQuery) {
+	return linkOptions({
+		to: "/agents/$id/memories/$memoryId",
+		params: { id: agentId, memoryId },
+		search: agentRouteSearch(query),
+	});
+}
+
+export function agentConnectorDetailHref(
+	agentId: string,
+	connectorName: string,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "connectors")}/${encodeURIComponent(connectorName)}`;
+	return agentDetailHref(path, query);
+}
+
+/** Typed TanStack Router options for a Connector viewed in the Agent shell. */
+export function agentConnectorDetailLink(
+	agentId: string,
+	connectorName: string,
+	query?: AgentRouteQuery,
+) {
+	return linkOptions({
+		to: "/agents/$id/connectors/$name",
+		params: { id: agentId, name: connectorName },
+		search: agentRouteSearch(query),
 	});
 }
 

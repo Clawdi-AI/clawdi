@@ -15,4 +15,11 @@ describe("AppBreadcrumb responsive trail", () => {
 		expect(breadcrumb).toContain("<Fragment key={href}>");
 		expect(breadcrumb).not.toContain('<span key={href} className="contents">');
 	});
+
+	test("returns Project-scoped resource crumbs to their independent collection", () => {
+		expect(breadcrumb).toContain('typeof search.project === "string"');
+		expect(breadcrumb).toContain("agentProjectResourceHref(route.agentId, projectId");
+		expect(breadcrumb).toContain("route.section,");
+		expect(breadcrumb).toContain('route.section === "projects" && route.projectId');
+	});
 });

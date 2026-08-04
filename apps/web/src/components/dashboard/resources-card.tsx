@@ -13,7 +13,6 @@ import {
 	PROJECT_RESOURCE_GROUPS,
 	PROJECT_RESOURCE_NAV_IDS,
 	type ProjectResourceDefinition,
-	type ProjectResourceId,
 	projectResourceCount,
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
@@ -32,15 +31,6 @@ export type ProjectTypeCounts = {
 	global: number;
 	agent: number;
 };
-
-const RESOURCE_ROUTES = {
-	projects: "/projects",
-	skills: "/skills",
-	vaults: "/vault",
-	sessions: "/sessions",
-	memories: "/memories",
-	connectors: "/connectors",
-} as const satisfies Record<ProjectResourceId, string>;
 
 function formatProjectTypeCounts(counts: ProjectTypeCounts) {
 	return `${formatNumber(counts.custom)} Custom · ${formatNumber(counts.global)} Global · ${formatNumber(counts.agent)} Agent`;
@@ -223,7 +213,7 @@ function ResourceRow({
 		);
 	return (
 		<Link
-			to={RESOURCE_ROUTES[definition.id]}
+			to={definition.href}
 			className="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/50"
 		>
 			{/* Same identity hue as this resource's sidebar chip — the rail

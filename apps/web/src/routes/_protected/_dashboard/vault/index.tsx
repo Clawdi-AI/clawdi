@@ -1,8 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { routeHeadTitle } from "@/lib/document-title";
-import VaultPage from "@/pages/dashboard/vault/page";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_protected/_dashboard/vault/")({
-	head: () => routeHeadTitle("Vaults"),
-	component: VaultPage,
+	beforeLoad: ({ search }) => {
+		throw redirect({ to: "/vaults", search, replace: true });
+	},
 });

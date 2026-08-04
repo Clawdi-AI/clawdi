@@ -16,14 +16,25 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
-import { projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+	resourceCollectionTarget,
+} from "@/lib/resource-navigation";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
-export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
+export default function MemoryDetailPage({
+	memoryId,
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	memoryId: string;
+	scope?: ResourceNavigationScope;
+}) {
 	const router = useRouter();
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
+	const collectionTarget = resourceCollectionTarget(scope, "memories");
 
 	const {
 		data: memory,
@@ -48,7 +59,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 				description: "Your agents will no longer recall it.",
 			});
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
-			void router.navigate({ href: projectResourceHref("memories") });
+			void router.navigate({ href: collectionTarget.href });
 		},
 		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
@@ -173,7 +184,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 											params={{ id: memory.source_session_id }}
 											className="underline hover:text-foreground"
 										>
-											View session
+											{scope.kind === "agent" ? "View in session library" : "View session"}
 										</Link>
 									</>
 								) : null}

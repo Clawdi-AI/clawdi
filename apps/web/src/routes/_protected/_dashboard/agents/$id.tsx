@@ -1,9 +1,14 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import {
+	agentConnectorDetailLink,
+	agentMemoryDetailLink,
+	agentProjectDetailLink,
+	agentProjectResourceLink,
 	agentRouteIdsEqual,
 	agentSectionLink,
 	agentSessionDetailLink,
 	agentSkillDetailLink,
+	agentVaultDetailLink,
 	legacyAgentRoute,
 	parseAgentPathname,
 	validateAgentRouteSearch,
@@ -30,6 +35,46 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 					typeof legacy.search?.project === "string" ? legacy.search.project : undefined;
 				throw redirect({
 					...agentSkillDetailLink(params.id, currentRoute.skillKey, projectId, legacy.search),
+					replace: true,
+				});
+			}
+			if (currentRoute?.projectId && currentRoute.projectResource) {
+				throw redirect({
+					...agentProjectResourceLink(
+						params.id,
+						currentRoute.projectId,
+						currentRoute.projectResource,
+						legacy.search,
+					),
+					replace: true,
+				});
+			}
+			if (currentRoute?.projectId) {
+				throw redirect({
+					...agentProjectDetailLink(params.id, currentRoute.projectId, legacy.search),
+					replace: true,
+				});
+			}
+			if (currentRoute?.vaultSlug) {
+				throw redirect({
+					...agentVaultDetailLink(
+						params.id,
+						currentRoute.vaultSlug,
+						typeof legacy.search?.vault === "string" ? legacy.search.vault : undefined,
+						legacy.search,
+					),
+					replace: true,
+				});
+			}
+			if (currentRoute?.memoryId) {
+				throw redirect({
+					...agentMemoryDetailLink(params.id, currentRoute.memoryId, legacy.search),
+					replace: true,
+				});
+			}
+			if (currentRoute?.connectorName) {
+				throw redirect({
+					...agentConnectorDetailLink(params.id, currentRoute.connectorName, legacy.search),
 					replace: true,
 				});
 			}

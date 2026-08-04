@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { syncAgentNameDraft } from "./agent-settings-panel.logic";
 
 describe("syncAgentNameDraft", () => {
@@ -19,5 +20,16 @@ describe("syncAgentNameDraft", () => {
 		expect(syncAgentNameDraft("Unsaved name", "Research agent", "Externally renamed")).toBe(
 			"Unsaved name",
 		);
+	});
+});
+
+describe("Agent disconnect navigation", () => {
+	test("refreshes related collections and returns to the Agents list", () => {
+		const source = readFileSync(new URL("./agent-settings-panel.tsx", import.meta.url), "utf8");
+
+		expect(source).toContain('invalidateQueries({ queryKey: ["get", "/v1/agents"] })');
+		expect(source).toContain('invalidateQueries({ queryKey: ["get", "/v1/projects"] })');
+		expect(source).toContain('invalidateQueries({ queryKey: ["get", "/v1/vault"] })');
+		expect(source).toContain('router.navigate({ href: "/agents" })');
 	});
 });

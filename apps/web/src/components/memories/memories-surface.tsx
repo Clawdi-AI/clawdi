@@ -44,6 +44,11 @@ import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { Memory } from "@/lib/api-schemas";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	LIBRARY_RESOURCE_SCOPE,
+	memoryDetailLink,
+	type ResourceNavigationScope,
+} from "@/lib/resource-navigation";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
@@ -63,7 +68,11 @@ const CATEGORIES = [
 const ALL = "all";
 const ADD_CATEGORY_ITEMS = CATEGORIES.filter((category) => category.value !== ALL);
 
-export function MemoriesSurface() {
+export function MemoriesSurface({
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	scope?: ResourceNavigationScope;
+}) {
 	const api = useApi();
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -232,6 +241,7 @@ export function MemoriesSurface() {
 						isLoading={isLoading}
 						emptyMessage={emptyMessage}
 						onDelete={requestDeleteMemory}
+						scope={scope}
 					/>
 					{paginationFooter}
 				</div>
@@ -245,11 +255,13 @@ function MemoryNotesGrid({
 	isLoading,
 	emptyMessage,
 	onDelete,
+	scope,
 }: {
 	memories: Memory[];
 	isLoading: boolean;
 	emptyMessage: ReactNode;
 	onDelete: (id: string) => void;
+	scope: ResourceNavigationScope;
 }) {
 	if (isLoading) {
 		const cardLineCounts = [4, 7, 3, 5, 6, 4, 8, 3, 5];
@@ -291,8 +303,7 @@ function MemoryNotesGrid({
 					)}
 				>
 					<Link
-						to="/memories/$id"
-						params={{ id: memory.id }}
+						{...memoryDetailLink(scope, memory.id)}
 						aria-label={`Open memory ${memory.id.slice(0, 8)}`}
 						className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					/>
@@ -329,7 +340,7 @@ function MemoryNotesGrid({
 					<span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
 						<ConfirmAction
 							title="Delete this memory?"
-							description={<p>Your AI will stop recalling it on every agent within seconds.</p>}
+							description={<p>Deleting removes this memory from every agent.</p>}
 							confirmLabel="Delete memory"
 							destructive
 							onConfirm={() => onDelete(memory.id)}

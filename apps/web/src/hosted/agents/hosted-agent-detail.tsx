@@ -40,17 +40,12 @@ import {
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
 	overviewProjectsModule,
-	overviewSkillsModule,
 	useOverviewConnectorsModule,
 	useOverviewMemoriesModule,
-	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
-import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
-import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
-import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
 import { DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -301,6 +296,7 @@ import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
@@ -314,8 +310,6 @@ type HostedAgentTab =
 	| "memories"
 	| "connectors"
 	| "projects"
-	| "skills"
-	| "vaults"
 	| "ai"
 	| "channels"
 	| "settings";
@@ -328,7 +322,7 @@ function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgent
 
 /** Only surfaces whose primary content needs the cloud-agent projection own its notice. */
 export function shouldShowHostedProjectionNotice(section: AgentSectionId): boolean {
-	return section === "projects" || section === "skills" || section === "vaults";
+	return section === "projects";
 }
 
 function LiveNote({ children }: { children: React.ReactNode }) {
@@ -511,6 +505,7 @@ export function HostedAgentDetail({
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
+	const resourceScope = agentResourceScope(environmentId, routeSearch);
 	const showInitialStartingPage =
 		activeTab === "overview" &&
 		isStartingStatus(deploymentStatus) &&
@@ -615,32 +610,13 @@ export function HostedAgentDetail({
 					{activeTab === "sessions" ? (
 						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
 					) : null}
-					{activeTab === "memories" ? <MemoriesSurface /> : null}
-					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
+					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
+					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
 					{activeTab === "projects" ? (
 						projection.status === "resolved" ? (
-							<AgentProjectsTab agentId={environmentId} />
+							<AgentProjectsTab agentId={environmentId} routeSearch={routeSearch} />
 						) : (
 							<ProjectionDependentUnavailable label="Projects" />
-						)
-					) : null}
-					{activeTab === "skills" ? (
-						projection.status === "resolved" ? (
-							<AgentSkillsTab
-								agentId={environmentId}
-								agentProjectId={agent?.default_project_id}
-								routeSearch={routeSearch}
-								projectionFence={deployment.resource.metadata.resourceVersion}
-							/>
-						) : (
-							<ProjectionDependentUnavailable label="Skills" />
-						)
-					) : null}
-					{activeTab === "vaults" ? (
-						projection.status === "resolved" ? (
-							<AgentVaultsTab agentId={environmentId} />
-						) : (
-							<ProjectionDependentUnavailable label="Vaults" />
 						)
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
@@ -1131,28 +1107,12 @@ function OverviewTab({
 		tone: runtimeStatusPresentation.tone,
 	};
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
-	const skills = useAgentProjectSkills(
-		agentId,
-		agent?.default_project_id,
-		agentId,
-		false,
-		Boolean(agent),
-	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	const memoriesModule = useOverviewMemoriesModule();
 	const connectorsModule = useOverviewConnectorsModule();
-	const vaultsModule = useOverviewVaultsModule({
-		projectIds: effectiveAgentProjectIds(projectBindings.data ?? []),
-		resolution:
-			projectionLoading || projectBindings.isLoading
-				? "loading"
-				: projectionUnavailable || projectBindings.error
-					? "unavailable"
-					: "ready",
-	});
 	return (
 		<div className="flex flex-col gap-8">
 			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
@@ -1237,14 +1197,7 @@ function OverviewTab({
 							error: projectBindings.error,
 						},
 					}),
-					skills: overviewSkillsModule({
-						items: (skills.skills ?? []).map((skill) => skill.name),
-						isLoading: projectionLoading || skills.isLoading,
-						isUnavailable: projectionUnavailable,
-						error: skills.error,
-					}),
 					memories: memoriesModule,
-					vaults: vaultsModule,
 					connectors: connectorsModule,
 					"model-provider": {
 						description:

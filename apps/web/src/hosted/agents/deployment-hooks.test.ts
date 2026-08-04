@@ -355,7 +355,9 @@ describe("deployment transition timeout rendering", () => {
 		expect(shouldShowProjectionNotice("ai")).toBe(false);
 		expect(shouldShowProjectionNotice("settings")).toBe(false);
 		expect(shouldShowProjectionNotice("sessions")).toBe(false);
-		expect(shouldShowProjectionNotice("skills")).toBe(true);
+		expect(shouldShowProjectionNotice("projects")).toBe(true);
+		expect(shouldShowProjectionNotice("skills")).toBe(false);
+		expect(shouldShowProjectionNotice("vaults")).toBe(false);
 	});
 
 	test("keeps lifecycle actions out of the deployment-backed overview", () => {
@@ -636,9 +638,9 @@ describe("deployment mutation settlement", () => {
 		expect(hooksSource).toContain('toast.message("Agent removed", {');
 		expect(hooksSource).toContain('description: "Cleanup continues in the background."');
 		expect(homeSource).toContain(
-			'onDeleteAccepted={() => router.navigate({ href: "/", replace: true })}',
+			'onDeleteAccepted={() => router.navigate({ href: "/agents", replace: true })}',
 		);
-		expect(actionSource).toContain('await router.navigate({ href: "/", replace: true });');
+		expect(actionSource).toContain('await router.navigate({ href: "/agents", replace: true });');
 	});
 
 	test("retires old runtime windows only after restart, access reset, or delete is accepted", () => {

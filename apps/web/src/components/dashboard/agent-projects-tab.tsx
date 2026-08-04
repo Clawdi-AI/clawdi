@@ -38,17 +38,21 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { agentResourceScope, type ResourceNavigationScope } from "@/lib/resource-navigation";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
 export function AgentProjectsTab({
 	agentId,
+	routeSearch,
 	enabled = true,
 }: {
 	agentId: string;
+	routeSearch: AgentRouteSearch;
 	enabled?: boolean;
 }) {
 	const $api = useOpenApi();
@@ -63,6 +67,7 @@ export function AgentProjectsTab({
 	);
 	const bindings = useAgentProjectBindings(agentId, { enabled });
 
+	const navigationScope = agentResourceScope(agentId, routeSearch);
 	return (
 		<AgentProjectsPanel
 			agentId={agentId}
@@ -77,6 +82,7 @@ export function AgentProjectsTab({
 			onRetryProjects={() => {
 				void projects.refetch();
 			}}
+			navigationScope={navigationScope}
 			onChanged={() => {
 				void queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) });
 				void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
@@ -94,6 +100,7 @@ function AgentProjectsPanel({
 	onRetryBindings,
 	projectsError,
 	onRetryProjects,
+	navigationScope,
 	onChanged,
 }: {
 	agentId: string;
@@ -104,6 +111,7 @@ function AgentProjectsPanel({
 	onRetryBindings?: () => void;
 	projectsError?: unknown;
 	onRetryProjects?: () => void;
+	navigationScope: ResourceNavigationScope;
 	onChanged: () => void;
 }) {
 	const api = useApi();
@@ -259,6 +267,7 @@ function AgentProjectsPanel({
 									binding={binding}
 									project={project}
 									position={position}
+									navigationScope={navigationScope}
 									actions={
 										binding.binding_type === "context" ? (
 											<div className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
@@ -378,11 +387,13 @@ function AgentProjectCard({
 	binding,
 	project,
 	position,
+	navigationScope,
 	actions,
 }: {
 	binding: AgentProjectBinding;
 	project: ProjectRow | undefined;
 	position: number;
+	navigationScope: ResourceNavigationScope;
 	actions?: React.ReactNode;
 }) {
 	const footer = [
@@ -398,5 +409,13 @@ function AgentProjectCard({
 			/>
 		);
 	}
-	return <ProjectResourceCard project={project} footer={footer} actions={actions} showKind />;
+	return (
+		<ProjectResourceCard
+			project={project}
+			footer={footer}
+			actions={actions}
+			showKind
+			navigationScope={navigationScope}
+		/>
+	);
 }

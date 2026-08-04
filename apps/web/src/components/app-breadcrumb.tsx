@@ -14,6 +14,8 @@ import {
 import {
 	type AgentRouteSearch,
 	agentDeploymentRouteQuery,
+	agentProjectDetailHref,
+	agentProjectResourceHref,
 	agentSectionLabelFromSegment,
 	agentSectionLink,
 	type ParsedAgentPathname,
@@ -34,6 +36,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	memories: "Memories",
 	skills: "Skills",
 	vault: "Vaults",
+	vaults: "Vaults",
 	connectors: "Connectors",
 	channels: "Channels",
 	deploy: "Deploy an Agent",
@@ -75,7 +78,21 @@ function agentBreadcrumbLink(
 	if (!route) return null;
 	const deploymentSearch = agentDeploymentRouteQuery(search);
 	if (index === 1) return agentSectionLink(route.agentId, "overview", deploymentSearch);
+	const projectId = typeof search.project === "string" ? search.project.trim() : "";
+	if (
+		index === 2 &&
+		projectId &&
+		((route.section === "skills" && route.skillKey) ||
+			(route.section === "vaults" && route.vaultSlug))
+	) {
+		return {
+			to: agentProjectResourceHref(route.agentId, projectId, route.section, deploymentSearch),
+		};
+	}
 	if (index === 2) return agentSectionLink(route.agentId, route.section, deploymentSearch);
+	if (index === 3 && route.section === "projects" && route.projectId) {
+		return { to: agentProjectDetailHref(route.agentId, route.projectId, deploymentSearch) };
+	}
 	return null;
 }
 

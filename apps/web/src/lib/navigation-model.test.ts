@@ -27,7 +27,7 @@ function groupShape(
 	}));
 }
 
-function expectSingleResourcesHeading(
+function expectNavigationHeadings(
 	groups: ReadonlyArray<{ label: string | null; items: readonly unknown[] }>,
 	expected = ["Resources"],
 ) {
@@ -66,7 +66,7 @@ describe("sidebar navigation model", () => {
 				],
 			},
 		]);
-		expectSingleResourcesHeading(cloudGroups);
+		expectNavigationHeadings(cloudGroups);
 
 		const ossGroups = consoleNavigationGroups(false);
 		expect(ossGroups[1]?.items.map((item) => item.id)).toEqual([
@@ -75,7 +75,7 @@ describe("sidebar navigation model", () => {
 			"skills",
 			"vaults",
 		]);
-		expectSingleResourcesHeading(ossGroups);
+		expectNavigationHeadings(ossGroups);
 	});
 
 	test("preserves command palette availability in the rendered navigation order", () => {
@@ -101,7 +101,7 @@ describe("sidebar navigation model", () => {
 		]);
 	});
 
-	test("locks connected and hosted blocks with one visible Resources heading", () => {
+	test("keeps only directly navigable Agent resources in one navigation group", () => {
 		const connectedGroups = agentNavigationGroups("connected");
 		expect(groupShape(connectedGroups)).toEqual([
 			{
@@ -119,9 +119,7 @@ describe("sidebar navigation model", () => {
 				separated: false,
 				items: [
 					{ id: "projects", label: "Projects" },
-					{ id: "skills", label: "Skills" },
 					{ id: "memories", label: "Memories" },
-					{ id: "vaults", label: "Vaults" },
 					{ id: "connectors", label: "Connectors" },
 				],
 			},
@@ -132,7 +130,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectSingleResourcesHeading(connectedGroups);
+		expectNavigationHeadings(connectedGroups, ["Resources"]);
 
 		const hostedGroups = agentNavigationGroups("hosted");
 		expect(groupShape(hostedGroups)).toEqual([
@@ -151,9 +149,7 @@ describe("sidebar navigation model", () => {
 				separated: false,
 				items: [
 					{ id: "projects", label: "Projects" },
-					{ id: "skills", label: "Skills" },
 					{ id: "memories", label: "Memories" },
-					{ id: "vaults", label: "Vaults" },
 					{ id: "connectors", label: "Connectors" },
 				],
 			},
@@ -175,15 +171,13 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectSingleResourcesHeading(hostedGroups, ["Resources", "Tools"]);
+		expectNavigationHeadings(hostedGroups, ["Resources", "Tools"]);
 
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
 			"sessions",
 			"projects",
-			"skills",
 			"memories",
-			"vaults",
 			"connectors",
 			"settings",
 		]);
@@ -191,9 +185,7 @@ describe("sidebar navigation model", () => {
 			"overview",
 			"sessions",
 			"projects",
-			"skills",
 			"memories",
-			"vaults",
 			"connectors",
 			"console",
 			"terminal",
@@ -241,7 +233,7 @@ describe("sidebar navigation model", () => {
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 	});
 
-	test("shares resource panels rather than duplicating agent implementations", () => {
+	test("shares direct resource panels and keeps Project resources on the Project hub", () => {
 		const connectedDetail = readFileSync(
 			new URL("../components/dashboard/connected-agent-detail.tsx", import.meta.url),
 			"utf8",
@@ -266,10 +258,15 @@ describe("sidebar navigation model", () => {
 			new URL("../pages/dashboard/vault/page.tsx", import.meta.url),
 			"utf8",
 		);
+		const overviewBodies = readFileSync(
+			new URL("../components/dashboard/agent-overview-resource-bodies.tsx", import.meta.url),
+			"utf8",
+		);
 		for (const source of [connectedDetail, hostedDetail]) {
 			expect(source).toContain("AGENT_SECTION_NAVIGATION_ITEMS[activeTab]");
 			expect(source).toContain("<AgentProjectsTab");
-			expect(source).toContain("<AgentVaultsTab");
+			expect(source).not.toContain("<AgentSkillsTab");
+			expect(source).not.toContain("<AgentVaultsTab");
 			expect(source).toContain("<ConnectorsSurface embedded");
 			expect(source).toContain("<MemoriesSurface");
 			expect(source).not.toContain("@/pages/dashboard");
@@ -282,6 +279,8 @@ describe("sidebar navigation model", () => {
 		expect(vaultPage).not.toContain("useQuery");
 		expect(memoriesPage).toContain("@/components/memories/memories-surface");
 		expect(memoriesPage).not.toContain("useQuery");
+		expect(overviewBodies).toContain("useOverviewMemoriesModule");
+		expect(overviewBodies).toContain("useOverviewConnectorsModule");
 		expect(connectedDetail).not.toContain("function AgentProjectsPanel");
 	});
 });

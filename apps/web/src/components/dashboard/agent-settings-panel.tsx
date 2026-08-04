@@ -140,13 +140,16 @@ export function AgentSettingsPanel({
 			toast.success("Agent disconnected", {
 				description: "Data is retained. Run clawdi setup on this installation to reconnect.",
 			});
-			queryClient.invalidateQueries({
+			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
+			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
+			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
+			void queryClient.invalidateQueries({
 				predicate: (q) => {
 					const key = q.queryKey[0];
 					return key === "agents" || key === "sessions";
 				},
 			});
-			void router.navigate({ href: "/" });
+			void router.navigate({ href: "/agents" });
 		},
 		onError: toastApiError("Couldn't disconnect agent"),
 	});

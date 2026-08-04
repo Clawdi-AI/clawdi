@@ -372,10 +372,14 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 
 export const AGENT_RESOURCE_SECTION_IDS = [
 	"projects",
-	"skills",
 	"memories",
-	"vaults",
 	"connectors",
+] as const satisfies readonly AgentSectionId[];
+
+/** Released route identifiers that stay valid without becoming flat navigation items. */
+export const AGENT_PROJECT_RESOURCE_SECTION_IDS = [
+	"skills",
+	"vaults",
 ] as const satisfies readonly AgentSectionId[];
 
 const AGENT_NAVIGATION_GROUPS = [

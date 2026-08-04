@@ -5,9 +5,17 @@ import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bi
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VaultsSurface } from "@/components/vault/vaults-surface";
+import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { agentResourceScope } from "@/lib/resource-navigation";
 
-export function AgentVaultsTab({ agentId }: { agentId: string }) {
+export function AgentVaultsTab({
+	agentId,
+	routeSearch,
+}: {
+	agentId: string;
+	routeSearch: AgentRouteSearch;
+}) {
 	const bindings = useAgentProjectBindings(agentId);
 
 	if (bindings.isLoading) {
@@ -37,5 +45,11 @@ export function AgentVaultsTab({ agentId }: { agentId: string }) {
 	}
 
 	const projectIds = effectiveAgentProjectIds(bindings.data ?? []);
-	return <VaultsSurface embedded agentProjectIds={projectIds} />;
+	return (
+		<VaultsSurface
+			embedded
+			agentProjectIds={projectIds}
+			navigationScope={agentResourceScope(agentId, routeSearch)}
+		/>
+	);
 }

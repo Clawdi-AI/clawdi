@@ -3,6 +3,7 @@ import type { components } from "@/lib/api-schemas";
 import {
 	effectiveAgentProjectIds,
 	orderedAgentProjectBindings,
+	resolveAgentDefaultProject,
 	resolveAgentProjectScope,
 } from "./agent-project-scope";
 
@@ -26,6 +27,52 @@ function binding(
 }
 
 describe("effective Agent Project scope", () => {
+	test("resolves only the accessible Project matching the single primary binding", () => {
+		const bindings = [
+			binding("primary", "project_primary", "primary", 0),
+			binding("context", "project_context", "context", 1),
+		];
+		const projects = [
+			{ id: "project_context", name: "Context" },
+			{ id: "project_primary", name: "Default" },
+		];
+
+		expect(resolveAgentDefaultProject(bindings, projects, "project_primary")).toEqual(
+			projects[1] ?? null,
+		);
+		expect(resolveAgentDefaultProject(bindings, projects, "project_context")).toBeNull();
+		expect(resolveAgentDefaultProject(bindings, projects, null)).toBeNull();
+	});
+
+	test("never falls back when the primary binding is missing, duplicated, or inaccessible", () => {
+		const accessibleFallback = [{ id: "project_context", name: "Context" }];
+
+		expect(
+			resolveAgentDefaultProject(
+				[binding("context", "project_context", "context", 1)],
+				accessibleFallback,
+				"project_primary",
+			),
+		).toBeNull();
+		expect(
+			resolveAgentDefaultProject(
+				[
+					binding("primary-1", "project_primary", "primary", 0),
+					binding("primary-2", "project_other", "primary", 0),
+				],
+				accessibleFallback,
+				"project_primary",
+			),
+		).toBeNull();
+		expect(
+			resolveAgentDefaultProject(
+				[binding("primary", "project_primary", "primary", 0)],
+				accessibleFallback,
+				"project_primary",
+			),
+		).toBeNull();
+	});
+
 	test("orders the fixed primary before context bindings in priority order", () => {
 		const bindings = [
 			binding("context-2", "project_context_2", "context", 2),

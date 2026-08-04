@@ -70,7 +70,7 @@ export function AddKeysDialog({
 			params: { query: { page_size: 200 } },
 		},
 		{
-			enabled: open,
+			enabled: open && !vaultSlug,
 		},
 	);
 	const projectsQuery = $api.useQuery(
@@ -78,7 +78,7 @@ export function AddKeysDialog({
 		"/v1/projects",
 		{},
 		{
-			enabled: open,
+			enabled: open && !vaultSlug,
 		},
 	);
 

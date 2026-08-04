@@ -22,12 +22,12 @@ describe("agent Skills resource boundary", () => {
 		expect(source).not.toContain("No Skills are available through");
 	});
 
-	test("describes both Agent Skill surfaces as effective availability", () => {
+	test("keeps Skill metadata for Project hubs without restoring flat navigation", () => {
 		const connectedSkills = agentNavigationGroups("connected").flatMap((group) => group.items);
 		const hostedSkills = agentNavigationGroups("hosted").flatMap((group) => group.items);
 
-		expect(connectedSkills).toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
-		expect(hostedSkills).toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
+		expect(connectedSkills).not.toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
+		expect(hostedSkills).not.toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.skills.description).toBe(
 			"Skills available through this agent's Projects.",
 		);

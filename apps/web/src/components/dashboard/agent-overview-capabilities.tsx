@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, type LinkProps } from "@tanstack/react-router";
 import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
 };
+
+type OverviewLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
 export function AgentOverviewStatusCard({
 	agentId,
@@ -138,41 +140,60 @@ export function AgentOverviewCapabilities({
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const moduleContent = content[module.id];
 							if (!moduleContent) return null;
-							const Icon = item.icon;
 							const title = module.id === "model-provider" ? "Model & Provider" : item.label;
 							return (
-								<Card
-									size="sm"
-									role="article"
+								<OverviewNavigationCard
 									key={module.id}
-									data-overview-module={module.id}
-									className="h-full min-w-0 py-3"
-								>
-									<CardHeader className="h-full grid-rows-1 content-center gap-0">
-										<Link
-											{...agentSectionLink(agentId, module.section, routeSearch)}
-											aria-label={title}
-											className="group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-										>
-											<IconChip size="sm" tint={item.tint}>
-												<Icon />
-											</IconChip>
-											<div className="min-w-0 flex-1">
-												<CardTitle>{title}</CardTitle>
-												<CardDescription data-overview-primary-value>
-													{moduleContent.description}
-												</CardDescription>
-											</div>
-											<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-										</Link>
-									</CardHeader>
-								</Card>
+									id={module.id}
+									title={title}
+									description={moduleContent.description}
+									icon={item.icon}
+									tint={item.tint}
+									link={agentSectionLink(agentId, module.section, routeSearch)}
+								/>
 							);
 						})}
 					</div>
 				</section>
 			))}
 		</div>
+	);
+}
+
+function OverviewNavigationCard({
+	id,
+	title,
+	description,
+	icon: Icon,
+	tint,
+	link,
+}: {
+	id: string;
+	title: string;
+	description: ReactNode;
+	icon: LucideIcon;
+	tint: string;
+	link: OverviewLinkOptions;
+}) {
+	return (
+		<Card size="sm" role="article" data-overview-module={id} className="h-full min-w-0 py-3">
+			<CardHeader className="h-full grid-rows-1 content-center gap-0">
+				<Link
+					{...link}
+					aria-label={title}
+					className="group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				>
+					<IconChip size="sm" tint={tint}>
+						<Icon />
+					</IconChip>
+					<div className="min-w-0 flex-1">
+						<CardTitle>{title}</CardTitle>
+						<CardDescription data-overview-primary-value>{description}</CardDescription>
+					</div>
+					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+				</Link>
+			</CardHeader>
+		</Card>
 	);
 }
 
