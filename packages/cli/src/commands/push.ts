@@ -25,6 +25,7 @@ import {
 import { isValidSkillKey } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
+	readProjectSkillMaterialization,
 	readSkillProjectionState,
 	recordSkillProjectionClaim,
 } from "../lib/skills-lock";
@@ -346,6 +347,7 @@ async function scanOneAgent(
 		// boundary. Legacy hash-only lock entries are not ownership evidence;
 		// skipping on them would leave same-byte Cloud rows unclaimed.
 		let invalidSkillCount = 0;
+		let projectMaterializationCount = 0;
 		let exactClaims = new Map<string, string>();
 		if (!opts.dryRun && envId) {
 			const skillProjectId = await fetchProjectIdForEnv(new ApiClient(), envId);
@@ -354,6 +356,10 @@ async function scanOneAgent(
 		for (const skill of await adapter.collectSkills()) {
 			if (!isValidSkillKey(skill.skillKey)) {
 				invalidSkillCount++;
+				continue;
+			}
+			if (readProjectSkillMaterialization({ agentType, localSkillKey: skill.skillKey })) {
+				projectMaterializationCount++;
 				continue;
 			}
 			skill.contentHash = await computeSkillFolderHash(
@@ -367,6 +373,11 @@ async function scanOneAgent(
 		if (invalidSkillCount > 0) {
 			notes.push(
 				`Skipped ${invalidSkillCount} skill ${invalidSkillCount === 1 ? "directory" : "directories"} with invalid names. Rename local skill directories to letters, numbers, dot, underscore, hyphen, or up to 4 slash-separated components.`,
+			);
+		}
+		if (projectMaterializationCount > 0) {
+			notes.push(
+				`Skipped ${projectMaterializationCount} Project-owned skill ${projectMaterializationCount === 1 ? "reference" : "references"}; update them from their source Project.`,
 			);
 		}
 	}

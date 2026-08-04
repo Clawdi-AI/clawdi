@@ -78,12 +78,12 @@ export function resourceCollectionTarget(
 						"projects",
 						agentDeploymentRouteQuery(scope.agentQuery),
 					),
-					label: "Agent Projects",
+					label: "Projects",
 				};
 	}
 	return {
 		href: agentSectionHref(scope.agentId, resource, agentDeploymentRouteQuery(scope.agentQuery)),
-		label: resource === "projects" ? "Agent Projects" : getResourceCollectionLabel(resource),
+		label: resource === "projects" ? "Projects" : getResourceCollectionLabel(resource),
 	};
 }
 

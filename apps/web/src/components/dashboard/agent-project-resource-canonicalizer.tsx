@@ -37,11 +37,7 @@ export function AgentProjectResourceCanonicalizer({
 		agentDeploymentRouteQuery(routeSearch),
 	);
 	return (
-		<AgentResourceRouteGate
-			agentId={agentId}
-			returnHref={projectsHref}
-			returnLabel="Agent Projects"
-		>
+		<AgentResourceRouteGate agentId={agentId} returnHref={projectsHref} returnLabel="Projects">
 			<CanonicalizeProjectResource
 				agentId={agentId}
 				resource={resource}
@@ -68,16 +64,14 @@ function CanonicalizeProjectResource({
 		typeof routeSearch.project === "string" && routeSearch.project.trim()
 			? routeSearch.project.trim()
 			: null;
-	const bindings = useAgentProjectBindings(agentId, { enabled: Boolean(requestedProjectId) });
+	const bindings = useAgentProjectBindings(agentId);
 	const orderedBindings = useMemo(
 		() => orderedAgentProjectBindings(bindings.data ?? []),
 		[bindings.data],
 	);
 	const resolvedProjectId = resolveAgentProjectResourceContext(orderedBindings, requestedProjectId);
-	const blockingError = requestedProjectId
-		? shouldBlockQueryError(bindings.error, bindings.data)
-			? bindings.error
-			: null
+	const blockingError = shouldBlockQueryError(bindings.error, bindings.data)
+		? bindings.error
 		: null;
 	const targetHref = resolvedProjectId
 		? agentProjectResourceHref(
@@ -87,7 +81,7 @@ function CanonicalizeProjectResource({
 				agentDeploymentRouteQuery(routeSearch),
 			)
 		: projectsHref;
-	const canCanonicalize = !requestedProjectId || bindings.data !== undefined;
+	const canCanonicalize = bindings.data !== undefined;
 
 	useEffect(() => {
 		if (!canCanonicalize || blockingError) return;
@@ -104,7 +98,7 @@ function CanonicalizeProjectResource({
 				className="w-fit"
 			>
 				<ArrowLeft className="size-4" />
-				Back to Agent Projects
+				Back to Projects
 			</Button>
 			{blockingError ? (
 				<ApiErrorPanel
@@ -112,7 +106,7 @@ function CanonicalizeProjectResource({
 					onRetry={() => {
 						void bindings.refetch();
 					}}
-					title="Couldn't load Agent Project access"
+					title="Couldn't load Workspace or Project access"
 				/>
 			) : (
 				<>

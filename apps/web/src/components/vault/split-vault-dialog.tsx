@@ -271,7 +271,7 @@ export function SplitVaultDialog({
 					{removeOriginals && (vault.project_ids?.length ?? 0) > 1 ? (
 						<p className="text-xs font-medium text-warning-muted-foreground">
 							{vault.name} is used by {vault.project_ids?.length} Projects — moved keys leave all of
-							them. Add the new vaults to those Projects afterwards.
+							them. Attach the new Vaults to those Projects afterwards.
 						</p>
 					) : null}
 					{shouldBlockQueryError(projectsQuery.error, projectsQuery.data) ? (

@@ -8,7 +8,6 @@ import {
 	Check,
 	ChevronDown,
 	Copy as CopyIcon,
-	Download,
 	ExternalLink,
 	ListChecks,
 	Plus,
@@ -327,19 +326,20 @@ function SkillsPageInner() {
 				}),
 			),
 		onSuccess: (_data, vars) => {
-			toast.success("Skill Uninstalled", {
+			toast.success("Skill removed from Project", {
 				description: `${vars.skillKey} was removed from ${targetProjectLabel}.`,
 			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
+		onError: (e) =>
+			toast.error("Couldn't remove Skill from Project", { description: errorMessage(e) }),
 	});
 
 	const syncGroup = useMutation({
 		mutationFn: async (group: { newest: SkillSummary; copies: SkillSummary[] }) => {
 			const { newest, copies } = group;
 			if (!copies.every((copy) => capabilitiesForSkill(copy).canSync)) {
-				throw new Error("Agent-synced and Agent Project Skills cannot be overwritten from Cloud");
+				throw new Error("Agent-synced and Workspace Skills cannot be overwritten from Cloud");
 			}
 			const stale = copies.filter(
 				(c) =>
@@ -413,11 +413,12 @@ function SkillsPageInner() {
 			return removed;
 		},
 		onSuccess: (removed) => {
-			toast.success(`${removed} ${removed === 1 ? "skill" : "skills"} uninstalled`);
+			toast.success(`${removed} ${removed === 1 ? "Skill" : "Skills"} removed from Projects`);
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 			clearSelection();
 		},
-		onError: (e) => toast.error("Couldn't uninstall skills", { description: errorMessage(e) }),
+		onError: (e) =>
+			toast.error("Couldn't remove Skills from Projects", { description: errorMessage(e) }),
 	});
 
 	const installSkill = async (repo: string, path?: string): Promise<boolean> => {
@@ -435,8 +436,9 @@ function SkillsPageInner() {
 			);
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 			const projectName = displayProjectName(targetProject);
-			toast.success(`Installed in ${projectName}`, {
-				description: "Add this Project to an agent when you want it available during a run.",
+			toast.success(`Added to ${projectName}`, {
+				description:
+					"The Skill is stored in this Project. Install it on an Agent separately to run it.",
 			});
 			return true;
 		} catch (e: unknown) {
@@ -472,9 +474,9 @@ function SkillsPageInner() {
 		: isStaleTarget
 			? "This link points to an agent that no longer exists. Pick a Project above."
 			: orderedProjects.length === 0
-				? "Create a Project first, then install skills into it."
+				? "Create a Project first, then add Skills to it."
 				: isProjectReady
-					? "No skills in this Project yet. Install one from the marketplace below."
+					? "No Skills are stored in this Project yet. Add one from the marketplace below."
 					: "Pick a Project to see its skills.";
 	const canShareTargetProject =
 		targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject);
@@ -489,7 +491,7 @@ function SkillsPageInner() {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
+			<PageHeader title="Project Skills" description={SKILLS_RESOURCE.managementDescription} />
 
 			<ListToolbar
 				search={<SearchInput value={search} onChange={setSearch} placeholder="Search skills…" />}
@@ -539,7 +541,7 @@ function SkillsPageInner() {
 												{displayProjectName(targetProject)}
 											</>
 										) : (
-											<>Agent projects</>
+											<>Workspaces</>
 										)}
 										<span className="text-muted-foreground tabular-nums">
 											{overflowProjects.length}
@@ -637,14 +639,12 @@ function SkillsPageInner() {
 				<Alert>
 					<AlertCircle />
 					<AlertTitle>
-						{targetProject.kind === "environment"
-							? "Agent Project is read-only"
-							: "Read-only Project"}
+						{targetProject.kind === "environment" ? "Workspace is read-only" : "Read-only Project"}
 					</AlertTitle>
 					<AlertDescription>
 						{targetProject.kind === "environment"
-							? "Agent Skills are authored on the Agent filesystem and sync here automatically. Rename, edit, or remove them on the Agent."
-							: `You can view skills in ${displayProjectName(targetProject)}, but only the owner can install or remove them.`}
+							? "Agent Skills are authored on the Agent filesystem and sync here as read-only projections. Rename, edit, or remove them on the Agent."
+							: `You can view Skills stored in ${displayProjectName(targetProject)}, but only the owner can add or remove them.`}
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -663,7 +663,7 @@ function SkillsPageInner() {
 							: undefined
 					}
 				>
-					Installed
+					Added
 				</SectionLabel>
 				{duplicatesView ? (
 					duplicateGroups.length === 0 ? (
@@ -761,7 +761,7 @@ function SkillsPageInner() {
 							description={
 								search.trim()
 									? "No skills match that search."
-									: "No skills installed anywhere yet. Pick a Project tab to install one."
+									: "No Skills are stored in any Project yet. Pick a Project tab to add one."
 							}
 						/>
 					) : (
@@ -856,11 +856,11 @@ function SkillsPageInner() {
 					</Button>
 				</SendSkillDialog>
 				<ConfirmAction
-					title={`Uninstall ${selectedSkills.length} ${selectedSkills.length === 1 ? "skill" : "skills"}?`}
+					title={`Remove ${selectedSkills.length} ${selectedSkills.length === 1 ? "Skill" : "Skills"} from Projects?`}
 					description={
 						<p>Each selected copy is removed from its Project. Read-only copies are skipped.</p>
 					}
-					confirmLabel="Uninstall"
+					confirmLabel="Remove from Projects"
 					destructive
 					onConfirm={() => bulkUninstall.mutate(selectedSkills)}
 				>
@@ -871,14 +871,14 @@ function SkillsPageInner() {
 						className="text-destructive"
 					>
 						<Trash2 className="size-3.5" />
-						Uninstall
+						Remove from Projects
 					</Button>
 				</ConfirmAction>
 			</BulkActionBar>
 
 			{isAllScope ? (
 				<p className="text-xs text-muted-foreground">
-					Pick a Project tab above to install new skills into it.
+					Pick a Project tab above to add new Skills to it.
 				</p>
 			) : canWriteTargetProject ? (
 				<section className="space-y-3">
@@ -923,7 +923,7 @@ function SkillsPageInner() {
 							className="sm:w-auto"
 						>
 							{installing && customRepo ? <Spinner /> : <Plus />}
-							Install
+							Add to Project
 						</Button>
 					</div>
 					{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
@@ -931,7 +931,7 @@ function SkillsPageInner() {
 						<ApiErrorPanel
 							error={installError}
 							onRetry={customRepo.trim() ? retryCustomInstall : undefined}
-							title="Install failed"
+							title="Add to Project failed"
 						/>
 					) : null}
 
@@ -970,7 +970,7 @@ function SkillsPageInner() {
 									{isInstalled ? (
 										<Badge variant="secondary" className="shrink-0">
 											<Check />
-											Installed
+											Added
 										</Badge>
 									) : (
 										<Button
@@ -980,8 +980,8 @@ function SkillsPageInner() {
 											disabled={isInstalling || !canWriteTargetProject}
 											className="shrink-0"
 										>
-											{isInstalling ? <Spinner /> : <Download />}
-											Install
+											{isInstalling ? <Spinner /> : <Plus />}
+											Add to Project
 										</Button>
 									)}
 								</div>

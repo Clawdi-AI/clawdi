@@ -191,6 +191,44 @@ describe("managed model catalog", () => {
 	});
 });
 
+describe("deployment Skill authority", () => {
+	it("uses the reviewed catalog, runtime-status, install, and uninstall operations", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			const path = new URL(request.url).pathname;
+			if (path === "/v1/skills/catalog") {
+				return jsonResponse({ items: [], total: 0 });
+			}
+			if (path === "/v1/deployments/hdep_test/skills") {
+				return jsonResponse({ skills: [] });
+			}
+			if (path === "/v1/deployments/hdep_test/skills/review-pr/install") {
+				return request.method === "POST"
+					? jsonResponse({ ok: true, skill_key: "review-pr", status: "installed" })
+					: jsonResponse({ ok: true, skill_key: "review-pr" });
+			}
+			throw new Error(`Unexpected request: ${request.method} ${path}`);
+		});
+
+		await expect(client.listSkillCatalog()).resolves.toEqual({ items: [], total: 0 });
+		await expect(client.getDeploymentSkills("hdep_test")).resolves.toEqual({ skills: [] });
+		await expect(client.installDeploymentSkill("hdep_test", "review-pr")).resolves.toMatchObject({
+			status: "installed",
+		});
+		await expect(client.uninstallDeploymentSkill("hdep_test", "review-pr")).resolves.toMatchObject({
+			ok: true,
+		});
+
+		expect(requests.map((request) => request.method)).toEqual(["GET", "GET", "POST", "DELETE"]);
+		expect(new URL(requests[0]?.url ?? "https://invalid").searchParams.get("limit")).toBe("200");
+		expect(await requests[2]?.json()).toEqual({ enable_after_install: true });
+		expect(
+			requests.every((request) => request.headers.get("Authorization") === "Bearer test-token"),
+		).toBe(true);
+	});
+});
+
 describe("declarative deployment mutations", () => {
 	it("releases an included Basic deployment as soon as its LRO is accepted", async () => {
 		const requests: Request[] = [];

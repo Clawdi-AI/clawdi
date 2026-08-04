@@ -220,7 +220,7 @@ async def create_vault(
 
 @router.get("/detail")
 async def get_vault_detail(
-    vault_id: UUID = Query(description="Stable Vault identity."),
+    vault_id: UUID | None = Query(default=None, description="Optional stable Vault identity."),
     slug: str = Query(description="Canonical Vault slug expected for this identity."),
     project_id: UUID | None = Query(default=None, description="Optional attachment context."),
     auth: AuthContext = Depends(require_user_auth),

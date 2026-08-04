@@ -11814,8 +11814,8 @@ export interface operations {
     get_vault_detail_v1_vault_detail_get: {
         parameters: {
             query: {
-                /** @description Stable Vault identity. */
-                vault_id: string;
+                /** @description Optional stable Vault identity. */
+                vault_id?: string | null;
                 /** @description Canonical Vault slug expected for this identity. */
                 slug: string;
                 /** @description Optional attachment context. */

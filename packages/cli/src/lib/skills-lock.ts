@@ -21,7 +21,7 @@ import { snapshotSkillArchive } from "./tar";
  * upload establishes a new claim, which is fail-safe.
  */
 export interface SkillsLock {
-	version: 3;
+	version: 4;
 	// Historical v1/v2 hash cache. These entries may suppress a redundant
 	// upload after callers re-confirm remote state, but are not ownership
 	// evidence and must never drive a projection delete.
@@ -30,6 +30,10 @@ export interface SkillsLock {
 	// repeat every identity field so hand-edited/corrupt mismatches can be
 	// rejected fail-closed on read.
 	claims: Record<string, SkillProjectionClaim>;
+	// Project-owned Skills materialized into an Agent filesystem stay
+	// references to their source Project. Their local bytes must never be
+	// promoted into an agent_sync claim by push or daemon reconciliation.
+	materializations: Record<string, ProjectSkillMaterialization>;
 }
 
 export interface SkillProjectionClaim {
@@ -47,6 +51,25 @@ export interface SkillProjectionIdentity {
 	skillKey: string;
 }
 
+export interface ProjectSkillMaterialization {
+	agent_type: string;
+	local_skill_key: string;
+	source_project_id: string;
+	source_skill_key: string;
+	content_hash: string;
+}
+
+export interface ProjectSkillMaterializationIdentity {
+	agentType: string;
+	localSkillKey: string;
+}
+
+type ProjectSkillMaterializationInput = ProjectSkillMaterializationIdentity & {
+	sourceProjectId: string;
+	sourceSkillKey: string;
+	contentHash: string;
+};
+
 export interface SkillProjectionState {
 	claims: Map<string, string>;
 	legacyBaselines: Map<string, string>;
@@ -58,7 +81,7 @@ type LegacyWritableSkillsLock = {
 };
 
 const LOCK_FILE = "skills-lock.json";
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 4;
 
 function lockPath(): string {
 	return join(getClawdiDir(), `${LOCK_FILE}.lock`);
@@ -78,6 +101,20 @@ export function skillCacheKey(agentType: string, skillKey: string): string {
  * if a future Skill-key grammar permits a separator used by IDs. */
 export function skillClaimCacheKey(agentId: string, projectId: string, skillKey: string): string {
 	return [agentId, projectId, skillKey].map((value) => encodeURIComponent(value)).join(":");
+}
+
+export function projectSkillMaterializationCacheKey(
+	agentType: string,
+	localSkillKey: string,
+): string {
+	return [agentType, localSkillKey].map((value) => encodeURIComponent(value)).join(":");
+}
+
+/** Convert a platform path relative to an adapter root into wire Skill-key form. */
+export function canonicalMaterializedSkillKey(relativePath: string): string {
+	const canonical = relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "");
+	if (!isValidSkillKey(canonical)) throw new Error("Invalid materialized Skill path");
+	return canonical;
 }
 
 /** SHA-256 over the exact safe, dereferenced regular-file projection that
@@ -103,17 +140,26 @@ export function readSkillsLock(): SkillsLock {
 	try {
 		const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
 		if (!isRecord(parsed)) return emptyLock();
-		if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== CURRENT_VERSION) {
+		if (
+			parsed.version !== 1 &&
+			parsed.version !== 2 &&
+			parsed.version !== 3 &&
+			parsed.version !== CURRENT_VERSION
+		) {
 			return emptyLock();
 		}
 		const skills = readHashEntries(parsed.skills);
-		if (parsed.version !== CURRENT_VERSION) {
-			return { version: CURRENT_VERSION, skills, claims: {} };
+		if (parsed.version === 1 || parsed.version === 2) {
+			return { version: CURRENT_VERSION, skills, claims: {}, materializations: {} };
 		}
 		return {
 			version: CURRENT_VERSION,
 			skills,
 			claims: readProjectionClaims(parsed.claims),
+			materializations:
+				parsed.version === CURRENT_VERSION
+					? readProjectSkillMaterializations(parsed.materializations)
+					: {},
 		};
 	} catch {
 		console.log(chalk.yellow(`⚠ ~/.clawdi/${LOCK_FILE} is corrupted; resetting.`));
@@ -126,14 +172,21 @@ export function writeSkillsLock(lock: SkillsLock | LegacyWritableSkillsLock): vo
 		// Baseline writers still use the released read/mutate/write API.
 		// Preserve exact claims committed after their read so a stale
 		// manual command cannot erase daemon deletion authority.
-		const currentClaims = readSkillsLock().claims;
+		const current = readSkillsLock();
+		const currentClaims = current.claims;
+		const currentMaterializations = current.materializations;
 		const requestedClaims =
 			lock.version === CURRENT_VERSION ? readProjectionClaims(lock.claims) : {};
+		const requestedMaterializations =
+			lock.version === CURRENT_VERSION
+				? readProjectSkillMaterializations(lock.materializations)
+				: {};
 		lease.assertOwned();
 		writeSkillsLockUnlocked({
 			version: CURRENT_VERSION,
 			skills: lock.skills,
 			claims: { ...requestedClaims, ...currentClaims },
+			materializations: { ...requestedMaterializations, ...currentMaterializations },
 		});
 	});
 }
@@ -152,10 +205,16 @@ function writeSkillsLockUnlocked(lock: SkillsLock): void {
 		const claim = lock.claims[key];
 		if (claim) sortedClaims[key] = claim;
 	}
+	const sortedMaterializations: Record<string, ProjectSkillMaterialization> = {};
+	for (const key of Object.keys(lock.materializations).sort()) {
+		const materialization = lock.materializations[key];
+		if (materialization) sortedMaterializations[key] = materialization;
+	}
 	const sorted: SkillsLock = {
 		version: CURRENT_VERSION,
 		skills: sortedSkills,
 		claims: sortedClaims,
+		materializations: sortedMaterializations,
 	};
 	writePrivateFileAtomic(dataPath(), `${JSON.stringify(sorted, null, 2)}\n`, {
 		mode: PRIVATE_FILE_MODE,
@@ -267,6 +326,95 @@ export function removeSkillProjectionClaim(identity: SkillProjectionIdentity): b
 	});
 }
 
+/** Read the exact Project materialization occupying an Agent-local Skill key. */
+export function readProjectSkillMaterialization(
+	identity: ProjectSkillMaterializationIdentity,
+): ProjectSkillMaterialization | null {
+	assertValidMaterializationIdentity(identity);
+	const key = projectSkillMaterializationCacheKey(identity.agentType, identity.localSkillKey);
+	const materialization = readSkillsLock().materializations[key];
+	if (
+		!materialization ||
+		materialization.agent_type !== identity.agentType ||
+		materialization.local_skill_key !== identity.localSkillKey
+	) {
+		return null;
+	}
+	return { ...materialization };
+}
+
+export function hasExactProjectSkillMaterialization(
+	materialization: ProjectSkillMaterializationInput,
+): boolean {
+	const existing = readProjectSkillMaterialization(materialization);
+	return Boolean(
+		existing &&
+			existing.source_project_id === materialization.sourceProjectId &&
+			existing.source_skill_key === materialization.sourceSkillKey &&
+			existing.content_hash === materialization.contentHash,
+	);
+}
+
+/** Persist Project ownership before its archive commits to the adapter filesystem. */
+export function recordProjectSkillMaterialization(
+	materialization: ProjectSkillMaterializationInput,
+): void {
+	assertValidMaterializationIdentity(materialization);
+	if (!materialization.sourceProjectId) throw new Error("Source Project ID is required");
+	if (!isValidSkillKey(materialization.sourceSkillKey)) {
+		throw new Error("Invalid source Project Skill key");
+	}
+	if (!materialization.contentHash) throw new Error("Materialized Skill hash is required");
+	withPrivateDirectoryLockSync(lockPath(), (lease) => {
+		const lock = readSkillsLock();
+		const key = projectSkillMaterializationCacheKey(
+			materialization.agentType,
+			materialization.localSkillKey,
+		);
+		lock.materializations[key] = {
+			agent_type: materialization.agentType,
+			local_skill_key: materialization.localSkillKey,
+			source_project_id: materialization.sourceProjectId,
+			source_skill_key: materialization.sourceSkillKey,
+			content_hash: materialization.contentHash,
+		};
+		lease.assertOwned();
+		writeSkillsLockUnlocked(lock);
+	});
+}
+
+/** Fence source authority durably before an adapter atomically activates bytes. */
+export async function commitProjectSkillMaterialization(
+	materialization: ProjectSkillMaterializationInput,
+	activate: () => Promise<void>,
+): Promise<void> {
+	recordProjectSkillMaterialization(materialization);
+	await activate();
+}
+
+/** Explicit Agent install/remove commands retire only the exact local reference. */
+export function removeProjectSkillMaterialization(
+	identity: ProjectSkillMaterializationIdentity,
+): boolean {
+	assertValidMaterializationIdentity(identity);
+	return withPrivateDirectoryLockSync(lockPath(), (lease) => {
+		const lock = readSkillsLock();
+		const key = projectSkillMaterializationCacheKey(identity.agentType, identity.localSkillKey);
+		const existing = lock.materializations[key];
+		if (
+			!existing ||
+			existing.agent_type !== identity.agentType ||
+			existing.local_skill_key !== identity.localSkillKey
+		) {
+			return false;
+		}
+		delete lock.materializations[key];
+		lease.assertOwned();
+		writeSkillsLockUnlocked(lock);
+		return true;
+	});
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -313,6 +461,41 @@ function readProjectionClaims(value: unknown): Record<string, SkillProjectionCla
 	return claims;
 }
 
+function readProjectSkillMaterializations(
+	value: unknown,
+): Record<string, ProjectSkillMaterialization> {
+	if (!isRecord(value)) return {};
+	const materializations: Record<string, ProjectSkillMaterialization> = {};
+	for (const [key, raw] of Object.entries(value)) {
+		if (!isRecord(raw)) continue;
+		if (
+			typeof raw.agent_type !== "string" ||
+			raw.agent_type.length === 0 ||
+			typeof raw.local_skill_key !== "string" ||
+			!isValidSkillKey(raw.local_skill_key) ||
+			typeof raw.source_project_id !== "string" ||
+			raw.source_project_id.length === 0 ||
+			typeof raw.source_skill_key !== "string" ||
+			!isValidSkillKey(raw.source_skill_key) ||
+			typeof raw.content_hash !== "string" ||
+			raw.content_hash.length === 0
+		) {
+			continue;
+		}
+		if (key !== projectSkillMaterializationCacheKey(raw.agent_type, raw.local_skill_key)) {
+			continue;
+		}
+		materializations[key] = {
+			agent_type: raw.agent_type,
+			local_skill_key: raw.local_skill_key,
+			source_project_id: raw.source_project_id,
+			source_skill_key: raw.source_skill_key,
+			content_hash: raw.content_hash,
+		};
+	}
+	return materializations;
+}
+
 function assertValidProjectionIdentity(identity: SkillProjectionIdentity): void {
 	if (identity.agentType.length === 0) throw new Error("Skill projection Agent type is required");
 	if (identity.agentId.length === 0) throw new Error("Skill projection Agent ID is required");
@@ -320,6 +503,11 @@ function assertValidProjectionIdentity(identity: SkillProjectionIdentity): void 
 	if (!isValidSkillKey(identity.skillKey)) throw new Error("Invalid Skill projection key");
 }
 
+function assertValidMaterializationIdentity(identity: ProjectSkillMaterializationIdentity): void {
+	if (!identity.agentType) throw new Error("Materialized Skill Agent type is required");
+	if (!isValidSkillKey(identity.localSkillKey)) throw new Error("Invalid materialized Skill key");
+}
+
 function emptyLock(): SkillsLock {
-	return { version: CURRENT_VERSION, skills: {}, claims: {} };
+	return { version: CURRENT_VERSION, skills: {}, claims: {}, materializations: {} };
 }

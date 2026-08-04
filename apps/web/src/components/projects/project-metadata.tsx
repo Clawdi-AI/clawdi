@@ -548,7 +548,7 @@ function ownedProjectKindText(
 		return variant === "full" ? "Custom Project" : "Custom";
 	}
 	if (project.kind === "personal") return variant === "full" ? "Global Project" : "Global";
-	if (project.kind === "environment") return variant === "full" ? "Agent Project" : "Agent";
+	if (project.kind === "environment") return "Workspace";
 	if (variant === "badge" && project.kind) return project.kind;
 	return "Project";
 }
@@ -600,9 +600,9 @@ export function projectKindMeta(kind: string): {
 	}
 	if (kind === "environment") {
 		return {
-			label: "Agent Project",
+			label: "Workspace",
 			groupLabel: "Managed Projects",
-			description: "Agent Project managed for one connected agent.",
+			description: "Workspace managed for one connected Agent.",
 			icon: Bot,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
 			badgeClassName: "border-border bg-muted/50 text-muted-foreground",

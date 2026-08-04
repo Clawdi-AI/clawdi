@@ -11,10 +11,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	canonicalMaterializedSkillKey,
+	commitProjectSkillMaterialization,
+	readProjectSkillMaterialization,
 	readSkillProjectionClaimsForAgent,
 	readSkillProjectionState,
 	readSkillsLock,
+	recordProjectSkillMaterialization,
 	recordSkillProjectionClaim,
+	removeProjectSkillMaterialization,
 	removeSkillProjectionClaim,
 	skillCacheKey,
 	skillClaimCacheKey,
@@ -50,7 +55,7 @@ function writeRaw(value: unknown): void {
 	if (!existsSync(dir)) throw new Error("expected lock parent");
 }
 
-describe("skills-lock v3 projection claims", () => {
+describe("skills-lock projection authority", () => {
 	it("migrates v1 and v2 hashes as baselines without deletion authority", () => {
 		writeRaw({ version: 1, skills: { alpha: { hash: "v1-hash" } } });
 		let state = readSkillProjectionState("claude_code", "agent-a", "project-a");
@@ -114,7 +119,7 @@ describe("skills-lock v3 projection claims", () => {
 			"project-a",
 			"project-b",
 		]);
-		expect(readSkillsLock().version).toBe(3);
+		expect(readSkillsLock().version).toBe(4);
 	});
 
 	it("removes only an exact claim and does not accept an identity reassignment", () => {
@@ -176,6 +181,103 @@ describe("skills-lock v3 projection claims", () => {
 		);
 		const entries = readdirSync(join(process.env.HOME ?? "", ".clawdi"));
 		expect(entries).toEqual(["skills-lock.json"]);
-		expect(JSON.parse(readFileSync(lockPath(), "utf8")).version).toBe(3);
+		expect(JSON.parse(readFileSync(lockPath(), "utf8")).version).toBe(4);
+	});
+
+	it("keeps Project materializations distinct from Agent projection claims", () => {
+		recordProjectSkillMaterialization({
+			agentType: "hermes",
+			localSkillKey: "shared/review-pr__alice",
+			sourceProjectId: "project-shared",
+			sourceSkillKey: "review-pr",
+			contentHash: "project-hash",
+		});
+
+		expect(
+			readProjectSkillMaterialization({
+				agentType: "hermes",
+				localSkillKey: "shared/review-pr__alice",
+			}),
+		).toEqual({
+			agent_type: "hermes",
+			local_skill_key: "shared/review-pr__alice",
+			source_project_id: "project-shared",
+			source_skill_key: "review-pr",
+			content_hash: "project-hash",
+		});
+		expect(readSkillProjectionState("hermes", "agent-a", "project-primary").claims.size).toBe(0);
+		expect(
+			readProjectSkillMaterialization({
+				agentType: "codex",
+				localSkillKey: "shared/review-pr__alice",
+			}),
+		).toBeNull();
+	});
+
+	it("normalizes Windows-relative materialization paths to canonical Skill keys", () => {
+		expect(canonicalMaterializedSkillKey("shared\\review-pr__alice")).toBe(
+			"shared/review-pr__alice",
+		);
+		expect(canonicalMaterializedSkillKey(".\\category\\review-pr")).toBe("category/review-pr");
+		expect(() => canonicalMaterializedSkillKey("..\\outside")).toThrow(
+			"Invalid materialized Skill path",
+		);
+	});
+
+	it("persists the Project fence before activation and retains it when activation fails", async () => {
+		const input = {
+			agentType: "codex",
+			localSkillKey: "review-pr",
+			sourceProjectId: "project-source",
+			sourceSkillKey: "review-pr",
+			contentHash: "source-hash",
+		};
+		let fenceObservedDuringActivation = false;
+		await expect(
+			commitProjectSkillMaterialization(input, async () => {
+				fenceObservedDuringActivation =
+					readProjectSkillMaterialization({
+						agentType: "codex",
+						localSkillKey: "review-pr",
+					}) !== null;
+				throw new Error("activation failed");
+			}),
+		).rejects.toThrow("activation failed");
+
+		expect(fenceObservedDuringActivation).toBe(true);
+		expect(
+			readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "review-pr" }),
+		).not.toBeNull();
+
+		let invalidActivationRan = false;
+		await expect(
+			commitProjectSkillMaterialization({ ...input, localSkillKey: "..\\invalid" }, async () => {
+				invalidActivationRan = true;
+			}),
+		).rejects.toThrow("Invalid materialized Skill key");
+		expect(invalidActivationRan).toBe(false);
+	});
+
+	it("preserves a concurrently recorded Project materialization through a stale write", () => {
+		const stale = readSkillsLock();
+		recordProjectSkillMaterialization({
+			agentType: "codex",
+			localSkillKey: "review-pr",
+			sourceProjectId: "project-source",
+			sourceSkillKey: "review-pr",
+			contentHash: "source-hash",
+		});
+		stale.skills[skillCacheKey("codex", "other")] = { hash: "other-hash" };
+		writeSkillsLock(stale);
+
+		expect(
+			readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "review-pr" }),
+		).not.toBeNull();
+		expect(
+			removeProjectSkillMaterialization({ agentType: "codex", localSkillKey: "review-pr" }),
+		).toBe(true);
+		expect(
+			readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "review-pr" }),
+		).toBeNull();
 	});
 });

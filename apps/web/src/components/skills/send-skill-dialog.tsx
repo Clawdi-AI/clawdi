@@ -116,7 +116,7 @@ export function SendSkillDialog({
 						).canSend,
 				)
 			) {
-				throw new Error("Agent-synced and Agent Project Skills cannot be sent from Cloud");
+				throw new Error("Agent-synced and Workspace Skills cannot be sent from Cloud");
 			}
 			// Per-skill try/catch: in a batch, one unreadable skill must
 			// not abort the rest — report partial success instead.

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { components } from "@/lib/api-schemas";
 import {
 	effectiveAgentProjectIds,
+	linkedAgentProjectCount,
 	orderedAgentProjectBindings,
 	resolveAgentDefaultProject,
 	resolveAgentProjectScope,
@@ -90,6 +91,7 @@ describe("effective Agent Project scope", () => {
 			"project_context_1",
 			"project_context_2",
 		]);
+		expect(linkedAgentProjectCount(bindings)).toBe(2);
 	});
 
 	test("uses AgentResponse.default_project_id only as a consistency fence", () => {
@@ -103,17 +105,17 @@ describe("effective Agent Project scope", () => {
 			"project_context",
 		]);
 		expect(() => resolveAgentProjectScope(bindings, "project_stale")).toThrow(
-			"Agent Project is still syncing",
+			"Workspace is still syncing",
 		);
 		expect(() => resolveAgentProjectScope([], "project_primary")).toThrow(
-			"Agent Project is not available",
+			"Workspace is not available",
 		);
 		expect(() =>
 			resolveAgentProjectScope(
 				[binding("context", "project_primary", "context", 1)],
 				"project_primary",
 			),
-		).toThrow("Agent Project is not available");
+		).toThrow("Workspace is not available");
 		expect(() =>
 			resolveAgentProjectScope(
 				[
@@ -122,6 +124,6 @@ describe("effective Agent Project scope", () => {
 				],
 				"project_primary",
 			),
-		).toThrow("Agent Project is not available");
+		).toThrow("Workspace is not available");
 	});
 });

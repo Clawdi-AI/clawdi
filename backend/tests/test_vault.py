@@ -373,6 +373,12 @@ async def test_vault_canonical_alias_collision_fails_closed_for_writes_and_exact
     assert ambiguous_read.json()["detail"]["code"] == "ambiguous_vault_slug"
     assert "value" not in ambiguous_read.json()["detail"]
 
+    ambiguous_detail = await cli_client.get(
+        f"/v1/vault/detail?slug=prod&project_id={seed_project.id}"
+    )
+    assert ambiguous_detail.status_code == 409, ambiguous_detail.text
+    assert ambiguous_detail.json()["detail"]["code"] == "ambiguous_vault_slug"
+
     ambiguous_resolve = await cli_client.post(
         f"/v1/vault/resolve?project_id={seed_project.id}&vault_slug=prod&field=TOKEN"
     )
@@ -479,6 +485,16 @@ async def test_vault_detail_and_items_select_exact_authorized_identity(
     assert detail.status_code == 200, detail.text
     assert detail.json()["id"] == str(second.id)
     assert detail.json()["name"] == "Second collision"
+
+    legacy_detail = await client.get("/v1/vault/detail?slug=collision-second")
+    assert legacy_detail.status_code == 200, legacy_detail.text
+    assert legacy_detail.json()["id"] == str(second.id)
+
+    scoped_legacy_detail = await client.get(
+        f"/v1/vault/detail?slug=collision-second&project_id={seed_project.id}"
+    )
+    assert scoped_legacy_detail.status_code == 200, scoped_legacy_detail.text
+    assert scoped_legacy_detail.json()["id"] == str(second.id)
 
     written = await client.put(
         f"/v1/vault/collision-second/items?project_id={seed_project.id}&vault_id={second.id}",

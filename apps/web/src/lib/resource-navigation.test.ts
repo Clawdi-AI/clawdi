@@ -71,7 +71,7 @@ describe("resource navigation scopes", () => {
 
 		expect(resourceCollectionTarget(scope, "projects")).toEqual({
 			href: "/agents/agent%201/project-access?source=on-clawdi&d=deployment%201",
-			label: "Agent Projects",
+			label: "Projects",
 		});
 		expect(projectDetailHrefForScope(scope, "project 1")).toBe(
 			"/agents/agent%201/project-access/project%201?source=on-clawdi&d=deployment%201",

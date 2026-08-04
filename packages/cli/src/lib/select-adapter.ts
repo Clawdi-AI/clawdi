@@ -83,7 +83,7 @@ export async function fetchProjectIdForEnv(
 	const legacy = env as { default_project_id?: string };
 	const projectId = env.default_project_id ?? legacy.default_project_id;
 	if (!projectId) {
-		throw new Error(`environment ${envId} has no default project id`);
+		throw new Error(`Agent ${envId} has no Workspace`);
 	}
 	return projectId;
 }

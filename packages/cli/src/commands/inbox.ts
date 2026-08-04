@@ -183,7 +183,7 @@ async function buildAcceptRequestBody(opts: AcceptOpts): Promise<Record<string, 
 	const agentIds = normalizeAgentIds(opts.agent);
 	if (agentIds.length === 0) {
 		if (opts.useAs) {
-			throw new Error("Pass --agent before choosing how to attach the Project.");
+			throw new Error("Pass --agent before choosing how to link the Project.");
 		}
 		return reqBody;
 	}
@@ -198,7 +198,7 @@ function normalizeAcceptMode(opts: AcceptOpts): "attached" {
 		const useAs = opts.useAs.toLowerCase();
 		if (useAs === "attached") return "attached";
 		if (useAs === "home") {
-			throw new Error("`--use-as home` is no longer supported. Agent Project is fixed.");
+			throw new Error("`--use-as home` is no longer supported. Workspace is fixed.");
 		}
 		throw new Error("`--use-as` must be `attached`.");
 	}
@@ -317,7 +317,7 @@ export async function inboxAcceptCommand(
 		if (normalizeAgentIds(opts.agent).length > 0 || opts.useAs) {
 			console.error(
 				chalk.red(
-					"Sign in before attaching an accepted Project to an Agent. " +
+					"Sign in before linking an accepted Project to an Agent. " +
 						"Run `clawdi auth login`, then re-run with --agent.",
 				),
 			);
@@ -759,12 +759,10 @@ function renderJoinedSuccess(
 	console.log(chalk.gray("  Role: viewer (read access)."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
-		console.log(chalk.gray(`  Attached to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));
+		console.log(chalk.gray(`  Linked to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));
 	} else {
 		console.log(
-			chalk.gray(
-				`  Attach to Agent: clawdi agent projects attach <agent-id> --project ${projectRef}`,
-			),
+			chalk.gray(`  Link to Agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
 		);
 	}
 	console.log(chalk.gray(`  Next (optional): clawdi pull --project ${projectRef}`));

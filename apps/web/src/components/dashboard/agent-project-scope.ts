@@ -25,8 +25,13 @@ export function effectiveAgentProjectIds(bindings: readonly AgentProjectBinding[
 	);
 }
 
+/** User-facing Projects exclude the fixed primary Workspace implementation detail. */
+export function linkedAgentProjectCount(bindings: readonly AgentProjectBinding[]): number {
+	return bindings.filter((binding) => binding.binding_type === "context").length;
+}
+
 /**
- * Resolve the Agent's real Default Project without guessing. The primary
+ * Resolve the Agent's fixed Workspace Project without guessing. The primary
  * binding is authoritative, AgentResponse.default_project_id fences stale
  * projections, and the Project collection proves that the user can open it.
  */
@@ -55,14 +60,14 @@ export function resolveAgentProjectScope(
 ): { bindings: AgentProjectBinding[]; projectIds: string[] } {
 	const primaryBindings = bindings.filter((binding) => binding.binding_type === "primary");
 	if (primaryBindings.length !== 1) {
-		throw new Error("The Agent Project is not available yet. Refresh and try again.");
+		throw new Error("The Workspace is not available yet. Refresh and try again.");
 	}
 	const primary = primaryBindings[0];
 	if (!primary) {
-		throw new Error("The Agent Project is not available yet. Refresh and try again.");
+		throw new Error("The Workspace is not available yet. Refresh and try again.");
 	}
 	if (expectedPrimaryProjectId && primary.project_id !== expectedPrimaryProjectId) {
-		throw new Error("The Agent Project is still syncing. Refresh and try again.");
+		throw new Error("The Workspace is still syncing. Refresh and try again.");
 	}
 
 	const orderedBindings = orderedAgentProjectBindings(bindings);

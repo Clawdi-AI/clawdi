@@ -181,6 +181,7 @@ async def test_agent_binding_list_materializes_default_primary_and_blocks_delete
 
     delete_primary = await client.delete(f"/v1/agents/{env.id}/project-bindings/{rows[0]['id']}")
     assert delete_primary.status_code == 400
+    assert delete_primary.json()["detail"] == "Workspace cannot be unlinked"
 
 
 async def test_agent_binding_list_restores_default_primary_and_demotes_stale_primary(

@@ -323,7 +323,7 @@ program
 	)
 	.option(
 		"-p, --project <id-or-slug>",
-		"Import Skills from an explicit workspace/personal Project (Agent Projects are rejected)",
+		"Import Skills from an explicit Custom/personal Project (Agent Workspaces are rejected)",
 	)
 	.option("--agent <type>", "Narrow to one agent (claude_code, codex, hermes, openclaw)")
 	.option(
@@ -939,8 +939,11 @@ vaultCmd
 		"-p, --project <project>",
 		"Project to resolve from (default: your default-write project)",
 	)
-	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
-	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Workspace and linked Projects")
+	.option(
+		"--allow-conflicts",
+		"Allow first-match wins for Workspace and linked-Project Vault conflicts",
+	)
 	.option("--debug", "Show project precedence and skipped matches")
 	.option("--dry-run", "Check where the key resolves without printing the plaintext value")
 	.option("--json", "Output the full resolve response as JSON")
@@ -962,8 +965,11 @@ program
 	.description("Read one clawdi:// secret reference")
 	.argument("<reference>", "Reference to read")
 	.option("-p, --project <project>", "Project to resolve from")
-	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
-	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Workspace and linked Projects")
+	.option(
+		"--allow-conflicts",
+		"Allow first-match wins for Workspace and linked-Project Vault conflicts",
+	)
 	.option("--debug", "Show project precedence without printing secrets in diagnostics")
 	.option("--dry-run", "Check the reference without printing the plaintext value")
 	.option("--json", "Output the full resolve response as JSON")
@@ -985,8 +991,11 @@ program
 	.option("--out <file>", "Output path, or - for stdout", "-")
 	.option("--force", "Overwrite an existing output file")
 	.option("-p, --project <project>", "Project to resolve from")
-	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
-	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Workspace and linked Projects")
+	.option(
+		"--allow-conflicts",
+		"Allow first-match wins for Workspace and linked-Project Vault conflicts",
+	)
 	.option("--no-project-folder", "Skip linked-folder Project lookup")
 	.option("--dry-run", "Show references that would resolve without writing output")
 	.addHelpText(
@@ -1022,7 +1031,10 @@ skillCmd
 skillCmd
 	.command("add <path>")
 	.description("Upload a skill directory or single .md file")
-	.option("-a, --agent <type>", "Upload to an Agent Project (claude_code, codex, hermes, openclaw)")
+	.option(
+		"-a, --agent <type>",
+		"Upload to an Agent Workspace (claude_code, codex, hermes, openclaw)",
+	)
 	.option(
 		"-p, --project <id-or-slug>",
 		"Upload to an explicit project (UUID, slug, or name). Mutex with --agent.",
@@ -1030,7 +1042,7 @@ skillCmd
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi skill add ./my-skill                         # default project\n  $ clawdi skill add ./my-skill --project engineering   # explicit project\n  $ clawdi skill add ./my-skill --agent codex            # Agent Project",
+		"\nExamples:\n  $ clawdi skill add ./my-skill                         # default project\n  $ clawdi skill add ./my-skill --project engineering   # explicit project\n  $ clawdi skill add ./my-skill --agent codex            # Agent Workspace",
 	)
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");
@@ -1064,7 +1076,7 @@ skillCmd
 	.description("Remove a skill from the cloud")
 	.option(
 		"-a, --agent <type>",
-		"Remove from an Agent Project (claude_code, codex, hermes, openclaw)",
+		"Remove from an Agent Workspace (claude_code, codex, hermes, openclaw)",
 	)
 	.option(
 		"-p, --project <id-or-slug>",
@@ -1307,7 +1319,7 @@ program
 	.command("run")
 	.description("Run a command with clawdi:// references resolved")
 	.option("-p, --project <id-or-slug>", "Resolve references from an explicit Project")
-	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Workspace and linked Projects")
 	.option(
 		"--env-file <file>",
 		"Load dotenv-like file and resolve clawdi:// references",
@@ -1316,7 +1328,10 @@ program
 	)
 	.option("--no-inherit-env", "Do not inherit the parent process environment")
 	.option("--all-vault-env", "Legacy mode: inject every vault env value from the selected Project")
-	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option(
+		"--allow-conflicts",
+		"Allow first-match wins for Workspace and linked-Project Vault conflicts",
+	)
 	.option("--no-project-folder", "Skip linked-folder Project lookup")
 	.option("--dry-run", "Show reference resolution plan without launching the command")
 	.addOption(
@@ -1597,11 +1612,11 @@ Examples:
 
 const agentProjectsCmd = agentCmd
 	.command("projects")
-	.description("View Agent Project and attachments");
+	.description("View Workspace and linked Projects");
 
 agentProjectsCmd
 	.command("list <agent-id>")
-	.description("Show Agent Project and attachment order")
+	.description("Show Workspace and linked-Project Vault priority")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.action(async (agentId, opts) => {
 		const { agentProjectsListCommand } = await import("./commands/agent-projects.js");
@@ -1609,18 +1624,20 @@ agentProjectsCmd
 	});
 
 agentProjectsCmd
-	.command("attach <agent-id>")
-	.description("Attach a Project for reads")
+	.command("link <agent-id>")
+	.alias("attach")
+	.description("Link a Project for Vault resolution")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
-	.option("--order <n>", "Read order (>=1)")
+	.option("--order <n>", "Vault resolution priority (>=1)")
 	.action(async (agentId, opts) => {
 		const { agentProjectsAddContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsAddContextCommand(agentId, opts);
 	});
 
 agentProjectsCmd
-	.command("detach <agent-id>")
-	.description("Detach a Project")
+	.command("unlink <agent-id>")
+	.alias("detach")
+	.description("Unlink a Project from Vault resolution")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
@@ -1629,10 +1646,10 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("move <agent-id>")
-	.description("Update attachment order")
+	.description("Update Vault resolution priority")
 	.option(
 		"--item <id:order>",
-		"Attachment id and target order (repeatable)",
+		"Linked Project relation id and target Vault priority (repeatable)",
 		collectValues,
 		[] as string[],
 	)
@@ -1665,11 +1682,11 @@ inboxCmd
 	.option("--url <link>", "Explicit share URL (bypass shape detection)")
 	.option(
 		"-a, --agent <agent-id>",
-		"Attach the accepted project to one or more agents (repeat or comma-separate)",
+		"Link the accepted Project to one or more Agents (repeat or comma-separate)",
 		collectCsvValues,
 		[] as string[],
 	)
-	.option("--use-as <attached>", "Attach to --agent (default: attached)")
+	.option("--use-as <attached>", "Link to --agent (compatibility value: attached)")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText(
 		"after",
@@ -1679,7 +1696,7 @@ Examples:
     $ clawdi inbox accept https://clawdi.ai/share/abc...
     $ clawdi inbox accept 1a2b3c4d-...    # invitation id
 
-  Accept and attach to Agent:
+  Accept and link to Agent:
     $ clawdi inbox accept --url <link> --agent <agent-id>
     $ clawdi inbox accept --invite <id> --agent <agent-id>`,
 	)
@@ -1693,11 +1710,11 @@ inboxCmd
 	.description("Explicitly join one locally staged project share")
 	.option(
 		"-a, --agent <agent-id>",
-		"Attach the joined project to one or more agents (repeat or comma-separate)",
+		"Link the joined Project to one or more Agents (repeat or comma-separate)",
 		collectCsvValues,
 		[] as string[],
 	)
-	.option("--use-as <attached>", "Attach to --agent (default: attached)")
+	.option("--use-as <attached>", "Link to --agent (compatibility value: attached)")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText(
 		"after",

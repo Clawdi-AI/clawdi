@@ -44,6 +44,7 @@ import {
 	useOverviewMemoriesModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { linkedAgentProjectCount } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailPanel } from "@/components/detail/layout";
@@ -1193,7 +1194,10 @@ function OverviewTab({
 				content={{
 					projects: overviewProjectsModule({
 						bindings: {
-							count: agent ? (projectBindings.data?.length ?? null) : null,
+							count:
+								agent && projectBindings.data
+									? linkedAgentProjectCount(projectBindings.data)
+									: null,
 							isLoading: projectionLoading || projectBindings.isLoading,
 							isUnavailable: projectionUnavailable,
 							error: projectBindings.error,

@@ -76,7 +76,7 @@ describe("projectListCommand", () => {
 		expect(out).toContain("viewer");
 		expect(out).toContain("Open:  clawdi project show @alice-a3b4/shared-toolkit");
 		expect(out).toContain(
-			"Attach to Agent: clawdi agent projects attach <agent-id> --project @alice-a3b4/shared-toolkit",
+			"Link to Agent: clawdi agent projects link <agent-id> --project @alice-a3b4/shared-toolkit",
 		);
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 		expect(out).not.toContain("context boundary");

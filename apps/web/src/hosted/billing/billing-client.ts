@@ -27,6 +27,10 @@ import type {
 	HostedDeployment,
 	HostedDeployRequestStatus,
 	HostedEventStreamSnapshotHandoff,
+	HostedSkillCatalogResponse,
+	HostedSkillInstallResponse,
+	HostedSkillsStatusResponse,
+	HostedSkillUninstallResponse,
 	PortalRequest,
 	WalletAutoReloadRequest,
 	WalletTopupRequest,
@@ -472,6 +476,37 @@ export function createBillingClient(
 
 		getMe: async () => unwrapDeploy(await api.GET("/v1/me")),
 		getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/v1/agent-environments")),
+		listSkillCatalog: async (): Promise<HostedSkillCatalogResponse> =>
+			unwrapDeploy(
+				await api.GET("/v1/skills/catalog", {
+					params: { query: { limit: 200 } },
+				}),
+			),
+		getDeploymentSkills: async (deploymentId: string): Promise<HostedSkillsStatusResponse> =>
+			unwrapDeploy(
+				await api.GET("/v1/deployments/{deployment_id}/skills", {
+					params: { path: { deployment_id: deploymentId } },
+				}),
+			),
+		installDeploymentSkill: async (
+			deploymentId: string,
+			skillKey: string,
+		): Promise<HostedSkillInstallResponse> =>
+			unwrapDeploy(
+				await api.POST("/v1/deployments/{deployment_id}/skills/{skill_key}/install", {
+					params: { path: { deployment_id: deploymentId, skill_key: skillKey } },
+					body: { enable_after_install: true },
+				}),
+			),
+		uninstallDeploymentSkill: async (
+			deploymentId: string,
+			skillKey: string,
+		): Promise<HostedSkillUninstallResponse> =>
+			unwrapDeploy(
+				await api.DELETE("/v1/deployments/{deployment_id}/skills/{skill_key}/install", {
+					params: { path: { deployment_id: deploymentId, skill_key: skillKey } },
+				}),
+			),
 
 		listDeployments: async (): Promise<HostedDeployment[]> =>
 			unwrapDeploymentList(unwrapDeploy(await api.GET("/v2/deployments"))),

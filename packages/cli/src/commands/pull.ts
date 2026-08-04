@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
@@ -10,13 +10,18 @@ import { errMessage } from "../lib/errors";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
-import { adapterForType, resolveTargetAgentTypes } from "../lib/select-adapter";
+import { adapterForType, getEnvIdByAgent, resolveTargetAgentTypes } from "../lib/select-adapter";
 import {
 	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 	SKILL_SYNC_PROTOCOL_HEADER,
 } from "../lib/skill-sync-protocol";
 import {
+	canonicalMaterializedSkillKey,
+	commitProjectSkillMaterialization,
+	hasExactProjectSkillMaterialization,
+	readSkillProjectionClaimsForAgent,
 	readSkillsLock,
+	removeSkillProjectionClaim,
 	type SkillsLock,
 	skillCacheKey,
 	writeSkillsLock,
@@ -99,7 +104,7 @@ export async function pull(opts: PullOpts) {
 	if (!opts.project && modules.includes("skills")) {
 		if (modules.length === 1) {
 			p.log.error(
-				"Skill import requires --project naming a workspace or personal Project. Agent Projects are filesystem-authoritative.",
+				"Skill import requires --project naming a Custom or personal Project. Agent Workspaces are filesystem-authoritative.",
 			);
 			p.outro(chalk.red("Aborted."));
 			process.exitCode = 1;
@@ -189,7 +194,15 @@ export async function pull(opts: PullOpts) {
 		totals.sessionsUpdated += result.sessionsUpdated;
 	}
 
-	if (skillsLock) writeSkillsLock(skillsLock);
+	if (skillsLock) {
+		// Pull keeps a long-lived hash baseline snapshot while per-Skill
+		// authority handoffs update claims/materializations transactionally.
+		// Merge only the baselines into fresh authority state so this stale
+		// snapshot cannot resurrect a projection claim retired above.
+		const latestSkillsLock = readSkillsLock();
+		latestSkillsLock.skills = { ...latestSkillsLock.skills, ...skillsLock.skills };
+		writeSkillsLock(latestSkillsLock);
+	}
 
 	const parts: string[] = [];
 	if (modules.includes("skills")) {
@@ -202,6 +215,11 @@ export async function pull(opts: PullOpts) {
 	if (modules.includes("sessions")) {
 		parts.push(
 			`${totals.sessionsNew} new sessions, ${totals.sessionsUpdated} updated, ${totals.sessionsUnchanged} unchanged`,
+		);
+	}
+	if (opts.project && totals.skillImports > 0) {
+		p.log.info(
+			"Imported Skills remain Project-owned references and are not pushed back as Agent Skills. Explicit `clawdi skill install <repo> --agent <type>` or `clawdi skill add <path> --agent <type>` transfers that local key to Agent authority.",
 		);
 	}
 	p.outro(chalk.green(`✓ Pull complete — ${parts.join(", ")}`));
@@ -226,6 +244,12 @@ async function scanOneAgent(
 
 	if (modules.includes("skills") && skillsLock) {
 		const adapter = adapterForType(agentType);
+		const agentId = getEnvIdByAgent(agentType);
+		const claimedLocalSkillKeys = new Set(
+			agentId
+				? readSkillProjectionClaimsForAgent(agentType, agentId).map((claim) => claim.skill_key)
+				: [],
+		);
 		if (adapter && opts.project) {
 			const accessToken = await api.getAccessToken();
 			skillProjectId = await resolveProjectId(api.baseUrl, accessToken, opts.project);
@@ -237,7 +261,7 @@ async function scanOneAgent(
 			}
 			if (project.kind !== "workspace" && project.kind !== "personal") {
 				throw new Error(
-					"Skill import only accepts workspace or personal Projects; Agent Projects are filesystem-authoritative.",
+					"Skill import only accepts Custom or personal Projects; Agent Workspaces are filesystem-authoritative.",
 				);
 			}
 			if (project.is_owner === false) {
@@ -252,9 +276,9 @@ async function scanOneAgent(
 
 		if (adapter && skillProjectId) {
 			for (const skill of await fetchCloudSkills(api, skillProjectId)) {
-				// An explicit import is unchanged iff its source content_hash matches
-				// our cached hash AND a local file exists — the local
-				// check restores skills the user wiped but kept the lock.
+				// A Project import is unchanged only when the hash, local path, and
+				// exact durable materialization marker all agree. Legacy caches are
+				// download baselines, not enough to fence reverse projection.
 				const cacheKey = opts.project
 					? skillCacheKey(agentType, `${skillProjectId}:${skill.skill_key}`)
 					: skillCacheKey(agentType, skill.skill_key);
@@ -262,9 +286,26 @@ async function scanOneAgent(
 				const localPath = sharedOwnerHandle
 					? adapter.getSharedSkillPath(skill.skill_key, sharedOwnerHandle)
 					: adapter.getSkillPath(skill.skill_key);
+				const localDirectory = sharedOwnerHandle ? localPath : dirname(localPath);
+				const localSkillKey = canonicalMaterializedSkillKey(
+					relative(adapter.getSkillsRootDir(), localDirectory),
+				);
 				const localExists = existsSync(localPath);
-				if (cached && cached === skill.content_hash && localExists) skillsInSync++;
-				else skills.push(skill);
+				const materializationIsExact = hasExactProjectSkillMaterialization({
+					agentType,
+					localSkillKey,
+					sourceProjectId: skillProjectId,
+					sourceSkillKey: skill.skill_key,
+					contentHash: skill.content_hash,
+				});
+				if (
+					cached === skill.content_hash &&
+					localExists &&
+					materializationIsExact &&
+					!claimedLocalSkillKeys.has(localSkillKey)
+				) {
+					skillsInSync++;
+				} else skills.push(skill);
 			}
 		}
 	}
@@ -319,15 +360,29 @@ async function applyOneAgentPull(
 							[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 						},
 					);
-					if (scan.sharedOwnerHandle) {
-						await adapter.writeSharedSkillArchive(
-							skill.skill_key,
-							scan.sharedOwnerHandle,
-							tarBytes,
-						);
-					} else {
-						await adapter.writeSkillArchive(skill.skill_key, tarBytes);
-					}
+					const localSkillDirectory = scan.sharedOwnerHandle
+						? adapter.getSharedSkillPath(skill.skill_key, scan.sharedOwnerHandle)
+						: dirname(adapter.getSkillPath(skill.skill_key));
+					const localSkillKey = canonicalMaterializedSkillKey(
+						relative(adapter.getSkillsRootDir(), localSkillDirectory),
+					);
+					// Persist the source authority before committing any bytes. If
+					// ledger persistence fails, the Agent filesystem stays untouched;
+					// if archive activation fails, retaining this fence is fail-closed.
+					await commitProjectSkillMaterialization(
+						{
+							agentType: scan.agentType,
+							localSkillKey,
+							sourceProjectId: scan.skillProjectId,
+							sourceSkillKey: skill.skill_key,
+							contentHash: skill.content_hash,
+						},
+						() =>
+							scan.sharedOwnerHandle
+								? adapter.writeSharedSkillArchive(skill.skill_key, scan.sharedOwnerHandle, tarBytes)
+								: adapter.writeSkillArchive(skill.skill_key, tarBytes),
+					);
+					await retireAgentProjectionClaims(api, scan.agentType, localSkillKey);
 					const cacheKey = scan.projectQualifiedSkillCache
 						? skillCacheKey(scan.agentType, `${scan.skillProjectId}:${skill.skill_key}`)
 						: skillCacheKey(scan.agentType, skill.skill_key);
@@ -379,6 +434,31 @@ async function applyOneAgentPull(
 	}
 
 	return { skillsImported, sessionsNew, sessionsUpdated };
+}
+
+/** Complete an Agent-to-Project authority handoff using only exact claims.
+ * The materialization fence is already durable before this runs, so a failed
+ * delete cannot cause the Project bytes to be reverse-claimed. A surviving
+ * claim remains durable retry evidence for the daemon and the next pull. */
+async function retireAgentProjectionClaims(
+	api: ApiClient,
+	agentType: AgentType,
+	localSkillKey: string,
+): Promise<void> {
+	const agentId = getEnvIdByAgent(agentType);
+	if (!agentId) return;
+	const claims = readSkillProjectionClaimsForAgent(agentType, agentId).filter(
+		(claim) => claim.skill_key === localSkillKey,
+	);
+	for (const claim of claims) {
+		await api.deleteAgentSkill(agentId, localSkillKey, claim.project_id);
+		removeSkillProjectionClaim({
+			agentType,
+			agentId,
+			projectId: claim.project_id,
+			skillKey: localSkillKey,
+		});
+	}
 }
 
 /** Page through every cloud skill for one Project. */

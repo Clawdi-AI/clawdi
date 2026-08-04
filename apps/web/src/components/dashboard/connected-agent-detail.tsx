@@ -23,6 +23,7 @@ import {
 	useOverviewMemoriesModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { linkedAgentProjectCount } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
@@ -260,7 +261,7 @@ export function ConnectedAgentDetail({
 								content={{
 									projects: overviewProjectsModule({
 										bindings: {
-											count: projectBindings?.length ?? null,
+											count: projectBindings ? linkedAgentProjectCount(projectBindings) : null,
 											isLoading: projectBindingsLoading,
 											error: blockingProjectBindingsError,
 										},

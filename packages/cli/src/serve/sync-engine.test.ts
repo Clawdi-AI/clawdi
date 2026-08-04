@@ -16,6 +16,7 @@ import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-cli
 import {
 	computeSkillFolderHash,
 	readSkillProjectionClaimsForAgent,
+	recordProjectSkillMaterialization,
 	recordSkillProjectionClaim,
 } from "../lib/skills-lock";
 import { computeSkillArchiveHash } from "../lib/tar";
@@ -245,6 +246,115 @@ describe("Agent filesystem projection reconcile", () => {
 					?.kind,
 			).toBe("skill_push");
 			expect(existsSync(join(local, "SKILL.md"))).toBe(true);
+		});
+	});
+
+	it("never reconciles or drains a Project materialization as agent_sync", async () => {
+		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
+			const local = join(root, "shared", "review-pr__alice");
+			mkdirSync(local, { recursive: true });
+			writeFileSync(join(local, "SKILL.md"), "# Project-owned\n");
+			keys.add("shared/review-pr__alice");
+			recordProjectSkillMaterialization({
+				agentType: "hermes",
+				localSkillKey: "shared/review-pr__alice",
+				sourceProjectId: "project-shared",
+				sourceSkillKey: "review-pr",
+				contentHash: "source-hash",
+			});
+
+			await reconcile(new Map(), new Set(["shared/review-pr__alice"]));
+			expect(queue.depth).toBe(0);
+			writeFileSync(join(local, "SKILL.md"), "# Locally edited but still Project-owned\n");
+			await reconcile(new Map());
+			expect(queue.depth).toBe(0);
+
+			recordSkillProjectionClaim({
+				agentType: "hermes",
+				agentId: "agent-1",
+				projectId: "project-old",
+				skillKey: "shared/review-pr__alice",
+				hash: "stale-agent-hash",
+			});
+			await reconcile(new Map());
+			const cleanup = queue.peek();
+			if (cleanup?.kind !== "skill_delete") throw new Error("expected projection cleanup");
+			const cleanupFetch = globalThis.fetch;
+			const requests: Request[] = [];
+			try {
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					requests.push(input instanceof Request ? input : new Request(input, init));
+					return new Response(null, { status: 204 });
+				}) as typeof fetch;
+				const abortController = new AbortController();
+				const outcome = await processQueueItem(
+					{
+						environmentId: "agent-1",
+						adapter: adapterRegistry.hermes.create(),
+						abort: abortController.signal,
+						abortController,
+					},
+					new ApiClient({ requireAuth: false }),
+					queue,
+					cleanup,
+					new Map(),
+					new Map(),
+					new Map(),
+					"project-1",
+				);
+				expect(outcome).toBe("applied");
+				expect(new URL(requests[0]?.url ?? "http://invalid").searchParams.get("project_id")).toBe(
+					"project-old",
+				);
+				expect(readSkillProjectionClaimsForAgent("hermes", "agent-1")).toEqual([]);
+				expect(existsSync(join(local, "SKILL.md"))).toBe(true);
+			} finally {
+				globalThis.fetch = cleanupFetch;
+			}
+
+			queue.enqueue({
+				kind: "skill_push",
+				agent_id: "agent-1",
+				project_id: "project-1",
+				skill_key: "shared/review-pr__alice",
+				new_hash: "queued-before-fence",
+				enqueued_at: new Date().toISOString(),
+				attempts: 0,
+			});
+			const queued = queue.peek();
+			if (!queued) throw new Error("expected queued Skill push");
+			let requestCount = 0;
+			const originalFetch = globalThis.fetch;
+			try {
+				globalThis.fetch = Object.assign(
+					async () => {
+						requestCount++;
+						return new Response("unexpected", { status: 500 });
+					},
+					{ preconnect: originalFetch.preconnect },
+				);
+				const abortController = new AbortController();
+				const outcome = await processQueueItem(
+					{
+						environmentId: "agent-1",
+						adapter: adapterRegistry.hermes.create(),
+						abort: abortController.signal,
+						abortController,
+					},
+					new ApiClient({ requireAuth: false }),
+					queue,
+					queued,
+					new Map(),
+					new Map(),
+					new Map(),
+					"project-1",
+				);
+				expect(outcome).toBe("absent");
+				expect(queue.depth).toBe(0);
+				expect(requestCount).toBe(0);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
 		});
 	});
 

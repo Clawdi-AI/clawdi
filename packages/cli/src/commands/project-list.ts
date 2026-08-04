@@ -148,7 +148,7 @@ export async function projectListCommand(opts: {
 	if (!opts.owned && shared.length > 0) {
 		if (!opts.sharedWithMe) console.log();
 		console.log(chalk.bold(`Shared with me (${shared.length}):`));
-		console.log(chalk.gray("  Viewer access is read-only. Attach to an Agent when needed."));
+		console.log(chalk.gray("  Viewer access is read-only. Link to an Agent when needed."));
 		for (const s of shared) {
 			const alias = projectAlias(s);
 			console.log(
@@ -159,7 +159,7 @@ export async function projectListCommand(opts: {
 			);
 			console.log(`    ${chalk.gray(`Open:  clawdi project show ${alias}`)}`);
 			console.log(
-				`    ${chalk.gray(`Attach to Agent: clawdi agent projects attach <agent-id> --project ${alias}`)}`,
+				`    ${chalk.gray(`Link to Agent: clawdi agent projects link <agent-id> --project ${alias}`)}`,
 			);
 		}
 	}

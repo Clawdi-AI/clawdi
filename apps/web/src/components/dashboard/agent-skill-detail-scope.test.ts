@@ -7,20 +7,36 @@ import {
 class NotFoundError extends Error {}
 
 describe("Agent Skill detail Project scope", () => {
+	const bindings = [
+		{ project_id: "primary", binding_type: "primary" },
+		{ project_id: "context", binding_type: "context" },
+	];
+
 	test("accepts only bound explicit Projects and never turns a tampered Project into a candidate", () => {
-		expect(resolveAgentSkillProjectAccess(["primary", "context"], "context")).toEqual({
+		expect(resolveAgentSkillProjectAccess(bindings, "context")).toEqual({
 			kind: "bound",
 			projectIds: ["context"],
 		});
-		expect(resolveAgentSkillProjectAccess(["primary", "context"], "other")).toEqual({
+		expect(resolveAgentSkillProjectAccess(bindings, "other")).toEqual({
 			kind: "unbound",
 			projectId: "other",
 		});
 	});
 
-	test("rejects an omitted Project instead of searching effective read order", () => {
-		const access = resolveAgentSkillProjectAccess(["primary", "context", "context"], "");
-		expect(access).toEqual({ kind: "missing" });
+	test("resolves omitted legacy context only to one primary Workspace", () => {
+		expect(resolveAgentSkillProjectAccess(bindings, "")).toEqual({
+			kind: "bound",
+			projectIds: ["primary"],
+		});
+		expect(
+			resolveAgentSkillProjectAccess([{ project_id: "context", binding_type: "context" }], ""),
+		).toEqual({ kind: "unavailable" });
+		expect(
+			resolveAgentSkillProjectAccess(
+				[...bindings, { project_id: "other-primary", binding_type: "primary" }],
+				"",
+			),
+		).toEqual({ kind: "unavailable" });
 	});
 
 	test("fails closed on non-404 errors and mismatched Project responses", async () => {
@@ -43,7 +59,7 @@ describe("Agent Skill detail Project scope", () => {
 				async () => ({ project_id: "other" }),
 				(error) => error instanceof NotFoundError,
 			),
-		).rejects.toThrow("did not match the requested Agent Project");
+		).rejects.toThrow("did not match the requested Workspace or Project");
 	});
 
 	test("returns the final not-found result after all bound Projects miss", async () => {
