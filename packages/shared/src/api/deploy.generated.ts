@@ -1751,10 +1751,14 @@ export interface components {
             agent_id: string | null;
             /** Agent Name */
             agent_name: string | null;
+            /** Agent Type */
+            agent_type?: ("openclaw" | "hermes") | null;
             /** Amount Usd */
             amount_usd: string;
             /** Requests */
             requests: number;
+            /** By Model */
+            by_model?: components["schemas"]["V2HostedUsageModelBreakdown"][] | null;
         };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {

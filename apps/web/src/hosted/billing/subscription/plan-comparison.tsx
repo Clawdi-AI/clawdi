@@ -2,6 +2,7 @@
 
 import { Check, Cpu, Zap } from "lucide-react";
 import { useMemo } from "react";
+import { SettingsSection } from "@/components/settings-section";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
@@ -75,20 +76,19 @@ export function PlanComparison({
 		basic !== undefined && performance !== undefined && !selectedTerm;
 
 	return (
-		<section data-hosted="true" className="space-y-4" aria-labelledby="plan-comparison-heading">
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-				<div>
-					<h3 id="plan-comparison-heading" className="text-base font-semibold">
-						Compare compute plans
-					</h3>
-					{sharedPricingUnavailable ? (
-						<p className="mt-1 text-sm text-muted-foreground">
-							A shared Basic and Performance billing term is not currently available.
-						</p>
-					) : null}
-				</div>
+		<SettingsSection
+			data-hosted="true"
+			headingLevel={3}
+			title="Compare compute plans"
+			description={
+				sharedPricingUnavailable
+					? "A shared Basic and Performance billing term is not currently available."
+					: undefined
+			}
+		>
+			<div className="space-y-4">
 				{commonOffers.length > 1 && selectedTerm !== null ? (
-					<div className="w-full shrink-0 space-y-1.5 sm:w-56">
+					<div className="ml-auto w-full space-y-1.5 sm:w-56">
 						<p className="text-xs font-medium text-muted-foreground">Billing term</p>
 						<TermSwitcher
 							offers={commonOffers}
@@ -99,81 +99,81 @@ export function PlanComparison({
 						/>
 					</div>
 				) : null}
-			</div>
-			<div className="grid gap-3 lg:grid-cols-2">
-				{/* Basic */}
-				<Card size="sm">
-					<CardHeader className="gap-2">
-						<CardTitle className="flex items-center gap-2">
-							<Cpu className="size-5 text-muted-foreground" aria-hidden /> Compute Basic
-						</CardTitle>
-						<CardDescription>First active Basic agent included at no charge.</CardDescription>
-						<div className="min-h-20 pt-1">
-							<p className="text-xs text-muted-foreground">Each additional Basic agent</p>
-							{basicPrice ? (
-								<>
-									<p className="text-3xl font-semibold tracking-tight tabular-nums">
-										{basicPrice.primary}
-									</p>
-									<p className="text-xs text-muted-foreground">{basicPrice.secondary}</p>
-								</>
-							) : (
-								<p className="text-sm font-medium">Pricing unavailable</p>
-							)}
-						</div>
-					</CardHeader>
-					<CardContent className="flex-1">
-						<ul className="space-y-2">
-							{basic ? (
+				<div className="grid gap-3 lg:grid-cols-2">
+					{/* Basic */}
+					<Card size="sm">
+						<CardHeader className="gap-2">
+							<CardTitle className="flex items-center gap-2">
+								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Compute Basic
+							</CardTitle>
+							<CardDescription>First active Basic agent included at no charge.</CardDescription>
+							<div className="min-h-20 pt-1">
+								<p className="text-xs text-muted-foreground">Each additional Basic agent</p>
+								{basicPrice ? (
+									<>
+										<p className="text-3xl font-semibold tracking-tight tabular-nums">
+											{basicPrice.primary}
+										</p>
+										<p className="text-xs text-muted-foreground">{basicPrice.secondary}</p>
+									</>
+								) : (
+									<p className="text-sm font-medium">Pricing unavailable</p>
+								)}
+							</div>
+						</CardHeader>
+						<CardContent className="flex-1">
+							<ul className="space-y-2">
+								{basic ? (
+									<FeatureRow>
+										Up to {basic.vcpu} vCPU · {basic.ram_gb} GB RAM · {basic.disk_size} GB storage
+									</FeatureRow>
+								) : null}
 								<FeatureRow>
-									Up to {basic.vcpu} vCPU · {basic.ram_gb} GB RAM · {basic.disk_size} GB storage
+									Managed confidential compute · one runtime (OpenClaw or Hermes)
 								</FeatureRow>
-							) : null}
-							<FeatureRow>
-								Managed confidential compute · one runtime (OpenClaw or Hermes)
-							</FeatureRow>
-							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
-						</ul>
-					</CardContent>
-				</Card>
+								<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
+							</ul>
+						</CardContent>
+					</Card>
 
-				{/* Performance */}
-				<Card size="sm" className="border-primary/30">
-					<CardHeader className="gap-2">
-						<CardTitle className="flex items-center gap-2">
-							<Zap className="size-5 text-primary" aria-hidden /> Compute Performance
-						</CardTitle>
-						<CardDescription>Higher capacity for production workloads.</CardDescription>
-						<div className="min-h-20 pt-1">
-							<p className="text-xs text-muted-foreground">Each Performance agent</p>
-							{performancePrice ? (
-								<>
-									<p className="text-3xl font-semibold tracking-tight tabular-nums">
-										{performancePrice.primary}
-									</p>
-									<p className="text-xs text-muted-foreground">{performancePrice.secondary}</p>
-								</>
-							) : (
-								<p className="text-sm font-medium">Pricing unavailable</p>
-							)}
-						</div>
-					</CardHeader>
-					<CardContent className="flex-1">
-						<ul className="space-y-2">
-							{performance ? (
+					{/* Performance */}
+					<Card size="sm" className="border-primary/30">
+						<CardHeader className="gap-2">
+							<CardTitle className="flex items-center gap-2">
+								<Zap className="size-5 text-primary" aria-hidden /> Compute Performance
+							</CardTitle>
+							<CardDescription>Higher capacity for production workloads.</CardDescription>
+							<div className="min-h-20 pt-1">
+								<p className="text-xs text-muted-foreground">Each Performance agent</p>
+								{performancePrice ? (
+									<>
+										<p className="text-3xl font-semibold tracking-tight tabular-nums">
+											{performancePrice.primary}
+										</p>
+										<p className="text-xs text-muted-foreground">{performancePrice.secondary}</p>
+									</>
+								) : (
+									<p className="text-sm font-medium">Pricing unavailable</p>
+								)}
+							</div>
+						</CardHeader>
+						<CardContent className="flex-1">
+							<ul className="space-y-2">
+								{performance ? (
+									<FeatureRow>
+										Up to {performance.vcpu} vCPU · {performance.ram_gb} GB RAM ·{" "}
+										{performance.disk_size} GB storage
+									</FeatureRow>
+								) : null}
 								<FeatureRow>
-									Up to {performance.vcpu} vCPU · {performance.ram_gb} GB RAM ·{" "}
-									{performance.disk_size} GB storage
+									Managed confidential compute · one runtime (OpenClaw or Hermes)
 								</FeatureRow>
-							) : null}
-							<FeatureRow>
-								Managed confidential compute · one runtime (OpenClaw or Hermes)
-							</FeatureRow>
-							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
-						</ul>
-					</CardContent>
-				</Card>
+								<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
+							</ul>
+						</CardContent>
+					</Card>
+				</div>
 			</div>
-		</section>
+		</SettingsSection>
 	);
 }
