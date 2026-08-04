@@ -113,9 +113,9 @@ different interpreter; the production `app` result is the zero-diagnostic
 invariant. Every first-party production module is clean in its owned gate.
 
 The strict-equivalent production audit reports 36 diagnostics across two
-retained standard-mode adapters and one explicitly frozen legacy module; the
-other 182 production files are strict-clean. The five reviewed SDK boundary
-owners have these exact gates:
+retained standard-mode adapters and one runtime-observation compatibility
+module with byte-frozen symbols; the other 182 production files are
+strict-clean. The five reviewed SDK boundary owners have these exact gates:
 
 | SDK boundary | Gate / diagnostics | Locked upstream and first-party normalization |
 | --- | --- | --- |
@@ -141,18 +141,33 @@ change its Bucket, Key, Body, ContentType, status, or stream contract.
 No local SDK stub or mirrored overload is used to hide diagnostics.
 `STANDARD_ONLY` contains exactly S3 and Mem0, and the owned production
 exclusion set is empty. The exception audit pins the per-file strict diagnostic
-counts (S3 2, Mem0 19, frozen legacy 15), so either added debt or a typing
-improvement fails until the exact allowlist is reviewed. The public
-`S3ObjectStoreClient` protocol is a first-party storage facade, not a substitute
-type for boto: the adapter itself retains the generated official `S3Client`.
+counts (S3 2, Mem0 19, runtime-observation compatibility 15), so either added
+debt or a typing improvement fails until the exact allowlist is reviewed. The
+public `S3ObjectStoreClient` protocol is a first-party storage facade, not a
+substitute type for boto: the adapter itself retains the generated official
+`S3Client`.
 
-`app/routes/sessions.py` is separately listed in `FROZEN_LEGACY_ONLY` with 15
-strict diagnostics. Its v1 runtime-observation symbols are protected by the
-repository byte-freeze, and this wave was explicitly authorized to defer that
-legacy deployment boundary instead of changing even type annotations inside
-the frozen symbols. This is not an SDK adapter and is not claimed as strict.
-The exception audit keeps the categories disjoint, rejects missing paths, and
-requires the exact diagnostic inventory so stale exceptions cannot linger.
+`app/routes/sessions.py` is separately listed in
+`RUNTIME_OBSERVATION_COMPATIBILITY_ONLY`. The module owns canonical Clawdi
+`/v1` APIs; it is not a legacy or Hosted v1 deployment module. Its 15 strict
+diagnostics occur only inside three repository byte-frozen pre-v2
+runtime-observation and heartbeat compatibility symbols:
+
+| Frozen symbol | Pinned strict diagnostics |
+| --- | --- |
+| `_runtime_desired_provider_binding` | 8: `reportMissingTypeArgument` 1, `reportUnknownArgumentType` 4, `reportUnknownParameterType` 1, `reportUnknownVariableType` 2 |
+| `_enabled_runtime_names` | 6: `reportMissingTypeArgument` 1, `reportUnknownArgumentType` 1, `reportUnknownMemberType` 1, `reportUnknownParameterType` 1, `reportUnknownVariableType` 2 |
+| `_bounded_runtime_observed` | 1: `reportUnknownVariableType` 1 |
+
+BasedPyright strict selection is file-scoped, so the byte freeze prevents an
+honest source-level fix for the bare `dict` annotations without changing those
+symbols. The exception audit therefore resolves every diagnostic line to its
+top-level AST symbol and requires the exact per-symbol rule counts above. A
+diagnostic outside those symbols, a rule change, added debt, or stale debt all
+fail the gate. No baseline, suppression, adapter stub, or redundant wrapper is
+used to hide the remaining compatibility boundary. Hosted v1 product and
+deployment infrastructure are outside this repository and are not part of the
+exception.
 
 Done: `owned` reports 185 files and `strict` reports 182 files, with every
 diagnostic count equal to zero; `exceptions` reports the exact 36-diagnostic

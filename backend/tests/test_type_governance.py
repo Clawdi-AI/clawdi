@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import subprocess
@@ -114,11 +115,13 @@ def test_typing_exception_sets_accept_live_disjoint_paths() -> None:
             "app/services/memory_provider_mem0.py",
         }
     )
-    assert type_governance.FROZEN_LEGACY_ONLY == frozenset({"app/routes/sessions.py"})
+    assert type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY == frozenset(
+        {"app/routes/sessions.py"}
+    )
     type_governance.validate_exception_sets(
         type_governance.PRODUCTION_FILES,
         type_governance.STANDARD_ONLY,
-        type_governance.FROZEN_LEGACY_ONLY,
+        type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY,
     )
 
 
@@ -132,14 +135,14 @@ def test_typing_exception_sets_reject_overlap() -> None:
         )
 
 
-@pytest.mark.parametrize("exception_kind", ["standard", "frozen"])
+@pytest.mark.parametrize("exception_kind", ["standard", "runtime-observation"])
 def test_typing_exception_sets_reject_stale_paths(exception_kind: str) -> None:
     stale = frozenset({"app/not_owned.py"})
     with pytest.raises(ValueError, match="stale"):
         type_governance.validate_exception_sets(
             type_governance.PRODUCTION_FILES,
             stale if exception_kind == "standard" else frozenset(),
-            stale if exception_kind == "frozen" else frozenset(),
+            stale if exception_kind == "runtime-observation" else frozenset(),
         )
 
 
@@ -233,19 +236,58 @@ def test_gate_rejects_nonzero_exit_without_diagnostics(
         type_governance.analyze(["app/core/query_utils.py"], gating=True)
 
 
-def exception_diagnostics(paths: list[str]) -> list[object]:
+def exception_diagnostics(paths: list[str]) -> list[dict[str, object]]:
     return [{"file": str(type_governance.BACKEND_ROOT / path)} for path in paths]
 
 
-def test_strict_exception_audit_reports_standard_and_frozen_boundaries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    paths = sorted(type_governance.STANDARD_ONLY | type_governance.FROZEN_LEGACY_ONLY)
+def runtime_observation_compatibility_diagnostics() -> list[dict[str, object]]:
+    diagnostics: list[dict[str, object]] = []
+    for (
+        path,
+        expected_symbols,
+    ) in type_governance.EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS.items():
+        source = (type_governance.BACKEND_ROOT / path).read_bytes()
+        tree = ast.parse(source, filename=path)
+        symbols = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for symbol, rule_counts in expected_symbols.items():
+            line = symbols[symbol].lineno - 1
+            for rule, count in rule_counts.items():
+                diagnostics.extend(
+                    {
+                        "file": str(type_governance.BACKEND_ROOT / path),
+                        "range": {
+                            "start": {"line": line, "character": 0},
+                            "end": {"line": line, "character": 1},
+                        },
+                        "rule": rule,
+                    }
+                    for _ in range(count)
+                )
+    return diagnostics
+
+
+def expected_exception_diagnostics() -> list[dict[str, object]]:
     diagnostics = [
         diagnostic
-        for path, count in type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS.items()
-        for diagnostic in exception_diagnostics([path] * count)
+        for path in sorted(type_governance.STANDARD_ONLY)
+        for diagnostic in exception_diagnostics(
+            [path] * type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS[path]
+        )
     ]
+    return diagnostics + runtime_observation_compatibility_diagnostics()
+
+
+def test_strict_exception_audit_reports_standard_and_compatibility_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = sorted(
+        type_governance.STANDARD_ONLY | type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
+    )
+    diagnostics = expected_exception_diagnostics()
     install_analyzer(
         tmp_path,
         monkeypatch,
@@ -263,41 +305,22 @@ def test_strict_exception_audit_reports_standard_and_frozen_boundaries(
         path: type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS[path]
         for path in sorted(type_governance.STANDARD_ONLY)
     }
-    assert result["frozenLegacyOnly"] == {
-        path: type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS[path]
-        for path in sorted(type_governance.FROZEN_LEGACY_ONLY)
-    }
+    assert result["runtimeObservationCompatibilityOnly"] == (
+        type_governance.EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS
+    )
 
 
 def test_strict_exception_audit_rejects_strict_clean_stale_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    paths = sorted(type_governance.STANDARD_ONLY | type_governance.FROZEN_LEGACY_ONLY)
-    install_analyzer(
-        tmp_path,
-        monkeypatch,
-        payload=analysis(
-            files=len(paths),
-            errors=len(paths) - 1,
-            diagnostics=exception_diagnostics(paths[:-1]),
-        ),
-        exit_code=1,
+    paths = sorted(
+        type_governance.STANDARD_ONLY | type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
     )
-
-    with pytest.raises(ValueError, match="strict-clean typing exceptions are stale"):
-        type_governance.strict_exception_audit()
-
-
-def test_strict_exception_audit_rejects_new_diagnostic_debt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    paths = sorted(type_governance.STANDARD_ONLY | type_governance.FROZEN_LEGACY_ONLY)
-    observed = dict(type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS)
-    observed["app/services/memory_provider_mem0.py"] += 1
     diagnostics = [
         diagnostic
-        for path, count in observed.items()
-        for diagnostic in exception_diagnostics([path] * count)
+        for diagnostic in expected_exception_diagnostics()
+        if diagnostic["file"]
+        != str(type_governance.BACKEND_ROOT / "app/services/memory_provider_mem0.py")
     ]
     install_analyzer(
         tmp_path,
@@ -310,5 +333,193 @@ def test_strict_exception_audit_rejects_new_diagnostic_debt(
         exit_code=1,
     )
 
+    with pytest.raises(ValueError, match="strict-clean typing exceptions are stale"):
+        type_governance.strict_exception_audit()
+
+
+def test_strict_exception_audit_rejects_new_diagnostic_debt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = sorted(
+        type_governance.STANDARD_ONLY | type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
+    )
+    diagnostics = expected_exception_diagnostics() + exception_diagnostics(
+        ["app/services/memory_provider_mem0.py"]
+    )
+    install_analyzer(
+        tmp_path,
+        monkeypatch,
+        payload=analysis(
+            files=len(paths),
+            errors=len(diagnostics),
+            diagnostics=diagnostics,
+        ),
+        exit_code=1,
+    )
+
     with pytest.raises(ValueError, match="strict exception diagnostic inventory mismatch"):
+        type_governance.strict_exception_audit()
+
+
+def test_strict_exception_audit_rejects_diagnostic_outside_compatibility_symbols(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = sorted(
+        type_governance.STANDARD_ONLY | type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
+    )
+    diagnostics = expected_exception_diagnostics()
+    compatibility_diagnostic = next(
+        diagnostic for diagnostic in diagnostics if "range" in diagnostic
+    )
+    source = (type_governance.BACKEND_ROOT / "app/routes/sessions.py").read_bytes()
+    tree = ast.parse(source, filename="app/routes/sessions.py")
+    non_compatibility_symbol = next(
+        node
+        for node in tree.body
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_bound_env_id"
+    )
+    line = non_compatibility_symbol.lineno - 1
+    compatibility_diagnostic["range"] = {
+        "start": {"line": line, "character": 0},
+        "end": {"line": line, "character": 1},
+    }
+    install_analyzer(
+        tmp_path,
+        monkeypatch,
+        payload=analysis(
+            files=len(paths),
+            errors=len(diagnostics),
+            diagnostics=diagnostics,
+        ),
+        exit_code=1,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="escaped its expected frozen symbol",
+    ):
+        type_governance.strict_exception_audit()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing-start",
+        "missing-end",
+        "malformed-start",
+        "malformed-end",
+        "missing-start-character",
+        "missing-end-character",
+        "bool",
+        "negative",
+        "invalid-type",
+        "reversed",
+        "cross-symbol",
+        "module-level",
+    ],
+)
+def test_compatibility_diagnostic_location_rejects_invalid_ranges(case: str) -> None:
+    path = "app/routes/sessions.py"
+    all_ranges = type_governance._top_level_symbol_ranges(path)
+    expected_symbols = type_governance.EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS[path]
+    symbol_ranges = {symbol: all_ranges[symbol] for symbol in expected_symbols}
+    binding_start = symbol_ranges["_runtime_desired_provider_binding"][0]
+    enabled_start = symbol_ranges["_enabled_runtime_names"][0]
+
+    def point(position: tuple[int, int]) -> dict[str, int]:
+        return {"line": position[0], "character": position[1]}
+
+    start = point(binding_start)
+    end = {"line": binding_start[0], "character": binding_start[1] + 1}
+    invalid_ranges: dict[str, object] = {
+        "missing-start": {"end": end},
+        "missing-end": {"start": start},
+        "malformed-start": {"start": [], "end": end},
+        "malformed-end": {"start": start, "end": []},
+        "missing-start-character": {
+            "start": {"line": binding_start[0]},
+            "end": end,
+        },
+        "missing-end-character": {
+            "start": start,
+            "end": {"line": binding_start[0]},
+        },
+        "bool": {
+            "start": {"line": True, "character": binding_start[1]},
+            "end": end,
+        },
+        "negative": {
+            "start": start,
+            "end": {"line": binding_start[0], "character": -1},
+        },
+        "invalid-type": {
+            "start": start,
+            "end": {"line": "0", "character": binding_start[1]},
+        },
+        "reversed": {
+            "start": end,
+            "end": start,
+        },
+        "cross-symbol": {
+            "start": start,
+            "end": point(enabled_start),
+        },
+        "module-level": {
+            "start": {"line": 0, "character": 0},
+            "end": {"line": 0, "character": 1},
+        },
+    }
+    expected_errors = {
+        "missing-start": "invalid range start",
+        "missing-end": "invalid range end",
+        "malformed-start": "invalid range start",
+        "malformed-end": "invalid range end",
+        "missing-start-character": "invalid range start",
+        "missing-end-character": "invalid range end",
+        "bool": "invalid range start",
+        "negative": "invalid range end",
+        "invalid-type": "invalid range end",
+        "reversed": "reversed range",
+        "cross-symbol": "escaped its expected frozen symbol",
+        "module-level": "escaped its expected frozen symbol",
+    }
+
+    with pytest.raises(ValueError, match=expected_errors[case]):
+        type_governance._compatibility_diagnostic_location(
+            path,
+            {
+                "rule": "reportUnknownParameterType",
+                "range": invalid_ranges[case],
+            },
+            symbol_ranges,
+        )
+
+
+def test_strict_exception_audit_rejects_compatibility_rule_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = sorted(
+        type_governance.STANDARD_ONLY | type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
+    )
+    diagnostics = expected_exception_diagnostics()
+    compatibility_diagnostic = next(
+        diagnostic for diagnostic in diagnostics if "range" in diagnostic
+    )
+    compatibility_diagnostic["rule"] = "reportUnexpectedCompatibilityDebt"
+    install_analyzer(
+        tmp_path,
+        monkeypatch,
+        payload=analysis(
+            files=len(paths),
+            errors=len(diagnostics),
+            diagnostics=diagnostics,
+        ),
+        exit_code=1,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="runtime-observation compatibility diagnostic inventory mismatch",
+    ):
         type_governance.strict_exception_audit()

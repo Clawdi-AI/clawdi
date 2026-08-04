@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import subprocess
 import sys
@@ -62,18 +63,46 @@ STANDARD_ONLY = frozenset(
         "app/services/memory_provider_mem0.py",
     }
 )
-FROZEN_LEGACY_ONLY = frozenset(
+RUNTIME_OBSERVATION_COMPATIBILITY_ONLY = frozenset(
     {
-        # The repository-owned byte-freeze protects this file's v1 runtime
-        # observation surface. The user explicitly deferred that legacy
-        # deployment boundary rather than permitting type-only source edits.
+        # Repository-owned byte hashes protect the pre-v2 runtime-observation
+        # and heartbeat compatibility symbols in this otherwise canonical v1
+        # API module. BasedPyright strictness is file-scoped, so the exception
+        # audit below pins every remaining diagnostic to those exact symbols.
         "app/routes/sessions.py",
     }
 )
+EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS = {
+    "app/routes/sessions.py": {
+        "_runtime_desired_provider_binding": {
+            "reportMissingTypeArgument": 1,
+            "reportUnknownArgumentType": 4,
+            "reportUnknownParameterType": 1,
+            "reportUnknownVariableType": 2,
+        },
+        "_enabled_runtime_names": {
+            "reportMissingTypeArgument": 1,
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 1,
+            "reportUnknownParameterType": 1,
+            "reportUnknownVariableType": 2,
+        },
+        "_bounded_runtime_observed": {
+            "reportUnknownVariableType": 1,
+        },
+    }
+}
 EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS = {
-    "app/routes/sessions.py": 15,
     "app/services/file_store_s3.py": 2,
     "app/services/memory_provider_mem0.py": 19,
+    **{
+        path: sum(
+            count
+            for symbol_diagnostics in symbols.values()
+            for count in symbol_diagnostics.values()
+        )
+        for path, symbols in EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS.items()
+    },
 }
 PRODUCTION_FILES = tuple(
     sorted(
@@ -82,7 +111,9 @@ PRODUCTION_FILES = tuple(
 )
 OWNED_PRODUCTION_FILES = tuple(path for path in PRODUCTION_FILES if path not in OWNED_EXCLUSIONS)
 STRICT_PRODUCTION_FILES = tuple(
-    path for path in PRODUCTION_FILES if path not in STANDARD_ONLY | FROZEN_LEGACY_ONLY
+    path
+    for path in PRODUCTION_FILES
+    if path not in STANDARD_ONLY | RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
 )
 EXPECTED_CONFIG = {
     "typeCheckingMode": "standard",
@@ -108,10 +139,26 @@ class Analysis(TypedDict):
     summary: Summary
 
 
+type SourcePosition = tuple[int, int]
+type SourceRange = tuple[SourcePosition, SourcePosition]
+
+
 def validate_config() -> None:
-    validate_exception_sets(PRODUCTION_FILES, STANDARD_ONLY, FROZEN_LEGACY_ONLY)
-    if set(EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS) != STANDARD_ONLY | FROZEN_LEGACY_ONLY:
+    validate_exception_sets(
+        PRODUCTION_FILES,
+        STANDARD_ONLY,
+        RUNTIME_OBSERVATION_COMPATIBILITY_ONLY,
+    )
+    exception_paths = STANDARD_ONLY | RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
+    if set(EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS) != exception_paths:
         raise ValueError("strict exception diagnostic inventory paths do not match exceptions")
+    if (
+        set(EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS)
+        != RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
+    ):
+        raise ValueError(
+            "runtime-observation compatibility diagnostic paths do not match exceptions"
+        )
     with CONFIG.open("rb") as handle:
         document = tomllib.load(handle)
     configured = document.get("tool", {}).get("basedpyright")
@@ -127,13 +174,13 @@ def validate_config() -> None:
 def validate_exception_sets(
     production_files: Sequence[str],
     standard_only: frozenset[str],
-    frozen_legacy_only: frozenset[str],
+    runtime_observation_compatibility_only: frozenset[str],
 ) -> None:
     production = set(production_files)
-    overlap = standard_only & frozen_legacy_only
+    overlap = standard_only & runtime_observation_compatibility_only
     if overlap:
         raise ValueError(f"typing exception sets overlap: {sorted(overlap)}")
-    stale = (standard_only | frozen_legacy_only) - production
+    stale = (standard_only | runtime_observation_compatibility_only) - production
     if stale:
         raise ValueError(f"stale typing exception paths: {sorted(stale)}")
 
@@ -269,8 +316,86 @@ def analyze(paths: Sequence[str], *, gating: bool, config: Path = CONFIG) -> Ana
     return analysis
 
 
+def _top_level_symbol_ranges(path: str) -> dict[str, SourceRange]:
+    source = (BACKEND_ROOT / path).read_bytes()
+    tree = ast.parse(source, filename=path)
+    ranges: dict[str, SourceRange] = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.end_lineno is None or node.end_col_offset is None:
+            raise ValueError(f"top-level symbol has no end position: {path}:{node.name}")
+        starts = [(node.lineno - 1, node.col_offset)]
+        starts.extend(
+            (decorator.lineno - 1, max(0, decorator.col_offset - 1))
+            for decorator in node.decorator_list
+        )
+        ranges[node.name] = (min(starts), (node.end_lineno - 1, node.end_col_offset))
+    return ranges
+
+
+def _diagnostic_position(path: str, name: str, value: object) -> SourcePosition:
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"runtime-observation compatibility diagnostic has an invalid {name}: {path}"
+        )
+    line = value.get("line")
+    character = value.get("character")
+    if (
+        isinstance(line, bool)
+        or not isinstance(line, int)
+        or line < 0
+        or isinstance(character, bool)
+        or not isinstance(character, int)
+        or character < 0
+    ):
+        raise ValueError(
+            f"runtime-observation compatibility diagnostic has an invalid {name}: {path}"
+        )
+    return line, character
+
+
+def _diagnostic_range(path: str, value: object) -> SourceRange:
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"runtime-observation compatibility diagnostic has an invalid range: {path}"
+        )
+    start = _diagnostic_position(path, "range start", value.get("start"))
+    end = _diagnostic_position(path, "range end", value.get("end"))
+    if start > end:
+        raise ValueError(
+            f"runtime-observation compatibility diagnostic has a reversed range: {path}"
+        )
+    return start, end
+
+
+def _compatibility_diagnostic_location(
+    path: str,
+    diagnostic: dict[object, object],
+    symbol_ranges: dict[str, SourceRange],
+) -> tuple[str, str]:
+    rule = diagnostic.get("rule")
+    if not isinstance(rule, str):
+        raise ValueError(f"runtime-observation compatibility diagnostic omitted its rule: {path}")
+    start, end = _diagnostic_range(path, diagnostic.get("range"))
+    symbol = next(
+        (
+            name
+            for name, (symbol_start, symbol_end) in symbol_ranges.items()
+            if symbol_start <= start and end <= symbol_end
+        ),
+        None,
+    )
+    if symbol is None:
+        raise ValueError(
+            "runtime-observation compatibility diagnostic escaped its expected frozen symbol: "
+            f"{path}:{start[0]}:{start[1]}-{end[0]}:{end[1]}:{rule}"
+        )
+    return symbol, rule
+
+
 def strict_exception_audit() -> dict[str, object]:
-    paths = sorted(STANDARD_ONLY | FROZEN_LEGACY_ONLY)
+    paths = sorted(STANDARD_ONLY | RUNTIME_OBSERVATION_COMPATIBILITY_ONLY)
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -290,6 +415,16 @@ def strict_exception_audit() -> dict[str, object]:
         analysis = analyze(paths, gating=False, config=Path(handle.name))
 
     counts = dict.fromkeys(paths, 0)
+    symbol_ranges: dict[str, dict[str, SourceRange]] = {}
+    for path, expected_symbols in EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS.items():
+        ranges = _top_level_symbol_ranges(path)
+        missing = set(expected_symbols) - set(ranges)
+        if missing:
+            raise ValueError(f"runtime-observation compatibility symbols are missing: {missing}")
+        symbol_ranges[path] = {symbol: ranges[symbol] for symbol in expected_symbols}
+    compatibility_counts: dict[str, dict[str, dict[str, int]]] = {
+        path: {} for path in RUNTIME_OBSERVATION_COMPATIBILITY_ONLY
+    }
     for diagnostic in analysis["generalDiagnostics"]:
         if not isinstance(diagnostic, dict):
             raise ValueError("strict exception audit returned a malformed diagnostic")
@@ -303,6 +438,14 @@ def strict_exception_audit() -> dict[str, object]:
         if path not in counts:
             raise ValueError(f"strict exception audit reported an unexpected file: {path}")
         counts[path] += 1
+        if path in RUNTIME_OBSERVATION_COMPATIBILITY_ONLY:
+            symbol, rule = _compatibility_diagnostic_location(
+                path,
+                diagnostic,
+                symbol_ranges[path],
+            )
+            rule_counts = compatibility_counts[path].setdefault(symbol, {})
+            rule_counts[rule] = rule_counts.get(rule, 0) + 1
 
     stale = [path for path, count in counts.items() if count == 0]
     if stale:
@@ -312,11 +455,17 @@ def strict_exception_audit() -> dict[str, object]:
             "strict exception diagnostic inventory mismatch: "
             f"expected={EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS} observed={counts}"
         )
+    if compatibility_counts != EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS:
+        raise ValueError(
+            "runtime-observation compatibility diagnostic inventory mismatch: "
+            f"expected={EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS} "
+            f"observed={compatibility_counts}"
+        )
     return {
         "basedpyrightVersion": EXPECTED_VERSION,
         "mode": "strict exception audit",
         "standardOnly": {path: counts[path] for path in sorted(STANDARD_ONLY)},
-        "frozenLegacyOnly": {path: counts[path] for path in sorted(FROZEN_LEGACY_ONLY)},
+        "runtimeObservationCompatibilityOnly": compatibility_counts,
         "totalDiagnostics": sum(counts.values()),
     }
 
