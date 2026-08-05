@@ -27,6 +27,7 @@ const COMPLETION_ONLY = [
 	"components/ui/confirm-action.tsx",
 	"components/vault/add-keys-dialog.tsx",
 	"components/vault/vaults-surface.tsx",
+	"hosted/agents/hosted-workspace-skills-panel.tsx",
 	"hosted/billing/wallet/top-up-dialog.tsx",
 	"hosted/v2/ai-providers/ai-providers-page.tsx",
 	"hosted/v2/ai-providers/provider-connection-test.tsx",

@@ -229,8 +229,8 @@ function HostedWorkspaceSkillsPanelContent({
 								skill={item.entity}
 								cloudSkill={item.cloudProjection ?? undefined}
 								readOnly
-								readOnlyLabel={item.cloudProjection ? "Synced from Agent · Read-only" : null}
-								showVersion={Boolean(!item.desired && item.cloudProjection?.version)}
+								readOnlyLabel={item.projectionOnly ? "Synced from Agent · Read-only" : null}
+								showVersion={Boolean(item.cloudProjection?.version)}
 								actions={
 									item.desired ? (
 										<div className="flex flex-wrap items-center gap-2">
@@ -285,7 +285,7 @@ function HostedWorkspaceSkillsPanelContent({
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
 						<DialogTitle>Install skill</DialogTitle>
-						<DialogDescription>Install a GitHub Skill into this Workspace.</DialogDescription>
+						<DialogDescription>Install from a public GitHub Skill repository.</DialogDescription>
 					</DialogHeader>
 					<div className="space-y-2">
 						<Label htmlFor={`hosted-workspace-skill-repo-${agentId}`}>

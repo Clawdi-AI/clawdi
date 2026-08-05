@@ -1,6 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
+import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
 	managedSkillReceiptMatchesIdentity,
@@ -18,10 +18,10 @@ export interface HostedHermesSkillExactSourceDriver {
 	install(input: {
 		home: string;
 		appRoot: string;
-		skill: PreparedHostedCatalogSkill;
+		skill: PreparedHostedSourcedSkill;
 		previouslyReserved: boolean;
 	}): "installed" | "unchanged";
-	verifyOwned(input: { home: string; appRoot: string; skill: PreparedHostedCatalogSkill }): boolean;
+	verifyOwned(input: { home: string; appRoot: string; skill: PreparedHostedSourcedSkill }): boolean;
 	uninstall(input: {
 		home: string;
 		appRoot: string;
@@ -52,7 +52,7 @@ function receiptInput(home: string, skillId: string, ownershipIdentity: string) 
 	};
 }
 
-function rawSkillUrl(skill: PreparedHostedCatalogSkill): string {
+function rawSkillUrl(skill: PreparedHostedSourcedSkill): string {
 	const repository = new URL(skill.source.url);
 	const [owner, repo] = repository.pathname.slice(1).split("/");
 	if (!owner || !repo)

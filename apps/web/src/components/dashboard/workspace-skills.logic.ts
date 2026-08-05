@@ -22,6 +22,7 @@ export type WorkspaceRuntimeSkill = {
 	entity: SkillCardEntity;
 	cloudProjection: SkillSummary | null;
 	desired: HostedWorkspaceSkillDesiredItem | null;
+	projectionOnly: boolean;
 };
 
 export function workspaceSkillMutationsAvailable(
@@ -43,17 +44,25 @@ export function mergeWorkspaceRuntimeSkills(
 		.map((skillKey): WorkspaceRuntimeSkill => {
 			const projection = projectionByKey.get(skillKey);
 			const desired = desiredByKey.get(skillKey);
+			const desiredSource = desired
+				? [desired.source.url.replace("https://github.com/", ""), desired.source.path]
+						.filter(Boolean)
+						.join("/")
+				: null;
 			return {
 				entity:
-					projection ??
-					workspaceRuntimeSkillEntity(skillKey, {
-						name: skillKey,
-						description: null,
-						source: "Agent Workspace",
-						sourceRepo: desired?.source.url ?? null,
-					}),
+					projection && desired
+						? { ...projection, source: "Agent Workspace", source_repo: desiredSource }
+						: (projection ??
+							workspaceRuntimeSkillEntity(skillKey, {
+								name: skillKey,
+								description: null,
+								source: "Agent Workspace",
+								sourceRepo: desiredSource,
+							})),
 				cloudProjection: projection ?? null,
 				desired: desired ?? null,
+				projectionOnly: Boolean(projection && !desired),
 			};
 		})
 		.sort(

@@ -53,9 +53,9 @@ describe("Workspace Skill runtime authority", () => {
 		expect(workspaceSkillMutationsAvailable(undefined, null)).toBe(false);
 	});
 
-	test("keeps manifest desired state authoritative and agent_sync projections read-only", () => {
+	test("keeps Workspace desired state authoritative and only projection-only Skills read-only", () => {
 		const inventory = mergeWorkspaceRuntimeSkills(
-			[projection("projected")],
+			[projection("projected"), projection("manifest-owned")],
 			[
 				{
 					skill_key: "manifest-owned",
@@ -85,18 +85,20 @@ describe("Workspace Skill runtime authority", () => {
 		expect(inventory.find((item) => item.entity.skill_key === "projected")).toMatchObject({
 			desired: null,
 			cloudProjection: { authority: "agent_sync" },
+			projectionOnly: true,
 		});
 		const manifestOwned = inventory.find((item) => item.entity.skill_key === "manifest-owned");
 		expect(manifestOwned).toMatchObject({
 			desired: { status: "managed" },
-			cloudProjection: null,
+			cloudProjection: { authority: "agent_sync" },
+			projectionOnly: false,
 		});
-		expect(manifestOwned?.entity).toEqual({
+		expect(manifestOwned?.entity).toMatchObject({
 			skill_key: "manifest-owned",
 			name: "manifest-owned",
-			description: null,
+			description: "Cloud projection",
 			source: "Agent Workspace",
-			source_repo: "https://github.com/example/skills",
+			source_repo: "example/skills/skills/manifest-owned",
 		});
 		expect(inventory.find((item) => item.entity.skill_key === "failed")?.desired).toMatchObject({
 			status: "failed",

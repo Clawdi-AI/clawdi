@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
 import { hostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
+import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 
 const originalEnv = { ...process.env };
 let root = "";
@@ -93,7 +93,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			path: "",
 			commit: "a".repeat(40),
 		};
-		const skill: PreparedHostedCatalogSkill = {
+		const skill: PreparedHostedSourcedSkill = {
 			skillId: "review-pr",
 			source,
 			sourceIdentity: `github\0review-pr\0https://github.com/Clawdi-AI/store\0\0${"a".repeat(40)}`,

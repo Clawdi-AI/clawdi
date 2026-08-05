@@ -81,7 +81,6 @@ import {
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
-import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
 import { managedMcpHeaderPlaceholder, normalizeSecretRef } from "./hosted-egress-profiles";
 import {
 	type HostedHermesSkillExactSourceDriver,
@@ -98,6 +97,7 @@ import {
 	requiresManagedGatewayModelProbe,
 	resolveManagedGatewayModelOverrides,
 } from "./hosted-provider-resolution";
+import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	emptyRuntimeInstallReceipts,
 	type RuntimeInstallReceiptEntry,
@@ -3671,7 +3671,7 @@ function validateHostedSkillsPlan(
 	manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
-	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): void {
 	if (!hostedBundledSkillsEnabled()) return;
 	for (const [skillName, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
@@ -3691,7 +3691,7 @@ function validateHostedSkillsPlan(
 				desired.enabled !== true
 			)
 				continue;
-			const prepared = preparedCatalogSkills.get(skillName);
+			const prepared = preparedSourcedSkills.get(skillName);
 			if (!prepared || JSON.stringify(prepared.source) !== JSON.stringify(desired.source)) {
 				throw new Error(`pinned archive for hosted Skill ${skillName} is unavailable`);
 			}
@@ -3716,10 +3716,10 @@ function validateHostedSkillsPlan(
 	}
 }
 
-function recoverHostedCatalogSkillReservations(
+function recoverHostedSourcedSkillReservations(
 	manifest: RuntimeManifest,
 	home: string,
-	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 	nativeReconciler: HostedHermesSkillExactSourceDriver,
 ): void {
 	if (!hostedBundledSkillsEnabled() || manifest.runtimes.hermes?.enabled !== true) return;
@@ -3742,7 +3742,7 @@ function recoverHostedCatalogSkillReservations(
 		) {
 			continue;
 		}
-		const prepared = preparedCatalogSkills.get(skillId);
+		const prepared = preparedSourcedSkills.get(skillId);
 		if (!prepared || JSON.stringify(prepared.source) !== JSON.stringify(desired.source)) {
 			continue;
 		}
@@ -3756,10 +3756,10 @@ function recoverHostedCatalogSkillReservations(
 	}
 }
 
-function recoverHostedOpenClawCatalogSkillReservations(
+function recoverHostedOpenClawSourcedSkillReservations(
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
-	prepared: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+	prepared: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 	driver: HostedOpenClawSkillDriver,
 ): void {
 	if (!hostedBundledSkillsEnabled() || manifest.runtimes.openclaw?.enabled !== true) return;
@@ -3881,11 +3881,11 @@ function applyHostedBundledSkills(
 	return targets;
 }
 
-function applyHostedCatalogSkills(
+function applyHostedSourcedSkills(
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
 	home: string,
-	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 	nativeReconciler: HostedHermesSkillExactSourceDriver,
 ): string[] {
 	const skillsRoot = join(home, ".hermes", "skills");
@@ -3931,7 +3931,7 @@ function applyHostedCatalogSkills(
 			continue;
 		}
 		if (!observation?.enabled || observation.status === "install_failed") continue;
-		const prepared = preparedCatalogSkills.get(skillId);
+		const prepared = preparedSourcedSkills.get(skillId);
 		if (!prepared) throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
 		const owner = managedSkillReservationOwner(targetDir, skillId);
 		if (existsSync(targetDir) && owner !== "hosted-manifest") {
@@ -3956,12 +3956,12 @@ function applyHostedCatalogSkills(
 	return targets;
 }
 
-function applyHostedOpenClawCatalogSkills(
+function applyHostedOpenClawSourcedSkills(
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
-	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 	driver: HostedOpenClawSkillDriver,
 ): string[] {
 	const skillsRoot = join(workspaceRoot, "skills");
@@ -4004,7 +4004,7 @@ function applyHostedOpenClawCatalogSkills(
 			continue;
 		}
 		if (!observation?.enabled || observation.status === "install_failed") continue;
-		const prepared = preparedCatalogSkills.get(skillId);
+		const prepared = preparedSourcedSkills.get(skillId);
 		if (!prepared) throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
 		const owner = managedSkillReservationOwner(targetDir, skillId);
 		if (existsSync(targetDir) && owner !== "hosted-manifest")
@@ -4733,12 +4733,12 @@ function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> 
 function validateRuntimeManifestPlan(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
-	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): void {
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	for (const name of HOSTED_RUNTIME_TARGETS) {
-		validateHostedSkillsPlan(name, manifest, home, workspaceRoot, preparedCatalogSkills);
+		validateHostedSkillsPlan(name, manifest, home, workspaceRoot, preparedSourcedSkills);
 	}
 	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
 		const runtimeName = runtimeNameSchema.parse(name);
@@ -5266,11 +5266,11 @@ export function runtimeUserMutationTargets(
 	}
 	const hermesSkillsRoot = join(home, ".hermes", "skills");
 	const openClawSkillsRoot = join(workspaceRoot, "skills");
-	let managesHermesCatalogSkill = false;
+	let managesHermesSourcedSkill = false;
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
 		if (!("source" in desired)) continue;
 		if (manifest.runtimes.hermes?.enabled === true) {
-			managesHermesCatalogSkill = true;
+			managesHermesSourcedSkill = true;
 			targets.add(join(hermesSkillsRoot, skillId));
 		}
 		if (manifest.runtimes.openclaw?.enabled === true)
@@ -5281,7 +5281,7 @@ export function runtimeUserMutationTargets(
 			dirname(reservation.targetDir) === hermesSkillsRoot &&
 			!hostedBundledSkillIds().includes(reservation.id)
 		) {
-			managesHermesCatalogSkill = true;
+			managesHermesSourcedSkill = true;
 			targets.add(reservation.targetDir);
 		}
 		if (
@@ -5290,7 +5290,7 @@ export function runtimeUserMutationTargets(
 		)
 			targets.add(reservation.targetDir);
 	}
-	if (managesHermesCatalogSkill) targets.add(join(hermesSkillsRoot, ".hub"));
+	if (managesHermesSourcedSkill) targets.add(join(hermesSkillsRoot, ".hub"));
 	return [...targets].sort();
 }
 
@@ -5460,7 +5460,7 @@ export function convergeRuntimeManifest(
 		egressEngineEnsureOptions?: EnsureRuntimeMitmproxyOptions;
 		systemdApply?: RuntimeSystemdApplyHooks;
 		executeOfficialServiceInstallers?: boolean;
-		preparedHostedCatalogSkills?: ReadonlyMap<string, PreparedHostedCatalogSkill>;
+		preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
 		hostedHermesSkillExactSourceDriver?: HostedHermesSkillExactSourceDriver;
 		hostedOpenClawSkillDriver?: HostedOpenClawSkillDriver;
 	} = {},
@@ -5507,23 +5507,23 @@ export function convergeRuntimeManifest(
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
 	const observations = new Map<string, RuntimeInstallObservation>();
 
-	const preparedHostedCatalogSkills = opts.preparedHostedCatalogSkills ?? new Map();
+	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const hermesSkillNativeReconciler =
 		opts.hostedHermesSkillExactSourceDriver ?? hostedHermesSkillExactSourceDriver;
 	const openClawSkillDriver = opts.hostedOpenClawSkillDriver ?? hostedOpenClawSkillDriver;
-	recoverHostedCatalogSkillReservations(
+	recoverHostedSourcedSkillReservations(
 		manifest,
 		projectionHome,
-		preparedHostedCatalogSkills,
+		preparedHostedSourcedSkills,
 		hermesSkillNativeReconciler,
 	);
-	recoverHostedOpenClawCatalogSkillReservations(
+	recoverHostedOpenClawSourcedSkillReservations(
 		manifest,
 		workspaceRoot,
-		preparedHostedCatalogSkills,
+		preparedHostedSourcedSkills,
 		openClawSkillDriver,
 	);
-	validateRuntimeManifestPlan(manifest, paths, preparedHostedCatalogSkills);
+	validateRuntimeManifestPlan(manifest, paths, preparedHostedSourcedSkills);
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = planRuntimeInstallObservation(name, runtime, projectionHome);
 		observations.set(name, observation);
@@ -5984,32 +5984,32 @@ export function convergeRuntimeManifest(
 			}
 		}
 		try {
-			applyHostedCatalogSkills(
+			applyHostedSourcedSkills(
 				observations.get("hermes"),
 				manifest,
 				projectionHome,
-				preparedHostedCatalogSkills,
+				preparedHostedSourcedSkills,
 				hermesSkillNativeReconciler,
 			);
 		} catch (error) {
 			installErrors.push(
-				`runtime hermes catalog Skill projection failed: ${
+				`runtime hermes sourced Skill projection failed: ${
 					error instanceof Error ? error.message : String(error)
 				}`,
 			);
 		}
 		try {
-			applyHostedOpenClawCatalogSkills(
+			applyHostedOpenClawSourcedSkills(
 				observations.get("openclaw"),
 				manifest,
 				projectionHome,
 				workspaceRoot,
-				preparedHostedCatalogSkills,
+				preparedHostedSourcedSkills,
 				openClawSkillDriver,
 			);
 		} catch (error) {
 			installErrors.push(
-				`runtime openclaw catalog Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+				`runtime openclaw sourced Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}
 		try {
