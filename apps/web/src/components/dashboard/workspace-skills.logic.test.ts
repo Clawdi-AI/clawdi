@@ -113,9 +113,9 @@ describe("Workspace Skill runtime authority", () => {
 			repo: "owner/repo",
 			path: undefined,
 		});
-		expect(parseWorkspaceSkillGitHubInput("  owner/repo/path with spaces/  ")).toEqual({
+		expect(parseWorkspaceSkillGitHubInput("  owner/repo/path with spaces/@team:skill/  ")).toEqual({
 			repo: "owner/repo",
-			path: "path with spaces",
+			path: "path with spaces/@team:skill",
 		});
 		expect(() => parseWorkspaceSkillGitHubInput("missing-repo")).toThrow("owner/repo");
 		expect(() => parseWorkspaceSkillGitHubInput("https://gitlab.com/owner/repo")).toThrow(

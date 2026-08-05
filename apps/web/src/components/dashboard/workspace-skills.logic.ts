@@ -90,9 +90,6 @@ export function parseWorkspaceSkillGitHubInput(input: string): HostedWorkspaceSk
 			throw new Error("Enter a valid GitHub repository URL.");
 		}
 	} else {
-		if (/[?#@:\\]/.test(clean) || clean.startsWith("github.com/")) {
-			throw new Error("Enter as `owner/repo` or use a canonical github.com URL.");
-		}
 		repositoryPath = clean.replace(/\/$/, "");
 	}
 	const parts = repositoryPath.split("/");
