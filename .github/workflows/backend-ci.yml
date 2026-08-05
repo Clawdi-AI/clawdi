@@ -18,6 +18,8 @@ on:
       - "bun.lock"
       - "scripts/openapi-typescript.sh"
       - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+      - "scripts/deploy-whatsapp-sidecar.sh"
+      - "scripts/test-deploy-whatsapp-sidecar.sh"
       - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
@@ -41,6 +43,8 @@ on:
       - "bun.lock"
       - "scripts/openapi-typescript.sh"
       - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+      - "scripts/deploy-whatsapp-sidecar.sh"
+      - "scripts/test-deploy-whatsapp-sidecar.sh"
       - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
@@ -89,6 +93,8 @@ jobs:
               - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
               - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
               - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+              - "scripts/deploy-whatsapp-sidecar.sh"
+              - "scripts/test-deploy-whatsapp-sidecar.sh"
               - "scripts/check_postgres_image_parity.py"
               - "config/deploy.yml"
               - "config/postgres-image.txt"
@@ -110,6 +116,8 @@ jobs:
               - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
               - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
               - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+              - "scripts/deploy-whatsapp-sidecar.sh"
+              - "scripts/test-deploy-whatsapp-sidecar.sh"
               - "config/deploy.yml"
               - "package.json"
               - "bun.lock"
@@ -257,6 +265,7 @@ jobs:
         run: |
           gem install kamal -v '2.12.0' --no-document
           scripts/test-kamal-whatsapp-sidecar-render.sh
+          scripts/test-deploy-whatsapp-sidecar.sh
       - name: Build production sidecar image
         run: >-
           docker build

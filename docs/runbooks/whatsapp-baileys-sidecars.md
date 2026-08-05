@@ -63,19 +63,31 @@ The exit-node argument explicitly disables LAN access.
 container replacements reuse the persisted node identity instead of requiring
 the key to remain valid.
 
-The release workflow treats both containers as one ordered unit. A changed or
-missing egress container is recreated first; the gate then requires a
-successful `tailscale ping` to the configured exit node and requires
-`https://api.ipify.org` to return the configured public IPv4. Only after both
-checks pass is Baileys recreated against the new network namespace. Failure
-stops the deployment before the real Baileys process starts, so there is no
-silent direct fallback. Changes to the egress image, exit node, or expected IP
-alter its non-secret configuration label and trigger this sequence even when
-the Baileys image itself is unchanged.
+Network namespace sharing changes outbound networking only. It does not carry
+the local control channel: both backend roles continue to mount
+`/home/phala/clawdi-whatsapp/run` read-only at `/run/clawdi-whatsapp`, while
+Baileys mounts the same host directory read-write and listens on
+`/run/clawdi-whatsapp/sidecar.sock`. The UDS therefore remains host-volume
+communication and is independent of bridge versus Tailscale networking.
+
+The release workflow treats both containers as one ordered unit. When egress is
+missing, stopped, or changed, it first stops the old Baileys process, then
+recreates egress. The old process therefore cannot continue using bridge or a
+stale namespace while cutover is being proved. Every enabled release—not only
+one that recreates containers—requires a successful `tailscale ping` to the
+configured exit node and requires `https://api.ipify.org` to return the exact
+configured public IPv4. Only after both checks pass is Baileys recreated when
+needed against the live namespace. If a cutover preflight fails after the old
+Baileys process was stopped, it remains stopped; there is no silent direct
+fallback. Changes to the egress image, exit node, or
+expected IP alter its non-secret configuration label and trigger this sequence
+even when the Baileys image itself is unchanged.
 
 To disable egress, set the activation variable to `false` (or remove it) and
 release. The rendered Baileys accessory returns to `bridge`; its normal
-deployment revision causes it to be recreated without the namespace binding.
+deployment explicitly compares Docker's actual `HostConfig.NetworkMode` with
+the desired mode and recreates it without the namespace binding. This does not
+depend on an image/deployment revision changing.
 After that release is healthy, an operator may stop and remove the now-unused
 Tailscale accessory in a separate deliberate maintenance action. Preserve its
 state directory unless intentionally revoking the Tailscale node identity.

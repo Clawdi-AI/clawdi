@@ -93,6 +93,25 @@ config.accessories.each do |accessory|
   raise "#{accessory.name} retained a json-file log option" if command.include?("--log-opt")
 end
 
+whatsapp_command = Kamal::Commands::Accessory.new(config, name: "whatsapp-baileys").run
+app_socket_volume = "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro"
+unless config.raw_config.volumes.include?(app_socket_volume)
+  raise "backend roles lost the read-only WhatsApp Unix socket directory"
+end
+unless whatsapp_command.each_cons(2).include?([ "--network", "bridge" ])
+  raise "disabled WhatsApp sidecar did not render bridge networking"
+end
+unless whatsapp_command.each_cons(2).include?(
+  [ "--volume", "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp" ]
+)
+  raise "WhatsApp sidecar lost its read-write Unix socket directory"
+end
+unless whatsapp_command.include?(
+  'CLAWDI_WA_SIDECAR_SOCKET_PATH="/run/clawdi-whatsapp/sidecar.sock"'
+)
+  raise "WhatsApp sidecar socket path drifted"
+end
+
 proxy_args = config.proxy_run(config.primary_host).docker_options_args
 unless proxy_args.each_cons(2).include?(expected_logging_args)
   raise "kamal-proxy logging did not render journald"
@@ -113,6 +132,7 @@ grep -Fq 'CLAWDI_WA_SIDECAR_STATE_ROOT: "/data"' "${rendered_config}"
 grep -Fq 'CLAWDI_WA_SIDECAR_SOCKET_PATH: "/run/clawdi-whatsapp/sidecar.sock"' \
 	"${rendered_config}"
 grep -Fq 'network: bridge' "${rendered_config}"
+grep -Fq '/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro' "${rendered_config}"
 test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_config}")" -eq 0
 
 test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_egress_config}")" -eq 1
@@ -127,3 +147,6 @@ grep -Fq 'io.clawdi.whatsapp-egress.config-revision: aaaaaaaaaaaaaaaaaaaaaaaaaaa
 grep -Fq 'TS_EXTRA_ARGS: "--exit-node=exit-node.example.ts.net --exit-node-allow-lan-access=false"' \
 	"${rendered_egress_config}"
 grep -Fq 'local: "/home/phala/clawdi-whatsapp/tailscale-state"' "${rendered_egress_config}"
+grep -Fq 'local: "/home/phala/clawdi-whatsapp/run"' "${rendered_egress_config}"
+grep -Fq 'CLAWDI_WA_SIDECAR_SOCKET_PATH: "/run/clawdi-whatsapp/sidecar.sock"' \
+	"${rendered_egress_config}"

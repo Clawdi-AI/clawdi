@@ -8,6 +8,10 @@ const workflow = readFileSync(
 	resolve(repoRoot, ".github/workflows/clawdi-image-release.yml"),
 	"utf8",
 );
+const deployHelper = readFileSync(
+	resolve(repoRoot, "scripts/deploy-whatsapp-sidecar.sh"),
+	"utf8",
+);
 const dockerfile = readFileSync(
 	resolve(repoRoot, "packages/whatsapp-baileys-sidecar/Dockerfile"),
 	"utf8",
@@ -39,30 +43,42 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy).toContain("device: /dev/net/tun:/dev/net/tun");
 		expect(deploy).toContain("cap-add: NET_ADMIN");
 		expect(deploy).toContain("TS_AUTHKEY");
+		expect(workflow).toContain('*[!A-Za-z0-9_-]*|"")');
+		expect(workflow).toContain('[ "${#TS_AUTHKEY}" -lt 20 ]');
+		expect(workflow).toContain('[ "${#TS_AUTHKEY}" -gt 512 ]');
 	});
 
-	test("health-checks the singleton before deploying the backend", () => {
-		const egressReboot = workflow.indexOf("kamal accessory reboot whatsapp-tailscale");
-		const egressPing = workflow.indexOf("tailscale ping --timeout=10s", egressReboot);
-		const publicIpGate = workflow.indexOf("https://api.ipify.org", egressPing);
-		const reboot = workflow.indexOf("kamal accessory reboot whatsapp-baileys");
-		const health = workflow.indexOf("dist/healthcheck.js", reboot);
+	test("cuts over the network pair fail-closed before deploying the backend", () => {
+		const helperCall = workflow.indexOf("scripts/deploy-whatsapp-sidecar.sh");
 		const appDeploy = workflow.indexOf(
 			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
 		);
 
-		expect(egressReboot).toBeGreaterThan(0);
-		expect(egressPing).toBeGreaterThan(egressReboot);
-		expect(publicIpGate).toBeGreaterThan(egressPing);
-		expect(reboot).toBeGreaterThan(publicIpGate);
-		expect(health).toBeGreaterThan(reboot);
-		expect(appDeploy).toBeGreaterThan(health);
+		expect(helperCall).toBeGreaterThan(0);
+		expect(appDeploy).toBeGreaterThan(helperCall);
 		expect(workflow).toContain("Build and push WhatsApp sidecar image");
-		expect(workflow).toContain(
-			`ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:\${{ needs.build.outputs.image_tag }}`,
+		expect(deployHelper).toContain(
+			"ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:${DEPLOY_IMAGE_VERSION}",
 		);
-		expect(workflow).toContain("kamal accessory directories whatsapp-baileys");
-		expect(workflow).toContain("docker container inspect --format '{{.Config.Image}}'");
+		expect(deployHelper).toContain("kamal accessory directories whatsapp-baileys");
+		expect(workflow).toContain("scripts/deploy-whatsapp-sidecar.sh");
+		expect(deployHelper).toContain("kamal accessory stop whatsapp-baileys");
+		expect(deployHelper).toContain("kamal accessory reboot whatsapp-tailscale");
+		expect(deployHelper).toContain("kamal accessory reboot whatsapp-baileys");
+		expect(deployHelper).toContain("https://api.ipify.org");
+		expect(deployHelper).toContain("preflight_egress");
+		expect(deployHelper).toMatch(/if \[\[ "\$\{egress_enabled\}" == true \]\]; then\n\s+preflight_egress/);
+	});
+
+	test("compares desired and actual network mode independently of image revision", () => {
+		expect(deployHelper).toContain("actual_network_mode=");
+		expect(deployHelper).toContain("'{{.HostConfig.NetworkMode}}'");
+		expect(deployHelper).toContain("desired_network_mode=bridge");
+		expect(deployHelper).toContain('desired_network_mode="container:${egress_service}"');
+		expect(deployHelper).toContain(
+			'elif [[ "${actual_network_mode}" != "${desired_network_mode}" ]]; then',
+		);
+		expect(deployHelper).toContain('[[ "${egress_running}" == true && -n "${egress_sandbox_id}" ]]');
 	});
 
 	test("keeps state private and exposes only a read-only Unix socket to the app", () => {
