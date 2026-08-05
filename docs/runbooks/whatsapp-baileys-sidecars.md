@@ -68,8 +68,6 @@ the following are provisioned in the release environment:
   lowercase value is the activation switch);
 - repository variable `WHATSAPP_TAILSCALE_EXIT_NODE`, set to the stable
   Tailscale DNS name or IP of an approved exit node;
-- repository variable `WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP`, set to that exit
-  node's exact public IPv4 address;
 - repository secret `WHATSAPP_TAILSCALE_AUTHKEY`, set to a tagged, one-off,
   pre-authorized, non-ephemeral key whose ACL grants only the required tailnet
   access. Persistent state keeps the node identity after bootstrap; if that
@@ -112,7 +110,7 @@ new marker. Docker canonicalizes each consumer's network mode to
 `/proc/self/ns/net` inodes from a bounded probe joined to the current owner and
 from inside each consumer; it needs Docker access but no host `/proc/<pid>` or
 root access. Drifted consumers are rebuilt in strict infra, Tailscale, guard,
-public-IP preflight, Baileys order.
+Baileys order.
 
 The shared network namespace does not carry the local control channel: both
 backend roles continue to mount
@@ -121,12 +119,11 @@ Baileys mounts the same host directory read-write and listens on
 `/run/clawdi-whatsapp/sidecar.sock`. The UDS therefore remains host-volume
 communication and is independent of Tailscale egress.
 
-Every enabled release runs a native `fetch` as UID 1000 in the shared namespace
-and requires the exact configured public IP before starting Baileys. This check
-has no application proxy settings and exercises the transparent route. A
+Every enabled release requires the kernel Tailscale interface, matching shared
+network namespace, and IPv4/IPv6 guard rules before starting Baileys. A
 Tailscale restart does not remove guard rules because the pause container owns
 the namespace; a pause restart forces both consumers to be recreated after the
-new guard marker and exact-IP preflight.
+new guard marker.
 
 To disable egress, set the activation variable to `false` (or remove it) and
 release. Deployment compares the running network mode and namespace inode with

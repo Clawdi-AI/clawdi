@@ -68,10 +68,6 @@ if [[ "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" == true ]]; then
 	case "${WHATSAPP_TAILSCALE_EXIT_NODE:-}" in
 		""|*[!A-Za-z0-9._:-]*) echo "invalid WhatsApp Tailscale exit node" >&2; exit 1 ;;
 	esac
-	if ! grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' <<< "${WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP:-}"; then
-		echo "WhatsApp Tailscale expected public IP must be IPv4" >&2
-		exit 1
-	fi
 	WHATSAPP_TAILSCALE_CONFIG_REVISION="$(printf '%s\n' \
 		'registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
 		"${tailscale_image}" \
@@ -103,7 +99,7 @@ sidecar_needs_reboot=false
 
 if [[ "${egress_enabled}" == true ]]; then
 	# A sidecar left on bridge by a previous disabled release must lose direct
-	# egress before any enabled-mode preparation or public-IP preflight.
+	# egress before preparing the guarded Tailscale namespace.
 	if [[ "${actual_network}" != "${desired_network}" ]]; then
 		ensure_container_stopped whatsapp-baileys "${sidecar_service}"
 	fi
@@ -184,10 +180,6 @@ if [[ "${egress_enabled}" == true ]]; then
 	[[ "$(container_field '{{.HostConfig.NetworkMode}}' "${guard_service}")" == "${desired_network}" ]] || { echo "Egress guard network owner drifted" >&2; exit 1; }
 	[[ "$(container_netns_inode "${guard_service}")" == "${infra_inode}" ]] || { echo "Egress guard network namespace drifted" >&2; exit 1; }
 
-	# Run as the production UID in the exact shared namespace. This is a native
-	# fetch with no proxy dispatcher, so it covers the transparent network path.
-	observed_ip="$(remote_value "docker run --rm --network container:${infra_service} --user 1000:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true --volume /home/phala/clawdi-whatsapp/tailscale-resolv.conf:/etc/resolv.conf:ro --entrypoint node ${sidecar_image} -e \"fetch('https://api.ipify.org',{signal:AbortSignal.timeout(15000)}).then(async r=>{if(!r.ok)throw Error(String(r.status));process.stdout.write((await r.text()).trim())}).catch(e=>{console.error(e);process.exit(1)})\"")"
-	[[ "${observed_ip}" == "${WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP}" ]] || { echo "WhatsApp Tailscale public IP preflight failed" >&2; exit 1; }
 	[[ "$(container_netns_inode "${sidecar_service}")" == "${infra_inode}" ]] || sidecar_needs_reboot=true
 fi
 

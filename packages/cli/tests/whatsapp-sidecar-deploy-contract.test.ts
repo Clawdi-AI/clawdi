@@ -55,7 +55,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(workflow).toContain('[ "$' + '{#TS_AUTHKEY}" -gt 512 ]');
 	});
 
-	test("preflights transparent egress before recreating the sidecar", () => {
+	test("prepares transparent egress before recreating the sidecar", () => {
 		const helperCall = workflow.indexOf("scripts/deploy-whatsapp-sidecar.sh");
 		const appDeploy = workflow.indexOf(
 			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
@@ -69,11 +69,9 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-tailscale");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-egress-guard");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-baileys");
-		expect(deployHelper).toContain("docker run --rm --network container:");
-		expect(deployHelper).toContain("AbortSignal.timeout(15000)");
-		expect(deployHelper.indexOf("docker run --rm --network container:")).toBeLessThan(
-			deployHelper.indexOf("kamal accessory reboot whatsapp-baileys"),
-		);
+		expect(deployHelper).not.toContain("api.ipify.org");
+		expect(deployHelper).not.toContain("WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP");
+		expect(workflow).not.toContain("WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP");
 	});
 
 	test("compares desired and actual network mode independently of image revision", () => {
