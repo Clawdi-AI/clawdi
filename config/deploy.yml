@@ -146,7 +146,8 @@ accessories:
         TS_STATE_DIR: /var/lib/tailscale
         TS_USERSPACE: "false"
         TS_AUTH_ONCE: "true"
-        TS_ACCEPT_DNS: "false"
+        # Quad100 only receives exit-node/default resolvers when CorpDNS is on.
+        TS_ACCEPT_DNS: "true"
         TS_EXTRA_ARGS: "--exit-node=<%= ENV.fetch('WHATSAPP_TAILSCALE_EXIT_NODE') %> --exit-node-allow-lan-access=false"
         TS_HOSTNAME: clawdi-whatsapp-egress
       secret:

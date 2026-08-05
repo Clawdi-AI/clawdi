@@ -183,6 +183,7 @@ grep -Fq 'image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5
 	"${rendered_egress_config}"
 test "$(grep -Fc 'network: container:clawdi-whatsapp-netns' "${rendered_egress_config}")" -eq 3
 grep -Fq "TS_USERSPACE: 'false'" "${rendered_egress_config}"
+grep -Fq "TS_ACCEPT_DNS: 'true'" "${rendered_egress_config}"
 grep -Fq '      - NET_ADMIN' "${rendered_egress_config}"
 grep -Fq '      - NET_RAW' "${rendered_egress_config}"
 grep -Fq 'device: /dev/net/tun:/dev/net/tun' "${rendered_egress_config}"

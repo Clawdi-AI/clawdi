@@ -74,6 +74,11 @@ reach the Tailscale control plane and DERP. If `tailscale0` or its route
 disappears, Baileys traffic selects the bridge interface and is rejected rather
 than falling back. Baileys uses `100.100.100.100` through a read-only resolver
 file, so Docker's `127.0.0.11` underlay DNS is not an escape path.
+`TS_ACCEPT_DNS=true` is still required: in v1.98.10, disabled CorpDNS returns
+from `dnsConfigForNetmap` before exit-node/default resolvers are populated for
+Quad100. Enabling it makes Quad100 use the tailnet and exit-node DNS policy;
+the resolver file only directs Baileys' separate mount namespace to that
+official Tailscale resolver.
 
 The guard atomically writes a marker containing the current host boot ID and
 network-namespace inode only after installing its rules. Baileys validates the
@@ -81,8 +86,11 @@ read-only marker before loading configuration; a host reboot, namespace owner
 restart, stale marker, or guard startup race therefore keeps the process down.
 Docker restores the namespace owner before `container:` consumers after an
 ordinary daemon restart, and the guard recreates rules before publishing the
-new marker. The deploy helper independently compares `/proc/<pid>/ns/net`
-inodes and rebuilds drifted consumers in strict infra, Tailscale, guard,
+new marker. Docker canonicalizes each consumer's network mode to
+`container:<full-infra-id>`. The deploy helper verifies that value and compares
+`/proc/self/ns/net` inodes from a bounded probe joined to the current owner and
+from inside each consumer; it needs Docker access but no host `/proc/<pid>` or
+root access. Drifted consumers are rebuilt in strict infra, Tailscale, guard,
 public-IP preflight, Baileys order.
 
 The shared network namespace does not carry the local control channel: both
@@ -110,6 +118,7 @@ Upstream contracts:
 
 - [Tailscale Docker image parameters](https://tailscale.com/kb/1282/docker)
 - [Tailscale containerboot environment contract](https://github.com/tailscale/tailscale/blob/v1.98.10/cmd/containerboot/main.go#L14-L58)
+- [Tailscale v1.98.10 Quad100/default-resolver construction](https://github.com/tailscale/tailscale/blob/v1.98.10/ipn/ipnlocal/node_backend.go#L736-L950)
 - [Docker container network mode](https://docs.docker.com/engine/network/#container-networks)
 - [Tailscale kernel-mode TUN setup](https://github.com/tailscale/tailscale/blob/v1.98.10/cmd/containerboot/main.go#L182-L186)
 - [Kamal 2.12 accessory lifecycle](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L78-L89)

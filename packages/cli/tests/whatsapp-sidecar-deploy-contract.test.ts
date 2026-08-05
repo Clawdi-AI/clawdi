@@ -41,6 +41,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		);
 		expect(deploy).toContain("TS_STATE_DIR: /var/lib/tailscale");
 		expect(deploy).toContain('TS_USERSPACE: "false"');
+		expect(deploy).toContain('TS_ACCEPT_DNS: "true"');
 		expect(deploy).toContain('TS_AUTH_ONCE: "true"');
 		expect(deploy).toContain("--exit-node-allow-lan-access=false");
 		expect(deploy).toContain("/dev/net/tun:/dev/net/tun");
@@ -50,8 +51,8 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy).toContain("network-namespace.ready");
 		expect(deploy).toContain("TS_AUTHKEY");
 		expect(workflow).toContain('*[!A-Za-z0-9_-]*|"")');
-		expect(workflow).toContain('[ "${#TS_AUTHKEY}" -lt 20 ]');
-		expect(workflow).toContain('[ "${#TS_AUTHKEY}" -gt 512 ]');
+		expect(workflow).toContain('[ "$' + '{#TS_AUTHKEY}" -lt 20 ]');
+		expect(workflow).toContain('[ "$' + '{#TS_AUTHKEY}" -gt 512 ]');
 	});
 
 	test("preflights transparent egress before recreating the sidecar", () => {
@@ -77,9 +78,11 @@ describe("WhatsApp sidecar production deployment contract", () => {
 	test("compares desired and actual network mode independently of image revision", () => {
 		expect(deployHelper).toContain("actual_network=");
 		expect(deployHelper).toContain("'{{.HostConfig.NetworkMode}}'");
-		expect(deployHelper).toContain('[[ "${actual_network}" == "${desired_network}" ]]');
-		expect(deployHelper).toContain("container_netns_inode");
-		expect(deployHelper).toContain("/proc/${pid}/ns/net");
+		expect(deployHelper).toContain('[[ "$' + '{actual_network}" == "$' + '{desired_network}" ]]');
+		expect(deployHelper).toContain("infra_netns_inode");
+		expect(deployHelper).toContain("docker exec '$1' stat -Lc %i /proc/self/ns/net");
+		expect(deployHelper).toContain('desired_network="container:$' + '{infra_id}"');
+		expect(deployHelper).not.toContain("/proc/$" + "{pid}/ns/net");
 	});
 
 	test("keeps state private and exposes only a read-only Unix socket to the app", () => {
