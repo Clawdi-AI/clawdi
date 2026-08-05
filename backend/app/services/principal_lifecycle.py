@@ -9,6 +9,7 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.agent_project_binding import AgentProjectBinding
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload, AiProviderOAuthAttempt
 from app.models.api_key import ApiKey
 from app.models.channel import (
@@ -46,6 +47,10 @@ from app.models.session_permission import SessionPermission
 from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.services.ai_provider_auth_transition import transition_ai_provider_auth
 from app.services.ai_provider_oauth_lifecycle import terminal_oauth_attempt
+from app.services.project_runtime_skills import (
+    lock_project_runtime_graphs,
+    queue_project_runtime_manifest_changed,
+)
 from app.services.runtime_observation import retire_runtime_environment
 
 
@@ -531,6 +536,28 @@ async def complete_principal_cleanup(
         _mark_principal_cleanup_complete(lifecycle, completed_at=current_time)
         await db.flush()
         return PrincipalCleanupResult(user_disabled=False)
+
+    # Owner deletion removes every other user's access to the owner's Projects.
+    # Take all Project locks before any affected Agent lock, notify managed
+    # Agents, and remove their links in this same transaction. Otherwise those
+    # Agents would keep a stale desired bundle until their next periodic poll.
+    owned_project_id_values = tuple(
+        (
+            await db.scalars(
+                select(Project.id).where(Project.user_id == user.id).order_by(Project.id)
+            )
+        ).all()
+    )
+    await lock_project_runtime_graphs(db, owned_project_id_values)
+    for project_id in owned_project_id_values:
+        await queue_project_runtime_manifest_changed(db, project_id=project_id)
+    if owned_project_id_values:
+        await db.execute(
+            delete(AgentProjectBinding).where(
+                AgentProjectBinding.project_id.in_(owned_project_id_values),
+                AgentProjectBinding.binding_type == "context",
+            )
+        )
 
     key_ids = tuple(
         (

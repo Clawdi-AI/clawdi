@@ -147,6 +147,29 @@ describe("managed Skill reservations", () => {
 		expect(managedSkillReservationState(path, "example")).toBe("unreserved");
 	});
 
+	it("accepts the canonical Project Skill source identity", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		const path = target();
+		const sourceIdentity = [
+			"clawdi",
+			"example",
+			"22222222-2222-4222-8222-222222222222",
+			"a".repeat(64),
+		].join("\0");
+
+		expect(
+			reserveManagedSkill({
+				targetDir: path,
+				id: "example",
+				manager: "hosted-manifest",
+				sourceIdentity,
+			}),
+		).toBe("created");
+		expect(managedSkillReservationState(path, "example")).toBe("reserved");
+	});
+
 	it("reports malformed ownership state instead of silently hiding Skills", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.HOME = root;

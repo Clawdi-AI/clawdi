@@ -1,8 +1,8 @@
 "use client";
 
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { ChevronDown, Plus, Share2 } from "lucide-react";
+import { Plus, Share2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -10,19 +10,11 @@ import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import {
-	displayProjectName,
-	isCustomProject,
-	type ProjectAgentMetadata,
-	projectAgentFor,
-	projectAgentLabel,
-	projectKindSortRank,
-} from "@/components/projects/project-metadata";
+import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
 import {
 	ProjectResourceCard,
 	ProjectResourceCardSkeleton,
 } from "@/components/projects/project-resource-card";
-import { SectionLabel } from "@/components/section-label";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,31 +27,27 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
-import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
+import { ApiError, useOpenApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
-import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 
-type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type ProjectCreate = components["schemas"]["ProjectCreate"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
-type CountValue = number | "unavailable";
 
 const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
 export default function ProjectsPage() {
-	const api = useApi();
 	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const [newProjectName, setNewProjectName] = useState("");
 	const [newProjectSlug, setNewProjectSlug] = useState("");
+	const [newProjectDescription, setNewProjectDescription] = useState("");
 	const [createOpen, setCreateOpen] = useState(false);
 	const [search, setSearch] = useState("");
-	const [systemOpen, setSystemOpen] = useState(false);
 
 	const projects = $api.useQuery(
 		"get",
@@ -71,62 +59,8 @@ export default function ProjectsPage() {
 	);
 
 	const rows = projects.data ?? [];
-	const environments = $api.useQuery(
-		"get",
-		"/v1/agents",
-		{},
-		{
-			enabled: rows.some((project) => project.kind === "environment"),
-		},
-	);
-	const agentsById = useMemo(
-		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
-		[environments.data],
-	);
 
-	// Per-project resource counts for the cards. Shares the skills cache with
-	// the Skills page (same queryKey); vault list carries project_ids.
-	const skills = useQuery({
-		queryKey: ["skills", "all-projects"],
-		queryFn: async () =>
-			fetchAllPages<SkillSummary>(
-				async (page, pageSize) =>
-					unwrap(await api.GET("/v1/skills", { params: { query: { page, page_size: pageSize } } })),
-				{ pageSize: 200, resourceName: "skills" },
-			),
-		placeholderData: keepPreviousData,
-	});
-	const vaults = $api.useQuery(
-		"get",
-		"/v1/vault",
-		{
-			params: { query: { page_size: 200 } },
-		},
-		{
-			placeholderData: keepPreviousData,
-		},
-	);
-	const skillCounts = useMemo(() => {
-		const m = new Map<string, number>();
-		for (const s of skills.data?.items ?? []) {
-			if (s.project_id) m.set(s.project_id, (m.get(s.project_id) ?? 0) + 1);
-		}
-		return m;
-	}, [skills.data]);
-	const vaultCounts = useMemo(() => {
-		const m = new Map<string, number>();
-		for (const v of vaults.data?.items ?? []) {
-			for (const pid of v.project_ids ?? []) m.set(pid, (m.get(pid) ?? 0) + 1);
-		}
-		return m;
-	}, [vaults.data]);
-	const skillCountsUnavailable = shouldBlockQueryError(skills.error, skills.data);
-	const vaultCountsUnavailable = shouldBlockQueryError(vaults.error, vaults.data);
-
-	const ownedProjects = useMemo(
-		() => rows.filter((s) => s.is_owner !== false).sort(compareProjectsForProductUse),
-		[rows],
-	);
+	const ownedProjects = useMemo(() => rows.filter((s) => s.is_owner !== false), [rows]);
 	const sharedProjects = useMemo(
 		() =>
 			rows
@@ -134,13 +68,8 @@ export default function ProjectsPage() {
 				.sort(compareProjectsForProductUse),
 		[rows],
 	);
-	const customProjects = useMemo(() => ownedProjects.filter(isCustomProject), [ownedProjects]);
-	// "System projects": account default (personal/Global) + per-agent managed
-	// projects + anything this UI version doesn't classify. Collapsed by
-	// default — visible enough for CLI users, quiet enough to keep the card
-	// grid about the user's own work.
-	const systemProjects = useMemo(
-		() => ownedProjects.filter((project) => !isCustomProject(project)),
+	const customProjects = useMemo(
+		() => ownedProjects.filter(isCustomProject).sort(compareProjectsForProductUse),
 		[ownedProjects],
 	);
 
@@ -163,9 +92,7 @@ export default function ProjectsPage() {
 		onSuccess: (project) => {
 			setCreateOpen(false);
 			qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
-			toast.success("Project created", {
-				description: `${project.name} is ready for skills, vaults, and sharing.`,
-			});
+			toast.success("Project created");
 			void router.navigate({ href: projectDetailHref(project.id) });
 		},
 		onError: (e) => {
@@ -178,6 +105,7 @@ export default function ProjectsPage() {
 	const openCreateDialog = () => {
 		setNewProjectName("");
 		setNewProjectSlug("");
+		setNewProjectDescription("");
 		setCreateOpen(true);
 	};
 
@@ -203,7 +131,7 @@ export default function ProjectsPage() {
 				actions={
 					<Button size="sm" onClick={openCreateDialog}>
 						<Plus className="size-3.5" />
-						Create project
+						Create Project
 					</Button>
 				}
 			/>
@@ -225,15 +153,16 @@ export default function ProjectsPage() {
 					if (!open) {
 						setNewProjectName("");
 						setNewProjectSlug("");
+						setNewProjectDescription("");
 					}
 				}}
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>Create project</DialogTitle>
+						<DialogTitle>Create Project</DialogTitle>
 						<DialogDescription>
-							Create a Project for a team, workflow, repo, or shareable resources. Install Skills,
-							attach Vaults, and configure sharing after it is created.
+							Create a shareable resource bundle for a team, workflow, or repository. Add Skills,
+							attach Vaults, then link the whole Project to Agents that should use it.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -241,7 +170,10 @@ export default function ProjectsPage() {
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!newProjectName.trim() || createProject.isPending) return;
-							const body: ProjectCreate = { name: newProjectName.trim() };
+							const body: ProjectCreate = {
+								name: newProjectName.trim(),
+								description: newProjectDescription.trim() || null,
+							};
 							const slug = normalizeSlugInput(newProjectSlug);
 							if (slug) body.slug = slug;
 							createProject.mutate({ body });
@@ -274,17 +206,25 @@ export default function ProjectsPage() {
 								/>
 							</div>
 						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="project-description">Description</Label>
+							<Input
+								id="project-description"
+								name="project-description"
+								value={newProjectDescription}
+								maxLength={2000}
+								placeholder="What should Agents use this Project for?"
+								autoComplete="off"
+								onChange={(event) => setNewProjectDescription(event.target.value)}
+							/>
+						</div>
 						<div className="flex justify-end gap-2">
 							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
 								Cancel
 							</Button>
-							<Button
-								type="submit"
-								disabled={!newProjectName.trim() || createProject.isPending}
-								variant={newProjectName.trim() ? "default" : "outline"}
-							>
+							<Button type="submit" disabled={!newProjectName.trim() || createProject.isPending}>
 								<Plus className="size-3.5" />
-								{createProject.isPending ? "Creating…" : "Create project"}
+								{createProject.isPending ? "Creating…" : "Create Project"}
 							</Button>
 						</div>
 					</form>
@@ -302,14 +242,8 @@ export default function ProjectsPage() {
 							key={project.id}
 							project={project}
 							footer={[
-								formatCountLabel(
-									skillCountsUnavailable ? "unavailable" : (skillCounts.get(project.id) ?? 0),
-									"skill",
-								),
-								formatCountLabel(
-									vaultCountsUnavailable ? "unavailable" : (vaultCounts.get(project.id) ?? 0),
-									"vault",
-								),
+								formatCountLabel(project.skill_count, "skill"),
+								formatCountLabel(project.vault_count, "vault"),
 								shared && project.owner_display ? `by ${project.owner_display}` : null,
 							]}
 							actions={
@@ -321,74 +255,7 @@ export default function ProjectsPage() {
 					))}
 				</div>
 			)}
-
-			{systemProjects.length > 0 ? (
-				<section className="space-y-2">
-					<button
-						type="button"
-						onClick={() => setSystemOpen((v) => !v)}
-						className="flex w-full items-start gap-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
-						aria-expanded={systemOpen}
-					>
-						<ChevronDown
-							className={cn(
-								"mt-0.5 size-4 shrink-0 transition-transform duration-150",
-								!systemOpen && "-rotate-90",
-							)}
-						/>
-						<span className="min-w-0">
-							<SectionLabel className="px-0" count={systemProjects.length}>
-								System projects
-							</SectionLabel>
-							<span className="block text-xs">
-								Account default and one per connected agent — managed automatically
-							</span>
-						</span>
-					</button>
-					{systemOpen ? (
-						<div className={HERO_GRID_CLASS}>
-							{systemProjects.map((project) => (
-								<SystemProjectCard
-									key={project.id}
-									project={project}
-									agent={projectAgentFor(project, agentsById)}
-									skillCount={
-										skillCountsUnavailable ? "unavailable" : (skillCounts.get(project.id) ?? 0)
-									}
-									vaultCount={
-										vaultCountsUnavailable ? "unavailable" : (vaultCounts.get(project.id) ?? 0)
-									}
-								/>
-							))}
-						</div>
-					) : null}
-				</section>
-			) : null}
 		</div>
-	);
-}
-
-function SystemProjectCard({
-	project,
-	agent,
-	skillCount,
-	vaultCount,
-}: {
-	project: ProjectRow;
-	agent: ProjectAgentMetadata | null;
-	skillCount: CountValue;
-	vaultCount: CountValue;
-}) {
-	return (
-		<ProjectResourceCard
-			project={project}
-			showKind
-			footer={[
-				formatCountLabel(skillCount, "skill"),
-				formatCountLabel(vaultCount, "vault"),
-				project.kind === "environment" && agent ? `Agent: ${projectAgentLabel(agent)}` : null,
-			]}
-		/>
 	);
 }
 
@@ -413,8 +280,7 @@ function normalizeSlugInput(value: string) {
 	return normalizeSlugDraft(value).replace(/-+$/, "");
 }
 
-function formatCountLabel(value: CountValue, noun: string) {
-	if (value === "unavailable") return `— ${noun}s`;
+function formatCountLabel(value: number, noun: string) {
 	return `${value} ${value === 1 ? noun : `${noun}s`}`;
 }
 
@@ -427,7 +293,5 @@ function normalizeSlugDraft(value: string) {
 }
 
 function compareProjectsForProductUse(a: ProjectRow, b: ProjectRow) {
-	const byRank = projectKindSortRank(a.kind) - projectKindSortRank(b.kind);
-	if (byRank !== 0) return byRank;
 	return a.name.localeCompare(b.name);
 }

@@ -171,6 +171,9 @@ from app.services.principal_lifecycle import (
     load_clerk_user_for_issuer,
     resolve_clerk_owner_issuer,
 )
+from app.services.project_runtime_skills import (
+    assert_agent_workspace_skill_write_compatible,
+)
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
     resolve_runtime_apply_generation_update,
@@ -1825,6 +1828,13 @@ async def _admin_upsert_runtime_state(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+
+    new_workspace_skill_keys = set(body.skills.entries) if body.skills is not None else set()
+    await assert_agent_workspace_skill_write_compatible(
+        db,
+        agent_id=environment_id,
+        skill_keys=new_workspace_skill_keys,
+    )
 
     # Lock the parent before the optional child row so concurrent first creates
     # serialize even when there is no HostedRuntimeState row to lock yet.

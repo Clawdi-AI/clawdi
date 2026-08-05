@@ -53,6 +53,7 @@ function receiptInput(home: string, skillId: string, ownershipIdentity: string) 
 }
 
 function rawSkillUrl(skill: PreparedHostedSourcedSkill): string {
+	if (skill.source.type === "clawdi") return skill.source.installUrl;
 	const repository = new URL(skill.source.url);
 	const [owner, repo] = repository.pathname.slice(1).split("/");
 	if (!owner || !repo)
@@ -83,7 +84,7 @@ const HERMES_SUPPORT_DIRS = new Set(["references", "templates", "scripts", "asse
 const HERMES_SUPPORT_REFERENCE =
 	/(?:\]\(|`|(?:^|[\s"']))((?:references|templates|scripts|assets|examples)\/[^\s)`"'<>]+)/gm;
 
-/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@aec3318: SKILL.md plus allowlisted references. */
+/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@aec331899e4748739927fddf02a54327e64419a0. */
 function expectedHermesNativeTree(sourceDir: string) {
 	const catalogTree = collectManagedSkillTree(sourceDir);
 	const skillMd = catalogTree?.get("SKILL.md");

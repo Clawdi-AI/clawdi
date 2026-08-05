@@ -196,15 +196,13 @@ function AgentProjectsPanel({
 			}
 			return created;
 		},
-		onSuccess: (project) => {
+		onSuccess: () => {
 			setCreatedProjectAwaitingLink(null);
 			setInitialLinkError(null);
 			setNewProjectName("");
 			setCreateOpen(false);
 			onChanged();
-			toast.success("Project created and linked", {
-				description: `${displayProjectName(project)} is now in this Agent's Project list.`,
-			});
+			toast.success("Project created and linked");
 		},
 		onError: (error) => {
 			if (error instanceof ProjectCreatedButNotLinkedError) {
@@ -229,17 +227,12 @@ function AgentProjectsPanel({
 				}),
 			),
 		onSuccess: () => {
-			const projectName = createdProjectAwaitingLink
-				? displayProjectName(createdProjectAwaitingLink)
-				: "Project";
 			setCreatedProjectAwaitingLink(null);
 			setInitialLinkError(null);
 			setNewProjectName("");
 			setCreateOpen(false);
 			onChanged();
-			toast.success("Project linked", {
-				description: `${projectName} is now in this Agent's Project list.`,
-			});
+			toast.success("Project linked");
 		},
 		onSettled: () => {
 			retryLinkLockedRef.current = false;
@@ -273,9 +266,7 @@ function AgentProjectsPanel({
 		setNewProjectName("");
 		setCreateOpen(false);
 		onChanged();
-		toast.success("Project kept unlinked", {
-			description: `${projectName} remains available in your Project library.`,
-		});
+		toast.success(`${projectName} kept unlinked`);
 	};
 
 	const removeBinding = useMutation({
@@ -305,10 +296,10 @@ function AgentProjectsPanel({
 		},
 		onSuccess: () => {
 			onChanged();
-			toast.success("Vault resolution priority updated");
+			toast.success("Project order updated");
 		},
 		onError: (error) =>
-			toast.error("Couldn't update Vault resolution priority", {
+			toast.error("Couldn't update Project order", {
 				description: errorMessage(error),
 			}),
 	});
@@ -389,12 +380,12 @@ function AgentProjectsPanel({
 			) : contexts.length === 0 ? (
 				<EmptyState
 					variant="inset"
-					description="No Projects are linked yet. Skills stay stored in each Project; Vaults attached to linked Projects join this Agent's runtime resolution order."
+					description="No Projects are linked yet. Link one to let this Agent use its Skills and attached Vaults."
 				/>
 			) : (
 				<ol
 					className={HERO_GRID_CLASS}
-					aria-label="Linked Projects in Vault resolution order"
+					aria-label="Linked Projects in use order"
 					data-testid="agent-project-grid"
 				>
 					{contexts.map((binding, position) => {
@@ -439,11 +430,11 @@ function AgentProjectsPanel({
 												title="Unlink this Project?"
 												description={
 													<>
-														<p>{projectName} will leave this Agent's Vault resolution order.</p>
 														<p>
-															Its Skills stay stored in the Project, and its Vault attachments are
-															unchanged.
+															This Agent will stop using {projectName}&apos;s Skills and attached
+															Vaults.
 														</p>
+														<p>The Project and its resources remain unchanged.</p>
 													</>
 												}
 												confirmLabel="Unlink project"
@@ -482,9 +473,9 @@ function AgentProjectsPanel({
 			>
 				<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
 					<DialogHeader>
-						<DialogTitle>Link project</DialogTitle>
+						<DialogTitle>Link Project</DialogTitle>
 						<DialogDescription>
-							Link a Custom or shared Project. This does not install its Skills on the Agent.
+							Choose a Project. This Agent will use its Skills and attached Vaults together.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -504,9 +495,7 @@ function AgentProjectsPanel({
 								disabled={linkContext.isPending}
 							/>
 						) : (
-							<p className="text-sm text-muted-foreground">
-								No Custom or shared Projects are available to link.
-							</p>
+							<p className="text-sm text-muted-foreground">No Projects are available to link.</p>
 						)}
 						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => setLinkOpen(false)}>
@@ -536,8 +525,8 @@ function AgentProjectsPanel({
 					<DialogHeader>
 						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
-							Create a Project and link it to this Agent. Install Skills and attach Vaults to the
-							Project separately.
+							Create a Project and link it to this Agent. You can add Skills and attach Vaults
+							before or after linking.
 						</DialogDescription>
 					</DialogHeader>
 					{createdProjectAwaitingLink ? (
@@ -621,7 +610,7 @@ function AgentProjectCard({
 	navigationScope: ResourceNavigationScope;
 	actions?: React.ReactNode;
 }) {
-	const footer = [`Vault priority ${position + 1}`];
+	const footer = [`Project order ${position + 1}`];
 	if (!project) {
 		return (
 			<UnavailableProjectResourceCard

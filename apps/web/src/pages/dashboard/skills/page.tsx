@@ -13,7 +13,6 @@ import {
 	Plus,
 	RefreshCw,
 	Search,
-	Send as SendIcon,
 	Trash2,
 } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
@@ -106,8 +105,15 @@ function SkillsPageInner() {
 		refetch: refetchProjects,
 	} = $api.useQuery("get", "/v1/projects", {});
 	const orderedProjects = useMemo(
-		() => [...(projects ?? [])].filter((project) => project.id).sort(compareProjectsForUse),
+		() =>
+			[...(projects ?? [])]
+				.filter((project) => project.id && isCustomProject(project))
+				.sort(compareProjectsForUse),
 		[projects],
+	);
+	const visibleProjectIds = useMemo(
+		() => new Set(orderedProjects.map((project) => project.id)),
+		[orderedProjects],
 	);
 	const projectsById = useMemo(
 		() => new Map((projects ?? []).map((project) => [project.id, project])),
@@ -177,8 +183,8 @@ function SkillsPageInner() {
 		? projectsError
 		: null;
 	const blockingSkillsError = shouldBlockQueryError(skillsError, skillsData) ? skillsError : null;
-	// Tab row shows custom + personal projects; the per-agent long tail
-	// lives behind one overflow menu (a 16-tab row teaches nothing).
+	// The Project library shows only user-created Projects. Agent Workspace
+	// Skills stay on the Agent surface.
 	// Both ranked by installed-skill count, busiest first.
 	const skillCountByProject = useMemo(() => {
 		const m = new Map<string, number>();
@@ -194,17 +200,11 @@ function SkillsPageInner() {
 		[skillCountByProject],
 	);
 	const tabProjects = useMemo(
-		() =>
-			orderedProjects
-				.filter((p) => p.kind === "workspace" || p.kind === "personal")
-				.sort(byCountDesc),
+		() => orderedProjects.filter((p) => p.kind === "workspace").sort(byCountDesc),
 		[orderedProjects, byCountDesc],
 	);
 	const overflowProjects = useMemo(
-		() =>
-			orderedProjects
-				.filter((p) => p.kind !== "workspace" && p.kind !== "personal")
-				.sort(byCountDesc),
+		() => orderedProjects.filter((p) => p.kind !== "workspace").sort(byCountDesc),
 		[orderedProjects, byCountDesc],
 	);
 
@@ -243,10 +243,24 @@ function SkillsPageInner() {
 	const skillsForTarget = useMemo(() => {
 		if (!skillsData?.items) return undefined;
 		if (isStaleProject || isStaleTarget) return [];
-		if (isAllScope) return skillsData.items.filter(matchesSearch);
+		if (isAllScope) {
+			return skillsData.items.filter(
+				(skill) =>
+					Boolean(skill.project_id && visibleProjectIds.has(skill.project_id)) &&
+					matchesSearch(skill),
+			);
+		}
 		if (!targetProjectId) return [];
 		return skillsData.items.filter((s) => s.project_id === targetProjectId && matchesSearch(s));
-	}, [skillsData, targetProjectId, isStaleProject, isStaleTarget, isAllScope, matchesSearch]);
+	}, [
+		skillsData,
+		targetProjectId,
+		isStaleProject,
+		isStaleTarget,
+		isAllScope,
+		matchesSearch,
+		visibleProjectIds,
+	]);
 
 	// Duplicates lens: the same skill_key installed in several Projects is
 	// N independent copies (see DESIGN.md copy-vs-reference) — and on real
@@ -254,9 +268,9 @@ function SkillsPageInner() {
 	// Group them by key, flag drift via content_hash (catches same-version
 	// content edits too), and offer one-click "sync all copies to newest".
 	const duplicateGroups = useMemo(() => {
-		if (!skillsData?.items) return [];
+		if (!skillsForTarget) return [];
 		const byKey = new Map<string, SkillSummary[]>();
-		for (const s of skillsData.items) {
+		for (const s of skillsForTarget) {
 			if (!s.project_id) continue;
 			const arr = byKey.get(s.skill_key);
 			if (arr) arr.push(s);
@@ -278,7 +292,7 @@ function SkillsPageInner() {
 					b.copies.length - a.copies.length ||
 					a.newest.name.localeCompare(b.newest.name),
 			);
-	}, [skillsData, matchesSearch]);
+	}, [skillsForTarget, matchesSearch]);
 	const [showDuplicates, setShowDuplicates] = useState(false);
 	const duplicatesView = showDuplicates && isAllScope;
 
@@ -436,10 +450,7 @@ function SkillsPageInner() {
 			);
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 			const projectName = displayProjectName(targetProject);
-			toast.success(`Added to ${projectName}`, {
-				description:
-					"The Skill is stored in this Project. Install it on an Agent separately to run it.",
-			});
+			toast.success(`Skill added to ${projectName}`);
 			return true;
 		} catch (e: unknown) {
 			setInstallError(errorMessage(e));
@@ -474,9 +485,9 @@ function SkillsPageInner() {
 		: isStaleTarget
 			? "This link points to an agent that no longer exists. Pick a Project above."
 			: orderedProjects.length === 0
-				? "Create a Project first, then install Skills in it."
+				? "Create a Project first, then add Skills to it."
 				: isProjectReady
-					? "No Skills are stored in this Project yet. Install one from the marketplace below."
+					? "No Skills are in this Project yet. Add one from GitHub below."
 					: "Pick a Project to see its skills.";
 	const canShareTargetProject =
 		targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject);
@@ -505,9 +516,9 @@ function SkillsPageInner() {
 									void setTargetEnvId("");
 								}}
 							>
-								All projects
+								All Projects
 								<span className="text-muted-foreground tabular-nums">
-									{skillsData?.items.length ?? 0}
+									{skillsForTarget?.length ?? 0}
 								</span>
 							</FilterChip>
 							{tabProjects.map((p) => (
@@ -643,7 +654,7 @@ function SkillsPageInner() {
 					</AlertTitle>
 					<AlertDescription>
 						{targetProject.kind === "environment"
-							? "Agent Skills are authored on the Agent filesystem and sync here as read-only projections. Rename, edit, or remove them on the Agent."
+							? "Skills in this Workspace are managed on the Agent and sync here as read-only. Rename, edit, or remove them on the Agent."
 							: `You can view Skills stored in ${displayProjectName(targetProject)}, but only the owner can add or remove them.`}
 					</AlertDescription>
 				</Alert>
@@ -851,8 +862,8 @@ function SkillsPageInner() {
 			<BulkActionBar count={selectedSkills.length} noun="skill" onClear={clearSelection}>
 				<SendSkillDialog skills={selectedSkills} onDone={clearSelection}>
 					<Button size="sm">
-						<SendIcon className="size-3.5" />
-						Send to…
+						<CopyIcon className="size-3.5" />
+						Copy or move
 					</Button>
 				</SendSkillDialog>
 				<ConfirmAction
@@ -883,7 +894,7 @@ function SkillsPageInner() {
 			) : canWriteTargetProject ? (
 				<section className="space-y-3">
 					<div className="flex items-center justify-between gap-2">
-						<h2 className="text-sm font-semibold">Install a skill</h2>
+						<h2 className="text-sm font-semibold">Add a Skill</h2>
 						<a
 							href="https://skills.sh"
 							target="_blank"
@@ -923,7 +934,7 @@ function SkillsPageInner() {
 							className="sm:w-auto"
 						>
 							{installing && customRepo ? <Spinner /> : <Plus />}
-							Install skill
+							Add Skill
 						</Button>
 					</div>
 					{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
@@ -931,7 +942,7 @@ function SkillsPageInner() {
 						<ApiErrorPanel
 							error={installError}
 							onRetry={customRepo.trim() ? retryCustomInstall : undefined}
-							title="Couldn't install skill"
+							title="Couldn't add Skill"
 						/>
 					) : null}
 
@@ -981,7 +992,7 @@ function SkillsPageInner() {
 											className="shrink-0"
 										>
 											{isInstalling ? <Spinner /> : <Plus />}
-											Install skill
+											Add Skill
 										</Button>
 									)}
 								</div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Send } from "lucide-react";
+import { ArrowRight, Copy } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -85,7 +85,7 @@ export function SendSkillDialog({
 					(p) =>
 						p.is_owner !== false &&
 						!skills.every((s) => s.project_id === p.id) &&
-						(p.kind === "workspace" || p.kind === "personal"),
+						p.kind === "workspace",
 				)
 				.map((p) => ({
 					value: p.id,
@@ -183,7 +183,7 @@ export function SendSkillDialog({
 			setOpen(false);
 			onDone?.();
 		},
-		onError: (e) => toast.error("Couldn't send skills", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't copy or move Skills", { description: errorMessage(e) }),
 	});
 
 	useEffect(() => {
@@ -193,8 +193,8 @@ export function SendSkillDialog({
 	}, [open]);
 
 	const trigger = children ?? (
-		<Button variant="ghost" size="icon-sm" aria-label={`Send ${batchLabel} to…`}>
-			<Send className="size-3.5" />
+		<Button variant="ghost" size="icon-sm" aria-label={`Copy or move ${batchLabel}`}>
+			<Copy className="size-3.5" />
 		</Button>
 	);
 
@@ -212,7 +212,7 @@ export function SendSkillDialog({
 			<DialogTrigger render={trigger} />
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Send {batchLabel} to…</DialogTitle>
+					<DialogTitle>Copy or move {batchLabel}</DialogTitle>
 					{/* Copy-vs-reference semantics must be explicit (Kingsley's
 					    review): skills duplicate per Project, so the destination's
 					    copy will NOT follow future changes to the source. */}

@@ -23,6 +23,7 @@ from app.schemas.sharing import (
     UpgradeBody,
 )
 from app.services.agent_bindings import attach_project_to_owned_agents
+from app.services.project_runtime_skills import lock_project_change
 from app.services.sharing import ensure_viewer_membership, safe_owner_display
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ async def list_my_invitations(
             .where(
                 ProjectInvitation.invitee_user_id == auth.user_id,
                 Project.kind == PROJECT_KIND_WORKSPACE,
+                Project.archived_at.is_(None),
             )
             .order_by(ProjectInvitation.created_at.desc())
         )
@@ -101,12 +103,13 @@ async def accept_invitation_for_user(
     if inv_pre is None or inv_pre.invitee_user_id != auth.user_id:
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
 
+    await lock_project_change(db, inv_pre.project_id)
     project = (
-        await db.execute(select(Project).where(Project.id == inv_pre.project_id).with_for_update())
+        await db.execute(select(Project).where(Project.id == inv_pre.project_id))
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_410_GONE, "project no longer available")
-    if project.kind != PROJECT_KIND_WORKSPACE:
+    if project.kind != PROJECT_KIND_WORKSPACE or project.archived_at is not None:
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
     if project.user_id == auth.user_id:
         raise HTTPException(

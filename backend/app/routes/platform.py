@@ -77,6 +77,9 @@ from app.services.principal_lifecycle import (
     load_clerk_user_for_issuer,
     resolve_clerk_owner_issuer,
 )
+from app.services.project_runtime_skills import (
+    assert_agent_workspace_skill_write_compatible,
+)
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
     resolve_runtime_apply_generation_update,
@@ -806,6 +809,12 @@ async def platform_upsert_runtime_state(
         action=action,
         request=request,
         idempotency_key=idempotency_key,
+    )
+    new_workspace_skill_keys = set(body.skills.entries) if body.skills is not None else set()
+    await assert_agent_workspace_skill_write_compatible(
+        db,
+        agent_id=agent_id,
+        skill_keys=new_workspace_skill_keys,
     )
     runtime_state = (
         await db.execute(

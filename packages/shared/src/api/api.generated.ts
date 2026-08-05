@@ -1546,10 +1546,12 @@ export interface paths {
         get: operations["get_project_v1_projects__project_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Archive Project */
+        delete: operations["archive_project_v1_projects__project_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Project */
+        patch: operations["update_project_v1_projects__project_id__patch"];
         trace?: never;
     };
     "/v1/runtime/manifest": {
@@ -6076,12 +6078,24 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** ProjectArchiveResponse */
+        ProjectArchiveResponse: {
+            /**
+             * Status
+             * @default archived
+             */
+            status: string;
+            /** Unlinked Agent Count */
+            unlinked_agent_count: number;
+        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Name */
             name: string;
             /** Slug */
             slug?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /**
          * ProjectLeaveResponse
@@ -6119,6 +6133,8 @@ export interface components {
             slug: string;
             /** Kind */
             kind: string;
+            /** Description */
+            description: string | null;
             /** Origin Environment Id */
             origin_environment_id: string | null;
             /** Archived At */
@@ -6137,6 +6153,33 @@ export interface components {
             owner_display?: string | null;
             /** Owner Handle */
             owner_handle?: string | null;
+            /**
+             * Skill Count
+             * @default 0
+             */
+            skill_count: number;
+            /**
+             * Vault Count
+             * @default 0
+             */
+            vault_count: number;
+            /**
+             * Agent Count
+             * @default 0
+             */
+            agent_count: number;
+            /**
+             * Member Count
+             * @default 0
+             */
+            member_count: number;
+        };
+        /** ProjectUpdate */
+        ProjectUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /**
          * PublicSessionExportResponse
@@ -9345,7 +9388,10 @@ export interface operations {
     };
     list_agents_v1_agents_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Return only the caller's Agents linked to this exact Project. */
+                project_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9367,6 +9413,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
@@ -10675,6 +10730,72 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_project_v1_projects__project_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectArchiveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_project_v1_projects__project_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectUpdate"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -52,7 +52,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Projects",
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
-			"Create Projects to share resources with teammates. Use the Global Project for account defaults. Workspaces belong to one connected Agent and cannot be shared.",
+			"Create shareable Projects that bundle Skills with attached Vault access. Each Agent also has a private Workspace, managed from that Agent's page.",
 		href: PROJECT_RESOURCE_LIST_PATHS.projects,
 		emptyCta: "Create project",
 		routeGroup: "project-registry",
@@ -67,9 +67,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Skills",
 		description: "Reusable instructions stored and managed in a Project.",
 		managementDescription:
-			"Skills are stored in Projects. Choose a Project, then install or uninstall its Skills. Install each Skill on an Agent separately to run it.",
+			"Skills are stored in Projects. Choose a Project before adding, editing, removing, copying, or moving a Skill. Linked Agents use the whole Project bundle.",
 		href: PROJECT_RESOURCE_LIST_PATHS.skills,
-		emptyCta: "Browse marketplace",
+		emptyCta: "Add Skill",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Skills"],

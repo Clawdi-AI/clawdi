@@ -454,6 +454,14 @@ async def bump_skills_revision(
     target_user_ids = {user_id, *member_rows}
     for target_user_id in target_user_ids:
         _queue_for_commit(db, target_user_id, payload)
+    if event_type not in {AGENT_SKILL_CHANGED_EVENT, AGENT_SKILL_DELETED_EVENT}:
+        # Local import avoids a module cycle: Project runtime delivery uses the
+        # queue primitive above, while Cloud Skill changes fan out through it.
+        from app.services.project_runtime_skills import (
+            queue_project_runtime_manifest_changed,
+        )
+
+        await queue_project_runtime_manifest_changed(db, project_id=project_id)
     return new_revision
 
 

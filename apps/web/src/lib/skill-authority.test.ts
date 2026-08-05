@@ -22,7 +22,7 @@ describe("skillCapabilities", () => {
 			canSelect: false,
 			canSync: false,
 			readOnlyReason: "agent-sync",
-			badgeLabel: "Agent projection · Read-only",
+			badgeLabel: "Synced from Agent · Read-only",
 		});
 	});
 

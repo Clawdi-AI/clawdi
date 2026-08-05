@@ -67,6 +67,10 @@ from app.schemas.skill import (
 )
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
+from app.services.project_runtime_skills import (
+    assert_project_skill_write_compatible,
+    lock_project_runtime_graph,
+)
 from app.services.runtime_manifest_resources import (
     assert_project_skill_not_runtime_managed,
     project_skill_advisory_lock_key,
@@ -1282,6 +1286,14 @@ async def _do_upload_skill(
             )
     else:
         await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+        await assert_project_skill_write_compatible(
+            db,
+            project_id=project_id,
+            skill_key=skill_key,
+        )
+        # Project archive can cross the initial authorization read while the
+        # archive is being validated. Re-check after the Project graph lock.
+        await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
     await assert_project_skill_not_runtime_managed(
@@ -1876,6 +1888,7 @@ async def _do_delete_skill(
     # Advisory lock matches the partial unique index identity, so
     # this delete serializes with any concurrent write to the
     # same (user, project, skill_key).
+    await lock_project_runtime_graph(db, project_id)
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
     await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
@@ -2021,6 +2034,11 @@ async def _do_install_skill(
     # (user, project, key) matches the partial unique index, so the
     # serialization is precisely scoped — different projects don't
     # block each other.
+    await assert_project_skill_write_compatible(
+        db,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
     # Project ownership/kind can change while GitHub is fetched. Re-check at

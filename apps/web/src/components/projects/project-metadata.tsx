@@ -1,4 +1,4 @@
-import { Bot, FolderKanban, Globe2, type LucideIcon } from "lucide-react";
+import { Bot, FolderKanban, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { agentIdentity } from "@/components/dashboard/agent-label";
 import { Badge } from "@/components/ui/badge";
@@ -40,12 +40,6 @@ export function isProjectOwner(project: Pick<ProjectMetadata, "is_owner">): bool
 }
 
 export function displayProjectName(project: Pick<ProjectMetadata, "kind" | "name" | "slug">) {
-	if (
-		project.kind === "personal" &&
-		(project.slug === "personal" || ["default", "personal"].includes(project.name.toLowerCase()))
-	) {
-		return "Global";
-	}
 	return project.name;
 }
 
@@ -242,13 +236,14 @@ export function ProjectScopePicker({
 	className?: string;
 	triggerClassName?: string;
 }) {
-	const selectedProject = projects.find((project) => project.id === value) ?? null;
+	const visibleProjects = projects.filter((project) => project.kind !== "personal");
+	const selectedProject = visibleProjects.find((project) => project.id === value) ?? null;
 	const agentsById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
 	const selectedAgent = selectedProject ? projectAgentFor(selectedProject, agentsById) : null;
-	const groupedProjects = projectPickerGroups(projects);
+	const groupedProjects = projectPickerGroups(visibleProjects);
 	const projectItems = [
 		...(allowAll ? [{ value: "all", label: allLabel }] : []),
-		...projects.flatMap((project) =>
+		...visibleProjects.flatMap((project) =>
 			project.id ? [{ value: project.id, label: displayProjectName(project) }] : [],
 		),
 	];
@@ -356,11 +351,12 @@ export function ProjectCompactPicker({
 	disabled?: boolean;
 	className?: string;
 }) {
-	const selectedProject = projects.find((project) => project.id === value) ?? null;
+	const visibleProjects = projects.filter((project) => project.kind !== "personal");
+	const selectedProject = visibleProjects.find((project) => project.id === value) ?? null;
 	const agentsById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
 	const projectItems = [
 		...(allowAll ? [{ value: "all", label: allLabel }] : []),
-		...projects.flatMap((project) =>
+		...visibleProjects.flatMap((project) =>
 			project.id ? [{ value: project.id, label: displayProjectName(project) }] : [],
 		),
 	];
@@ -419,8 +415,8 @@ export function ProjectCompactPicker({
 						</div>
 					</SelectItem>
 				) : null}
-				{allowAll && projects.length > 0 ? <SelectSeparator /> : null}
-				{projects.map((project) =>
+				{allowAll && visibleProjects.length > 0 ? <SelectSeparator /> : null}
+				{visibleProjects.map((project) =>
 					project.id ? (
 						<SelectItem key={project.id} value={project.id} className="py-2">
 							<ProjectIdentity
@@ -542,14 +538,13 @@ function projectCompactKindText(project: ProjectMetadata) {
 
 function ownedProjectKindText(
 	project: Pick<ProjectMetadata, "kind">,
-	variant: "full" | "compact" | "badge",
+	_variant: "full" | "compact" | "badge",
 ) {
 	if (project.kind === "workspace" || !project.kind) {
-		return variant === "full" ? "Custom Project" : "Custom";
+		return "Project";
 	}
-	if (project.kind === "personal") return variant === "full" ? "Global Project" : "Global";
+	if (project.kind === "personal") return "Private resources";
 	if (project.kind === "environment") return "Workspace";
-	if (variant === "badge" && project.kind) return project.kind;
 	return "Project";
 }
 
@@ -577,7 +572,7 @@ function ProjectTypeBadge({
 function projectPickerAccessText(project: ProjectMetadata) {
 	if (project.is_owner === false) return "Viewer";
 	if (project.kind === "workspace" || !project.kind) return "Owner";
-	return "Managed";
+	return "Owner";
 }
 
 export function projectKindMeta(kind: string): {
@@ -590,8 +585,8 @@ export function projectKindMeta(kind: string): {
 } {
 	if (kind === "workspace") {
 		return {
-			label: "Custom Project",
-			groupLabel: "Custom Projects",
+			label: "Project",
+			groupLabel: "Projects",
 			description: "Project you create for a workflow, team, or shareable resources.",
 			icon: FolderKanban,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
@@ -601,8 +596,8 @@ export function projectKindMeta(kind: string): {
 	if (kind === "environment") {
 		return {
 			label: "Workspace",
-			groupLabel: "Managed Projects",
-			description: "Workspace managed for one connected Agent.",
+			groupLabel: "Agent Workspaces",
+			description: "Private Workspace permanently used by one Agent.",
 			icon: Bot,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
 			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
@@ -610,18 +605,18 @@ export function projectKindMeta(kind: string): {
 	}
 	if (kind === "personal") {
 		return {
-			label: "Global Project",
-			groupLabel: "Managed Projects",
-			description: "Project for account resources not tied to one Agent or workflow.",
-			icon: Globe2,
+			label: "Private resources",
+			groupLabel: "Private resources",
+			description: "Private account resources.",
+			icon: FolderKanban,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
 			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
 		};
 	}
 	return {
-		label: kind,
-		groupLabel: "Other Projects",
-		description: `Project type: ${kind}`,
+		label: "Project",
+		groupLabel: "Projects",
+		description: "Resource bundle.",
 		icon: FolderKanban,
 		iconClassName: "border-border bg-muted/30 text-muted-foreground",
 		badgeClassName: "border-border bg-muted/30 text-muted-foreground",
@@ -655,14 +650,14 @@ function projectPickerGroups(projects: ProjectMetadata[]) {
 	const shared = projects.filter((project) => !isProjectOwner(project));
 	const groups = [
 		{
-			id: "custom",
-			label: "Custom Projects",
+			id: "projects",
+			label: "Projects",
 			projects: owned.filter(isCustomProject),
 		},
 		{
-			id: "managed",
-			label: "Managed Projects",
-			projects: owned.filter(isManagedProject),
+			id: "workspaces",
+			label: "Agent Workspaces",
+			projects: owned.filter((project) => project.kind === "environment"),
 		},
 		{
 			id: "other",

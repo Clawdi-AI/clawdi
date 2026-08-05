@@ -33,10 +33,8 @@ import { normalizeBillingError } from "@/hosted/billing/errors";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import type { AgentRouteQuery } from "@/lib/agent-routes";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
-import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type WorkspaceSkillMutation =
 	| { action: "install"; repo: string; path?: string }
 	| { action: "uninstall"; skillKey: string };
@@ -46,10 +44,6 @@ type HostedWorkspaceSkillsPanelProps = {
 	projectId: string;
 	routeSearch?: AgentRouteQuery;
 	deploymentSelector?: string | null;
-	projections: SkillSummary[];
-	projectionsLoading: boolean;
-	projectionError?: unknown;
-	onRetryProjections?: () => void;
 };
 
 export function HostedWorkspaceSkillsPanel(props: HostedWorkspaceSkillsPanelProps) {
@@ -65,10 +59,6 @@ function HostedWorkspaceSkillsPanelContent({
 	projectId,
 	routeSearch,
 	deploymentSelector,
-	projections,
-	projectionsLoading,
-	projectionError,
-	onRetryProjections,
 }: HostedWorkspaceSkillsPanelProps) {
 	const billingClient = useBillingClient();
 	const queryClient = useQueryClient();
@@ -179,7 +169,7 @@ function HostedWorkspaceSkillsPanelContent({
 	const blockingStatusError = shouldBlockQueryError(status.error, status.data)
 		? status.error
 		: null;
-	const inventory = mergeWorkspaceRuntimeSkills(projections, status.data?.items ?? []);
+	const inventory = mergeWorkspaceRuntimeSkills([], status.data?.items ?? []);
 	return (
 		<div className="space-y-4">
 			{canMutate ? (
@@ -200,15 +190,6 @@ function HostedWorkspaceSkillsPanelContent({
 				/>
 			) : status.isLoading ? (
 				<p className="text-xs text-muted-foreground">Loading skills…</p>
-			) : null}
-			{projectionError ? (
-				<ApiErrorPanel
-					error={projectionError}
-					onRetry={onRetryProjections}
-					title="Couldn't load Agent skills"
-				/>
-			) : projectionsLoading ? (
-				<p className="text-xs text-muted-foreground">Loading Agent skills…</p>
 			) : null}
 			{inventory.length === 0 ? (
 				<EmptyState

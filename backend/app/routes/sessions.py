@@ -34,6 +34,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.database import get_session, runtime_snapshot_session
+from app.models.agent_project_binding import AgentProjectBinding
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
@@ -293,6 +294,7 @@ async def _list_agent_identities(
     db: AsyncSession,
     *,
     agent_response: Literal[True],
+    project_id: UUID | None = None,
 ) -> list[AgentResponse] | Response: ...
 
 
@@ -304,6 +306,7 @@ async def _list_agent_identities(
     db: AsyncSession,
     *,
     agent_response: Literal[False],
+    project_id: UUID | None = None,
 ) -> list[EnvironmentResponse] | Response: ...
 
 
@@ -314,6 +317,7 @@ async def _list_agent_identities(
     db: AsyncSession,
     *,
     agent_response: bool,
+    project_id: UUID | None = None,
 ) -> list[AgentResponse] | list[EnvironmentResponse] | Response:
     # Bound api_keys (deploy keys) only see their own env.
     # Returning every env of the user would let a leaked deploy
@@ -333,6 +337,11 @@ async def _list_agent_identities(
     )
     if bound_env is not None:
         stmt = stmt.where(AgentEnvironment.id == bound_env)
+    if project_id is not None:
+        stmt = stmt.join(
+            AgentProjectBinding,
+            AgentProjectBinding.agent_id == AgentEnvironment.id,
+        ).where(AgentProjectBinding.project_id == project_id)
     result = await db.execute(stmt)
     envs = result.scalars().all()
     states_by_env: dict[UUID, HostedRuntimeState] = {}
@@ -367,10 +376,21 @@ async def _list_agent_identities(
 async def list_agents(
     request: Request,
     response: Response,
+    project_id: UUID | None = Query(
+        default=None,
+        description="Return only the caller's Agents linked to this exact Project.",
+    ),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentResponse] | Response:
-    return await _list_agent_identities(request, response, auth, db, agent_response=True)
+    return await _list_agent_identities(
+        request,
+        response,
+        auth,
+        db,
+        agent_response=True,
+        project_id=project_id,
+    )
 
 
 @router.get(

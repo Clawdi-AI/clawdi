@@ -73,15 +73,6 @@ export function AddKeysDialog({
 			enabled: open && !vaultSlug,
 		},
 	);
-	const projectsQuery = $api.useQuery(
-		"get",
-		"/v1/projects",
-		{},
-		{
-			enabled: open && !vaultSlug,
-		},
-	);
-
 	const ownVaults = useMemo(
 		() => (vaultsQuery.data?.items ?? []).filter((v) => v.is_owner !== false),
 		[vaultsQuery.data],
@@ -98,36 +89,16 @@ export function AddKeysDialog({
 	const selectedVault = ownVaults.find((v) => v.id === effectiveChoice);
 	const effectiveSlug = selectedVault?.slug ?? (vaultSlug && vaultId ? vaultSlug : NEW_VAULT);
 	const selectedVaultId = selectedVault?.id ?? vaultId;
-	const selectedVaultProjectId = selectedVault?.project_ids?.[0] ?? vaultProjectId;
+	const selectedVaultProjectId = vaultProjectId;
 	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
 	const newVaultSlugTaken =
 		effectiveChoice === NEW_VAULT &&
 		newVaultSlug.length > 0 &&
 		ownVaults.some((v) => v.slug === newVaultSlug);
-	const writableProject = useMemo(
-		() =>
-			(projectsQuery.data ?? []).find((p) => p.kind === "personal") ??
-			(projectsQuery.data ?? []).find((p) => p.is_owner !== false),
-		[projectsQuery.data],
-	);
-	const newVaultPending =
-		effectiveChoice === NEW_VAULT &&
-		!vaultSlug &&
-		(vaultsQuery.isLoading || projectsQuery.isLoading);
+	const newVaultPending = effectiveChoice === NEW_VAULT && !vaultSlug && vaultsQuery.isLoading;
 	const blockingVaultsError = shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data)
 		? vaultsQuery.error
 		: null;
-	const blockingProjectsError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
-		? projectsQuery.error
-		: null;
-	const newVaultUnavailable =
-		effectiveChoice === NEW_VAULT &&
-		!vaultSlug &&
-		!vaultsQuery.isLoading &&
-		!projectsQuery.isLoading &&
-		!blockingVaultsError &&
-		!blockingProjectsError &&
-		writableProject === undefined;
 	const existingItems = useQuery({
 		queryKey: ["vault-items", selectedVaultId, effectiveSlug, selectedVaultProjectId],
 		queryFn: async () =>
@@ -155,8 +126,7 @@ export function AddKeysDialog({
 		open &&
 		effectiveChoice !== NEW_VAULT &&
 		(vaultsQuery.isLoading || selectedVaultId === undefined || existingItems.isLoading);
-	const destinationLoadError =
-		blockingVaultsError ?? (effectiveChoice === NEW_VAULT ? blockingProjectsError : null);
+	const destinationLoadError = blockingVaultsError;
 	const existingItemsError = shouldBlockQueryError(existingItems.error, existingItems.data)
 		? existingItems.error
 		: null;
@@ -166,7 +136,6 @@ export function AddKeysDialog({
 		!saveDisabledForNewVault(effectiveChoice, vaultSlug, newVaultName, newVaultSlug) &&
 		!newVaultSlugTaken &&
 		!newVaultPending &&
-		!newVaultUnavailable &&
 		!destinationPending &&
 		!destinationLoadError &&
 		!existingItemsError;
@@ -184,8 +153,7 @@ export function AddKeysDialog({
 				if (ownVaults.some((v) => v.slug === slug)) {
 					throw new Error("A vault with that name already exists");
 				}
-				if (!writableProject) throw new Error("No writable Project available yet");
-				projectId = writableProject.id;
+				projectId = vaultProjectId;
 				const created = unwrap(
 					await api.POST("/v1/vault", {
 						params: { query: { project_id: projectId, create_only: true } },
@@ -319,11 +287,6 @@ export function AddKeysDialog({
 											That vault already exists. Choose it from the list or use a different name.
 										</p>
 									) : null}
-									{newVaultUnavailable ? (
-										<p className="max-w-44 text-xs text-destructive">
-											No writable Project is available yet.
-										</p>
-									) : null}
 								</div>
 							) : null}
 						</div>
@@ -333,9 +296,6 @@ export function AddKeysDialog({
 							error={destinationLoadError}
 							onRetry={() => {
 								if (vaultsQuery.error) void vaultsQuery.refetch();
-								if (effectiveChoice === NEW_VAULT && projectsQuery.error) {
-									void projectsQuery.refetch();
-								}
 							}}
 							title="Couldn't load destinations"
 						/>

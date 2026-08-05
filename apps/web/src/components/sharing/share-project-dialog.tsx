@@ -108,7 +108,7 @@ export function ShareProjectDialog({
 					<DialogDescription>
 						{isShareableProject
 							? "Share this Project without sharing ownership. People join as Viewers with read access; agent use is a separate choice they make later."
-							: "Only Projects you create can be shared with people. Global Projects and Workspaces are created automatically and cannot be shared."}
+							: "Sharing is available for Projects you create. An Agent's private Workspace cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
@@ -145,7 +145,7 @@ export function ShareProjectDialog({
 				) : (
 					<Alert>
 						<AlertCircle />
-						<AlertTitle>Managed Projects are not shareable</AlertTitle>
+						<AlertTitle>This resource cannot be shared</AlertTitle>
 						<AlertDescription>
 							Only Projects you create can have members, invitations, and share links.
 						</AlertDescription>

@@ -34,6 +34,7 @@ from app.schemas.sharing import (
     UnshareResponse,
 )
 from app.services.agent_bindings import delete_project_bindings_for_users
+from app.services.project_runtime_skills import lock_project_change
 from app.services.sharing import (
     generate_share_token,
     hash_share_token,
@@ -65,12 +66,12 @@ async def _assert_project_owner(
 
 
 def _assert_project_shareable(project: Project) -> None:
-    if project.kind != PROJECT_KIND_WORKSPACE:
+    if project.kind != PROJECT_KIND_WORKSPACE or project.archived_at is not None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             {
                 "error": "project_not_shareable",
-                "message": "Only Custom Projects can be shared.",
+                "message": "Only active user-created Projects can be shared.",
             },
         )
 
@@ -408,6 +409,7 @@ async def remove_member(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> ProjectMemberRemoveResponse:
+    await lock_project_change(db, project_id)
     project = await _assert_shareable_project_owner(db, auth, project_id)
     if member_user_id == project.user_id:
         raise HTTPException(
@@ -444,6 +446,7 @@ async def leave_project(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> ProjectLeaveResponse:
+    await lock_project_change(db, project_id)
     project = (
         await db.execute(select(Project).where(Project.id == project_id))
     ).scalar_one_or_none()
@@ -484,7 +487,8 @@ async def unshare_project(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> UnshareResponse:
-    await _assert_shareable_project_owner(db, auth, project_id, for_update=True)
+    await lock_project_change(db, project_id)
+    await _assert_shareable_project_owner(db, auth, project_id)
     now = datetime.now(UTC)
 
     active_links = (

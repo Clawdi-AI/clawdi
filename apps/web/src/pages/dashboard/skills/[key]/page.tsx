@@ -224,18 +224,11 @@ export function SkillDetailContent({
 	useSetBreadcrumbSegmentTitle(agentId ? agentSectionHref(agentId) : null, skillAgentLabel);
 	useSetBreadcrumbTitle(breadcrumbTitle);
 
-	const { data: defaultProject, error: projectError } = $api.useQuery(
-		"get",
-		"/v1/projects/default",
-		{},
-		{ enabled: !isAgentScope },
-	);
-	// Edits land in the skill's own project when the detail response
-	// carries one (multi-machine accounts), falling back to the
-	// caller's default project (single-machine accounts and legacy
-	// rows). Falling back to defaultProject is also what the delete
-	// path does, so the editor stays consistent with uninstall.
-	const targetProjectId = skill?.project_id ?? defaultProject?.project_id ?? null;
+	// Browser writes require the exact Project selected by the URL. A released
+	// key-only URL remains readable through the compatibility resolver, but its
+	// inferred response must never become authority for a modern Web mutation.
+	const targetProjectId =
+		selectedProjectId && skill?.project_id === selectedProjectId ? selectedProjectId : null;
 	const isProjectReady = !!targetProjectId;
 
 	// Persisted authority and durable Project kind jointly control every
@@ -257,7 +250,9 @@ export function SkillDetailContent({
 		skill.authority === "agent_sync" ||
 		skill.project_kind === "environment" ||
 		projects !== undefined;
-	const isReadOnly = capabilities ? !capabilities.canUpdate : true;
+	const needsExplicitProject =
+		!isAgentScope && !selectedProjectId && Boolean(skill?.project_id && capabilities?.canUpdate);
+	const isReadOnly = capabilities ? !capabilities.canUpdate || !isProjectReady : true;
 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState("");
@@ -273,7 +268,11 @@ export function SkillDetailContent({
 
 	const startEdit = () => {
 		if (!capabilities?.canUpdate) {
-			toast.error("This Skill is read-only in Cloud");
+			toast.error("This Skill is read-only here");
+			return;
+		}
+		if (!targetProjectId) {
+			toast.error("Open this Skill from a Project before editing it");
 			return;
 		}
 		if (!skill?.content) {
@@ -300,7 +299,7 @@ export function SkillDetailContent({
 	const saveEdit = useMutation({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("No project available for this skill");
-			if (!capabilities?.canUpdate) throw new Error("This Skill is read-only in Cloud");
+			if (!capabilities?.canUpdate) throw new Error("This Skill is read-only here");
 			// `content_hash` here is an If-Match PRECONDITION — the
 			// hash the editor saw when this page loaded, NOT the
 			// new content's hash. The backend route accepts it as
@@ -320,8 +319,8 @@ export function SkillDetailContent({
 			);
 		},
 		onSuccess: () => {
-			toast.success("Skill Saved", {
-				description: "The Cloud-owned Skill content was updated.",
+			toast.success("Skill saved", {
+				description: "The Project Skill was updated.",
 			});
 			setIsEditing(false);
 			setDraft("");
@@ -351,7 +350,7 @@ export function SkillDetailContent({
 	const uninstall = useMutation({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("Project not loaded yet");
-			if (!capabilities?.canDelete) throw new Error("This Skill is read-only in Cloud");
+			if (!capabilities?.canDelete) throw new Error("This Skill is read-only here");
 			return unwrap(
 				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
@@ -377,7 +376,7 @@ export function SkillDetailContent({
 			return;
 		}
 		if (!capabilities?.canDelete) {
-			toast.error("This Skill is read-only in Cloud");
+			toast.error("This Skill is read-only here");
 			return;
 		}
 		uninstall.mutate();
@@ -389,7 +388,7 @@ export function SkillDetailContent({
 	const agentCaption = isAgentSyncProjection
 		? skillAgentLabel
 			? `synced from ${skillAgentLabel}`
-			: "synced from Agent runtime"
+			: "synced from Agent"
 		: sourceProjectName
 			? `stored in ${sourceProjectName}`
 			: null;
@@ -456,6 +455,15 @@ export function SkillDetailContent({
 				</div>
 			) : viewState === "detail" && skill ? (
 				<>
+					{needsExplicitProject ? (
+						<Alert>
+							<AlertTitle>Choose a Project to make changes</AlertTitle>
+							<AlertDescription>
+								This older link is view-only. Open the Skill from a Project&apos;s Skills page to
+								edit or remove that exact copy.
+							</AlertDescription>
+						</Alert>
+					) : null}
 					<div className="space-y-2">
 						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 							<div className="min-w-0 space-y-2">
@@ -469,9 +477,15 @@ export function SkillDetailContent({
 								{!accessKnown ? null : isReadOnly ? (
 									<Badge
 										variant="secondary"
-										title="Cloud mutations are disabled for this Skill's authority or Project."
+										title={
+											needsExplicitProject
+												? "Open this Skill from a Project to make changes."
+												: "This Skill must be changed from its source."
+										}
 									>
-										{capabilities?.badgeLabel ?? "Read-only"}
+										{needsExplicitProject
+											? "Choose Project"
+											: (capabilities?.badgeLabel ?? "Read-only")}
 									</Badge>
 								) : !isEditing ? (
 									<>
@@ -483,8 +497,8 @@ export function SkillDetailContent({
 											title={
 												!skill.content
 													? "No content stored for this skill yet"
-													: projectError
-														? `Project unavailable: ${errorMessage(projectError)}`
+													: !isProjectReady
+														? "Project unavailable"
 														: undefined
 											}
 										>
@@ -510,11 +524,7 @@ export function SkillDetailContent({
 												variant="outline"
 												size="sm"
 												disabled={uninstall.isPending || !isProjectReady}
-												title={
-													projectError
-														? `Project unavailable: ${errorMessage(projectError)}`
-														: undefined
-												}
+												title={!isProjectReady ? "Project unavailable" : undefined}
 												className="text-destructive hover:text-destructive"
 											>
 												<Trash2 />
@@ -603,7 +613,7 @@ export function SkillDetailContent({
 								<p className="text-xs text-muted-foreground">
 									{isAgentSyncProjection
 										? "This Skill is synced from the Agent and is read-only here. Manage it on the Agent."
-										: "This Skill is stored and managed in this Project. Install it on an Agent separately to run it."}
+										: "This Skill is stored and managed in this Project. Linked Agents use it automatically."}
 								</p>
 							</div>
 							<Badge variant={isReadOnly ? "secondary" : "outline"}>
@@ -638,8 +648,8 @@ export function SkillDetailContent({
 								<AlertTitle>Editing the Skill File</AlertTitle>
 								<AlertDescription>
 									Keep the YAML header at the top intact. It stores the skill name and description.
-									Save updates only the Skill stored in this Project. Install it on an Agent
-									separately to run the new content.
+									Saving updates this Project Skill. Linked Agents receive the new version
+									automatically.
 								</AlertDescription>
 							</Alert>
 							<Textarea
@@ -664,8 +674,8 @@ export function SkillDetailContent({
 									</div>
 									<p className="text-xs text-muted-foreground">
 										{isAgentSyncProjection
-											? "This read-only instruction file was projected from the Agent runtime."
-											: "This instruction file is stored in the Project. Install the Skill on an Agent separately to run it."}
+											? "This instruction file was synced from the Agent and is managed there."
+											: "This instruction file belongs to the Project. Linked Agents use updates automatically."}
 									</p>
 								</div>
 								<Badge variant="secondary">
@@ -693,7 +703,7 @@ export function SkillDetailContent({
 									</div>
 									<p className="text-xs text-muted-foreground">
 										{isAgentSyncProjection
-											? "The Agent runtime reported this Skill, but its read-only projection does not include an instruction body yet."
+											? "This Skill was synced from the Agent, but its instructions are not available yet."
 											: "This Project Skill has no editable instruction body."}
 									</p>
 								</div>
@@ -705,7 +715,7 @@ export function SkillDetailContent({
 								variant="inset"
 								description={
 									isAgentSyncProjection
-										? "When the Agent uploads its Skill file content, the read-only preview will appear here."
+										? "The preview will appear after the Agent syncs its Skill files."
 										: "No instruction content is stored for this Skill."
 								}
 							/>

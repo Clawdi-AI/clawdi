@@ -5,7 +5,6 @@ import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	ArrowLeft,
 	ArrowRight,
-	BookOpen,
 	Bot,
 	CheckCircle2,
 	ChevronRight,
@@ -13,6 +12,7 @@ import {
 	Eye,
 	Link2,
 	LogOut,
+	Pencil,
 	Plus,
 	Share2,
 	Trash2,
@@ -50,7 +50,6 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
 	isCustomProject,
-	isManagedProject,
 	type ProjectAgentMetadata,
 	ProjectIdentity,
 	ProjectKindBadge,
@@ -94,6 +93,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import {
 	agentDeploymentRouteQuery,
@@ -126,11 +126,18 @@ import { cn, errorMessage } from "@/lib/utils";
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type VaultSummary = components["schemas"]["VaultResponse"];
 type Env = components["schemas"]["AgentResponse"];
-type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
-
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type Member = components["schemas"]["MemberResponse"];
 type CountValue = number | "unavailable";
+type ProjectLocalTab = "overview" | "skills" | "vaults" | "agents" | "access";
+
+const PROJECT_LOCAL_TABS: readonly { id: ProjectLocalTab; label: string }[] = [
+	{ id: "overview", label: "Overview" },
+	{ id: "skills", label: "Skills" },
+	{ id: "vaults", label: "Vaults" },
+	{ id: "agents", label: "Agents" },
+	{ id: "access", label: "Access" },
+];
 
 const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
@@ -158,21 +165,26 @@ export default function ProjectDetailPage({
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+	const requestedTab = searchParams.get("tab");
+	const localTab: ProjectLocalTab = PROJECT_LOCAL_TABS.some((tab) => tab.id === requestedTab)
+		? (requestedTab as ProjectLocalTab)
+		: "overview";
 	const projectsTarget = resourceCollectionTarget(scope, "projects");
 	const managementTarget = libraryManagementTarget("projects", { projectId });
 	const isAgentScope = scope.kind === "agent";
-	const showSkills = focus !== "vaults";
-	const showVaults = focus !== "skills";
+	const showSkills = isAgentScope ? focus !== "vaults" : localTab === "skills";
+	const showVaults = isAgentScope ? focus !== "skills" : localTab === "vaults";
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
 		searchParams.get("useWithAgent") === "1",
 	);
 	const [installSkillOpen, setInstallSkillOpen] = useState(false);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
 
-	const projects = $api.useQuery("get", "/v1/projects", {});
+	const projectQuery = $api.useQuery("get", "/v1/projects/{project_id}", {
+		params: { path: { project_id: projectId } },
+	});
 
-	const rows = projects.data ?? [];
-	const project = rows.find((row) => row.id === projectId) ?? null;
+	const project = projectQuery.data ?? null;
 	const projectName = project ? displayProjectName(project) : null;
 	const projectResourceTargets =
 		scope.kind === "agent"
@@ -192,14 +204,13 @@ export default function ProjectDetailPage({
 				}
 			: null;
 	const projectNameById = useMemo(
-		() => new Map(rows.map((row) => [row.id, displayProjectName(row)])),
-		[rows],
+		() => new Map(project ? [[project.id, displayProjectName(project)]] : []),
+		[project],
 	);
 	const visibleProjectIds = useMemo(() => new Set([projectId]), [projectId]);
 	const isOwner = project?.is_owner !== false;
 	const canManageSkills = isBrowserWritableSkillProject(project);
 	const isShareableProject = project ? isCustomProject(project) : false;
-	const isManaged = project ? isManagedProject(project) : false;
 	const scopedBindings = useAgentProjectBindings(scope.kind === "agent" ? scope.agentId : "", {
 		enabled: scope.kind === "agent",
 	});
@@ -258,7 +269,7 @@ export default function ProjectDetailPage({
 		"get",
 		"/v1/agents",
 		{},
-		{ enabled: !isAgentScope && !!project },
+		{ enabled: !isAgentScope && !!project && useWithAgentOpen },
 	);
 	const agentsById = useMemo(
 		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
@@ -279,7 +290,7 @@ export default function ProjectDetailPage({
 					),
 				{ pageSize: 200, resourceName: "project skills" },
 			),
-		enabled: showSkills && (!isAgentScope || !!scopedBinding),
+		enabled: showSkills && (!isAgentScope || !!scopedBinding) && !(IS_HOSTED_BUILD && isWorkspace),
 	});
 	const workspaceSkillProjections = useMemo(
 		() => (skills.data?.items ?? []).filter((skill) => skill.authority === "agent_sync"),
@@ -311,39 +322,22 @@ export default function ProjectDetailPage({
 					params: { path: { project_id: projectId } },
 				}),
 			),
-		enabled: !isAgentScope && !!project && isOwner && isShareableProject,
+		enabled: !isAgentScope && !!project && isOwner && isShareableProject && localTab === "access",
 	});
 
-	// Agents tile/section — which connected agents can use this project:
-	// its home agent (default_project_id) plus every context binding.
-	const boundAgents = useQuery({
-		queryKey: ["project-bound-agents", projectId, (environments.data ?? []).length],
-		enabled: !isAgentScope && !!project && !!environments.data,
-		queryFn: async () => {
-			const envs = environments.data ?? [];
-			const results = await Promise.all(
-				envs.map(async (env) => {
-					if (env.default_project_id === projectId) return { env, home: true };
-					const bindings = unwrap(
-						await api.GET("/v1/agents/{agent_id}/project-bindings", {
-							params: { path: { agent_id: env.id } },
-						}),
-					);
-					return bindings.some((b: AgentProjectBinding) => b.project_id === projectId)
-						? { env, home: false }
-						: null;
-				}),
-			);
-			return results.filter((r): r is { env: Env; home: boolean } => r !== null);
-		},
-	});
+	const boundAgents = $api.useQuery(
+		"get",
+		"/v1/agents",
+		{ params: { query: { project_id: projectId } } },
+		{ enabled: !isAgentScope && !!project && localTab === "agents" },
+	);
 
 	const refresh = () => {
 		qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
 		qc.invalidateQueries({ queryKey: ["vaults"] });
 		qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
-		qc.invalidateQueries({ queryKey: ["project-bound-agents", projectId] });
+		qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 	};
 
 	const removeProjectSkill = useMutation({
@@ -424,7 +418,7 @@ export default function ProjectDetailPage({
 			: null,
 	);
 
-	if (projects.isLoading || (isAgentScope && scopedBindings.isLoading)) {
+	if (projectQuery.isLoading || (isAgentScope && scopedBindings.isLoading)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Skeleton className="h-8 w-24" />
@@ -451,8 +445,8 @@ export default function ProjectDetailPage({
 			? scopedBindings.error
 			: null
 		: null;
-	const blockingProjectError = shouldBlockQueryError(projects.error, projects.data)
-		? projects.error
+	const blockingProjectError = shouldBlockQueryError(projectQuery.error, projectQuery.data)
+		? projectQuery.error
 		: null;
 
 	if (blockingProjectError || blockingScopeError) {
@@ -469,7 +463,7 @@ export default function ProjectDetailPage({
 					<ApiErrorPanel
 						error={blockingError}
 						onRetry={() => {
-							if (blockingProjectError) void projects.refetch();
+							if (blockingProjectError) void projectQuery.refetch();
 							if (blockingScopeError) void scopedBindings.refetch();
 						}}
 						title={
@@ -490,6 +484,18 @@ export default function ProjectDetailPage({
 				<DetailNotFound
 					title="Project not found"
 					message="This Project may have been removed, or your account no longer has access."
+				/>
+			</div>
+		);
+	}
+
+	if (!isAgentScope && project.kind !== "workspace") {
+		return (
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<ProjectReturnLink target={projectsTarget} />
+				<DetailNotFound
+					title="Project not found"
+					message="This page is for user-created Projects. Open an Agent to manage its private Workspace."
 				/>
 			</div>
 		);
@@ -532,30 +538,23 @@ export default function ProjectDetailPage({
 	const blockingMembersError = shouldBlockQueryError(members.error, members.data)
 		? members.error
 		: null;
-	const blockingEnvironmentsError = shouldBlockQueryError(environments.error, environments.data)
-		? environments.error
-		: null;
 	const blockingBoundAgentsError = shouldBlockQueryError(boundAgents.error, boundAgents.data)
 		? boundAgents.error
 		: null;
-	const skillCount: CountValue | undefined =
-		isWorkspace || project.kind === "environment"
+	const skillCount: CountValue | undefined = isAgentScope
+		? isWorkspace || project.kind === "environment"
 			? undefined
 			: blockingSkillsError
 				? "unavailable"
-				: skills.data?.items.length;
-	const vaultCount: CountValue | undefined = blockingVaultsError
-		? "unavailable"
-		: vaults.data?.items.length;
-	const peopleCount: CountValue | undefined = blockingMembersError
-		? "unavailable"
-		: members.data
-			? members.data.length + 1
-			: undefined; // +1 = owner
-	const agentCount: CountValue | undefined =
-		blockingEnvironmentsError || blockingBoundAgentsError
+				: skills.data?.items.length
+		: project.skill_count;
+	const vaultCount: CountValue | undefined = isAgentScope
+		? blockingVaultsError
 			? "unavailable"
-			: boundAgents.data?.length;
+			: vaults.data?.items.length
+		: project.vault_count;
+	const peopleCount: CountValue | undefined = project.member_count + 1;
+	const agentCount: CountValue | undefined = project.agent_count;
 
 	const addToAgentDialog = (trigger: ReactElement) => (
 		<UseProjectWithAgentDialog
@@ -606,10 +605,10 @@ export default function ProjectDetailPage({
 									? "Vaults attached to this Agent's Workspace."
 									: "This Agent's fixed Workspace for installed Skills and attached Vaults."
 							: focus === "skills"
-								? "Skills stored and managed in this Project. Linking it does not install them on the Agent."
+								? "Skills this Agent uses through this linked Project."
 								: focus === "vaults"
 									? "Vaults this Agent can resolve through this Project."
-									: "Skills stay managed in this Project; its Vaults join the Agent's runtime resolution."
+									: "This Agent uses the Project's Skills and attached Vaults as one bundle."
 						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
 				}
 				status={
@@ -630,7 +629,7 @@ export default function ProjectDetailPage({
 								? addToAgentDialog(
 										<Button size="sm">
 											<Bot className="mr-1.5 size-3.5" />
-											Link project
+											Link Project
 										</Button>,
 									)
 								: null}
@@ -657,29 +656,55 @@ export default function ProjectDetailPage({
 					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<span>
-							Linking makes attached Vaults available in Agent runtime resolution. Skills stay
-							stored and managed in this Project until separately installed on an Agent.
+							Linking lets an Agent use this Project&apos;s Skills and attached Vaults together.
 						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
-							Link project
+							Link Project
 						</Button>
 					</AlertDescription>
 				</Alert>
 			) : null}
 
-			{/* Stat tiles — anchors into the sections below. */}
 			{!isAgentScope ? (
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					{project.kind !== "environment" ? (
-						<StatTile label="Skills" value={skillCount} href="#skills" />
-					) : null}
-					<StatTile label="Vaults" value={vaultCount} href="#vaults" />
-					{isOwner && isShareableProject ? (
-						<StatTile label="People" value={peopleCount} href="#people" />
-					) : null}
-					<StatTile label="Agents" value={agentCount} href="#agents" />
-				</div>
+				<nav
+					aria-label="Project pages"
+					className="grid grid-cols-2 gap-1 rounded-xl border bg-muted/30 p-1 sm:grid-cols-5"
+				>
+					{PROJECT_LOCAL_TABS.map((tab) => (
+						<a
+							key={tab.id}
+							href={`${pathname}?tab=${tab.id}`}
+							aria-current={localTab === tab.id ? "page" : undefined}
+							className={cn(
+								"rounded-lg px-3 py-2 text-center text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+								localTab === tab.id
+									? "bg-background text-foreground shadow-sm"
+									: "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+							)}
+						>
+							{tab.label}
+						</a>
+					))}
+				</nav>
+			) : null}
+
+			{!isAgentScope && localTab === "overview" ? (
+				<DetailPanel className="space-y-5">
+					<div className="space-y-1">
+						<h2 className="text-sm font-semibold">Project bundle</h2>
+						<p className="text-sm text-muted-foreground">
+							{project.description ||
+								"Keep reusable Skills and Vault access together, then link the whole Project to any Agent that needs it."}
+						</p>
+					</div>
+					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+						<StatTile label="Skills" value={skillCount} href={`${pathname}?tab=skills`} />
+						<StatTile label="Vaults" value={vaultCount} href={`${pathname}?tab=vaults`} />
+						<StatTile label="People" value={peopleCount} href={`${pathname}?tab=access`} />
+						<StatTile label="Agents" value={agentCount} href={`${pathname}?tab=agents`} />
+					</div>
+				</DetailPanel>
 			) : null}
 
 			<HubSection
@@ -692,9 +717,9 @@ export default function ProjectDetailPage({
 					isAgentScope
 						? isWorkspace
 							? "Installed Skills in this Agent's fixed Workspace."
-							: "Skills are stored and managed in this Project; linking does not install them."
+							: "Skills this Agent uses through this linked Project."
 						: project.kind === "environment"
-							? "Read-only projections authored on this Agent's filesystem."
+							? "Skills synced from this Agent. Manage them on the Agent."
 							: isOwner
 								? "Reusable instructions stored in this Project."
 								: "Readable instructions shared by the owner."
@@ -711,7 +736,7 @@ export default function ProjectDetailPage({
 							{canManageProjectSkills ? (
 								<Button variant="outline" size="sm" onClick={() => setInstallSkillOpen(true)}>
 									<Plus className="size-3.5" />
-									Install skill
+									Add Skill
 								</Button>
 							) : null}
 						</>
@@ -742,12 +767,6 @@ export default function ProjectDetailPage({
 								projectId={project.id}
 								routeSearch={scope.agentQuery}
 								deploymentSelector={deploymentSelector}
-								projections={workspaceSkillProjections}
-								projectionsLoading={skills.isLoading}
-								projectionError={blockingSkillsError}
-								onRetryProjections={() => {
-									void skills.refetch();
-								}}
 							/>
 						</Suspense>
 					) : workspaceAgent.data ? (
@@ -903,7 +922,18 @@ export default function ProjectDetailPage({
 				)}
 			</HubSection>
 
-			{!isAgentScope && isOwner && isShareableProject ? (
+			{!isAgentScope && localTab === "access" && isOwner ? (
+				<ProjectOwnerPanel
+					project={project}
+					onUpdated={() => {
+						refresh();
+						void projectQuery.refetch();
+					}}
+					onArchived={() => void router.navigate({ href: projectsTarget.href })}
+				/>
+			) : null}
+
+			{!isAgentScope && localTab === "access" && isOwner && isShareableProject ? (
 				<HubSection
 					id="people"
 					title="People"
@@ -952,11 +982,11 @@ export default function ProjectDetailPage({
 				</HubSection>
 			) : null}
 
-			{!isAgentScope && !isOwner ? (
+			{!isAgentScope && localTab === "access" && !isOwner ? (
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You have viewer access to stored Skills and Vault key names. Install Skills on an Agent separately; attached Vaults can participate in runtime resolution after linking the Project."
+					description="You have viewer access. Linked Agents use this Project's Skills and attached Vaults together."
 				>
 					<SharedAccessPanel
 						project={project}
@@ -968,29 +998,21 @@ export default function ProjectDetailPage({
 				</HubSection>
 			) : null}
 
-			{!isAgentScope ? (
+			{!isAgentScope && localTab === "agents" ? (
 				<HubSection
 					id="agents"
 					title="Agents"
 					count={agentCount}
 					description={
 						project.kind === "environment"
-							? "Home Agent for this managed Workspace."
+							? "Agent that owns this Workspace."
 							: project.kind === "personal"
-								? "This Global Project belongs to your account and is not linked to individual Agents."
-								: "Agents linked to this Project for Vault runtime resolution."
+								? "Private account resources are not linked to individual Agents."
+								: "Agents using this Project's Skills and attached Vaults."
 					}
 				>
-					{boundAgents.isLoading || environments.isLoading ? (
+					{boundAgents.isLoading ? (
 						<Skeleton className="h-16 w-full" />
-					) : blockingEnvironmentsError ? (
-						<ApiErrorPanel
-							error={blockingEnvironmentsError}
-							onRetry={() => {
-								void environments.refetch();
-							}}
-							title="Couldn't load agents"
-						/>
 					) : blockingBoundAgentsError ? (
 						<ApiErrorPanel
 							error={blockingBoundAgentsError}
@@ -1005,13 +1027,13 @@ export default function ProjectDetailPage({
 								project.kind === "environment"
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
-										? "Global Project belongs to your account and has no Agent links."
-										: "No Agents are linked yet. Linking adds attached Vaults to runtime resolution; it does not install Skills."
+										? "Private account resources have no Agent links."
+										: "No Agents are linked yet. Link this Project to let an Agent use its Skills and attached Vaults."
 							}
 						/>
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
-							{(boundAgents.data ?? []).map(({ env, home }) => (
+							{(boundAgents.data ?? []).map((env) => (
 								<div key={env.id} className="group relative flex items-center gap-3 px-4 py-3">
 									<AgentLabel
 										machineName={env.machine_name}
@@ -1023,7 +1045,7 @@ export default function ProjectDetailPage({
 										titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 										className="min-w-0 flex-1"
 									/>
-									{home ? (
+									{env.default_project_id === project.id ? (
 										<Badge variant="secondary" className="shrink-0">
 											Workspace
 										</Badge>
@@ -1043,10 +1065,6 @@ export default function ProjectDetailPage({
 						</div>
 					)}
 				</HubSection>
-			) : null}
-
-			{!isAgentScope && isOwner && isManaged ? (
-				<ManagedProjectPanel project={project} agent={projectAgent} returnTarget={projectsTarget} />
 			) : null}
 		</div>
 	);
@@ -1166,52 +1184,160 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLab
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? `${typeLabel} you own. Install Skills and attach Vaults here, share the Project, then link it to Agents when needed. Linking does not install its Skills.`
-			: `${typeLabel} shared with you. Its Skills stay stored here, while attached Vaults can join an Agent's runtime resolution after you link the Project.`;
+			? `${typeLabel} you own. Add Skills and attach Vaults, then link the whole bundle to Agents that need it.`
+			: `${typeLabel} shared with you. Linked Agents use its Skills and attached Vaults together.`;
 	}
 	if (project.kind === "environment") {
-		return `${typeLabel} ${access}. This Workspace belongs to one connected Agent. It is managed for you and cannot be shared.`;
+		return `${typeLabel} ${access}. This private Workspace belongs to one Agent and cannot be shared.`;
 	}
 	if (project.kind === "personal") {
-		return `${typeLabel} ${access}. This is your account default for resources that are not tied to one workflow or agent.`;
+		return `${typeLabel} ${access}. These private resources are not tied to one workflow or Agent.`;
 	}
 	return `${typeLabel} ${access}. Slug: ${project.slug}`;
 }
 
-function ManagedProjectPanel({
+function ProjectOwnerPanel({
 	project,
-	agent,
-	returnTarget,
+	onUpdated,
+	onArchived,
 }: {
 	project: ProjectRow;
-	agent?: ProjectAgentMetadata | null;
-	returnTarget: { href: string; label: string };
+	onUpdated: () => void;
+	onArchived: () => void;
 }) {
-	const description =
-		project.kind === "environment"
-			? "This Workspace is managed by the connected Agent and is not shareable. Create a Project when you need collaboration or reusable resources."
-			: "This Global Project is your account default and is not shareable. Create a Project when you need collaboration or reusable resources.";
+	const api = useApi();
+	const [editOpen, setEditOpen] = useState(false);
+	const [name, setName] = useState(project.name);
+	const [description, setDescription] = useState(project.description ?? "");
+	const update = useMutation({
+		mutationFn: async () =>
+			unwrap(
+				await api.PATCH("/v1/projects/{project_id}", {
+					params: { path: { project_id: project.id } },
+					body: { name: name.trim(), description: description.trim() || null },
+				}),
+			),
+		onSuccess: () => {
+			setEditOpen(false);
+			onUpdated();
+			toast.success("Project updated");
+		},
+		onError: (error) =>
+			toast.error("Couldn't update Project", { description: errorMessage(error) }),
+	});
+	const archive = useMutation({
+		mutationFn: async () =>
+			unwrap(
+				await api.DELETE("/v1/projects/{project_id}", {
+					params: { path: { project_id: project.id } },
+				}),
+			),
+		onSuccess: () => {
+			toast.success("Project archived");
+			onArchived();
+		},
+		onError: (error) =>
+			toast.error("Couldn't archive Project", { description: errorMessage(error) }),
+	});
+
 	return (
 		<DetailPanel className="space-y-4">
-			<div className="space-y-1">
-				<div className="flex items-center gap-2">
-					<BookOpen className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Managed Project</h2>
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+				<div className="space-y-1">
+					<h2 className="text-sm font-semibold">Project settings</h2>
+					<p className="text-xs text-muted-foreground">
+						Update the name and description, or archive this Project when it is no longer used.
+					</p>
 				</div>
-				<p className="text-xs text-muted-foreground">{description}</p>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => {
+						setName(project.name);
+						setDescription(project.description ?? "");
+						setEditOpen(true);
+					}}
+				>
+					<Pencil className="size-3.5" />
+					Edit Project
+				</Button>
 			</div>
-			<div className="rounded-md border bg-background/60 p-3">
-				<ProjectIdentity project={project} agent={agent} showKind={false} />
+			<div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+					<div>
+						<p className="text-sm font-medium">Archive Project</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							This immediately unlinks every Agent and removes the Project from active views.
+						</p>
+					</div>
+					<ConfirmAction
+						title={`Archive ${displayProjectName(project)}?`}
+						description={
+							<p>
+								Agents will stop using this Project&apos;s Skills and attached Vaults. Historical
+								resource records are retained.
+							</p>
+						}
+						confirmLabel="Archive Project"
+						destructive
+						onConfirm={() => archive.mutateAsync()}
+					>
+						<Button variant="destructive" size="sm" disabled={archive.isPending}>
+							{archive.isPending ? <Spinner /> : <Trash2 className="size-3.5" />}
+							Archive Project
+						</Button>
+					</ConfirmAction>
+				</div>
 			</div>
-			<Button
-				render={<Link to={returnTarget.href} />}
-				nativeButton={false}
-				variant="outline"
-				size="sm"
-				className="w-full"
-			>
-				Back to {returnTarget.label}
-			</Button>
+
+			<Dialog open={editOpen} onOpenChange={setEditOpen}>
+				<DialogContent className="sm:max-w-lg">
+					<DialogHeader>
+						<DialogTitle>Edit Project</DialogTitle>
+						<DialogDescription>
+							These details help people recognize the resource bundle. Existing Agent links stay
+							connected.
+						</DialogDescription>
+					</DialogHeader>
+					<form
+						className="space-y-4"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (name.trim()) update.mutate();
+						}}
+					>
+						<div className="space-y-1.5">
+							<Label htmlFor={`project-name-${project.id}`}>Name</Label>
+							<Input
+								id={`project-name-${project.id}`}
+								value={name}
+								onChange={(event) => setName(event.target.value)}
+								maxLength={200}
+								autoComplete="off"
+							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor={`project-description-${project.id}`}>Description</Label>
+							<Textarea
+								id={`project-description-${project.id}`}
+								value={description}
+								onChange={(event) => setDescription(event.target.value)}
+								maxLength={2000}
+								rows={4}
+							/>
+						</div>
+						<DialogFooter>
+							<Button type="button" variant="ghost" onClick={() => setEditOpen(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!name.trim() || update.isPending}>
+								{update.isPending ? <Spinner /> : null}
+								Save changes
+							</Button>
+						</DialogFooter>
+					</form>
+				</DialogContent>
+			</Dialog>
 		</DetailPanel>
 	);
 }
@@ -1237,8 +1363,8 @@ function SharedAccessPanel({
 					<h2 className="text-sm font-semibold">You Have Viewer Access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					You can read this Project and link it to an Agent. Its attached Vaults then join runtime
-					resolution; its Skills stay stored here until separately installed on the Agent.
+					You can read this Project and link it to an Agent. The Agent then uses the Project&apos;s
+					Skills and attached Vaults together.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -1265,8 +1391,8 @@ function SharedAccessPanel({
 					<AlertDialogHeader>
 						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
 						<AlertDialogDescription>
-							This removes your read-only membership. Your Agents will stop resolving attached
-							Vaults through this Project; Project Skills remain separate from Agent installs.
+							This removes your access and unlinks the Project from your Agents. Those Agents will
+							stop using its Skills and attached Vaults.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -1344,7 +1470,7 @@ function UseProjectWithAgentDialog({
 			qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(selectedAgentId) });
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			toast.success("Project linked", {
-				description: `${projectName}'s attached Vaults now participate in ${agentName}'s runtime resolution. Skills remain stored in the Project until separately installed on the Agent.`,
+				description: `${agentName} can now use ${projectName}'s Skills and attached Vaults.`,
 				action: {
 					label: "Open Agent",
 					onClick: () =>
@@ -1365,10 +1491,9 @@ function UseProjectWithAgentDialog({
 			<DialogTrigger render={children} />
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Link project to Agent</DialogTitle>
+					<DialogTitle>Link Project to Agent</DialogTitle>
 					<DialogDescription>
-						Link {projectName} as a context Project. Attached Vaults join runtime resolution; Skills
-						remain stored here and must be installed on the Agent separately.
+						The Agent will use {projectName}&apos;s Skills and attached Vaults as one bundle.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -1449,8 +1574,8 @@ function UseProjectWithAgentDialog({
 									<div>
 										<div className="font-medium">This Project Is the Agent&apos;s Workspace</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											No context link is needed. Workspace Skills and Vaults are managed from the
-											Agent&apos;s Workspace section.
+											No extra Project link is needed. Workspace Skills and Vaults are managed from
+											the Agent&apos;s Workspace section.
 										</p>
 									</div>
 								</div>
@@ -1461,7 +1586,7 @@ function UseProjectWithAgentDialog({
 										<div className="font-medium">Already Linked</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											Open the Agent&apos;s {AGENT_PROJECTS_SECTION_LABEL} section to review its
-											Vault resolution priority or unlink it.
+											Project order or unlink it.
 										</p>
 									</div>
 								</div>
@@ -1471,8 +1596,8 @@ function UseProjectWithAgentDialog({
 									<div>
 										<div className="font-medium">Link as Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Attached Vaults join the selected Agent&apos;s runtime resolution. Skills stay
-											stored in this Project until separately installed on the Agent.
+											The selected Agent will use this Project&apos;s Skills and attached Vaults
+											together.
 										</p>
 									</div>
 								</div>
@@ -1517,7 +1642,7 @@ function UseProjectWithAgentDialog({
 									}
 								>
 									{addProjectToAgent.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-									{addProjectToAgent.isPending ? "Linking…" : "Link project"}
+									{addProjectToAgent.isPending ? "Linking…" : "Link Project"}
 								</Button>
 							)}
 						</div>
@@ -1555,7 +1680,7 @@ function InstallSkillInProjectDialog({
 			setError(null);
 			onOpenChange(false);
 			onChanged();
-			toast.success("Skill installed", { description: "Saved in this Project." });
+			toast.success("Skill added");
 		},
 		onError: (e) => {
 			setError(errorMessage(e));
@@ -1594,8 +1719,8 @@ function InstallSkillInProjectDialog({
 		>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Install skill</DialogTitle>
-					<DialogDescription>Install a GitHub Skill into this Project.</DialogDescription>
+					<DialogTitle>Add Skill</DialogTitle>
+					<DialogDescription>Import a GitHub Skill into this Project.</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-2">
 					<Label htmlFor={`project-skill-repo-${projectId}`}>GitHub skill repository</Label>
@@ -1631,7 +1756,7 @@ function InstallSkillInProjectDialog({
 					</Button>
 					<Button onClick={submit} disabled={!repoInput.trim() || install.isPending}>
 						{install.isPending ? <Spinner /> : <Plus className="size-3.5" />}
-						Install skill
+						Add Skill
 					</Button>
 				</DialogFooter>
 			</DialogContent>

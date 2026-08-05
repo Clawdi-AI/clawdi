@@ -156,7 +156,7 @@ export default function VaultDetailPage({
 			vault?.project_ids?.includes(requestedProjectId)
 			? requestedProjectId
 			: undefined
-		: vault?.project_ids?.[0];
+		: undefined;
 
 	const projects = $api.useQuery(
 		"get",
@@ -240,13 +240,16 @@ export default function VaultDetailPage({
 
 	const deleteKey = useMutation({
 		mutationFn: async ({ section, name }: { section: string; name: string }) => {
-			if (!anyProjectId) throw new Error("No Project attachment");
 			if (!resolvedVaultId) throw new Error("Vault not loaded");
 			return unwrap(
 				await api.DELETE("/v1/vault/{slug}/items", {
 					params: {
 						path: { slug },
-						query: { project_id: anyProjectId, vault_id: resolvedVaultId, global_delete: true },
+						query: {
+							project_id: anyProjectId,
+							vault_id: resolvedVaultId,
+							global_delete: true,
+						},
 					},
 					body: { section: apiSection(section), fields: [name] },
 				}),
@@ -258,7 +261,6 @@ export default function VaultDetailPage({
 
 	const bulkDeleteKeys = useMutation({
 		mutationFn: async (list: { section: string; name: string }[]) => {
-			if (!anyProjectId) throw new Error("No Project attachment");
 			if (!resolvedVaultId) throw new Error("Vault not loaded");
 			const bySection = new Map<string, string[]>();
 			for (const k of list) {
@@ -650,7 +652,7 @@ export default function VaultDetailPage({
 								<Button
 									variant="outline"
 									size="sm"
-									disabled={!anyProjectId}
+									disabled={!vault.id}
 									className="w-full sm:w-auto"
 								>
 									<Plus className="size-3.5" />
