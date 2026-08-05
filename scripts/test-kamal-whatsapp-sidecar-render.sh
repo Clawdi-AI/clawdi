@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 render_root="$(mktemp -d)"
 rendered_config="${render_root}/rendered.yml"
+rendered_egress_config="${render_root}/rendered-egress.yml"
 expected_version="0123456789abcdef0123456789abcdef01234567"
 
 cleanup() {
@@ -19,6 +20,7 @@ secret_keys=(
 	KAMAL_REGISTRY_USERNAME
 	KAMAL_REGISTRY_PASSWORD
 	CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN
+	TS_AUTHKEY
 	POSTGRES_PASSWORD
 	PGBACKREST_REPO1_PATH
 	PGBACKREST_REPO1_S3_BUCKET
@@ -42,10 +44,21 @@ secret_keys=(
 	MEMORY_EMBEDDING_BASE_URL
 	VAULT_ENCRYPTION_KEY
 )
+
 for key in "${secret_keys[@]}"; do
 	printf '%s=fake-render-value\n' "${key}" >> "${render_root}/.kamal/secrets"
 done
 chmod 600 "${render_root}/.kamal/secrets"
+
+(
+	cd "${render_root}"
+	WHATSAPP_TAILSCALE_EGRESS_ENABLED=true \
+		WHATSAPP_TAILSCALE_EXIT_NODE=exit-node.example.ts.net \
+		WHATSAPP_TAILSCALE_CONFIG_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+		DEPLOY_HOST=192.0.2.10 \
+		DEPLOY_IMAGE_VERSION="${expected_version}" \
+		kamal config --version "${expected_version}" > "${rendered_egress_config}"
+)
 
 (
 	cd "${render_root}"
@@ -99,3 +112,18 @@ grep -Fq 'remote: "/run/clawdi-whatsapp"' "${rendered_config}"
 grep -Fq 'CLAWDI_WA_SIDECAR_STATE_ROOT: "/data"' "${rendered_config}"
 grep -Fq 'CLAWDI_WA_SIDECAR_SOCKET_PATH: "/run/clawdi-whatsapp/sidecar.sock"' \
 	"${rendered_config}"
+grep -Fq 'network: bridge' "${rendered_config}"
+test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_config}")" -eq 0
+
+test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_egress_config}")" -eq 1
+grep -Fq 'service: clawdi-whatsapp-tailscale' "${rendered_egress_config}"
+grep -Fq 'image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0' \
+	"${rendered_egress_config}"
+grep -Fq 'network: container:clawdi-whatsapp-tailscale' "${rendered_egress_config}"
+grep -Fq "TS_USERSPACE: 'false'" "${rendered_egress_config}"
+grep -Fq "TS_AUTH_ONCE: 'true'" "${rendered_egress_config}"
+grep -Fq 'io.clawdi.whatsapp-egress.config-revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+	"${rendered_egress_config}"
+grep -Fq 'TS_EXTRA_ARGS: "--exit-node=exit-node.example.ts.net --exit-node-allow-lan-access=false"' \
+	"${rendered_egress_config}"
+grep -Fq 'local: "/home/phala/clawdi-whatsapp/tailscale-state"' "${rendered_egress_config}"
