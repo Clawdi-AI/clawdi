@@ -14,6 +14,7 @@ import pino, { type Logger } from "pino";
 
 import { AUDITED_PROVIDER_RELEASE } from "./audited-version.js";
 import type { SidecarSessionConfig } from "./config.js";
+import { createProxyTransports, type ProxyTransports } from "./proxy.js";
 import {
 	isLinkedAuthenticationCreds,
 	type ProviderMessageEvent,
@@ -104,6 +105,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private readonly providerState: ProviderState;
 	private readonly socketFactory: ProviderSocketFactory;
 	private stateClosed = false;
+	private readonly proxyTransports: ProxyTransports | undefined;
 	private pairingMethod: "qr" | "code" | undefined;
 	private pairingQr: string | undefined;
 	private pairingQrExpiresAt: number | undefined;
@@ -121,6 +123,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		// emits only its own generic lifecycle logs at the configured level.
 		this.baileysLogger = pino({ level: "silent" });
 		this.socketFactory = dependencies.socketFactory ?? defaultProviderSocketFactory;
+		this.proxyTransports = config.proxyUrl ? createProxyTransports(config.proxyUrl) : undefined;
 		this.providerState =
 			dependencies.providerState ??
 			new SQLiteProviderState(
@@ -179,6 +182,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			}
 		} finally {
 			this.closeState();
+			await this.proxyTransports?.close();
 		}
 	}
 
@@ -412,6 +416,16 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			printQRInTerminal: false,
 			syncFullHistory: false,
 			markOnlineOnConnect: false,
+			// Audited rc14 routes WebSocketClient, Node HTTPS uploads, and
+			// native fetch through these three distinct SocketConfig fields.
+			// https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Types/Socket.ts
+			...(this.proxyTransports
+				? {
+						agent: this.proxyTransports.agent,
+						fetchAgent: this.proxyTransports.fetchAgent,
+						options: { dispatcher: this.proxyTransports.dispatcher },
+					}
+				: {}),
 			msgRetryCounterCache: this.providerState.retryCounterCache,
 			getMessage: async (key) =>
 				this.providerState.getRetryMessage(key.remoteJid, key.id) ?? { conversation: "" },

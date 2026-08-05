@@ -98,8 +98,8 @@ app_socket_volume = "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro"
 unless config.raw_config.volumes.include?(app_socket_volume)
   raise "backend roles lost the read-only WhatsApp Unix socket directory"
 end
-unless whatsapp_command.each_cons(2).include?([ "--network", "bridge" ])
-  raise "disabled WhatsApp sidecar did not render bridge networking"
+unless whatsapp_command.each_cons(2).include?([ "--network", "kamal" ])
+  raise "WhatsApp sidecar did not render the Kamal network"
 end
 unless whatsapp_command.each_cons(2).include?(
   [ "--volume", "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp" ]
@@ -131,7 +131,7 @@ grep -Fq 'remote: "/run/clawdi-whatsapp"' "${rendered_config}"
 grep -Fq 'CLAWDI_WA_SIDECAR_STATE_ROOT: "/data"' "${rendered_config}"
 grep -Fq 'CLAWDI_WA_SIDECAR_SOCKET_PATH: "/run/clawdi-whatsapp/sidecar.sock"' \
 	"${rendered_config}"
-grep -Fq 'network: bridge' "${rendered_config}"
+grep -Fq 'network: kamal' "${rendered_config}"
 grep -Fq '/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro' "${rendered_config}"
 test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_config}")" -eq 0
 
@@ -139,8 +139,10 @@ test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_egress_config}")" -eq 1
 grep -Fq 'service: clawdi-whatsapp-tailscale' "${rendered_egress_config}"
 grep -Fq 'image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0' \
 	"${rendered_egress_config}"
-grep -Fq 'network: container:clawdi-whatsapp-tailscale' "${rendered_egress_config}"
-grep -Fq "TS_USERSPACE: 'false'" "${rendered_egress_config}"
+test "$(grep -Fc 'network: kamal' "${rendered_egress_config}")" -ge 2
+grep -Fq "TS_USERSPACE: 'true'" "${rendered_egress_config}"
+grep -Fq 'TS_OUTBOUND_HTTP_PROXY_LISTEN: :8080' "${rendered_egress_config}"
+grep -Fq 'CLAWDI_WA_SIDECAR_PROXY_URL: http://clawdi-whatsapp-tailscale:8080' "${rendered_egress_config}"
 grep -Fq "TS_AUTH_ONCE: 'true'" "${rendered_egress_config}"
 grep -Fq 'io.clawdi.whatsapp-egress.config-revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
 	"${rendered_egress_config}"

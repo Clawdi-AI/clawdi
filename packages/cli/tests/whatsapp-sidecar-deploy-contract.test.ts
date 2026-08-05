@@ -8,10 +8,7 @@ const workflow = readFileSync(
 	resolve(repoRoot, ".github/workflows/clawdi-image-release.yml"),
 	"utf8",
 );
-const deployHelper = readFileSync(
-	resolve(repoRoot, "scripts/deploy-whatsapp-sidecar.sh"),
-	"utf8",
-);
+const deployHelper = readFileSync(resolve(repoRoot, "scripts/deploy-whatsapp-sidecar.sh"), "utf8");
 const dockerfile = readFileSync(
 	resolve(repoRoot, "packages/whatsapp-baileys-sidecar/Dockerfile"),
 	"utf8",
@@ -22,7 +19,8 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy.match(/^ {2}whatsapp-baileys:$/gm)).toHaveLength(1);
 		expect(deploy).toContain("service: clawdi-whatsapp-baileys");
 		expect(deploy).toContain('ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true"');
-		expect(deploy).toContain('"container:clawdi-whatsapp-tailscale" : "bridge"');
+		expect(deploy).toContain("network: kamal");
+		expect(deploy).toContain("CLAWDI_WA_SIDECAR_PROXY_URL");
 		expect(deploy).toContain("/home/phala/clawdi-whatsapp/state");
 		expect(deploy).toContain("/home/phala/clawdi-whatsapp/run");
 		expect(deploy).toContain("CLAWDI_WA_SIDECAR_STATE_ROOT: /data");
@@ -31,24 +29,25 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy).not.toContain("whatsapp_accounts");
 	});
 
-	test("gates a pinned kernel-mode Tailscale network namespace owner", () => {
+	test("gates a pinned userspace Tailscale outbound proxy", () => {
 		expect(deploy.match(/^ {2}whatsapp-tailscale:$/gm)).toHaveLength(1);
 		expect(deploy).toContain(
 			"tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0",
 		);
 		expect(deploy).toContain("TS_STATE_DIR: /var/lib/tailscale");
-		expect(deploy).toContain('TS_USERSPACE: "false"');
+		expect(deploy).toContain('TS_USERSPACE: "true"');
 		expect(deploy).toContain('TS_AUTH_ONCE: "true"');
+		expect(deploy).toContain("TS_OUTBOUND_HTTP_PROXY_LISTEN: :8080");
 		expect(deploy).toContain("--exit-node-allow-lan-access=false");
-		expect(deploy).toContain("device: /dev/net/tun:/dev/net/tun");
-		expect(deploy).toContain("cap-add: NET_ADMIN");
+		expect(deploy).not.toContain("/dev/net/tun");
+		expect(deploy).not.toContain("NET_ADMIN");
 		expect(deploy).toContain("TS_AUTHKEY");
 		expect(workflow).toContain('*[!A-Za-z0-9_-]*|"")');
 		expect(workflow).toContain('[ "${#TS_AUTHKEY}" -lt 20 ]');
 		expect(workflow).toContain('[ "${#TS_AUTHKEY}" -gt 512 ]');
 	});
 
-	test("cuts over the network pair fail-closed before deploying the backend", () => {
+	test("preflights proxy egress before recreating the sidecar", () => {
 		const helperCall = workflow.indexOf("scripts/deploy-whatsapp-sidecar.sh");
 		const appDeploy = workflow.indexOf(
 			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
@@ -57,28 +56,22 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(helperCall).toBeGreaterThan(0);
 		expect(appDeploy).toBeGreaterThan(helperCall);
 		expect(workflow).toContain("Build and push WhatsApp sidecar image");
-		expect(deployHelper).toContain(
-			"ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:${DEPLOY_IMAGE_VERSION}",
-		);
 		expect(deployHelper).toContain("kamal accessory directories whatsapp-baileys");
 		expect(workflow).toContain("scripts/deploy-whatsapp-sidecar.sh");
-		expect(deployHelper).toContain("kamal accessory stop whatsapp-baileys");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-tailscale");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-baileys");
-		expect(deployHelper).toContain("https://api.ipify.org");
-		expect(deployHelper).toContain("preflight_egress");
-		expect(deployHelper).toMatch(/if \[\[ "\$\{egress_enabled\}" == true \]\]; then\n\s+preflight_egress/);
+		expect(deployHelper).toContain("egress-healthcheck.js");
+		expect(deployHelper.indexOf("egress-healthcheck.js")).toBeLessThan(
+			deployHelper.indexOf("kamal accessory reboot whatsapp-baileys"),
+		);
 	});
 
 	test("compares desired and actual network mode independently of image revision", () => {
-		expect(deployHelper).toContain("actual_network_mode=");
+		expect(deployHelper).toContain("actual_network=");
 		expect(deployHelper).toContain("'{{.HostConfig.NetworkMode}}'");
-		expect(deployHelper).toContain("desired_network_mode=bridge");
-		expect(deployHelper).toContain('desired_network_mode="container:${egress_service}"');
-		expect(deployHelper).toContain(
-			'elif [[ "${actual_network_mode}" != "${desired_network_mode}" ]]; then',
-		);
-		expect(deployHelper).toContain('[[ "${egress_running}" == true && -n "${egress_sandbox_id}" ]]');
+		expect(deployHelper).toContain('[[ "${actual_network}" == kamal ]]');
+		expect(deployHelper).toContain("actual_proxy=");
+		expect(deployHelper).not.toContain("SandboxID");
 	});
 
 	test("keeps state private and exposes only a read-only Unix socket to the app", () => {

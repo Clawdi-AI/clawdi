@@ -16,6 +16,7 @@ export type SidecarConfig = {
 	apiToken: string;
 	stateRoot: string;
 	logLevel: string;
+	proxyUrl?: string;
 	webVersion: WAVersion;
 	providerInbox: {
 		maxEvents: number;
@@ -51,6 +52,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 		apiToken,
 		stateRoot,
 		logLevel: nonEmpty(env.CLAWDI_WA_SIDECAR_LOG_LEVEL) ?? "info",
+		...parseProxyUrl(env.CLAWDI_WA_SIDECAR_PROXY_URL),
 		webVersion: parseAuditedWhatsAppWebVersion(
 			nonEmpty(env.CLAWDI_WA_WEB_VERSION) ?? AUDITED_WHATSAPP_WEB_VERSION_TEXT,
 		),
@@ -70,6 +72,29 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 		},
 	};
 	return config;
+}
+
+function parseProxyUrl(raw: string | undefined): { proxyUrl?: string } {
+	const value = nonEmpty(raw);
+	if (!value) return {};
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error("CLAWDI_WA_SIDECAR_PROXY_URL must be a valid HTTP proxy URL");
+	}
+	if (
+		url.protocol !== "http:" ||
+		!url.hostname ||
+		url.username ||
+		url.password ||
+		url.pathname !== "/" ||
+		url.search ||
+		url.hash
+	) {
+		throw new Error("CLAWDI_WA_SIDECAR_PROXY_URL must be an origin-only HTTP URL");
+	}
+	return { proxyUrl: url.origin };
 }
 
 function parseSocketPath(raw: string | undefined): string | undefined {

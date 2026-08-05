@@ -121,4 +121,27 @@ describe("sidecar config", () => {
 			rmSync(stateRoot, { recursive: true, force: true });
 		}
 	});
+
+	it("accepts only an origin-only HTTP sidecar proxy URL", () => {
+		const stateRoot = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
+		const base = {
+			CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: "secret",
+			CLAWDI_WA_SIDECAR_STATE_ROOT: stateRoot,
+		};
+		try {
+			expect(
+				loadConfigFromEnv({
+					...base,
+					CLAWDI_WA_SIDECAR_PROXY_URL: "http://clawdi-whatsapp-tailscale:8080",
+				}).proxyUrl,
+			).toBe("http://clawdi-whatsapp-tailscale:8080");
+			for (const value of ["https://proxy:8080", "http://user:pass@proxy:8080", "not-a-url"]) {
+				expect(() => loadConfigFromEnv({ ...base, CLAWDI_WA_SIDECAR_PROXY_URL: value })).toThrow(
+					"CLAWDI_WA_SIDECAR_PROXY_URL",
+				);
+			}
+		} finally {
+			rmSync(stateRoot, { recursive: true, force: true });
+		}
+	});
 });

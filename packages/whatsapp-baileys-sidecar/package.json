@@ -12,7 +12,9 @@
 	},
 	"dependencies": {
 		"baileys": "npm:@whiskeysockets/baileys@7.0.0-rc14",
-		"pino": "^10.3.1"
+		"https-proxy-agent": "^9.1.0",
+		"pino": "^10.3.1",
+		"undici": "^8.10.0"
 	},
 	"devDependencies": {
 		"@types/node": "^22.20.0",

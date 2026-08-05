@@ -107,6 +107,7 @@ accessories:
     # https://hub.docker.com/r/tailscale/tailscale/tags?name=v1.98.10
     image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
     host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: kamal
     labels:
       io.clawdi.whatsapp-egress.config-revision: <%= ENV.fetch("WHATSAPP_TAILSCALE_CONFIG_REVISION") %>
     directories:
@@ -114,16 +115,15 @@ accessories:
         remote: /var/lib/tailscale
         mode: "700"
     options:
-      device: /dev/net/tun:/dev/net/tun
-      cap-add: NET_ADMIN
       read-only: true
       security-opt: no-new-privileges:true
       tmpfs: /tmp:rw,noexec,nosuid,nodev,size=16m
     env:
       clear:
         TS_STATE_DIR: /var/lib/tailscale
-        TS_USERSPACE: "false"
+        TS_USERSPACE: "true"
         TS_AUTH_ONCE: "true"
+        TS_OUTBOUND_HTTP_PROXY_LISTEN: :8080
         TS_EXTRA_ARGS: "--exit-node=<%= ENV.fetch('WHATSAPP_TAILSCALE_EXIT_NODE') %> --exit-node-allow-lan-access=false"
         TS_HOSTNAME: clawdi-whatsapp-egress
       secret:
@@ -134,7 +134,7 @@ accessories:
     service: clawdi-whatsapp-baileys
     image: ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:<%= ENV.fetch("DEPLOY_IMAGE_VERSION") %>
     host: <%= ENV.fetch("DEPLOY_HOST") %>
-    network: <%= ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" ? "container:clawdi-whatsapp-tailscale" : "bridge" %>
+    network: kamal
     directories:
       - local: /home/phala/clawdi-whatsapp/state
         remote: /data
@@ -155,6 +155,9 @@ accessories:
         CLAWDI_WA_SIDECAR_STATE_ROOT: /data
         CLAWDI_WA_SIDECAR_SOCKET_PATH: /run/clawdi-whatsapp/sidecar.sock
         CLAWDI_WA_SIDECAR_LOG_LEVEL: info
+<% if ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" %>
+        CLAWDI_WA_SIDECAR_PROXY_URL: http://clawdi-whatsapp-tailscale:8080
+<% end %>
       secret:
         - CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN
 
