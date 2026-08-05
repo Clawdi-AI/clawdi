@@ -83,12 +83,20 @@ end
 raise "infra did not own the Kamal bridge namespace" unless option?(commands.fetch("whatsapp-netns"), "--network", "kamal")
 tailscale = commands.fetch("whatsapp-tailscale")
 raise "Tailscale did not join infra" unless option?(tailscale, "--network", "container:clawdi-whatsapp-netns")
+raise "Tailscale lost state-directory access" unless option?(tailscale, "--cap-add", "DAC_OVERRIDE")
 raise "Tailscale lost NET_ADMIN" unless option?(tailscale, "--cap-add", "NET_ADMIN")
 raise "Tailscale lost NET_RAW" unless option?(tailscale, "--cap-add", "NET_RAW")
 raise "Tailscale lost tun" unless option?(tailscale, "--device", "/dev/net/tun:/dev/net/tun")
+raise "Tailscale lost its writable runtime directory" unless option?(
+  tailscale, "--tmpfs", "/run:rw,noexec,nosuid,nodev,size=8m"
+)
 guard = commands.fetch("whatsapp-egress-guard")
 raise "guard did not join infra" unless option?(guard, "--network", "container:clawdi-whatsapp-netns")
 raise "guard entrypoint drifted" unless option?(guard, "--entrypoint", "/bin/sh")
+raise "guard lost marker-directory access" unless option?(guard, "--cap-add", "DAC_OVERRIDE")
+raise "guard lost its writable runtime directory" unless option?(
+  guard, "--tmpfs", "/run:rw,noexec,nosuid,nodev,size=4m"
+)
 guard_cmd = config.accessory("whatsapp-egress-guard").cmd
 unless guard_cmd.start_with?("-ceu '") && guard_cmd.end_with?("'") && guard_cmd.count("'") == 2
   raise "guard command quoting drifted"
