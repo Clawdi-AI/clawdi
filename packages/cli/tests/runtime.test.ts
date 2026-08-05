@@ -1584,6 +1584,21 @@ function writeFakeOpenClawMcpBinary(
 		commandPath,
 		`#!/usr/bin/env bash
 set -euo pipefail
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${home}/workspace"}]\n'
+  exit 0
+fi
+if [ "\${1:-} \${2:-}" = "skills install" ]; then
+  source="\${3:?missing source}"; shift 3; slug=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--as" ]; then slug="\${2:?missing slug}"; shift; fi
+    shift
+  done
+  rm -rf "${home}/workspace/skills/$slug"
+  mkdir -p "${home}/workspace/skills/$slug"
+  cp -R "$source/." "${home}/workspace/skills/$slug/"
+  exit 0
+fi
 if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ]; then
   ${logSet}
   ${failSetFile}
@@ -14154,7 +14169,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		).toThrow("no bundled hosted skill clawdi version 2 is registered");
 		expect(existsSync(ledgerPath)).toBe(false);
 
-		const openclawSkill = join(home, ".openclaw", "agents", "main", "skills", "clawdi");
+		const openclawSkill = join(home, "workspace", "skills", "clawdi");
 		mkdirSync(openclawSkill, { recursive: true });
 		writeFileSync(join(openclawSkill, "SKILL.md"), "local setup skill\n");
 		reserveManagedSkill({
@@ -14188,7 +14203,9 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
 			runtimes: { openclaw: ["clawdi", "search-proxy"] },
 		});
-		expect(existsSync(join(openclawSkill, ".clawdi-managed.json"))).toBe(true);
+		expect(existsSync(join(workspace, "skills", ".clawdi-manifest-receipts", "clawdi.json"))).toBe(
+			true,
+		);
 
 		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());
 		expect(updated.installErrors).toEqual([]);
@@ -15462,7 +15479,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 
 		expect(controlPlaneRev).toBe(baseRev);
 		expect(controlPlaneWorkerRev).toBe(baseWorkerRev);
-		expect(skillGatewayRev).not.toBe(baseRev);
+		expect(skillGatewayRev).toBe(baseRev);
 		expect(skillWorkerRev).toBe(baseWorkerRev);
 		expect(siblingRuntimeRev).toBe(baseRev);
 	});

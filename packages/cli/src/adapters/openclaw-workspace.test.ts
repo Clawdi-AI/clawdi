@@ -18,10 +18,13 @@ test("resolves Skills from the official agent workspace roster", () => {
 	const bin = join(root, "bin");
 	const command = join(bin, "openclaw");
 	mkdirSync(bin, { recursive: true });
-	writeFileSync(command, `#!/bin/sh
+	writeFileSync(
+		command,
+		`#!/bin/sh
 test "$*" = "agents list --json"
 printf '%s\n' '[{"id":"main","workspace":"${root}/main-workspace"},{"id":"sales","workspace":"${root}/sales-workspace"}]'
-`);
+`,
+	);
 	chmodSync(command, 0o755);
 	process.env.PATH = `${bin}:${originalPath ?? ""}`;
 

@@ -1,10 +1,10 @@
 import { join } from "node:path";
-import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
 import type { AgentAdapter } from "./base";
 import { ClaudeCodeAdapter } from "./claude-code";
 import { CodexAdapter } from "./codex";
 import { HermesAdapter } from "./hermes";
 import { OpenClawAdapter } from "./openclaw";
+import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
 import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome } from "./paths";
 
 // Agent identity is declared as a literal tuple so `AgentType` doesn't depend

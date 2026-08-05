@@ -44,6 +44,7 @@ from app.models.session_permission import (
 from app.schemas.common import Paginated
 from app.schemas.runtime import (
     HostedRuntimeStdioMcpServer,
+    PersistedHostedRuntimeBundledSkillEntry,
     PersistedHostedRuntimeMcp,
     PersistedHostedRuntimeSkills,
     validate_hosted_runtime_desired_state,
@@ -1335,7 +1336,11 @@ def _runtime_managed_skill_summaries(
             RuntimeManagedSkillSummary(
                 id=skill_id,
                 enabled=entry.enabled,
-                version=entry.version or 1,
+                version=(
+                    entry.version or 1
+                    if isinstance(entry, PersistedHostedRuntimeBundledSkillEntry)
+                    else 1
+                ),
             )
             for skill_id, entry in sorted(skills.entries.items())
         )

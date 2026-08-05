@@ -24,7 +24,9 @@ export function listOpenClawAgentWorkspaces(): OpenClawAgentWorkspace[] {
 				const summaries = parsed.flatMap((value): OpenClawAgentWorkspace[] => {
 					if (!value || typeof value !== "object" || Array.isArray(value)) return [];
 					const entry = value as Record<string, unknown>;
-					return typeof entry.id === "string" && typeof entry.workspace === "string" && isAbsolute(entry.workspace)
+					return typeof entry.id === "string" &&
+						typeof entry.workspace === "string" &&
+						isAbsolute(entry.workspace)
 						? [{ id: entry.id, workspace: entry.workspace }]
 						: [];
 				});
@@ -39,6 +41,7 @@ export function listOpenClawAgentWorkspaces(): OpenClawAgentWorkspace[] {
 
 export function resolveOpenClawAgentWorkspace(agentId = openClawAgentId()): string {
 	const workspace = listOpenClawAgentWorkspaces().find((entry) => entry.id === agentId)?.workspace;
-	if (!workspace) throw new Error(`OpenClaw agent ${agentId} is not present in the official agent roster`);
+	if (!workspace)
+		throw new Error(`OpenClaw agent ${agentId} is not present in the official agent roster`);
 	return workspace;
 }

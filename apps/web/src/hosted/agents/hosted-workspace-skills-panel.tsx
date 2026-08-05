@@ -262,9 +262,11 @@ function HostedWorkspaceSkillsPanelContent({
 											</Badge>
 											<ConfirmAction
 												title={`Uninstall ${item.entity.name} from Agent?`}
-													description={
-														<p>The runtime driver will remove only the manifest-owned Workspace copy.</p>
-													}
+												description={
+													<p>
+														The runtime driver will remove only the manifest-owned Workspace copy.
+													</p>
+												}
 												confirmLabel="Uninstall skill"
 												destructive
 												onConfirm={() => runMutation("uninstall", item.entity.skill_key)}
@@ -324,7 +326,11 @@ function ProjectionCards({
 }) {
 	if (error) {
 		return (
-			<ApiErrorPanel error={error} onRetry={onRetry} title="Runtime Skill observations unavailable" />
+			<ApiErrorPanel
+				error={error}
+				onRetry={onRetry}
+				title="Runtime Skill observations unavailable"
+			/>
 		);
 	}
 	if (isLoading) return <WorkspaceSkillSkeleton />;

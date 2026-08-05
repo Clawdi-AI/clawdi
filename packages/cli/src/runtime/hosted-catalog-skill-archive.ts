@@ -132,10 +132,8 @@ export async function prepareHostedCatalogSkillArchives(
 	options: { fetcher?: GithubArchiveFetcher } = {},
 ): Promise<ReadonlyMap<string, PreparedHostedCatalogSkill>> {
 	const prepared = new Map<string, PreparedHostedCatalogSkill>();
-	if (
-		manifest.runtimes.hermes?.enabled !== true &&
-		manifest.runtimes.openclaw?.enabled !== true
-	) return prepared;
+	if (manifest.runtimes.hermes?.enabled !== true && manifest.runtimes.openclaw?.enabled !== true)
+		return prepared;
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(
 		([left], [right]) => left.localeCompare(right),
 	)) {
