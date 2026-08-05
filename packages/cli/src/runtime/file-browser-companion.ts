@@ -182,7 +182,7 @@ function renderFileBrowserConfig(companion: NonNullable<FileBrowserCompanion>, p
 					config: {
 						defaultEnabled: true,
 						private: true,
-						rules: [{ folderPath: "/", ignoreSymlinks: true }],
+						rules: [{ folderPath: "/", ignoreHidden: true, ignoreSymlinks: true }],
 					},
 				},
 			],

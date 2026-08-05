@@ -5205,6 +5205,7 @@ exit 42
 		expect(config).toContain("listen: 0.0.0.0");
 		expect(config).toContain("port: 9120");
 		expect(config).toContain("path: /home/clawdi");
+		expect(config).toContain("ignoreHidden: true");
 		expect(config).toContain("ignoreSymlinks: true");
 		expect(config).toContain("disableWebDAV: true");
 		expect(config).toContain("password:\n      enabled: false");

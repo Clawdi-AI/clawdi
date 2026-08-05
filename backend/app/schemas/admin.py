@@ -28,8 +28,8 @@ from app.schemas.platform import PlatformOwner
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
-    HostedRuntimeDesiredState,
     HostedRuntimeCompanions,
+    HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
     HostedRuntimeMcp,
@@ -183,7 +183,7 @@ class AdminRuntimeStateUpsert(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_files_binding(self) -> "AdminRuntimeStateUpsert":
+    def _validate_files_binding(self) -> AdminRuntimeStateUpsert:
         files = self.companions.files if self.companions is not None else None
         if files is None:
             return self

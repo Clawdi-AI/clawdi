@@ -1455,7 +1455,7 @@ function ConsoleTab({
 	);
 }
 
-type FilesFrameState = "loading" | "ready" | "error";
+type FilesFrameState = "loading" | "loaded" | "error";
 
 function FilesTab({
 	deployment,
@@ -1551,7 +1551,7 @@ function FilesTab({
 					title="Files"
 					className="min-h-[420px] flex-1 border-0 bg-background"
 					allow="clipboard-read; clipboard-write"
-					onLoad={() => setFrameState("ready")}
+					onLoad={() => setFrameState("loaded")}
 					onError={() => setFrameState("error")}
 				/>
 				{frameState === "loading" ? (
@@ -1569,13 +1569,24 @@ function FilesTab({
 							<div>
 								<h2 className="text-base font-semibold">Couldn’t open Files</h2>
 								<p className="mt-1 text-sm text-muted-foreground">
-									The secure Files endpoint did not load. Check your connection and try again.
+									The embedded page could not be displayed. If your sign-in needs attention,
+									open Files in a new tab and then retry here.
 								</p>
 							</div>
-							<Button type="button" onClick={retryFrame}>
-								<RefreshCw className="size-3.5" />
-								Retry
-							</Button>
+							<div className="flex flex-wrap justify-center gap-2">
+								<Button
+									render={<a href={url} target="_blank" rel="noopener noreferrer" />}
+									nativeButton={false}
+									variant="outline"
+								>
+									Open in new tab
+									<ExternalLink className="size-3.5" />
+								</Button>
+								<Button type="button" onClick={retryFrame}>
+									<RefreshCw className="size-3.5" />
+									Retry
+								</Button>
+							</div>
 						</div>
 					</div>
 				) : null}
