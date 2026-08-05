@@ -159,9 +159,9 @@ const cleanHttpUrlSchema = z
 		);
 	}, "must be a clean HTTP(S) URL");
 
-const hostedClawdiProjectSkillSourceSchema = z
+const hostedProjectSkillSourceSchema = z
 	.object({
-		type: z.literal("clawdi"),
+		type: z.literal("project"),
 		projectId: z.uuid(),
 		contentHash: z.string().regex(/^[a-f0-9]{64}$/),
 		archiveUrl: cleanHttpUrlSchema,
@@ -171,7 +171,7 @@ const hostedClawdiProjectSkillSourceSchema = z
 
 export const hostedSkillSourceSchema = z.discriminatedUnion("type", [
 	hostedGithubSkillSourceSchema,
-	hostedClawdiProjectSkillSourceSchema,
+	hostedProjectSkillSourceSchema,
 ]);
 export type HostedSkillSource = z.infer<typeof hostedSkillSourceSchema>;
 

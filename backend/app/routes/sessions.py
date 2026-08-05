@@ -1777,6 +1777,7 @@ class SyncHeartbeatRequest(BaseModel):
     # boundary defense, not a regression for correct clients.
     queue_depth: int | None = Field(default=None, ge=0)
     dropped_count_delta: int | None = Field(default=None, ge=0)
+    project_skill_reconcile_version: int | None = Field(default=None, ge=1, le=1)
     runtime_observed: HostedRuntimeObserved | None = None
 
     @field_validator("runtime_observed", mode="before")
@@ -1916,6 +1917,7 @@ async def sync_heartbeat(
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
+    new_project_skill_reconcile_version = body.project_skill_reconcile_version
     runtime_observed = body.runtime_observed
     hosted_state = None
     observation = None
@@ -1949,6 +1951,7 @@ async def sync_heartbeat(
         )
         or bool(body.dropped_count_delta)
         or not env.sync_enabled
+        or env.project_skill_reconcile_version != new_project_skill_reconcile_version
         or observed_changed
     )
     # Even with no state change, refresh last_sync_at on a bounded
@@ -1963,6 +1966,7 @@ async def sync_heartbeat(
         return
     env.last_sync_at = now
     env.last_sync_error = new_error
+    env.project_skill_reconcile_version = new_project_skill_reconcile_version
     if new_revision is not None:
         env.last_revision_seen = new_revision
     if body.queue_depth is not None and body.queue_depth > env.queue_depth_high_water_since_start:

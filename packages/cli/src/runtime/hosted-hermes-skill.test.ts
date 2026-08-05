@@ -87,13 +87,18 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const skill: PreparedHostedSourcedSkill = {
 			skillId: "review-pr",
 			source: {
-				type: "clawdi",
+				type: "project",
 				projectId: "22222222-2222-4222-8222-222222222222",
 				contentHash: "a".repeat(64),
 				archiveUrl: `https://cloud-api.example.test/v1/runtime/project-skill-archives/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333/${"a".repeat(64)}/${"f".repeat(64)}/review-pr.tar.gz`,
 				installUrl,
 			},
-			sourceIdentity: "clawdi-project-review",
+			sourceIdentity: [
+				"project",
+				"review-pr",
+				"22222222-2222-4222-8222-222222222222",
+				"a".repeat(64),
+			].join("\0"),
 			archiveSha256: "b".repeat(64),
 			tarBytes: readFileSync(archive),
 		};

@@ -1042,7 +1042,7 @@ skillCmd
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi skill add ./my-skill                         # default project\n  $ clawdi skill add ./my-skill --project engineering   # explicit project\n  $ clawdi skill add ./my-skill --agent codex            # Agent Workspace",
+		"\nExamples:\n  $ clawdi skill add ./my-skill --project engineering   # Project\n  $ clawdi skill add ./my-skill --agent codex            # Agent Workspace",
 	)
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");
@@ -1375,8 +1375,8 @@ Folder-link workflow:
   $ clawdi run -- npm run deploy
 
 Notes:
-  project list hides auto-created machine/environment projects by default.
-  Use project list --include-envs to inspect those scopes.`,
+	  project list shows user-created and shared Projects by default.
+	  Use project list --include-workspaces to inspect Agent Workspaces.`,
 	);
 
 projectCmd
@@ -1401,20 +1401,25 @@ projectCmd
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option("--shared-with-me", "Show only projects shared with you")
 	.option("--owned", "Show only projects you own")
-	.option("--include-envs", "Include auto-created machine/environment projects")
+	.option("--include-workspaces", "Include Agent Workspaces")
+	.addOption(new Option("--include-envs").hideHelp())
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi project list\n  $ clawdi project list --include-envs\n  $ clawdi project list --shared-with-me --json",
+		"\nExamples:\n  $ clawdi project list\n  $ clawdi project list --include-workspaces\n  $ clawdi project list --shared-with-me --json",
 	)
 	.action(
 		async (opts: {
 			json?: boolean;
 			sharedWithMe?: boolean;
-			owned?: boolean;
-			includeEnvs?: boolean;
-		}) => {
-			const { projectListCommand } = await import("./commands/project-list.js");
-			await projectListCommand(opts);
+				owned?: boolean;
+				includeEnvs?: boolean;
+				includeWorkspaces?: boolean;
+			}) => {
+				const { projectListCommand } = await import("./commands/project-list.js");
+				await projectListCommand({
+					...opts,
+					includeEnvs: opts.includeWorkspaces === true || opts.includeEnvs === true,
+				});
 		},
 	);
 

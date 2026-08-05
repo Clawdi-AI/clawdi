@@ -86,7 +86,7 @@ function projectManifest(
 					"review-pr": {
 						enabled: true,
 						source: {
-							type: "clawdi",
+							type: "project",
 							projectId,
 							contentHash,
 							archiveUrl: `${origin}/v1/runtime/project-skill-archives/${agentId}/${projectId}/${skillId}/${contentHash}/${"f".repeat(64)}/review-pr.tar.gz`,
@@ -114,9 +114,9 @@ describe("hosted sourced Skill archives", () => {
 		const desired = projectManifest(canonical.hash);
 		const desiredEntry = desired.projection?.skills?.entries["review-pr"];
 		if (!desiredEntry || !("source" in desiredEntry)) throw new Error("missing Project source");
-		if (desiredEntry.source.type !== "clawdi") throw new Error("wrong Project source type");
+		if (desiredEntry.source.type !== "project") throw new Error("wrong Project source type");
 		expect(hostedSkillSourceSchema.parse(desiredEntry.source)).toMatchObject({
-			type: "clawdi",
+			type: "project",
 			contentHash: canonical.hash,
 		});
 		const requests: Array<{
@@ -142,7 +142,7 @@ describe("hosted sourced Skill archives", () => {
 			fetcher,
 		});
 		expect(first.get("review-pr")?.sourceIdentity).toBe(
-			["clawdi", "review-pr", "22222222-2222-4222-8222-222222222222", canonical.hash].join("\0"),
+			["project", "review-pr", "22222222-2222-4222-8222-222222222222", canonical.hash].join("\0"),
 		);
 		expect(requests).toEqual([
 			{

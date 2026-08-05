@@ -311,15 +311,17 @@ async def queue_environment_runtime_manifest_changed(
     user_id: UUID,
     environment_id: UUID,
 ) -> bool:
-    """Queue an event when an environment currently has runtime desired state."""
-    state = (
+    """Queue an exact Agent desired-state invalidation when the Agent is active."""
+    agent = (
         await db.execute(
-            select(HostedRuntimeState).where(
-                HostedRuntimeState.environment_id == environment_id,
+            select(AgentEnvironment.id).where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
     ).scalar_one_or_none()
-    if state is None:
+    if agent is None:
         return False
     queue_runtime_manifest_changed(db, user_id, environment_id)
     return True

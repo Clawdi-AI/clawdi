@@ -1,74 +1,54 @@
 "use client";
 
-import { FEATURED_SKILLS } from "@clawdi/shared/consts";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import {
-	AlertCircle,
-	Check,
-	ChevronDown,
-	Copy as CopyIcon,
-	ExternalLink,
-	ListChecks,
-	Plus,
-	RefreshCw,
-	Search,
-	Trash2,
-} from "lucide-react";
+import { FolderKanban, Import as ImportIcon, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { BulkActionBar } from "@/components/bulk-action-bar";
 import { EmptyState } from "@/components/empty-state";
-import { FilterChip, filterChipClass } from "@/components/filter-chip";
+import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
-	compareProjectsForUse,
 	displayProjectName,
 	isCustomProject,
 	isProjectOwner,
+	ProjectCompactPicker,
 } from "@/components/projects/project-metadata";
-import { SectionLabel } from "@/components/section-label";
-import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
-import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
-import { SkillCardGrid, skillSelectionKey } from "@/components/skills/skill-card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuGroup,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+	ProjectResourceCard,
+	ProjectResourceCardSkeleton,
+} from "@/components/projects/project-resource-card";
+import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
+import { SkillCardGrid } from "@/components/skills/skill-card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
-import { ensureBlob, unwrap, useApi, useOpenApi, useSkillArchiveUploader } from "@/lib/api";
-import { fetchAllPages } from "@/lib/api-pagination";
+import { Textarea } from "@/components/ui/textarea";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
-import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage } from "@/lib/utils";
 
-type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type ProjectRow = components["schemas"]["ProjectResponse"];
 
-// /skills is the Project skill control center. Pick a Project at
-// the top, manage its installed skills below, and use the install
-// bar + featured tiles to add new ones. Agent pages deep-link here
-// through their Agent Project.
+const PAGE_SIZE = 30;
 
-const SKILLS_RESOURCE = getProjectResourceDefinition("skills");
-
-// Wrap the URL-state body in Suspense so the shell remains stable while the
-// param-aware inner client tree hydrates.
 export default function SkillsPage() {
 	return (
 		<Suspense fallback={null}>
@@ -80,927 +60,514 @@ export default function SkillsPage() {
 function SkillsPageInner() {
 	const api = useApi();
 	const $api = useOpenApi();
-	const uploadSkillArchive = useSkillArchiveUploader();
 	const queryClient = useQueryClient();
-	// `?project=<project_id>` is the canonical scope. `?target=<env_id>`
-	// remains supported for older deep links from agent detail pages.
 	const [projectParam, setProjectParam] = useQueryState(
 		"project",
-		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "push" }),
 	);
-	const [targetEnvId, setTargetEnvId] = useQueryState(
+	const [legacyTarget, setLegacyTarget] = useQueryState(
 		"target",
 		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
 	);
-	const hasProjectParam = projectParam.trim().length > 0;
-	const hasTargetParam = targetEnvId.trim().length > 0;
-	const [installing, setInstalling] = useState<string | null>(null);
-	const [installError, setInstallError] = useState<string | null>(null);
-	const [customRepo, setCustomRepo] = useState("");
-	const [customRepoError, setCustomRepoError] = useState<string | null>(null);
-
-	const {
-		data: projects,
-		error: projectsError,
-		refetch: refetchProjects,
-	} = $api.useQuery("get", "/v1/projects", {});
-	const orderedProjects = useMemo(
-		() =>
-			[...(projects ?? [])]
-				.filter((project) => project.id && isCustomProject(project))
-				.sort(compareProjectsForUse),
-		[projects],
-	);
-	const visibleProjectIds = useMemo(
-		() => new Set(orderedProjects.map((project) => project.id)),
-		[orderedProjects],
-	);
-	const projectsById = useMemo(
-		() => new Map((projects ?? []).map((project) => [project.id, project])),
-		[projects],
-	);
-	const capabilitiesForSkill = (skill: SkillSummary) =>
-		skillCapabilities(skill, skill.project_id ? projectsById.get(skill.project_id) : undefined);
-
-	const { data: envs } = $api.useQuery("get", "/v1/agents", {});
-
-	// Resolution order:
-	//   - URL has ?project=X and projects loaded:
-	//       project found → that Project
-	//       project missing → stale link, block writes
-	//   - Legacy URL has ?target=X and envs loaded:
-	//       env found → its Agent Project
-	//       env missing → stale link, block writes
-	//   - No URL scope → "All projects": most skills live in agent/system
-	//     projects, so defaulting to one customized Project hid the bulk
-	//     of the user's inventory (Marvin: "users very hard to view them")
-	const targetEnvFromUrl = useMemo(() => {
-		if (!hasTargetParam || hasProjectParam) return null;
-		if (!envs) return undefined; // still loading
-		return envs.find((e) => e.id === targetEnvId) ?? null; // null = stale id
-	}, [hasProjectParam, hasTargetParam, targetEnvId, envs]);
-	const projectFromUrl = useMemo(() => {
-		if (!hasProjectParam) return null;
-		if (!projects) return undefined; // still loading
-		return orderedProjects.find((project) => project.id === projectParam) ?? null;
-	}, [hasProjectParam, projectParam, projects, orderedProjects]);
-	const isResolvingTarget =
-		projects === undefined || targetEnvFromUrl === undefined || projectFromUrl === undefined;
-	const isAllScope = !hasProjectParam && !hasTargetParam;
-	const targetProjectId = (() => {
-		if (hasProjectParam) return projectFromUrl?.id ?? null;
-		if (hasTargetParam) return targetEnvFromUrl?.default_project_id ?? null;
-		return null; // All-projects view
-	})();
-	const targetProject = orderedProjects.find((project) => project.id === targetProjectId) ?? null;
-	const isStaleProject = hasProjectParam && projectFromUrl === null;
-	const isStaleTarget = !hasProjectParam && hasTargetParam && targetEnvFromUrl === null;
-
-	// Fetch account-wide, then filter client-side by the selected
-	// Project. That keeps one inventory cache for Project switching
-	// while preserving exact project_id writes for install/uninstall.
-	const {
-		data: skillsData,
-		isLoading: skillsLoading,
-		error: skillsError,
-		refetch: refetchSkills,
-	} = useQuery({
-		queryKey: ["skills", "all-projects"],
-		queryFn: async () =>
-			fetchAllPages<SkillSummary>(
-				async (page, pageSize) =>
-					unwrap(
-						await api.GET("/v1/skills", {
-							params: { query: { page, page_size: pageSize } },
-						}),
-					),
-				{ pageSize: 200, resourceName: "skills" },
-			),
-		enabled: !isResolvingTarget,
-		placeholderData: keepPreviousData,
-	});
-	const blockingProjectsError = shouldBlockQueryError(projectsError, projects)
-		? projectsError
-		: null;
-	const blockingSkillsError = shouldBlockQueryError(skillsError, skillsData) ? skillsError : null;
-	// The Project library shows only user-created Projects. Agent Workspace
-	// Skills stay on the Agent surface.
-	// Both ranked by installed-skill count, busiest first.
-	const skillCountByProject = useMemo(() => {
-		const m = new Map<string, number>();
-		for (const s of skillsData?.items ?? []) {
-			if (s.project_id) m.set(s.project_id, (m.get(s.project_id) ?? 0) + 1);
-		}
-		return m;
-	}, [skillsData]);
-	const byCountDesc = useMemo(
-		() => (a: { id: string; name: string }, b: { id: string; name: string }) =>
-			(skillCountByProject.get(b.id) ?? 0) - (skillCountByProject.get(a.id) ?? 0) ||
-			a.name.localeCompare(b.name),
-		[skillCountByProject],
-	);
-	const tabProjects = useMemo(
-		() => orderedProjects.filter((p) => p.kind === "workspace").sort(byCountDesc),
-		[orderedProjects, byCountDesc],
-	);
-	const overflowProjects = useMemo(
-		() => orderedProjects.filter((p) => p.kind !== "workspace").sort(byCountDesc),
-		[orderedProjects, byCountDesc],
-	);
-
-	const isProjectReady = !!targetProjectId && !!targetProject && !isStaleProject && !isStaleTarget;
-	const canWriteTargetProject = isProjectReady && isBrowserWritableSkillProject(targetProject);
-	const targetProjectLabel = targetProject ? displayProjectName(targetProject) : "Project";
-	const overflowActive = !!targetProject && overflowProjects.some((p) => p.id === targetProject.id);
-
-	// Curation toolkit: search across every copy of every skill, then
-	// batch-select and send them somewhere better. This is how content
-	// escapes the agent/system projects it accumulates in.
 	const [search, setSearch] = useState("");
-	const [selectMode, setSelectMode] = useState(false);
-	const [selectedSkillKeys, setSelectedSkillKeys] = useState<Set<string>>(new Set());
-	const clearSelection = () => setSelectedSkillKeys(new Set());
-	const toggleSkill = (skill: SkillSummary) => {
-		if (!capabilitiesForSkill(skill).canSelect) return;
-		setSelectedSkillKeys((prev) => {
-			const next = new Set(prev);
-			const key = skillSelectionKey(skill);
-			if (next.has(key)) next.delete(key);
-			else next.add(key);
-			return next;
-		});
-	};
+	const [page, setPage] = useState(1);
+	const [createOpen, setCreateOpen] = useState(false);
+	const [importOpen, setImportOpen] = useState(false);
 
-	const matchesSearch = useMemo(() => {
-		const needle = search.trim().toLowerCase();
-		if (!needle) return () => true;
-		return (s: SkillSummary) =>
-			(s.name ?? "").toLowerCase().includes(needle) ||
-			s.skill_key.toLowerCase().includes(needle) ||
-			(s.description ?? "").toLowerCase().includes(needle);
-	}, [search]);
-
-	const skillsForTarget = useMemo(() => {
-		if (!skillsData?.items) return undefined;
-		if (isStaleProject || isStaleTarget) return [];
-		if (isAllScope) {
-			return skillsData.items.filter(
-				(skill) =>
-					Boolean(skill.project_id && visibleProjectIds.has(skill.project_id)) &&
-					matchesSearch(skill),
-			);
-		}
-		if (!targetProjectId) return [];
-		return skillsData.items.filter((s) => s.project_id === targetProjectId && matchesSearch(s));
-	}, [
-		skillsData,
-		targetProjectId,
-		isStaleProject,
-		isStaleTarget,
-		isAllScope,
-		matchesSearch,
-		visibleProjectIds,
-	]);
-
-	// Duplicates lens: the same skill_key installed in several Projects is
-	// N independent copies (see DESIGN.md copy-vs-reference) — and on real
-	// fleets a third of installs are duplicates, many at drifted versions.
-	// Group them by key, flag drift via content_hash (catches same-version
-	// content edits too), and offer one-click "sync all copies to newest".
-	const duplicateGroups = useMemo(() => {
-		if (!skillsForTarget) return [];
-		const byKey = new Map<string, SkillSummary[]>();
-		for (const s of skillsForTarget) {
-			if (!s.project_id) continue;
-			const arr = byKey.get(s.skill_key);
-			if (arr) arr.push(s);
-			else byKey.set(s.skill_key, [s]);
-		}
-		return [...byKey.entries()]
-			.filter(([, copies]) => copies.length > 1)
-			.map(([key, copies]) => {
-				const newest = [...copies].sort(
-					(a, b) => b.version - a.version || b.updated_at.localeCompare(a.updated_at),
-				)[0];
-				const drift = new Set(copies.map((c) => c.content_hash)).size > 1;
-				return { key, copies, newest, drift };
-			})
-			.filter((g) => matchesSearch(g.newest))
-			.sort(
-				(a, b) =>
-					Number(b.drift) - Number(a.drift) ||
-					b.copies.length - a.copies.length ||
-					a.newest.name.localeCompare(b.newest.name),
-			);
-	}, [skillsForTarget, matchesSearch]);
-	const [showDuplicates, setShowDuplicates] = useState(false);
-	const duplicatesView = showDuplicates && isAllScope;
-
-	// All-projects view groups by source project, busiest first — this is
-	// the "where do most of my skills actually live?" answer at a glance.
-	const allGroups = useMemo(() => {
-		if (!isAllScope || !skillsForTarget) return [];
-		const byProject = new Map<string, SkillSummary[]>();
-		for (const s of skillsForTarget) {
-			const pid = s.project_id ?? "";
-			const bucket = byProject.get(pid);
-			if (bucket) bucket.push(s);
-			else byProject.set(pid, [s]);
-		}
-		return [...byProject.entries()]
-			.map(([pid, groupSkills]) => {
-				const project = orderedProjects.find((p) => p.id === pid) ?? null;
-				const label = project
-					? displayProjectName(project)
-					: (groupSkills[0]?.project_name ?? "Other");
-				return { pid, project, label, skills: groupSkills };
-			})
-			.sort((a, b) => b.skills.length - a.skills.length || a.label.localeCompare(b.label));
-	}, [isAllScope, skillsForTarget, orderedProjects]);
-
-	const selectedSkills = useMemo(
+	const projectsQuery = $api.useQuery("get", "/v1/projects", {});
+	const projects = useMemo(
 		() =>
-			(skillsData?.items ?? []).filter(
-				(s) => selectedSkillKeys.has(skillSelectionKey(s)) && capabilitiesForSkill(s).canSelect,
+			(projectsQuery.data ?? [])
+				.filter(isCustomProject)
+				.sort((left, right) => displayProjectName(left).localeCompare(displayProjectName(right))),
+		[projectsQuery.data],
+	);
+	const selectedProject = useMemo(
+		() => projects.find((project) => project.id === projectParam) ?? null,
+		[projectParam, projects],
+	);
+	const projectResolved = projectsQuery.data !== undefined;
+	const staleProject = Boolean(projectParam && projectResolved && !selectedProject);
+	const projectError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
+		? projectsQuery.error
+		: null;
+
+	useEffect(() => {
+		setPage(1);
+	}, [projectParam, search]);
+
+	const skillsQuery = useQuery({
+		queryKey: ["skills", "project", selectedProject?.id, search.trim(), page],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/v1/skills", {
+					params: {
+						query: {
+							project_id: selectedProject?.id,
+							q: search.trim() || undefined,
+							page,
+							page_size: PAGE_SIZE,
+						},
+					},
+				}),
 			),
-		[skillsData, selectedSkillKeys, projectsById],
+		enabled: Boolean(selectedProject),
+	});
+	const skillsError = shouldBlockQueryError(skillsQuery.error, skillsQuery.data)
+		? skillsQuery.error
+		: null;
+	const skills = skillsQuery.data?.items ?? [];
+	const total = skillsQuery.data?.total ?? 0;
+	const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+	useEffect(() => {
+		setPage((current) => Math.min(current, pageCount));
+	}, [pageCount]);
+	const writable = Boolean(
+		selectedProject &&
+			isBrowserWritableSkillProject(selectedProject) &&
+			isProjectOwner(selectedProject),
 	);
 
-	const installedKeysOnTarget = useMemo(() => {
-		const items = skillsForTarget;
-		if (!items) return new Set<string>();
-		return new Set(items.map((s) => s.skill_key));
-	}, [skillsForTarget]);
+	const selectProject = (projectId: string) => {
+		void setProjectParam(projectId);
+		void setLegacyTarget("");
+	};
 
-	const uninstallSkill = useMutation({
-		mutationFn: async ({ skillKey, projectId }: { skillKey: string; projectId: string }) =>
-			unwrap(
+	const removeSkill = useMutation({
+		mutationFn: async (skillKey: string) => {
+			if (!selectedProject || !writable) throw new Error("This Project is read-only");
+			return unwrap(
 				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-					params: { path: { project_id: projectId, skill_key: skillKey } },
-				}),
-			),
-		onSuccess: (_data, vars) => {
-			toast.success("Skill removed from Project", {
-				description: `${vars.skillKey} was removed from ${targetProjectLabel}.`,
-			});
-			queryClient.invalidateQueries({ queryKey: ["skills"] });
-		},
-		onError: (e) =>
-			toast.error("Couldn't remove Skill from Project", { description: errorMessage(e) }),
-	});
-
-	const syncGroup = useMutation({
-		mutationFn: async (group: { newest: SkillSummary; copies: SkillSummary[] }) => {
-			const { newest, copies } = group;
-			if (!copies.every((copy) => capabilitiesForSkill(copy).canSync)) {
-				throw new Error("Agent-synced and Workspace Skills cannot be overwritten from Cloud");
-			}
-			const stale = copies.filter(
-				(c) =>
-					c.project_id &&
-					c.project_id !== newest.project_id &&
-					c.content_hash !== newest.content_hash,
-			);
-			if (stale.length === 0) return { name: newest.name, updated: 0, failed: [] as string[] };
-			if (!newest.project_id) {
-				return { name: newest.name, updated: 0, failed: ["source project"] };
-			}
-			const blob = ensureBlob(
-				unwrap(
-					await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
-						params: {
-							path: { project_id: newest.project_id, skill_key: newest.skill_key },
-						},
-						parseAs: "blob",
-					}),
-				),
-			);
-			let updated = 0;
-			const failed: string[] = [];
-			for (const copy of stale) {
-				if (!copy.project_id) {
-					failed.push(copy.project_name ?? "unknown project");
-					continue;
-				}
-				try {
-					await uploadSkillArchive(copy.project_id, newest.skill_key, blob);
-					updated += 1;
-				} catch {
-					failed.push(copy.project_name ?? "unknown project");
-				}
-			}
-			return { name: newest.name, updated, failed };
-		},
-		onSuccess: ({ name, updated, failed }) => {
-			queryClient.invalidateQueries({ queryKey: ["skills"] });
-			if (updated === 0 && failed.length === 0) {
-				toast.success(`${name} copies already match`);
-				return;
-			}
-			if (updated === 0) {
-				toast.error(`Couldn't sync ${name}`, {
-					description: `Failed: ${failed.join(", ")}.`,
-				});
-				return;
-			}
-			toast.success(`${name} synced`, {
-				description:
-					`${updated} ${updated === 1 ? "copy" : "copies"} updated to the newest content.` +
-					(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
-			});
-		},
-		onError: (e) => toast.error("Couldn't sync copies", { description: errorMessage(e) }),
-	});
-
-	const bulkUninstall = useMutation({
-		mutationFn: async (skills: SkillSummary[]) => {
-			let removed = 0;
-			for (const s of skills) {
-				if (!s.project_id || !capabilitiesForSkill(s).canDelete) continue;
-				unwrap(
-					await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-						params: { path: { project_id: s.project_id, skill_key: s.skill_key } },
-					}),
-				);
-				removed += 1;
-			}
-			return removed;
-		},
-		onSuccess: (removed) => {
-			toast.success(`${removed} ${removed === 1 ? "Skill" : "Skills"} removed from Projects`);
-			queryClient.invalidateQueries({ queryKey: ["skills"] });
-			clearSelection();
-		},
-		onError: (e) =>
-			toast.error("Couldn't remove Skills from Projects", { description: errorMessage(e) }),
-	});
-
-	const installSkill = async (repo: string, path?: string): Promise<boolean> => {
-		const key = `${repo}/${path || ""}`;
-		setInstalling(key);
-		setInstallError(null);
-		try {
-			if (!targetProjectId || !targetProject) throw new Error("Choose a Project first");
-			if (!canWriteTargetProject) throw new Error("This Project is read-only");
-			unwrap(
-				await api.POST("/v1/projects/{project_id}/skills/install", {
-					params: { path: { project_id: targetProjectId } },
-					body: { repo, path },
+					params: {
+						path: { project_id: selectedProject.id, skill_key: skillKey },
+					},
 				}),
 			);
-			queryClient.invalidateQueries({ queryKey: ["skills"] });
-			const projectName = displayProjectName(targetProject);
-			toast.success(`Skill added to ${projectName}`);
-			return true;
-		} catch (e: unknown) {
-			setInstallError(errorMessage(e));
-			return false;
-		} finally {
-			setInstalling(null);
-		}
-	};
-
-	const handleCustom = async () => {
-		setCustomRepoError(null);
-		const trimmed = customRepo.trim();
-		if (!trimmed) return;
-		const clean = trimmed.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
-		const parts = clean.split("/").filter(Boolean);
-		if (parts.length < 2) {
-			setCustomRepoError("Enter as `owner/repo` or `owner/repo/path-to-skill`.");
-			return;
-		}
-		const repo = `${parts[0]}/${parts[1]}`;
-		const path = parts.length > 2 ? parts.slice(2).join("/") : undefined;
-		const ok = await installSkill(repo, path);
-		if (ok) setCustomRepo("");
-	};
-
-	const retryCustomInstall = () => {
-		void handleCustom();
-	};
-
-	const installedSkillsEmptyMessage = isStaleProject
-		? "This link points to a Project that is no longer available. Pick another Project."
-		: isStaleTarget
-			? "This link points to an agent that no longer exists. Pick a Project above."
-			: orderedProjects.length === 0
-				? "Create a Project first, then add Skills to it."
-				: isProjectReady
-					? "No Skills are in this Project yet. Add one from GitHub below."
-					: "Pick a Project to see its skills.";
-	const canShareTargetProject =
-		targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject);
-	const renderShareProjectAction = () =>
-		canShareTargetProject && targetProject ? (
-			<ShareProjectDialog
-				projectId={targetProject.id}
-				projectName={displayProjectName(targetProject)}
-				projectKind={targetProject.kind}
-			/>
-		) : null;
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["skills", "project"] });
+			toast.success("Skill removed");
+		},
+		onError: (error) => toast.error("Couldn't remove skill", { description: errorMessage(error) }),
+	});
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader title="Project Skills" description={SKILLS_RESOURCE.managementDescription} />
-
-			<ListToolbar
-				search={<SearchInput value={search} onChange={setSearch} placeholder="Search skills…" />}
-				filters={
-					orderedProjects.length > 0 ? (
-						<>
-							<FilterChip
-								active={isAllScope}
-								onClick={() => {
-									void setProjectParam("");
-									void setTargetEnvId("");
-								}}
-							>
-								All Projects
-								<span className="text-muted-foreground tabular-nums">
-									{skillsForTarget?.length ?? 0}
-								</span>
-							</FilterChip>
-							{tabProjects.map((p) => (
-								<FilterChip
-									key={p.id}
-									active={targetProjectId === p.id}
-									onClick={() => {
-										void setProjectParam(p.id);
-										void setTargetEnvId("");
-									}}
-								>
-									<span aria-hidden className="select-none">
-										{identityFor(displayProjectName(p)).emoji}
-									</span>
-									{displayProjectName(p)}
-									<span className="text-muted-foreground tabular-nums">
-										{skillCountByProject.get(p.id) ?? 0}
-									</span>
-								</FilterChip>
-							))}
-							{overflowProjects.length > 0 ? (
-								<DropdownMenu>
-									<DropdownMenuTrigger
-										render={<button type="button" className={filterChipClass(overflowActive)} />}
-									>
-										{overflowActive && targetProject ? (
-											<>
-												<span aria-hidden className="select-none">
-													{identityFor(displayProjectName(targetProject)).emoji}
-												</span>
-												{displayProjectName(targetProject)}
-											</>
-										) : (
-											<>Workspaces</>
-										)}
-										<span className="text-muted-foreground tabular-nums">
-											{overflowProjects.length}
-										</span>
-										<ChevronDown className="size-3.5" />
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
-										<DropdownMenuGroup>
-											{overflowProjects.map((p) => (
-												<DropdownMenuItem
-													key={p.id}
-													onSelect={() => {
-														void setProjectParam(p.id);
-														void setTargetEnvId("");
-													}}
-												>
-													<span aria-hidden className="select-none">
-														{identityFor(displayProjectName(p)).emoji}
-													</span>
-													<span className="min-w-0 flex-1 truncate">{displayProjectName(p)}</span>
-													<span className="text-xs text-muted-foreground tabular-nums">
-														{skillCountByProject.get(p.id) ?? 0}
-													</span>
-												</DropdownMenuItem>
-											))}
-										</DropdownMenuGroup>
-									</DropdownMenuContent>
-								</DropdownMenu>
-							) : null}
-						</>
-					) : null
+			<PageHeader
+				title="Skills"
+				description={
+					selectedProject
+						? `Skills in ${displayProjectName(selectedProject)}. Linked Agents use the whole Project.`
+						: "Choose a Project to view or add its Skills."
 				}
 				actions={
-					<>
-						{orderedProjects.length > 0 ? renderShareProjectAction() : null}
-						{isAllScope && duplicateGroups.length > 0 ? (
-							<Button
-								variant={showDuplicates ? "secondary" : "outline"}
-								size="sm"
-								onClick={() => setShowDuplicates((on) => !on)}
-								aria-pressed={showDuplicates}
-							>
-								<CopyIcon className="size-3.5" />
-								Duplicates
-								<span className="text-xs text-muted-foreground tabular-nums">
-									{duplicateGroups.length}
-								</span>
-							</Button>
-						) : null}
-						<Button
-							variant={selectMode ? "secondary" : "outline"}
-							size="sm"
-							onClick={() => {
-								setSelectMode((on) => {
-									if (on) clearSelection();
-									return !on;
-								});
-							}}
-							aria-pressed={selectMode}
-						>
-							<ListChecks className="size-3.5" />
-							{selectMode ? "Done" : "Select"}
-						</Button>
-					</>
+					selectedProject ? (
+						<div className="flex flex-wrap items-center gap-2">
+							{isProjectOwner(selectedProject) ? (
+								<ShareProjectDialog
+									projectId={selectedProject.id}
+									projectName={displayProjectName(selectedProject)}
+									projectKind={selectedProject.kind}
+								/>
+							) : null}
+							{writable ? (
+								<>
+									<Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+										<ImportIcon />
+										Import from GitHub
+									</Button>
+									<Button size="sm" onClick={() => setCreateOpen(true)}>
+										<Plus />
+										Add skill
+									</Button>
+								</>
+							) : null}
+						</div>
+					) : undefined
 				}
 			/>
 
-			{blockingProjectsError ? (
+			{projectError ? (
 				<ApiErrorPanel
-					error={blockingProjectsError}
-					onRetry={() => {
-						void refetchProjects();
-					}}
+					error={projectError}
+					onRetry={() => void projectsQuery.refetch()}
 					title="Couldn't load Projects"
 				/>
 			) : null}
 
-			{/* Skills inventory failure: a load error must not look
-			    like an empty inventory — pre-fix the page swallowed
-			    `skillsError` and fell through to the empty-state copy
-			    'No skills installed on this agent yet,' which is
-			    indistinguishable from a real /api/skills outage from
-			    the user's perspective. */}
-			{blockingSkillsError ? (
-				<ApiErrorPanel
-					error={blockingSkillsError}
-					onRetry={() => {
-						void refetchSkills();
-					}}
-					title="Couldn't load skills"
-				/>
-			) : null}
-
-			{!canWriteTargetProject && targetProject ? (
+			{legacyTarget && !projectParam ? (
 				<Alert>
-					<AlertCircle />
-					<AlertTitle>
-						{targetProject.kind === "environment" ? "Workspace is read-only" : "Read-only Project"}
-					</AlertTitle>
-					<AlertDescription>
-						{targetProject.kind === "environment"
-							? "Skills in this Workspace are managed on the Agent and sync here as read-only. Rename, edit, or remove them on the Agent."
-							: `You can view Skills stored in ${displayProjectName(targetProject)}, but only the owner can add or remove them.`}
+					<AlertTitle>Agent Workspace Skills moved to the Agent</AlertTitle>
+					<AlertDescription className="space-y-2">
+						<p>
+							A Workspace contains one Agent&apos;s private resources. Open that Agent to view its
+							Workspace Skills, or choose a Project here.
+						</p>
+						<Button
+							variant="outline"
+							size="sm"
+							render={<Link to="/agents/$id/skills" params={{ id: legacyTarget }} />}
+						>
+							Open workspace
+						</Button>
 					</AlertDescription>
 				</Alert>
 			) : null}
 
-			<section className="space-y-3">
-				<SectionLabel
-					count={
-						skillsForTarget
-							? `${skillsForTarget.length}${
-									targetProject
-										? ` in ${displayProjectName(targetProject)}`
-										: isAllScope
-											? " across every Project"
-											: ""
-								}`
-							: undefined
-					}
-				>
-					Added
-				</SectionLabel>
-				{duplicatesView ? (
-					duplicateGroups.length === 0 ? (
-						<EmptyState
-							description={`No duplicated skills${search.trim() ? " match that search" : ""}.`}
-						/>
-					) : (
-						<div className="space-y-6">
-							{duplicateGroups.map((group) => {
-								const versions = [...new Set(group.copies.map((c) => c.version))].sort(
-									(a, b) => b - a,
-								);
-								const staleCount = group.copies.filter(
-									(c) => c.content_hash !== group.newest.content_hash,
-								).length;
-								const canSyncGroup = group.copies.every(
-									(copy) => capabilitiesForSkill(copy).canSync,
-								);
-								return (
-									<div key={group.key} className="space-y-2">
-										<div className="flex flex-wrap items-center gap-2">
-											<SectionLabel
-												leading={
-													<span aria-hidden className="select-none">
-														{identityFor(group.newest.name || group.key).emoji}
-													</span>
-												}
-												count={`in ${group.copies.length} projects`}
-											>
-												{group.newest.name}
-											</SectionLabel>
-											{group.drift ? (
-												<Badge
-													variant="secondary"
-													className="bg-warning-muted text-warning-muted-foreground"
-												>
-													content differs · {versions.map((v) => `v${v}`).join(" / ")}
-												</Badge>
-											) : (
-												<Badge variant="secondary">identical copies · v{versions[0]}</Badge>
-											)}
-											{group.drift && canSyncGroup ? (
-												<ConfirmAction
-													title={`Sync ${group.newest.name} everywhere?`}
-													description={
-														<p>
-															Overwrites {staleCount} older {staleCount === 1 ? "copy" : "copies"}{" "}
-															with v{group.newest.version} from{" "}
-															{group.newest.project_name ?? "the newest Project"}. Local edits in
-															those Projects are replaced.
-														</p>
-													}
-													confirmLabel="Sync copies"
-													onConfirm={() => syncGroup.mutate(group)}
-												>
-													<Button
-														variant="outline"
-														size="sm"
-														className="h-6 px-2 text-xs"
-														disabled={syncGroup.isPending}
-													>
-														<RefreshCw className="size-3" />
-														Sync all to newest
-													</Button>
-												</ConfirmAction>
-											) : null}
-										</div>
-										<SkillCardGrid
-											skills={group.copies}
-											isLoading={false}
-											emptyMessage={null}
-											capabilitiesFor={capabilitiesForSkill}
-											onUninstall={(skillKey, projectId) =>
-												uninstallSkill.mutate({ skillKey, projectId })
-											}
-											uninstallPending={uninstallSkill.isPending}
-											sourceLabelFor={(sk) => {
-												const project = orderedProjects.find((p) => p.id === sk.project_id);
-												const label = project
-													? displayProjectName(project)
-													: (sk.project_name ?? "Unknown");
-												return { name: label, emoji: identityFor(label).emoji };
-											}}
-										/>
-									</div>
-								);
-							})}
-						</div>
-					)
-				) : isAllScope ? (
-					skillsLoading || isResolvingTarget ? (
-						<SkillCardGrid skills={[]} isLoading emptyMessage={null} />
-					) : allGroups.length === 0 ? (
-						<EmptyState
-							description={
-								search.trim()
-									? "No skills match that search."
-									: "No Skills are stored in any Project yet. Pick a Project tab to add one."
-							}
-						/>
-					) : (
-						<div className="space-y-6">
-							{allGroups.map((group) => {
-								const groupKeys = group.skills
-									.filter((skill) => capabilitiesForSkill(skill).canSelect)
-									.map(skillSelectionKey);
-								const allSelected =
-									groupKeys.length > 0 && groupKeys.every((k) => selectedSkillKeys.has(k));
-								return (
-									<div key={group.pid || "other"} className="space-y-2">
-										<div className="flex items-center gap-2">
-											<SectionLabel
-												leading={
-													<span aria-hidden className="select-none">
-														{identityFor(group.label).emoji}
-													</span>
-												}
-												count={group.skills.length}
-											>
-												{group.project ? (
-													<button
-														type="button"
-														onClick={() => void setProjectParam(group.pid)}
-														className="hover:underline"
-													>
-														{group.label}
-													</button>
-												) : (
-													group.label
-												)}
-											</SectionLabel>
-											{selectMode && groupKeys.length > 0 ? (
-												<Button
-													variant="ghost"
-													size="sm"
-													className="h-6 px-2 text-xs"
-													onClick={() => {
-														setSelectedSkillKeys((prev) => {
-															const next = new Set(prev);
-															for (const k of groupKeys) {
-																if (allSelected) next.delete(k);
-																else next.add(k);
-															}
-															return next;
-														});
-													}}
-												>
-													{allSelected ? "Deselect all" : "Select all"}
-												</Button>
-											) : null}
-										</div>
-										<SkillCardGrid
-											skills={group.skills}
-											isLoading={false}
-											emptyMessage={null}
-											capabilitiesFor={capabilitiesForSkill}
-											onUninstall={(skillKey, projectId) =>
-												uninstallSkill.mutate({ skillKey, projectId })
-											}
-											uninstallPending={uninstallSkill.isPending}
-											selectMode={selectMode}
-											selectedKeys={selectedSkillKeys}
-											onToggleSelect={toggleSkill}
-										/>
-									</div>
-								);
-							})}
-						</div>
-					)
-				) : (
-					<SkillCardGrid
-						skills={skillsForTarget ?? []}
-						isLoading={skillsLoading || isResolvingTarget}
-						emptyMessage={installedSkillsEmptyMessage}
-						capabilitiesFor={capabilitiesForSkill}
-						onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
-						uninstallPending={uninstallSkill.isPending}
-						selectMode={selectMode}
-						selectedKeys={selectedSkillKeys}
-						onToggleSelect={toggleSkill}
-					/>
-				)}
-			</section>
+			{staleProject ? (
+				<Alert>
+					<AlertTitle>Project unavailable</AlertTitle>
+					<AlertDescription>
+						Choose another Project. It may have been archived or your access may have changed.
+					</AlertDescription>
+				</Alert>
+			) : null}
 
-			<BulkActionBar count={selectedSkills.length} noun="skill" onClear={clearSelection}>
-				<SendSkillDialog skills={selectedSkills} onDone={clearSelection}>
-					<Button size="sm">
-						<CopyIcon className="size-3.5" />
-						Copy or move
-					</Button>
-				</SendSkillDialog>
-				<ConfirmAction
-					title={`Remove ${selectedSkills.length} ${selectedSkills.length === 1 ? "Skill" : "Skills"} from Projects?`}
-					description={
-						<p>Each selected copy is removed from its Project. Read-only copies are skipped.</p>
-					}
-					confirmLabel="Remove from Projects"
-					destructive
-					onConfirm={() => bulkUninstall.mutate(selectedSkills)}
-				>
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={bulkUninstall.isPending}
-						className="text-destructive"
-					>
-						<Trash2 className="size-3.5" />
-						Remove from Projects
-					</Button>
-				</ConfirmAction>
-			</BulkActionBar>
-
-			{isAllScope ? (
-				<p className="text-xs text-muted-foreground">
-					Pick a Project tab above to add new Skills to it.
-				</p>
-			) : canWriteTargetProject ? (
-				<section className="space-y-3">
-					<div className="flex items-center justify-between gap-2">
-						<h2 className="text-sm font-semibold">Add a Skill</h2>
-						<a
-							href="https://skills.sh"
-							target="_blank"
-							rel="noopener noreferrer"
-							className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-						>
-							More on skills.sh <ExternalLink className="size-3" />
-						</a>
-					</div>
-					<div className="flex flex-col gap-2 sm:flex-row">
-						<div className="relative min-w-0 flex-1 sm:max-w-md">
-							<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-							<Input
-								id="skill-custom-repo"
-								name="skill-custom-repo"
-								value={customRepo}
-								onChange={(e) => {
-									setCustomRepo(e.target.value);
-									setCustomRepoError(null);
-									setInstallError(null);
-								}}
-								placeholder="owner/repo or owner/repo/path…"
-								autoComplete="off"
-								spellCheck={false}
-								className="pl-9"
-								onKeyDown={(e) => {
-									if (e.key === "Enter") handleCustom();
-								}}
-								aria-invalid={!!customRepoError || undefined}
-								aria-label="GitHub skill repository"
+			{!selectedProject ? (
+				<ProjectSelection projects={projects} loading={!projectResolved && !projectError} />
+			) : (
+				<>
+					<ListToolbar
+						search={
+							<SearchInput value={search} onChange={setSearch} placeholder="Search this Project…" />
+						}
+						filters={
+							<ProjectCompactPicker
+								projects={projects}
+								value={selectedProject.id}
+								onValueChange={selectProject}
+								placeholder="Choose a Project"
+								ariaLabel="Choose Project"
+								className="w-full sm:w-72"
 							/>
-						</div>
-						<Button
-							onClick={handleCustom}
-							disabled={!customRepo.trim() || !!installing || !canWriteTargetProject}
-							variant={customRepo.trim() && canWriteTargetProject ? "default" : "outline"}
-							className="sm:w-auto"
-						>
-							{installing && customRepo ? <Spinner /> : <Plus />}
-							Add Skill
-						</Button>
-					</div>
-					{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
-					{installError ? (
+						}
+					/>
+
+					{!writable ? (
+						<Alert>
+							<AlertTitle>Read-only Project</AlertTitle>
+							<AlertDescription>
+								You can view these Skills. Only the Project owner can add, edit, copy, move, or
+								remove them.
+							</AlertDescription>
+						</Alert>
+					) : null}
+
+					{skillsError ? (
 						<ApiErrorPanel
-							error={installError}
-							onRetry={customRepo.trim() ? retryCustomInstall : undefined}
-							title="Couldn't add Skill"
+							error={skillsError}
+							onRetry={() => void skillsQuery.refetch()}
+							title="Couldn't load skills"
 						/>
 					) : null}
 
-					<SectionLabel className="pt-2">Suggested</SectionLabel>
-					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-						{FEATURED_SKILLS.map((skill) => {
-							const key = `${skill.repo}/${skill.path ?? ""}`;
-							const isInstalled = installedKeysOnTarget.has(skill.skillKey);
-							const isInstalling = installing === key;
-							return (
-								<div
-									key={key}
-									className="flex items-start justify-between gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-foreground/20"
+					<SkillCardGrid
+						skills={skills}
+						isLoading={skillsQuery.isLoading}
+						emptyMessage={
+							search.trim()
+								? "No Skills in this Project match that search."
+								: writable
+									? "No Skills yet. Add one with instructions or import one from GitHub."
+									: "No Skills are in this Project yet."
+						}
+						capabilitiesFor={(skill) => skillCapabilities(skill, selectedProject)}
+						onUninstall={writable ? (skillKey) => removeSkill.mutate(skillKey) : undefined}
+						uninstallPending={removeSkill.isPending}
+					/>
+
+					{total > PAGE_SIZE ? (
+						<div className="flex items-center justify-between gap-3 border-t pt-4">
+							<p className="text-sm text-muted-foreground tabular-nums">
+								Page {page} of {pageCount} · {total} Skills
+							</p>
+							<div className="flex items-center gap-2">
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={page <= 1 || skillsQuery.isFetching}
+									onClick={() => setPage((current) => Math.max(1, current - 1))}
 								>
-									<div className="min-w-0 flex-1">
-										{isInstalled && targetProjectId ? (
-											<Link
-												to="/skills/$key"
-												params={{ key: skill.skillKey }}
-												search={{ project: targetProjectId }}
-												className="truncate text-sm font-medium hover:underline"
-											>
-												{skill.name}
-											</Link>
-										) : (
-											<span className="truncate text-sm font-medium">{skill.name}</span>
-										)}
-										<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-											{skill.description}
-										</p>
-										<p className="mt-1.5 font-mono text-xs text-muted-foreground">
-											{skill.repo}
-											{skill.path ? `/${skill.path}` : ""}
-										</p>
-									</div>
-									{isInstalled ? (
-										<Badge variant="secondary" className="shrink-0">
-											<Check />
-											Added
-										</Badge>
-									) : (
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={() => installSkill(skill.repo, skill.path)}
-											disabled={isInstalling || !canWriteTargetProject}
-											className="shrink-0"
-										>
-											{isInstalling ? <Spinner /> : <Plus />}
-											Add Skill
-										</Button>
-									)}
-								</div>
-							);
-						})}
-					</div>
-				</section>
+									Previous
+								</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={page >= pageCount || skillsQuery.isFetching}
+									onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+								>
+									Next
+								</Button>
+							</div>
+						</div>
+					) : null}
+				</>
+			)}
+
+			{selectedProject ? (
+				<>
+					<CreateSkillDialog
+						open={createOpen}
+						onOpenChange={setCreateOpen}
+						project={selectedProject}
+					/>
+					<ImportSkillDialog
+						open={importOpen}
+						onOpenChange={setImportOpen}
+						project={selectedProject}
+					/>
+				</>
 			) : null}
 		</div>
+	);
+}
+
+function ProjectSelection({ projects, loading }: { projects: ProjectRow[]; loading: boolean }) {
+	if (loading) {
+		return (
+			<div className={HERO_GRID_CLASS}>
+				{Array.from({ length: 3 }).map((_, index) => (
+					<ProjectResourceCardSkeleton key={index} />
+				))}
+			</div>
+		);
+	}
+	if (projects.length === 0) {
+		return (
+			<EmptyState
+				icon={FolderKanban}
+				description="Create a Project to bundle Skills and Vault access for Agents."
+				action={
+					<Button render={<Link to="/projects" />}>
+						<Plus />
+						Create project
+					</Button>
+				}
+			/>
+		);
+	}
+	return (
+		<section className="space-y-3">
+			<h2 className="text-sm font-medium">Choose a Project</h2>
+			<div className={HERO_GRID_CLASS}>
+				{projects.map((project) => (
+					<ProjectResourceCard
+						key={project.id}
+						project={project}
+						footer={[
+							`${project.skill_count} ${project.skill_count === 1 ? "Skill" : "Skills"}`,
+							`${project.vault_count} ${project.vault_count === 1 ? "Vault" : "Vaults"}`,
+						]}
+						link={{ to: "/skills", search: { project: project.id } }}
+					/>
+				))}
+			</div>
+		</section>
+	);
+}
+
+function CreateSkillDialog({
+	open,
+	onOpenChange,
+	project,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	project: ProjectRow;
+}) {
+	const api = useApi();
+	const queryClient = useQueryClient();
+	const [name, setName] = useState("");
+	const [description, setDescription] = useState("");
+	const [instructions, setInstructions] = useState("");
+	const create = useMutation({
+		mutationFn: async () =>
+			unwrap(
+				await api.POST("/v1/projects/{project_id}/skills", {
+					params: { path: { project_id: project.id } },
+					body: {
+						name: name.trim(),
+						description: description.trim() || null,
+						instructions: instructions.trim(),
+					},
+				}),
+			),
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["skills", "project", project.id] });
+			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
+			onOpenChange(false);
+			toast.success("Skill added");
+		},
+		onError: (error) => toast.error("Couldn't add skill", { description: errorMessage(error) }),
+	});
+	const reset = () => {
+		setName("");
+		setDescription("");
+		setInstructions("");
+		create.reset();
+	};
+	return (
+		<Dialog
+			open={open}
+			onOpenChange={(nextOpen) => {
+				onOpenChange(nextOpen);
+				if (!nextOpen) reset();
+			}}
+		>
+			<DialogContent className="sm:max-w-xl">
+				<DialogHeader>
+					<DialogTitle>Add skill</DialogTitle>
+					<DialogDescription>
+						Add instructions to {displayProjectName(project)}. Linked Agents receive the Skill
+						automatically.
+					</DialogDescription>
+				</DialogHeader>
+				<form
+					className="space-y-4"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (name.trim() && instructions.trim() && !create.isPending) create.mutate();
+					}}
+				>
+					<div className="space-y-1.5">
+						<Label htmlFor="skill-name">Name</Label>
+						<Input
+							id="skill-name"
+							value={name}
+							maxLength={200}
+							autoFocus
+							onChange={(event) => setName(event.target.value)}
+							placeholder="Review pull requests"
+						/>
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor="skill-description">
+							Description <span className="text-muted-foreground">(optional)</span>
+						</Label>
+						<Input
+							id="skill-description"
+							value={description}
+							maxLength={2000}
+							onChange={(event) => setDescription(event.target.value)}
+							placeholder="When and why an Agent should use this Skill"
+						/>
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor="skill-instructions">Instructions</Label>
+						<Textarea
+							id="skill-instructions"
+							value={instructions}
+							maxLength={200 * 1024}
+							onChange={(event) => setInstructions(event.target.value)}
+							placeholder="Explain what the Agent should do, including constraints and examples."
+							className="min-h-48"
+						/>
+					</div>
+					<DialogFooter>
+						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button
+							type="submit"
+							disabled={!name.trim() || !instructions.trim() || create.isPending}
+						>
+							{create.isPending ? <Spinner /> : <Plus />}
+							{create.isPending ? "Adding…" : "Add skill"}
+						</Button>
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function ImportSkillDialog({
+	open,
+	onOpenChange,
+	project,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	project: ProjectRow;
+}) {
+	const api = useApi();
+	const queryClient = useQueryClient();
+	const [source, setSource] = useState("");
+	const importSkill = useMutation({
+		mutationFn: async () => {
+			const clean = source
+				.trim()
+				.replace(/^https?:\/\/github\.com\//, "")
+				.replace(/\/$/, "");
+			const parts = clean.split("/").filter(Boolean);
+			if (parts.length < 2) throw new Error("Enter owner/repository or a GitHub Skill path");
+			return unwrap(
+				await api.POST("/v1/projects/{project_id}/skills/install", {
+					params: { path: { project_id: project.id } },
+					body: {
+						repo: `${parts[0]}/${parts[1]}`,
+						path: parts.length > 2 ? parts.slice(2).join("/") : undefined,
+					},
+				}),
+			);
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["skills", "project", project.id] });
+			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
+			onOpenChange(false);
+			toast.success("Skill imported");
+		},
+		onError: (error) => toast.error("Couldn't import skill", { description: errorMessage(error) }),
+	});
+	return (
+		<Dialog
+			open={open}
+			onOpenChange={(nextOpen) => {
+				onOpenChange(nextOpen);
+				if (!nextOpen) {
+					setSource("");
+					importSkill.reset();
+				}
+			}}
+		>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Import from GitHub</DialogTitle>
+					<DialogDescription>
+						Copy a GitHub Skill into {displayProjectName(project)}. This Project owns the imported
+						copy.
+					</DialogDescription>
+				</DialogHeader>
+				<form
+					className="space-y-4"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (source.trim() && !importSkill.isPending) importSkill.mutate();
+					}}
+				>
+					<div className="space-y-1.5">
+						<Label htmlFor="github-skill-source">Repository or Skill path</Label>
+						<Input
+							id="github-skill-source"
+							value={source}
+							autoFocus
+							onChange={(event) => setSource(event.target.value)}
+							placeholder="owner/repository/path-to-skill"
+							autoComplete="off"
+							spellCheck={false}
+						/>
+					</div>
+					<DialogFooter>
+						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={!source.trim() || importSkill.isPending}>
+							{importSkill.isPending ? <Spinner /> : <ImportIcon />}
+							{importSkill.isPending ? "Importing…" : "Import skill"}
+						</Button>
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
 	);
 }

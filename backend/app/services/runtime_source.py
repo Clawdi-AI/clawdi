@@ -24,7 +24,11 @@ from app.models.channel import (
     ChannelAccount,
     ChannelBotAgentLink,
 )
-from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
+from app.models.hosted_runtime import (
+    HostedRuntimeConfigObservation,
+    HostedRuntimeSecret,
+    HostedRuntimeState,
+)
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
@@ -65,6 +69,7 @@ from app.services.managed_ai_provider import (
 )
 from app.services.project_runtime_skills import (
     RUNTIME_PROJECT_SKILL_KEY_PATTERN,
+    agent_supports_project_skills,
     project_skill_file_signature,
 )
 from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
@@ -99,6 +104,7 @@ def expected_runtime_bundle_v2_etag(source_revision: str) -> str:
 class RuntimeSourceRow:
     environment: AgentEnvironment
     state: HostedRuntimeState | None
+    observation: HostedRuntimeConfigObservation | None = None
 
 
 @dataclass(frozen=True)
@@ -152,12 +158,23 @@ async def load_runtime_source_batch(
         env_filters.append(AgentEnvironment.user_id == owner_user_id)
     env_rows = (
         await db.execute(
-            select(AgentEnvironment, HostedRuntimeState)
+            select(
+                AgentEnvironment,
+                HostedRuntimeState,
+                HostedRuntimeConfigObservation,
+            )
             .outerjoin(HostedRuntimeState, HostedRuntimeState.environment_id == AgentEnvironment.id)
+            .outerjoin(
+                HostedRuntimeConfigObservation,
+                HostedRuntimeConfigObservation.environment_id == AgentEnvironment.id,
+            )
             .where(*env_filters)
         )
     ).all()
-    rows = {env.id: RuntimeSourceRow(environment=env, state=state) for env, state in env_rows}
+    rows = {
+        env.id: RuntimeSourceRow(environment=env, state=state, observation=observation)
+        for env, state, observation in env_rows
+    }
     user_ids = sorted({row.environment.user_id for row in rows.values()}, key=str)
     if not user_ids:
         return RuntimeSourceBatch(rows, {}, {}, {}, {}, {})
@@ -251,6 +268,20 @@ async def load_runtime_source_batch(
     ).all()
     project_skills: dict[UUID, list[RuntimeProjectSkill]] = {}
     for environment_id, skill in project_skill_rows:
+        runtime_row = rows.get(environment_id)
+        if (
+            runtime_row is None
+            or runtime_row.state is None
+            or not agent_supports_project_skills(
+                runtime_row.environment,
+                runtime_row.state,
+                runtime_row.observation,
+            )
+        ):
+            # Existing Vault-only bindings predate Project Skill delivery. Keep
+            # those links usable, but never render the new source shape until
+            # this exact Hosted Agent has proven a compatible, Ready CLI.
+            continue
         project_skills.setdefault(environment_id, []).append(
             RuntimeProjectSkill(
                 id=skill.id,
@@ -312,7 +343,7 @@ def _project_runtime_skills(
         entries[skill.skill_key] = {
             "enabled": True,
             "source": {
-                "type": "clawdi",
+                "type": "project",
                 "projectId": str(skill.project_id),
                 "contentHash": skill.content_hash,
                 "archiveUrl": (

@@ -199,8 +199,7 @@ function reservationIdentityIsValid(value: {
 	const hasDigest = typeof value.digest === "string" && SHA256_PATTERN.test(value.digest);
 	const hasSourceIdentity =
 		typeof value.sourceIdentity === "string" &&
-		(value.sourceIdentity.startsWith("github\0") ||
-			value.sourceIdentity.startsWith("clawdi\0")) &&
+		(value.sourceIdentity.startsWith("github\0") || value.sourceIdentity.startsWith("project\0")) &&
 		value.sourceIdentity.length <= 2048;
 	return hasDigest !== hasSourceIdentity;
 }

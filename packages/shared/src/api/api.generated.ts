@@ -1571,6 +1571,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runtime/project-skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Project Skills
+         * @description Return one Agent's complete linked-Project Skill inventory.
+         */
+        get: operations["get_agent_project_skills_v1_runtime_project_skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills": {
         parameters: {
             query?: never;
@@ -1726,6 +1746,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Skill */
+        post: operations["create_skill_v1_projects__project_id__skills_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/skills/{skill_key}/content": {
         parameters: {
             query?: never;
@@ -1736,12 +1773,11 @@ export interface paths {
         get?: never;
         /**
          * Update Skill Content
-         * @description Edit a skill's SKILL.md from the dashboard.
+         * @description Edit a Skill's user-facing fields while preserving its support files.
          *
-         *     Body is JSON `{content, content_hash?}`. The server wraps the
-         *     text into a one-file tar.gz and dispatches through the shared
-         *     `_do_upload_skill` integrity path. This endpoint is limited to Cloud-owned
-         *     Personal and Workspace Projects; Agent Project rows are read-only here.
+         *     The server renders SKILL.md and dispatches the resulting archive through
+         *     the shared `_do_upload_skill` integrity path. Agent Workspace projections
+         *     remain read-only here.
          *
          *     `content_hash` is interpreted as an If-Match precondition (the
          *     hash the editor saw when it loaded the skill, NOT the hash of
@@ -3057,6 +3093,26 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** AgentProjectSkillDesiredItem */
+        AgentProjectSkillDesiredItem: {
+            /** Project Id */
+            project_id: string;
+            /** Skill Id */
+            skill_id: string;
+            /** Skill Key */
+            skill_key: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Archive Url */
+            archive_url: string;
+        };
+        /** AgentProjectSkillDesiredResponse */
+        AgentProjectSkillDesiredResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Skills */
+            skills?: components["schemas"]["AgentProjectSkillDesiredItem"][];
         };
         /** AgentReorderRequest */
         AgentReorderRequest: {
@@ -4886,6 +4942,8 @@ export interface components {
             peak_hour: number;
             /** Favorite Model */
             favorite_model: string | null;
+            /** Projects Count */
+            projects_count: number;
             /** Skills Count */
             skills_count: number;
             /** Memories Count */
@@ -7233,10 +7291,23 @@ export interface components {
         };
         /** SkillContentUpdateRequest */
         SkillContentUpdateRequest: {
-            /** Content */
-            content: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Instructions */
+            instructions: string;
             /** Content Hash */
-            content_hash?: string | null;
+            content_hash: string;
+        };
+        /** SkillCreateRequest */
+        SkillCreateRequest: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Instructions */
+            instructions: string;
         };
         /** SkillDeleteResponse */
         SkillDeleteResponse: {
@@ -7406,6 +7477,8 @@ export interface components {
             queue_depth?: number | null;
             /** Dropped Count Delta */
             dropped_count_delta?: number | null;
+            /** Project Skill Reconcile Version */
+            project_skill_reconcile_version?: number | null;
             runtime_observed?: components["schemas"]["HostedRuntimeObservedV2"] | null;
         };
         /**
@@ -10848,6 +10921,37 @@ export interface operations {
             };
         };
     };
+    get_agent_project_skills_v1_runtime_project_skills_get: {
+        parameters: {
+            query?: {
+                environment_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectSkillDesiredResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_skills_v1_skills_get: {
         parameters: {
             query?: {
@@ -11067,6 +11171,41 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_upload_skill_project_v1_projects__project_id__skills_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_skill_v1_projects__project_id__skills_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillCreateRequest"];
             };
         };
         responses: {

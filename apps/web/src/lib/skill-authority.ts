@@ -9,8 +9,6 @@ export type SkillCapabilities = {
 	canUpdate: boolean;
 	canDelete: boolean;
 	canSend: boolean;
-	canSelect: boolean;
-	canSync: boolean;
 	readOnlyReason: SkillReadOnlyReason | null;
 	badgeLabel: string | null;
 };
@@ -19,8 +17,6 @@ const WRITABLE_SKILL_CAPABILITIES: SkillCapabilities = {
 	canUpdate: true,
 	canDelete: true,
 	canSend: true,
-	canSelect: true,
-	canSync: true,
 	readOnlyReason: null,
 	badgeLabel: null,
 };
@@ -30,8 +26,6 @@ function readOnlyCapabilities(reason: SkillReadOnlyReason, badgeLabel: string): 
 		canUpdate: false,
 		canDelete: false,
 		canSend: false,
-		canSelect: false,
-		canSync: false,
 		readOnlyReason: reason,
 		badgeLabel,
 	};

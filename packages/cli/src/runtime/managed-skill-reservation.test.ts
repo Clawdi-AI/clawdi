@@ -153,7 +153,7 @@ describe("managed Skill reservations", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		const path = target();
 		const sourceIdentity = [
-			"clawdi",
+			"project",
 			"example",
 			"22222222-2222-4222-8222-222222222222",
 			"a".repeat(64),

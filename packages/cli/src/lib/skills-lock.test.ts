@@ -119,7 +119,7 @@ describe("skills-lock projection authority", () => {
 			"project-a",
 			"project-b",
 		]);
-		expect(readSkillsLock().version).toBe(4);
+		expect(readSkillsLock().version).toBe(5);
 	});
 
 	it("removes only an exact claim and does not accept an identity reassignment", () => {
@@ -181,7 +181,7 @@ describe("skills-lock projection authority", () => {
 		);
 		const entries = readdirSync(join(process.env.HOME ?? "", ".clawdi"));
 		expect(entries).toEqual(["skills-lock.json"]);
-		expect(JSON.parse(readFileSync(lockPath(), "utf8")).version).toBe(4);
+		expect(JSON.parse(readFileSync(lockPath(), "utf8")).version).toBe(5);
 	});
 
 	it("keeps Project materializations distinct from Agent projection claims", () => {
@@ -224,7 +224,7 @@ describe("skills-lock projection authority", () => {
 		);
 	});
 
-	it("persists the Project fence before activation and retains it when activation fails", async () => {
+	it("persists the Project fence before activation and rolls it back when activation fails", async () => {
 		const input = {
 			agentType: "codex",
 			localSkillKey: "review-pr",
@@ -247,7 +247,7 @@ describe("skills-lock projection authority", () => {
 		expect(fenceObservedDuringActivation).toBe(true);
 		expect(
 			readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "review-pr" }),
-		).not.toBeNull();
+		).toBeNull();
 
 		let invalidActivationRan = false;
 		await expect(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import io
 import tarfile
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
@@ -18,6 +19,7 @@ from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
+from app.schemas.session import AgentProjectSkillDesiredItem, AgentProjectSkillDesiredResponse
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import project_skill_file_signature
@@ -38,6 +40,7 @@ _RUNTIME_MANIFEST_CACHE_CONTROL = "no-store, no-transform"
 _PROJECT_SKILL_SUPPORT_DIRS = {"references", "templates", "scripts", "assets", "examples"}
 _MAX_PROJECT_SKILL_FILE_BYTES = 16 * 1024 * 1024
 _MAX_PROJECT_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024
+_MAX_AGENT_PROJECT_SKILLS = 1000
 file_store = get_file_store()
 
 
@@ -100,6 +103,90 @@ def _authorized_environment_id(auth: AuthContext, requested_environment_id: UUID
             status.HTTP_403_FORBIDDEN, "runtime manifest requires an environment id"
         )
     return requested_environment_id
+
+
+@router.get("/project-skills", response_model=AgentProjectSkillDesiredResponse)
+async def get_agent_project_skills(
+    requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
+    auth: AuthContext = Depends(require_cli_auth),
+    db: AsyncSession = Depends(get_session),
+) -> AgentProjectSkillDesiredResponse:
+    """Return one Agent's complete linked-Project Skill inventory."""
+    agent_id = _authorized_environment_id(auth, requested_environment_id)
+    membership = ProjectMembership.__table__.alias("desired_project_skill_membership")
+    rows = (
+        (
+            await db.execute(
+                select(Skill)
+                .join(Project, Project.id == Skill.project_id)
+                .join(
+                    AgentProjectBinding,
+                    (AgentProjectBinding.project_id == Project.id)
+                    & (AgentProjectBinding.agent_id == agent_id),
+                )
+                .join(AgentEnvironment, AgentEnvironment.id == AgentProjectBinding.agent_id)
+                .outerjoin(
+                    membership,
+                    (membership.c.project_id == Project.id)
+                    & (membership.c.member_user_id == AgentEnvironment.user_id),
+                )
+                .where(
+                    AgentEnvironment.id == agent_id,
+                    AgentEnvironment.user_id == auth.user_id,
+                    AgentEnvironment.archived_at.is_(None),
+                    AgentProjectBinding.binding_type == "context",
+                    Project.kind == PROJECT_KIND_WORKSPACE,
+                    Project.archived_at.is_(None),
+                    (Project.user_id == AgentEnvironment.user_id) | membership.c.id.is_not(None),
+                    Skill.authority == SKILL_AUTHORITY_CLOUD,
+                    Skill.is_active,
+                )
+                .order_by(Skill.skill_key, Skill.project_id, Skill.id)
+                .limit(_MAX_AGENT_PROJECT_SKILLS + 1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(rows) > _MAX_AGENT_PROJECT_SKILLS:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Agent has too many linked Project Skills. Unlink a Project, then try again.",
+        )
+    seen_keys: set[str] = set()
+    for skill in rows:
+        if skill.skill_key in seen_keys:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f'Skill "{skill.skill_key}" comes from more than one linked Project. '
+                "Unlink one Project.",
+            )
+        seen_keys.add(skill.skill_key)
+
+    base_url = settings.public_api_url.rstrip("/")
+    signing_key = vault_key_identity(settings.vault_encryption_key)
+    skills: list[AgentProjectSkillDesiredItem] = []
+    for skill in rows:
+        signature = project_skill_file_signature(
+            signing_key=signing_key,
+            agent_id=agent_id,
+            skill_id=skill.id,
+            content_hash=skill.content_hash,
+        )
+        skills.append(
+            AgentProjectSkillDesiredItem(
+                project_id=str(skill.project_id),
+                skill_id=str(skill.id),
+                skill_key=skill.skill_key,
+                content_hash=skill.content_hash,
+                archive_url=(
+                    f"{base_url}/v1/runtime/project-skill-archives/{agent_id}/"
+                    f"{skill.project_id}/{skill.id}/{skill.content_hash}/{signature}/"
+                    f"{quote(skill.skill_key, safe='')}.tar.gz"
+                ),
+            )
+        )
+    return AgentProjectSkillDesiredResponse(agent_id=str(agent_id), skills=skills)
 
 
 @router.get(

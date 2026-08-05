@@ -324,8 +324,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "projects",
 		...CANONICAL_NAVIGATION_IDENTITIES.projects,
 		tint: RESOURCE_TINT_CLASSES.projects,
-		description: "Custom and shared Projects linked to this Agent.",
-		tooltip: "Custom and shared Projects linked to this Agent",
+		description: "Projects linked to this Agent.",
+		tooltip: "Projects linked to this Agent",
 		variants: ["connected", "hosted"],
 	},
 	vaults: {

@@ -1,3 +1,4 @@
+import type { LinkProps } from "@tanstack/react-router";
 import { FolderKanban } from "lucide-react";
 import type { ReactNode } from "react";
 import { HERO_CARD_BASE, HeroCard } from "@/components/entity-card";
@@ -30,6 +31,7 @@ export function ProjectResourceCard({
 	actions,
 	showKind = false,
 	navigationScope = LIBRARY_RESOURCE_SCOPE,
+	link,
 	className,
 }: {
 	project: ProjectMetadata;
@@ -37,6 +39,8 @@ export function ProjectResourceCard({
 	actions?: ReactNode;
 	showKind?: boolean;
 	navigationScope?: ResourceNavigationScope;
+	/** Optional collection-local destination while retaining the canonical card. */
+	link?: Pick<LinkProps, "to" | "params" | "search" | "hash">;
 	className?: string;
 }) {
 	const projectName = displayProjectName(project);
@@ -62,7 +66,7 @@ export function ProjectResourceCard({
 			descriptionClassName="truncate font-mono"
 			footer={footer}
 			actions={actions}
-			link={project.id ? projectDetailLink(navigationScope, project.id) : undefined}
+			link={link ?? (project.id ? projectDetailLink(navigationScope, project.id) : undefined)}
 			ariaLabel={`Open ${projectName}`}
 			className={className}
 		/>

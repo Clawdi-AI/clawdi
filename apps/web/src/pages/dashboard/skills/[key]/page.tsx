@@ -48,6 +48,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -255,7 +257,9 @@ export function SkillDetailContent({
 	const isReadOnly = capabilities ? !capabilities.canUpdate || !isProjectReady : true;
 
 	const [isEditing, setIsEditing] = useState(false);
-	const [draft, setDraft] = useState("");
+	const [draftName, setDraftName] = useState("");
+	const [draftDescription, setDraftDescription] = useState("");
+	const [draftInstructions, setDraftInstructions] = useState("");
 	// Capture the content_hash at EDIT-START so the If-Match
 	// precondition matches the version the user actually saw.
 	// Storing it on save instead would let a background refetch
@@ -276,16 +280,20 @@ export function SkillDetailContent({
 			return;
 		}
 		if (!skill?.content) {
-			toast.error("No Skill Content Yet");
+			toast.error("This Skill has no instructions to edit");
 			return;
 		}
-		setDraft(skill.content);
+		setDraftName(skill.name);
+		setDraftDescription(skill.description ?? "");
+		setDraftInstructions(stripFrontmatter(skill.content).trim());
 		setEditingHash(skill.content_hash ?? null);
 		setIsEditing(true);
 	};
 	const cancelEdit = () => {
 		setIsEditing(false);
-		setDraft("");
+		setDraftName("");
+		setDraftDescription("");
+		setDraftInstructions("");
 		setEditingHash(null);
 	};
 
@@ -300,6 +308,7 @@ export function SkillDetailContent({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("No project available for this skill");
 			if (!capabilities?.canUpdate) throw new Error("This Skill is read-only here");
+			if (!editingHash) throw new Error("Reload this Skill before saving");
 			// `content_hash` here is an If-Match PRECONDITION — the
 			// hash the editor saw when this page loaded, NOT the
 			// new content's hash. The backend route accepts it as
@@ -314,7 +323,12 @@ export function SkillDetailContent({
 			return unwrap(
 				await api.PUT("/v1/projects/{project_id}/skills/{skill_key}/content", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
-					body: { content: draft, content_hash: editingHash ?? undefined },
+					body: {
+						name: draftName.trim(),
+						description: draftDescription.trim() || null,
+						instructions: draftInstructions.trim(),
+						content_hash: editingHash,
+					},
 				}),
 			);
 		},
@@ -323,7 +337,9 @@ export function SkillDetailContent({
 				description: "The Project Skill was updated.",
 			});
 			setIsEditing(false);
-			setDraft("");
+			setDraftName("");
+			setDraftDescription("");
+			setDraftInstructions("");
 			setEditingHash(null);
 			queryClient.invalidateQueries({ queryKey: skillDetailQueryPrefix(skillKey) });
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
@@ -336,7 +352,7 @@ export function SkillDetailContent({
 			// says "Failed to save" and the user keeps clicking
 			// save against a hash the server keeps rejecting.
 			if (e instanceof ApiError && e.status === 412) {
-				toast.error("Skill Changed Elsewhere", {
+				toast.error("Skill changed elsewhere", {
 					description:
 						"Another edit landed while you were typing. Reload to see the latest, then re-apply your change.",
 				});
@@ -372,7 +388,7 @@ export function SkillDetailContent({
 
 	const onUninstall = () => {
 		if (!isProjectReady || !accessKnown) {
-			toast.error("Project Access Unavailable", { description: "Try again in a moment." });
+			toast.error("Project access unavailable", { description: "Try again in a moment." });
 			return;
 		}
 		if (!capabilities?.canDelete) {
@@ -390,7 +406,7 @@ export function SkillDetailContent({
 			? `synced from ${skillAgentLabel}`
 			: "synced from Agent"
 		: sourceProjectName
-			? `stored in ${sourceProjectName}`
+			? `in ${sourceProjectName}`
 			: null;
 	const skillBody = useMemo(() => stripFrontmatter(skill?.content ?? "").trim(), [skill?.content]);
 	const viewState = skillDetailViewState({
@@ -484,7 +500,7 @@ export function SkillDetailContent({
 										}
 									>
 										{needsExplicitProject
-											? "Choose Project"
+											? "Choose project"
 											: (capabilities?.badgeLabel ?? "Read-only")}
 									</Badge>
 								) : !isEditing ? (
@@ -496,7 +512,7 @@ export function SkillDetailContent({
 											disabled={!skill.content || !isProjectReady}
 											title={
 												!skill.content
-													? "No content stored for this skill yet"
+													? "No instructions are available for this Skill yet"
 													: !isProjectReady
 														? "Project unavailable"
 														: undefined
@@ -516,7 +532,7 @@ export function SkillDetailContent({
 													</p>
 												</>
 											}
-											confirmLabel="Remove from Project"
+											confirmLabel="Remove from project"
 											destructive
 											onConfirm={onUninstall}
 										>
@@ -528,7 +544,7 @@ export function SkillDetailContent({
 												className="text-destructive hover:text-destructive"
 											>
 												<Trash2 />
-												Remove from Project
+												Remove from project
 											</Button>
 										</ConfirmAction>
 									</>
@@ -546,7 +562,14 @@ export function SkillDetailContent({
 										<Button
 											size="sm"
 											onClick={() => saveEdit.mutate()}
-											disabled={saveEdit.isPending || draft.length === 0 || draft === skill.content}
+											disabled={
+												saveEdit.isPending ||
+												!draftName.trim() ||
+												!draftInstructions.trim() ||
+												(draftName.trim() === skill.name &&
+													draftDescription.trim() === (skill.description ?? "") &&
+													draftInstructions.trim() === stripFrontmatter(skill.content ?? "").trim())
+											}
 										>
 											<Save />
 											{saveEdit.isPending ? "Saving…" : "Save"}
@@ -556,7 +579,7 @@ export function SkillDetailContent({
 							</div>
 						</div>
 						<DetailMeta>
-							<span>{skill.source}</span>
+							<span>{isAgentSyncProjection ? "Workspace Skill" : "Project Skill"}</span>
 							{skill.source_repo ? (
 								<>
 									<span>·</span>
@@ -608,12 +631,12 @@ export function SkillDetailContent({
 							<div className="space-y-1">
 								<div className="flex items-center gap-2">
 									<FolderKanban className="size-4 text-muted-foreground" />
-									<h2 className="text-sm font-semibold">Project storage</h2>
+									<h2 className="text-sm font-semibold">Project</h2>
 								</div>
 								<p className="text-xs text-muted-foreground">
 									{isAgentSyncProjection
 										? "This Skill is synced from the Agent and is read-only here. Manage it on the Agent."
-										: "This Skill is stored and managed in this Project. Linked Agents use it automatically."}
+										: "This Skill belongs to this Project. Linked Agents use it automatically."}
 								</p>
 							</div>
 							<Badge variant={isReadOnly ? "secondary" : "outline"}>
@@ -644,25 +667,48 @@ export function SkillDetailContent({
 
 					{isEditing ? (
 						<DetailPanel className="space-y-4">
-							<Alert>
-								<AlertTitle>Editing the Skill File</AlertTitle>
-								<AlertDescription>
-									Keep the YAML header at the top intact. It stores the skill name and description.
+							<div>
+								<h2 className="text-sm font-semibold">Edit skill</h2>
+								<p className="mt-1 text-xs text-muted-foreground">
 									Saving updates this Project Skill. Linked Agents receive the new version
-									automatically.
-								</AlertDescription>
-							</Alert>
-							<Textarea
-								ref={textareaRef}
-								name="skill-content"
-								aria-label="Skill content"
-								value={draft}
-								onChange={(e) => setDraft(e.target.value)}
-								className="min-h-[480px] font-mono text-sm leading-relaxed"
-								autoComplete="off"
-								spellCheck={false}
-								disabled={saveEdit.isPending}
-							/>
+									automatically, and imported support files stay attached.
+								</p>
+							</div>
+							<div className="space-y-1.5">
+								<Label htmlFor="edit-skill-name">Name</Label>
+								<Input
+									id="edit-skill-name"
+									value={draftName}
+									onChange={(event) => setDraftName(event.target.value)}
+									maxLength={200}
+									disabled={saveEdit.isPending}
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<Label htmlFor="edit-skill-description">
+									Description <span className="text-muted-foreground">(optional)</span>
+								</Label>
+								<Input
+									id="edit-skill-description"
+									value={draftDescription}
+									onChange={(event) => setDraftDescription(event.target.value)}
+									maxLength={2000}
+									disabled={saveEdit.isPending}
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<Label htmlFor="edit-skill-instructions">Instructions</Label>
+								<Textarea
+									ref={textareaRef}
+									id="edit-skill-instructions"
+									name="skill-instructions"
+									value={draftInstructions}
+									onChange={(event) => setDraftInstructions(event.target.value)}
+									className="min-h-[420px] text-sm leading-relaxed"
+									autoComplete="off"
+									disabled={saveEdit.isPending}
+								/>
+							</div>
 						</DetailPanel>
 					) : skill.content ? (
 						<DetailPanel className="space-y-4">
@@ -674,7 +720,7 @@ export function SkillDetailContent({
 									</div>
 									<p className="text-xs text-muted-foreground">
 										{isAgentSyncProjection
-											? "This instruction file was synced from the Agent and is managed there."
+											? "This Skill belongs to the Agent's Workspace. Edit it on the Agent."
 											: "This instruction file belongs to the Project. Linked Agents use updates automatically."}
 									</p>
 								</div>
@@ -689,7 +735,7 @@ export function SkillDetailContent({
 							) : (
 								<EmptyState
 									variant="inset"
-									description="No additional instruction body is stored for this Skill."
+									description="This Skill has no additional instructions."
 								/>
 							)}
 						</DetailPanel>
@@ -716,7 +762,7 @@ export function SkillDetailContent({
 								description={
 									isAgentSyncProjection
 										? "The preview will appear after the Agent syncs its Skill files."
-										: "No instruction content is stored for this Skill."
+										: "This Skill has no instructions."
 								}
 							/>
 						</DetailPanel>

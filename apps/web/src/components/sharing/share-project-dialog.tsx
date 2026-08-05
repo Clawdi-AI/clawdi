@@ -90,7 +90,7 @@ export function ShareProjectDialog({
 	const trigger = children ?? (
 		<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
 			<Share2 className="mr-2 size-4" />
-			Share Project
+			Share project
 		</Button>
 	);
 

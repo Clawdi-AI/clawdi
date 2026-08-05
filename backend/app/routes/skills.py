@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import tarfile
 from typing import TypedDict
 from uuid import UUID
@@ -58,6 +59,7 @@ from app.schemas.skill import (
     PersistedProjectKind,
     PersistedSkillAuthority,
     SkillContentUpdateRequest,
+    SkillCreateRequest,
     SkillDeleteResponse,
     SkillDetailResponse,
     SkillInstallRequest,
@@ -68,8 +70,8 @@ from app.schemas.skill import (
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
+    assert_agent_workspace_skill_write_compatible,
     assert_project_skill_write_compatible,
-    lock_project_runtime_graph,
 )
 from app.services.runtime_manifest_resources import (
     assert_project_skill_not_runtime_managed,
@@ -86,6 +88,8 @@ from app.services.tar_utils import (
     TarValidationError,
     extract_skill_md,
     parse_frontmatter,
+    replace_skill_md,
+    skill_document,
     tar_from_content,
     validate_tar,
 )
@@ -149,13 +153,9 @@ def _persisted_project_kind(value: str) -> PersistedProjectKind:
     raise ValueError(f"Unsupported persisted Project kind: {value}")
 
 
-def _file_key(user_id: UUID, project_id: UUID, skill_key: str) -> str:
-    """Storage path for a skill tarball. Includes project_id so
-    different projects' same-named skills don't clobber each other
-    in object storage. Migration 8a3e5f7b2c1d rewrote pre-existing
-    paths to this shape; new uploads use it directly.
-    """
-    return f"skills/{user_id}/{project_id}/{skill_key}.tar.gz"
+def _file_key(user_id: UUID, project_id: UUID, skill_key: str, content_hash: str) -> str:
+    """Immutable object identity for new writes; historical keys remain readable."""
+    return f"skills/{user_id}/{project_id}/{skill_key}/{content_hash}.tar.gz"
 
 
 def _sanitize_log(value: object) -> str:
@@ -1100,10 +1100,51 @@ async def upload_skill_project(
     )
 
 
-# Cloud-owned Skill editor entry point. Takes raw SKILL.md text (the editor
-# shows the full file including frontmatter), tars it server-side, then runs
-# the shared integrity and persistence pipeline. Agent Project Skills are
-# rejected before this path because their filesystem is authoritative.
+# Cloud-owned Skill editor entry point. The browser sends user-facing fields;
+# the backend renders SKILL.md and runs the shared integrity/persistence path.
+# Agent Workspace projections are rejected because their filesystem is
+# authoritative.
+def _native_skill_key(name: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")[:64].rstrip("-")
+    if not key:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Use a Skill name containing letters or numbers.",
+        )
+    try:
+        return validate_derived_skill_key(key)
+    except SkillKeyValidationError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Use a shorter Skill name with letters or numbers.",
+        ) from exc
+
+
+@project_router.post("")
+async def create_skill(
+    payload: SkillCreateRequest,
+    project_id: UUID = Path(...),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    db: AsyncSession = Depends(get_session),
+) -> SkillUploadResponse:
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+    await db.commit()
+    skill_key = _native_skill_key(payload.name)
+    data, _ = tar_from_content(
+        skill_key,
+        skill_document(payload.name, payload.description, payload.instructions),
+    )
+    return await _do_upload_skill(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+        data=data,
+        content_hash=None,
+        create_only=True,
+    )
+
+
 @project_router.put("/{skill_key:path}/content")
 async def update_skill_content(
     payload: SkillContentUpdateRequest,
@@ -1112,12 +1153,11 @@ async def update_skill_content(
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
-    """Edit a skill's SKILL.md from the dashboard.
+    """Edit a Skill's user-facing fields while preserving its support files.
 
-    Body is JSON `{content, content_hash?}`. The server wraps the
-    text into a one-file tar.gz and dispatches through the shared
-    `_do_upload_skill` integrity path. This endpoint is limited to Cloud-owned
-    Personal and Workspace Projects; Agent Project rows are read-only here.
+    The server renders SKILL.md and dispatches the resulting archive through
+    the shared `_do_upload_skill` integrity path. Agent Workspace projections
+    remain read-only here.
 
     `content_hash` is interpreted as an If-Match precondition (the
     hash the editor saw when it loaded the skill, NOT the hash of
@@ -1131,8 +1171,41 @@ async def update_skill_content(
     persist a hash that didn't match the bytes.
     """
     await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+    existing = (
+        await db.execute(
+            select(Skill).where(
+                Skill.user_id == auth.user_id,
+                Skill.project_id == project_id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+                Skill.authority == SKILL_AUTHORITY_CLOUD,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None or not existing.file_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
+    file_key = existing.file_key
     await db.commit()
-    data, _ = tar_from_content(skill_key, payload.content)
+    try:
+        previous = await file_store.get(file_key)
+    except Exception:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill's files are unavailable. Retry before editing it.",
+        ) from None
+    try:
+        if file_key.endswith(".md"):
+            previous, _ = tar_from_content(skill_key, previous.decode("utf-8"))
+        data, _ = replace_skill_md(
+            previous,
+            skill_key,
+            skill_document(payload.name, payload.description, payload.instructions),
+        )
+    except (TarValidationError, UnicodeDecodeError):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill's files could not be preserved. Retry or import it again.",
+        ) from None
     if len(data) > _MAX_SKILL_TAR_BYTES:
         # `content` is already capped at 200 KB by the schema, so the
         # post-tar size is effectively bounded. The check stays as a
@@ -1167,15 +1240,16 @@ async def _do_upload_skill(
     data: bytes,
     content_hash: str | None,
     expected_content_hash: str | None = None,
+    create_only: bool = False,
     authority: str = SKILL_AUTHORITY_CLOUD,
     authority_agent_id: UUID | None = None,
 ) -> SkillUploadResponse:
     """Validate and persist a Cloud row or Agent filesystem projection.
 
     Authority and Agent/Project identity are revalidated inside the write
-    transaction. The pre-fetch/hash short-circuit saves an object-store write
-    and avoids cosmetic version bumps on byte-identical re-uploads, while an
-    authenticated same-byte Agent claim still updates durable provenance.
+    transaction. A hash short-circuit avoids cosmetic version bumps on
+    byte-identical re-uploads, while an authenticated same-byte Agent claim
+    still updates durable provenance.
     """
     # Reserved-suffix guard: refuse keys whose last segment
     # collides with a routing suffix (`download`, `content`,
@@ -1265,26 +1339,35 @@ async def _do_upload_skill(
         )
     content_hash = computed_content_hash
 
-    # Serialize concurrent writes for this (user, project, skill_key)
-    # via a Postgres advisory lock keyed on the same identity as
-    # the partial unique index. Two projects can hold the same
-    # skill_key in parallel; the lock is per-(user,project,key) so
-    # they don't block each other.
-    if authority == SKILL_AUTHORITY_AGENT_SYNC:
-        if authority_agent_id is None:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Agent sync authority is missing")
-        current_project_id = await _agent_sync_project(
-            db, auth, authority_agent_id, lock_agent=True
-        )
-        if current_project_id != project_id:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "agent_project_changed",
-                    "message": "The Agent Project changed while this Skill was uploading; retry.",
-                },
+    async def assert_write_boundary() -> None:
+        if authority == SKILL_AUTHORITY_AGENT_SYNC:
+            if authority_agent_id is None:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    "Agent sync authority is missing",
+                )
+            current_project_id = await _agent_sync_project(
+                db,
+                auth,
+                authority_agent_id,
+                lock_agent=True,
             )
-    else:
+            if current_project_id != project_id:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "agent_project_changed",
+                        "message": (
+                            "The Agent Project changed while this Skill was uploading; retry."
+                        ),
+                    },
+                )
+            await assert_agent_workspace_skill_write_compatible(
+                db,
+                agent_id=authority_agent_id,
+                skill_keys={skill_key},
+            )
+            return
         await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
         await assert_project_skill_write_compatible(
             db,
@@ -1294,15 +1377,32 @@ async def _do_upload_skill(
         # Project archive can cross the initial authorization read while the
         # archive is being validated. Re-check after the Project graph lock.
         await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+
+    # Reject known authority/collision failures before creating even an
+    # unreachable object, then release Project/Agent/row locks before storage
+    # I/O. The immutable key makes a race-loser orphan safe and reusable.
+    await assert_write_boundary()
+    await db.commit()
+    fk = _file_key(auth.user_id, project_id, skill_key, content_hash)
+    await file_store.put(fk, data)
+
+    # The graph may change while object storage is in flight. Re-acquire the
+    # canonical Project -> Agent lock order and fail before any row mutation.
+    await assert_write_boundary()
+
+    # Serialize concurrent writes for this (user, project, skill_key)
+    # via a Postgres advisory lock keyed on the same identity as
+    # the partial unique index. Two projects can hold the same
+    # skill_key in parallel; the lock is per-(user,project,key) so
+    # they don't block each other.
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
     await assert_project_skill_not_runtime_managed(
         db, user_id=auth.user_id, project_id=project_id, skill_key=skill_key
     )
 
-    # Pre-fetch existing row so we can skip both file_store.put AND the
-    # upsert when the bytes are identical to what's already stored. Saves
-    # an R2/S3 PUT and prevents the cosmetic version+1 bump.
+    # Pre-fetch the existing row so we can skip the upsert when the immutable
+    # object identity is unchanged and prevent a cosmetic version+1 bump.
     #
     # `is_active` filter is load-bearing: the duplicate-cleanup
     # migration soft-deletes legacy rows for the same
@@ -1324,6 +1424,15 @@ async def _do_upload_skill(
         .limit(1)
     )
     existing = existing_result.scalar_one_or_none()
+
+    if create_only and existing is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "skill_name_conflict",
+                "message": f'A Skill named "{skill_key}" already exists in this Project.',
+            },
+        )
 
     if existing is not None:
         if authority == SKILL_AUTHORITY_CLOUD and existing.authority != SKILL_AUTHORITY_CLOUD:
@@ -1428,9 +1537,6 @@ async def _do_upload_skill(
             file_count=file_count,
             content_hash=existing.content_hash,
         )
-
-    fk = _file_key(auth.user_id, project_id, skill_key)
-    await file_store.put(fk, data)
 
     skill = await _upsert_skill(
         db,
@@ -1888,7 +1994,11 @@ async def _do_delete_skill(
     # Advisory lock matches the partial unique index identity, so
     # this delete serializes with any concurrent write to the
     # same (user, project, skill_key).
-    await lock_project_runtime_graph(db, project_id)
+    await assert_project_skill_write_compatible(
+        db,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
     await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
@@ -2028,7 +2138,19 @@ async def _do_install_skill(
         skill_key = validate_derived_skill_key(fetched.name.lower().replace(" ", "-"))
     except SkillKeyValidationError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
-    fk = _file_key(auth.user_id, project_id, skill_key)
+    fk = _file_key(auth.user_id, project_id, skill_key, content_hash)
+
+    # Fail predictable graph conflicts before object I/O, then release the
+    # Project/Agent locks. The second check below closes races after the
+    # immutable object has been written.
+    await assert_project_skill_write_compatible(
+        db,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+    await db.commit()
+    await file_store.put(fk, fetched.tar_bytes)
 
     # Same advisory lock pattern as upload_skill. Lock identity
     # (user, project, key) matches the partial unique index, so the
@@ -2073,8 +2195,6 @@ async def _do_install_skill(
                 ),
             },
         )
-
-    await file_store.put(fk, fetched.tar_bytes)
 
     skill = await _upsert_skill(
         db,

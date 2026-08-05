@@ -101,8 +101,8 @@ Skills root is authoritative, and Cloud stores a read-only projection. Boot,
 watcher, and periodic scans compare local inventory with an identity-fenced
 claim ledger and durably queue the latest push or delete for each Skill key.
 Cloud list failures and truncated results never authorize deletion. SSE only
-wakes a local rescan; Cloud changes and deletes never write or remove local
-Agent Skill files. `clawdi pull` remains for explicitly Cloud-owned user
+wakes a local rescan; Cloud changes and deletes never write or remove Agent
+Workspace Skill files. `clawdi pull` remains for explicitly Cloud-owned user
 Project workflows, not Agent Workspace projections.
 
 Target selection:
@@ -168,9 +168,12 @@ invalidate the affected managed Agent desired state.
 Skill keys have no precedence across the Agent Workspace and linked Projects.
 The link or write transaction rejects a duplicate key before changing the
 binding, Skill row, or object-store content and tells the user to remove or
-rename one copy. A connected Agent without managed desired-state delivery may
-link an empty Project for Vault access, but linking or later adding a Project
-Skill fails closed until a supported runtime delivery primitive exists.
+rename one copy. A connected Agent must advertise the exact Project Skill
+reconcile capability in every heartbeat. Hosted requires an allowlisted exact
+CLI package specification plus a fresh, successful observation of that CLI
+applying the current generation. Missing, stale, or downgraded evidence fails
+closed with an update action before Link or a later Project Skill write. An
+empty Project can still be linked for Vault access.
 
 Project owners may rename, edit the description, and archive their Projects.
 Archival removes all Agent links immediately while retaining historical
@@ -333,8 +336,9 @@ renders support/runtime service plans, and exposes `runtime init`, `watch`,
 Cloud API is the single desired-state composer for Skills. It merges Hosted V2
 Agent Workspace Skill intent with Cloud-owned Skills from linked Projects. The
 Project rows remain the only content writer; runtime observations never become
-another catalog. Each Project Skill manifest entry carries immutable content
-identity plus authenticated archive and signed file endpoints. The CLI verifies
+another catalog. Each Project Skill entry uses the runtime-neutral `project`
+source discriminator and carries immutable content identity plus authenticated
+archive and signed file endpoints. The CLI verifies
 the canonical archive tree hash before cache or install. Historical Skills that
 were stored as one `.md` file retain their file-content SHA compatibility only
 when the delivered archive contains exactly one `SKILL.md`. It then preserves
@@ -366,6 +370,13 @@ and returned by
 [`openclaw agents list --json`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/commands/agents.commands.list.ts#L137-L140)
 before and after installation. Any target or byte mismatch rolls back instead
 of creating a second writer.
+
+Rollout is deliberately capability-first: ship the compatible CLI, wait for
+fresh same-generation readiness observations, configure the exact Hosted CLI
+package-spec allowlist (which defaults empty), and only then permit
+Skill-bearing Project links. Connected daemons advertise the capability only
+after the reconcile implementation is present; older daemons remain
+unavailable. No runtime name or unobserved desired row is capability evidence.
 
 The detailed contract is [`managed-runtime.md`](managed-runtime.md). This
 architecture page should not duplicate that runtime specification.

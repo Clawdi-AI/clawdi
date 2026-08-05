@@ -42,7 +42,7 @@ export interface ProjectResourceDefinition {
 }
 
 export const PROJECT_CANONICAL_DEFINITION =
-	"A Project stores Skills and attaches Vault access for a workflow or team.";
+	"A Project owns Skills and attaches Vault access for a workflow or team.";
 
 const PROJECT_RESOURCE_DEFINITIONS = [
 	{
@@ -52,7 +52,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Projects",
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
-			"Create shareable Projects that bundle Skills with attached Vault access. Each Agent also has a private Workspace, managed from that Agent's page.",
+			"Create shareable Projects that bundle Skills with attached Vault access. Each Agent also has a private Workspace on that Agent's page.",
 		href: PROJECT_RESOURCE_LIST_PATHS.projects,
 		emptyCta: "Create project",
 		routeGroup: "project-registry",
@@ -65,11 +65,11 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Skills",
 		singularLabel: "Skill",
 		navLabel: "Skills",
-		description: "Reusable instructions stored and managed in a Project.",
+		description: "Reusable instructions that belong to a Project.",
 		managementDescription:
-			"Skills are stored in Projects. Choose a Project before adding, editing, removing, copying, or moving a Skill. Linked Agents use the whole Project bundle.",
+			"Skills belong to Projects. Choose a Project before adding, editing, removing, copying, or moving a Skill. Linked Agents use the whole Project bundle.",
 		href: PROJECT_RESOURCE_LIST_PATHS.skills,
-		emptyCta: "Add Skill",
+		emptyCta: "Add skill",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Skills"],
@@ -84,7 +84,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Vaults",
 		description: "Encrypted key collections attached to one or more Projects.",
 		managementDescription:
-			"Store API keys once, then attach Vaults to the Projects where Agents should use those keys.",
+			"Keep API keys in a Vault, then attach it to the Projects where Agents should use those keys.",
 		href: PROJECT_RESOURCE_LIST_PATHS.vaults,
 		emptyCta: "Create vault",
 		routeGroup: "project-resources",

@@ -173,7 +173,7 @@ function ConnectedSkillRemoveAction({
 					<DialogHeader>
 						<DialogTitle>Uninstall skill</DialogTitle>
 						<DialogDescription>
-							Run this command on the Agent machine. The Skill is stored and managed there.
+							Run this command on the Agent machine. The Skill belongs to that Workspace.
 						</DialogDescription>
 					</DialogHeader>
 					<CliCommand command={workspaceSkillRemoveCommand(skill.skill_key, agentType)} />

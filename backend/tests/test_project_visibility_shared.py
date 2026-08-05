@@ -229,7 +229,12 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
 
         edit = await client.put(
             f"/v1/projects/{shared.id}/skills/owner-skill-{nonce}/content",
-            json={"content": "---\nname: denied\n---\n# Denied\n"},
+            json={
+                "name": "Denied",
+                "description": None,
+                "instructions": "# Denied",
+                "content_hash": "e" * 64,
+            },
         )
         assert edit.status_code == 404, edit.text
 

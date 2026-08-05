@@ -21,7 +21,7 @@ import { snapshotSkillArchive } from "./tar";
  * upload establishes a new claim, which is fail-safe.
  */
 export interface SkillsLock {
-	version: 4;
+	version: 5;
 	// Historical v1/v2 hash cache. These entries may suppress a redundant
 	// upload after callers re-confirm remote state, but are not ownership
 	// evidence and must never drive a projection delete.
@@ -57,6 +57,10 @@ export interface ProjectSkillMaterialization {
 	source_project_id: string;
 	source_skill_key: string;
 	content_hash: string;
+	/** Agent whose desired-inventory reconcile owns install/remove lifecycle.
+	 * Absent on explicit legacy pull materializations, which the daemon must
+	 * never remove merely because they are outside its desired inventory. */
+	reconcile_agent_id?: string;
 }
 
 export interface ProjectSkillMaterializationIdentity {
@@ -68,6 +72,7 @@ type ProjectSkillMaterializationInput = ProjectSkillMaterializationIdentity & {
 	sourceProjectId: string;
 	sourceSkillKey: string;
 	contentHash: string;
+	reconcileAgentId?: string;
 };
 
 export interface SkillProjectionState {
@@ -81,7 +86,7 @@ type LegacyWritableSkillsLock = {
 };
 
 const LOCK_FILE = "skills-lock.json";
-const CURRENT_VERSION = 4;
+const CURRENT_VERSION = 5;
 
 function lockPath(): string {
 	return join(getClawdiDir(), `${LOCK_FILE}.lock`);
@@ -144,6 +149,7 @@ export function readSkillsLock(): SkillsLock {
 			parsed.version !== 1 &&
 			parsed.version !== 2 &&
 			parsed.version !== 3 &&
+			parsed.version !== 4 &&
 			parsed.version !== CURRENT_VERSION
 		) {
 			return emptyLock();
@@ -157,7 +163,7 @@ export function readSkillsLock(): SkillsLock {
 			skills,
 			claims: readProjectionClaims(parsed.claims),
 			materializations:
-				parsed.version === CURRENT_VERSION
+				parsed.version === 4 || parsed.version === CURRENT_VERSION
 					? readProjectSkillMaterializations(parsed.materializations)
 					: {},
 		};
@@ -351,7 +357,9 @@ export function hasExactProjectSkillMaterialization(
 		existing &&
 			existing.source_project_id === materialization.sourceProjectId &&
 			existing.source_skill_key === materialization.sourceSkillKey &&
-			existing.content_hash === materialization.contentHash,
+			existing.content_hash === materialization.contentHash &&
+			(materialization.reconcileAgentId === undefined ||
+				existing.reconcile_agent_id === materialization.reconcileAgentId),
 	);
 }
 
@@ -365,6 +373,9 @@ export function recordProjectSkillMaterialization(
 		throw new Error("Invalid source Project Skill key");
 	}
 	if (!materialization.contentHash) throw new Error("Materialized Skill hash is required");
+	if (materialization.reconcileAgentId !== undefined && !materialization.reconcileAgentId) {
+		throw new Error("Reconcile Agent ID must not be empty");
+	}
 	withPrivateDirectoryLockSync(lockPath(), (lease) => {
 		const lock = readSkillsLock();
 		const key = projectSkillMaterializationCacheKey(
@@ -377,6 +388,9 @@ export function recordProjectSkillMaterialization(
 			source_project_id: materialization.sourceProjectId,
 			source_skill_key: materialization.sourceSkillKey,
 			content_hash: materialization.contentHash,
+			...(materialization.reconcileAgentId
+				? { reconcile_agent_id: materialization.reconcileAgentId }
+				: {}),
 		};
 		lease.assertOwned();
 		writeSkillsLockUnlocked(lock);
@@ -388,8 +402,44 @@ export async function commitProjectSkillMaterialization(
 	materialization: ProjectSkillMaterializationInput,
 	activate: () => Promise<void>,
 ): Promise<void> {
+	const previous = readProjectSkillMaterialization(materialization);
 	recordProjectSkillMaterialization(materialization);
-	await activate();
+	try {
+		await activate();
+	} catch (error) {
+		withPrivateDirectoryLockSync(lockPath(), (lease) => {
+			const lock = readSkillsLock();
+			const key = projectSkillMaterializationCacheKey(
+				materialization.agentType,
+				materialization.localSkillKey,
+			);
+			const current = lock.materializations[key];
+			if (
+				current?.source_project_id === materialization.sourceProjectId &&
+				current.source_skill_key === materialization.sourceSkillKey &&
+				current.content_hash === materialization.contentHash &&
+				current.reconcile_agent_id === materialization.reconcileAgentId
+			) {
+				if (previous) lock.materializations[key] = previous;
+				else delete lock.materializations[key];
+				lease.assertOwned();
+				writeSkillsLockUnlocked(lock);
+			}
+		});
+		throw error;
+	}
+}
+
+export function readProjectSkillMaterializationsForReconcile(
+	agentType: string,
+	agentId: string,
+): ProjectSkillMaterialization[] {
+	return Object.values(readSkillsLock().materializations)
+		.filter(
+			(materialization) =>
+				materialization.agent_type === agentType && materialization.reconcile_agent_id === agentId,
+		)
+		.map((materialization) => ({ ...materialization }));
 }
 
 /** Explicit Agent install/remove commands retire only the exact local reference. */
@@ -405,6 +455,36 @@ export function removeProjectSkillMaterialization(
 			!existing ||
 			existing.agent_type !== identity.agentType ||
 			existing.local_skill_key !== identity.localSkillKey
+		) {
+			return false;
+		}
+		delete lock.materializations[key];
+		lease.assertOwned();
+		writeSkillsLockUnlocked(lock);
+		return true;
+	});
+}
+
+/** Remove only the receipt that still matches the complete source identity. */
+export function removeExactProjectSkillMaterialization(
+	materialization: ProjectSkillMaterializationInput,
+): boolean {
+	assertValidMaterializationIdentity(materialization);
+	return withPrivateDirectoryLockSync(lockPath(), (lease) => {
+		const lock = readSkillsLock();
+		const key = projectSkillMaterializationCacheKey(
+			materialization.agentType,
+			materialization.localSkillKey,
+		);
+		const existing = lock.materializations[key];
+		if (
+			!existing ||
+			existing.agent_type !== materialization.agentType ||
+			existing.local_skill_key !== materialization.localSkillKey ||
+			existing.source_project_id !== materialization.sourceProjectId ||
+			existing.source_skill_key !== materialization.sourceSkillKey ||
+			existing.content_hash !== materialization.contentHash ||
+			existing.reconcile_agent_id !== materialization.reconcileAgentId
 		) {
 			return false;
 		}
@@ -491,6 +571,9 @@ function readProjectSkillMaterializations(
 			source_project_id: raw.source_project_id,
 			source_skill_key: raw.source_skill_key,
 			content_hash: raw.content_hash,
+			...(typeof raw.reconcile_agent_id === "string" && raw.reconcile_agent_id.length > 0
+				? { reconcile_agent_id: raw.reconcile_agent_id }
+				: {}),
 		};
 	}
 	return materializations;

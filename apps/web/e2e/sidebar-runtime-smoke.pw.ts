@@ -513,7 +513,9 @@ type DashboardApiStubOptions = {
 	memoryDetailGate?: Promise<void>;
 	memoryDetailResponse?: { body: unknown; status: number };
 	projectBindingRequests?: string[];
+	projectLinkBodies?: unknown[];
 	projectRequests?: string[];
+	projectCreateBodies?: unknown[];
 	projectBindings?: readonly unknown[];
 	projectBindingsError?: { status: number; detail: string };
 	projectBindingsGate?: Promise<void>;
@@ -589,8 +591,41 @@ async function stubDashboardApi(
 			await fulfillJson(route, options.projectBindings ?? projectBindings);
 			return;
 		}
+		if (
+			url.pathname === "/v1/agents/agent-smoke-1/project-bindings/context" &&
+			route.request().method() === "POST"
+		) {
+			options.projectLinkBodies?.push(route.request().postDataJSON());
+			await fulfillJson(route, {
+				id: "binding-created-context",
+				agent_id: "agent-smoke-1",
+				project_id: "project-unrelated",
+				binding_type: "context",
+				priority: 3,
+				default_write_enabled: false,
+				created_at: now.toISOString(),
+			});
+			return;
+		}
 		if (url.pathname === "/v1/dashboard/stats") {
 			await fulfillJson(route, dashboardStats);
+			return;
+		}
+		if (url.pathname === "/v1/projects" && route.request().method() === "POST") {
+			const body = route.request().postDataJSON() as { name?: string };
+			options.projectCreateBodies?.push(body);
+			await fulfillJson(route, {
+				id: "project-created",
+				name: body.name ?? "Created Project",
+				slug: "created-project",
+				kind: "workspace",
+				origin_environment_id: null,
+				archived_at: null,
+				created_at: now.toISOString(),
+				is_owner: true,
+				owner_display: "Dev User",
+				owner_handle: "dev-user",
+			});
 			return;
 		}
 		if (url.pathname === "/v1/projects") {
@@ -1550,6 +1585,8 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	test.setTimeout(60_000);
 	const skillRequests: string[] = [];
 	const vaultRequests: string[] = [];
+	const projectCreateBodies: unknown[] = [];
+	const projectLinkBodies: unknown[] = [];
 	const longContextProjectName =
 		"Automation Library for exceptionally long production workflow names across several teams";
 	const longContextProjectSlug =
@@ -1657,6 +1694,8 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		skillRequests,
 		vaultRequests,
 		vaultItems: projectAccessVaults,
+		projectCreateBodies,
+		projectLinkBodies,
 	});
 
 	await page.setViewportSize({ width: 1280, height: 900 });
@@ -1723,6 +1762,13 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(
 		projectStack.getByRole("button", { name: "Create project", exact: true }),
 	).toBeVisible();
+	await projectStack.getByRole("button", { name: "Create project", exact: true }).click();
+	const createProjectDialog = page.getByRole("dialog", { name: "Create project" });
+	await createProjectDialog.getByLabel("Project name").fill("Release Review");
+	await createProjectDialog.getByRole("button", { name: "Create project" }).click();
+	await expect(createProjectDialog).toHaveCount(0);
+	await expect.poll(() => projectCreateBodies).toEqual([{ name: "Release Review" }]);
+	expect(projectLinkBodies).toEqual([]);
 	const addProjectTrigger = projectStack.getByRole("button", {
 		name: "Link project",
 		exact: true,
@@ -1731,7 +1777,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await addProjectTrigger.click();
 	const addProjectDialog = page.getByTestId("agent-project-add-dialog");
 	await expect(addProjectDialog).toBeVisible();
-	await expect(addProjectDialog.getByRole("heading", { name: "Link Project" })).toBeVisible();
+	await expect(addProjectDialog.getByRole("heading", { name: "Link project" })).toBeVisible();
 	const compactProjectPicker = addProjectDialog.getByLabel("Project to link");
 	await expect(compactProjectPicker).toBeVisible();
 	await compactProjectPicker.click();
@@ -1739,8 +1785,9 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(
 		addProjectDialog.getByRole("button", { name: "Link project", exact: true }),
 	).toBeEnabled();
-	await addProjectDialog.getByRole("button", { name: "Cancel" }).click();
+	await addProjectDialog.getByRole("button", { name: "Link project", exact: true }).click();
 	await expect(addProjectDialog).toHaveCount(0);
+	await expect.poll(() => projectLinkBodies).toEqual([{ project_id: "project-unrelated" }]);
 
 	await projectStack.screenshot({
 		path: testInfo.outputPath("connected-agent-projects-desktop.png"),
@@ -1842,7 +1889,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Add Skill", exact: true })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Attach Vault/i })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("connected-workspace-skills-mobile.png") });
 	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
@@ -1938,7 +1985,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		"href",
 		"/agents/agent-smoke-1/project-access/project-context-later/skills",
 	);
-	await expect(main.getByRole("button", { name: "Add Skill", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/project-access/project-context-later/vaults",
@@ -1993,11 +2040,11 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(main.getByText("Project: Team Knowledge", { exact: true })).toBeVisible();
 	await expect(main.getByText("Team-only Skill", { exact: true })).toBeVisible();
 	await expect(main.getByText("Primary-only Skill", { exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Add Skill", exact: true })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toHaveCount(0);
 	expect(vaultRequests).toEqual([]);
 	await page.goto("/agents/agent-smoke-1/project-access/project-context-later/skills");
 	await expect(main.getByText(`Project: ${longContextProjectName}`, { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Add Skill", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: /Attach Vault/i })).toHaveCount(0);
 
 	await page.goto("/agents/agent-smoke-1/vaults");

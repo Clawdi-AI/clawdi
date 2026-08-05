@@ -131,22 +131,33 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		return fulfill(route, {});
 	});
 
-	await page.goto(`/projects/${projectId}`);
+	await page.goto(`/projects/${projectId}?source=on-clawdi&d=deployment-1&joined=share`);
 	await expect(page.getByRole("heading", { name: "Client Review" })).toBeVisible({
 		timeout: 15_000,
 	});
-	const projectNav = page.getByRole("navigation", { name: "Project pages" });
-	await expect(projectNav.getByRole("link")).toHaveCount(5);
-	await expect(projectNav.getByRole("link", { name: "Overview" })).toHaveAttribute(
-		"aria-current",
-		"page",
-	);
+	const projectTabs = page.getByRole("tablist", { name: "Project pages" });
+	await expect(projectTabs.getByRole("tab")).toHaveCount(5);
+	const overviewTab = projectTabs.getByRole("tab", { name: "Overview" });
+	await expect(overviewTab).toHaveAttribute("aria-selected", "true");
 	expect(projectResourceRequests).toEqual([]);
 	await expect(page.locator("html")).toHaveClass(/dark/);
 	await expectNoHorizontalOverflow(page);
 
-	await projectNav.getByRole("link", { name: "Skills" }).click();
-	await expect(page).toHaveURL(new RegExp(`/projects/${projectId}\\?tab=skills$`));
+	await overviewTab.focus();
+	await page.keyboard.press("ArrowRight");
+	await expect(projectTabs.getByRole("tab", { name: "Skills" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/projects/${projectId}` &&
+			url.searchParams.get("tab") === "skills" &&
+			url.searchParams.get("source") === "on-clawdi" &&
+			url.searchParams.get("d") === "deployment-1" &&
+			!url.searchParams.has("joined")
+		);
+	});
 	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
 	await expect
 		.poll(() => projectResourceRequests.some((request) => request.includes("/v1/skills")))
@@ -154,26 +165,26 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 	await expectNoHorizontalOverflow(page);
 
 	await page
-		.getByRole("navigation", { name: "Project pages" })
-		.getByRole("link", { name: "Agents" })
+		.getByRole("tablist", { name: "Project pages" })
+		.getByRole("tab", { name: "Agents" })
 		.click();
 	await expect(page.getByText("Review Agent", { exact: true })).toBeVisible();
 	await expect.poll(() => boundedAgentRequests.length).toBe(1);
 
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await expectNoHorizontalOverflow(page);
-	await page.getByRole("button", { name: "Link Project" }).click();
-	const linkDialog = page.getByRole("dialog", { name: "Link Project to Agent" });
+	await page.getByRole("button", { name: "Link project" }).click();
+	const linkDialog = page.getByRole("dialog", { name: "Link project to Agent" });
 	await expect(linkDialog).toContainText("Skills and attached Vaults as one bundle");
-	await linkDialog.getByRole("button", { name: "Link Project" }).click();
+	await linkDialog.getByRole("button", { name: "Link project" }).click();
 	await expect.poll(() => linkedBodies).toEqual([{ project_id: projectId }]);
 
 	await page
-		.getByRole("navigation", { name: "Project pages" })
-		.getByRole("link", { name: "Access" })
+		.getByRole("tablist", { name: "Project pages" })
+		.getByRole("tab", { name: "Access" })
 		.click();
-	await page.getByRole("button", { name: "Edit Project" }).click();
-	const editDialog = page.getByRole("dialog", { name: "Edit Project" });
+	await page.getByRole("button", { name: "Edit project" }).click();
+	const editDialog = page.getByRole("dialog", { name: "Edit project" });
 	await editDialog.getByLabel("Name").fill("Client Review Updated");
 	await editDialog.getByLabel("Description").fill("Updated Project purpose.");
 	await editDialog.getByRole("button", { name: "Save changes" }).click();
@@ -248,17 +259,100 @@ test("legacy Skill detail stays view-only until the URL names a Project", async 
 	await expect(page.getByRole("heading", { name: "Review PR" })).toBeVisible({ timeout: 15_000 });
 	await expect(page.getByText("Choose a Project to make changes", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Remove from Project" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Remove from project" })).toHaveCount(0);
 	expect(detailRequests).toEqual(["/v1/skills/review-pr"]);
 	expect(mutationRequests).toEqual([]);
 
 	await page.goto(`/skills/review-pr?project=${projectId}`);
 	await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Remove from Project" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Remove from project" })).toBeVisible();
 	await expect(page.getByText("Choose a Project to make changes", { exact: true })).toHaveCount(0);
 	expect(detailRequests).toEqual([
 		"/v1/skills/review-pr",
 		`/v1/projects/${projectId}/skills/review-pr`,
 	]);
 	expect(mutationRequests).toEqual([]);
+});
+
+test("Skills library selects one Project before reading or creating Skills", async ({ page }) => {
+	const project = {
+		id: projectId,
+		name: "Client Review",
+		slug: "client-review",
+		kind: "workspace",
+		description: "Review instructions and credentials together.",
+		origin_environment_id: null,
+		archived_at: null,
+		created_at: now,
+		is_owner: true,
+		owner_display: "Dev User",
+		owner_handle: "dev-user",
+		skill_count: 0,
+		vault_count: 1,
+		agent_count: 0,
+		member_count: 0,
+	};
+	const skillRequests: URL[] = [];
+	const createBodies: unknown[] = [];
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.route("**/v1/**", async (route) => {
+		const request = route.request();
+		const url = new URL(request.url());
+		if (url.pathname === "/v1/projects") return fulfill(route, [project]);
+		if (url.pathname === "/v1/agents") return fulfill(route, []);
+		if (url.pathname === "/v1/skills") {
+			skillRequests.push(url);
+			return fulfill(route, { items: [], total: 0, page: 1, page_size: 24 });
+		}
+		if (url.pathname === `/v1/projects/${projectId}/skills`) {
+			createBodies.push(request.postDataJSON());
+			return fulfill(route, {
+				skill_key: "review-pull-requests",
+				name: "Review pull requests",
+				version: 1,
+				file_count: 1,
+				content_hash: "a".repeat(64),
+			});
+		}
+		if (url.pathname === "/v1/dashboard/stats") return fulfill(route, {});
+		if (url.pathname === "/v1/auth/keys") return fulfill(route, []);
+		return fulfill(route, {});
+	});
+
+	await page.goto("/skills");
+	await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible({
+		timeout: 15_000,
+	});
+	await expect(page.getByRole("heading", { name: "Choose a Project" })).toBeVisible();
+	expect(skillRequests).toEqual([]);
+	await expectNoHorizontalOverflow(page);
+
+	await page.getByRole("link", { name: "Open Client Review" }).click();
+	await expect(page).toHaveURL(`/skills?project=${projectId}`);
+	await expect(page.getByRole("button", { name: "Add skill" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Import from GitHub" })).toBeVisible();
+	await expect.poll(() => skillRequests.length).toBe(1);
+	for (const request of skillRequests)
+		expect(request.searchParams.get("project_id")).toBe(projectId);
+
+	await page.getByRole("button", { name: "Add skill" }).click();
+	const dialog = page.getByRole("dialog", { name: "Add skill" });
+	await dialog.getByLabel("Name").fill("Review pull requests");
+	await dialog.getByLabel("Description").fill("Review code before approval");
+	await dialog
+		.getByLabel("Instructions")
+		.fill("Inspect the diff and report blocking issues first.");
+	await dialog.getByRole("button", { name: "Add skill" }).click();
+	await expect
+		.poll(() => createBodies)
+		.toEqual([
+			{
+				name: "Review pull requests",
+				description: "Review code before approval",
+				instructions: "Inspect the diff and report blocking issues first.",
+			},
+		]);
+	await expect(dialog).toHaveCount(0);
+	await expectNoHorizontalOverflow(page);
 });

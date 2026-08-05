@@ -11,24 +11,30 @@ import hashlib
 import hmac
 import re
 from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.agent_project_binding import AgentProjectBinding
-from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.session import AgentEnvironment
-from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
+from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.runtime import PersistedHostedRuntimeSkills
+from app.schemas.runtime_observed import HostedRuntimeObservedV2
+from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.sync_events import queue_runtime_manifest_changed
 
 # OpenClaw's native `skills install --as` contract accepts this slug shape.
 # Keeping Project-delivered keys inside the strictest native runtime contract
 # prevents a desired manifest from succeeding but failing during installation.
 RUNTIME_PROJECT_SKILL_KEY_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+PROJECT_SKILL_RECONCILE_VERSION = 1
+_CONNECTED_PROJECT_SKILL_AGENT_TYPES = frozenset({"claude_code", "codex", "hermes", "openclaw"})
 
 
 def _advisory_key(namespace: str, value: UUID) -> int:
@@ -135,6 +141,22 @@ def _runtime_state_skill_keys(state: HostedRuntimeState) -> set[str]:
     return set(desired.entries)
 
 
+async def _connected_workspace_skill_keys(
+    db: AsyncSession,
+    *,
+    agent: AgentEnvironment,
+) -> set[str]:
+    """Read the Agent-owned Cloud projection without claiming filesystem authority."""
+    rows = await db.execute(
+        select(Skill.skill_key).where(
+            Skill.project_id == agent.default_project_id,
+            Skill.authority == SKILL_AUTHORITY_AGENT_SYNC,
+            Skill.is_active,
+        )
+    )
+    return set(rows.scalars())
+
+
 def _assert_runtime_skill_key(skill_key: str) -> None:
     if RUNTIME_PROJECT_SKILL_KEY_PATTERN.fullmatch(skill_key) is not None:
         return
@@ -200,20 +222,41 @@ async def _assert_agent_accepts_project_skills(
     for skill_key in sorted(skill_keys):
         _assert_runtime_skill_key(skill_key)
 
-    state = await db.get(HostedRuntimeState, agent_id)
-    if state is None:
+    row = (
+        await db.execute(
+            select(AgentEnvironment, HostedRuntimeState, HostedRuntimeConfigObservation)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .outerjoin(
+                HostedRuntimeConfigObservation,
+                HostedRuntimeConfigObservation.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.archived_at.is_(None),
+            )
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    agent, state, observation = row
+    if not agent_supports_project_skills(agent, state, observation):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
-                "code": "project_skills_require_managed_agent",
-                "message": (
-                    "This Agent cannot install Project Skills automatically. "
-                    "Choose a managed Agent or remove the Project Skills before linking."
-                ),
+                "code": "project_skill_delivery_update_required",
+                "message": "Update this Agent, then try again.",
             },
         )
 
-    workspace_conflicts = skill_keys & _runtime_state_skill_keys(state)
+    workspace_skill_keys = (
+        _runtime_state_skill_keys(state)
+        if state is not None
+        else await _connected_workspace_skill_keys(db, agent=agent)
+    )
+    workspace_conflicts = skill_keys & workspace_skill_keys
     project_conflicts = skill_keys & await _other_project_skill_keys(
         db,
         agent_id=agent_id,
@@ -233,6 +276,56 @@ async def _assert_agent_accepts_project_skills(
             ),
             "skill_key": skill_key,
         },
+    )
+
+
+def agent_supports_project_skills(
+    agent: AgentEnvironment,
+    state: HostedRuntimeState | None,
+    observation: HostedRuntimeConfigObservation | None,
+) -> bool:
+    """Require authoritative rollout evidence for the Agent's delivery path."""
+    if state is None:
+        return (
+            agent.agent_type in _CONNECTED_PROJECT_SKILL_AGENT_TYPES
+            and agent.project_skill_reconcile_version == PROJECT_SKILL_RECONCILE_VERSION
+        )
+    if state.cli_package_spec not in settings.project_skill_hosted_cli_package_specs:
+        return False
+    if observation is None or observation.observed_at is None:
+        return False
+    now = datetime.now(UTC)
+    observed_at = observation.observed_at
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=UTC)
+    if now - observed_at > timedelta(seconds=settings.runtime_observation_freshness_seconds):
+        return False
+    if agent.last_sync_at is None or agent.last_sync_error:
+        return False
+    last_sync_at = agent.last_sync_at
+    if last_sync_at.tzinfo is None:
+        last_sync_at = last_sync_at.replace(tzinfo=UTC)
+    if now - last_sync_at > timedelta(seconds=settings.runtime_observation_freshness_seconds):
+        return False
+    try:
+        diagnostics = HostedRuntimeObservedV2.model_validate(observation.diagnostics)
+    except ValueError:
+        return False
+    expected_version = state.cli_package_spec.removeprefix("clawdi@")
+    expected_generation = resolve_runtime_apply_generation(
+        generation=state.generation,
+        apply_generation=state.apply_generation,
+    )
+    return bool(
+        diagnostics.status == "ok"
+        and diagnostics.converge_error is None
+        and diagnostics.active_cli_version == expected_version
+        and diagnostics.applied is not None
+        and diagnostics.applied.instance_id == state.instance_id
+        and diagnostics.applied.generation == expected_generation
+        and observation.observed_config_generation == expected_generation
+        and observation.observed_manifest_etag == diagnostics.applied.etag
+        and observation.observed_source_revision == diagnostics.applied.source_revision
     )
 
 
@@ -323,10 +416,6 @@ async def queue_project_runtime_manifest_changed(
             .join(
                 AgentProjectBinding,
                 AgentProjectBinding.agent_id == AgentEnvironment.id,
-            )
-            .join(
-                HostedRuntimeState,
-                HostedRuntimeState.environment_id == AgentEnvironment.id,
             )
             .where(
                 AgentProjectBinding.project_id == project_id,

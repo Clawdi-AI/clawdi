@@ -14,12 +14,18 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy import select
 
+from app.core.auth import AuthContext
 from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
     SKILL_SYNC_PROTOCOL_HEADER,
 )
-from app.services.file_store import FileStore
+from app.models.skill import Skill
+from app.models.user import User
+from app.routes import skills as skill_routes
+from app.routes.skills import _compute_file_tree_hash
+from app.services.file_store import FileStore, get_file_store
 from app.services.skill_installer import SkillPackage
 from app.services.tar_utils import tar_from_content
 
@@ -28,6 +34,17 @@ pytestmark = pytest.mark.committed_db
 AGENT_SKILL_SYNC_HEADERS = {
     SKILL_SYNC_PROTOCOL_HEADER: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 }
+
+
+def _archive_with_files(skill_key: str, files: dict[str, bytes]) -> bytes:
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        for relative_path, content in files.items():
+            info = tarfile.TarInfo(name=f"{skill_key}/{relative_path}")
+            info.size = len(content)
+            info.mode = 0o644
+            archive.addfile(info, io.BytesIO(content))
+    return output.getvalue()
 
 
 @pytest.mark.asyncio
@@ -123,7 +140,9 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     r = await client.put(
         f"/v1/projects/{project_id}/skills/editme/content",
         json={
-            "content": "---\nname: editme\ndescription: edited\n---\n# Edited\n",
+            "name": "Edit me",
+            "description": "edited",
+            "instructions": "# Edited",
             "content_hash": stale,
         },
     )
@@ -141,7 +160,9 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     ok = await client.put(
         f"/v1/projects/{project_id}/skills/editme/content",
         json={
-            "content": "---\nname: editme\ndescription: edited\n---\n# Edited\n",
+            "name": "Edit me",
+            "description": "edited",
+            "instructions": "# Edited",
             "content_hash": current_hash,
         },
     )
@@ -151,12 +172,8 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
 
 
 @pytest.mark.asyncio
-async def test_dashboard_edit_without_content_hash_is_last_write_wins(
-    client: httpx.AsyncClient, project_id: str
-):
-    """The `content_hash` field is optional. Phase-1 dashboard editor
-    leaves it blank for last-write-wins. Verify the omitted-hash path
-    still applies the edit even when the row exists."""
+async def test_dashboard_edit_requires_content_hash(client: httpx.AsyncClient, project_id: str):
+    """Modern Web edits are conflict-safe and never silently overwrite."""
     seed_content = "---\nname: lww\ndescription: original\n---\n# Original\n"
     tar_bytes, _ = tar_from_content("lww", seed_content)
     await client.post(
@@ -168,12 +185,183 @@ async def test_dashboard_edit_without_content_hash_is_last_write_wins(
     r = await client.put(
         f"/v1/projects/{project_id}/skills/lww/content",
         json={
-            "content": "---\nname: lww\ndescription: edited\n---\n# Edited\n",
+            "name": "LWW",
+            "description": "edited",
+            "instructions": "# Edited",
         },
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 422, r.text
     after = await client.get(f"/v1/projects/{project_id}/skills/lww")
-    assert "# Edited" in after.json().get("content", "")
+    assert "# Original" in after.json().get("content", "")
+
+
+@pytest.mark.asyncio
+async def test_native_create_is_project_explicit_and_conflict_safe(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    created = await client.post(
+        f"/v1/projects/{project_id}/skills",
+        json={
+            "name": "Review pull requests",
+            "description": "Review code carefully",
+            "instructions": "Check correctness, tests, and rollback safety.",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["skill_key"] == "review-pull-requests"
+    detail = await client.get(f"/v1/projects/{project_id}/skills/review-pull-requests")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["name"] == "Review pull requests"
+    assert detail.json()["description"] == "Review code carefully"
+    assert "Check correctness" in detail.json()["content"]
+
+    duplicate = await client.post(
+        f"/v1/projects/{project_id}/skills",
+        json={
+            "name": "Review pull requests",
+            "description": "A conflicting create",
+            "instructions": "This must not overwrite the first Skill.",
+        },
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()["detail"]["code"] == "skill_name_conflict"
+    unchanged = await client.get(f"/v1/projects/{project_id}/skills/review-pull-requests")
+    assert "Check correctness" in unchanged.json()["content"]
+
+
+@pytest.mark.asyncio
+async def test_edit_preserves_imported_support_files(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    skill_key = "preserve-files"
+    original_md = b"---\nname: Preserve files\ndescription: Imported\n---\n\nUse the references.\n"
+    archive = _archive_with_files(
+        skill_key,
+        {
+            "SKILL.md": original_md,
+            "references/notes.md": b"# Important notes\n",
+            "scripts/check.sh": b"#!/bin/sh\nexit 0\n",
+        },
+    )
+    uploaded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("preserve-files.tar.gz", archive, "application/gzip")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    edited = await client.put(
+        f"/v1/projects/{project_id}/skills/{skill_key}/content",
+        json={
+            "name": "Preserve files",
+            "description": "Edited without losing files",
+            "instructions": "Read references/notes.md, then run scripts/check.sh.",
+            "content_hash": uploaded.json()["content_hash"],
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    downloaded = await client.get(f"/v1/projects/{project_id}/skills/{skill_key}/download")
+    assert downloaded.status_code == 200, downloaded.text
+    with tarfile.open(fileobj=io.BytesIO(downloaded.content), mode="r:gz") as result:
+        names = set(result.getnames())
+        assert f"{skill_key}/references/notes.md" in names
+        assert f"{skill_key}/scripts/check.sh" in names
+        notes = result.extractfile(f"{skill_key}/references/notes.md")
+        script = result.extractfile(f"{skill_key}/scripts/check.sh")
+        skill_md = result.extractfile(f"{skill_key}/SKILL.md")
+        assert notes is not None and notes.read() == b"# Important notes\n"
+        assert script is not None and script.read() == b"#!/bin/sh\nexit 0\n"
+        assert skill_md is not None
+        rendered = skill_md.read().decode()
+    assert "description: Edited without losing files" in rendered
+    assert "Read references/notes.md" in rendered
+
+
+@pytest.mark.asyncio
+async def test_failed_db_commit_cannot_change_committed_skill_object_identity(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user: User,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    skill_key = "immutable-object"
+    old_archive, _ = tar_from_content(
+        skill_key,
+        "---\nname: Immutable object\ndescription: old\n---\n# Old\n",
+    )
+    seeded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("immutable-object.tar.gz", old_archive, "application/gzip")},
+    )
+    assert seeded.status_code == 200, seeded.text
+    project_uuid = uuid.UUID(project_id)
+    committed = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == project_uuid,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    old_file_key = committed.file_key
+    old_hash = committed.content_hash
+    assert old_file_key is not None
+    file_store = get_file_store()
+    assert await file_store.get(old_file_key) == old_archive
+
+    new_archive, _ = tar_from_content(
+        skill_key,
+        "---\nname: Immutable object\ndescription: new\n---\n# New\n",
+    )
+    new_hash = _compute_file_tree_hash(new_archive, skill_key)
+    new_file_key = skill_routes._file_key(
+        seed_user.id,
+        project_uuid,
+        skill_key,
+        new_hash,
+    )
+    assert new_file_key != old_file_key
+    real_commit = db_session.commit
+    commit_count = 0
+
+    async def fail_final_commit() -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            await db_session.rollback()
+            raise RuntimeError("injected commit failure")
+        await real_commit()
+
+    monkeypatch.setattr(db_session, "commit", fail_final_commit)
+    with pytest.raises(RuntimeError, match="injected commit failure"):
+        await skill_routes._do_upload_skill(
+            db=db_session,
+            auth=AuthContext(user=seed_user),
+            project_id=project_uuid,
+            skill_key=skill_key,
+            data=new_archive,
+            content_hash=None,
+        )
+
+    row = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == project_uuid,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    assert row.content_hash == old_hash
+    assert row.file_key == old_file_key
+    assert await file_store.get(old_file_key) == old_archive
+    assert await file_store.exists(new_file_key) is True
+    await file_store.delete(new_file_key)
 
 
 @pytest.mark.asyncio
@@ -600,10 +788,14 @@ async def test_nested_skill_round_trips_through_project_routes(
 
     # PUT content — also a more-specific subroute; ordering matters
     # the same way it does for download.
-    new_md = "---\nname: nested\ndescription: edited via project PUT\n---\n# Nested v2\n"
     r_put = await client.put(
         f"/v1/projects/{project_id}/skills/{nested_key}/content",
-        json={"content": new_md},
+        json={
+            "name": "Nested",
+            "description": "edited via project PUT",
+            "instructions": "# Nested v2",
+            "content_hash": r_upload.json()["content_hash"],
+        },
     )
     assert r_put.status_code == 200, r_put.text
 

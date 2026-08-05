@@ -85,6 +85,11 @@ class AgentEnvironment(Base, TimestampMixin):
     # auto-pick-up the new sync until operator opts them in); new
     # envs created post-v1 default to true.
     sync_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    # Explicit daemon capability handshake. NULL means the installed daemon
+    # has not proven it can reconcile linked Project Skills. The heartbeat
+    # rewrites this value on every client generation, so downgrading to an old
+    # daemon fails closed instead of retaining stale capability evidence.
+    project_skill_reconcile_version: Mapped[int | None] = mapped_column(Integer)
 
     # Default project this env's daemon writes into. Phase-1 migration
     # creates one env-local project per env and points this column at

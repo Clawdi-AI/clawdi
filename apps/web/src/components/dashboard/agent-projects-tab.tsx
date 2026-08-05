@@ -26,7 +26,6 @@ import {
 	ProjectResourceCardSkeleton,
 	UnavailableProjectResourceCard,
 } from "@/components/projects/project-resource-card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -49,18 +48,6 @@ import { agentResourceScope, type ResourceNavigationScope } from "@/lib/resource
 import { errorMessage } from "@/lib/utils";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
-
-class ProjectCreatedButNotLinkedError extends Error {
-	constructor(
-		readonly project: ProjectRow,
-		readonly linkError: unknown,
-	) {
-		super(`Project ${displayProjectName(project)} was created but could not be linked`, {
-			cause: linkError,
-		});
-		this.name = "ProjectCreatedButNotLinkedError";
-	}
-}
 
 export function AgentProjectsTab({
 	agentId,
@@ -135,15 +122,10 @@ function AgentProjectsPanel({
 	const [linkOpen, setLinkOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
 	const [newProjectName, setNewProjectName] = useState("");
-	const [createdProjectAwaitingLink, setCreatedProjectAwaitingLink] = useState<ProjectRow | null>(
-		null,
-	);
-	const [initialLinkError, setInitialLinkError] = useState<unknown>(null);
 	// React Query pending state is post-render. These refs reject a second
 	// submit synchronously, before another mutation can queue in the same frame.
 	const linkExistingLockedRef = useRef(false);
-	const createAndLinkLockedRef = useRef(false);
-	const retryLinkLockedRef = useRef(false);
+	const createProjectLockedRef = useRef(false);
 	const orderedBindings = orderedAgentProjectBindings(bindings);
 	const primary = orderedBindings.find((binding) => binding.binding_type === "primary") ?? null;
 	const contexts = orderedBindings.filter((binding) => binding.binding_type === "context");
@@ -165,11 +147,7 @@ function AgentProjectsPanel({
 				}),
 			);
 		},
-		onSuccess: (_result, projectId) => {
-			if (createdProjectAwaitingLink?.id === projectId) {
-				setCreatedProjectAwaitingLink(null);
-				setInitialLinkError(null);
-			}
+		onSuccess: () => {
 			setContextProjectId("");
 			setLinkOpen(false);
 			onChanged();
@@ -181,61 +159,20 @@ function AgentProjectsPanel({
 		},
 	});
 
-	const createAndLink = useMutation({
-		mutationFn: async (name: string) => {
-			const created = unwrap(await api.POST("/v1/projects", { body: { name } }));
-			try {
-				await unwrap(
-					await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
-						params: { path: { agent_id: agentId } },
-						body: { project_id: created.id },
-					}),
-				);
-			} catch (error) {
-				throw new ProjectCreatedButNotLinkedError(created, error);
-			}
-			return created;
-		},
+	const createProject = useMutation({
+		mutationFn: async (name: string) => unwrap(await api.POST("/v1/projects", { body: { name } })),
 		onSuccess: () => {
-			setCreatedProjectAwaitingLink(null);
-			setInitialLinkError(null);
 			setNewProjectName("");
 			setCreateOpen(false);
 			onChanged();
-			toast.success("Project created and linked");
+			toast.success("Project created", {
+				description: "Link it when this Agent should use its Skills and attached Vaults.",
+			});
 		},
-		onError: (error) => {
-			if (error instanceof ProjectCreatedButNotLinkedError) {
-				setCreatedProjectAwaitingLink(error.project);
-				setInitialLinkError(error.linkError);
-				onChanged();
-				return;
-			}
-			toast.error("Couldn't create project", { description: errorMessage(error) });
-		},
+		onError: (error) =>
+			toast.error("Couldn't create project", { description: errorMessage(error) }),
 		onSettled: () => {
-			createAndLinkLockedRef.current = false;
-		},
-	});
-
-	const retryCreatedProjectLink = useMutation({
-		mutationFn: async (project: ProjectRow) =>
-			unwrap(
-				await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
-					params: { path: { agent_id: agentId } },
-					body: { project_id: project.id },
-				}),
-			),
-		onSuccess: () => {
-			setCreatedProjectAwaitingLink(null);
-			setInitialLinkError(null);
-			setNewProjectName("");
-			setCreateOpen(false);
-			onChanged();
-			toast.success("Project linked");
-		},
-		onSettled: () => {
-			retryLinkLockedRef.current = false;
+			createProjectLockedRef.current = false;
 		},
 	});
 
@@ -245,28 +182,11 @@ function AgentProjectsPanel({
 		linkContext.mutate(contextProjectId);
 	};
 
-	const submitCreateAndLink = () => {
+	const submitCreateProject = () => {
 		const name = newProjectName.trim();
-		if (!name || createAndLinkLockedRef.current) return;
-		createAndLinkLockedRef.current = true;
-		createAndLink.mutate(name);
-	};
-
-	const submitRetryLink = () => {
-		if (!createdProjectAwaitingLink || retryLinkLockedRef.current) return;
-		retryLinkLockedRef.current = true;
-		retryCreatedProjectLink.mutate(createdProjectAwaitingLink);
-	};
-
-	const keepCreatedProjectUnlinked = () => {
-		if (!createdProjectAwaitingLink) return;
-		const projectName = displayProjectName(createdProjectAwaitingLink);
-		setCreatedProjectAwaitingLink(null);
-		setInitialLinkError(null);
-		setNewProjectName("");
-		setCreateOpen(false);
-		onChanged();
-		toast.success(`${projectName} kept unlinked`);
+		if (!name || createProjectLockedRef.current) return;
+		createProjectLockedRef.current = true;
+		createProject.mutate(name);
 	};
 
 	const removeBinding = useMutation({
@@ -473,7 +393,7 @@ function AgentProjectsPanel({
 			>
 				<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
 					<DialogHeader>
-						<DialogTitle>Link Project</DialogTitle>
+						<DialogTitle>Link project</DialogTitle>
 						<DialogDescription>
 							Choose a Project. This Agent will use its Skills and attached Vaults together.
 						</DialogDescription>
@@ -518,79 +438,46 @@ function AgentProjectsPanel({
 				open={createOpen}
 				onOpenChange={setCreateOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open && !createdProjectAwaitingLink) setNewProjectName("");
+					if (!open) setNewProjectName("");
 				}}
 			>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
 						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
-							Create a Project and link it to this Agent. You can add Skills and attach Vaults
-							before or after linking.
+							Create a shareable bundle for Skills and attached Vault access. Link it to this Agent
+							when it is ready to use.
 						</DialogDescription>
 					</DialogHeader>
-					{createdProjectAwaitingLink ? (
-						<div className="space-y-4">
-							<Alert variant="destructive">
-								<AlertTitle>Project created, link not completed</AlertTitle>
-								<AlertDescription>
-									{displayProjectName(createdProjectAwaitingLink)} remains in your Project library.
-									Retrying links that exact Project and will not create another one.
-								</AlertDescription>
-								{retryCreatedProjectLink.error || initialLinkError ? (
-									<AlertDescription>
-										{errorMessage(retryCreatedProjectLink.error ?? initialLinkError)}
-									</AlertDescription>
-								) : null}
-							</Alert>
-							<DialogFooter>
-								<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-									Close
-								</Button>
-								<Button type="button" variant="outline" onClick={keepCreatedProjectUnlinked}>
-									Keep unlinked
-								</Button>
-								<Button
-									type="button"
-									disabled={retryCreatedProjectLink.isPending}
-									onClick={submitRetryLink}
-								>
-									{retryCreatedProjectLink.isPending ? <Spinner className="size-3.5" /> : <Link2 />}
-									Retry link
-								</Button>
-							</DialogFooter>
+					<form
+						className="space-y-4"
+						onSubmit={(event) => {
+							event.preventDefault();
+							submitCreateProject();
+						}}
+					>
+						<div className="space-y-1.5">
+							<Label htmlFor="agent-project-name">Project name</Label>
+							<Input
+								id="agent-project-name"
+								name="agent-project-name"
+								value={newProjectName}
+								maxLength={200}
+								autoComplete="off"
+								placeholder="Project name…"
+								onChange={(event) => setNewProjectName(event.target.value)}
+							/>
 						</div>
-					) : (
-						<form
-							className="space-y-4"
-							onSubmit={(event) => {
-								event.preventDefault();
-								submitCreateAndLink();
-							}}
-						>
-							<div className="space-y-1.5">
-								<Label htmlFor="agent-project-name">Project name</Label>
-								<Input
-									id="agent-project-name"
-									name="agent-project-name"
-									value={newProjectName}
-									maxLength={200}
-									autoComplete="off"
-									placeholder="Project name…"
-									onChange={(event) => setNewProjectName(event.target.value)}
-								/>
-							</div>
-							<DialogFooter>
-								<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-									Cancel
-								</Button>
-								<Button type="submit" disabled={!newProjectName.trim() || createAndLink.isPending}>
-									{createAndLink.isPending ? <Spinner className="size-3.5" /> : <Plus />}
-									Create project
-								</Button>
-							</DialogFooter>
-						</form>
-					)}
+						<DialogFooter>
+							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!newProjectName.trim() || createProject.isPending}>
+								{createProject.isPending ? <Spinner className="size-3.5" /> : <Plus />}
+								Create project
+							</Button>
+						</DialogFooter>
+					</form>
 				</DialogContent>
 			</Dialog>
 		</div>
@@ -625,7 +512,6 @@ function AgentProjectCard({
 			project={project}
 			footer={footer}
 			actions={actions}
-			showKind
 			navigationScope={navigationScope}
 		/>
 	);

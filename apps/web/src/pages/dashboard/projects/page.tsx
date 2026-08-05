@@ -44,7 +44,6 @@ export default function ProjectsPage() {
 	const qc = useQueryClient();
 	const router = useRouter();
 	const [newProjectName, setNewProjectName] = useState("");
-	const [newProjectSlug, setNewProjectSlug] = useState("");
 	const [newProjectDescription, setNewProjectDescription] = useState("");
 	const [createOpen, setCreateOpen] = useState(false);
 	const [search, setSearch] = useState("");
@@ -104,7 +103,6 @@ export default function ProjectsPage() {
 
 	const openCreateDialog = () => {
 		setNewProjectName("");
-		setNewProjectSlug("");
 		setNewProjectDescription("");
 		setCreateOpen(true);
 	};
@@ -131,7 +129,7 @@ export default function ProjectsPage() {
 				actions={
 					<Button size="sm" onClick={openCreateDialog}>
 						<Plus className="size-3.5" />
-						Create Project
+						Create project
 					</Button>
 				}
 			/>
@@ -152,14 +150,13 @@ export default function ProjectsPage() {
 				onOpenChangeComplete={(open) => {
 					if (!open) {
 						setNewProjectName("");
-						setNewProjectSlug("");
 						setNewProjectDescription("");
 					}
 				}}
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>Create Project</DialogTitle>
+						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
 							Create a shareable resource bundle for a team, workflow, or repository. Add Skills,
 							attach Vaults, then link the whole Project to Agents that should use it.
@@ -174,37 +171,20 @@ export default function ProjectsPage() {
 								name: newProjectName.trim(),
 								description: newProjectDescription.trim() || null,
 							};
-							const slug = normalizeSlugInput(newProjectSlug);
-							if (slug) body.slug = slug;
 							createProject.mutate({ body });
 						}}
 					>
-						<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
-							<div className="space-y-1.5">
-								<Label htmlFor="project-name">Name</Label>
-								<Input
-									id="project-name"
-									name="project-name"
-									value={newProjectName}
-									maxLength={200}
-									placeholder="Project name…"
-									autoComplete="off"
-									onChange={(event) => setNewProjectName(event.target.value)}
-								/>
-							</div>
-							<div className="space-y-1.5">
-								<Label htmlFor="project-slug">Slug</Label>
-								<Input
-									id="project-slug"
-									name="project-slug"
-									value={newProjectSlug}
-									maxLength={80}
-									placeholder="auto-generated…"
-									autoComplete="off"
-									spellCheck={false}
-									onChange={(event) => setNewProjectSlug(normalizeSlugDraft(event.target.value))}
-								/>
-							</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="project-name">Name</Label>
+							<Input
+								id="project-name"
+								name="project-name"
+								value={newProjectName}
+								maxLength={200}
+								placeholder="Project name…"
+								autoComplete="off"
+								onChange={(event) => setNewProjectName(event.target.value)}
+							/>
 						</div>
 						<div className="space-y-1.5">
 							<Label htmlFor="project-description">Description</Label>
@@ -224,7 +204,7 @@ export default function ProjectsPage() {
 							</Button>
 							<Button type="submit" disabled={!newProjectName.trim() || createProject.isPending}>
 								<Plus className="size-3.5" />
-								{createProject.isPending ? "Creating…" : "Create Project"}
+								{createProject.isPending ? "Creating…" : "Create project"}
 							</Button>
 						</div>
 					</form>
@@ -276,20 +256,8 @@ function ProjectShareAction({ project }: { project: ProjectRow }) {
 	);
 }
 
-function normalizeSlugInput(value: string) {
-	return normalizeSlugDraft(value).replace(/-+$/, "");
-}
-
 function formatCountLabel(value: number, noun: string) {
 	return `${value} ${value === 1 ? noun : `${noun}s`}`;
-}
-
-function normalizeSlugDraft(value: string) {
-	return value
-		.toLowerCase()
-		.replace(/[^a-z0-9-]+/g, "-")
-		.replace(/-{2,}/g, "-")
-		.replace(/^-+/, "");
 }
 
 function compareProjectsForProductUse(a: ProjectRow, b: ProjectRow) {

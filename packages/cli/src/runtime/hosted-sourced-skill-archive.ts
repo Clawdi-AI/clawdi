@@ -43,7 +43,7 @@ function sha256(bytes: Uint8Array | string): string {
 function sourceIdentity(skillId: string, source: HostedSkillSource): string {
 	return source.type === "github"
 		? ["github", skillId, source.url, source.path, source.commit].join("\0")
-		: ["clawdi", skillId, source.projectId, source.contentHash].join("\0");
+		: ["project", skillId, source.projectId, source.contentHash].join("\0");
 }
 
 function cachePaths(paths: RuntimePaths, skillId: string, source: HostedSkillSource) {
@@ -106,17 +106,17 @@ function isReceipt(value: unknown): value is HostedSourcedSkillArchiveReceipt {
 		? typeof source.url === "string" &&
 				typeof source.path === "string" &&
 				typeof source.commit === "string"
-		: source.type === "clawdi" &&
+		: source.type === "project" &&
 				typeof source.projectId === "string" &&
 				typeof source.contentHash === "string" &&
 				typeof source.archiveUrl === "string" &&
 				typeof source.installUrl === "string";
 }
 
-function assertClawdiProjectSkillEndpoints(
+function assertProjectSkillEndpoints(
 	manifest: RuntimeManifest,
 	skillId: string,
-	source: Extract<HostedSkillSource, { type: "clawdi" }>,
+	source: Extract<HostedSkillSource, { type: "project" }>,
 ): void {
 	const controlPlane = new URL(manifest.controlPlane.apiUrl);
 	const archive = new URL(source.archiveUrl);
@@ -148,9 +148,9 @@ function assertClawdiProjectSkillEndpoints(
 	}
 }
 
-async function fetchClawdiProjectSkillArchive(
+async function fetchProjectSkillArchive(
 	skillId: string,
-	source: Extract<HostedSkillSource, { type: "clawdi" }>,
+	source: Extract<HostedSkillSource, { type: "project" }>,
 	options: { authToken?: string; fetcher?: GithubArchiveFetcher },
 ): Promise<Buffer> {
 	const headers = new Headers({ Accept: "application/gzip" });
@@ -227,8 +227,8 @@ export async function prepareHostedSourcedSkillArchives(
 		([left], [right]) => left.localeCompare(right),
 	)) {
 		if (!desired.enabled || !("source" in desired)) continue;
-		if (desired.source.type === "clawdi") {
-			assertClawdiProjectSkillEndpoints(manifest, skillId, desired.source);
+		if (desired.source.type === "project") {
+			assertProjectSkillEndpoints(manifest, skillId, desired.source);
 		}
 		const cached = readCachedArchive(paths, skillId, desired.source);
 		if (cached) {
@@ -257,7 +257,7 @@ export async function prepareHostedSourcedSkillArchives(
 			}
 			tarBytes = downloaded.tarBytes;
 		} else {
-			tarBytes = await fetchClawdiProjectSkillArchive(skillId, desired.source, options);
+			tarBytes = await fetchProjectSkillArchive(skillId, desired.source, options);
 		}
 		const archiveSha256 = writeCachedArchive(paths, skillId, desired.source, tarBytes);
 		prepared.set(skillId, {

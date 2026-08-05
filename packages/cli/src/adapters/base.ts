@@ -132,10 +132,10 @@ export interface AgentAdapter {
 	 * Called by explicit pull flows so the recipient's agent sees the
 	 * shared skill folder only after content download is requested. */
 	writeSharedSkillArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
-	/** Remove a skill from the agent's local skills directory as an explicit
-	 * local-authority mutation. Managed reservations are fail-closed and an
-	 * already absent user-authored skill is handled idempotently. Cloud events
-	 * and projection reconciliation never call this method. */
+	/** Remove a Skill from the Agent's local skills directory. Callers must
+	 * prove exact local ownership before invoking this method; Project desired-
+	 * inventory reconciliation does so with its durable materialization receipt.
+	 * An already absent target is handled idempotently. */
 	removeLocalSkill(key: string): Promise<void>;
 
 	buildRunCommand(args: string[], env: Record<string, string>): string[];

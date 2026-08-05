@@ -58,10 +58,6 @@ export function isCustomProject(project: Pick<ProjectMetadata, "kind">): boolean
 	return project.kind === "workspace" || !project.kind;
 }
 
-export function isManagedProject(project: Pick<ProjectMetadata, "kind">): boolean {
-	return project.kind === "environment" || project.kind === "personal";
-}
-
 export function projectKindSortRank(kind?: string): number {
 	if (kind === "workspace" || !kind) return 0;
 	if (kind === "personal") return 1;

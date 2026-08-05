@@ -53,7 +53,7 @@ function receiptInput(home: string, skillId: string, ownershipIdentity: string) 
 }
 
 function rawSkillUrl(skill: PreparedHostedSourcedSkill): string {
-	if (skill.source.type === "clawdi") return skill.source.installUrl;
+	if (skill.source.type === "project") return skill.source.installUrl;
 	const repository = new URL(skill.source.url);
 	const [owner, repo] = repository.pathname.slice(1).split("/");
 	if (!owner || !repo)

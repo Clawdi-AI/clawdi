@@ -16,6 +16,7 @@ function stats(overrides: Partial<DashboardStats> = {}): DashboardStats {
 		longest_streak: 5,
 		peak_hour: 10,
 		favorite_model: "all-time-model",
+		projects_count: 3,
 		skills_count: 4,
 		memories_count: 6,
 		vault_count: 2,

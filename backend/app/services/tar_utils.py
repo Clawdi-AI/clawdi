@@ -158,6 +158,62 @@ def tar_from_content(skill_key: str, content: str) -> tuple[bytes, int]:
     return buf.getvalue(), 1
 
 
+def replace_skill_md(data: bytes, skill_key: str, content: str) -> tuple[bytes, int]:
+    """Replace only SKILL.md while preserving every validated support file."""
+    validate_tar(data)
+    replacement_name = f"{skill_key}/SKILL.md"
+    encoded = content.encode("utf-8")
+    output = io.BytesIO()
+    file_count = 0
+    found = False
+    try:
+        with (
+            tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as source,
+            tarfile.open(fileobj=output, mode="w:gz") as target,
+        ):
+            for member in source:
+                if member.name == replacement_name and member.isfile():
+                    if found:
+                        raise TarValidationError("Archive contains duplicate SKILL.md entries")
+                    found = True
+                    continue
+                if member.isfile():
+                    extracted = source.extractfile(member)
+                    if extracted is None:
+                        raise TarValidationError("Archive file could not be read")
+                    target.addfile(member, extracted)
+                    file_count += 1
+                else:
+                    target.addfile(member)
+            if not found:
+                raise TarValidationError("Archive must contain SKILL.md at its declared root")
+            info = tarfile.TarInfo(name=replacement_name)
+            info.size = len(encoded)
+            info.mode = 0o644
+            info.mtime = 0
+            target.addfile(info, io.BytesIO(encoded))
+            file_count += 1
+    except tarfile.TarError as exc:
+        raise TarValidationError("Invalid tar archive") from exc
+    return output.getvalue(), file_count
+
+
+def skill_document(name: str, description: str | None, instructions: str) -> str:
+    """Render Web fields into the runtime SKILL.md contract server-side."""
+    import yaml
+
+    metadata = {"name": name.strip()}
+    if description and description.strip():
+        metadata["description"] = description.strip()
+    frontmatter = yaml.safe_dump(
+        metadata,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+    ).rstrip()
+    return f"---\n{frontmatter}\n---\n\n{instructions.strip()}\n"
+
+
 def parse_frontmatter(content: str) -> dict[str, str]:
     """Extract YAML frontmatter from SKILL.md.
 

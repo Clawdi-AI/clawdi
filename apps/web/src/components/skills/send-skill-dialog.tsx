@@ -34,20 +34,16 @@ import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
-/* Move Cloud-owned Skills between Cloud-owned Projects, one at a time from
- * the card hover or as a batch from select mode. Agent Projects are filesystem
- * projections and are excluded at both the source capability and destination
- * boundary. */
+/* Copy or move Cloud-owned Skills between two explicit Projects from the
+ * canonical Skill card. Agent Workspace projections are excluded at both the
+ * source capability and destination boundary. */
 
 export function SendSkillDialog({
-	skills,
+	skill,
 	children,
-	onDone,
 }: {
-	skills: SkillSummary[];
+	skill: SkillSummary;
 	children?: ReactElement;
-	/** Called after a successful send (bulk mode clears its selection). */
-	onDone?: () => void;
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -56,9 +52,6 @@ export function SendSkillDialog({
 	const [open, setOpen] = useState(false);
 	const [target, setTarget] = useState("");
 	const [removeFromSource, setRemoveFromSource] = useState(false);
-
-	const single = skills.length === 1 ? skills[0] : null;
-	const batchLabel = single ? single.name : `${skills.length} skills`;
 
 	const projectsQuery = $api.useQuery(
 		"get",
@@ -73,26 +66,18 @@ export function SendSkillDialog({
 		? projectsQuery.error
 		: null;
 
-	// Target value encodes a Cloud-owned destination Project id. Environment
-	// Projects are filesystem projections and are deliberately excluded.
-	// A destination only disappears when EVERY selected skill already
-	// lives there — mixed-source batches keep it (already-there copies
-	// are skipped at send time).
+	// Copy/Move is always between two explicit user Projects. Agent Workspace
+	// projections are excluded at both source and destination boundaries.
 	const projectTargets = useMemo(
 		() =>
 			(projects ?? [])
-				.filter(
-					(p) =>
-						p.is_owner !== false &&
-						!skills.every((s) => s.project_id === p.id) &&
-						p.kind === "workspace",
-				)
+				.filter((p) => p.is_owner !== false && p.id !== skill.project_id && p.kind === "workspace")
 				.map((p) => ({
 					value: p.id,
 					label: displayProjectName(p),
 					emoji: identityFor(displayProjectName(p)).emoji,
 				})),
-		[projects, skills],
+		[projects, skill.project_id],
 	);
 	const targetItems = useMemo(
 		() =>
@@ -106,84 +91,48 @@ export function SendSkillDialog({
 	const send = useMutation({
 		mutationFn: async () => {
 			if (!target) throw new Error("Choose a destination first");
+			if (!skill.project_id) throw new Error("Open this Skill from its Project and try again");
 			const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
-			if (
-				skills.some(
-					(skill) =>
-						!skillCapabilities(
-							skill,
-							skill.project_id ? projectsById.get(skill.project_id) : undefined,
-						).canSend,
-				)
-			) {
-				throw new Error("Agent-synced and Workspace Skills cannot be sent from Cloud");
+			if (!skillCapabilities(skill, projectsById.get(skill.project_id)).canSend) {
+				throw new Error("This Skill is read-only");
 			}
-			// Per-skill try/catch: in a batch, one unreadable skill must
-			// not abort the rest — report partial success instead.
-			let copied = 0;
-			const failed: string[] = [];
-			const sourceRemoveFailed: string[] = [];
-			for (const skill of skills) {
-				if (!skill.project_id || skill.project_id === target) continue;
-				const label = skill.name || skill.skill_key;
-				try {
-					const blob = ensureBlob(
-						unwrap(
-							await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
-								params: {
-									path: { project_id: skill.project_id, skill_key: skill.skill_key },
-								},
-								parseAs: "blob",
-							}),
-						),
-					);
-					await uploadSkillArchive(target, skill.skill_key, blob);
-					copied += 1;
-					if (removeFromSource) {
-						try {
-							unwrap(
-								await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-									params: { path: { project_id: skill.project_id, skill_key: skill.skill_key } },
-								}),
-							);
-						} catch {
-							sourceRemoveFailed.push(label);
-						}
-					}
-				} catch {
-					failed.push(label);
-				}
-			}
-			if (copied === 0) {
-				throw new Error(
-					failed.length > 0
-						? `Couldn't send ${failed.join(", ")}`
-						: "Everything selected is already in that destination",
+			const blob = ensureBlob(
+				unwrap(
+					await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
+						params: {
+							path: { project_id: skill.project_id, skill_key: skill.skill_key },
+						},
+						parseAs: "blob",
+					}),
+				),
+			);
+			await uploadSkillArchive(target, skill.skill_key, blob);
+			if (!removeFromSource) return { sourceRemoved: null };
+			try {
+				unwrap(
+					await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
+						params: { path: { project_id: skill.project_id, skill_key: skill.skill_key } },
+					}),
 				);
+				return { sourceRemoved: true };
+			} catch {
+				return { sourceRemoved: false };
 			}
-			return { copied, failed, sourceRemoveFailed };
 		},
-		onSuccess: ({ copied, failed, sourceRemoveFailed }) => {
+		onSuccess: ({ sourceRemoved }) => {
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			const targetLabel =
 				projectTargets.find((candidate) => candidate.value === target)?.label ?? "the destination";
-			const what = copied === 1 ? (single?.name ?? "1 skill") : `${copied} skills`;
-			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
-			toast.success(
-				removeFromSource && !sourceCleanupFailed
-					? `${copied === 1 ? "Skill" : "Skills"} moved`
-					: `${copied === 1 ? "Skill" : "Skills"} copied`,
-				{
-					description:
-						`${what} now available in ${targetLabel}.` +
-						(sourceCleanupFailed ? ` Source not removed: ${sourceRemoveFailed.join(", ")}.` : "") +
-						(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
-				},
-			);
+			toast.success(sourceRemoved ? "Skill moved" : "Skill copied", {
+				description:
+					`${skill.name} is now available in ${targetLabel}.` +
+					(sourceRemoved === false
+						? " The source copy could not be removed; remove it after checking the new copy."
+						: ""),
+			});
 			setOpen(false);
-			onDone?.();
 		},
-		onError: (e) => toast.error("Couldn't copy or move Skills", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't copy or move skill", { description: errorMessage(e) }),
 	});
 
 	useEffect(() => {
@@ -193,7 +142,7 @@ export function SendSkillDialog({
 	}, [open]);
 
 	const trigger = children ?? (
-		<Button variant="ghost" size="icon-sm" aria-label={`Copy or move ${batchLabel}`}>
+		<Button variant="ghost" size="icon-sm" aria-label={`Copy or move ${skill.name}`}>
 			<Copy className="size-3.5" />
 		</Button>
 	);
@@ -212,15 +161,14 @@ export function SendSkillDialog({
 			<DialogTrigger render={trigger} />
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Copy or move {batchLabel}</DialogTitle>
+					<DialogTitle>Copy or move {skill.name}</DialogTitle>
 					{/* Copy-vs-reference semantics must be explicit (Kingsley's
 					    review): skills duplicate per Project, so the destination's
 					    copy will NOT follow future changes to the source. */}
 					<DialogDescription>
-						The destination gets {single ? "an independent copy" : "independent copies"} — later
-						changes to the source won&apos;t sync. To give people the{" "}
-						<em className="not-italic font-medium">same</em> {single ? "skill" : "skills"}, share
-						the Project instead.
+						The destination gets an independent copy — later changes to the source won&apos;t sync.
+						To give people the <em className="not-italic font-medium">same</em> Skill, share the
+						Project instead.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
@@ -273,7 +221,7 @@ export function SendSkillDialog({
 						onClick={() => send.mutate()}
 					>
 						{send.isPending ? <Spinner /> : <ArrowRight className="size-3.5" />}
-						{removeFromSource ? `Move ${batchLabel}` : `Copy ${batchLabel}`}
+						{removeFromSource ? "Move skill" : "Copy skill"}
 					</Button>
 				</div>
 			</DialogContent>
