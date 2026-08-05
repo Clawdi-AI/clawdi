@@ -25,7 +25,7 @@ import {
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
-import { loadHostedBundledSkill } from "./hosted-bundled-skill";
+import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
 import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {
@@ -535,7 +535,10 @@ EOF
   "gateway uninstall")
     rm -f '${input.unitPath}'
     ;;
-  skills\ install\ *)
+  "agents list --json")
+    printf '[{"id":"main","workspace":"%s"}]\n' "$PWD"
+    ;;
+  "skills install "*)
     source_dir="$3"
     skill_id="$7"
     mkdir -p "$PWD/skills"
@@ -4077,6 +4080,46 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(existsSync(skillDir)).toBe(false);
 		expect(readFileSync(join(userOwnedSibling, "SKILL.md"), "utf8")).toBe("keep me\n");
 		expect(shouldIgnoreUserSkill(userOwnedSibling, "user-owned")).toBe(false);
+	});
+
+	test("removes only strictly identified legacy bundled OpenClaw Skills without requiring a new receipt", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const workspaceRoot = join(paths.userHome, "clawdi");
+		const target = join(workspaceRoot, "skills", "clawdi");
+		const source = resolve(import.meta.dir, "../..", "skills", "hosted-versions", "1", "clawdi");
+		const bundle = loadHostedBundledSkill("clawdi", 1, source);
+		reconcileHostedBundledSkill({ bundle, targetDir: target, reserved: true });
+		const manifest = baseManifest(
+			paths,
+			{ openclaw: { enabled: true, run: runSettings(command, ["gateway"]), services: {} } },
+			{ projection: { skills: { entries: {} } } },
+		);
+		let guardedCleanupCalls = 0;
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "legacy-openclaw-remove"),
+			paths,
+			{
+				hostedOpenClawSkillDriver: {
+					installDirectory: () => "installed",
+					install: () => "installed",
+					verifyOwned: () => false,
+					cleanupManifestOwned: () => {
+						guardedCleanupCalls += 1;
+						return "removed";
+					},
+				},
+			},
+		);
+		expect(result.installErrors).toEqual([]);
+		expect(guardedCleanupCalls).toBe(0);
+		expect(existsSync(target)).toBe(false);
 	});
 
 	test("restores exact root and runtime-user targets before systemd rollback reconciliation", () => {

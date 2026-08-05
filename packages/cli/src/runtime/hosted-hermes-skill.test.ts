@@ -142,15 +142,19 @@ function fakeHermesApp(home: string): string {
 import json, os, shutil, sys
 from pathlib import Path
 root = Path(os.environ["HERMES_HOME"]) / "skills"
+with Path(os.environ["FAKE_HERMES_LOG"]).open("a") as log:
+    log.write(" ".join(sys.argv[1:]) + chr(10))
 if sys.argv[1:3] == ["skills", "install"]:
-    assert sys.argv[-1] == "--yes" and sys.argv[-3] == "--name"
-    name = sys.argv[-2]
+    assert "--yes" in sys.argv and "--name" in sys.argv
+    name = sys.argv[sys.argv.index("--name") + 1]
     target = root / name
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(Path(os.environ["FAKE_HERMES_SOURCE"]), target)
 elif sys.argv[1:3] == ["skills", "uninstall"]:
     assert sys.argv[-1] == "--yes"
+    if os.environ.get("FAKE_HERMES_UNINSTALL_FAIL") == "1":
+        raise SystemExit(43)
     shutil.rmtree(root / sys.argv[3])
 else:
     raise SystemExit(2)
@@ -171,6 +175,8 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		mkdirSync(sourceDir, { recursive: true });
 		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
 		process.env.FAKE_HERMES_SOURCE = sourceDir;
+		const commandLog = join(root, "hermes.log");
+		process.env.FAKE_HERMES_LOG = commandLog;
 		const archive = join(root, "review-pr.tar.gz");
 		const packed = spawnSync("tar", ["-czf", archive, "-C", dirname(sourceDir), "review-pr"]);
 		if (packed.status !== 0) throw new Error("test tar creation failed");
@@ -192,12 +198,18 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			skill,
 		};
 
-		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false })).toBe(
-			"installed",
-		);
+		expect(
+			hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false }),
+		).toBe("installed");
 		const target = join(home, ".hermes", "skills", "review-pr");
+		const receipt = join(home, ".hermes", "skills", ".clawdi-manifest-receipts", "review-pr.json");
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
+		expect(readFileSync(commandLog, "utf8")).not.toContain("--force");
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
+		const receiptBytes = readFileSync(receipt);
+		rmSync(receipt);
+		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
+		writeFileSync(receipt, receiptBytes);
 
 		writeFileSync(join(target, "SKILL.md"), "forged user bytes\n");
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
@@ -211,14 +223,66 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
 			"unchanged",
 		);
+		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR v2\n");
+		const updateArchive = join(root, "review-pr-update.tar.gz");
+		const updatePacked = spawnSync("tar", [
+			"-czf",
+			updateArchive,
+			"-C",
+			dirname(sourceDir),
+			"review-pr",
+		]);
+		if (updatePacked.status !== 0) throw new Error("test update tar creation failed");
+		const updatedSkill = {
+			...skill,
+			digest: "c".repeat(64),
+			tarBytes: readFileSync(updateArchive),
+		};
+		expect(
+			hostedHermesSkillExactSourceDriver.install({
+				home,
+				appRoot,
+				skill: updatedSkill,
+				previouslyReserved: true,
+			}),
+		).toBe("installed");
+		expect(readFileSync(commandLog, "utf8").trim().split("\n").at(-1)).toContain("--force");
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR v2\n");
 		expect(
 			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
 				appRoot,
 				skillId: "review-pr",
+				digest: updatedSkill.digest,
 			}),
 		).toBe("removed");
 		expect(existsSync(target)).toBe(false);
+		writeFileSync(receipt, "{}\n");
+		expect(
+			hostedHermesSkillExactSourceDriver.uninstall({
+				home,
+				appRoot,
+				skillId: "review-pr",
+				digest: updatedSkill.digest,
+			}),
+		).toBe("absent");
+		expect(existsSync(receipt)).toBe(false);
+		const wrongSource = join(root, "wrong-source");
+		mkdirSync(wrongSource, { recursive: true });
+		writeFileSync(join(wrongSource, "SKILL.md"), "wrong bytes\n");
+		process.env.FAKE_HERMES_SOURCE = wrongSource;
+		process.env.FAKE_HERMES_UNINSTALL_FAIL = "1";
+		expect(() =>
+			hostedHermesSkillExactSourceDriver.install({
+				home,
+				appRoot,
+				skill: updatedSkill,
+				previouslyReserved: true,
+			}),
+		).toThrow("rollback failed");
+		expect(existsSync(receipt)).toBe(false);
+		delete process.env.FAKE_HERMES_UNINSTALL_FAIL;
+		rmSync(target, { recursive: true, force: true });
 
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "user-owned\n");
@@ -227,6 +291,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				home,
 				appRoot,
 				skillId: "review-pr",
+				digest: skill.digest,
 			}),
 		).toThrow("ownership receipt");
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("user-owned\n");

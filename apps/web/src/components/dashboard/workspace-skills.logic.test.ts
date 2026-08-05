@@ -111,7 +111,7 @@ describe("Workspace Skill runtime authority", () => {
 			skill_key: "manifest-owned",
 			name: "manifest-owned",
 			description: null,
-			source: "Runtime Workspace",
+			source: "Agent Workspace",
 			source_repo: "https://github.com/Clawdi-AI/store",
 		});
 		expect(inventory.find((item) => item.entity.skill_key === "failed")?.desired).toMatchObject({

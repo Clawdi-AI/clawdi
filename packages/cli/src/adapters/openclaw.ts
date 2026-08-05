@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
-import { extractTarGz, replaceSkillArchiveTarGz } from "../lib/tar";
+import { extractTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	migrateLegacyLocalSetupSkill,
@@ -19,12 +19,12 @@ import type {
 	RawSkill,
 	SessionMessage,
 } from "./base";
-import { getOpenClawHome, SKIP_DIRS } from "./paths";
 import {
 	listOpenClawAgentWorkspaces,
 	openClawAgentId,
 	resolveOpenClawAgentWorkspace,
 } from "./openclaw-workspace";
+import { getOpenClawHome, SKIP_DIRS } from "./paths";
 import { readCommandVersion } from "./version";
 
 function openclawDir() {
@@ -426,23 +426,36 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const targetDir = join(skillsDir(), key);
+		await this.installOfficialSkillArchive(key, key, tarGzBytes);
+	}
+
+	private async installOfficialSkillArchive(
+		archiveKey: string,
+		installedSlug: string,
+		tarGzBytes: Buffer,
+	): Promise<void> {
+		const targetDir = join(skillsDir(), installedSlug);
 		const stagingRoot = mkdtempSync(join(tmpdir(), "clawdi-openclaw-install-"));
 		try {
 			await extractTarGz(stagingRoot, tarGzBytes);
-			const sourceDir = join(stagingRoot, key);
-			if (!existsSync(join(sourceDir, "SKILL.md"))) throw new Error("Skill archive is missing SKILL.md");
-			mutateUserSkillTarget(targetDir, key, () => {
+			const sourceDir = join(stagingRoot, archiveKey);
+			if (!existsSync(join(sourceDir, "SKILL.md")))
+				throw new Error("Skill archive is missing SKILL.md");
+			mutateUserSkillTarget(targetDir, installedSlug, () => {
 				const result = spawnSync(
 					"openclaw",
-					["skills", "install", sourceDir, "--agent", agentId(), "--as", key, "--force"],
+					["skills", "install", sourceDir, "--agent", agentId(), "--as", installedSlug, "--force"],
 					{ encoding: "utf8", env: process.env, maxBuffer: 1024 * 1024, timeout: 120_000 },
 				);
 				if (result.status !== 0) {
-					throw new Error(`OpenClaw official Skill install failed: ${(result.stderr || result.stdout).trim() || "unknown error"}`);
+					throw new Error(
+						`OpenClaw official Skill install failed: ${(result.stderr || result.stdout).trim() || "unknown error"}`,
+					);
 				}
 				if (!existsSync(join(targetDir, "SKILL.md"))) {
-					throw new Error(`OpenClaw did not install the Skill in agent workspace ${activeAgentWorkspace()}`);
+					throw new Error(
+						`OpenClaw did not install the Skill in agent workspace ${activeAgentWorkspace()}`,
+					);
 				}
 			});
 		} finally {
@@ -455,12 +468,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		ownerHandle: string,
 		tarGzBytes: Buffer,
 	): Promise<void> {
-		await replaceSkillArchiveTarGz(
-			key,
-			this.getSkillsRootDir(),
-			this.getSharedSkillPath(key, ownerHandle),
-			tarGzBytes,
-		);
+		await this.installOfficialSkillArchive(key, `${key}__${ownerHandle}`, tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

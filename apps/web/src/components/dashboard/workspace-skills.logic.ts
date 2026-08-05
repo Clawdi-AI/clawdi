@@ -34,7 +34,7 @@ export function mergeWorkspaceRuntimeSkills(
 					workspaceRuntimeSkillEntity(skillKey, {
 						name: catalogItem?.name || skillKey,
 						description: catalogItem?.description ?? null,
-						source: desired ? "Runtime Workspace" : "Skill catalog",
+						source: desired ? "Agent Workspace" : "Skill catalog",
 						sourceRepo: catalogItem?.homepage ?? desired?.source.url ?? null,
 					}),
 				cloudProjection: projection ?? null,

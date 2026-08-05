@@ -12,13 +12,16 @@ const RUNTIME_META = {
 	hermes: {
 		label: "Hermes",
 		blurb: "Recommended for most people. Chat with and manage your agent in the Hermes Dashboard.",
-		skillDeliveryDriver: "hermes-cli-with-exact-source-fallback",
+		skillDeliveryDriver: "hermes-cli",
 	},
-} as const satisfies Record<HostedRuntime, {
-	label: string;
-	blurb: string;
-	skillDeliveryDriver: "openclaw-cli" | "hermes-cli-with-exact-source-fallback";
-}>;
+} as const satisfies Record<
+	HostedRuntime,
+	{
+		label: string;
+		blurb: string;
+		skillDeliveryDriver: "openclaw-cli" | "hermes-cli";
+	}
+>;
 
 export function isHostedRuntime(value: string): value is HostedRuntime {
 	return (HOSTED_RUNTIMES as readonly string[]).includes(value);

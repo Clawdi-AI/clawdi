@@ -87,10 +87,7 @@ import {
 	type HostedHermesSkillExactSourceDriver,
 	hostedHermesSkillExactSourceDriver,
 } from "./hosted-hermes-skill";
-import {
-	type HostedOpenClawSkillDriver,
-	hostedOpenClawSkillDriver,
-} from "./hosted-openclaw-skill";
+import { type HostedOpenClawSkillDriver, hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import {
 	hostedAiProviderCatalog,
 	hostedProviderEnvironment,
@@ -3651,6 +3648,14 @@ function hostedBundledSkillTargetDir(
 	return agentSkillTargetDir(name, skillName, agentHome);
 }
 
+function managedSkillReservationDigest(targetDir: string, skillId: string): string {
+	const reservation = managedSkillReservations("hosted-manifest").find(
+		(entry) => entry.targetDir === targetDir && entry.id === skillId,
+	);
+	if (!reservation) throw new Error(`managed Skill ${skillId} has no matching ownership receipt`);
+	return reservation.digest;
+}
+
 function validateHostedSkillsPlan(
 	name: string,
 	manifest: RuntimeManifest,
@@ -3660,15 +3665,22 @@ function validateHostedSkillsPlan(
 ): void {
 	if (!hostedBundledSkillsEnabled()) return;
 	for (const [skillName, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
-		const targetDir = "source" in desired && name === "openclaw"
-			? join(workspaceRoot, "skills", skillName)
-			: hostedBundledSkillTargetDir(name, skillName, home, workspaceRoot);
+		const targetDir =
+			"source" in desired && name === "openclaw"
+				? join(workspaceRoot, "skills", skillName)
+				: hostedBundledSkillTargetDir(name, skillName, home, workspaceRoot);
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
 		if ("source" in desired) {
 			if (hostedBundledSkillIds().includes(skillName)) {
 				throw new Error(`bundled hosted Skill ${skillName} must not declare a catalog source`);
 			}
-			if ((name !== "hermes" && name !== "openclaw") || !targetDir || !runtimeEnabled || desired.enabled !== true) continue;
+			if (
+				(name !== "hermes" && name !== "openclaw") ||
+				!targetDir ||
+				!runtimeEnabled ||
+				desired.enabled !== true
+			)
+				continue;
 			const prepared = preparedCatalogSkills.get(skillName);
 			if (!prepared || JSON.stringify(prepared.source) !== JSON.stringify(desired.source)) {
 				throw new Error(`pinned archive for hosted Skill ${skillName} is unavailable`);
@@ -3742,12 +3754,28 @@ function recoverHostedOpenClawCatalogSkillReservations(
 ): void {
 	if (!hostedBundledSkillsEnabled() || manifest.runtimes.openclaw?.enabled !== true) return;
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
-		if (desired.enabled !== true || !("source" in desired) || hostedBundledSkillIds().includes(skillId)) continue;
+		if (
+			desired.enabled !== true ||
+			!("source" in desired) ||
+			hostedBundledSkillIds().includes(skillId)
+		)
+			continue;
 		const targetDir = join(workspaceRoot, "skills", skillId);
-		if (!existsSync(targetDir) || managedSkillReservationOwner(targetDir, skillId) !== "unreserved") continue;
+		if (!existsSync(targetDir) || managedSkillReservationOwner(targetDir, skillId) !== "unreserved")
+			continue;
 		const skill = prepared.get(skillId);
-		if (!skill || JSON.stringify(skill.source) !== JSON.stringify(desired.source) || !driver.verifyOwned({ workspaceRoot, skill })) continue;
-		reserveManagedSkill({ targetDir, id: skillId, manager: "hosted-manifest", digest: skill.digest });
+		if (
+			!skill ||
+			JSON.stringify(skill.source) !== JSON.stringify(desired.source) ||
+			!driver.verifyOwned({ workspaceRoot, skill })
+		)
+			continue;
+		reserveManagedSkill({
+			targetDir,
+			id: skillId,
+			manager: "hosted-manifest",
+			digest: skill.digest,
+		});
 	}
 }
 
@@ -3775,6 +3803,7 @@ function applyHostedBundledSkills(
 		if (!installEnabled || !runtimeEnabled || desired?.enabled !== true) {
 			const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
 			const legacy = adoptableLegacyHostedBundledSkill(targetDir, skillName);
+			const legacyAdopted = Boolean(legacy && reservationOwner === "unreserved");
 			if (reservationOwner === "local-setup") continue;
 			if (!installEnabled && reservationOwner === "unreserved" && !legacy) continue;
 			if (legacy && reservationOwner === "unreserved") {
@@ -3791,8 +3820,12 @@ function applyHostedBundledSkills(
 				id: skillName,
 				manager: "hosted-manifest",
 				removeTarget: () =>
-					name === "openclaw"
-						? openClawDriver.cleanupManifestOwned({ workspaceRoot, skillId: skillName })
+					name === "openclaw" && !legacyAdopted
+						? openClawDriver.cleanupManifestOwned({
+								workspaceRoot,
+								skillId: skillName,
+								digest: managedSkillReservationDigest(targetDir, skillName),
+							})
 						: withRuntimeUserFileAccess(() => rmSync(targetDir, { recursive: true, force: true })),
 			});
 			continue;
@@ -3808,13 +3841,10 @@ function applyHostedBundledSkills(
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
 		}
 		const bundled = catalogEntry;
+		const sourceDir = hostedBundledSkillSourceDir(bundled.assetDirectory);
 		// Root captures and verifies the source before the callback drops to the
 		// runtime identity. The callback can only mutate the target from bytes.
-		const bundle = loadHostedBundledSkill(
-			skillName,
-			desired.version,
-			hostedBundledSkillSourceDir(bundled.assetDirectory),
-		);
+		const bundle = loadHostedBundledSkill(skillName, desired.version, sourceDir);
 		const result = installReservedManagedSkill(
 			{
 				targetDir,
@@ -3823,9 +3853,18 @@ function applyHostedBundledSkills(
 				version: desired.version,
 				digest: bundled.digest,
 			},
-			() => name === "openclaw"
-				? openClawDriver.installDirectory({ home, workspaceRoot, skillId: skillName, sourceDir, digest: bundled.digest })
-				: withRuntimeUserFileAccess(() => reconcileHostedBundledSkill({ bundle, targetDir, reserved: true })),
+			() =>
+				name === "openclaw"
+					? openClawDriver.installDirectory({
+							home,
+							workspaceRoot,
+							skillId: skillName,
+							sourceDir,
+							digest: bundled.digest,
+						})
+					: withRuntimeUserFileAccess(() =>
+							reconcileHostedBundledSkill({ bundle, targetDir, reserved: true }),
+						),
 		);
 		if (result === "unchanged") continue;
 	}
@@ -3871,7 +3910,13 @@ function applyHostedCatalogSkills(
 				targetDir,
 				id: skillId,
 				manager: "hosted-manifest",
-				removeTarget: () => nativeReconciler.uninstall({ home, appRoot, skillId }),
+				removeTarget: () =>
+					nativeReconciler.uninstall({
+						home,
+						appRoot,
+						skillId,
+						digest: managedSkillReservationDigest(targetDir, skillId),
+					}),
 			});
 			continue;
 		}
@@ -3911,26 +3956,49 @@ function applyHostedOpenClawCatalogSkills(
 ): string[] {
 	const skillsRoot = join(workspaceRoot, "skills");
 	const desiredEntries = manifest.projection?.skills?.entries ?? {};
-	const desiredIds = Object.entries(desiredEntries).flatMap(([id, desired]) => "source" in desired ? [id] : []);
-	const managedIds = managedSkillReservations("hosted-manifest").flatMap((reservation) =>
-		dirname(reservation.targetDir) === skillsRoot && !hostedBundledSkillIds().includes(reservation.id) ? [reservation.id] : [],
+	const desiredIds = Object.entries(desiredEntries).flatMap(([id, desired]) =>
+		"source" in desired ? [id] : [],
 	);
-	const ids = [...new Set([...desiredIds, ...managedIds])].sort((left, right) => left.localeCompare(right));
+	const managedIds = managedSkillReservations("hosted-manifest").flatMap((reservation) =>
+		dirname(reservation.targetDir) === skillsRoot &&
+		!hostedBundledSkillIds().includes(reservation.id)
+			? [reservation.id]
+			: [],
+	);
+	const ids = [...new Set([...desiredIds, ...managedIds])].sort((left, right) =>
+		left.localeCompare(right),
+	);
 	for (const skillId of ids) {
 		const targetDir = join(skillsRoot, skillId);
 		const desired = desiredEntries[skillId];
-		if (manifest.runtimes.openclaw?.enabled !== true || desired?.enabled !== true || !("source" in desired)) {
+		if (
+			manifest.runtimes.openclaw?.enabled !== true ||
+			desired?.enabled !== true ||
+			!("source" in desired)
+		) {
 			const owner = managedSkillReservationOwner(targetDir, skillId);
 			if (owner === "unreserved") continue;
-			if (owner !== "hosted-manifest") throw new Error(`managed Skill ${skillId} is owned by a different manager`);
-			releaseManagedSkill({ targetDir, id: skillId, manager: "hosted-manifest", removeTarget: () => driver.cleanupManifestOwned({ workspaceRoot, skillId }) });
+			if (owner !== "hosted-manifest")
+				throw new Error(`managed Skill ${skillId} is owned by a different manager`);
+			releaseManagedSkill({
+				targetDir,
+				id: skillId,
+				manager: "hosted-manifest",
+				removeTarget: () =>
+					driver.cleanupManifestOwned({
+						workspaceRoot,
+						skillId,
+						digest: managedSkillReservationDigest(targetDir, skillId),
+					}),
+			});
 			continue;
 		}
 		if (!observation?.enabled || observation.status === "install_failed") continue;
 		const prepared = preparedCatalogSkills.get(skillId);
 		if (!prepared) throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
 		const owner = managedSkillReservationOwner(targetDir, skillId);
-		if (existsSync(targetDir) && owner !== "hosted-manifest") throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
+		if (existsSync(targetDir) && owner !== "hosted-manifest")
+			throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
 		installReservedManagedSkill(
 			{ targetDir, id: skillId, manager: "hosted-manifest", digest: prepared.digest },
 			() => driver.install({ home, workspaceRoot, skill: prepared }),
@@ -5190,7 +5258,8 @@ export function runtimeUserMutationTargets(
 			managesHermesCatalogSkill = true;
 			targets.add(join(hermesSkillsRoot, skillId));
 		}
-		if (manifest.runtimes.openclaw?.enabled === true) targets.add(join(openClawSkillsRoot, skillId));
+		if (manifest.runtimes.openclaw?.enabled === true)
+			targets.add(join(openClawSkillsRoot, skillId));
 	}
 	for (const reservation of managedSkillReservations("hosted-manifest")) {
 		if (
@@ -5203,7 +5272,8 @@ export function runtimeUserMutationTargets(
 		if (
 			dirname(reservation.targetDir) === openClawSkillsRoot &&
 			!hostedBundledSkillIds().includes(reservation.id)
-		) targets.add(reservation.targetDir);
+		)
+			targets.add(reservation.targetDir);
 	}
 	if (managesHermesCatalogSkill) targets.add(join(hermesSkillsRoot, ".hub"));
 	return [...targets].sort();
@@ -5433,7 +5503,10 @@ export function convergeRuntimeManifest(
 		hermesSkillNativeReconciler,
 	);
 	recoverHostedOpenClawCatalogSkillReservations(
-		manifest, workspaceRoot, preparedHostedCatalogSkills, openClawSkillDriver,
+		manifest,
+		workspaceRoot,
+		preparedHostedCatalogSkills,
+		openClawSkillDriver,
 	);
 	validateRuntimeManifestPlan(manifest, paths, preparedHostedCatalogSkills);
 	for (const [name, runtime] of runtimeEntries) {
@@ -5912,11 +5985,17 @@ export function convergeRuntimeManifest(
 		}
 		try {
 			applyHostedOpenClawCatalogSkills(
-				observations.get("openclaw"), manifest, projectionHome, workspaceRoot,
-				preparedHostedCatalogSkills, openClawSkillDriver,
+				observations.get("openclaw"),
+				manifest,
+				projectionHome,
+				workspaceRoot,
+				preparedHostedCatalogSkills,
+				openClawSkillDriver,
 			);
 		} catch (error) {
-			installErrors.push(`runtime openclaw catalog Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+			installErrors.push(
+				`runtime openclaw catalog Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
 		}
 		try {
 			applyHostedMcpProjections(manifest, paths, observations, workspaceRoot);
