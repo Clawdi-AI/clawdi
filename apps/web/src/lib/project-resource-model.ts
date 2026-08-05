@@ -67,9 +67,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Skills",
 		description: "Reusable instructions stored and managed in a Project.",
 		managementDescription:
-			"Skills are stored in Projects. Choose a Project, then install or uninstall its Skills. Install each Skill on an Agent separately to run it.",
+			"Skills are stored in Projects. Choose a Project to import, edit, or remove Skills. Install a Project Skill on an Agent separately to run it.",
 		href: PROJECT_RESOURCE_LIST_PATHS.skills,
-		emptyCta: "Browse marketplace",
+		emptyCta: "Import skill",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Skills"],

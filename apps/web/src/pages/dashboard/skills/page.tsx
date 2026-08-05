@@ -474,9 +474,9 @@ function SkillsPageInner() {
 		: isStaleTarget
 			? "This link points to an agent that no longer exists. Pick a Project above."
 			: orderedProjects.length === 0
-				? "Create a Project first, then install Skills in it."
+				? "Create a Project first, then add Skills to it."
 				: isProjectReady
-					? "No Skills are stored in this Project yet. Install one from the marketplace below."
+					? "No Skills are stored in this Project yet. Import one from GitHub below."
 					: "Pick a Project to see its skills.";
 	const canShareTargetProject =
 		targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject);
@@ -883,7 +883,7 @@ function SkillsPageInner() {
 			) : canWriteTargetProject ? (
 				<section className="space-y-3">
 					<div className="flex items-center justify-between gap-2">
-						<h2 className="text-sm font-semibold">Install a skill</h2>
+						<h2 className="text-sm font-semibold">Import from GitHub</h2>
 						<a
 							href="https://skills.sh"
 							target="_blank"
@@ -923,7 +923,7 @@ function SkillsPageInner() {
 							className="sm:w-auto"
 						>
 							{installing && customRepo ? <Spinner /> : <Plus />}
-							Install skill
+							Import skill
 						</Button>
 					</div>
 					{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
@@ -931,7 +931,7 @@ function SkillsPageInner() {
 						<ApiErrorPanel
 							error={installError}
 							onRetry={customRepo.trim() ? retryCustomInstall : undefined}
-							title="Couldn't install skill"
+							title="Couldn't import skill"
 						/>
 					) : null}
 
@@ -981,7 +981,7 @@ function SkillsPageInner() {
 											className="shrink-0"
 										>
 											{isInstalling ? <Spinner /> : <Plus />}
-											Install skill
+											Add to Project
 										</Button>
 									)}
 								</div>

@@ -711,7 +711,7 @@ export default function ProjectDetailPage({
 							{canManageProjectSkills ? (
 								<Button variant="outline" size="sm" onClick={() => setInstallSkillOpen(true)}>
 									<Plus className="size-3.5" />
-									Install skill
+									Import skill
 								</Button>
 							) : null}
 						</>
@@ -956,7 +956,7 @@ export default function ProjectDetailPage({
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You can view this Project's Skills and Vault key names. Link the Project to let an Agent use its attached Vaults; install Skills separately."
+					description="You can view this Project's Skills and Vault key names. Link the Project to let an Agent use its attached Vaults; install its Skills on the Agent separately."
 				>
 					<SharedAccessPanel
 						project={project}
@@ -1166,7 +1166,7 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLab
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? `${typeLabel} you own. Install Skills and attach Vaults here, share the Project, then link it to Agents when needed. Linking does not install its Skills.`
+			? `${typeLabel} you own. Add Skills and attach Vaults here, share the Project, then link it to Agents when needed. Linking does not install its Skills.`
 			: `${typeLabel} shared with you. Its Skills stay here; link the Project to let an Agent use its attached Vaults.`;
 	}
 	if (project.kind === "environment") {
@@ -1555,7 +1555,7 @@ function InstallSkillInProjectDialog({
 			setError(null);
 			onOpenChange(false);
 			onChanged();
-			toast.success("Skill installed", { description: "Saved in this Project." });
+			toast.success("Skill imported", { description: "Saved in this Project." });
 		},
 		onError: (e) => {
 			setError(errorMessage(e));
@@ -1594,8 +1594,8 @@ function InstallSkillInProjectDialog({
 		>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Install skill</DialogTitle>
-					<DialogDescription>Install a GitHub Skill into this Project.</DialogDescription>
+					<DialogTitle>Import skill</DialogTitle>
+					<DialogDescription>Copy a GitHub Skill into this Project.</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-2">
 					<Label htmlFor={`project-skill-repo-${projectId}`}>GitHub skill repository</Label>
@@ -1631,7 +1631,7 @@ function InstallSkillInProjectDialog({
 					</Button>
 					<Button onClick={submit} disabled={!repoInput.trim() || install.isPending}>
 						{install.isPending ? <Spinner /> : <Plus className="size-3.5" />}
-						Install skill
+						Import skill
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -535,7 +535,7 @@ function AgentProjectsPanel({
 					<DialogHeader>
 						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
-							Create a Project and link it to this Agent. Install Skills and attach Vaults to the
+							Create a Project and link it to this Agent. Add Skills and attach Vaults to the
 							Project separately.
 						</DialogDescription>
 					</DialogHeader>

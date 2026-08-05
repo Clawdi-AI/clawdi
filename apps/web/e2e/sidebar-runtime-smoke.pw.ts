@@ -1925,7 +1925,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		"href",
 		"/agents/agent-smoke-1/project-access/project-context-later/skills",
 	);
-	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Import skill", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/project-access/project-context-later/vaults",
@@ -1990,7 +1990,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	expect(vaultRequests).toEqual([]);
 	await page.goto("/agents/agent-smoke-1/project-access/project-context-later/skills");
 	await expect(main.getByText(`Project: ${longContextProjectName}`, { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Import skill", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: /Attach Vault/i })).toHaveCount(0);
 
 	await page.goto("/agents/agent-smoke-1/vaults");
