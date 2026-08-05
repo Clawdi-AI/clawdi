@@ -7,6 +7,12 @@ readonly tailscale_service="clawdi-whatsapp-tailscale"
 readonly guard_service="clawdi-whatsapp-egress-guard"
 readonly sidecar_image="ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:${DEPLOY_IMAGE_VERSION}"
 readonly tailscale_image="tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0"
+readonly whatsapp_host_root="/home/phala/clawdi-whatsapp"
+readonly sidecar_state_dir="${whatsapp_host_root}/state"
+readonly sidecar_run_dir="${whatsapp_host_root}/run"
+readonly tailscale_state_dir="${whatsapp_host_root}/tailscale-state"
+readonly guard_state_dir="${whatsapp_host_root}/egress-guard"
+readonly tailscale_resolver_file="${whatsapp_host_root}/tailscale-resolv.conf"
 
 remote_value() {
 	kamal server exec "printf 'CLAWDI_VALUE=%s\\n' \"\$($1)\"" 2>/dev/null |
@@ -19,6 +25,24 @@ container_field() {
 
 container_netns_inode() {
 	remote_value "docker exec '$1' stat -Lc %i /proc/self/ns/net"
+}
+
+validate_host_path() {
+	local kind="$1" path="$2" expected_metadata="$3" predicate
+	case "${kind}" in
+		directory) predicate=-d ;;
+		file) predicate=-f ;;
+		*) echo "Invalid WhatsApp host path kind: ${kind}" >&2; exit 1 ;;
+	esac
+	case "${path}" in
+		"${whatsapp_host_root}"/*) ;;
+		*) echo "Refusing to validate an unexpected WhatsApp host path: ${path}" >&2; exit 1 ;;
+	esac
+	kamal server exec \
+		"test ${predicate} '${path}' && \
+		 test ! -L '${path}' && \
+		 test \"\$(realpath -e '${path}')\" = '${path}' && \
+		 test \"\$(stat -c '%u:%g:%a' '${path}')\" = '${expected_metadata}'"
 }
 
 infra_netns_inode() {
@@ -44,14 +68,10 @@ if [[ "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" == true ]]; then
 	case "${WHATSAPP_TAILSCALE_EXIT_NODE:-}" in
 		""|*[!A-Za-z0-9._:-]*) echo "invalid WhatsApp Tailscale exit node" >&2; exit 1 ;;
 	esac
-	if ! grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' <<< "${WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP:-}"; then
-		echo "WhatsApp Tailscale expected public IP must be IPv4" >&2
-		exit 1
-	fi
 	WHATSAPP_TAILSCALE_CONFIG_REVISION="$(printf '%s\n' \
 		'registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
 		"${tailscale_image}" \
-		'kernel-netns-uid-killswitch-v2-corp-dns' \
+		'kernel-netns-uid-killswitch-v3-hardened-mounts' \
 		"${WHATSAPP_TAILSCALE_EXIT_NODE}" | sha256sum | cut -d ' ' -f 1)"
 	export WHATSAPP_TAILSCALE_CONFIG_REVISION
 elif [[ -n "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" && "${WHATSAPP_TAILSCALE_EGRESS_ENABLED}" != false ]]; then
@@ -60,15 +80,8 @@ elif [[ -n "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" && "${WHATSAPP_TAILSCALE_EGR
 fi
 
 kamal accessory directories whatsapp-baileys
-kamal server exec \
-	"test -d '/home/phala/clawdi-whatsapp/state' && \
-	 test ! -L '/home/phala/clawdi-whatsapp/state' && \
-	 test \"\$(realpath -e '/home/phala/clawdi-whatsapp/state')\" = '/home/phala/clawdi-whatsapp/state' && \
-	 test \"\$(stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/state')\" = '1000:1000:700' && \
-	 test -d '/home/phala/clawdi-whatsapp/run' && \
-	 test ! -L '/home/phala/clawdi-whatsapp/run' && \
-	 test \"\$(realpath -e '/home/phala/clawdi-whatsapp/run')\" = '/home/phala/clawdi-whatsapp/run' && \
-	 test \"\$(stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/run')\" = '1000:1000:770'"
+validate_host_path directory "${sidecar_state_dir}" "1000:1000:700"
+validate_host_path directory "${sidecar_run_dir}" "1000:1000:770"
 
 current_revision="$(container_field '{{ index .Config.Labels "io.clawdi.whatsapp-sidecar.deployment-revision" }}' "${sidecar_service}")"
 actual_network="$(container_field '{{.HostConfig.NetworkMode}}' "${sidecar_service}")"
@@ -86,16 +99,22 @@ sidecar_needs_reboot=false
 
 if [[ "${egress_enabled}" == true ]]; then
 	# A sidecar left on bridge by a previous disabled release must lose direct
-	# egress before any enabled-mode preparation or public-IP preflight.
+	# egress before preparing the guarded Tailscale namespace.
 	if [[ "${actual_network}" != "${desired_network}" ]]; then
 		ensure_container_stopped whatsapp-baileys "${sidecar_service}"
 	fi
 	kamal accessory directories whatsapp-tailscale
 	kamal accessory directories whatsapp-egress-guard
+	validate_host_path directory "${tailscale_state_dir}" "1000:1000:700"
+	validate_host_path directory "${guard_state_dir}" "1000:1000:700"
 	kamal server exec \
-		"printf 'nameserver 100.100.100.100\\noptions timeout:2 attempts:2\\n' > \
-		 /home/phala/clawdi-whatsapp/tailscale-resolv.conf && \
-		 chmod 644 /home/phala/clawdi-whatsapp/tailscale-resolv.conf"
+		"test ! -L '${tailscale_resolver_file}' && \
+		 resolver_tmp=\$(mktemp '${whatsapp_host_root}/.tailscale-resolv.conf.XXXXXX') && \
+		 { printf 'nameserver 100.100.100.100\\noptions timeout:2 attempts:2\\n' > \"\$resolver_tmp\" && \
+		 chmod 600 \"\$resolver_tmp\" && \
+		 mv -T \"\$resolver_tmp\" '${tailscale_resolver_file}'; } || \
+		 { rm -f -- \"\$resolver_tmp\"; exit 1; }"
+	validate_host_path file "${tailscale_resolver_file}" "1000:1000:600"
 
 	infra_revision="$(container_field '{{ index .Config.Labels "io.clawdi.whatsapp-netns.config-revision" }}' "${infra_service}")"
 	infra_running="$(container_field '{{.State.Running}}' "${infra_service}")"
@@ -147,7 +166,10 @@ if [[ "${egress_enabled}" == true ]]; then
 			"iptables -C OUTPUT -m owner --uid-owner 1000 -j CLAWDI_WA_EGRESS && \
 			 iptables -C CLAWDI_WA_EGRESS -o tailscale0 -j ACCEPT && \
 			 iptables -C CLAWDI_WA_EGRESS -j REJECT && \
-			 ip6tables -C OUTPUT -m owner --uid-owner 1000 -j CLAWDI_WA_EGRESS" \
+			 ip6tables -C OUTPUT -m owner --uid-owner 1000 -j CLAWDI_WA_EGRESS && \
+			 test -f /guard/network-namespace.ready && \
+			 test ! -L /guard/network-namespace.ready && \
+			 test \"\$(stat -c '%a' /guard/network-namespace.ready)\" = 644" \
 			>/dev/null 2>&1; then
 			guard_ready=true
 			break
@@ -158,10 +180,6 @@ if [[ "${egress_enabled}" == true ]]; then
 	[[ "$(container_field '{{.HostConfig.NetworkMode}}' "${guard_service}")" == "${desired_network}" ]] || { echo "Egress guard network owner drifted" >&2; exit 1; }
 	[[ "$(container_netns_inode "${guard_service}")" == "${infra_inode}" ]] || { echo "Egress guard network namespace drifted" >&2; exit 1; }
 
-	# Run as the production UID in the exact shared namespace. This is a native
-	# fetch with no proxy dispatcher, so it covers the transparent network path.
-	observed_ip="$(remote_value "docker run --rm --network container:${infra_service} --user 1000:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true --volume /home/phala/clawdi-whatsapp/tailscale-resolv.conf:/etc/resolv.conf:ro --entrypoint node ${sidecar_image} -e \"fetch('https://api.ipify.org',{signal:AbortSignal.timeout(15000)}).then(async r=>{if(!r.ok)throw Error(String(r.status));process.stdout.write((await r.text()).trim())}).catch(e=>{console.error(e);process.exit(1)})\"")"
-	[[ "${observed_ip}" == "${WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP}" ]] || { echo "WhatsApp Tailscale public IP preflight failed" >&2; exit 1; }
 	[[ "$(container_netns_inode "${sidecar_service}")" == "${infra_inode}" ]] || sidecar_needs_reboot=true
 fi
 

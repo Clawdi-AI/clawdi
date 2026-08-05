@@ -89,9 +89,20 @@ raise "Tailscale lost tun" unless option?(tailscale, "--device", "/dev/net/tun:/
 guard = commands.fetch("whatsapp-egress-guard")
 raise "guard did not join infra" unless option?(guard, "--network", "container:clawdi-whatsapp-netns")
 raise "guard entrypoint drifted" unless option?(guard, "--entrypoint", "/bin/sh")
+guard_cmd = config.accessory("whatsapp-egress-guard").cmd
+unless guard_cmd.start_with?("-ceu '") && guard_cmd.end_with?("'") && guard_cmd.count("'") == 2
+  raise "guard command quoting drifted"
+end
+guard_script = guard_cmd.delete_prefix("-ceu '").delete_suffix("'")
+raise "guard command is not valid sh" unless system("/bin/sh", "-n", "-c", guard_script)
+guard_directory = config.accessory("whatsapp-egress-guard").directories.fetch(
+  "/home/phala/clawdi-whatsapp/egress-guard"
+)
+raise "guard directory mode drifted" unless guard_directory[:mode] == "700"
 sidecar = commands.fetch("whatsapp-baileys")
 raise "sidecar did not join infra" unless option?(sidecar, "--network", "container:clawdi-whatsapp-netns")
 raise "sidecar lost UDS bind" unless option?(sidecar, "--volume", "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp")
+raise "sidecar lost read-only resolver bind" unless option?(sidecar, "--volume", "/home/phala/clawdi-whatsapp/tailscale-resolv.conf:/etc/resolv.conf:ro")
 raise "sidecar lost guard marker bind" unless option?(sidecar, "--volume", "/home/phala/clawdi-whatsapp/egress-guard:/run/clawdi-egress-guard:ro")
 raise "sidecar lost guard marker env" unless sidecar.include?(
   'CLAWDI_WA_NETWORK_NAMESPACE_MARKER="/run/clawdi-egress-guard/network-namespace.ready"'
