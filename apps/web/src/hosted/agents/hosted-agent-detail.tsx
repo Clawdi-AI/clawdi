@@ -496,7 +496,9 @@ export function HostedAgentDetail({
 		: deploymentDisplayName(deployment.resource.spec.name, runtime);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
-	const activeTab = parseHostedAgentTab(section) ?? "overview";
+	const requestedTab = parseHostedAgentTab(section) ?? "overview";
+	const filesUrl = deploymentFilesUrl(deployment);
+	const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;
 	useSetAgentBreadcrumbTitle({
 		agentId: environmentId,
 		agentTitle,
@@ -620,12 +622,8 @@ export function HostedAgentDetail({
 					{deploymentStatus.known && activeTab === "terminal" ? (
 						<TerminalTab deployment={deployment} />
 					) : null}
-					{deploymentStatus.known && activeTab === "files" ? (
-						<FilesTab
-							deployment={deployment}
-							isCheckingDeployment={isCheckingDeployment}
-							onCheckDeploymentAgain={onCheckDeploymentAgain}
-						/>
+					{deploymentStatus.known && activeTab === "files" && filesUrl ? (
+						<FilesTab deployment={deployment} url={filesUrl} />
 					) : null}
 					{activeTab === "sessions" ? (
 						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
@@ -1455,28 +1453,10 @@ function ConsoleTab({
 	);
 }
 
-type FilesFrameState = "loading" | "loaded" | "error";
-
-function FilesTab({
-	deployment,
-	isCheckingDeployment,
-	onCheckDeploymentAgain,
-}: {
-	deployment: HostedDeployment;
-	isCheckingDeployment: boolean;
-	onCheckDeploymentAgain: () => void;
-}) {
+function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: string }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
 	const isStarting = isStartingStatus(status);
-	const url = deploymentFilesUrl(deployment);
-	const [frameState, setFrameState] = useState<FilesFrameState>("loading");
-	const [frameAttempt, setFrameAttempt] = useState(0);
-
-	useEffect(() => {
-		setFrameState("loading");
-		setFrameAttempt(0);
-	}, [deployment.resource.id, url]);
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1497,37 +1477,6 @@ function FilesTab({
 		);
 	}
 
-	if (!url) {
-		return (
-			<EmptyState
-				icon={FolderOpen}
-				title="Files isn’t ready yet"
-				description="Your agent is running, but its secure Files endpoint is not available. Check again in a moment."
-				action={
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						disabled={isCheckingDeployment}
-						onClick={onCheckDeploymentAgain}
-					>
-						{isCheckingDeployment ? (
-							<Spinner className="size-3.5" />
-						) : (
-							<RefreshCw className="size-3.5" />
-						)}
-						Check again
-					</Button>
-				}
-			/>
-		);
-	}
-
-	const retryFrame = () => {
-		setFrameState("loading");
-		setFrameAttempt((attempt) => attempt + 1);
-	};
-
 	return (
 		<LiveToolFrame
 			icon={FolderOpen}
@@ -1544,53 +1493,12 @@ function FilesTab({
 				</Button>
 			}
 		>
-			<div className="relative flex min-h-[420px] flex-1 bg-background">
-				<iframe
-					key={`${deployment.resource.id}:${url}:${frameAttempt}`}
-					src={url}
-					title="Files"
-					className="min-h-[420px] flex-1 border-0 bg-background"
-					allow="clipboard-read; clipboard-write"
-					onLoad={() => setFrameState("loaded")}
-					onError={() => setFrameState("error")}
-				/>
-				{frameState === "loading" ? (
-					<div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background">
-						<div className="flex items-center gap-2 text-sm text-muted-foreground">
-							<Spinner className="size-4" />
-							Opening Files…
-						</div>
-					</div>
-				) : null}
-				{frameState === "error" ? (
-					<div className="absolute inset-0 flex items-center justify-center bg-background px-4 py-10">
-						<div className="flex max-w-sm flex-col items-center gap-4 text-center">
-							<FolderOpen className="size-6 text-muted-foreground" />
-							<div>
-								<h2 className="text-base font-semibold">Couldn’t open Files</h2>
-								<p className="mt-1 text-sm text-muted-foreground">
-									The embedded page could not be displayed. If your sign-in needs attention, open
-									Files in a new tab and then retry here.
-								</p>
-							</div>
-							<div className="flex flex-wrap justify-center gap-2">
-								<Button
-									render={<a href={url} target="_blank" rel="noopener noreferrer" />}
-									nativeButton={false}
-									variant="outline"
-								>
-									Open in new tab
-									<ExternalLink className="size-3.5" />
-								</Button>
-								<Button type="button" onClick={retryFrame}>
-									<RefreshCw className="size-3.5" />
-									Retry
-								</Button>
-							</div>
-						</div>
-					</div>
-				) : null}
-			</div>
+			<iframe
+				src={url}
+				title="Files"
+				className="min-h-[420px] flex-1 border-0 bg-background"
+				allow="clipboard-read; clipboard-write"
+			/>
 		</LiveToolFrame>
 	);
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	chownSync,
@@ -9,13 +9,10 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
-	readlinkSync,
 	renameSync,
 	rmSync,
-	symlinkSync,
-	writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { runtimeContentSha256 } from "./applied-state";
@@ -33,8 +30,6 @@ import {
 } from "./runtime-user-command";
 
 const FILE_BROWSER_BINARY = "filebrowser";
-const FILE_BROWSER_ACTIVE = "active";
-const FILE_BROWSER_PREVIOUS = "previous";
 const FILE_BROWSER_CANDIDATES = "candidates";
 const FILE_BROWSER_RECEIPT = "files";
 
@@ -83,18 +78,6 @@ function candidateBinary(paths: RuntimePaths, sha256: string): string {
 	return join(candidateRoot(paths, sha256), FILE_BROWSER_BINARY);
 }
 
-function activeLink(paths: RuntimePaths): string {
-	return join(paths.companionInstallRoot, FILE_BROWSER_ACTIVE);
-}
-
-function previousLink(paths: RuntimePaths): string {
-	return join(paths.companionInstallRoot, FILE_BROWSER_PREVIOUS);
-}
-
-export function fileBrowserActiveBinary(paths: RuntimePaths): string {
-	return join(activeLink(paths), FILE_BROWSER_BINARY);
-}
-
 function selectedAsset(
 	companion: NonNullable<FileBrowserCompanion>,
 	arch: NodeJS.Architecture,
@@ -114,17 +97,13 @@ function sha256File(path: string): string | null {
 	}
 }
 
-function exactSymlinkTarget(path: string): string | null {
-	try {
-		const stat = lstatSync(path);
-		if (!stat.isSymbolicLink()) return null;
-		return resolve(dirname(path), readlinkSync(path));
-	} catch {
-		return null;
-	}
-}
-
 function candidateIsValid(paths: RuntimePaths, sha256: string): boolean {
+	try {
+		const root = lstatSync(candidateRoot(paths, sha256));
+		if (!root.isDirectory() || root.isSymbolicLink()) return false;
+	} catch {
+		return false;
+	}
 	return sha256File(candidateBinary(paths, sha256)) === sha256.toLowerCase();
 }
 
@@ -146,8 +125,6 @@ export function fileBrowserCompanionMutationPlan(
 	const target = candidateRoot(paths, asset.sha256);
 	return {
 		runtimeUserTargets: [
-			activeLink(paths),
-			previousLink(paths),
 			...(candidateIsValid(paths, asset.sha256) ? [] : [target]),
 			...(existsSync(paths.fileBrowserStateRoot) ? [] : [paths.fileBrowserStateRoot]),
 			...(existsSync(paths.fileBrowserStateRoot) &&
@@ -158,8 +135,8 @@ export function fileBrowserCompanionMutationPlan(
 					: []),
 		],
 		runtimeUserTrustedRoots: [paths.companionInstallRoot, paths.fileBrowserStateRoot],
-		runtimeUserSymlinkTargets: [activeLink(paths), previousLink(paths)],
-		rootTargets: [paths.fileBrowserConfig, paths.fileBrowserRootfs],
+		runtimeUserSymlinkTargets: [],
+		rootTargets: [paths.fileBrowserConfig],
 	};
 }
 
@@ -200,7 +177,7 @@ function renderFileBrowserConfig(
 				passkey: { enabled: false },
 				jwt: {
 					enabled: true,
-					secret: companion.auth.publicKeyPem,
+					secret: companion.auth.secret,
 					algorithm: companion.auth.algorithm,
 					header: companion.auth.header,
 					userIdentifier: companion.auth.userIdentifier,
@@ -265,72 +242,11 @@ function ensureRuntimeUserDirectory(path: string): void {
 	assertRuntimeUserDirectory(path);
 }
 
-function makeRootOwned(path: string): void {
-	if (!runningAsRoot()) return;
-	chownSync(path, 0, 0);
-	const stat = lstatSync(path);
-	if (stat.uid !== 0 || stat.gid !== 0) {
-		throw new Error(`Files companion sandbox path is not root-owned: ${path}`);
+function makeConfigReadableByRuntime(path: string): void {
+	chmodSync(path, 0o640);
+	if (runningAsRoot()) {
+		chownSync(path, 0, runtimeUserGid(process.env.CLAWDI_RUNTIME_USER || "clawdi"));
 	}
-}
-
-function ensureSandboxDirectory(path: string, mode: number): void {
-	mkdirSync(path, { recursive: true, mode });
-	chmodSync(path, mode);
-	makeRootOwned(path);
-	const stat = lstatSync(path);
-	if (!stat.isDirectory() || stat.isSymbolicLink()) {
-		throw new Error(`Files companion sandbox path is not a real directory: ${path}`);
-	}
-}
-
-function ensureSandboxMountFile(path: string): void {
-	if (!existsSync(path)) writeFileSync(path, "", { mode: 0o400 });
-	const stat = lstatSync(path);
-	if (!stat.isFile() || stat.isSymbolicLink()) {
-		throw new Error(`Files companion sandbox mount target is not a regular file: ${path}`);
-	}
-	chmodSync(path, 0o400);
-	makeRootOwned(path);
-}
-
-function sandboxPath(rootfs: string, hostPath: string): string {
-	const normalizedRoot = resolve(rootfs);
-	const projected = resolve(normalizedRoot, `.${resolve(hostPath)}`);
-	if (projected === normalizedRoot || !projected.startsWith(`${normalizedRoot}/`)) {
-		throw new Error(`Files companion sandbox path escapes its root: ${hostPath}`);
-	}
-	return projected;
-}
-
-function ensureFileBrowserSandbox(paths: RuntimePaths): void {
-	const userHomeTarget = sandboxPath(paths.fileBrowserRootfs, paths.userHome);
-	const stateTarget = sandboxPath(paths.fileBrowserRootfs, paths.fileBrowserStateRoot);
-	const configTarget = sandboxPath(paths.fileBrowserRootfs, paths.fileBrowserConfig);
-	const binaryTarget = sandboxPath(paths.fileBrowserRootfs, fileBrowserActiveBinary(paths));
-	for (const path of [
-		paths.fileBrowserRootfs,
-		join(paths.fileBrowserRootfs, "dev"),
-		join(paths.fileBrowserRootfs, "proc"),
-		join(paths.fileBrowserRootfs, "sys"),
-		userHomeTarget,
-		stateTarget,
-		dirname(configTarget),
-		dirname(binaryTarget),
-	]) {
-		ensureSandboxDirectory(path, 0o755);
-	}
-	for (const path of [
-		join(paths.fileBrowserRootfs, "tmp"),
-		join(paths.fileBrowserRootfs, "var", "tmp"),
-	]) {
-		// PrivateTmp mounts the service's writable temporary directories. The
-		// persistent sandbox skeleton stays root-owned and non-writable so it can
-		// participate in the existing trusted live-state snapshot transaction.
-		ensureSandboxDirectory(path, 0o755);
-	}
-	ensureSandboxMountFile(configTarget);
-	ensureSandboxMountFile(binaryTarget);
 }
 
 function defaultDownload(url: string, destination: string, paths: RuntimePaths): void {
@@ -370,8 +286,6 @@ function installCandidate(
 ): void {
 	const targetRoot = candidateRoot(paths, asset.sha256);
 	if (candidateIsValid(paths, asset.sha256)) return;
-	ensureRuntimeUserDirectory(paths.companionInstallRoot);
-	ensureRuntimeUserDirectory(candidatesRoot(paths));
 	withRuntimeUserFileAccess(() => rmSync(targetRoot, { recursive: true, force: true }));
 	const staging = withRuntimeUserFileAccess(() =>
 		mkdtempSync(join(candidatesRoot(paths), ".staging-")),
@@ -399,24 +313,21 @@ function installCandidate(
 	}
 }
 
-function atomicSymlink(target: string, path: string): void {
-	const temporary = `${path}.next-${randomUUID()}`;
-	try {
-		symlinkSync(target, temporary);
-		renameSync(temporary, path);
-	} finally {
-		rmSync(temporary, { force: true });
-	}
-}
-
-function activateCandidate(paths: RuntimePaths, targetRoot: string): void {
+function cleanStaleStaging(paths: RuntimePaths): string[] {
+	const removed: string[] = [];
 	withRuntimeUserFileAccess(() => {
-		const active = activeLink(paths);
-		const previous = previousLink(paths);
-		const oldTarget = exactSymlinkTarget(active);
-		if (oldTarget && oldTarget !== resolve(targetRoot)) atomicSymlink(oldTarget, previous);
-		if (oldTarget !== resolve(targetRoot)) atomicSymlink(targetRoot, active);
+		for (const entry of readdirSync(candidatesRoot(paths)).sort()) {
+			if (!entry.startsWith(".staging-")) continue;
+			const path = join(candidatesRoot(paths), entry);
+			const stat = lstatSync(path);
+			if (!stat.isDirectory() || stat.isSymbolicLink()) {
+				throw new Error(`Files companion staging entry is not a trusted directory: ${entry}`);
+			}
+			rmSync(path, { recursive: true });
+			removed.push(path);
+		}
 	});
+	return removed;
 }
 
 function desiredRevision(companion: NonNullable<FileBrowserCompanion>, config: string): string {
@@ -435,8 +346,6 @@ function currentRevision(
 	assetSha256: string,
 	config: string,
 ): string | null {
-	const target = candidateRoot(paths, assetSha256);
-	if (exactSymlinkTarget(activeLink(paths)) !== resolve(target)) return null;
 	if (!candidateIsValid(paths, assetSha256)) return null;
 	try {
 		if (readFileSync(paths.fileBrowserConfig, "utf8") !== config) return null;
@@ -461,13 +370,15 @@ export function ensureFileBrowserCompanion(
 	const candidateWasValid = candidateIsValid(paths, asset.sha256);
 	const verifiedReceipt =
 		previousReceipt?.desiredRevision === desired && previousReceipt.currentRevision === before;
-	ensureFileBrowserSandbox(paths);
+	ensureRuntimeUserDirectory(paths.companionInstallRoot);
+	ensureRuntimeUserDirectory(candidatesRoot(paths));
+	cleanStaleStaging(paths);
 	ensureRuntimeUserDirectory(paths.fileBrowserStateRoot);
 	ensureRuntimeUserDirectory(join(paths.fileBrowserStateRoot, "cache"));
 	if (!verifiedReceipt || before === null) {
 		installCandidate(companion, paths, asset, options);
-		writePrivateFileAtomic(paths.fileBrowserConfig, config, { mode: 0o644, dirMode: 0o755 });
-		activateCandidate(paths, candidateRoot(paths, asset.sha256));
+		writePrivateFileAtomic(paths.fileBrowserConfig, config, { mode: 0o640, dirMode: 0o755 });
+		makeConfigReadableByRuntime(paths.fileBrowserConfig);
 	}
 	const current = () => currentRevision(companion, paths, asset.sha256, config);
 	const expected = current();
@@ -480,7 +391,7 @@ export function ensureFileBrowserCompanion(
 			currentRevision: current,
 			expectedCurrentRevision: expected,
 		},
-		activeBinary: fileBrowserActiveBinary(paths),
+		activeBinary: candidateBinary(paths, asset.sha256),
 		installed: !candidateWasValid,
 	};
 }
@@ -491,10 +402,12 @@ export function fileBrowserCompanionProgram(
 ): RuntimeSystemdUserProgram | null {
 	const companion = fileBrowser(manifest);
 	if (!companion) return null;
+	const asset = selectedAsset(companion, process.arch);
 	return {
+		programKind: "file-browser",
 		runtime: "files",
 		service: null,
-		command: fileBrowserActiveBinary(paths),
+		command: candidateBinary(paths, asset.sha256),
 		args: ["-c", paths.fileBrowserConfig],
 		cwd: companion.sourceRoot,
 		env: {},
@@ -532,19 +445,16 @@ export function probeFileBrowserReadiness(
 export function gcFileBrowserCompanionCandidates(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
+	arch: NodeJS.Architecture = process.arch,
 ): string[] {
-	if (!fileBrowser(manifest) || !existsSync(candidatesRoot(paths))) return [];
-	const retained = new Set(
-		[exactSymlinkTarget(activeLink(paths)), exactSymlinkTarget(previousLink(paths))]
-			.filter((value): value is string => value !== null)
-			.map((value) => resolve(value)),
-	);
+	const companion = fileBrowser(manifest);
+	if (!companion || !existsSync(candidatesRoot(paths))) return [];
+	const retained = candidateRoot(paths, selectedAsset(companion, arch).sha256);
 	const removed: string[] = [];
 	withRuntimeUserFileAccess(() => {
 		for (const entry of readdirSync(candidatesRoot(paths)).sort()) {
-			if (entry.startsWith(".staging-")) continue;
 			const path = join(candidatesRoot(paths), entry);
-			if (retained.has(resolve(path))) continue;
+			if (path === retained) continue;
 			const stat = lstatSync(path);
 			if (!stat.isDirectory() || stat.isSymbolicLink()) {
 				throw new Error(`Files companion candidate is not a trusted directory: ${basename(path)}`);

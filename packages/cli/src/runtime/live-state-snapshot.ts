@@ -81,6 +81,7 @@ export function runtimeRootLiveMutationTargets(
 	}
 	if (manifest.companions?.files) {
 		result.add(join(paths.systemdSystemRoot, "clawdi-files.service"));
+		result.add(join(paths.systemdEnvRoot, "clawdi-files.service.env"));
 	}
 	addExistingManagedSystemdSystemPaths(paths, result);
 	return [...result].sort();

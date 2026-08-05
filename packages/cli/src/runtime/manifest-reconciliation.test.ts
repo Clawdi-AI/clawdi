@@ -590,17 +590,22 @@ function filesCompanion(accessRevision = "a".repeat(64)): FilesCompanion {
 		},
 		auth: {
 			method: "jwt",
-			algorithm: "ES256",
+			algorithm: "HS256",
 			header: "X-JWT-Assertion",
 			userIdentifier: "sub",
 			groupsClaim: "groups",
-			publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(120)}\n-----END PUBLIC KEY-----\n`,
+			secret: accessRevision.slice(0, 43),
 			audience,
 			subject: "deployment:hdep_reconcile:owner",
 			requiredGroup: `${audience}:${accessRevision}`,
 			accessRevision,
 		},
 	};
+}
+
+function filesBinaryPath(paths: RuntimePaths, binary: string): string {
+	const sha256 = createHash("sha256").update(binary).digest("hex");
+	return join(paths.companionInstallRoot, "candidates", sha256, "filebrowser");
 }
 
 function filesManifest(
@@ -5197,7 +5202,7 @@ exit 42
 		expect(downloads).toBe(1);
 		expect(activations).toBe(1);
 		expect(authorityCommits).toBe(1);
-		const active = join(paths.companionInstallRoot, "active", "filebrowser");
+		const active = filesBinaryPath(paths, binary);
 		expect(readFileSync(active, "utf8")).toBe(binary);
 		const config = readFileSync(paths.fileBrowserConfig, "utf8");
 		expect(config).toContain("listen: 0.0.0.0");
@@ -5214,16 +5219,19 @@ exit 42
 		expect(first.outputs.systemdUserUnits).not.toContain(
 			join(paths.systemdUserRoot, "clawdi-files.service"),
 		);
-		expect(unit).toContain(`RootDirectory=${paths.fileBrowserRootfs}`);
+		expect(unit).not.toContain("RootDirectory=");
 		expect(unit).toContain("User=10001");
 		expect(unit).toContain("Group=10001");
-		expect(unit).toContain(`BindPaths=${paths.userHome}:${paths.userHome}`);
-		expect(unit).toContain(`BindPaths=${paths.fileBrowserStateRoot}:${paths.fileBrowserStateRoot}`);
-		expect(unit).toContain(
-			`BindReadOnlyPaths=${paths.fileBrowserConfig}:${paths.fileBrowserConfig}`,
-		);
+		expect(unit).toContain("ProtectHome=tmpfs");
+		expect(unit).toContain(`BindPaths=${paths.userHome}`);
+		expect(unit).toContain(`ReadWritePaths=${paths.userHome} ${paths.fileBrowserStateRoot}`);
+		expect(unit).toContain(`ReadOnlyPaths=${paths.fileBrowserConfig} ${active}`);
 		expect(unit).toContain("ProtectSystem=strict");
 		expect(unit).toContain("CapabilityBoundingSet=");
+		expect(unit).toContain("TasksMax=128");
+		expect(unit).toContain(
+			`EnvironmentFile=${join(paths.systemdEnvRoot, "clawdi-files.service.env")}`,
+		);
 		expect(readRuntimeInstallReceipts(paths)?.companions.files).toMatchObject({
 			desiredRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
 			currentRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -5255,8 +5263,7 @@ exit 42
 			readyOptions,
 		);
 		expect(initial.installErrors).toEqual([]);
-		const active = join(paths.companionInstallRoot, "active", "filebrowser");
-		const originalActiveTarget = resolve(dirname(active), readlinkSync(dirname(active)));
+		const active = filesBinaryPath(paths, originalBinary);
 		const originalConfig = readFileSync(paths.fileBrowserConfig, "utf8");
 		const originalUnit = readFileSync(
 			join(paths.systemdSystemRoot, "clawdi-files.service"),
@@ -5284,7 +5291,7 @@ exit 42
 		expect(hashFailure.installErrors.join("\n")).toContain("Files companion SHA256 mismatch");
 		expect(hashFailureCommits).toBe(0);
 		expect(readFileSync(active, "utf8")).toBe(originalBinary);
-		expect(resolve(dirname(active), readlinkSync(dirname(active)))).toBe(originalActiveTarget);
+		expect(existsSync(filesBinaryPath(paths, desiredBinary))).toBe(false);
 		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(originalConfig);
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
 			originalUnit,
@@ -5321,7 +5328,7 @@ exit 42
 		).toBe(originalReceipts);
 	});
 
-	test("retains active and previous Files candidates while collecting only orphan installs", () => {
+	test("retains only the desired Files candidate after authority commit", () => {
 		const paths = tempRuntimePaths();
 		const firstBinary = "first Files candidate\n";
 		const secondBinary = "second Files candidate\n";
@@ -5340,21 +5347,114 @@ exit 42
 		).toEqual([]);
 		const secondManifest = filesManifest(paths, { generation: 2, binary: secondBinary });
 		expect(install(secondManifest, secondBinary).installErrors).toEqual([]);
-		const activeTarget = resolve(
-			paths.companionInstallRoot,
-			readlinkSync(join(paths.companionInstallRoot, "active")),
-		);
-		const previousTarget = resolve(
-			paths.companionInstallRoot,
-			readlinkSync(join(paths.companionInstallRoot, "previous")),
-		);
+		const firstTarget = dirname(filesBinaryPath(paths, firstBinary));
+		const desiredTarget = dirname(filesBinaryPath(paths, secondBinary));
 		const orphan = join(paths.companionInstallRoot, "candidates", "c".repeat(64));
 		mkdirSync(orphan, { recursive: true });
 
 		expect(gcFileBrowserCompanionCandidates(secondManifest, paths)).toEqual([orphan]);
-		expect(existsSync(activeTarget)).toBe(true);
-		expect(existsSync(previousTarget)).toBe(true);
+		expect(existsSync(firstTarget)).toBe(false);
+		expect(existsSync(desiredTarget)).toBe(true);
 		expect(existsSync(orphan)).toBe(false);
+	});
+
+	test("withdraws only the Files system unit when the companion becomes ineligible", () => {
+		const paths = tempRuntimePaths();
+		const binary = "Files eligibility fixture\n";
+		const manifest = filesManifest(paths, { generation: 1, binary });
+		const installOptions = {
+			fileBrowserInstallOptions: {
+				download: (_url: string, destination: string) => writeFileSync(destination, binary),
+				versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+			},
+			fileBrowserReadinessProbe: () => true,
+			systemdApply: filesApplyHooks(),
+		};
+		expect(
+			convergeRuntimeManifest(filesManifestLoad(manifest), paths, installOptions).installErrors,
+		).toEqual([]);
+
+		const filesUnit = join(paths.systemdSystemRoot, "clawdi-files.service");
+		const runtimeUnit = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		expect(existsSync(filesUnit)).toBe(true);
+		expect(existsSync(runtimeUnit)).toBe(true);
+		const withoutFiles: RuntimeManifest = {
+			...manifest,
+			generation: 2,
+			issuedAt: "2026-08-05T00:00:02.000Z",
+			companions: {},
+		};
+		let staleSystemUnits: string[] = [];
+		const result = convergeRuntimeManifest(filesManifestLoad(withoutFiles), paths, {
+			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
+				activate: (signal) => {
+					staleSystemUnits = signal.staleSystemUnits;
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {},
+			},
+		});
+
+		expect(result.installErrors).toEqual([]);
+		expect(staleSystemUnits).toEqual(["clawdi-files.service"]);
+		expect(existsSync(filesUnit)).toBe(false);
+		expect(existsSync(runtimeUnit)).toBe(true);
+	});
+
+	test("cleans interrupted Files staging directories without following symlinks", () => {
+		const paths = tempRuntimePaths();
+		const binary = "Files staging fixture\n";
+		const manifest = filesManifest(paths, { generation: 1, binary });
+		const options = {
+			fileBrowserInstallOptions: {
+				download: (_url: string, destination: string) => writeFileSync(destination, binary),
+				versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+			},
+			fileBrowserReadinessProbe: () => true,
+			systemdApply: filesApplyHooks(),
+		};
+		expect(
+			convergeRuntimeManifest(filesManifestLoad(manifest), paths, options).installErrors,
+		).toEqual([]);
+
+		const candidates = join(paths.companionInstallRoot, "candidates");
+		const interrupted = join(candidates, ".staging-interrupted");
+		mkdirSync(interrupted);
+		expect(
+			convergeRuntimeManifest(filesManifestLoad(manifest), paths, options).installErrors,
+		).toEqual([]);
+		expect(existsSync(interrupted)).toBe(false);
+
+		const outside = join(dirname(paths.companionInstallRoot), "outside-staging-target");
+		mkdirSync(outside);
+		const unsafe = join(candidates, ".staging-unsafe");
+		symlinkSync(outside, unsafe);
+		const refused = convergeRuntimeManifest(filesManifestLoad(manifest), paths, options);
+		expect(refused.installErrors.join("\n")).toContain(
+			"Files companion staging entry is not a trusted directory",
+		);
+		expect(existsSync(outside)).toBe(true);
+	});
+
+	test('treats a user runtime named "files" as a normal runtime program', () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(paths, {
+			files: {
+				enabled: true,
+				run: runSettings(process.execPath, ["--version"]),
+				services: {},
+			},
+		});
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "runtime-named-files"), paths);
+
+		expect(result.installErrors).toEqual([]);
+		expect(result.outputs.systemdSystemUnits).not.toContain(
+			join(paths.systemdSystemRoot, "clawdi-files.service"),
+		);
+		expect(result.outputs.systemdUserUnits).toContain(
+			join(paths.systemdUserRoot, "clawdi-files.service"),
+		);
 	});
 
 	test("requires trusted Incus context and rejects user-overridden Files contracts", () => {

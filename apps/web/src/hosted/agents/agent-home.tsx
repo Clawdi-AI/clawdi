@@ -29,7 +29,7 @@ import {
 	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
 } from "@/hosted/deployment-status";
-import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
+import { defaultDeploymentRuntime, deploymentFilesUrl, isHostedRuntime } from "@/hosted/runtimes";
 import {
 	type AgentRouteSearch,
 	type AgentSectionId,
@@ -42,6 +42,7 @@ import {
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
+import { hostedAgentVisibleSectionIds } from "@/lib/navigation-model";
 import { cn } from "@/lib/utils";
 
 const UNRESOLVED_HOSTED_AGENT_REFETCH_INTERVAL_MS = 5_000;
@@ -102,7 +103,10 @@ export function AgentHome({
 	const manualCheckInFlightRef = useRef(false);
 	const [manualChecking, setManualChecking] = useState(false);
 	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
-	const hostedSection = HOSTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
+	const hostedSectionIds = deployment
+		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null)
+		: HOSTED_AGENT_SECTION_IDS;
+	const hostedSection = hostedSectionIds.some((candidate) => candidate === section);
 	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 
 	// Hosted membership is asynchronous, so it cannot be resolved in beforeLoad.
@@ -161,6 +165,7 @@ export function AgentHome({
 		ownsCurrentSection,
 		requestedHostedAgent,
 		router,
+		section,
 	]);
 
 	useEffect(() => {

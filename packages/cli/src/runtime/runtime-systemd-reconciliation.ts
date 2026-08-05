@@ -80,6 +80,7 @@ function makeRootReadableDir(path: string): void {
 }
 
 export interface RuntimeSystemdUserProgram {
+	programKind: "runtime" | "file-browser";
 	runtime: RuntimeName;
 	service: RuntimeServiceName | null;
 	command: string;
@@ -231,6 +232,7 @@ export function buildRuntimeSystemdUserProgram(input: {
 			: input.config.command;
 
 	return {
+		programKind: "runtime",
 		runtime: input.config.runtime,
 		service: input.config.service,
 		command,
@@ -246,6 +248,7 @@ function hashToUInt16(input: string): number {
 }
 
 function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
+	if (program.programKind === "file-browser") return "clawdi-files";
 	const officialName = officialRuntimeSystemdProgramName(program);
 	if (officialName) return officialName;
 	if (!program.service) return `clawdi-${systemdUnitNameSegment(program.runtime)}`;
@@ -268,6 +271,12 @@ function runtimeSystemdProgramRevision(
 		providerProjectionRevision: string | null,
 	) => string,
 ): string {
+	if (program.programKind === "file-browser") {
+		return runtimeImpactRevision({
+			companion: manifest.companions?.files ?? null,
+			providerProjectionRevision: null,
+		});
+	}
 	if (program.service) return runtimeServiceProgramRevision(program);
 	return runtimeRevision(
 		manifest,
@@ -1141,7 +1150,7 @@ export function planRuntimeSystemdUserMutations(
 	]);
 	const writtenUnits = programs
 		.map((program) => {
-			if (program.runtime === "files") return null;
+			if (program.programKind === "file-browser") return null;
 			const name = runtimeSystemdProgramName(program);
 			const unitName = systemdUnitFileName(name);
 			unitNames.add(unitName);
@@ -1243,6 +1252,7 @@ function planStaleRuntimeSystemdFiles(
 		"clawdi-runtime-watch.service",
 		"clawdi-daemon.service",
 		"clawdi-runtime-sidecar.service",
+		"clawdi-files.service",
 	]);
 	if (existsSync(paths.systemdSystemRoot)) {
 		for (const entry of readdirSync(paths.systemdSystemRoot)) {
@@ -1415,79 +1425,59 @@ function writeRuntimeSystemdUserProgram(input: {
 	});
 }
 
-function systemdBindPath(source: string, destination: string = source): string {
-	return `${systemdPath(source)}:${systemdPath(destination)}`;
-}
-
 function writeFileBrowserSystemdUnit(input: {
 	program: RuntimeSystemdUserProgram;
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
-	runtimeRevision: Parameters<typeof runtimeSystemdProgramRevision>[4];
 }): string {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const uid = runtimeUserUid(runtimeUser);
 	const gid = runtimeUserGid(runtimeUser);
 	if (uid === 0 || gid === 0) throw new Error("Files companion systemd identity must be non-root");
-	const path = join(input.paths.systemdSystemRoot, "clawdi-files.service");
-	const revision = input.runtimeRevision(input.manifest, "files", undefined, null);
-	const lines = [
-		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
-		"[Unit]",
-		"Description=Clawdi hosted Files companion",
-		"After=network-online.target",
-		"Wants=network-online.target",
-		"",
-		"[Service]",
-		"Type=simple",
-		`User=${uid}`,
-		`Group=${gid}`,
-		`RootDirectory=${systemdPath(input.paths.fileBrowserRootfs)}`,
-		"MountAPIVFS=yes",
-		`BindPaths=${systemdBindPath(input.paths.userHome)}`,
-		`BindPaths=${systemdBindPath(input.paths.fileBrowserStateRoot)}`,
-		`BindReadOnlyPaths=${systemdBindPath(input.paths.fileBrowserConfig)}`,
-		`BindReadOnlyPaths=${systemdBindPath(input.program.command)}`,
-		`WorkingDirectory=${systemdPath(input.program.cwd)}`,
-		...systemdUnitEnvironmentLines({
+	return writeSystemdSystemUnit({
+		paths: input.paths,
+		name: "clawdi-files",
+		description: "Clawdi hosted Files companion",
+		command: input.program.command,
+		args: input.program.args,
+		cwd: input.program.cwd,
+		env: {
 			HOME: input.paths.userHome,
-			CLAWDI_RUNTIME_REV: revision,
-		}),
-		`ExecStart=${systemdExec(input.program.command, input.program.args)}`,
-		"Restart=always",
-		"RestartSec=2",
-		"KillMode=mixed",
-		"TimeoutStopSec=30",
-		"UMask=0077",
-		"NoNewPrivileges=true",
-		"PrivateTmp=true",
-		"PrivateDevices=true",
-		"ProtectSystem=strict",
-		`ReadWritePaths=${systemdPath(input.paths.userHome)} ${systemdPath(input.paths.fileBrowserStateRoot)}`,
-		"ProtectKernelTunables=true",
-		"ProtectKernelModules=true",
-		"ProtectKernelLogs=true",
-		"ProtectControlGroups=true",
-		"ProtectClock=true",
-		"ProtectProc=invisible",
-		"ProcSubset=pid",
-		"LockPersonality=true",
-		"RestrictSUIDSGID=true",
-		"RestrictRealtime=true",
-		"RestrictNamespaces=true",
-		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
-		"CapabilityBoundingSet=",
-		"AmbientCapabilities=",
-		"SystemCallArchitectures=native",
-		"",
-		"[Install]",
-		"WantedBy=multi-user.target",
-		"",
-	];
-	mkdirSync(input.paths.systemdSystemRoot, { recursive: true });
-	writePrivateFileAtomic(path, lines.join("\n"), { mode: 0o644, dirMode: 0o755 });
-	makeRootOwned(path);
-	return path;
+			CLAWDI_RUNTIME_REV: runtimeImpactRevision({
+				companion: input.manifest.companions?.files ?? null,
+			}),
+		},
+		extraUnitLines: ["After=network-online.target", "Wants=network-online.target"],
+		extraServiceLines: [
+			`User=${uid}`,
+			`Group=${gid}`,
+			"UMask=0077",
+			"NoNewPrivileges=true",
+			"PrivateTmp=true",
+			"PrivateDevices=true",
+			"ProtectSystem=strict",
+			"ProtectHome=tmpfs",
+			`BindPaths=${systemdPath(input.paths.userHome)}`,
+			`ReadWritePaths=${systemdPath(input.paths.userHome)} ${systemdPath(input.paths.fileBrowserStateRoot)}`,
+			`ReadOnlyPaths=${systemdPath(input.paths.fileBrowserConfig)} ${systemdPath(input.program.command)}`,
+			"ProtectKernelTunables=true",
+			"ProtectKernelModules=true",
+			"ProtectKernelLogs=true",
+			"ProtectControlGroups=true",
+			"ProtectClock=true",
+			"ProtectProc=invisible",
+			"ProcSubset=pid",
+			"LockPersonality=true",
+			"RestrictSUIDSGID=true",
+			"RestrictRealtime=true",
+			"RestrictNamespaces=true",
+			"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+			"CapabilityBoundingSet=",
+			"AmbientCapabilities=",
+			"SystemCallArchitectures=native",
+			"TasksMax=128",
+		],
+	});
 }
 
 function officialRuntimeSystemdPrograms(
@@ -1573,12 +1563,12 @@ export function writeRuntimeSystemdState(input: {
 	const desiredSystemUnitNames = [
 		...(daemonAuthTokenFile ? ["clawdi-runtime-watch.service", "clawdi-daemon.service"] : []),
 		...(activeEgressProgram ? ["clawdi-runtime-sidecar.service"] : []),
-		...(runtimePrograms.some((program) => program.runtime === "files")
+		...(runtimePrograms.some((program) => program.programKind === "file-browser")
 			? ["clawdi-files.service"]
 			: []),
 	];
 	const desiredUserUnitNames = runtimePrograms
-		.filter((program) => program.runtime !== "files")
+		.filter((program) => program.programKind !== "file-browser")
 		.map((program) => systemdUnitFileName(runtimeSystemdProgramName(program)));
 	const staleFiles = planStaleRuntimeSystemdFiles(
 		paths,
@@ -1653,13 +1643,12 @@ export function writeRuntimeSystemdState(input: {
 	}
 
 	for (const program of runtimePrograms) {
-		if (program.runtime === "files") {
+		if (program.programKind === "file-browser") {
 			systemUnits.push(
 				writeFileBrowserSystemdUnit({
 					program,
 					manifest,
 					paths,
-					runtimeRevision,
 				}),
 			);
 			continue;

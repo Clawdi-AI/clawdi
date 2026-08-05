@@ -234,15 +234,15 @@ export const fileBrowserCompanionSchema = z
 		auth: z
 			.object({
 				method: z.literal("jwt"),
-				algorithm: z.literal("ES256"),
+				algorithm: z.literal("HS256"),
 				header: z.literal("X-JWT-Assertion"),
 				userIdentifier: z.literal("sub"),
 				groupsClaim: z.literal("groups"),
-				publicKeyPem: z
+				secret: z
 					.string()
-					.min(100)
-					.max(4096)
-					.regex(/^-----BEGIN PUBLIC KEY-----\n[\s\S]+\n-----END PUBLIC KEY-----\n?$/),
+					.min(43)
+					.max(128)
+					.regex(/^[A-Za-z0-9_-]+$/),
 				audience: z.string().min(1).max(256),
 				subject: z.string().min(1).max(256),
 				requiredGroup: z.string().min(1).max(256),

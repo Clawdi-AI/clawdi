@@ -1316,6 +1316,7 @@ describe("runtime manifest services", () => {
 		});
 		const plan = {
 			program: {
+				programKind: "runtime" as const,
 				runtime: "hermes" as const,
 				service: "dashboard" as const,
 				command: hermesCommand,
@@ -1354,6 +1355,7 @@ describe("runtime manifest services", () => {
 			"index.html",
 		);
 		const program = {
+			programKind: "runtime" as const,
 			runtime: "hermes" as const,
 			service: "dashboard" as const,
 			command: hermesCommand,

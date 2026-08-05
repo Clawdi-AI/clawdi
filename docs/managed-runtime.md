@@ -272,6 +272,55 @@ explicit compatibility unit, if required, must use a `clawdi-*` name. The
 Hermes dashboard binds directly to `0.0.0.0:9119` and uses Hermes' bundled
 Basic authentication provider.
 
+### Incus Files Companion
+
+Hosted V2 may declare `companions.files` only in a trusted Incus apply context.
+The declaration is a server-owned companion program, not a user runtime named
+`files`; systemd planning uses the typed `file-browser` program kind so a real
+user runtime with that name keeps the normal runtime-user unit behavior. The
+companion is installed after boot and does not add File Browser to the base
+runtime image or change the k3s runtime contract.
+
+The manifest pins one direct File Browser executable per architecture and
+provides a deployment-specific HS256 secret. Convergence downloads into a
+private `.staging-*` directory, verifies the exact SHA256 and version/commit
+probe, then atomically renames it to
+`companions/files/candidates/<sha256>/filebrowser`. It rejects staging symlinks
+or non-directories, executes the content-addressed candidate directly, and
+garbage-collects older candidates only after applied authority commits. The
+existing manifest snapshot covers the desired candidate, root-owned `0640`
+configuration, install receipt, systemd unit/environment file, and applied
+state, so a download, verification, systemd, or readiness failure restores the
+previous exact pre-image. There is no separate active/previous link state or
+hand-built chroot.
+
+`clawdi-files.service` runs as the non-root runtime UID/GID. It reuses the
+generated system-unit and environment-file writer and applies systemd's native
+`ProtectSystem=strict`, `ProtectHome=tmpfs`, `BindPaths`, `ReadWritePaths`,
+`ReadOnlyPaths`, private device/tmp, capability, namespace, and task-limit
+controls. File Browser receives its official JWT header configuration with
+password, signup, passkey, sharing, admin, API-token management, realtime, and
+WebDAV disabled. The route broker supplies a short-lived owner assertion; no
+password, pairing code, access code, or URL token is part of this runtime
+contract. When a later manifest omits the companion, normal stale-unit
+reconciliation stops and withdraws only `clawdi-files.service` while preserving
+the selected Hermes or OpenClaw unit.
+
+The pinned upstream contracts are File Browser's
+[JWT verifier](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/auth/jwt.go),
+[JWT middleware](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/middleware.go),
+and [authentication settings](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/auth.go),
+plus the documented
+[systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
+Reverse-proxy origin/header behavior remains the single topology smoke check
+owned by the hosted control plane; repository tests verify the manifest,
+rollback, sandbox, signed-out callback, and UI eligibility contracts without
+claiming to emulate a real browser/Traefik deployment.
+
+Done: `bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts`
+and `bash scripts/test.sh web src/pages/files/files-authorize-route.test.ts`
+exit 0 and report `0 fail`.
+
 ### Runtime Host Contents
 
 | Area | Contains | Must not contain |
@@ -926,6 +975,8 @@ outputs include:
 | `cache/runtime-secrets.last-good.json` | Root-only `0600` reference-scoped set of active `secret://` values required to reproduce last-good |
 | `status/runtime-applied.json` | Root-only `0600` Agent v2 authority for one ETag, source revision, instance, checkpoint `generation`, optional `applyGeneration`, private recoverability content identity, source provider IDs, and target-specific projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
+| `companions/files/candidates/<sha256>/filebrowser` | Verified, content-addressed Files executable selected directly by the manifest |
+| `config/filebrowser.yaml` | Root-owned, runtime-group-readable File Browser configuration with the deployment-scoped JWT secret |
 | `managed-cli/bin/clawdi` | Root-only active managed CLI link used by system services |
 | `npm/` | Root-only managed CLI package prefixes and active targets |
 | `config/projections/<runtime>.json` | Runtime projection payload |

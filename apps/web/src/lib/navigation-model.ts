@@ -440,6 +440,12 @@ export const CONNECTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
 export const HOSTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
 	agentNavigationSectionIds("hosted");
 
+export function hostedAgentVisibleSectionIds(filesAvailable: boolean): AgentSectionId[] {
+	return filesAvailable
+		? [...HOSTED_AGENT_SECTION_IDS]
+		: HOSTED_AGENT_SECTION_IDS.filter((section) => section !== "files");
+}
+
 export function agentNavigationGroups(
 	variant: AgentNavigationVariant,
 	visibleSectionIds?: readonly AgentSectionId[],

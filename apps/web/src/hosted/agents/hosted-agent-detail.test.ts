@@ -10,10 +10,12 @@ describe("hosted agent detail header", () => {
 		expect(source).toContain('title="Files"');
 		expect(source).toContain('target="_blank"');
 		expect(source).toContain("Open in new tab");
-		expect(source).toContain("Opening Files…");
-		expect(source).toContain("Couldn’t open Files");
-		expect(source).toContain('onLoad={() => setFrameState("loaded")}');
-		expect(source).toContain("If your sign-in needs attention,");
+		expect(source).not.toContain("Opening Files…");
+		expect(source).not.toContain("Couldn’t open Files");
+		expect(source).not.toContain("onError=");
+		expect(source).toContain(
+			'const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;',
+		);
 		expect(source).not.toContain("The secure Files endpoint did not load");
 		expect(source).not.toContain("fileBrowserPassword");
 		expect(source).not.toContain("Files credentials");

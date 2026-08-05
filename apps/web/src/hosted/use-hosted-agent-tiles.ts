@@ -25,7 +25,7 @@ import {
 	claimedEnvIdsFromDeployments,
 	isHostedDeploymentVisible,
 } from "@/hosted/hosted-agent-resolution";
-import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
+import { deploymentFilesUrl, deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
 
@@ -222,6 +222,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			href: detailHref,
 			external: false,
 			cardStatus,
+			filesAvailable: deploymentFilesUrl(d) !== null,
 			env: matchedEnv ?? null,
 		},
 	];

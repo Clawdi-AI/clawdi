@@ -103,15 +103,11 @@ class HostedFileBrowserAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     method: Literal["jwt"]
-    algorithm: Literal["ES256"]
+    algorithm: Literal["HS256"]
     header: Literal["X-JWT-Assertion"]
     userIdentifier: Literal["sub"]
     groupsClaim: Literal["groups"]
-    publicKeyPem: str = Field(
-        min_length=100,
-        max_length=4096,
-        pattern=r"^-----BEGIN PUBLIC KEY-----\n[\s\S]+\n-----END PUBLIC KEY-----\n?$",
-    )
+    secret: str = Field(min_length=43, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     audience: str = Field(min_length=1, max_length=256)
     subject: str = Field(min_length=1, max_length=256)
     requiredGroup: str = Field(min_length=1, max_length=256)

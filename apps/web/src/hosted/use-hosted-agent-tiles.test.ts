@@ -168,6 +168,7 @@ function deployment(
 		failureReason?: string;
 		failedVerb?: DeploymentOperationVerb;
 		environmentId?: string | null;
+		filesEndpoint?: HostedDeployment["files_endpoint"];
 	} = {},
 ): HostedDeployment {
 	const id = overrides.id ?? "dep_123";
@@ -184,6 +185,7 @@ function deployment(
 		currentPlanSlug: overrides.computePlanSlug,
 		failure: overrides.failureReason ? deploymentFailure(overrides.failureReason) : undefined,
 		acceptedOperation: overrides.failedVerb ? acceptedOperation(overrides.failedVerb) : undefined,
+		filesEndpoint: overrides.filesEndpoint,
 	});
 }
 
@@ -206,7 +208,20 @@ describe("deploymentToTiles", () => {
 		expect(tiles.map((tile) => tile.name)).toEqual(["hosted-test"]);
 		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
 		expect(tiles[0]?.env).toBe(openclawEnv);
+		expect(tiles[0]?.filesAvailable).toBe(false);
 		expectHostedTileStatus(tiles[0], "Running");
+	});
+
+	test("projects Files eligibility only from the authoritative endpoint", () => {
+		const [eligible] = hostedDeploymentToTiles(
+			deployment({ filesEndpoint: { url: "https://agent-9120.node.clawdi.ai/" } }),
+		);
+		const [malformed] = hostedDeploymentToTiles(
+			deployment({ filesEndpoint: { url: "http://agent-9120.node.clawdi.ai/" } }),
+		);
+
+		expect(eligible?.filesAvailable).toBe(true);
+		expect(malformed?.filesAvailable).toBe(false);
 	});
 
 	test("keeps dunning state off the hosted tile", () => {

@@ -30,7 +30,6 @@ export interface RuntimePaths {
 	egressEngineMaintainedRoot: string;
 	companionInstallRoot: string;
 	fileBrowserStateRoot: string;
-	fileBrowserRootfs: string;
 	fileBrowserConfig: string;
 	cacheRoot: string;
 	manifestLastGood: string;
@@ -145,7 +144,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		egressEngineMaintainedRoot: join(serviceStateRoot, "maintained", "egress-engine", "mitmproxy"),
 		companionInstallRoot: join(serviceStateRoot, "companions", "files"),
 		fileBrowserStateRoot: join(serviceStateRoot, "filebrowser"),
-		fileBrowserRootfs: join(serviceStateRoot, "filebrowser-rootfs"),
 		fileBrowserConfig: join(serviceStateRoot, "config", "filebrowser.yaml"),
 		cacheRoot,
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),

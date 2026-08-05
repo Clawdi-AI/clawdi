@@ -4694,12 +4694,6 @@ function runtimeProgramRevisionForManifest(
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevision: string | null = null,
 ): string {
-	if (runtime === "files") {
-		return runtimeImpactRevision({
-			companion: manifest.companions?.files ?? null,
-			providerProjectionRevision,
-		});
-	}
 	const desiredRuntime = manifest.runtimes[runtime];
 	const runtimeSecretRefs = desiredRuntime
 		? Object.values(

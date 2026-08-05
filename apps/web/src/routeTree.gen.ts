@@ -23,6 +23,7 @@ import { Route as SignUpSplatRouteImport } from './routes/sign-up/$'
 import { Route as ProtectedDashboardIndexRouteImport } from './routes/_protected/_dashboard/index'
 import { Route as ProtectedDashboardAiProvidersRouteImport } from './routes/_protected/_dashboard/ai-providers'
 import { Route as ProtectedDashboardDeployRouteImport } from './routes/_protected/_dashboard/deploy'
+import { Route as ApiFilesAuthorizeRouteImport } from './routes/api/files/authorize'
 import { Route as ProtectedDashboardAgentsIndexRouteImport } from './routes/_protected/_dashboard/agents/index'
 import { Route as ProtectedDashboardAgentsIdRouteImport } from './routes/_protected/_dashboard/agents/$id'
 import { Route as ProtectedDashboardChannelsIndexRouteImport } from './routes/_protected/_dashboard/channels/index'
@@ -126,6 +127,11 @@ const ProtectedDashboardDeployRoute =
     path: '/deploy',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
+const ApiFilesAuthorizeRoute = ApiFilesAuthorizeRouteImport.update({
+  id: '/api/files/authorize',
+  path: '/api/files/authorize',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProtectedDashboardAgentsIndexRoute =
   ProtectedDashboardAgentsIndexRouteImport.update({
     id: '/agents/',
@@ -326,6 +332,7 @@ export interface FileRoutesByFullPath {
   '/sign-up/$': typeof SignUpSplatRoute
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
+  '/api/files/authorize': typeof ApiFilesAuthorizeRoute
   '/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
@@ -371,6 +378,7 @@ export interface FileRoutesByTo {
   '/sign-up/$': typeof SignUpSplatRoute
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
+  '/api/files/authorize': typeof ApiFilesAuthorizeRoute
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
   '/memories/$id': typeof ProtectedDashboardMemoriesIdRoute
@@ -416,6 +424,7 @@ export interface FileRoutesById {
   '/sign-up/$': typeof SignUpSplatRoute
   '/_protected/_dashboard/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/_protected/_dashboard/deploy': typeof ProtectedDashboardDeployRoute
+  '/api/files/authorize': typeof ApiFilesAuthorizeRoute
   '/_protected/_dashboard/': typeof ProtectedDashboardIndexRoute
   '/_protected/_dashboard/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/_protected/_dashboard/channels/$id': typeof ProtectedDashboardChannelsIdRoute
@@ -464,6 +473,7 @@ export interface FileRouteTypes {
     | '/sign-up/$'
     | '/ai-providers'
     | '/deploy'
+    | '/api/files/authorize'
     | '/agents/$id'
     | '/channels/$id'
     | '/connectors/$name'
@@ -509,6 +519,7 @@ export interface FileRouteTypes {
     | '/sign-up/$'
     | '/ai-providers'
     | '/deploy'
+    | '/api/files/authorize'
     | '/channels/$id'
     | '/connectors/$name'
     | '/memories/$id'
@@ -553,6 +564,7 @@ export interface FileRouteTypes {
     | '/sign-up/$'
     | '/_protected/_dashboard/ai-providers'
     | '/_protected/_dashboard/deploy'
+    | '/api/files/authorize'
     | '/_protected/_dashboard/'
     | '/_protected/_dashboard/agents/$id'
     | '/_protected/_dashboard/channels/$id'
@@ -595,6 +607,7 @@ export interface RootRouteChildren {
   SChar123idChar125DotjsonRoute: typeof SChar123idChar125DotjsonRoute
   SChar123idChar125DotmdRoute: typeof SChar123idChar125DotmdRoute
   ShareTokenRoute: typeof ShareTokenRoute
+  ApiFilesAuthorizeRoute: typeof ApiFilesAuthorizeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -696,6 +709,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/deploy'
       preLoaderRoute: typeof ProtectedDashboardDeployRouteImport
       parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/api/files/authorize': {
+      id: '/api/files/authorize'
+      path: '/api/files/authorize'
+      fullPath: '/api/files/authorize'
+      preLoaderRoute: typeof ApiFilesAuthorizeRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_protected/_dashboard/agents/': {
       id: '/_protected/_dashboard/agents/'
@@ -1074,6 +1094,7 @@ const rootRouteChildren: RootRouteChildren = {
   SChar123idChar125DotjsonRoute: SChar123idChar125DotjsonRoute,
   SChar123idChar125DotmdRoute: SChar123idChar125DotmdRoute,
   ShareTokenRoute: ShareTokenRoute,
+  ApiFilesAuthorizeRoute: ApiFilesAuthorizeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
