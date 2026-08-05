@@ -425,8 +425,8 @@ function CreateSkillDialog({
 	return (
 		<Dialog
 			open={open}
-			onOpenChange={(nextOpen) => {
-				onOpenChange(nextOpen);
+			onOpenChange={onOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
 				if (!nextOpen) reset();
 			}}
 		>
@@ -538,8 +538,8 @@ function ImportSkillDialog({
 	return (
 		<Dialog
 			open={open}
-			onOpenChange={(nextOpen) => {
-				onOpenChange(nextOpen);
+			onOpenChange={onOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
 				if (!nextOpen) {
 					setSource("");
 					importSkill.reset();
