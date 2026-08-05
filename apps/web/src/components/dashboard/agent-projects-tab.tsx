@@ -41,6 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
@@ -54,6 +55,7 @@ import {
 import { errorMessage } from "@/lib/utils";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
+type ProjectCreate = components["schemas"]["ProjectCreate"];
 
 export function AgentProjectsTab({
 	agentId,
@@ -129,6 +131,7 @@ function AgentProjectsPanel({
 	const [linkOpen, setLinkOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
 	const [newProjectName, setNewProjectName] = useState("");
+	const [newProjectDescription, setNewProjectDescription] = useState("");
 	// React Query pending state is post-render. These refs reject a second
 	// submit synchronously, before another mutation can queue in the same frame.
 	const linkExistingLockedRef = useRef(false);
@@ -167,9 +170,10 @@ function AgentProjectsPanel({
 	});
 
 	const createProject = useMutation({
-		mutationFn: async (name: string) => unwrap(await api.POST("/v1/projects", { body: { name } })),
+		mutationFn: async (body: ProjectCreate) => unwrap(await api.POST("/v1/projects", { body })),
 		onSuccess: (project) => {
 			setNewProjectName("");
+			setNewProjectDescription("");
 			setCreateOpen(false);
 			onChanged();
 			const returnTarget = resourceCollectionTarget(navigationScope, "projects");
@@ -199,7 +203,10 @@ function AgentProjectsPanel({
 		const name = newProjectName.trim();
 		if (!name || createProjectLockedRef.current) return;
 		createProjectLockedRef.current = true;
-		createProject.mutate(name);
+		createProject.mutate({
+			name,
+			description: newProjectDescription.trim() || null,
+		});
 	};
 
 	const removeBinding = useMutation({
@@ -323,7 +330,7 @@ function AgentProjectsPanel({
 				>
 					{contexts.map((binding, position) => {
 						const project = projectsById.get(binding.project_id);
-						const projectName = project ? displayProjectName(project) : binding.project_id;
+						const projectName = project ? displayProjectName(project) : "Unavailable Project";
 						const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
 						return (
 							<li
@@ -333,7 +340,6 @@ function AgentProjectsPanel({
 								data-testid="agent-project-card"
 							>
 								<AgentProjectCard
-									binding={binding}
 									project={project}
 									position={position}
 									navigationScope={navigationScope}
@@ -451,7 +457,10 @@ function AgentProjectsPanel({
 				open={createOpen}
 				onOpenChange={setCreateOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open) setNewProjectName("");
+					if (!open) {
+						setNewProjectName("");
+						setNewProjectDescription("");
+					}
 				}}
 			>
 				<DialogContent className="sm:max-w-md">
@@ -470,7 +479,7 @@ function AgentProjectsPanel({
 						}}
 					>
 						<div className="space-y-1.5">
-							<Label htmlFor="agent-project-name">Project name</Label>
+							<Label htmlFor="agent-project-name">Name</Label>
 							<Input
 								id="agent-project-name"
 								name="agent-project-name"
@@ -479,6 +488,19 @@ function AgentProjectsPanel({
 								autoComplete="off"
 								placeholder="Project name…"
 								onChange={(event) => setNewProjectName(event.target.value)}
+							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="agent-project-description">Description</Label>
+							<Textarea
+								id="agent-project-description"
+								name="agent-project-description"
+								value={newProjectDescription}
+								maxLength={2000}
+								placeholder="What should Agents use this Project for?"
+								autoComplete="off"
+								onChange={(event) => setNewProjectDescription(event.target.value)}
+								className="min-h-24"
 							/>
 						</div>
 						<DialogFooter>
@@ -498,13 +520,11 @@ function AgentProjectsPanel({
 }
 
 function AgentProjectCard({
-	binding,
 	project,
 	position,
 	navigationScope,
 	actions,
 }: {
-	binding: AgentProjectBinding;
 	project: ProjectRow | undefined;
 	position: number;
 	navigationScope: ResourceNavigationScope;
@@ -512,13 +532,7 @@ function AgentProjectCard({
 }) {
 	const footer = [`Project order ${position + 1}`];
 	if (!project) {
-		return (
-			<UnavailableProjectResourceCard
-				projectId={binding.project_id}
-				footer={footer}
-				actions={actions}
-			/>
-		);
+		return <UnavailableProjectResourceCard footer={footer} actions={actions} />;
 	}
 	return (
 		<ProjectResourceCard

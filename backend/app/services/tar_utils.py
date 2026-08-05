@@ -135,7 +135,7 @@ def extract_skill_md(data: bytes, skill_key: str | None = None) -> str | None:
                     f = tf.extractfile(member)
                     if f:
                         return f.read().decode("utf-8")
-    except (OSError, tarfile.TarError):
+    except (OSError, UnicodeDecodeError, tarfile.TarError):
         return None
     return None
 
@@ -336,7 +336,7 @@ def parse_frontmatter(content: str) -> dict[str, str]:
 
     try:
         loaded: object = yaml.safe_load(raw)
-    except yaml.YAMLError:
+    except (RecursionError, UnicodeError, yaml.YAMLError):
         return {}
 
     if not _is_object_dict(loaded):

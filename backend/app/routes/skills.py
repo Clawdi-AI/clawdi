@@ -596,6 +596,7 @@ async def _selected_project_visibility(
             )
             .where(
                 Project.id == selected_project_id,
+                Project.archived_at.is_(None),
                 or_(
                     Project.user_id == auth.user_id,
                     ProjectMembership.member_user_id.is_not(None),

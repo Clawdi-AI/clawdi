@@ -612,11 +612,15 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/projects" && route.request().method() === "POST") {
-			const body = route.request().postDataJSON() as { name?: string };
+			const body = route.request().postDataJSON() as {
+				name?: string;
+				description?: string | null;
+			};
 			options.projectCreateBodies?.push(body);
 			await fulfillJson(route, {
 				id: "project-created",
 				name: body.name ?? "Created Project",
+				description: body.description ?? null,
 				slug: "created-project",
 				kind: "workspace",
 				origin_environment_id: null,
@@ -1768,10 +1772,20 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	).toBeVisible();
 	await projectStack.getByRole("button", { name: "Create project", exact: true }).click();
 	const createProjectDialog = page.getByRole("dialog", { name: "Create project" });
-	await createProjectDialog.getByLabel("Project name").fill("Release Review");
+	await createProjectDialog.getByLabel("Name").fill("Release Review");
+	await createProjectDialog
+		.getByLabel("Description")
+		.fill("Review instructions and protected Vault access");
 	await createProjectDialog.getByRole("button", { name: "Create project" }).click();
 	await expect(createProjectDialog).toHaveCount(0);
-	await expect.poll(() => projectCreateBodies).toEqual([{ name: "Release Review" }]);
+	await expect
+		.poll(() => projectCreateBodies)
+		.toEqual([
+			{
+				name: "Release Review",
+				description: "Review instructions and protected Vault access",
+			},
+		]);
 	expect(projectLinkBodies).toEqual([]);
 	const createdToast = page.locator("[data-sonner-toast]").filter({ hasText: "Project created" });
 	await createdToast.getByRole("button", { name: "Open project" }).click();

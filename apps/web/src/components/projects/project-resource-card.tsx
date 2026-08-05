@@ -74,11 +74,9 @@ export function ProjectResourceCard({
 }
 
 export function UnavailableProjectResourceCard({
-	projectId,
 	footer,
 	actions,
 }: {
-	projectId: string;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
 }) {
@@ -89,7 +87,7 @@ export function UnavailableProjectResourceCard({
 					<FolderKanban />
 				</IconChip>
 			}
-			title={projectId}
+			title="Unavailable Project"
 			badges={<Badge variant="outline">Access unavailable</Badge>}
 			footer={footer}
 			actions={actions}

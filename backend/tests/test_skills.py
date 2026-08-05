@@ -165,6 +165,33 @@ async def test_skill_upload_rejects_nul_text_before_persistence(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("parser_error", [RecursionError, UnicodeError])
+async def test_skill_upload_treats_yaml_parser_failures_as_empty_frontmatter(
+    client: httpx.AsyncClient,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    parser_error: type[Exception],
+):
+    def fail_to_parse(_raw: str):
+        raise parser_error("pathological frontmatter")
+
+    monkeypatch.setattr(yaml, "safe_load", fail_to_parse)
+    tar_bytes, _ = tar_from_content(
+        "parser-failure",
+        "---\nname: ignored\ndescription: ignored\n---\nInstructions.\n",
+    )
+
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "parser-failure"},
+        files={"file": ("parser-failure.tar.gz", tar_bytes, "application/gzip")},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "parser-failure"
+
+
+@pytest.mark.asyncio
 async def test_dashboard_edit_with_stale_content_hash_returns_412(
     client: httpx.AsyncClient, project_id: str
 ):
@@ -998,6 +1025,53 @@ async def test_skill_upload_requires_skill_md(client: httpx.AsyncClient, project
     )
     assert r.status_code == 400, r.text
     assert "SKILL.md" in r.text
+
+
+@pytest.mark.asyncio
+async def test_skill_upload_rejects_non_utf8_skill_md(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    archive = _archive_with_files("invalid-utf8", {"SKILL.md": b"\xff\xfe"})
+
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "invalid-utf8"},
+        files={"file": ("invalid-utf8.tar.gz", archive, "application/gzip")},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "Archive must contain a SKILL.md"
+
+
+@pytest.mark.asyncio
+async def test_explicit_skills_list_hides_archived_project(
+    client: httpx.AsyncClient,
+    workspace_project,
+):
+    project_id = str(workspace_project.id)
+    tar_bytes, _ = tar_from_content(
+        "archived-skill",
+        "---\nname: Archived skill\ndescription: hidden after archive\n---\nInstructions.\n",
+    )
+    uploaded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "archived-skill"},
+        files={"file": ("archived-skill.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    visible = await client.get("/v1/skills", params={"project_id": project_id})
+    assert visible.status_code == 200, visible.text
+    assert [item["skill_key"] for item in visible.json()["items"]] == ["archived-skill"]
+
+    archived = await client.delete(f"/v1/projects/{project_id}")
+    assert archived.status_code == 200, archived.text
+
+    hidden = await client.get("/v1/skills", params={"project_id": project_id})
+    assert hidden.status_code == 200, hidden.text
+    assert hidden.json()["total"] == 0
+    assert hidden.json()["items"] == []
 
 
 @pytest.mark.asyncio
