@@ -24,7 +24,9 @@ Kamal declares one fixed `whatsapp-baileys` accessory in `config/deploy.yml`:
 - socket: `/run/clawdi-whatsapp/sidecar.sock`, mode `0660`;
 - app mount: the run directory only, read-only;
 - root filesystem: read-only, all capabilities dropped, no new privileges;
-- network: Docker bridge for provider egress, with no published port;
+- network: Docker bridge by default; when optional Tailscale egress is enabled,
+  Baileys joins a pod-style network namespace guarded at the kernel OUTPUT
+  boundary; neither configuration publishes a host port;
 - restart policy: Kamal 2.12's `unless-stopped`, so an ordinary host reboot
   starts the same singleton against the same durable state root;
 - identity: numeric UID/GID `1000:1000` for the Kamal SSH user, backend, and sidecar.
@@ -34,6 +36,92 @@ The only sidecar deployment secret is
 between backend processes and the singleton. Account/session UUIDs are not
 deployment configuration. Do not add per-account secrets, accessories,
 host-root variables, or JSON registries.
+
+## Optional Tailscale exit-node egress
+
+The checked-in configuration is inert by default. Merging it does not create a
+Tailscale container or change Baileys networking. Enable it only after all of
+the following are provisioned in the release environment:
+
+- repository variable `WHATSAPP_TAILSCALE_EGRESS_ENABLED=true` (the exact
+  lowercase value is the activation switch);
+- repository variable `WHATSAPP_TAILSCALE_EXIT_NODE`, set to the stable
+  Tailscale DNS name or IP of an approved exit node;
+- repository variable `WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP`, set to that exit
+  node's exact public IPv4 address;
+- repository secret `WHATSAPP_TAILSCALE_AUTHKEY`, set to a tagged, one-off,
+  pre-authorized, non-ephemeral key whose ACL grants only the required tailnet
+  access. Persistent state keeps the node identity after bootstrap; if that
+  state is ever lost, issue a new one-off key instead of making this key
+  reusable.
+
+The official Kubernetes `pause` 3.10.1 image, pinned by its immutable manifest
+digest, owns a stable network namespace. Kernel-mode Tailscale, an egress guard,
+and Baileys join it with Docker's `container:clawdi-whatsapp-netns` network
+mode. Tailscale uses the official v1.98.10 image pinned by immutable digest,
+`/dev/net/tun`, and only `NET_ADMIN` plus `NET_RAW` (required by the image's
+iptables-legacy control socket after dropping Docker's default capabilities).
+Its identity persists under `/home/phala/clawdi-whatsapp/tailscale-state`.
+The exit-node argument explicitly disables LAN access.
+`TS_AUTH_ONCE=true` makes the auth key a bootstrap credential: subsequent
+container replacements reuse the persisted node identity instead of requiring
+the key to remain valid.
+
+The guard installs IPv4 and IPv6 OUTPUT chains matching only numeric UID 1000.
+That UID may use `tailscale0` and the exact local loopback address; every other
+interface is rejected. Tailscaled runs as root, so its underlay remains able to
+reach the Tailscale control plane and DERP. If `tailscale0` or its route
+disappears, Baileys traffic selects the bridge interface and is rejected rather
+than falling back. Baileys uses `100.100.100.100` through a read-only resolver
+file, so Docker's `127.0.0.11` underlay DNS is not an escape path.
+`TS_ACCEPT_DNS=true` is still required: in v1.98.10, disabled CorpDNS returns
+from `dnsConfigForNetmap` before exit-node/default resolvers are populated for
+Quad100. Enabling it makes Quad100 use the tailnet and exit-node DNS policy;
+the resolver file only directs Baileys' separate mount namespace to that
+official Tailscale resolver.
+
+The guard atomically writes a marker containing the current host boot ID and
+network-namespace inode only after installing its rules. Baileys validates the
+read-only marker before loading configuration; a host reboot, namespace owner
+restart, stale marker, or guard startup race therefore keeps the process down.
+Docker restores the namespace owner before `container:` consumers after an
+ordinary daemon restart, and the guard recreates rules before publishing the
+new marker. Docker canonicalizes each consumer's network mode to
+`container:<full-infra-id>`. The deploy helper verifies that value and compares
+`/proc/self/ns/net` inodes from a bounded probe joined to the current owner and
+from inside each consumer; it needs Docker access but no host `/proc/<pid>` or
+root access. Drifted consumers are rebuilt in strict infra, Tailscale, guard,
+public-IP preflight, Baileys order.
+
+The shared network namespace does not carry the local control channel: both
+backend roles continue to mount
+`/home/phala/clawdi-whatsapp/run` read-only at `/run/clawdi-whatsapp`, while
+Baileys mounts the same host directory read-write and listens on
+`/run/clawdi-whatsapp/sidecar.sock`. The UDS therefore remains host-volume
+communication and is independent of Tailscale egress.
+
+Every enabled release runs a native `fetch` as UID 1000 in the shared namespace
+and requires the exact configured public IP before starting Baileys. This check
+has no application proxy settings and exercises the transparent route. A
+Tailscale restart does not remove guard rules because the pause container owns
+the namespace; a pause restart forces both consumers to be recreated after the
+new guard marker and exact-IP preflight.
+
+To disable egress, set the activation variable to `false` (or remove it) and
+release. Deployment compares the running network mode and namespace inode with
+the desired values and recreates Baileys even if its image is unchanged.
+After that release is healthy, an operator may stop and remove the now-unused
+Tailscale accessory in a separate deliberate maintenance action. Preserve its
+state directory unless intentionally revoking the Tailscale node identity.
+
+Upstream contracts:
+
+- [Tailscale Docker image parameters](https://tailscale.com/kb/1282/docker)
+- [Tailscale containerboot environment contract](https://github.com/tailscale/tailscale/blob/v1.98.10/cmd/containerboot/main.go#L14-L58)
+- [Tailscale v1.98.10 Quad100/default-resolver construction](https://github.com/tailscale/tailscale/blob/v1.98.10/ipn/ipnlocal/node_backend.go#L736-L950)
+- [Docker container network mode](https://docs.docker.com/engine/network/#container-networks)
+- [Tailscale kernel-mode TUN setup](https://github.com/tailscale/tailscale/blob/v1.98.10/cmd/containerboot/main.go#L182-L186)
+- [Kamal 2.12 accessory lifecycle](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L78-L89)
 
 ## Storage gate
 

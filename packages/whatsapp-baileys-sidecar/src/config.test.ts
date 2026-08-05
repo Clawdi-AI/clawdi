@@ -1,4 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -15,6 +23,30 @@ describe("sidecar config", () => {
 				CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: "secret",
 			}),
 		).toThrow("CLAWDI_WA_SIDECAR_STATE_ROOT is required");
+	});
+
+	it("fails closed unless the guard marker matches this boot and network namespace", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
+		const marker = join(root, "network-namespace.ready");
+		const base = {
+			CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: "secret",
+			CLAWDI_WA_SIDECAR_STATE_ROOT: root,
+			CLAWDI_WA_NETWORK_NAMESPACE_MARKER: marker,
+		};
+		try {
+			expect(() => loadConfigFromEnv(base)).toThrow("network namespace guard is not ready");
+			writeFileSync(marker, "stale marker\n");
+			expect(() => loadConfigFromEnv(base)).toThrow(
+				"does not match this boot and network namespace",
+			);
+			writeFileSync(
+				marker,
+				`${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()} ${statSync("/proc/self/ns/net").ino}\n`,
+			);
+			expect(loadConfigFromEnv(base).stateRoot).toBe(root);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("loads one business-neutral multi-session provider service", () => {

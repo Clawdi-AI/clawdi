@@ -45,7 +45,6 @@ const TRANSIENT_DISCONNECT_REASONS = new Set<number>([
 ]);
 
 type SocketConfiguration = Parameters<typeof makeWASocket>[0];
-
 type ProviderSocketEvents = {
 	on(event: "creds.update", listener: (update: Partial<AuthenticationCreds>) => void): void;
 	on(
@@ -130,7 +129,13 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				config.providerInbox,
 				(operation, error) => this.markStateFatal(operation, error),
 			);
-		const quarantineReason = this.providerState.physicalAuthQuarantineReason();
+		let quarantineReason: string | undefined;
+		try {
+			quarantineReason = this.providerState.physicalAuthQuarantineReason();
+		} catch (error: unknown) {
+			this.providerState.close();
+			throw error;
+		}
 		if (quarantineReason) {
 			this.fatalReason = quarantineReason;
 			this.lastDisconnectReason = quarantineReason;

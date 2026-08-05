@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { WAVersion } from "baileys";
 
@@ -29,6 +30,7 @@ export type SidecarSessionConfig = Omit<SidecarConfig, "stateRoot"> & {
 };
 
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConfig {
+	assertNetworkNamespaceGuard(env.CLAWDI_WA_NETWORK_NAMESPACE_MARKER);
 	const apiToken = parseApiToken(
 		readRequired(
 			env.CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN,
@@ -70,6 +72,26 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 		},
 	};
 	return config;
+}
+
+function assertNetworkNamespaceGuard(rawMarkerPath: string | undefined): void {
+	const markerPath = nonEmpty(rawMarkerPath);
+	if (!markerPath) return;
+	if (resolve(markerPath) !== markerPath || basename(markerPath) !== "network-namespace.ready") {
+		throw new Error("CLAWDI_WA_NETWORK_NAMESPACE_MARKER must be an absolute readiness marker path");
+	}
+	const expected = `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()} ${statSync("/proc/self/ns/net").ino}`;
+	let actual: string;
+	try {
+		actual = readFileSync(markerPath, "utf8").trim();
+	} catch {
+		throw new Error("WhatsApp network namespace guard is not ready");
+	}
+	if (actual !== expected) {
+		throw new Error(
+			"WhatsApp network namespace guard does not match this boot and network namespace",
+		);
+	}
 }
 
 function parseSocketPath(raw: string | undefined): string | undefined {
