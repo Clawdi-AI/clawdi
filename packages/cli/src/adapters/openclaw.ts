@@ -7,6 +7,11 @@ import { durationSecondsBetween } from "../lib/session-duration";
 import { extractTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
+	collectManagedSkillTree,
+	managedSkillTreesEqual,
+	withTargetTreeRollback,
+} from "../runtime/managed-skill-delivery";
+import {
 	migrateLegacyLocalSetupSkill,
 	mutateUserSkillTarget,
 	shouldIgnoreUserSkill,
@@ -390,20 +395,21 @@ export class OpenClawAdapter implements AgentAdapter {
 		// silently dropping those skills. Pre-fix the cross-agent
 		// enumerator silently lost OpenClaw skills under any
 		// agent other than the active one.
+		const root = skillsDir();
 		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir(), "clawdi"),
+			targetDir: join(root, "clawdi"),
 			id: "clawdi",
 			version: 1,
 			digest: managedSkillDirectoryDigest,
 		});
-		if (!existsSync(skillsDir())) return [];
+		if (!existsSync(root)) return [];
 		const out: string[] = [];
-		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
+		for (const entry of readdirSync(root, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (shouldIgnoreUserSkill(join(skillsDir(), entry.name), entry.name)) continue;
-			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
+			if (shouldIgnoreUserSkill(join(root, entry.name), entry.name)) continue;
+			const skillMd = join(root, entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 			out.push(entry.name);
 		}
@@ -434,30 +440,55 @@ export class OpenClawAdapter implements AgentAdapter {
 		installedSlug: string,
 		tarGzBytes: Buffer,
 	): Promise<void> {
-		const targetDir = join(skillsDir(), installedSlug);
+		const workspace = activeAgentWorkspace();
+		const targetDir = join(workspace, "skills", installedSlug);
 		const stagingRoot = mkdtempSync(join(tmpdir(), "clawdi-openclaw-install-"));
 		try {
 			await extractTarGz(stagingRoot, tarGzBytes);
 			const sourceDir = join(stagingRoot, archiveKey);
 			if (!existsSync(join(sourceDir, "SKILL.md")))
 				throw new Error("Skill archive is missing SKILL.md");
-			mutateUserSkillTarget(targetDir, installedSlug, () => {
-				const result = spawnSync(
-					"openclaw",
-					["skills", "install", sourceDir, "--agent", agentId(), "--as", installedSlug, "--force"],
-					{ encoding: "utf8", env: process.env, maxBuffer: 1024 * 1024, timeout: 120_000 },
-				);
-				if (result.status !== 0) {
-					throw new Error(
-						`OpenClaw official Skill install failed: ${(result.stderr || result.stdout).trim() || "unknown error"}`,
-					);
-				}
-				if (!existsSync(join(targetDir, "SKILL.md"))) {
-					throw new Error(
-						`OpenClaw did not install the Skill in agent workspace ${activeAgentWorkspace()}`,
-					);
-				}
-			});
+			mutateUserSkillTarget(targetDir, installedSlug, () =>
+				withTargetTreeRollback({
+					target: targetDir,
+					operation: () => {
+						const result = spawnSync(
+							"openclaw",
+							[
+								"skills",
+								"install",
+								sourceDir,
+								"--agent",
+								agentId(),
+								"--as",
+								installedSlug,
+								"--force",
+							],
+							{
+								encoding: "utf8",
+								env: process.env,
+								maxBuffer: 1024 * 1024,
+								timeout: 120_000,
+							},
+						);
+						if (result.status !== 0) {
+							throw new Error(
+								`OpenClaw official Skill install failed: ${(result.stderr || result.stdout).trim() || "unknown error"}`,
+							);
+						}
+						if (activeAgentWorkspace() !== workspace) {
+							throw new Error("OpenClaw agent workspace changed during Skill install");
+						}
+						const sourceTree = collectManagedSkillTree(sourceDir);
+						const installedTree = collectManagedSkillTree(targetDir, {
+							exclude: new Set([".openclaw/source-origin.json"]),
+						});
+						if (!managedSkillTreesEqual(sourceTree, installedTree)) {
+							throw new Error(`OpenClaw installed an unexpected Skill tree in ${workspace}`);
+						}
+					},
+				}),
+			);
 		} finally {
 			rmSync(stagingRoot, { recursive: true, force: true });
 		}

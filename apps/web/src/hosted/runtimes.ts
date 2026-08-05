@@ -7,19 +7,16 @@ const RUNTIME_META = {
 	openclaw: {
 		label: "OpenClaw",
 		blurb: "Choose this if you already use OpenClaw and want its Control UI and workflows.",
-		skillDeliveryDriver: "openclaw-cli",
 	},
 	hermes: {
 		label: "Hermes",
 		blurb: "Recommended for most people. Chat with and manage your agent in the Hermes Dashboard.",
-		skillDeliveryDriver: "hermes-cli",
 	},
 } as const satisfies Record<
 	HostedRuntime,
 	{
 		label: string;
 		blurb: string;
-		skillDeliveryDriver: "openclaw-cli" | "hermes-cli";
 	}
 >;
 
@@ -33,10 +30,6 @@ export function runtimeDisplayName(runtime: HostedRuntime): string {
 
 export function runtimeBlurb(runtime: HostedRuntime): string {
 	return RUNTIME_META[runtime].blurb;
-}
-
-export function runtimeSupportsSkillInstall(runtime: HostedRuntime): boolean {
-	return Boolean(RUNTIME_META[runtime].skillDeliveryDriver);
 }
 
 export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {

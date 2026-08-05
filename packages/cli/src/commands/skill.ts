@@ -196,7 +196,7 @@ async function installGithubSkillForAgent(
 	} catch (error) {
 		console.log(
 			chalk.yellow(
-				`Installed ${sanitizeMetadata(downloaded.skillKey)} locally; its Cloud projection will retry when the daemon syncs.`,
+				`Installed ${sanitizeMetadata(downloaded.skillKey)} locally; the dashboard will retry the update the next time the daemon syncs.`,
 			),
 		);
 		throw error;
@@ -387,7 +387,7 @@ export async function skillAdd(
 		} catch (error) {
 			console.log(
 				chalk.yellow(
-					`Saved ${sanitizeMetadata(skillKey)} in the Agent filesystem; its Cloud projection will retry when the daemon syncs.`,
+					`Saved ${sanitizeMetadata(skillKey)} in the Agent filesystem; the dashboard will retry the update the next time the daemon syncs.`,
 				),
 			);
 			throw error;
@@ -509,7 +509,7 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 		} catch (error) {
 			console.log(
 				chalk.yellow(
-					`Removed ${sanitizeMetadata(key)} locally; its Cloud projection will retry when the daemon syncs.`,
+					`Removed ${sanitizeMetadata(key)} locally; the dashboard will retry the update the next time the daemon syncs.`,
 				),
 			);
 			throw error;

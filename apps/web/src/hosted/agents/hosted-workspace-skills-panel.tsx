@@ -5,7 +5,11 @@ import { Plus, Trash2 } from "lucide-react";
 import { useRef } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { mergeWorkspaceRuntimeSkills } from "@/components/dashboard/workspace-skills.logic";
+import {
+	mergeWorkspaceRuntimeSkills,
+	workspaceSkillMutationsAvailable,
+	workspaceSkillStatusLabel,
+} from "@/components/dashboard/workspace-skills.logic";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { SkillCard } from "@/components/skills/skill-card";
@@ -18,7 +22,6 @@ import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
-import { deploymentRuntime, runtimeSupportsSkillInstall } from "@/hosted/runtimes";
 import type { AgentRouteQuery } from "@/lib/agent-routes";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
 import type { components } from "@/lib/api-schemas";
@@ -60,24 +63,23 @@ function HostedWorkspaceSkillsPanelContent({
 	const actionLockedRef = useRef(false);
 	const deploymentResolution = useAgentDeployment(agentId, deploymentSelector);
 	const deployment = deploymentResolution.deployment;
-	const runtime = deployment ? deploymentRuntime(deployment) : null;
-	const canInstall = runtime ? runtimeSupportsSkillInstall(runtime) : false;
 	const deploymentId = deployment?.resource.id ?? null;
 	const catalogKey = ["hosted", "skills", "catalog"] as const;
 	const statusKey = ["hosted", "deployments", deploymentId, "skills"] as const;
 
-	const catalog = useQuery({
-		queryKey: catalogKey,
-		queryFn: () => billingClient.listSkillCatalog(),
-		enabled: Boolean(deploymentId && canInstall),
-	});
 	const status = useQuery({
 		queryKey: statusKey,
 		queryFn: () => {
 			if (!deploymentId) throw new Error("Deployment is not available");
 			return billingClient.listWorkspaceSkills(deploymentId);
 		},
-		enabled: Boolean(deploymentId && canInstall),
+		enabled: Boolean(deploymentId),
+	});
+	const canMutate = workspaceSkillMutationsAvailable(status.data, status.error);
+	const catalog = useQuery({
+		queryKey: catalogKey,
+		queryFn: () => billingClient.listSkillCatalog(),
+		enabled: canMutate,
 	});
 
 	const mutateSkill = useMutation({
@@ -89,8 +91,8 @@ function HostedWorkspaceSkillsPanelContent({
 			skillKey: string;
 		}) => {
 			const resourceVersion = status.data?.deployment_resource_version;
-			if (!deploymentId || !canInstall || !resourceVersion) {
-				throw new Error("Workspace Skill desired state is not available");
+			if (!deploymentId || !canMutate || !resourceVersion) {
+				throw new Error("Skill management isn't available right now.");
 			}
 			const idempotencyKey = newIdempotencyKey(`workspace-skill-${action}`);
 			if (action === "uninstall") {
@@ -110,9 +112,9 @@ function HostedWorkspaceSkillsPanelContent({
 		},
 		onSuccess: (result, variables) => {
 			void queryClient.invalidateQueries({ queryKey: statusKey });
-			if (result.reconciliation_status === "failed") {
-				toast.error("Workspace Skill reconciliation needs attention", {
-					description: result.failure_message ?? "The control plane will retry reconciliation.",
+			if (result.status === "failed") {
+				toast.error("Skill update needs attention", {
+					description: "We'll retry automatically.",
 				});
 				return;
 			}
@@ -120,7 +122,6 @@ function HostedWorkspaceSkillsPanelContent({
 				variables.action === "install"
 					? "Skill installation requested"
 					: "Skill uninstall requested",
-				{ description: "Hermes is reconciling the Workspace desired state." },
 			);
 		},
 		onError: (error, variables) => {
@@ -155,84 +156,55 @@ function HostedWorkspaceSkillsPanelContent({
 		);
 	}
 
-	if (!canInstall) {
-		return (
-			<div>
-				<ProjectionCards
-					agentId={agentId}
-					projectId={projectId}
-					routeSearch={routeSearch}
-					projections={projections}
-					isLoading={projectionsLoading}
-					error={projectionError}
-					onRetry={onRetryProjections}
-				/>
-			</div>
-		);
-	}
-
 	const blockingCatalogError = shouldBlockQueryError(catalog.error, catalog.data)
 		? catalog.error
 		: null;
 	const blockingStatusError = shouldBlockQueryError(status.error, status.data)
 		? status.error
 		: null;
-	if (blockingStatusError) {
-		return (
-			<div className="space-y-4">
+	const inventory = mergeWorkspaceRuntimeSkills(
+		projections,
+		status.data?.items ?? [],
+		canMutate && !blockingCatalogError ? (catalog.data?.items ?? []) : [],
+	);
+	return (
+		<div className="space-y-4">
+			{blockingStatusError ? (
 				<ApiErrorPanel
 					error={blockingStatusError}
 					onRetry={() => {
 						void status.refetch();
 					}}
-					title="Couldn't load Workspace Skill status"
+					title="Couldn't load skills"
 				/>
-				<ProjectionCards
-					agentId={agentId}
-					projectId={projectId}
-					routeSearch={routeSearch}
-					projections={projections}
-					isLoading={projectionsLoading}
-					error={projectionError}
-					onRetry={onRetryProjections}
-				/>
-			</div>
-		);
-	}
-
-	if (status.isLoading) {
-		return <WorkspaceSkillSkeleton />;
-	}
-
-	const inventory = mergeWorkspaceRuntimeSkills(
-		projectionError ? [] : projections,
-		status.data?.items ?? [],
-		blockingCatalogError ? [] : (catalog.data?.items ?? []),
-	);
-	return (
-		<div className="space-y-4">
+			) : status.isLoading ? (
+				<p className="text-xs text-muted-foreground">Loading skills…</p>
+			) : null}
 			{blockingCatalogError ? (
 				<ApiErrorPanel
 					error={blockingCatalogError}
 					onRetry={() => {
 						void catalog.refetch();
 					}}
-					title="Skill install catalog unavailable"
+					title="Couldn't load installable skills"
 				/>
 			) : catalog.isLoading ? (
-				<p className="text-xs text-muted-foreground">Loading install catalog…</p>
+				<p className="text-xs text-muted-foreground">Loading installable skills…</p>
 			) : null}
 			{projectionError ? (
 				<ApiErrorPanel
 					error={projectionError}
 					onRetry={onRetryProjections}
-					title="Runtime Skill observations unavailable"
+					title="Couldn't load Agent skills"
 				/>
 			) : projectionsLoading ? (
-				<p className="text-xs text-muted-foreground">Loading read-only runtime observations…</p>
+				<p className="text-xs text-muted-foreground">Loading Agent skills…</p>
 			) : null}
 			{inventory.length === 0 ? (
-				<EmptyState variant="inset" description="No Skills are available for this Agent runtime." />
+				<EmptyState
+					variant="inset"
+					description="No Skills are available in this Agent's Workspace."
+				/>
 			) : (
 				<div className={HERO_GRID_CLASS}>
 					{inventory.map((item) => {
@@ -245,54 +217,57 @@ function HostedWorkspaceSkillsPanelContent({
 								skill={item.entity}
 								cloudSkill={item.cloudProjection ?? undefined}
 								readOnly
-								readOnlyLabel={item.cloudProjection ? "Agent projection · Read-only" : null}
-								showVersion={Boolean(item.cloudProjection?.version)}
+								readOnlyLabel={item.cloudProjection ? "Synced from Agent · Read-only" : null}
+								showVersion={Boolean(!item.desired && item.cloudProjection?.version)}
 								actions={
 									item.desired ? (
 										<div className="flex flex-wrap items-center gap-2">
 											<Badge
-												variant={
-													item.desired.reconciliation_status === "failed"
-														? "destructive"
-														: "secondary"
+												variant={item.desired.status === "failed" ? "destructive" : "secondary"}
+												title={
+													item.desired.status === "failed"
+														? "We'll retry automatically."
+														: undefined
 												}
-												title={item.desired.failure_message ?? undefined}
 											>
-												{item.desired.reconciliation_status === "failed" ? "Failed" : "Reconciling"}
+												{workspaceSkillStatusLabel(item.desired.status)}
 											</Badge>
-											<ConfirmAction
-												title={`Uninstall ${item.entity.name} from Agent?`}
-												description={
-													<p>
-														The runtime driver will remove only the manifest-owned Workspace copy.
-													</p>
-												}
-												confirmLabel="Uninstall skill"
-												destructive
-												onConfirm={() => runMutation("uninstall", item.entity.skill_key)}
-											>
-												<Button variant="ghost" size="sm" disabled={pending}>
-													{pending ? (
-														<Spinner className="size-3.5" />
-													) : (
-														<Trash2 className="size-3.5" />
-													)}
-													{pendingAction === "uninstall" ? "Uninstalling…" : "Uninstall"}
-												</Button>
-											</ConfirmAction>
+											{canMutate ? (
+												<ConfirmAction
+													title={`Uninstall ${item.entity.name} from Agent?`}
+													description={
+														<p>
+															This removes the copy managed by this Workspace. Other copies won't be
+															affected.
+														</p>
+													}
+													confirmLabel="Uninstall skill"
+													destructive
+													onConfirm={() => runMutation("uninstall", item.entity.skill_key)}
+												>
+													<Button variant="ghost" size="sm" disabled={mutateSkill.isPending}>
+														{pending ? (
+															<Spinner className="size-3.5" />
+														) : (
+															<Trash2 className="size-3.5" />
+														)}
+														{pendingAction === "uninstall" ? "Uninstalling…" : "Uninstall"}
+													</Button>
+												</ConfirmAction>
+											) : null}
 										</div>
-									) : item.installable ? (
+									) : canMutate && item.installable ? (
 										<Button
 											variant="outline"
 											size="sm"
-											disabled={pending}
+											disabled={mutateSkill.isPending}
 											onClick={() => runMutation("install", item.entity.skill_key)}
 										>
 											{pending ? <Spinner className="size-3.5" /> : <Plus className="size-3.5" />}
 											{pendingAction === "install" ? "Installing…" : "Install"}
 										</Button>
 									) : item.cloudProjection ? (
-										<Badge variant="secondary">Agent projection · Read-only</Badge>
+										<Badge variant="secondary">Synced from Agent · Read-only</Badge>
 									) : null
 								}
 								skillLink={(cloudSkill) =>
@@ -303,54 +278,6 @@ function HostedWorkspaceSkillsPanelContent({
 					})}
 				</div>
 			)}
-		</div>
-	);
-}
-
-function ProjectionCards({
-	agentId,
-	projectId,
-	routeSearch,
-	projections,
-	isLoading,
-	error,
-	onRetry,
-}: {
-	agentId: string;
-	projectId: string;
-	routeSearch?: AgentRouteQuery;
-	projections: SkillSummary[];
-	isLoading: boolean;
-	error?: unknown;
-	onRetry?: () => void;
-}) {
-	if (error) {
-		return (
-			<ApiErrorPanel
-				error={error}
-				onRetry={onRetry}
-				title="Runtime Skill observations unavailable"
-			/>
-		);
-	}
-	if (isLoading) return <WorkspaceSkillSkeleton />;
-	if (projections.length === 0) {
-		return <EmptyState variant="inset" description="No Agent-synced Skill projections yet." />;
-	}
-	return (
-		<div className={HERO_GRID_CLASS}>
-			{projections.map((skill) => (
-				<SkillCard
-					key={skill.id}
-					skill={skill}
-					cloudSkill={skill}
-					readOnly
-					readOnlyLabel="Agent projection · Read-only"
-					skillLink={(cloudSkill) =>
-						agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId, routeSearch)
-					}
-				/>
-			))}
 		</div>
 	);
 }

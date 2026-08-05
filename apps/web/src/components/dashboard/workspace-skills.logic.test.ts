@@ -3,7 +3,9 @@ import type { components } from "@/lib/api-schemas";
 import {
 	mergeWorkspaceRuntimeSkills,
 	workspaceSkillInstallCommand,
+	workspaceSkillMutationsAvailable,
 	workspaceSkillRemoveCommand,
+	workspaceSkillStatusLabel,
 } from "./workspace-skills.logic";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -30,6 +32,33 @@ function projection(skillKey: string): SkillSummary {
 }
 
 describe("Workspace Skill runtime authority", () => {
+	test("fails closed unless the read capability is explicitly available", () => {
+		const status = {
+			deployment_id: "dep_test",
+			deployment_resource_version: "rv_test",
+			manifest_generation: 1,
+			capability: { available: true, reason: "available" as const },
+		};
+		expect(workspaceSkillMutationsAvailable(status, null)).toBe(true);
+		expect(
+			workspaceSkillMutationsAvailable(
+				{ ...status, capability: { available: false, reason: "rollout_not_enabled" } },
+				null,
+			),
+		).toBe(false);
+		expect(workspaceSkillMutationsAvailable(status, new Error("status unavailable"))).toBe(false);
+		expect(workspaceSkillMutationsAvailable({ ...status, capability: undefined }, null)).toBe(
+			false,
+		);
+		expect(workspaceSkillMutationsAvailable(undefined, null)).toBe(false);
+	});
+
+	test("uses stable desired-state copy", () => {
+		expect(workspaceSkillStatusLabel("managed")).toBe("Managed");
+		expect(workspaceSkillStatusLabel("requested")).toBe("Requested");
+		expect(workspaceSkillStatusLabel("failed")).toBe("Failed");
+	});
+
 	test("keeps manifest desired state authoritative and agent_sync projections read-only", () => {
 		const inventory = mergeWorkspaceRuntimeSkills(
 			[projection("projected")],
@@ -42,7 +71,7 @@ describe("Workspace Skill runtime authority", () => {
 						path: "skills/manifest-owned",
 						commit: "a".repeat(40),
 					},
-					reconciliation_status: "reconciling",
+					status: "managed",
 					failure_message: null,
 				},
 				{
@@ -53,7 +82,7 @@ describe("Workspace Skill runtime authority", () => {
 						path: "skills/failed",
 						commit: "b".repeat(40),
 					},
-					reconciliation_status: "failed",
+					status: "failed",
 					failure_message: "Retry pending.",
 				},
 			],
@@ -103,7 +132,7 @@ describe("Workspace Skill runtime authority", () => {
 		});
 		const manifestOwned = inventory.find((item) => item.entity.skill_key === "manifest-owned");
 		expect(manifestOwned).toMatchObject({
-			desired: { reconciliation_status: "reconciling" },
+			desired: { status: "managed" },
 			installable: false,
 			cloudProjection: null,
 		});
@@ -115,7 +144,7 @@ describe("Workspace Skill runtime authority", () => {
 			source_repo: "https://github.com/Clawdi-AI/store",
 		});
 		expect(inventory.find((item) => item.entity.skill_key === "failed")?.desired).toMatchObject({
-			reconciliation_status: "failed",
+			status: "failed",
 			failure_message: "Retry pending.",
 		});
 	});
@@ -141,7 +170,7 @@ describe("Workspace Skill runtime authority", () => {
 						path: "skills/desired",
 						commit: "c".repeat(40),
 					},
-					reconciliation_status: "reconciling",
+					status: "requested",
 				},
 			],
 			[],
@@ -149,7 +178,7 @@ describe("Workspace Skill runtime authority", () => {
 
 		expect(inventory).toHaveLength(1);
 		expect(inventory[0]).toMatchObject({
-			desired: { reconciliation_status: "reconciling" },
+			desired: { status: "requested" },
 			installable: false,
 		});
 	});

@@ -205,6 +205,7 @@ describe("deployment Skill authority", () => {
 					deployment_id: "hdep_test",
 					deployment_resource_version: "rv-skills",
 					manifest_generation: 4,
+					capability: { available: true, reason: "available" },
 					items: [],
 				});
 			}
@@ -215,7 +216,7 @@ describe("deployment Skill authority", () => {
 					manifest_generation: request.method === "PUT" ? 5 : 6,
 					skill_key: "review-pr",
 					desired_state: request.method === "PUT" ? "present" : "absent",
-					reconciliation_status: "reconciling",
+					status: "requested",
 				});
 			}
 			throw new Error(`Unexpected request: ${request.method} ${path}`);
@@ -227,7 +228,7 @@ describe("deployment Skill authority", () => {
 			client.installWorkspaceSkill("hdep_test", "review-pr", "rv-skills", "install-attempt"),
 		).resolves.toMatchObject({
 			desired_state: "present",
-			reconciliation_status: "reconciling",
+			status: "requested",
 		});
 		await expect(
 			client.uninstallWorkspaceSkill("hdep_test", "review-pr", "rv-installed", "remove-attempt"),
@@ -271,7 +272,7 @@ describe("deployment Skill authority", () => {
 					manifest_generation: 5,
 					skill_key: "review-pr",
 					desired_state: "present",
-					reconciliation_status: "reconciling",
+					status: "requested",
 				});
 			}
 			if (path === "/v2/deployments/hdep_test/workspace-skills") {
@@ -279,6 +280,7 @@ describe("deployment Skill authority", () => {
 					deployment_id: "hdep_test",
 					deployment_resource_version: "rv-fresh",
 					manifest_generation: 4,
+					capability: { available: true, reason: "available" },
 					items: [],
 				});
 			}
@@ -289,7 +291,7 @@ describe("deployment Skill authority", () => {
 			client.installWorkspaceSkill("hdep_test", "review-pr", "rv-stale", "same-attempt"),
 		).resolves.toMatchObject({
 			desired_state: "present",
-			reconciliation_status: "reconciling",
+			status: "requested",
 		});
 
 		expect(requests.map((request) => request.method)).toEqual(["PUT", "GET", "PUT"]);

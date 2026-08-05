@@ -602,7 +602,7 @@ export function SkillDetailContent({
 								</div>
 								<p className="text-xs text-muted-foreground">
 									{isAgentSyncProjection
-										? "This is a read-only Cloud projection synced from the Agent runtime. Install and uninstall happen on the Agent."
+										? "This Skill is synced from the Agent and is read-only here. Manage it on the Agent."
 										: "This Skill is stored and managed in this Project. Install it on an Agent separately to run it."}
 								</p>
 							</div>

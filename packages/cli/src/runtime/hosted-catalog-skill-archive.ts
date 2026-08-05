@@ -24,7 +24,10 @@ interface HostedCatalogSkillArchiveReceipt {
 export interface PreparedHostedCatalogSkill {
 	skillId: string;
 	source: HostedSkillSource;
-	digest: string;
+	/** Stable canonical ownership identity; independent of tar encoding and cache lifetime. */
+	sourceIdentity: string;
+	/** Byte hash used only to detect corruption in the local archive cache. */
+	archiveSha256: string;
 	tarBytes: Buffer;
 }
 
@@ -33,7 +36,7 @@ function sha256(bytes: Uint8Array | string): string {
 }
 
 function sourceIdentity(skillId: string, source: HostedSkillSource): string {
-	return JSON.stringify({ skillId, source });
+	return ["github", skillId, source.url, source.path, source.commit].join("\0");
 }
 
 function cachePaths(paths: RuntimePaths, skillId: string, source: HostedSkillSource) {
@@ -46,7 +49,7 @@ function readCachedArchive(
 	paths: RuntimePaths,
 	skillId: string,
 	source: HostedSkillSource,
-): { digest: string; tarBytes: Buffer } | null {
+): { archiveSha256: string; tarBytes: Buffer } | null {
 	const cache = cachePaths(paths, skillId, source);
 	if (!existsSync(cache.archive) || !existsSync(cache.receipt)) return null;
 	try {
@@ -71,7 +74,7 @@ function readCachedArchive(
 		}
 		const tarBytes = readFileSync(cache.archive);
 		if (sha256(tarBytes) !== receipt.sha256) return null;
-		return { digest: receipt.sha256, tarBytes };
+		return { archiveSha256: receipt.sha256, tarBytes };
 	} catch {
 		return null;
 	}
@@ -143,7 +146,9 @@ export async function prepareHostedCatalogSkillArchives(
 			prepared.set(skillId, {
 				skillId,
 				source: desired.source,
-				...cached,
+				sourceIdentity: sourceIdentity(skillId, desired.source),
+				archiveSha256: cached.archiveSha256,
+				tarBytes: cached.tarBytes,
 			});
 			continue;
 		}
@@ -159,10 +164,12 @@ export async function prepareHostedCatalogSkillArchives(
 		if (downloaded.skillKey !== skillId) {
 			throw new Error(`downloaded Skill identity does not match manifest entry ${skillId}`);
 		}
+		const archiveSha256 = writeCachedArchive(paths, skillId, desired.source, downloaded.tarBytes);
 		prepared.set(skillId, {
 			skillId,
 			source: desired.source,
-			digest: writeCachedArchive(paths, skillId, desired.source, downloaded.tarBytes),
+			sourceIdentity: sourceIdentity(skillId, desired.source),
+			archiveSha256,
 			tarBytes: downloaded.tarBytes,
 		});
 	}

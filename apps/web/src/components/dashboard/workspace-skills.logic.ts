@@ -5,6 +5,10 @@ import type { components } from "@/lib/api-schemas";
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type HostedSkillCatalogItem = DeployComponents["schemas"]["V1SkillCatalogItem"];
 type HostedWorkspaceSkillDesiredItem = DeployComponents["schemas"]["V2WorkspaceSkillDesiredItem"];
+type HostedWorkspaceSkillListResponse = DeployComponents["schemas"]["V2WorkspaceSkillListResponse"];
+type WorkspaceSkillStatusBoundary = Omit<HostedWorkspaceSkillListResponse, "capability"> & {
+	capability?: HostedWorkspaceSkillListResponse["capability"];
+};
 
 export type WorkspaceRuntimeSkill = {
 	entity: SkillCardEntity;
@@ -12,6 +16,20 @@ export type WorkspaceRuntimeSkill = {
 	desired: HostedWorkspaceSkillDesiredItem | null;
 	installable: boolean;
 };
+
+export function workspaceSkillMutationsAvailable(
+	status: WorkspaceSkillStatusBoundary | undefined,
+	error: unknown,
+): boolean {
+	return !error && status?.capability?.available === true;
+}
+
+export function workspaceSkillStatusLabel(
+	status: HostedWorkspaceSkillDesiredItem["status"],
+): "Managed" | "Requested" | "Failed" {
+	if (status === "failed") return "Failed";
+	return status === "requested" ? "Requested" : "Managed";
+}
 
 export function mergeWorkspaceRuntimeSkills(
 	projections: readonly SkillSummary[],

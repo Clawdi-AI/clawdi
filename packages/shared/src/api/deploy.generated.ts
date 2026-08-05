@@ -2263,16 +2263,26 @@ export interface components {
             /** Amount Usd */
             amount_usd?: string | null;
         };
+        /** V2WorkspaceSkillCapability */
+        V2WorkspaceSkillCapability: {
+            /** Available */
+            available: boolean;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "available" | "rollout_not_enabled" | "upgrade_not_observed";
+        };
         /** V2WorkspaceSkillDesiredItem */
         V2WorkspaceSkillDesiredItem: {
             /** Skill Key */
             skill_key: string;
             source: components["schemas"]["V2WorkspaceSkillSource"];
             /**
-             * Reconciliation Status
+             * Status
              * @enum {string}
              */
-            reconciliation_status: "reconciling" | "failed";
+            status: "managed" | "requested" | "failed";
             /** Failure Message */
             failure_message?: string | null;
         };
@@ -2288,6 +2298,7 @@ export interface components {
             deployment_resource_version: string;
             /** Manifest Generation */
             manifest_generation: number;
+            capability: components["schemas"]["V2WorkspaceSkillCapability"];
             /** Items */
             items?: components["schemas"]["V2WorkspaceSkillDesiredItem"][];
         };
@@ -2312,10 +2323,10 @@ export interface components {
             desired_state: "present" | "absent";
             source?: components["schemas"]["V2WorkspaceSkillSource"] | null;
             /**
-             * Reconciliation Status
+             * Status
              * @enum {string}
              */
-            reconciliation_status: "reconciling" | "failed";
+            status: "managed" | "requested" | "failed";
             /** Failure Message */
             failure_message?: string | null;
         };

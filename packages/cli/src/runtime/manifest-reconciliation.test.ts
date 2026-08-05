@@ -3953,7 +3953,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		const prepared: PreparedHostedCatalogSkill = {
 			skillId: "review-pr",
 			source,
-			digest: "b".repeat(64),
+			sourceIdentity:
+				"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
+				"a".repeat(40),
+			archiveSha256: "b".repeat(64),
 			tarBytes: Buffer.from("exact archive"),
 		};
 		const desiredManifest = baseManifest(
@@ -4006,7 +4009,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			verifyOwned: (input: { skill: PreparedHostedCatalogSkill }) => {
 				verifyCalls += 1;
 				return (
-					input.skill.digest === prepared.digest &&
+					input.skill.sourceIdentity === prepared.sourceIdentity &&
 					JSON.stringify(input.skill.source) === JSON.stringify(prepared.source) &&
 					existsSync(join(skillDir, "SKILL.md")) &&
 					readFileSync(join(skillDir, "SKILL.md"), "utf8") === "manifest-owned\n"

@@ -4408,11 +4408,11 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			version: 3,
 			source: {
 				type: "github",
-				repo_url: "https://github.com/Clawdi-AI/store",
-				repo_subdir: "skills/review-pr",
-				revision: "a".repeat(40),
+				url: "https://github.com/Clawdi-AI/store",
+				path: "skills/review-pr",
+				commit: "a".repeat(40),
 			},
-			reconciliation_status: "reconciling",
+			status: "managed",
 			failure_message: null,
 		},
 	];
@@ -4455,6 +4455,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 					deployment_id: railHostedDeployment.id,
 					deployment_resource_version: workspaceResourceVersion,
 					manifest_generation: workspaceManifestGeneration,
+					capability: { available: true, reason: "available" },
 					items: desiredWorkspaceSkills,
 				});
 				return;
@@ -4471,9 +4472,9 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 				workspaceResourceVersion = `rv-workspace-skills-${workspaceManifestGeneration}`;
 				const source = {
 					type: "github" as const,
-					repo_url: "https://github.com/Clawdi-AI/store",
-					repo_subdir: `skills/${skillKey}`,
-					revision: "b".repeat(40),
+					url: "https://github.com/Clawdi-AI/store",
+					path: `skills/${skillKey}`,
+					commit: "b".repeat(40),
 				};
 				if (request.method() === "PUT") {
 					desiredWorkspaceSkills = [
@@ -4482,7 +4483,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 							skill_key: skillKey,
 							version: 1,
 							source,
-							reconciliation_status: "reconciling",
+							status: "requested",
 							failure_message: null,
 						},
 					];
@@ -4498,7 +4499,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 					skill_key: skillKey,
 					desired_state: request.method() === "PUT" ? "present" : "absent",
 					source: request.method() === "PUT" ? source : null,
-					reconciliation_status: "reconciling",
+					status: "requested",
 					failure_message: null,
 				});
 				return;
@@ -4776,7 +4777,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveCount(0);
 	await main.getByRole("button", { name: "Install", exact: true }).click();
 	await expect(main.getByText("Deploy helper", { exact: true })).toBeVisible();
-	await expect(main.getByText("Reconciling", { exact: true }).last()).toBeVisible();
+	await expect(main.getByText("Requested", { exact: true }).last()).toBeVisible();
 	await expect(main.getByRole("button", { name: "Uninstall", exact: true }).last()).toBeVisible();
 	expect(workspaceSkillMutations).toHaveLength(1);
 	expect(workspaceSkillMutations[0]).toMatchObject({

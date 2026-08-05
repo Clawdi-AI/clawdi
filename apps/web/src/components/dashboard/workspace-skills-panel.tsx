@@ -174,8 +174,7 @@ function ConnectedSkillRemoveAction({
 					<DialogHeader>
 						<DialogTitle>Uninstall skill</DialogTitle>
 						<DialogDescription>
-							Run this command on the connected Agent machine. The Cloud projection is not an
-							uninstall authority.
+							Run this command on the connected Agent machine. This Skill is managed on the Agent.
 						</DialogDescription>
 					</DialogHeader>
 					<CliCommand command={workspaceSkillRemoveCommand(skill.skill_key, agentType)} />

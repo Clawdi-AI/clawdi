@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
@@ -16,9 +24,13 @@ afterEach(() => {
 	process.env = { ...originalEnv };
 });
 
-async function codeloadArchive(parent: string, repositoryRoot: string): Promise<Buffer> {
+async function codeloadArchive(
+	parent: string,
+	repositoryRoot: string,
+	gzipLevel = 9,
+): Promise<Buffer> {
 	const chunks: Buffer[] = [];
-	const stream = tar.create({ cwd: parent, gzip: true }, [repositoryRoot]);
+	const stream = tar.create({ cwd: parent, gzip: { level: gzipLevel } }, [repositoryRoot]);
 	for await (const chunk of stream) chunks.push(Buffer.from(chunk));
 	return Buffer.concat(chunks);
 }
@@ -66,6 +78,7 @@ describe("hosted catalog Skill archives", () => {
 		const skillDir = join(root, repositoryRoot, "skills", "review-pr");
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(join(skillDir, "SKILL.md"), "# Review PR\n");
+		writeFileSync(join(skillDir, "reference.md"), "source identity\n".repeat(4096));
 		const archive = await codeloadArchive(root, repositoryRoot);
 		const requestedUrls: string[] = [];
 		const fetcher = async (input: URL | RequestInfo) => {
@@ -82,7 +95,7 @@ describe("hosted catalog Skill archives", () => {
 			skillId: "review-pr",
 			source: { commit },
 		});
-		expect(prepared?.digest).toMatch(/^[a-f0-9]{64}$/);
+		expect(prepared?.archiveSha256).toMatch(/^[a-f0-9]{64}$/);
 		expect(requestedUrls).toEqual([`https://codeload.github.com/Clawdi-AI/store/tar.gz/${commit}`]);
 
 		const cached = await prepareHostedCatalogSkillArchives(manifest(commit), paths, {
@@ -90,7 +103,27 @@ describe("hosted catalog Skill archives", () => {
 				throw new Error("cache should satisfy the exact source offline");
 			},
 		});
-		expect(cached.get("review-pr")?.digest).toBe(prepared?.digest);
+		expect(cached.get("review-pr")?.archiveSha256).toBe(prepared?.archiveSha256);
+		expect(cached.get("review-pr")?.sourceIdentity).toBe(prepared?.sourceIdentity);
+
+		// Cache loss may yield different gzip/tar bytes for the same pinned tree.
+		rmSync(join(paths.cacheRoot, "workspace-skills"), { recursive: true });
+		utimesSync(
+			join(skillDir, "SKILL.md"),
+			new Date("2026-01-02T00:00:00Z"),
+			new Date("2026-01-02T00:00:00Z"),
+		);
+		chmodSync(join(skillDir, "reference.md"), 0o755);
+		const repackedArchive = await codeloadArchive(root, repositoryRoot, 1);
+		const refetched = await prepareHostedCatalogSkillArchives(manifest(commit), paths, {
+			fetcher: async () =>
+				new Response(Uint8Array.from(repackedArchive), {
+					status: 200,
+					headers: { "content-length": String(repackedArchive.byteLength) },
+				}),
+		});
+		expect(refetched.get("review-pr")?.archiveSha256).not.toBe(prepared?.archiveSha256);
+		expect(refetched.get("review-pr")?.sourceIdentity).toBe(prepared?.sourceIdentity);
 
 		const cacheKeys = readdirSync(join(paths.cacheRoot, "workspace-skills"));
 		expect(cacheKeys).toHaveLength(1);

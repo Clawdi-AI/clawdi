@@ -25,6 +25,7 @@ test("uses official OpenClaw install and guards manifest cleanup with a content 
 	const workspaceRoot = join(home, "agent-workspace");
 	const command = join(home, ".local", "bin", "openclaw");
 	const installLog = join(root, "install.log");
+	const workspaceDriftMarker = join(root, "workspace-drift");
 	mkdirSync(dirname(command), { recursive: true });
 	mkdirSync(workspaceRoot, { recursive: true });
 	writeFileSync(
@@ -32,6 +33,10 @@ test("uses official OpenClaw install and guards manifest cleanup with a content 
 		`#!/bin/sh
 set -eu
 if test "$1 $2 $3" = "agents list --json"; then
+  if test -f '${workspaceDriftMarker}'; then
+    printf '[{"id":"main","workspace":"${join(home, "different-workspace")}"}]\n'
+    exit 0
+  fi
   printf '[{"id":"main","workspace":"%s"}]\n' "$PWD"
   exit 0
 fi
@@ -49,6 +54,8 @@ rm -rf "$PWD/skills/$skill_id"
 cp -R "$source_dir" "$PWD/skills/$skill_id"
 mkdir -p "$PWD/skills/$skill_id/.openclaw"
 printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
+if test "\${FAKE_OPENCLAW_FAIL_AFTER_WRITE:-}" = "1"; then exit 45; fi
+if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDriftMarker}'; fi
 `,
 	);
 	chmodSync(command, 0o755);
@@ -66,7 +73,9 @@ printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
 			path: "skills/review-pr",
 			commit: "a".repeat(40),
 		},
-		digest: "b".repeat(64),
+		sourceIdentity:
+			"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" + "a".repeat(40),
+		archiveSha256: "b".repeat(64),
 		tarBytes: readFileSync(archive),
 	};
 
@@ -79,12 +88,41 @@ printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
 	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(false);
 	writeFileSync(receipt, receiptBytes);
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
+	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR v2\n");
+	process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE = "1";
+	expect(() =>
+		hostedOpenClawSkillDriver.installDirectory({
+			home,
+			workspaceRoot,
+			skillId: "review-pr",
+			sourceDir,
+			ownershipIdentity: `${skill.sourceIdentity}-v2`,
+		}),
+	).toThrow("official Skill install failed");
+	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
+	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(true);
+	delete process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE;
+	process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE = "1";
+	expect(() =>
+		hostedOpenClawSkillDriver.installDirectory({
+			home,
+			workspaceRoot,
+			skillId: "review-pr",
+			sourceDir,
+			ownershipIdentity: `${skill.sourceIdentity}-v2`,
+		}),
+	).toThrow("does not match");
+	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
+	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(true);
+	delete process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE;
+	rmSync(workspaceDriftMarker);
+	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
 	writeFileSync(join(target, "SKILL.md"), "user changed\n");
 	expect(() =>
 		hostedOpenClawSkillDriver.cleanupManifestOwned({
 			workspaceRoot,
 			skillId: "review-pr",
-			digest: skill.digest,
+			ownershipIdentity: skill.sourceIdentity,
 		}),
 	).toThrow("ownership receipt");
 	expect(existsSync(target)).toBe(true);
@@ -93,7 +131,7 @@ printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
 		hostedOpenClawSkillDriver.cleanupManifestOwned({
 			workspaceRoot,
 			skillId: "review-pr",
-			digest: skill.digest,
+			ownershipIdentity: skill.sourceIdentity,
 		}),
 	).toBe("removed");
 	expect(existsSync(target)).toBe(false);
@@ -102,7 +140,7 @@ printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
 		hostedOpenClawSkillDriver.cleanupManifestOwned({
 			workspaceRoot,
 			skillId: "review-pr",
-			digest: skill.digest,
+			ownershipIdentity: skill.sourceIdentity,
 		}),
 	).toBe("absent");
 	expect(existsSync(receipt)).toBe(false);
@@ -137,7 +175,9 @@ exit 0
 			workspaceRoot,
 			skillId: "review-pr",
 			sourceDir,
-			digest: "b".repeat(64),
+			ownershipIdentity:
+				"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
+				"a".repeat(40),
 		}),
 	).toThrow("does not match");
 	expect(existsSync(installMarker)).toBe(false);

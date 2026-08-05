@@ -67,3 +67,44 @@ cp -R "$source_dir" '${workspace}/skills/'"$skill_id"
 	expect(commands[0]).toContain("--as review-pr --force");
 	expect(commands[1]).toContain("--as review-pr__alice-a3b4 --force");
 });
+
+test("restores an existing Skill when the official installer writes then fails", async () => {
+	root = mkdtempSync(join(tmpdir(), "openclaw-skill-installer-rollback-"));
+	const bin = join(root, "bin");
+	const workspace = join(root, "workspace");
+	const target = join(workspace, "skills", "review-pr");
+	mkdirSync(bin, { recursive: true });
+	mkdirSync(target, { recursive: true });
+	writeFileSync(join(target, "SKILL.md"), "# Original\n");
+	writeFileSync(
+		join(bin, "openclaw"),
+		`#!/bin/sh
+set -eu
+if test "$1 $2 $3" = "agents list --json"; then
+  printf '[{"id":"main","workspace":"${workspace}"}]\n'
+  exit 0
+fi
+skill_id="$7"
+rm -rf '${workspace}/skills/'"$skill_id"
+mkdir -p '${workspace}/skills/'"$skill_id"
+printf '# Partial\n' > '${workspace}/skills/'"$skill_id"/SKILL.md"
+exit 23
+`,
+	);
+	chmodSync(join(bin, "openclaw"), 0o755);
+	process.env.PATH = `${bin}:${originalEnv.PATH ?? ""}`;
+	process.env.HOME = root;
+	process.env.OPENCLAW_STATE_DIR = join(root, "state");
+	delete process.env.OPENCLAW_AGENT_ID;
+	const sourceDir = join(root, "source", "review-pr");
+	mkdirSync(sourceDir, { recursive: true });
+	writeFileSync(join(sourceDir, "SKILL.md"), "# Replacement\n");
+	const archive = join(root, "review-pr.tar.gz");
+	const packed = spawnSync("tar", ["-czf", archive, "-C", dirname(sourceDir), "review-pr"]);
+	if (packed.status !== 0) throw new Error("test tar creation failed");
+
+	await expect(
+		new OpenClawAdapter().writeSkillArchive("review-pr", readFileSync(archive)),
+	).rejects.toThrow("OpenClaw official Skill install failed");
+	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Original\n");
+});

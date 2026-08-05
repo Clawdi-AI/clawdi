@@ -3653,7 +3653,17 @@ function managedSkillReservationDigest(targetDir: string, skillId: string): stri
 		(entry) => entry.targetDir === targetDir && entry.id === skillId,
 	);
 	if (!reservation) throw new Error(`managed Skill ${skillId} has no matching ownership receipt`);
+	if (!reservation.digest) throw new Error(`managed Skill ${skillId} has no content digest`);
 	return reservation.digest;
+}
+
+function managedSkillReservationSourceIdentity(targetDir: string, skillId: string): string {
+	const reservation = managedSkillReservations("hosted-manifest").find(
+		(entry) => entry.targetDir === targetDir && entry.id === skillId,
+	);
+	if (!reservation?.sourceIdentity)
+		throw new Error(`managed Skill ${skillId} has no canonical source identity`);
+	return reservation.sourceIdentity;
 }
 
 function validateHostedSkillsPlan(
@@ -3741,7 +3751,7 @@ function recoverHostedCatalogSkillReservations(
 			targetDir,
 			id: skillId,
 			manager: "hosted-manifest",
-			digest: prepared.digest,
+			sourceIdentity: prepared.sourceIdentity,
 		});
 	}
 }
@@ -3774,7 +3784,7 @@ function recoverHostedOpenClawCatalogSkillReservations(
 			targetDir,
 			id: skillId,
 			manager: "hosted-manifest",
-			digest: skill.digest,
+			sourceIdentity: skill.sourceIdentity,
 		});
 	}
 }
@@ -3824,7 +3834,7 @@ function applyHostedBundledSkills(
 						? openClawDriver.cleanupManifestOwned({
 								workspaceRoot,
 								skillId: skillName,
-								digest: managedSkillReservationDigest(targetDir, skillName),
+								ownershipIdentity: `content-sha256\0${managedSkillReservationDigest(targetDir, skillName)}`,
 							})
 						: withRuntimeUserFileAccess(() => rmSync(targetDir, { recursive: true, force: true })),
 			});
@@ -3860,7 +3870,7 @@ function applyHostedBundledSkills(
 							workspaceRoot,
 							skillId: skillName,
 							sourceDir,
-							digest: bundled.digest,
+							ownershipIdentity: `content-sha256\0${bundled.digest}`,
 						})
 					: withRuntimeUserFileAccess(() =>
 							reconcileHostedBundledSkill({ bundle, targetDir, reserved: true }),
@@ -3915,7 +3925,7 @@ function applyHostedCatalogSkills(
 						home,
 						appRoot,
 						skillId,
-						digest: managedSkillReservationDigest(targetDir, skillId),
+						ownershipIdentity: managedSkillReservationSourceIdentity(targetDir, skillId),
 					}),
 			});
 			continue;
@@ -3932,7 +3942,7 @@ function applyHostedCatalogSkills(
 				targetDir,
 				id: skillId,
 				manager: "hosted-manifest",
-				digest: prepared.digest,
+				sourceIdentity: prepared.sourceIdentity,
 			},
 			() =>
 				nativeReconciler.install({
@@ -3988,7 +3998,7 @@ function applyHostedOpenClawCatalogSkills(
 					driver.cleanupManifestOwned({
 						workspaceRoot,
 						skillId,
-						digest: managedSkillReservationDigest(targetDir, skillId),
+						ownershipIdentity: managedSkillReservationSourceIdentity(targetDir, skillId),
 					}),
 			});
 			continue;
@@ -4000,7 +4010,12 @@ function applyHostedOpenClawCatalogSkills(
 		if (existsSync(targetDir) && owner !== "hosted-manifest")
 			throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
 		installReservedManagedSkill(
-			{ targetDir, id: skillId, manager: "hosted-manifest", digest: prepared.digest },
+			{
+				targetDir,
+				id: skillId,
+				manager: "hosted-manifest",
+				sourceIdentity: prepared.sourceIdentity,
+			},
 			() => driver.install({ home, workspaceRoot, skill: prepared }),
 		);
 	}
