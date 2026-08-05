@@ -42,9 +42,14 @@ import {
 	overviewProjectsModule,
 	useOverviewConnectorsModule,
 	useOverviewMemoriesModule,
+	useOverviewVaultsModule,
+	useOverviewWorkspaceSkillsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
-import { linkedAgentProjectCount } from "@/components/dashboard/agent-project-scope";
+import {
+	linkedAgentProjectCount,
+	resolveAgentWorkspaceProjectId,
+} from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailPanel } from "@/components/detail/layout";
@@ -287,6 +292,7 @@ import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
 import {
 	type AgentRouteSearch,
 	type AgentSectionId,
+	agentProjectResourceLink,
 	agentSectionHref,
 	agentSectionLabel,
 	agentSectionLink,
@@ -1109,11 +1115,39 @@ function OverviewTab({
 		label: runtimeStatusPresentation.label,
 		tone: runtimeStatusPresentation.tone,
 	};
+	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
+	const workspaceProjectId = agent
+		? resolveAgentWorkspaceProjectId(projectBindings.data ?? [], agent.default_project_id)
+		: null;
+	const workspaceResolution =
+		projectionLoading || projectBindings.isLoading
+			? "loading"
+			: projectionUnavailable || projectBindings.error || !workspaceProjectId
+				? "unavailable"
+				: "ready";
+	const runtimeSkills = useQuery({
+		queryKey: ["hosted", "deployments", deployment.resource.id, "skills"],
+		queryFn: () => billingClient.listWorkspaceSkills(deployment.resource.id),
+	});
+	const visibleSkillsModule = useOverviewWorkspaceSkillsModule({
+		projectId: workspaceProjectId,
+		resolution: workspaceResolution,
+		skillKeys: (runtimeSkills.data?.items ?? []).map((skill) => skill.skill_key),
+	});
+	const skillsModule = runtimeSkills.isLoading
+		? { description: <OverviewDescriptionSkeleton label="skills" /> }
+		: runtimeSkills.error
+			? { description: "Unavailable right now" }
+			: visibleSkillsModule;
+	const vaultsModule = useOverviewVaultsModule({
+		projectIds: workspaceProjectId ? [workspaceProjectId] : [],
+		resolution: workspaceResolution,
+	});
 	const memoriesModule = useOverviewMemoriesModule();
 	const connectorsModule = useOverviewConnectorsModule();
 	return (
@@ -1203,7 +1237,19 @@ function OverviewTab({
 							error: projectBindings.error,
 						},
 					}),
+					skills: {
+						...skillsModule,
+						link: workspaceProjectId
+							? agentProjectResourceLink(agentId, workspaceProjectId, "skills", routeSearch)
+							: null,
+					},
 					memories: memoriesModule,
+					vaults: {
+						...vaultsModule,
+						link: workspaceProjectId
+							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults", routeSearch)
+							: null,
+					},
 					connectors: connectorsModule,
 					"model-provider": {
 						description:

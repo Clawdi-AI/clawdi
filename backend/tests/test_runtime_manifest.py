@@ -41,6 +41,7 @@ from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
     HostedRuntimeMcp,
+    HostedRuntimeSkills,
     validate_clawdi_cli_package_spec,
 )
 from app.services import sync_events
@@ -131,6 +132,61 @@ TEST_HERMES_DASHBOARD_AUTH = {
         "capability": "hermes-basic-auth-v1",
     },
 }
+
+
+def test_hosted_runtime_skills_retain_exact_catalog_source() -> None:
+    source = {
+        "type": "github",
+        "repoUrl": "https://github.com/Clawdi-AI/store",
+        "repoSubdir": "skills/review-pr",
+        "revision": "a" * 40,
+    }
+    skills = HostedRuntimeSkills.model_validate(
+        {
+            "entries": {
+                "review-pr": {"enabled": True, "version": 3, "source": source}
+            }
+        }
+    )
+
+    assert skills.model_dump(mode="json") == {
+        "entries": {
+            "review-pr": {"enabled": True, "version": 3, "source": source}
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "source_override",
+    [
+        {"revision": "main"},
+        {"revision": "A" * 40},
+        {"repoUrl": "https://github.com/Clawdi-AI/store/"},
+        {"repoUrl": f"https://github.com/Clawdi-AI/store/tree/{'a' * 40}"},
+        {"repoSubdir": "skills/../review-pr"},
+    ],
+)
+def test_hosted_runtime_skills_reject_mutable_or_noncanonical_source(
+    source_override: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError):
+        HostedRuntimeSkills.model_validate(
+            {
+                "entries": {
+                    "review-pr": {
+                        "enabled": True,
+                        "version": 3,
+                        "source": {
+                            "type": "github",
+                            "repoUrl": "https://github.com/Clawdi-AI/store",
+                            "repoSubdir": "skills/review-pr",
+                            "revision": "a" * 40,
+                            **source_override,
+                        },
+                    }
+                }
+            }
+        )
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "skills")
 TEST_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
 TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@1.2.5-test"

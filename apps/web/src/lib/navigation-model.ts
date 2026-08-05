@@ -382,6 +382,15 @@ export const AGENT_PROJECT_RESOURCE_SECTION_IDS = [
 	"vaults",
 ] as const satisfies readonly AgentSectionId[];
 
+/** Agent overview resources, including the two entries scoped to its Workspace. */
+export const AGENT_OVERVIEW_RESOURCE_SECTION_IDS = [
+	"projects",
+	"skills",
+	"memories",
+	"vaults",
+	"connectors",
+] as const satisfies readonly AgentSectionId[];
+
 const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "primary",

@@ -81,7 +81,12 @@ import {
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
+import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
 import { managedMcpHeaderPlaceholder, normalizeSecretRef } from "./hosted-egress-profiles";
+import {
+	type HostedHermesSkillNativeReconciler,
+	hostedHermesSkillNativeReconciler,
+} from "./hosted-hermes-skill";
 import {
 	hostedAiProviderCatalog,
 	hostedProviderEnvironment,
@@ -117,12 +122,14 @@ import { buildManagedModelsEndpoint, extractManagedLiveModels } from "./managed-
 import {
 	installReservedManagedSkill,
 	managedSkillReservationOwner,
+	managedSkillReservations,
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "./managed-skill-reservation";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import {
 	type HostedMcpServerDesiredState,
+	type HostedSkillSource,
 	hostedMcpDesiredStateSchema,
 } from "./manifest-resources";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
@@ -3634,16 +3641,36 @@ function hostedBundledSkillTargetDir(name: string, skillName: string, home: stri
 	return agentSkillTargetDir(name, skillName, agentHome);
 }
 
-function validateHostedBundledSkillsPlan(
+function validateHostedSkillsPlan(
 	name: string,
 	manifest: RuntimeManifest,
 	home: string,
+	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
 ): void {
 	if (!hostedBundledSkillsEnabled()) return;
 	for (const [skillName, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
-		const bundled = resolveHostedBundledSkill(skillName, desired.version);
 		const targetDir = hostedBundledSkillTargetDir(name, skillName, home);
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
+		if (desired.source) {
+			if (hostedBundledSkillIds().includes(skillName)) {
+				throw new Error(`bundled hosted Skill ${skillName} must not declare a catalog source`);
+			}
+			if (name !== "hermes" || !targetDir || !runtimeEnabled || desired.enabled !== true) continue;
+			const prepared = preparedCatalogSkills.get(skillName);
+			if (
+				!prepared ||
+				JSON.stringify(prepared.source) !== JSON.stringify(desired.source) ||
+				prepared.version !== desired.version
+			) {
+				throw new Error(`pinned archive for hosted Skill ${skillName} is unavailable`);
+			}
+			const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
+			if (existsSync(targetDir) && reservationOwner !== "hosted-manifest") {
+				throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
+			}
+			continue;
+		}
+		const bundled = resolveHostedBundledSkill(skillName, desired.version);
 		if (!targetDir || !runtimeEnabled || desired.enabled !== true) continue;
 		const sourceDir = hostedBundledSkillSourceDir(bundled.assetDirectory);
 		assertHostedBundledSkillCatalogDigest(bundled, sourceDir);
@@ -3655,6 +3682,47 @@ function validateHostedBundledSkillsPlan(
 		) {
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
 		}
+	}
+}
+
+function recoverHostedCatalogSkillReservations(
+	manifest: RuntimeManifest,
+	home: string,
+	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+	nativeReconciler: HostedHermesSkillNativeReconciler,
+): void {
+	if (!hostedBundledSkillsEnabled() || manifest.runtimes.hermes?.enabled !== true) return;
+	const appRoot = join(home, ".hermes", "hermes-agent");
+	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(
+		([left], [right]) => left.localeCompare(right),
+	)) {
+		if (desired.enabled !== true || !desired.source || hostedBundledSkillIds().includes(skillId)) {
+			continue;
+		}
+		const targetDir = hostedBundledSkillTargetDir("hermes", skillId, home);
+		if (
+			!targetDir ||
+			!existsSync(targetDir) ||
+			managedSkillReservationOwner(targetDir, skillId) !== "unreserved"
+		) {
+			continue;
+		}
+		const prepared = preparedCatalogSkills.get(skillId);
+		if (
+			!prepared ||
+			prepared.version !== desired.version ||
+			JSON.stringify(prepared.source) !== JSON.stringify(desired.source)
+		) {
+			continue;
+		}
+		if (!nativeReconciler.verifyOwned({ home, appRoot, skill: prepared })) continue;
+		reserveManagedSkill({
+			targetDir,
+			id: skillId,
+			manager: "hosted-manifest",
+			version: prepared.version,
+			digest: prepared.digest,
+		});
 	}
 }
 
@@ -3737,20 +3805,101 @@ function applyHostedBundledSkills(
 	return targets;
 }
 
-function hostedBundledSkillProjection(
+function applyHostedCatalogSkills(
+	observation: RuntimeInstallObservation | undefined,
+	manifest: RuntimeManifest,
+	home: string,
+	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+	nativeReconciler: HostedHermesSkillNativeReconciler,
+): string[] {
+	const skillsRoot = join(home, ".hermes", "skills");
+	const desiredEntries = manifest.projection?.skills?.entries ?? {};
+	const desiredCatalogIds = Object.entries(desiredEntries).flatMap(([skillId, desired]) =>
+		desired.source ? [skillId] : [],
+	);
+	const previouslyManagedIds = managedSkillReservations("hosted-manifest").flatMap((reservation) =>
+		dirname(reservation.targetDir) === skillsRoot &&
+		!hostedBundledSkillIds().includes(reservation.id)
+			? [reservation.id]
+			: [],
+	);
+	const skillIds = [...new Set([...desiredCatalogIds, ...previouslyManagedIds])].sort(
+		(left, right) => left.localeCompare(right),
+	);
+	const appRoot = join(home, ".hermes", "hermes-agent");
+	const runtimeEnabled = manifest.runtimes.hermes?.enabled === true;
+	const targets: string[] = [];
+	for (const skillId of skillIds) {
+		const targetDir = hostedBundledSkillTargetDir("hermes", skillId, home);
+		if (!targetDir) continue;
+		targets.push(targetDir);
+		const desired = desiredEntries[skillId];
+		if (!runtimeEnabled || desired?.enabled !== true || !desired.source) {
+			const owner = managedSkillReservationOwner(targetDir, skillId);
+			if (owner === "unreserved") continue;
+			if (owner !== "hosted-manifest") {
+				throw new Error(`managed Skill ${skillId} is owned by a different manager`);
+			}
+			releaseManagedSkill({
+				targetDir,
+				id: skillId,
+				manager: "hosted-manifest",
+				removeTarget: () => nativeReconciler.uninstall({ home, appRoot, skillId }),
+			});
+			continue;
+		}
+		if (!observation?.enabled || observation.status === "install_failed") continue;
+		const prepared = preparedCatalogSkills.get(skillId);
+		if (!prepared) throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
+		const owner = managedSkillReservationOwner(targetDir, skillId);
+		if (existsSync(targetDir) && owner !== "hosted-manifest") {
+			throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
+		}
+		installReservedManagedSkill(
+			{
+				targetDir,
+				id: skillId,
+				manager: "hosted-manifest",
+				version: prepared.version,
+				digest: prepared.digest,
+			},
+			() =>
+				nativeReconciler.install({
+					home,
+					appRoot,
+					skill: prepared,
+					previouslyReserved: owner === "hosted-manifest",
+				}),
+		);
+	}
+	return targets;
+}
+
+type HostedSkillProjectionEntry =
+	| { id: string; version: number; digest: string }
+	| { id: string; version: number; source: HostedSkillSource };
+
+function hostedSkillProjection(
 	manifest: RuntimeManifest,
 	runtime: string,
-): Array<{ id: string; version: number; digest: string }> | null {
+): HostedSkillProjectionEntry[] | null {
 	if (runtime !== "openclaw" && runtime !== "hermes") return null;
 	if (manifest.runtimes[runtime]?.enabled !== true) return [];
-	return hostedBundledSkillIds()
-		.sort((left, right) => left.localeCompare(right))
-		.flatMap((skillId) => {
-			const desired = manifest.projection?.skills?.entries[skillId];
-			if (desired?.enabled !== true) return [];
-			const bundled = resolveHostedBundledSkill(skillId, desired.version);
-			return [{ id: bundled.id, version: bundled.version, digest: bundled.digest }];
-		});
+	const projection: HostedSkillProjectionEntry[] = [];
+	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(
+		([left], [right]) => left.localeCompare(right),
+	)) {
+		if (desired.enabled !== true) continue;
+		if (desired.source) {
+			if (runtime === "hermes") {
+				projection.push({ id: skillId, version: desired.version, source: desired.source });
+			}
+			continue;
+		}
+		const bundled = resolveHostedBundledSkill(skillId, desired.version);
+		projection.push({ id: bundled.id, version: bundled.version, digest: bundled.digest });
+	}
+	return projection;
 }
 
 function applyHostedMcpProjections(
@@ -4419,7 +4568,7 @@ function runtimeProgramRevisionForManifest(
 					: (manifest.locale?.timezone ?? null),
 			mcp: hostedTarget ? hostedMcpIntent(manifest) : null,
 			provider: providerProjectionRevision,
-			skills: hostedBundledSkillProjection(manifest, runtime),
+			skills: hostedSkillProjection(manifest, runtime),
 		},
 		desiredRuntime,
 		secretValues: scopedSecretValues(secretValues, runtimeSecretRefs),
@@ -4436,11 +4585,15 @@ function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> 
 		: undefined;
 }
 
-function validateRuntimeManifestPlan(manifest: RuntimeManifest, paths: RuntimePaths): void {
+function validateRuntimeManifestPlan(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	preparedCatalogSkills: ReadonlyMap<string, PreparedHostedCatalogSkill>,
+): void {
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	for (const name of HOSTED_RUNTIME_TARGETS) {
-		validateHostedBundledSkillsPlan(name, manifest, home);
+		validateHostedSkillsPlan(name, manifest, home, preparedCatalogSkills);
 	}
 	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
 		const runtimeName = runtimeNameSchema.parse(name);
@@ -4966,6 +5119,23 @@ export function runtimeUserMutationTargets(
 			if (target) targets.add(target);
 		}
 	}
+	const hermesSkillsRoot = join(home, ".hermes", "skills");
+	let managesHermesCatalogSkill = false;
+	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
+		if (!desired.source) continue;
+		managesHermesCatalogSkill = true;
+		targets.add(join(hermesSkillsRoot, skillId));
+	}
+	for (const reservation of managedSkillReservations("hosted-manifest")) {
+		if (
+			dirname(reservation.targetDir) === hermesSkillsRoot &&
+			!hostedBundledSkillIds().includes(reservation.id)
+		) {
+			managesHermesCatalogSkill = true;
+			targets.add(reservation.targetDir);
+		}
+	}
+	if (managesHermesCatalogSkill) targets.add(join(hermesSkillsRoot, ".hub"));
 	return [...targets].sort();
 }
 
@@ -5135,6 +5305,8 @@ export function convergeRuntimeManifest(
 		egressEngineEnsureOptions?: EnsureRuntimeMitmproxyOptions;
 		systemdApply?: RuntimeSystemdApplyHooks;
 		executeOfficialServiceInstallers?: boolean;
+		preparedHostedCatalogSkills?: ReadonlyMap<string, PreparedHostedCatalogSkill>;
+		hostedHermesSkillNativeReconciler?: HostedHermesSkillNativeReconciler;
 	} = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
@@ -5179,7 +5351,16 @@ export function convergeRuntimeManifest(
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
 	const observations = new Map<string, RuntimeInstallObservation>();
 
-	validateRuntimeManifestPlan(manifest, paths);
+	const preparedHostedCatalogSkills = opts.preparedHostedCatalogSkills ?? new Map();
+	const hermesSkillNativeReconciler =
+		opts.hostedHermesSkillNativeReconciler ?? hostedHermesSkillNativeReconciler;
+	recoverHostedCatalogSkillReservations(
+		manifest,
+		projectionHome,
+		preparedHostedCatalogSkills,
+		hermesSkillNativeReconciler,
+	);
+	validateRuntimeManifestPlan(manifest, paths, preparedHostedCatalogSkills);
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = planRuntimeInstallObservation(name, runtime, projectionHome);
 		observations.set(name, observation);
@@ -5631,6 +5812,21 @@ export function convergeRuntimeManifest(
 					}`,
 				);
 			}
+		}
+		try {
+			applyHostedCatalogSkills(
+				observations.get("hermes"),
+				manifest,
+				projectionHome,
+				preparedHostedCatalogSkills,
+				hermesSkillNativeReconciler,
+			);
+		} catch (error) {
+			installErrors.push(
+				`runtime hermes catalog Skill projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
 		}
 		try {
 			applyHostedMcpProjections(manifest, paths, observations, workspaceRoot);

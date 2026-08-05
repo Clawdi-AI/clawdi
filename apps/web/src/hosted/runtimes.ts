@@ -7,12 +7,12 @@ const RUNTIME_META = {
 	openclaw: {
 		label: "OpenClaw",
 		blurb: "Choose this if you already use OpenClaw and want its Control UI and workflows.",
-		skillInstall: true,
+		skillInstall: false,
 	},
 	hermes: {
 		label: "Hermes",
 		blurb: "Recommended for most people. Chat with and manage your agent in the Hermes Dashboard.",
-		skillInstall: false,
+		skillInstall: true,
 	},
 } as const satisfies Record<HostedRuntime, { label: string; blurb: string; skillInstall: boolean }>;
 

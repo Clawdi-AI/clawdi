@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
+	/** Override the default section route; null keeps an unresolved resource non-interactive. */
+	link?: OverviewLinkOptions | null;
 };
 
 type OverviewLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
@@ -149,7 +151,11 @@ export function AgentOverviewCapabilities({
 									description={moduleContent.description}
 									icon={item.icon}
 									tint={item.tint}
-									link={agentSectionLink(agentId, module.section, routeSearch)}
+									link={
+										moduleContent.link === undefined
+											? agentSectionLink(agentId, module.section, routeSearch)
+											: moduleContent.link
+									}
 								/>
 							);
 						})}
@@ -173,25 +179,36 @@ function OverviewNavigationCard({
 	description: ReactNode;
 	icon: LucideIcon;
 	tint: string;
-	link: OverviewLinkOptions;
+	link: OverviewLinkOptions | null;
 }) {
+	const content = (
+		<>
+			<IconChip size="sm" tint={tint}>
+				<Icon />
+			</IconChip>
+			<div className="min-w-0 flex-1">
+				<CardTitle>{title}</CardTitle>
+				<CardDescription data-overview-primary-value>{description}</CardDescription>
+			</div>
+			{link ? (
+				<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+			) : null}
+		</>
+	);
 	return (
 		<Card size="sm" role="article" data-overview-module={id} className="h-full min-w-0 py-3">
 			<CardHeader className="h-full grid-rows-1 content-center gap-0">
-				<Link
-					{...link}
-					aria-label={title}
-					className="group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-				>
-					<IconChip size="sm" tint={tint}>
-						<Icon />
-					</IconChip>
-					<div className="min-w-0 flex-1">
-						<CardTitle>{title}</CardTitle>
-						<CardDescription data-overview-primary-value>{description}</CardDescription>
-					</div>
-					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-				</Link>
+				{link ? (
+					<Link
+						{...link}
+						aria-label={title}
+						className="group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					>
+						{content}
+					</Link>
+				) : (
+					<div className="flex min-w-0 items-center gap-3">{content}</div>
+				)}
 			</CardHeader>
 		</Card>
 	);

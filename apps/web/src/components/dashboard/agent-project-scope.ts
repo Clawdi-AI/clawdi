@@ -30,6 +30,20 @@ export function linkedAgentProjectCount(bindings: readonly AgentProjectBinding[]
 	return bindings.filter((binding) => binding.binding_type === "context").length;
 }
 
+/** Resolve the one Workspace binding only when it matches the Agent projection. */
+export function resolveAgentWorkspaceProjectId(
+	bindings: readonly AgentProjectBinding[],
+	expectedProjectId: string | null | undefined,
+): string | null {
+	const expectedId = expectedProjectId?.trim();
+	if (!expectedId) return null;
+
+	const primaryBindings = bindings.filter((binding) => binding.binding_type === "primary");
+	return primaryBindings.length === 1 && primaryBindings[0]?.project_id === expectedId
+		? expectedId
+		: null;
+}
+
 /**
  * Resolve the Agent's fixed Workspace Project without guessing. The primary
  * binding is authoritative, AgentResponse.default_project_id fences stale
@@ -40,13 +54,10 @@ export function resolveAgentDefaultProject<Project extends { id: string }>(
 	projects: readonly Project[],
 	expectedProjectId: string | null | undefined,
 ): Project | null {
-	const expectedId = expectedProjectId?.trim();
-	if (!expectedId) return null;
-
-	const primaryBindings = bindings.filter((binding) => binding.binding_type === "primary");
-	if (primaryBindings.length !== 1 || primaryBindings[0]?.project_id !== expectedId) return null;
-
-	return projects.find((project) => project.id === expectedId) ?? null;
+	const workspaceProjectId = resolveAgentWorkspaceProjectId(bindings, expectedProjectId);
+	return workspaceProjectId
+		? (projects.find((project) => project.id === workspaceProjectId) ?? null)
+		: null;
 }
 
 /**

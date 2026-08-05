@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasAsciiControlCharacter } from "../lib/github-skill-archive";
 import { secretRefSchema } from "./egress-profiles";
 
 const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
@@ -92,12 +93,64 @@ export const hostedMcpDesiredStateSchema = z
 	})
 	.strict();
 
+const exactGitRevisionSchema = z.string().regex(/^[a-f0-9]{40}$/);
+
+function isCanonicalGithubRepositoryUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return (
+			url.protocol === "https:" &&
+			url.hostname === "github.com" &&
+			!url.username &&
+			!url.password &&
+			!url.search &&
+			!url.hash &&
+			/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(url.pathname)
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isSafeRepositorySubdir(value: string): boolean {
+	const segments = value.split("/");
+	return (
+		value === value.trim() &&
+		segments.length > 0 &&
+		segments.every(
+			(segment) =>
+				segment.length > 0 &&
+				segment !== "." &&
+				segment !== ".." &&
+				!segment.includes("\\") &&
+				!hasAsciiControlCharacter(segment),
+		)
+	);
+}
+
+export const hostedSkillSourceSchema = z
+	.object({
+		type: z.literal("github"),
+		repoUrl: z
+			.string()
+			.max(500)
+			.refine(isCanonicalGithubRepositoryUrl, "must be a canonical GitHub repository URL"),
+		repoSubdir: z
+			.string()
+			.max(500)
+			.refine(isSafeRepositorySubdir, "must be a safe repository-relative directory"),
+		revision: exactGitRevisionSchema,
+	})
+	.strict();
+export type HostedSkillSource = z.infer<typeof hostedSkillSourceSchema>;
+
 export const hostedSkillEntryDesiredStateSchema = z
 	.object({
 		enabled: z.boolean(),
 		// Expand-phase compatibility for enabled-only manifests is pinned to the
 		// first immutable bundle. It must never resolve relative to the CLI package.
 		version: z.number().int().positive().default(1),
+		source: hostedSkillSourceSchema.optional(),
 	})
 	.strict();
 

@@ -44,6 +44,13 @@ interface ManagedSkillReservation {
 	manager: ManagedSkillReservationManager;
 }
 
+export interface ManagedSkillReservationSnapshot {
+	targetDir: string;
+	id: string;
+	version: number;
+	digest: string;
+}
+
 interface ManagedSkillReservationLedger {
 	schemaVersion: typeof LEDGER_SCHEMA;
 	reservations: Record<string, ManagedSkillReservation>;
@@ -164,6 +171,21 @@ export function managedSkillReservationOwner(
 	} catch {
 		return "indeterminate";
 	}
+}
+
+export function managedSkillReservations(
+	manager: ManagedSkillReservationManager,
+): ManagedSkillReservationSnapshot[] {
+	const ledger = readLedger(ledgerPath());
+	return Object.values(ledger.reservations)
+		.filter((reservation) => reservation.manager === manager)
+		.map((reservation) => ({
+			targetDir: reservation.target,
+			id: reservation.id,
+			version: reservation.version,
+			digest: reservation.digest,
+		}))
+		.sort((left, right) => left.targetDir.localeCompare(right.targetDir));
 }
 
 export function shouldIgnoreUserSkill(targetDir: string, skillId = basename(targetDir)): boolean {

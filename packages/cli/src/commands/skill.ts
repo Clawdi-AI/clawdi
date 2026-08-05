@@ -10,7 +10,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
@@ -21,6 +21,7 @@ import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getConfig, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
+import { fetchGithubSkillArchive, readBoundedResponseBytes } from "../lib/github-skill-archive";
 import { resolveProjectId } from "../lib/project-resolver";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
@@ -37,7 +38,7 @@ import {
 	removeSkillProjectionClaim,
 } from "../lib/skills-lock";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
-import { extractTarGz, snapshotSkillArchive, tarSingleFile, tarSkillDir } from "../lib/tar";
+import { snapshotSkillArchive, tarSingleFile } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
 
 function requireAuth() {
@@ -160,111 +161,7 @@ function countFiles(dir: string): number {
 	return count;
 }
 
-const MAX_GITHUB_ARCHIVE_BYTES = 100 * 1024 * 1024;
-
-export async function readBoundedResponseBytes(
-	response: Response,
-	maxBytes: number,
-): Promise<Buffer> {
-	if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
-		throw new Error("Response byte limit must be a positive safe integer.");
-	}
-	const declaredHeader = response.headers.get("content-length");
-	if (declaredHeader !== null) {
-		const declaredBytes = Number(declaredHeader);
-		if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
-			throw new Error("Response has an invalid Content-Length.");
-		}
-		if (declaredBytes > maxBytes) {
-			await response.body?.cancel("response exceeds byte limit");
-			throw new Error("GitHub archive exceeds the 100 MB download limit.");
-		}
-	}
-	if (!response.body) throw new Error("GitHub archive response has no body.");
-
-	const reader = response.body.getReader();
-	const chunks: Uint8Array[] = [];
-	let receivedBytes = 0;
-	try {
-		while (true) {
-			const next = await reader.read();
-			if (next.done) break;
-			receivedBytes += next.value.byteLength;
-			if (receivedBytes > maxBytes) {
-				await reader.cancel("response exceeds byte limit");
-				throw new Error("GitHub archive exceeds the 100 MB download limit.");
-			}
-			chunks.push(next.value);
-		}
-	} finally {
-		reader.releaseLock();
-	}
-	return Buffer.concat(chunks, receivedBytes);
-}
-
-function assertSafeRepositoryPath(path: string): void {
-	const segments = path.split("/");
-	if (
-		segments.length === 0 ||
-		segments.some(
-			(segment) => !segment || segment === "." || segment === ".." || segment.includes("\\"),
-		)
-	) {
-		throw new Error("GitHub Skill path is invalid.");
-	}
-}
-
-async function fetchGithubSkillArchive(source: Extract<ParsedSource, { type: "github" }>): Promise<{
-	skillKey: string;
-	tarBytes: Buffer;
-}> {
-	if (source.path) assertSafeRepositoryPath(source.path);
-	const archiveUrl = new URL(
-		`https://codeload.github.com/${encodeURIComponent(source.owner)}/${encodeURIComponent(source.repo)}/tar.gz/${encodeURIComponent(source.ref ?? "HEAD")}`,
-	);
-	const response = await fetch(archiveUrl, {
-		headers: { Accept: "application/vnd.github+json" },
-		redirect: "follow",
-	});
-	if (!response.ok) {
-		throw new Error(`GitHub archive download failed (${response.status}).`);
-	}
-	const archive = await readBoundedResponseBytes(response, MAX_GITHUB_ARCHIVE_BYTES);
-
-	const extractRoot = mkdtempSync(join(tmpdir(), "clawdi-github-skill-"));
-	try {
-		await extractTarGz(extractRoot, archive);
-		const roots = readdirSync(extractRoot, { withFileTypes: true }).filter((entry) =>
-			entry.isDirectory(),
-		);
-		const rootEntry = roots.length === 1 ? roots[0] : undefined;
-		if (!rootEntry) throw new Error("GitHub archive has an unexpected root layout.");
-		const repositoryRoot = join(extractRoot, rootEntry.name);
-		const sourceDir = source.path ? resolve(repositoryRoot, source.path) : repositoryRoot;
-		const fromRepositoryRoot = relative(repositoryRoot, sourceDir);
-		if (
-			fromRepositoryRoot.startsWith("..") ||
-			isAbsolute(fromRepositoryRoot) ||
-			!existsSync(join(sourceDir, "SKILL.md"))
-		) {
-			throw new Error("GitHub source does not contain a Skill at the requested path.");
-		}
-		const skillKey = sanitizeSkillKey(basename(source.path ?? source.repo));
-		const canonicalRoot = mkdtempSync(join(tmpdir(), "clawdi-github-skill-stage-"));
-		try {
-			const canonicalDir = join(canonicalRoot, skillKey);
-			cpSync(sourceDir, canonicalDir, { recursive: true });
-			return {
-				skillKey,
-				tarBytes: await tarSkillDir(canonicalDir, [repositoryRoot, canonicalRoot], skillKey),
-			};
-		} finally {
-			rmSync(canonicalRoot, { recursive: true, force: true });
-		}
-	} finally {
-		rmSync(extractRoot, { recursive: true, force: true });
-	}
-}
+export { readBoundedResponseBytes };
 
 async function installGithubSkillForAgent(
 	api: ApiClient,

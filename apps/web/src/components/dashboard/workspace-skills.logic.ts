@@ -4,61 +4,47 @@ import type { components } from "@/lib/api-schemas";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type HostedSkillCatalogItem = DeployComponents["schemas"]["V1SkillCatalogItem"];
-type HostedSkillInstallResponse = DeployComponents["schemas"]["V1SkillInstallResponse"];
-type HostedSkillStatusItem = DeployComponents["schemas"]["V1SkillStatusItem"];
+type HostedWorkspaceSkillDesiredItem = DeployComponents["schemas"]["V2WorkspaceSkillDesiredItem"];
 
 export type WorkspaceRuntimeSkill = {
 	entity: SkillCardEntity;
 	cloudProjection: SkillSummary | null;
-	installed: boolean;
-	locked: boolean;
+	desired: HostedWorkspaceSkillDesiredItem | null;
 	installable: boolean;
 };
 
-export type HostedSkillInstallOutcome = "installed" | "pending" | "failed";
-
-export function hostedSkillInstallOutcome(
-	result: Pick<HostedSkillInstallResponse, "ok" | "status">,
-): HostedSkillInstallOutcome {
-	if (result.status === "pending") return "pending";
-	return result.ok ? "installed" : "failed";
-}
-
 export function mergeWorkspaceRuntimeSkills(
 	projections: readonly SkillSummary[],
-	statuses: readonly HostedSkillStatusItem[],
+	desiredItems: readonly HostedWorkspaceSkillDesiredItem[],
 	catalog: readonly HostedSkillCatalogItem[],
 ): WorkspaceRuntimeSkill[] {
 	const projectionByKey = new Map(projections.map((skill) => [skill.skill_key, skill]));
-	const statusByKey = new Map(
-		statuses.filter((skill) => skill.skill_key).map((skill) => [skill.skill_key, skill]),
-	);
+	const desiredByKey = new Map(desiredItems.map((skill) => [skill.skill_key, skill]));
 	const catalogByKey = new Map(catalog.map((skill) => [skill.skill_key, skill]));
-	const keys = new Set([...projectionByKey.keys(), ...statusByKey.keys(), ...catalogByKey.keys()]);
+	const keys = new Set([...projectionByKey.keys(), ...desiredByKey.keys(), ...catalogByKey.keys()]);
 
 	return [...keys]
 		.map((skillKey): WorkspaceRuntimeSkill => {
 			const projection = projectionByKey.get(skillKey);
-			const status = statusByKey.get(skillKey);
+			const desired = desiredByKey.get(skillKey);
 			const catalogItem = catalogByKey.get(skillKey);
 			return {
 				entity:
 					projection ??
 					workspaceRuntimeSkillEntity(skillKey, {
-						name: status?.name || catalogItem?.name || skillKey,
-						description: status?.description ?? catalogItem?.description ?? null,
-						source: status?.source ?? "Agent runtime",
-						sourceRepo: catalogItem?.homepage ?? status?.homepage ?? null,
+						name: catalogItem?.name || skillKey,
+						description: catalogItem?.description ?? null,
+						source: desired ? "Hermes Workspace" : "Skill catalog",
+						sourceRepo: catalogItem?.homepage ?? desired?.source.repo_url ?? null,
 					}),
 				cloudProjection: projection ?? null,
-				installed: Boolean(status),
-				locked: status?.always === true || status?.bundled === true,
-				installable: !status && catalogItem?.installable === true,
+				desired: desired ?? null,
+				installable: !desired && !projection && catalogItem?.installable === true,
 			};
 		})
 		.sort(
 			(left, right) =>
-				Number(right.installed) - Number(left.installed) ||
+				Number(Boolean(right.desired)) - Number(Boolean(left.desired)) ||
 				Number(Boolean(right.cloudProjection)) - Number(Boolean(left.cloudProjection)) ||
 				left.entity.name.localeCompare(right.entity.name),
 		);

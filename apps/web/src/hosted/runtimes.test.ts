@@ -93,8 +93,8 @@ describe("runtimeEnvironmentId", () => {
 });
 
 describe("hosted runtime Skill capabilities", () => {
-	test("allows deployment Skill mutations only for OpenClaw", () => {
-		expect(runtimeSupportsSkillInstall("openclaw")).toBe(true);
-		expect(runtimeSupportsSkillInstall("hermes")).toBe(false);
+	test("allows V2 Workspace Skill mutations only for Hermes", () => {
+		expect(runtimeSupportsSkillInstall("openclaw")).toBe(false);
+		expect(runtimeSupportsSkillInstall("hermes")).toBe(true);
 	});
 });

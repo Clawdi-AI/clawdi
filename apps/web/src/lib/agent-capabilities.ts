@@ -1,5 +1,5 @@
 import {
-	AGENT_RESOURCE_SECTION_IDS,
+	AGENT_OVERVIEW_RESOURCE_SECTION_IDS,
 	type AgentNavigationVariant,
 	type AgentSectionId,
 } from "@/lib/navigation-model";
@@ -27,7 +27,10 @@ export type AgentOverviewGroup = {
 	modules: readonly AgentOverviewModule[];
 };
 
-const SHARED_RESOURCES = AGENT_RESOURCE_SECTION_IDS.map((section) => ({ id: section, section }));
+const SHARED_RESOURCES = AGENT_OVERVIEW_RESOURCE_SECTION_IDS.map((section) => ({
+	id: section,
+	section,
+}));
 
 const AGENT_OVERVIEW_GROUPS = {
 	connected: [

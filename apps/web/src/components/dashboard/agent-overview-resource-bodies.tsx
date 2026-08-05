@@ -6,6 +6,7 @@ import {
 	type AgentOverviewModuleContent,
 	OverviewDescriptionSkeleton,
 } from "@/components/dashboard/agent-overview-capabilities";
+import { fetchAgentProjectSkills } from "@/components/dashboard/agent-skill-inventory";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { unwrap, useApi } from "@/lib/api";
 import { isActiveConnection, useConnections } from "@/lib/connectors-data";
@@ -31,17 +32,45 @@ export function overviewProjectsModule({
 	return { description: primary };
 }
 
-export function overviewSkillsModule({
-	items,
-	...state
-}: SummaryState & { items: readonly string[] }): AgentOverviewModuleContent {
-	if (state.isLoading) return { description: <OverviewDescriptionSkeleton label="skills" /> };
-	if (state.isUnavailable) return { description: "Unavailable right now" };
-	if (state.error) return { description: "Unavailable right now" };
+export function useOverviewWorkspaceSkillsModule({
+	projectId,
+	resolution,
+	skillKeys = [],
+	enabled = true,
+}: {
+	projectId: string | null;
+	resolution: "loading" | "unavailable" | "ready";
+	skillKeys?: readonly string[];
+	enabled?: boolean;
+}): AgentOverviewModuleContent {
+	const api = useApi();
+	const query = useQuery({
+		queryKey: ["skills", "workspace-overview", projectId],
+		queryFn: async () => {
+			if (!projectId) throw new Error("Workspace is unavailable");
+			return fetchAgentProjectSkills(
+				[projectId],
+				async (currentProjectId, page, pageSize) =>
+					unwrap(
+						await api.GET("/v1/skills", {
+							params: {
+								query: { project_id: currentProjectId, page, page_size: pageSize },
+							},
+						}),
+					),
+				{ pageSize: 200 },
+			);
+		},
+		enabled: enabled && resolution === "ready" && Boolean(projectId),
+	});
+	if (resolution === "loading" || query.isLoading)
+		return { description: <OverviewDescriptionSkeleton label="skills" /> };
+	if (resolution === "unavailable" || query.error) return { description: "Unavailable right now" };
+	const visibleSkillKeys = new Set(skillKeys);
+	for (const skill of query.data ?? []) visibleSkillKeys.add(skill.skill_key);
+	const total = visibleSkillKeys.size;
 	return {
-		description: items.length
-			? `${items.length} ${items.length === 1 ? "skill" : "skills"}`
-			: "No skills available",
+		description: total ? `${total} ${total === 1 ? "skill" : "skills"}` : "No skills installed",
 	};
 }
 

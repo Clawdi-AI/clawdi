@@ -35,6 +35,10 @@ _RUNTIME_SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _MANAGED_ENTRY_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _SECRET_REF_PATTERN = re.compile(r"^secret://\S+$")
 _SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
+_GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_GITHUB_REPOSITORY_PATH_PATTERN = re.compile(
+    r"^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+)
 _SEMVER_CORE_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
 _SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 _EXACT_SEMVER_PATTERN = re.compile(
@@ -700,9 +704,56 @@ def validate_hosted_runtime_mcp_desired_state(
     return value
 
 
+class HostedRuntimeSkillSource(_StrictHostedWireModel):
+    type: Literal["github"]
+    repoUrl: str = Field(max_length=500)
+    repoSubdir: str = Field(max_length=500)
+    revision: str = Field(pattern=_GIT_COMMIT_PATTERN.pattern)
+
+    @field_validator("repoUrl")
+    @classmethod
+    def _validate_repo_url(cls, value: str) -> str:
+        try:
+            parsed = urlsplit(value)
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("must be a canonical GitHub repository URL") from exc
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "github.com"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or _GITHUB_REPOSITORY_PATH_PATTERN.fullmatch(parsed.path) is None
+            or value != f"https://github.com{parsed.path}"
+        ):
+            raise ValueError("must be a canonical GitHub repository URL")
+        return value
+
+    @field_validator("repoSubdir")
+    @classmethod
+    def _validate_repo_subdir(cls, value: str) -> str:
+        segments = value.split("/")
+        if (
+            value != value.strip()
+            or not segments
+            or any(
+                not segment
+                or segment in {".", ".."}
+                or "\\" in segment
+                or any(ord(character) <= 0x1F or ord(character) == 0x7F for character in segment)
+                for segment in segments
+            )
+        ):
+            raise ValueError("must be a safe repository-relative directory")
+        return value
+
+
 class HostedRuntimeSkillEntry(_StrictHostedWireModel):
     enabled: bool
     version: int = Field(ge=1)
+    source: HostedRuntimeSkillSource | None = None
 
 
 class HostedRuntimeSkills(_StrictHostedWireModel):
@@ -723,6 +774,7 @@ class PersistedHostedRuntimeSkillEntry(_StrictHostedWireModel):
 
     enabled: bool
     version: int | None = Field(default=None, ge=1)
+    source: HostedRuntimeSkillSource | None = None
 
 
 class PersistedHostedRuntimeSkills(_StrictHostedWireModel):

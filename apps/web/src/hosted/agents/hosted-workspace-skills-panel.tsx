@@ -1,18 +1,14 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Plus, Trash2 } from "lucide-react";
+import { useRef } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import {
-	hostedSkillInstallOutcome,
-	mergeWorkspaceRuntimeSkills,
-} from "@/components/dashboard/workspace-skills.logic";
+import { mergeWorkspaceRuntimeSkills } from "@/components/dashboard/workspace-skills.logic";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { SkillCard } from "@/components/skills/skill-card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -20,16 +16,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { useBillingClient } from "@/hosted/billing/billing-client";
-import {
-	deploymentRuntime,
-	runtimeDisplayName,
-	runtimeSupportsSkillInstall,
-} from "@/hosted/runtimes";
+import { normalizeBillingError } from "@/hosted/billing/errors";
+import { newIdempotencyKey } from "@/hosted/billing/idempotency";
+import { deploymentRuntime, runtimeSupportsSkillInstall } from "@/hosted/runtimes";
 import type { AgentRouteQuery } from "@/lib/agent-routes";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
@@ -65,7 +58,6 @@ function HostedWorkspaceSkillsPanelContent({
 	const billingClient = useBillingClient();
 	const queryClient = useQueryClient();
 	const actionLockedRef = useRef(false);
-	const [pendingInstallKeys, setPendingInstallKeys] = useState<Set<string>>(() => new Set());
 	const deploymentResolution = useAgentDeployment(agentId, deploymentSelector);
 	const deployment = deploymentResolution.deployment;
 	const runtime = deployment ? deploymentRuntime(deployment) : null;
@@ -83,20 +75,10 @@ function HostedWorkspaceSkillsPanelContent({
 		queryKey: statusKey,
 		queryFn: () => {
 			if (!deploymentId) throw new Error("Deployment is not available");
-			return billingClient.getDeploymentSkills(deploymentId);
+			return billingClient.listWorkspaceSkills(deploymentId);
 		},
 		enabled: Boolean(deploymentId && canInstall),
 	});
-
-	useEffect(() => {
-		const installedKeys = new Set(
-			(status.data?.skills ?? []).map((skill) => skill.skill_key).filter(Boolean),
-		);
-		setPendingInstallKeys((current) => {
-			const next = new Set([...current].filter((skillKey) => !installedKeys.has(skillKey)));
-			return next.size === current.size ? current : next;
-		});
-	}, [status.data?.skills]);
 
 	const mutateSkill = useMutation({
 		mutationFn: async ({
@@ -106,36 +88,45 @@ function HostedWorkspaceSkillsPanelContent({
 			action: "install" | "uninstall";
 			skillKey: string;
 		}) => {
-			if (!deploymentId || !canInstall) throw new Error("Skill install is not supported here");
+			const resourceVersion = status.data?.deployment_resource_version;
+			if (!deploymentId || !canInstall || !resourceVersion) {
+				throw new Error("Workspace Skill desired state is not available");
+			}
+			const idempotencyKey = newIdempotencyKey(`workspace-skill-${action}`);
 			if (action === "uninstall") {
-				return billingClient.uninstallDeploymentSkill(deploymentId, skillKey);
+				return billingClient.uninstallWorkspaceSkill(
+					deploymentId,
+					skillKey,
+					resourceVersion,
+					idempotencyKey,
+				);
 			}
-			const result = await billingClient.installDeploymentSkill(deploymentId, skillKey);
-			if (hostedSkillInstallOutcome(result) === "failed") {
-				throw new Error(result.error || "The runtime rejected installation");
-			}
-			return result;
+			return billingClient.installWorkspaceSkill(
+				deploymentId,
+				skillKey,
+				resourceVersion,
+				idempotencyKey,
+			);
 		},
 		onSuccess: (result, variables) => {
-			const installOutcome =
-				variables.action === "install" && "status" in result && typeof result.status === "string"
-					? hostedSkillInstallOutcome({ ok: result.ok, status: result.status })
-					: null;
-			if (installOutcome === "pending") {
-				setPendingInstallKeys((current) => new Set(current).add(variables.skillKey));
-				toast.warning("Skill install is awaiting runtime confirmation", {
-					description: "Files were placed. Refreshing the deployment's authoritative Skill status.",
+			void queryClient.invalidateQueries({ queryKey: statusKey });
+			if (result.reconciliation_status === "failed") {
+				toast.error("Workspace Skill reconciliation needs attention", {
+					description: result.failure_message ?? "The control plane will retry reconciliation.",
 				});
-				void status.refetch();
 				return;
 			}
-			void queryClient.invalidateQueries({ queryKey: statusKey });
-			toast.success(variables.action === "install" ? "Skill installed" : "Skill uninstalled");
+			toast.success(
+				variables.action === "install"
+					? "Skill installation requested"
+					: "Skill uninstall requested",
+				{ description: "Hermes is reconciling the Workspace desired state." },
+			);
 		},
 		onError: (error, variables) => {
 			toast.error(
 				variables.action === "install" ? "Couldn't install skill" : "Couldn't uninstall skill",
-				{ description: errorMessage(error) },
+				{ description: normalizeBillingError(error) },
 			);
 		},
 		onSettled: () => {
@@ -166,14 +157,7 @@ function HostedWorkspaceSkillsPanelContent({
 
 	if (!canInstall) {
 		return (
-			<div className="space-y-4">
-				<Alert>
-					<AlertTitle>Skill installation is unavailable</AlertTitle>
-					<AlertDescription>
-						{runtimeDisplayName(deploymentRuntime(deployment))} does not expose a deployment Skill
-						install capability. Cloud projection details remain read-only.
-					</AlertDescription>
-				</Alert>
+			<div>
 				<ProjectionCards
 					agentId={agentId}
 					projectId={projectId}
@@ -195,13 +179,24 @@ function HostedWorkspaceSkillsPanelContent({
 		: null;
 	if (blockingStatusError) {
 		return (
-			<ApiErrorPanel
-				error={blockingStatusError}
-				onRetry={() => {
-					void status.refetch();
-				}}
-				title="Couldn't load Agent runtime Skills"
-			/>
+			<div className="space-y-4">
+				<ApiErrorPanel
+					error={blockingStatusError}
+					onRetry={() => {
+						void status.refetch();
+					}}
+					title="Couldn't load Workspace Skill status"
+				/>
+				<ProjectionCards
+					agentId={agentId}
+					projectId={projectId}
+					routeSearch={routeSearch}
+					projections={projections}
+					isLoading={projectionsLoading}
+					error={projectionError}
+					onRetry={onRetryProjections}
+				/>
+			</div>
 		);
 	}
 
@@ -211,42 +206,11 @@ function HostedWorkspaceSkillsPanelContent({
 
 	const inventory = mergeWorkspaceRuntimeSkills(
 		projectionError ? [] : projections,
-		status.data?.skills ?? [],
+		status.data?.items ?? [],
 		blockingCatalogError ? [] : (catalog.data?.items ?? []),
 	);
 	return (
 		<div className="space-y-4">
-			<Alert>
-				<AlertTitle>Agent runtime is the install authority</AlertTitle>
-				<AlertDescription>
-					Install status and controls come directly from this deployment. Synced Cloud projection
-					content remains read-only.
-				</AlertDescription>
-			</Alert>
-			{pendingInstallKeys.size > 0 ? (
-				<Alert>
-					<AlertTitle>Awaiting runtime confirmation</AlertTitle>
-					<AlertDescription className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-						<span>
-							Install files were placed, but runtime status has not confirmed them yet. Install
-							stays disabled until it does.
-						</span>
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={status.isFetching}
-							onClick={() => void status.refetch()}
-						>
-							{status.isFetching ? (
-								<Spinner className="size-3.5" />
-							) : (
-								<RefreshCw className="size-3.5" />
-							)}
-							Refresh status
-						</Button>
-					</AlertDescription>
-				</Alert>
-			) : null}
 			{blockingCatalogError ? (
 				<ApiErrorPanel
 					error={blockingCatalogError}
@@ -273,8 +237,8 @@ function HostedWorkspaceSkillsPanelContent({
 				<div className={HERO_GRID_CLASS}>
 					{inventory.map((item) => {
 						const pending =
-							pendingInstallKeys.has(item.entity.skill_key) ||
-							(mutateSkill.isPending && mutateSkill.variables?.skillKey === item.entity.skill_key);
+							mutateSkill.isPending && mutateSkill.variables?.skillKey === item.entity.skill_key;
+						const pendingAction = pending ? mutateSkill.variables?.action : null;
 						return (
 							<SkillCard
 								key={item.entity.skill_key}
@@ -284,25 +248,37 @@ function HostedWorkspaceSkillsPanelContent({
 								readOnlyLabel={item.cloudProjection ? "Agent projection · Read-only" : null}
 								showVersion={Boolean(item.cloudProjection?.version)}
 								actions={
-									item.installed && item.locked ? (
-										<Badge variant="secondary">Runtime-managed</Badge>
-									) : item.installed ? (
-										<ConfirmAction
-											title={`Uninstall ${item.entity.name} from Agent?`}
-											description={<p>The deployment runtime will remove its workspace copy.</p>}
-											confirmLabel="Uninstall skill"
-											destructive
-											onConfirm={() => runMutation("uninstall", item.entity.skill_key)}
-										>
-											<Button variant="ghost" size="sm" disabled={pending}>
-												{pending ? (
-													<Spinner className="size-3.5" />
-												) : (
-													<Trash2 className="size-3.5" />
-												)}
-												Uninstall skill
-											</Button>
-										</ConfirmAction>
+									item.desired ? (
+										<div className="flex flex-wrap items-center gap-2">
+											<Badge
+												variant={
+													item.desired.reconciliation_status === "failed"
+														? "destructive"
+														: "secondary"
+												}
+												title={item.desired.failure_message ?? undefined}
+											>
+												{item.desired.reconciliation_status === "failed" ? "Failed" : "Reconciling"}
+											</Badge>
+											<ConfirmAction
+												title={`Uninstall ${item.entity.name} from Agent?`}
+												description={
+													<p>Hermes will remove only the manifest-owned Workspace copy.</p>
+												}
+												confirmLabel="Uninstall skill"
+												destructive
+												onConfirm={() => runMutation("uninstall", item.entity.skill_key)}
+											>
+												<Button variant="ghost" size="sm" disabled={pending}>
+													{pending ? (
+														<Spinner className="size-3.5" />
+													) : (
+														<Trash2 className="size-3.5" />
+													)}
+													{pendingAction === "uninstall" ? "Uninstalling…" : "Uninstall"}
+												</Button>
+											</ConfirmAction>
+										</div>
 									) : item.installable ? (
 										<Button
 											variant="outline"
@@ -311,8 +287,10 @@ function HostedWorkspaceSkillsPanelContent({
 											onClick={() => runMutation("install", item.entity.skill_key)}
 										>
 											{pending ? <Spinner className="size-3.5" /> : <Plus className="size-3.5" />}
-											{pending ? "Awaiting runtime" : "Install skill"}
+											{pendingAction === "install" ? "Installing…" : "Install"}
 										</Button>
+									) : item.cloudProjection ? (
+										<Badge variant="secondary">Agent projection · Read-only</Badge>
 									) : null
 								}
 								skillLink={(cloudSkill) =>

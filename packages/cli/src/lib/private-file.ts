@@ -11,7 +11,7 @@ interface PrivateFileWriteOptions {
 
 export function writePrivateFileAtomic(
 	path: string,
-	content: string,
+	content: string | Uint8Array,
 	options: PrivateFileWriteOptions = {},
 ): void {
 	const mode = options.mode ?? PRIVATE_FILE_MODE;
