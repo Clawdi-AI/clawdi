@@ -160,7 +160,6 @@ accessories:
     network: container:clawdi-whatsapp-netns
     labels:
       io.clawdi.whatsapp-egress.config-revision: <%= ENV.fetch("WHATSAPP_TAILSCALE_CONFIG_REVISION") %>
-    entrypoint: /bin/sh
     cmd: >-
       -ceu 'chain=CLAWDI_WA_EGRESS;
       iptables -N "$chain" 2>/dev/null || true;
@@ -182,6 +181,7 @@ accessories:
         remote: /guard
         mode: "755"
     options:
+      entrypoint: /bin/sh
       cap-drop: ALL
       cap-add:
         - NET_ADMIN

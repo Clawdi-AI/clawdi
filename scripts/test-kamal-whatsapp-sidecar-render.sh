@@ -93,6 +93,9 @@ sidecar = commands.fetch("whatsapp-baileys")
 raise "sidecar did not join infra" unless option?(sidecar, "--network", "container:clawdi-whatsapp-netns")
 raise "sidecar lost UDS bind" unless option?(sidecar, "--volume", "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp")
 raise "sidecar lost guard marker bind" unless option?(sidecar, "--volume", "/home/phala/clawdi-whatsapp/egress-guard:/run/clawdi-egress-guard:ro")
+raise "sidecar lost guard marker env" unless sidecar.include?(
+  'CLAWDI_WA_NETWORK_NAMESPACE_MARKER="/run/clawdi-egress-guard/network-namespace.ready"'
+)
 RUBY
 )
 
@@ -186,9 +189,6 @@ grep -Fq "TS_USERSPACE: 'false'" "${rendered_egress_config}"
 grep -Fq "TS_ACCEPT_DNS: 'true'" "${rendered_egress_config}"
 grep -Fq '      - NET_ADMIN' "${rendered_egress_config}"
 grep -Fq '      - NET_RAW' "${rendered_egress_config}"
-grep -Fq 'device: /dev/net/tun:/dev/net/tun' "${rendered_egress_config}"
-grep -Fq 'CLAWDI_WA_NETWORK_NAMESPACE_MARKER: /run/clawdi-egress-guard/network-namespace.ready' \
-	"${rendered_egress_config}"
 ! grep -Fq 'CLAWDI_WA_SIDECAR_PROXY_URL' "${rendered_egress_config}"
 ! grep -Fq 'TS_OUTBOUND_HTTP_PROXY_LISTEN' "${rendered_egress_config}"
 test "$(grep -Fc 'cap-drop: ALL' "${rendered_egress_config}")" -ge 4

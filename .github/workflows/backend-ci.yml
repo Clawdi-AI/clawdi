@@ -260,13 +260,19 @@ jobs:
           tests/clawdi-image-release-workflow.test.ts
       - name: Kamal 2.12 render contract
         run: |
-          docker run --rm \
-            --volume "$PWD:/repo:ro" \
-            --workdir /repo \
-            ruby:3.4.10-bookworm@sha256:8ff02c55f0467a3d03bc6c41b7500f9f0b30086a1861c601cd4e9dc5b8536a66 \
-            bash -c "gem install kamal -v '2.12.0' --no-document && \
-              scripts/test-kamal-whatsapp-sidecar-render.sh && \
-              scripts/test-deploy-whatsapp-sidecar.sh"
+          contract_image="clawdi-kamal-contract:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() { docker image rm "$contract_image" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker build --tag "$contract_image" --file - . <<'DOCKERFILE'
+          FROM ruby:3.4.10-bookworm@sha256:8ff02c55f0467a3d03bc6c41b7500f9f0b30086a1861c601cd4e9dc5b8536a66
+          WORKDIR /repo
+          COPY config/deploy.yml config/deploy.yml
+          COPY scripts/deploy-whatsapp-sidecar.sh scripts/deploy-whatsapp-sidecar.sh
+          COPY scripts/test-deploy-whatsapp-sidecar.sh scripts/test-deploy-whatsapp-sidecar.sh
+          COPY scripts/test-kamal-whatsapp-sidecar-render.sh scripts/test-kamal-whatsapp-sidecar-render.sh
+          RUN gem install kamal -v '2.12.0' --no-document
+          RUN scripts/test-kamal-whatsapp-sidecar-render.sh && scripts/test-deploy-whatsapp-sidecar.sh
+          DOCKERFILE
       - name: Build production sidecar image
         run: >-
           docker build
