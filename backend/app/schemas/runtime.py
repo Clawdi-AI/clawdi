@@ -36,9 +36,7 @@ _MANAGED_ENTRY_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _SECRET_REF_PATTERN = re.compile(r"^secret://\S+$")
 _SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
 _GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-_GITHUB_REPOSITORY_PATH_PATTERN = re.compile(
-    r"^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
-)
+_GITHUB_REPOSITORY_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SEMVER_CORE_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
 _SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 _EXACT_SEMVER_PATTERN = re.compile(

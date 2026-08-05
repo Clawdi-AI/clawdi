@@ -833,9 +833,7 @@ async def platform_upsert_runtime_state(
         runtime_state.skills if runtime_state is not None else None
     )
     new_skill_ids = enabled_runtime_manifest_skill_ids(
-        body.skills.model_dump(mode="json", exclude_none=True)
-        if body.skills is not None
-        else None
+        body.skills.model_dump(mode="json", exclude_none=True) if body.skills is not None else None
     )
     await lock_runtime_manifest_skill_reservations(
         db,
