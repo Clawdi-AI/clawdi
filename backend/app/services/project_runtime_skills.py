@@ -576,6 +576,20 @@ async def assert_agent_workspace_skill_write_compatible(
         )
     )
     project_skill_keys = set(rows.scalars())
+    conflicts = sorted(skill_keys & project_skill_keys)
+    if conflicts:
+        skill_key = conflicts[0]
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_workspace_project_skill_name_conflict",
+                "message": (
+                    f'Skill "{skill_key}" already comes from a linked Project. '
+                    "Remove or rename one copy, then try again."
+                ),
+                "skill_key": skill_key,
+            },
+        )
     if project_skill_keys:
         (
             agent,
@@ -592,21 +606,6 @@ async def assert_agent_workspace_skill_write_compatible(
             observation,
             has_environment_bound_key=has_environment_bound_key,
         )
-    conflicts = sorted(skill_keys & project_skill_keys)
-    if not conflicts:
-        return
-    skill_key = conflicts[0]
-    raise HTTPException(
-        status.HTTP_409_CONFLICT,
-        detail={
-            "code": "agent_workspace_project_skill_name_conflict",
-            "message": (
-                f'Skill "{skill_key}" already comes from a linked Project. '
-                "Remove or rename one copy, then try again."
-            ),
-            "skill_key": skill_key,
-        },
-    )
 
 
 async def queue_project_runtime_manifest_changed(

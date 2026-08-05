@@ -129,7 +129,7 @@ describe("projectListCommand", () => {
 		expect(parsed.hidden_environment_project_count).toBe(0);
 	});
 
-	it("hides machine environment projects by default and can include them", async () => {
+	it("hides Agent Workspace projects by default and can include them", async () => {
 		const projects = [
 			{ id: "project-a", slug: "personal", name: "Personal", kind: "personal", is_owner: true },
 			{
@@ -154,12 +154,12 @@ describe("projectListCommand", () => {
 			const hiddenOut = lines.join("\n");
 			expect(hiddenOut).toContain("My projects (1)");
 			expect(hiddenOut).not.toContain("env-abc123");
-			expect(hiddenOut).toContain("Hidden machine projects: 1");
+			expect(hiddenOut).toContain("Hidden Agent Workspaces: 1");
 
 			lines.length = 0;
 			await projectListCommand({ includeEnvs: true });
 			const includedOut = lines.join("\n");
-			expect(includedOut).toContain("Machines (1)");
+			expect(includedOut).toContain("Agent Workspaces (1)");
 			expect(includedOut).toContain("env-abc123");
 		} finally {
 			console.log = orig;
@@ -167,7 +167,7 @@ describe("projectListCommand", () => {
 		}
 	});
 
-	it("omits machine environment projects from JSON unless requested", async () => {
+	it("omits Agent Workspace projects from JSON unless requested", async () => {
 		const projects = [
 			{ id: "project-a", slug: "personal", name: "Personal", kind: "personal", is_owner: true },
 			{
