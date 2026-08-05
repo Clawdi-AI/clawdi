@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
 import type { AgentAdapter } from "./base";
 import { ClaudeCodeAdapter } from "./claude-code";
 import { CodexAdapter } from "./codex";
@@ -85,8 +86,7 @@ export function agentSkillTargetDir(
 	const home = homeOverride ?? adapterRegistry[agentType]?.home();
 	if (!home) return null;
 	if (agentType === "openclaw") {
-		const openclawAgentId = process.env.OPENCLAW_AGENT_ID || "main";
-		return join(home, "agents", openclawAgentId, "skills", skillName);
+		return join(resolveOpenClawAgentWorkspace(), "skills", skillName);
 	}
 	if (agentType === "claude_code" || agentType === "codex" || agentType === "hermes") {
 		return join(home, "skills", skillName);

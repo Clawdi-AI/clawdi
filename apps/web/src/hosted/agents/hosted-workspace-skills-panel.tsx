@@ -226,10 +226,10 @@ function HostedWorkspaceSkillsPanelContent({
 				<ApiErrorPanel
 					error={projectionError}
 					onRetry={onRetryProjections}
-					title="Cloud Skill projections unavailable"
+					title="Runtime Skill observations unavailable"
 				/>
 			) : projectionsLoading ? (
-				<p className="text-xs text-muted-foreground">Loading read-only Cloud projections…</p>
+				<p className="text-xs text-muted-foreground">Loading read-only runtime observations…</p>
 			) : null}
 			{inventory.length === 0 ? (
 				<EmptyState variant="inset" description="No Skills are available for this Agent runtime." />
@@ -262,9 +262,9 @@ function HostedWorkspaceSkillsPanelContent({
 											</Badge>
 											<ConfirmAction
 												title={`Uninstall ${item.entity.name} from Agent?`}
-												description={
-													<p>Hermes will remove only the manifest-owned Workspace copy.</p>
-												}
+													description={
+														<p>The runtime driver will remove only the manifest-owned Workspace copy.</p>
+													}
 												confirmLabel="Uninstall skill"
 												destructive
 												onConfirm={() => runMutation("uninstall", item.entity.skill_key)}
@@ -324,7 +324,7 @@ function ProjectionCards({
 }) {
 	if (error) {
 		return (
-			<ApiErrorPanel error={error} onRetry={onRetry} title="Cloud Skill projections unavailable" />
+			<ApiErrorPanel error={error} onRetry={onRetry} title="Runtime Skill observations unavailable" />
 		);
 	}
 	if (isLoading) return <WorkspaceSkillSkeleton />;

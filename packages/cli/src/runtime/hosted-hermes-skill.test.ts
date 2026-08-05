@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -11,9 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { tarSkillDir } from "../lib/tar";
 import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
-import { hostedHermesSkillNativeReconciler } from "./hosted-hermes-skill";
+import { hostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
 
 const originalEnv = { ...process.env };
 let root = "";
@@ -129,16 +129,38 @@ def should_allow_install(result, force=False):
 function fakeHermesApp(home: string): string {
 	const appRoot = join(home, ".hermes", "hermes-agent");
 	const python = join(appRoot, "venv", "bin", "python");
+	const hermes = join(appRoot, "venv", "bin", "hermes");
 	mkdirSync(dirname(python), { recursive: true });
 	symlinkSync("/usr/bin/python3", python);
 	mkdirSync(join(appRoot, "tools"), { recursive: true });
 	writeFileSync(join(appRoot, "tools", "__init__.py"), "");
 	writeFileSync(join(appRoot, "tools", "skills_hub.py"), FAKE_SKILLS_HUB);
 	writeFileSync(join(appRoot, "tools", "skills_guard.py"), FAKE_SKILLS_GUARD);
+	writeFileSync(
+		hermes,
+		`#!/usr/bin/python3
+import json, os, shutil, sys
+from pathlib import Path
+root = Path(os.environ["HERMES_HOME"]) / "skills"
+if sys.argv[1:3] == ["skills", "install"]:
+    assert sys.argv[-1] == "--yes" and sys.argv[-3] == "--name"
+    name = sys.argv[-2]
+    target = root / name
+    shutil.rmtree(target, ignore_errors=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(Path(os.environ["FAKE_HERMES_SOURCE"]), target)
+elif sys.argv[1:3] == ["skills", "uninstall"]:
+    assert sys.argv[-1] == "--yes"
+    shutil.rmtree(root / sys.argv[3])
+else:
+    raise SystemExit(2)
+`,
+	);
+	chmodSync(hermes, 0o755);
 	return appRoot;
 }
 
-describe("Hermes native Workspace Skill integration", () => {
+describe("Hermes exact-source Workspace Skill driver", () => {
 	test("requires paired ownership and uses Hermes install and uninstall semantics", async () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-skill-"));
 		delete process.env.CLAWDI_RUNTIME_USER;
@@ -148,6 +170,10 @@ describe("Hermes native Workspace Skill integration", () => {
 		const sourceDir = join(root, "source", "review-pr");
 		mkdirSync(sourceDir, { recursive: true });
 		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
+		process.env.FAKE_HERMES_SOURCE = sourceDir;
+		const archive = join(root, "review-pr.tar.gz");
+		const packed = spawnSync("tar", ["-czf", archive, "-C", dirname(sourceDir), "review-pr"]);
+		if (packed.status !== 0) throw new Error("test tar creation failed");
 		const source = {
 			type: "github" as const,
 			url: "https://github.com/Clawdi-AI/store",
@@ -158,7 +184,7 @@ describe("Hermes native Workspace Skill integration", () => {
 			skillId: "review-pr",
 			source,
 			digest: "b".repeat(64),
-			tarBytes: await tarSkillDir(sourceDir),
+			tarBytes: readFileSync(archive),
 		};
 		const input = {
 			home,
@@ -166,46 +192,27 @@ describe("Hermes native Workspace Skill integration", () => {
 			skill,
 		};
 
-		expect(hostedHermesSkillNativeReconciler.install({ ...input, previouslyReserved: false })).toBe(
+		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false })).toBe(
 			"installed",
 		);
 		const target = join(home, ".hermes", "skills", "review-pr");
-		const lockPath = join(home, ".hermes", "skills", ".hub", "lock.json");
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
-		const lock = JSON.parse(readFileSync(lockPath, "utf8"));
-		expect(lock.installed["review-pr"]).toMatchObject({
-			install_path: "review-pr",
-			metadata: {
-				clawdi_manager: "hosted-manifest",
-				clawdi_archive_sha256: skill.digest,
-				clawdi_source: source,
-			},
-		});
-		expect(hostedHermesSkillNativeReconciler.verifyOwned(input)).toBe(true);
+		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 
 		writeFileSync(join(target, "SKILL.md"), "forged user bytes\n");
-		const forgedLock = JSON.parse(readFileSync(lockPath, "utf8"));
-		forgedLock.installed["review-pr"].content_hash = `sha256:${createHash("sha256")
-			.update("SKILL.md")
-			.update("\0")
-			.update("forged user bytes\n")
-			.digest("hex")
-			.slice(0, 16)}`;
-		writeFileSync(lockPath, JSON.stringify(forgedLock));
-		expect(hostedHermesSkillNativeReconciler.verifyOwned(input)).toBe(false);
+		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
 		writeFileSync(join(target, "SKILL.md"), "# Review PR\n");
-		writeFileSync(lockPath, JSON.stringify(lock));
-		expect(hostedHermesSkillNativeReconciler.verifyOwned(input)).toBe(true);
+		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 		expect(existsSync(join(root, "wrong-profile", "skills", "review-pr"))).toBe(false);
 
 		expect(() =>
-			hostedHermesSkillNativeReconciler.install({ ...input, previouslyReserved: false }),
+			hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false }),
 		).toThrow("not paired with a manifest reservation");
-		expect(hostedHermesSkillNativeReconciler.install({ ...input, previouslyReserved: true })).toBe(
+		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
 			"unchanged",
 		);
 		expect(
-			hostedHermesSkillNativeReconciler.uninstall({
+			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
 				appRoot,
 				skillId: "review-pr",
@@ -216,12 +223,12 @@ describe("Hermes native Workspace Skill integration", () => {
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "user-owned\n");
 		expect(() =>
-			hostedHermesSkillNativeReconciler.uninstall({
+			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
 				appRoot,
 				skillId: "review-pr",
 			}),
-		).toThrow("without a manifest-owned Hub lock");
+		).toThrow("ownership receipt");
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("user-owned\n");
 	});
 });

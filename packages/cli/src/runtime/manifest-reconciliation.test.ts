@@ -535,6 +535,15 @@ EOF
   "gateway uninstall")
     rm -f '${input.unitPath}'
     ;;
+  skills\ install\ *)
+    source_dir="$3"
+    skill_id="$7"
+    mkdir -p "$PWD/skills"
+    rm -rf "$PWD/skills/$skill_id"
+    cp -R "$source_dir" "$PWD/skills/$skill_id"
+    mkdir -p "$PWD/skills/$skill_id/.openclaw"
+    printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
+    ;;
   *)
     printf 'unexpected ${input.runtime} command: %s\\n' "$*" >&2
     exit 64
@@ -3968,7 +3977,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(() =>
 			convergeRuntimeManifest(manifestLoad(desiredManifest, "catalog-collision"), paths, {
 				preparedHostedCatalogSkills: new Map([[prepared.skillId, prepared]]),
-				hostedHermesSkillNativeReconciler: {
+				hostedHermesSkillExactSourceDriver: {
 					install: () => "installed",
 					verifyOwned: () => false,
 					uninstall: () => "removed",
@@ -4008,7 +4017,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		};
 		const options = {
 			preparedHostedCatalogSkills: new Map([[prepared.skillId, prepared]]),
-			hostedHermesSkillNativeReconciler: nativeReconciler,
+			hostedHermesSkillExactSourceDriver: nativeReconciler,
 		};
 		const lostResponse = convergeRuntimeManifest(
 			manifestLoad(desiredManifest, "catalog-lost-native-response"),
@@ -4060,7 +4069,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			paths,
 			{
 				preparedHostedCatalogSkills: new Map(),
-				hostedHermesSkillNativeReconciler: nativeReconciler,
+				hostedHermesSkillExactSourceDriver: nativeReconciler,
 			},
 		);
 		expect(removed.installErrors).toEqual([]);
@@ -4353,7 +4362,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			join(paths.userHome, ".hermes", "SOUL.md"),
 			join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi"),
 			join(paths.userHome, ".codex", "config.toml"),
-			join(paths.userHome, ".openclaw", "agents", "main", "skills", "clawdi"),
+			join(workspaceRoot, "skills", "clawdi"),
 			join(paths.userHome, ".hermes", "skills", "clawdi"),
 			join(paths.localEnvironments, "openclaw.json"),
 			join(paths.systemdUserRoot, "clawdi-openclaw.service"),

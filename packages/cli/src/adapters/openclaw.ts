@@ -1,8 +1,10 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
-import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { extractTarGz, replaceSkillArchiveTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	migrateLegacyLocalSetupSkill,
@@ -18,6 +20,11 @@ import type {
 	SessionMessage,
 } from "./base";
 import { getOpenClawHome, SKIP_DIRS } from "./paths";
+import {
+	listOpenClawAgentWorkspaces,
+	openClawAgentId,
+	resolveOpenClawAgentWorkspace,
+} from "./openclaw-workspace";
 import { readCommandVersion } from "./version";
 
 function openclawDir() {
@@ -27,7 +34,7 @@ function agentsRoot() {
 	return join(openclawDir(), "agents");
 }
 function agentId() {
-	return process.env.OPENCLAW_AGENT_ID || "main";
+	return openClawAgentId();
 }
 function agentDir() {
 	// Single-agent path used for *write* operations (skill install, MCP
@@ -40,8 +47,12 @@ function sessionsDir() {
 function sessionsIndexPath() {
 	return join(sessionsDir(), "sessions.json");
 }
+function activeAgentWorkspace() {
+	return resolveOpenClawAgentWorkspace(agentId());
+}
+
 function skillsDir() {
-	return join(agentDir(), "skills");
+	return join(activeAgentWorkspace(), "skills");
 }
 
 /**
@@ -304,15 +315,15 @@ export class OpenClawAdapter implements AgentAdapter {
 			digest: managedSkillDirectoryDigest,
 		});
 
-		// Skills can live under any `agents/<id>/skills/` — iterate every
-		// agent the user has on disk so a deployment with multiple
+		// Skills live in each official agent workspace — iterate every
+		// configured workspace so a deployment with multiple
 		// personalities (issue #28) doesn't lose six of seven skill sets.
 		// Dedup by `skillKey`: identical names across agents collapse to
 		// the first occurrence (server-side `skill_key` is per-user, so
 		// we'd 409 on the second push anyway). Warn on collision so the
 		// user can rename or pick an explicit OPENCLAW_AGENT_ID.
-		for (const agentRoot of listAgentDirs()) {
-			const dir = join(agentRoot, "skills");
+		for (const agent of listOpenClawAgentWorkspaces()) {
+			const dir = join(agent.workspace, "skills");
 			migrateLegacyLocalSetupSkill({
 				targetDir: join(dir, "clawdi"),
 				id: "clawdi",
@@ -415,11 +426,28 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const root = skillsDir();
-		const targetDir = join(root, key);
-		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
-			mutateUserSkillTarget(targetDir, key, mutation),
-		);
+		const targetDir = join(skillsDir(), key);
+		const stagingRoot = mkdtempSync(join(tmpdir(), "clawdi-openclaw-install-"));
+		try {
+			await extractTarGz(stagingRoot, tarGzBytes);
+			const sourceDir = join(stagingRoot, key);
+			if (!existsSync(join(sourceDir, "SKILL.md"))) throw new Error("Skill archive is missing SKILL.md");
+			mutateUserSkillTarget(targetDir, key, () => {
+				const result = spawnSync(
+					"openclaw",
+					["skills", "install", sourceDir, "--agent", agentId(), "--as", key, "--force"],
+					{ encoding: "utf8", env: process.env, maxBuffer: 1024 * 1024, timeout: 120_000 },
+				);
+				if (result.status !== 0) {
+					throw new Error(`OpenClaw official Skill install failed: ${(result.stderr || result.stdout).trim() || "unknown error"}`);
+				}
+				if (!existsSync(join(targetDir, "SKILL.md"))) {
+					throw new Error(`OpenClaw did not install the Skill in agent workspace ${activeAgentWorkspace()}`);
+				}
+			});
+		} finally {
+			rmSync(stagingRoot, { recursive: true, force: true });
+		}
 	}
 
 	async writeSharedSkillArchive(
