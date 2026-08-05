@@ -27,7 +27,7 @@ import type {
 	HostedDeployment,
 	HostedDeployRequestStatus,
 	HostedEventStreamSnapshotHandoff,
-	HostedSkillCatalogResponse,
+	HostedWorkspaceSkillInstallRequest,
 	HostedWorkspaceSkillListResponse,
 	HostedWorkspaceSkillMutationResponse,
 	PortalRequest,
@@ -72,6 +72,10 @@ type MutationHeaders = {
 	"Idempotency-Key": string;
 	"If-Match": string;
 };
+
+type WorkspaceSkillMutation =
+	| { action: "install"; request: HostedWorkspaceSkillInstallRequest }
+	| { action: "uninstall"; skillKey: string };
 
 function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Response> {
 	const caller = init?.signal ?? request.signal;
@@ -417,28 +421,34 @@ export function createBillingClient(
 		);
 	const mutateWorkspaceSkill = async (
 		deploymentId: string,
-		skillKey: string,
+		mutation: WorkspaceSkillMutation,
 		resourceVersion: string,
 		idempotencyKey: string,
-		action: "install" | "uninstall",
 	): Promise<HostedWorkspaceSkillMutationResponse> => {
 		let currentResourceVersion = resourceVersion;
 		for (let attempt = 0; attempt < 2; attempt += 1) {
-			const params = {
-				path: { deployment_id: deploymentId, skill_key: skillKey },
-				header: {
-					"Idempotency-Key": idempotencyKey,
-					"If-Match": strongResourceEtag(currentResourceVersion),
-				},
+			const headers = {
+				"Idempotency-Key": idempotencyKey,
+				"If-Match": strongResourceEtag(currentResourceVersion),
 			};
 			try {
 				return unwrapDeploy(
-					action === "install"
-						? await api.PUT("/v2/deployments/{deployment_id}/workspace-skills/{skill_key}", {
-								params,
+					mutation.action === "install"
+						? await api.POST("/v2/deployments/{deployment_id}/workspace-skills", {
+								body: mutation.request,
+								params: {
+									path: { deployment_id: deploymentId },
+									header: headers,
+								},
 							})
 						: await api.DELETE("/v2/deployments/{deployment_id}/workspace-skills/{skill_key}", {
-								params,
+								params: {
+									path: {
+										deployment_id: deploymentId,
+										skill_key: mutation.skillKey,
+									},
+									header: headers,
+								},
 							}),
 				);
 			} catch (error) {
@@ -534,27 +544,31 @@ export function createBillingClient(
 
 		getMe: async () => unwrapDeploy(await api.GET("/v1/me")),
 		getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/v1/agent-environments")),
-		listSkillCatalog: async (): Promise<HostedSkillCatalogResponse> =>
-			unwrapDeploy(
-				await api.GET("/v1/skills/catalog", {
-					params: { query: { limit: 200 } },
-				}),
-			),
 		listWorkspaceSkills,
 		installWorkspaceSkill: async (
 			deploymentId: string,
-			skillKey: string,
+			request: HostedWorkspaceSkillInstallRequest,
 			resourceVersion: string,
 			idempotencyKey: string,
 		): Promise<HostedWorkspaceSkillMutationResponse> =>
-			mutateWorkspaceSkill(deploymentId, skillKey, resourceVersion, idempotencyKey, "install"),
+			mutateWorkspaceSkill(
+				deploymentId,
+				{ action: "install", request },
+				resourceVersion,
+				idempotencyKey,
+			),
 		uninstallWorkspaceSkill: async (
 			deploymentId: string,
 			skillKey: string,
 			resourceVersion: string,
 			idempotencyKey: string,
 		): Promise<HostedWorkspaceSkillMutationResponse> =>
-			mutateWorkspaceSkill(deploymentId, skillKey, resourceVersion, idempotencyKey, "uninstall"),
+			mutateWorkspaceSkill(
+				deploymentId,
+				{ action: "uninstall", skillKey },
+				resourceVersion,
+				idempotencyKey,
+			),
 
 		listDeployments: async (): Promise<HostedDeployment[]> =>
 			unwrapDeploymentList(unwrapDeploy(await api.GET("/v2/deployments"))),

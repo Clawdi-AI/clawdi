@@ -4408,7 +4408,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			version: 3,
 			source: {
 				type: "github",
-				url: "https://github.com/Clawdi-AI/store",
+				url: "https://github.com/example/skills",
 				path: "skills/review-pr",
 				commit: "a".repeat(40),
 			},
@@ -4419,32 +4419,11 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const workspaceSkillMutations: Array<{
 		method: string;
 		skillKey: string;
+		repo: string | null;
+		path: string | null;
 		idempotencyKey: string | null;
 		ifMatch: string | null;
 	}> = [];
-	await page.route("**/v1/skills/catalog**", async (route) => {
-		await fulfillJson(route, {
-			items: [
-				{
-					skill_key: "deploy-helper",
-					name: "Deploy helper",
-					description: "Deploy safely",
-					emoji: "🚀",
-					category: "developer",
-					featured: false,
-					headline: "",
-					homepage: null,
-					languages: [],
-					trust_level: "community",
-					tags: [],
-					status: "active",
-					installable: true,
-					connector_requirements: [],
-				},
-			],
-			total: 1,
-		});
-	});
 	await page.route(
 		`**/v2/deployments/${railHostedDeployment.id}/workspace-skills**`,
 		async (route) => {
@@ -4460,11 +4439,17 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 				});
 				return;
 			}
-			const skillKey = decodeURIComponent(path.split("/").at(-1) ?? "");
-			if ((request.method() === "PUT" || request.method() === "DELETE") && skillKey) {
+			const requestBody = request.method() === "POST" ? request.postDataJSON() : null;
+			const skillKey =
+				request.method() === "POST"
+					? "deploy-helper"
+					: decodeURIComponent(path.split("/").at(-1) ?? "");
+			if ((request.method() === "POST" || request.method() === "DELETE") && skillKey) {
 				workspaceSkillMutations.push({
 					method: request.method(),
 					skillKey,
+					repo: requestBody?.repo ?? null,
+					path: requestBody?.path ?? null,
 					idempotencyKey: request.headers()["idempotency-key"] ?? null,
 					ifMatch: request.headers()["if-match"] ?? null,
 				});
@@ -4472,11 +4457,11 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 				workspaceResourceVersion = `rv-workspace-skills-${workspaceManifestGeneration}`;
 				const source = {
 					type: "github" as const,
-					url: "https://github.com/Clawdi-AI/store",
-					path: `skills/${skillKey}`,
+					url: "https://github.com/example/skills",
+					path: requestBody?.path ?? `skills/${skillKey}`,
 					commit: "b".repeat(40),
 				};
-				if (request.method() === "PUT") {
+				if (request.method() === "POST") {
 					desiredWorkspaceSkills = [
 						...desiredWorkspaceSkills.filter((item) => item.skill_key !== skillKey),
 						{
@@ -4497,8 +4482,8 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 					deployment_resource_version: workspaceResourceVersion,
 					manifest_generation: workspaceManifestGeneration,
 					skill_key: skillKey,
-					desired_state: request.method() === "PUT" ? "present" : "absent",
-					source: request.method() === "PUT" ? source : null,
+					desired_state: request.method() === "POST" ? "present" : "absent",
+					source: request.method() === "POST" ? source : null,
 					status: "requested",
 					failure_message: null,
 				});
@@ -4775,14 +4760,22 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveCount(0);
-	await main.getByRole("button", { name: "Install", exact: true }).click();
-	await expect(main.getByText("Deploy helper", { exact: true })).toBeVisible();
-	await expect(main.getByText("Requested", { exact: true }).last()).toBeVisible();
+	await main.getByRole("button", { name: "Install skill", exact: true }).click();
+	const installSkillDialog = page.getByRole("dialog", { name: "Install skill" });
+	await installSkillDialog
+		.getByLabel("GitHub Skill repository")
+		.fill("example/skills/tools/deploy");
+	await installSkillDialog.getByRole("button", { name: "Install skill" }).click();
+	await expect(main.getByText("deploy-helper", { exact: true })).toBeVisible();
+	await expect(main.getByText("Requested", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Managed", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Uninstall", exact: true }).last()).toBeVisible();
 	expect(workspaceSkillMutations).toHaveLength(1);
 	expect(workspaceSkillMutations[0]).toMatchObject({
-		method: "PUT",
+		method: "POST",
 		skillKey: "deploy-helper",
+		repo: "example/skills",
+		path: "tools/deploy",
 		ifMatch: '"rv-workspace-skills-1"',
 	});
 	expect(workspaceSkillMutations[0]?.idempotencyKey).toMatch(/^workspace-skill-install-/);

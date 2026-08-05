@@ -11,17 +11,18 @@ import type { RuntimeManifest } from "./manifest-contract";
 import type { HostedSkillSource } from "./manifest-resources";
 import type { RuntimePaths } from "./paths";
 
+// Legacy compatibility: persisted receipts keep their original schema identifier.
 const CACHE_SCHEMA = "clawdi.hostedCatalogSkillArchive.v1";
 const MAX_CACHED_ARCHIVE_BYTES = 100 * 1024 * 1024;
 
-interface HostedCatalogSkillArchiveReceipt {
+interface HostedSourcedSkillArchiveReceipt {
 	schemaVersion: typeof CACHE_SCHEMA;
 	skillId: string;
 	source: HostedSkillSource;
 	sha256: string;
 }
 
-export interface PreparedHostedCatalogSkill {
+export interface PreparedHostedSourcedSkill {
 	skillId: string;
 	source: HostedSkillSource;
 	/** Stable canonical ownership identity; independent of tar encoding and cache lifetime. */
@@ -80,7 +81,7 @@ function readCachedArchive(
 	}
 }
 
-function isReceipt(value: unknown): value is HostedCatalogSkillArchiveReceipt {
+function isReceipt(value: unknown): value is HostedSourcedSkillArchiveReceipt {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 	const receipt = value as Record<string, unknown>;
 	if (
@@ -120,7 +121,7 @@ function writeCachedArchive(
 				skillId,
 				source,
 				sha256: digest,
-			} satisfies HostedCatalogSkillArchiveReceipt,
+			} satisfies HostedSourcedSkillArchiveReceipt,
 			null,
 			2,
 		)}\n`,
@@ -129,12 +130,12 @@ function writeCachedArchive(
 	return digest;
 }
 
-export async function prepareHostedCatalogSkillArchives(
+export async function prepareHostedSourcedSkillArchives(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	options: { fetcher?: GithubArchiveFetcher } = {},
-): Promise<ReadonlyMap<string, PreparedHostedCatalogSkill>> {
-	const prepared = new Map<string, PreparedHostedCatalogSkill>();
+): Promise<ReadonlyMap<string, PreparedHostedSourcedSkill>> {
+	const prepared = new Map<string, PreparedHostedSourcedSkill>();
 	if (manifest.runtimes.hermes?.enabled !== true && manifest.runtimes.openclaw?.enabled !== true)
 		return prepared;
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(

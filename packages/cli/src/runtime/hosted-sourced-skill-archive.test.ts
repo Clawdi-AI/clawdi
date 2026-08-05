@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
-import { prepareHostedCatalogSkillArchives } from "./hosted-catalog-skill-archive";
+import { prepareHostedSourcedSkillArchives } from "./hosted-sourced-skill-archive";
 import type { RuntimeManifest } from "./manifest-contract";
 import { getRuntimePaths } from "./paths";
 
@@ -66,9 +66,9 @@ function manifest(commit: string): RuntimeManifest {
 	};
 }
 
-describe("hosted catalog Skill archives", () => {
+describe("hosted sourced Skill archives", () => {
 	test("fetches the exact commit and reuses only a digest-verified cache", async () => {
-		root = mkdtempSync(join(tmpdir(), "hosted-catalog-skill-"));
+		root = mkdtempSync(join(tmpdir(), "hosted-sourced-skill-"));
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
@@ -89,7 +89,7 @@ describe("hosted catalog Skill archives", () => {
 			});
 		};
 		const paths = getRuntimePaths({ mode: "hosted" });
-		const first = await prepareHostedCatalogSkillArchives(manifest(commit), paths, { fetcher });
+		const first = await prepareHostedSourcedSkillArchives(manifest(commit), paths, { fetcher });
 		const prepared = first.get("review-pr");
 		expect(prepared).toMatchObject({
 			skillId: "review-pr",
@@ -98,7 +98,7 @@ describe("hosted catalog Skill archives", () => {
 		expect(prepared?.archiveSha256).toMatch(/^[a-f0-9]{64}$/);
 		expect(requestedUrls).toEqual([`https://codeload.github.com/Clawdi-AI/store/tar.gz/${commit}`]);
 
-		const cached = await prepareHostedCatalogSkillArchives(manifest(commit), paths, {
+		const cached = await prepareHostedSourcedSkillArchives(manifest(commit), paths, {
 			fetcher: async () => {
 				throw new Error("cache should satisfy the exact source offline");
 			},
@@ -115,7 +115,7 @@ describe("hosted catalog Skill archives", () => {
 		);
 		chmodSync(join(skillDir, "reference.md"), 0o755);
 		const repackedArchive = await codeloadArchive(root, repositoryRoot, 1);
-		const refetched = await prepareHostedCatalogSkillArchives(manifest(commit), paths, {
+		const refetched = await prepareHostedSourcedSkillArchives(manifest(commit), paths, {
 			fetcher: async () =>
 				new Response(Uint8Array.from(repackedArchive), {
 					status: 200,
@@ -131,7 +131,7 @@ describe("hosted catalog Skill archives", () => {
 			join(paths.cacheRoot, "workspace-skills", cacheKeys[0] ?? "missing", "skill.tar.gz"),
 			"tampered",
 		);
-		await prepareHostedCatalogSkillArchives(manifest(commit), paths, { fetcher });
+		await prepareHostedSourcedSkillArchives(manifest(commit), paths, { fetcher });
 		expect(requestedUrls).toHaveLength(2);
 	});
 });

@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
+import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 
 const MAX_ENTRIES = 1024;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
@@ -154,7 +154,7 @@ export function managedSkillReceiptMatchesIdentity(input: {
 }
 
 export function withStagedManagedSkill<T>(
-	skill: PreparedHostedCatalogSkill,
+	skill: PreparedHostedSourcedSkill,
 	operation: (sourceDir: string) => T,
 ): T {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-managed-skill-"));

@@ -732,6 +732,8 @@ class HostedRuntimeSkillSource(_StrictHostedWireModel):
     @field_validator("path")
     @classmethod
     def _validate_path(cls, value: str) -> str:
+        if value == "":
+            return value
         segments = value.split("/")
         if (
             value != value.strip()

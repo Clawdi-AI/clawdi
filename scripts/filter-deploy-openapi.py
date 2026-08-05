@@ -52,7 +52,6 @@ from typing import Any
 KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v1/agent-environments": {"get"},
     "/v1/me": {"get"},
-    "/v1/skills/catalog": {"get"},
     "/v2/ai-providers/managed/models": {"get"},
     "/v2/deployments": {"get", "post"},
     "/v2/deployments/by-request/{deploy_request_id}": {"get"},
@@ -63,8 +62,8 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/deployments/{deployment_id}/restart": {"post"},
     "/v2/deployments/{deployment_id}/start": {"post"},
     "/v2/deployments/{deployment_id}/stop": {"post"},
-    "/v2/deployments/{deployment_id}/workspace-skills": {"get"},
-    "/v2/deployments/{deployment_id}/workspace-skills/{skill_key}": {"put", "delete"},
+    "/v2/deployments/{deployment_id}/workspace-skills": {"get", "post"},
+    "/v2/deployments/{deployment_id}/workspace-skills/{skill_key}": {"delete"},
     "/v2/operations/{operation_id}": {"get"},
     "/v2/subscription/checkout": {"post"},
     "/v2/subscription/cancel": {"post"},

@@ -38,26 +38,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/skills/catalog": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Skill Catalog
-         * @description List/search curated skill catalog entries. Public endpoint, no auth required.
-         */
-        get: operations["skill_catalog_v1_skills_catalog_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/ai-providers/managed/models": {
         parameters: {
             query?: never;
@@ -241,7 +221,8 @@ export interface paths {
         /** List V2 Workspace Skills */
         get: operations["list_v2_workspace_skills_v2_deployments__deployment_id__workspace_skills_get"];
         put?: never;
-        post?: never;
+        /** Install V2 Workspace Skill */
+        post: operations["install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -256,8 +237,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Install V2 Workspace Skill */
-        put: operations["install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__put"];
+        put?: never;
         post?: never;
         /** Uninstall V2 Workspace Skill */
         delete: operations["uninstall_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__delete"];
@@ -1042,88 +1022,6 @@ export interface components {
         V1AgentEnvironmentsResponse: {
             /** Environment Ids */
             environment_ids: string[];
-        };
-        /** V1SkillCatalogItem */
-        V1SkillCatalogItem: {
-            /** Skill Key */
-            skill_key: string;
-            /** Name */
-            name: string;
-            /** Description */
-            description: string;
-            /** Emoji */
-            emoji: string;
-            /** Category */
-            category: string;
-            /** Featured */
-            featured: boolean;
-            /**
-             * Headline
-             * @default
-             */
-            headline: string;
-            /** Homepage */
-            homepage?: string | null;
-            /**
-             * Languages
-             * @default []
-             */
-            languages: string[];
-            /**
-             * Trust Level
-             * @default community
-             */
-            trust_level: string;
-            /**
-             * Tags
-             * @default []
-             */
-            tags: string[];
-            /**
-             * Status
-             * @default active
-             */
-            status: string;
-            /**
-             * Installable
-             * @default false
-             */
-            installable: boolean;
-            /**
-             * Connector Requirements
-             * @default []
-             */
-            connector_requirements: components["schemas"]["V1SkillConnectorRequirementItem"][];
-        };
-        /** V1SkillCatalogResponse */
-        V1SkillCatalogResponse: {
-            /** Items */
-            items: components["schemas"]["V1SkillCatalogItem"][];
-            /**
-             * Total
-             * @default 0
-             */
-            total: number;
-        };
-        /** V1SkillConnectorRequirementItem */
-        V1SkillConnectorRequirementItem: {
-            /** App Name */
-            app_name: string;
-            /**
-             * Reason
-             * @default
-             */
-            reason: string;
-            /**
-             * Required
-             * @default true
-             */
-            required: boolean;
-            /**
-             * Rank
-             * @default 0
-             */
-            rank: number;
         };
         /** V1UserFeatureResolution */
         V1UserFeatureResolution: {
@@ -2286,6 +2184,13 @@ export interface components {
             /** Failure Message */
             failure_message?: string | null;
         };
+        /** V2WorkspaceSkillInstallRequest */
+        V2WorkspaceSkillInstallRequest: {
+            /** Repo */
+            repo: string;
+            /** Path */
+            path?: string | null;
+        };
         /** V2WorkspaceSkillListResponse */
         V2WorkspaceSkillListResponse: {
             /**
@@ -2403,40 +2308,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V1UserResponse"];
-                };
-            };
-        };
-    };
-    skill_catalog_v1_skills_catalog_get: {
-        parameters: {
-            query?: {
-                q?: string | null;
-                category?: string | null;
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V1SkillCatalogResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3162,7 +3033,7 @@ export interface operations {
             };
         };
     };
-    install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__put: {
+    install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills_post: {
         parameters: {
             query?: never;
             header: {
@@ -3171,11 +3042,14 @@ export interface operations {
             };
             path: {
                 deployment_id: string;
-                skill_key: string;
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WorkspaceSkillInstallRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

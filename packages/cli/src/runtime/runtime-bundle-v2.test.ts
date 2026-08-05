@@ -274,7 +274,7 @@ describe("hosted runtime bundle v2", () => {
 		});
 	});
 
-	test("retains an exact immutable catalog Skill source", () => {
+	test("retains an exact immutable repository-root Skill source", () => {
 		const raw = z
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
@@ -282,7 +282,7 @@ describe("hosted runtime bundle v2", () => {
 		const source = {
 			type: "github",
 			url: "https://github.com/Clawdi-AI/store",
-			path: "skills/review-pr",
+			path: "",
 			commit: "a".repeat(40),
 		} as const;
 		const load = normalizeHostedRuntimeBundleV2({
@@ -306,7 +306,7 @@ describe("hosted runtime bundle v2", () => {
 		["tree URL", { url: `https://github.com/Clawdi-AI/store/tree/${"a".repeat(40)}` }],
 		["trailing repository slash", { url: "https://github.com/Clawdi-AI/store/" }],
 		["traversal path", { path: "skills/../review-pr" }],
-	])("rejects catalog Skill source with %s", (_label, override) => {
+	])("rejects sourced Skill source with %s", (_label, override) => {
 		const raw = z
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
