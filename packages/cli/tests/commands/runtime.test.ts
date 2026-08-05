@@ -40,9 +40,32 @@ describe("runtime sidecar egress privilege drop", () => {
 	});
 
 	it("checks the CA as the runtime user when convergence runs as root", () => {
-		expect(buildRuntimeUserReadCommand(0, 10001, "clawdi", "/run/clawdi/egress/ca.pem")).toEqual({
+		expect(
+			buildRuntimeUserReadCommand(
+				0,
+				10001,
+				"clawdi",
+				"/run/clawdi/egress/ca.pem",
+				(command) => command === "gosu",
+			),
+		).toEqual({
 			command: "gosu",
 			args: ["clawdi", "test", "-r", "/run/clawdi/egress/ca.pem"],
+		});
+	});
+
+	it("uses standard runuser when the runtime image intentionally omits gosu", () => {
+		expect(
+			buildRuntimeUserReadCommand(
+				0,
+				10001,
+				"clawdi",
+				"/run/clawdi/egress/ca.pem",
+				(command) => command === "runuser",
+			),
+		).toEqual({
+			command: "runuser",
+			args: ["-u", "clawdi", "--", "test", "-r", "/run/clawdi/egress/ca.pem"],
 		});
 	});
 
