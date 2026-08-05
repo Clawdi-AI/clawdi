@@ -58,6 +58,12 @@ Baileys receives that directory read-only. Do not replace these mounts with a
 host root, Docker socket, network filesystem, or an automatically pruned
 volume.
 
+The kernel-networking containers keep a read-only root filesystem and bounded
+`/tmp` and `/run` tmpfs mounts; `/run` carries the iptables lock files. After
+dropping all default capabilities, they retain `DAC_OVERRIDE` only so their
+root process can access the two Kamal-created `0700` bind mounts, plus the
+network capabilities required for TUN and firewall setup.
+
 ## Optional Tailscale exit-node egress
 
 The checked-in configuration is inert by default. Merging it does not create a

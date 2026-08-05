@@ -71,7 +71,7 @@ if [[ "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" == true ]]; then
 	WHATSAPP_TAILSCALE_CONFIG_REVISION="$(printf '%s\n' \
 		'registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
 		"${tailscale_image}" \
-		'kernel-netns-uid-killswitch-v3-hardened-mounts' \
+		'kernel-netns-uid-killswitch-v4-runtime-permissions' \
 		"${WHATSAPP_TAILSCALE_EXIT_NODE}" | sha256sum | cut -d ' ' -f 1)"
 	export WHATSAPP_TAILSCALE_CONFIG_REVISION
 elif [[ -n "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" && "${WHATSAPP_TAILSCALE_EGRESS_ENABLED}" != false ]]; then

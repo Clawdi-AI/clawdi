@@ -131,6 +131,9 @@ accessories:
     options:
       cap-drop: ALL
       cap-add:
+        # Kamal creates the private bind mount as the SSH UID; container root
+        # needs the dropped DAC capability to traverse and persist state.
+        - DAC_OVERRIDE
         - NET_ADMIN
         - NET_RAW
       # iptables-legacy opens a raw control socket; dropping Docker defaults
@@ -140,7 +143,7 @@ accessories:
       security-opt: no-new-privileges:true
       tmpfs:
         - /tmp:rw,noexec,nosuid,nodev,size=16m
-        - /var/run/tailscale:rw,noexec,nosuid,nodev,size=4m
+        - /run:rw,noexec,nosuid,nodev,size=8m
     env:
       clear:
         TS_STATE_DIR: /var/lib/tailscale
@@ -187,11 +190,15 @@ accessories:
       entrypoint: /bin/sh
       cap-drop: ALL
       cap-add:
+        # Required to publish the marker inside Kamal's private bind mount.
+        - DAC_OVERRIDE
         - NET_ADMIN
         - NET_RAW
       read-only: true
       security-opt: no-new-privileges:true
-      tmpfs: /tmp:rw,noexec,nosuid,nodev,size=4m
+      tmpfs:
+        - /tmp:rw,noexec,nosuid,nodev,size=4m
+        - /run:rw,noexec,nosuid,nodev,size=4m
 <% end %>
 
   whatsapp-baileys:
