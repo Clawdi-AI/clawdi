@@ -23,7 +23,6 @@ interface HostedCatalogSkillArchiveReceipt {
 
 export interface PreparedHostedCatalogSkill {
 	skillId: string;
-	version: number;
 	source: HostedSkillSource;
 	digest: string;
 	tarBytes: Buffer;
@@ -95,9 +94,9 @@ function isReceipt(value: unknown): value is HostedCatalogSkillArchiveReceipt {
 	const source = receipt.source as Record<string, unknown>;
 	return (
 		source.type === "github" &&
-		typeof source.repoUrl === "string" &&
-		typeof source.repoSubdir === "string" &&
-		typeof source.revision === "string"
+		typeof source.url === "string" &&
+		typeof source.path === "string" &&
+		typeof source.commit === "string"
 	);
 }
 
@@ -137,23 +136,22 @@ export async function prepareHostedCatalogSkillArchives(
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(
 		([left], [right]) => left.localeCompare(right),
 	)) {
-		if (!desired.enabled || !desired.source) continue;
+		if (!desired.enabled || !("source" in desired)) continue;
 		const cached = readCachedArchive(paths, skillId, desired.source);
 		if (cached) {
 			prepared.set(skillId, {
 				skillId,
-				version: desired.version,
 				source: desired.source,
 				...cached,
 			});
 			continue;
 		}
-		const repository = parseCanonicalGithubRepositoryUrl(desired.source.repoUrl);
+		const repository = parseCanonicalGithubRepositoryUrl(desired.source.url);
 		const downloaded = await fetchGithubSkillArchive(
 			{
 				...repository,
-				path: desired.source.repoSubdir,
-				ref: desired.source.revision,
+				path: desired.source.path,
+				ref: desired.source.commit,
 			},
 			{ skillKey: skillId, fetcher: options.fetcher },
 		);
@@ -162,7 +160,6 @@ export async function prepareHostedCatalogSkillArchives(
 		}
 		prepared.set(skillId, {
 			skillId,
-			version: desired.version,
 			source: desired.source,
 			digest: writeCachedArchive(paths, skillId, desired.source, downloaded.tarBytes),
 			tarBytes: downloaded.tarBytes,

@@ -3651,17 +3651,13 @@ function validateHostedSkillsPlan(
 	for (const [skillName, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
 		const targetDir = hostedBundledSkillTargetDir(name, skillName, home);
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
-		if (desired.source) {
+		if ("source" in desired) {
 			if (hostedBundledSkillIds().includes(skillName)) {
 				throw new Error(`bundled hosted Skill ${skillName} must not declare a catalog source`);
 			}
 			if (name !== "hermes" || !targetDir || !runtimeEnabled || desired.enabled !== true) continue;
 			const prepared = preparedCatalogSkills.get(skillName);
-			if (
-				!prepared ||
-				JSON.stringify(prepared.source) !== JSON.stringify(desired.source) ||
-				prepared.version !== desired.version
-			) {
+			if (!prepared || JSON.stringify(prepared.source) !== JSON.stringify(desired.source)) {
 				throw new Error(`pinned archive for hosted Skill ${skillName} is unavailable`);
 			}
 			const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
@@ -3696,7 +3692,11 @@ function recoverHostedCatalogSkillReservations(
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(
 		([left], [right]) => left.localeCompare(right),
 	)) {
-		if (desired.enabled !== true || !desired.source || hostedBundledSkillIds().includes(skillId)) {
+		if (
+			desired.enabled !== true ||
+			!("source" in desired) ||
+			hostedBundledSkillIds().includes(skillId)
+		) {
 			continue;
 		}
 		const targetDir = hostedBundledSkillTargetDir("hermes", skillId, home);
@@ -3708,11 +3708,7 @@ function recoverHostedCatalogSkillReservations(
 			continue;
 		}
 		const prepared = preparedCatalogSkills.get(skillId);
-		if (
-			!prepared ||
-			prepared.version !== desired.version ||
-			JSON.stringify(prepared.source) !== JSON.stringify(desired.source)
-		) {
+		if (!prepared || JSON.stringify(prepared.source) !== JSON.stringify(desired.source)) {
 			continue;
 		}
 		if (!nativeReconciler.verifyOwned({ home, appRoot, skill: prepared })) continue;
@@ -3720,7 +3716,6 @@ function recoverHostedCatalogSkillReservations(
 			targetDir,
 			id: skillId,
 			manager: "hosted-manifest",
-			version: prepared.version,
 			digest: prepared.digest,
 		});
 	}
@@ -3742,6 +3737,9 @@ function applyHostedBundledSkills(
 		targets.push(targetDir);
 		const desired = manifest.projection?.skills?.entries[skillName];
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
+		if (desired && "source" in desired) {
+			throw new Error(`bundled hosted Skill ${skillName} must not declare a catalog source`);
+		}
 		if (!installEnabled || !runtimeEnabled || desired?.enabled !== true) {
 			const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
 			const legacy = adoptableLegacyHostedBundledSkill(targetDir, skillName);
@@ -3815,7 +3813,7 @@ function applyHostedCatalogSkills(
 	const skillsRoot = join(home, ".hermes", "skills");
 	const desiredEntries = manifest.projection?.skills?.entries ?? {};
 	const desiredCatalogIds = Object.entries(desiredEntries).flatMap(([skillId, desired]) =>
-		desired.source ? [skillId] : [],
+		"source" in desired ? [skillId] : [],
 	);
 	const previouslyManagedIds = managedSkillReservations("hosted-manifest").flatMap((reservation) =>
 		dirname(reservation.targetDir) === skillsRoot &&
@@ -3834,7 +3832,7 @@ function applyHostedCatalogSkills(
 		if (!targetDir) continue;
 		targets.push(targetDir);
 		const desired = desiredEntries[skillId];
-		if (!runtimeEnabled || desired?.enabled !== true || !desired.source) {
+		if (!runtimeEnabled || desired?.enabled !== true || !("source" in desired)) {
 			const owner = managedSkillReservationOwner(targetDir, skillId);
 			if (owner === "unreserved") continue;
 			if (owner !== "hosted-manifest") {
@@ -3860,7 +3858,6 @@ function applyHostedCatalogSkills(
 				targetDir,
 				id: skillId,
 				manager: "hosted-manifest",
-				version: prepared.version,
 				digest: prepared.digest,
 			},
 			() =>
@@ -3877,7 +3874,7 @@ function applyHostedCatalogSkills(
 
 type HostedSkillProjectionEntry =
 	| { id: string; version: number; digest: string }
-	| { id: string; version: number; source: HostedSkillSource };
+	| { id: string; source: HostedSkillSource };
 
 function hostedSkillProjection(
 	manifest: RuntimeManifest,
@@ -3890,9 +3887,9 @@ function hostedSkillProjection(
 		([left], [right]) => left.localeCompare(right),
 	)) {
 		if (desired.enabled !== true) continue;
-		if (desired.source) {
+		if ("source" in desired) {
 			if (runtime === "hermes") {
-				projection.push({ id: skillId, version: desired.version, source: desired.source });
+				projection.push({ id: skillId, source: desired.source });
 			}
 			continue;
 		}
@@ -5122,7 +5119,7 @@ export function runtimeUserMutationTargets(
 	const hermesSkillsRoot = join(home, ".hermes", "skills");
 	let managesHermesCatalogSkill = false;
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
-		if (!desired.source) continue;
+		if (!("source" in desired)) continue;
 		managesHermesCatalogSkill = true;
 		targets.add(join(hermesSkillsRoot, skillId));
 	}

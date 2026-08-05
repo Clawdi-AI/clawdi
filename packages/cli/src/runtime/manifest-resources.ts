@@ -93,7 +93,7 @@ export const hostedMcpDesiredStateSchema = z
 	})
 	.strict();
 
-const exactGitRevisionSchema = z.string().regex(/^[a-f0-9]{40}$/);
+const exactGitCommitSchema = z.string().regex(/^[a-f0-9]{40}$/);
 
 function isCanonicalGithubRepositoryUrl(value: string): boolean {
 	try {
@@ -112,7 +112,7 @@ function isCanonicalGithubRepositoryUrl(value: string): boolean {
 	}
 }
 
-function isSafeRepositorySubdir(value: string): boolean {
+function isSafeRepositoryPath(value: string): boolean {
 	const segments = value.split("/");
 	return (
 		value === value.trim() &&
@@ -131,28 +131,39 @@ function isSafeRepositorySubdir(value: string): boolean {
 export const hostedSkillSourceSchema = z
 	.object({
 		type: z.literal("github"),
-		repoUrl: z
+		url: z
 			.string()
 			.max(500)
 			.refine(isCanonicalGithubRepositoryUrl, "must be a canonical GitHub repository URL"),
-		repoSubdir: z
+		path: z
 			.string()
 			.max(500)
-			.refine(isSafeRepositorySubdir, "must be a safe repository-relative directory"),
-		revision: exactGitRevisionSchema,
+			.refine(isSafeRepositoryPath, "must be a safe repository-relative directory"),
+		commit: exactGitCommitSchema,
 	})
 	.strict();
 export type HostedSkillSource = z.infer<typeof hostedSkillSourceSchema>;
 
-export const hostedSkillEntryDesiredStateSchema = z
+const hostedBundledSkillEntryDesiredStateSchema = z
 	.object({
 		enabled: z.boolean(),
 		// Expand-phase compatibility for enabled-only manifests is pinned to the
 		// first immutable bundle. It must never resolve relative to the CLI package.
 		version: z.number().int().positive().default(1),
-		source: hostedSkillSourceSchema.optional(),
 	})
 	.strict();
+
+const hostedSourcedSkillEntryDesiredStateSchema = z
+	.object({
+		enabled: z.boolean(),
+		source: hostedSkillSourceSchema,
+	})
+	.strict();
+
+export const hostedSkillEntryDesiredStateSchema = z.union([
+	hostedBundledSkillEntryDesiredStateSchema,
+	hostedSourcedSkillEntryDesiredStateSchema,
+]);
 
 export const hostedSkillsDesiredStateSchema = z
 	.object({

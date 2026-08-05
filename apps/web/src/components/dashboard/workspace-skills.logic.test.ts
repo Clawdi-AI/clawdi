@@ -36,24 +36,22 @@ describe("Workspace Skill runtime authority", () => {
 			[
 				{
 					skill_key: "manifest-owned",
-					version: 3,
 					source: {
 						type: "github",
-						repo_url: "https://github.com/Clawdi-AI/store",
-						repo_subdir: "skills/manifest-owned",
-						revision: "a".repeat(40),
+						url: "https://github.com/Clawdi-AI/store",
+						path: "skills/manifest-owned",
+						commit: "a".repeat(40),
 					},
 					reconciliation_status: "reconciling",
 					failure_message: null,
 				},
 				{
 					skill_key: "failed",
-					version: 1,
 					source: {
 						type: "github",
-						repo_url: "https://github.com/Clawdi-AI/store",
-						repo_subdir: "skills/failed",
-						revision: "b".repeat(40),
+						url: "https://github.com/Clawdi-AI/store",
+						path: "skills/failed",
+						commit: "b".repeat(40),
 					},
 					reconciliation_status: "failed",
 					failure_message: "Retry pending.",
@@ -105,7 +103,7 @@ describe("Workspace Skill runtime authority", () => {
 		});
 		const manifestOwned = inventory.find((item) => item.entity.skill_key === "manifest-owned");
 		expect(manifestOwned).toMatchObject({
-			desired: { reconciliation_status: "reconciling", version: 3 },
+			desired: { reconciliation_status: "reconciling" },
 			installable: false,
 			cloudProjection: null,
 		});
@@ -137,12 +135,11 @@ describe("Workspace Skill runtime authority", () => {
 			[
 				{
 					skill_key: "desired",
-					version: 1,
 					source: {
 						type: "github",
-						repo_url: "https://github.com/Clawdi-AI/store",
-						repo_subdir: "skills/desired",
-						revision: "c".repeat(40),
+						url: "https://github.com/Clawdi-AI/store",
+						path: "skills/desired",
+						commit: "c".repeat(40),
 					},
 					reconciliation_status: "reconciling",
 				},

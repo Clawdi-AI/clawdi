@@ -35,7 +35,7 @@ export function mergeWorkspaceRuntimeSkills(
 						name: catalogItem?.name || skillKey,
 						description: catalogItem?.description ?? null,
 						source: desired ? "Hermes Workspace" : "Skill catalog",
-						sourceRepo: catalogItem?.homepage ?? desired?.source.repo_url ?? null,
+						sourceRepo: catalogItem?.homepage ?? desired?.source.url ?? null,
 					}),
 				cloudProjection: projection ?? null,
 				desired: desired ?? null,

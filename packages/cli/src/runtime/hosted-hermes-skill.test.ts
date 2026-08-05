@@ -150,13 +150,12 @@ describe("Hermes native Workspace Skill integration", () => {
 		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
 		const source = {
 			type: "github" as const,
-			repoUrl: "https://github.com/Clawdi-AI/store",
-			repoSubdir: "skills/review-pr",
-			revision: "a".repeat(40),
+			url: "https://github.com/Clawdi-AI/store",
+			path: "skills/review-pr",
+			commit: "a".repeat(40),
 		};
 		const skill: PreparedHostedCatalogSkill = {
 			skillId: "review-pr",
-			version: 2,
 			source,
 			digest: "b".repeat(64),
 			tarBytes: await tarSkillDir(sourceDir),

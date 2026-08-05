@@ -2267,8 +2267,6 @@ export interface components {
         V2WorkspaceSkillDesiredItem: {
             /** Skill Key */
             skill_key: string;
-            /** Version */
-            version: number;
             source: components["schemas"]["V2WorkspaceSkillSource"];
             /**
              * Reconciliation Status
@@ -2329,12 +2327,12 @@ export interface components {
              * @constant
              */
             type: "github";
-            /** Repo Url */
-            repo_url: string;
-            /** Repo Subdir */
-            repo_subdir: string;
-            /** Revision */
-            revision: string;
+            /** Url */
+            url: string;
+            /** Path */
+            path: string;
+            /** Commit */
+            commit: string;
         };
         /** ValidationError */
         ValidationError: {

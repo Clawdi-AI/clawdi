@@ -704,13 +704,13 @@ def validate_hosted_runtime_mcp_desired_state(
 
 class HostedRuntimeSkillSource(_StrictHostedWireModel):
     type: Literal["github"]
-    repoUrl: str = Field(max_length=500)
-    repoSubdir: str = Field(max_length=500)
-    revision: str = Field(pattern=_GIT_COMMIT_PATTERN.pattern)
+    url: str = Field(max_length=500)
+    path: str = Field(max_length=500)
+    commit: str = Field(pattern=_GIT_COMMIT_PATTERN.pattern)
 
-    @field_validator("repoUrl")
+    @field_validator("url")
     @classmethod
-    def _validate_repo_url(cls, value: str) -> str:
+    def _validate_url(cls, value: str) -> str:
         try:
             parsed = urlsplit(value)
             parsed.port
@@ -729,9 +729,9 @@ class HostedRuntimeSkillSource(_StrictHostedWireModel):
             raise ValueError("must be a canonical GitHub repository URL")
         return value
 
-    @field_validator("repoSubdir")
+    @field_validator("path")
     @classmethod
-    def _validate_repo_subdir(cls, value: str) -> str:
+    def _validate_path(cls, value: str) -> str:
         segments = value.split("/")
         if (
             value != value.strip()
@@ -748,10 +748,17 @@ class HostedRuntimeSkillSource(_StrictHostedWireModel):
         return value
 
 
-class HostedRuntimeSkillEntry(_StrictHostedWireModel):
+class HostedRuntimeBundledSkillEntry(_StrictHostedWireModel):
     enabled: bool
     version: int = Field(ge=1)
-    source: HostedRuntimeSkillSource | None = None
+
+
+class HostedRuntimeSourcedSkillEntry(_StrictHostedWireModel):
+    enabled: bool
+    source: HostedRuntimeSkillSource
+
+
+HostedRuntimeSkillEntry = HostedRuntimeBundledSkillEntry | HostedRuntimeSourcedSkillEntry
 
 
 class HostedRuntimeSkills(_StrictHostedWireModel):
@@ -767,12 +774,21 @@ class HostedRuntimeSkills(_StrictHostedWireModel):
         return value
 
 
-class PersistedHostedRuntimeSkillEntry(_StrictHostedWireModel):
+class PersistedHostedRuntimeBundledSkillEntry(_StrictHostedWireModel):
     """Expand-phase reader for already-persisted enabled-only Skill intent."""
 
     enabled: bool
     version: int | None = Field(default=None, ge=1)
-    source: HostedRuntimeSkillSource | None = None
+
+
+class PersistedHostedRuntimeSourcedSkillEntry(_StrictHostedWireModel):
+    enabled: bool
+    source: HostedRuntimeSkillSource
+
+
+PersistedHostedRuntimeSkillEntry = (
+    PersistedHostedRuntimeBundledSkillEntry | PersistedHostedRuntimeSourcedSkillEntry
+)
 
 
 class PersistedHostedRuntimeSkills(_StrictHostedWireModel):

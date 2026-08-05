@@ -23,7 +23,7 @@ async function codeloadArchive(parent: string, repositoryRoot: string): Promise<
 	return Buffer.concat(chunks);
 }
 
-function manifest(revision: string): RuntimeManifest {
+function manifest(commit: string): RuntimeManifest {
 	const home = join(root, "home");
 	return {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -40,12 +40,11 @@ function manifest(revision: string): RuntimeManifest {
 				entries: {
 					"review-pr": {
 						enabled: true,
-						version: 4,
 						source: {
 							type: "github",
-							repoUrl: "https://github.com/Clawdi-AI/store",
-							repoSubdir: "skills/review-pr",
-							revision,
+							url: "https://github.com/Clawdi-AI/store",
+							path: "skills/review-pr",
+							commit,
 						},
 					},
 				},
@@ -62,8 +61,8 @@ describe("hosted catalog Skill archives", () => {
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
-		const revision = "a".repeat(40);
-		const repositoryRoot = `store-${revision}`;
+		const commit = "a".repeat(40);
+		const repositoryRoot = `store-${commit}`;
 		const skillDir = join(root, repositoryRoot, "skills", "review-pr");
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(join(skillDir, "SKILL.md"), "# Review PR\n");
@@ -77,19 +76,16 @@ describe("hosted catalog Skill archives", () => {
 			});
 		};
 		const paths = getRuntimePaths({ mode: "hosted" });
-		const first = await prepareHostedCatalogSkillArchives(manifest(revision), paths, { fetcher });
+		const first = await prepareHostedCatalogSkillArchives(manifest(commit), paths, { fetcher });
 		const prepared = first.get("review-pr");
 		expect(prepared).toMatchObject({
 			skillId: "review-pr",
-			version: 4,
-			source: { revision },
+			source: { commit },
 		});
 		expect(prepared?.digest).toMatch(/^[a-f0-9]{64}$/);
-		expect(requestedUrls).toEqual([
-			`https://codeload.github.com/Clawdi-AI/store/tar.gz/${revision}`,
-		]);
+		expect(requestedUrls).toEqual([`https://codeload.github.com/Clawdi-AI/store/tar.gz/${commit}`]);
 
-		const cached = await prepareHostedCatalogSkillArchives(manifest(revision), paths, {
+		const cached = await prepareHostedCatalogSkillArchives(manifest(commit), paths, {
 			fetcher: async () => {
 				throw new Error("cache should satisfy the exact source offline");
 			},
@@ -102,7 +98,7 @@ describe("hosted catalog Skill archives", () => {
 			join(paths.cacheRoot, "workspace-skills", cacheKeys[0] ?? "missing", "skill.tar.gz"),
 			"tampered",
 		);
-		await prepareHostedCatalogSkillArchives(manifest(revision), paths, { fetcher });
+		await prepareHostedCatalogSkillArchives(manifest(commit), paths, { fetcher });
 		expect(requestedUrls).toHaveLength(2);
 	});
 });

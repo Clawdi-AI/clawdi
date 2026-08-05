@@ -3934,13 +3934,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		chmodSync(hermesCommand, 0o755);
 		const source = {
 			type: "github" as const,
-			repoUrl: "https://github.com/Clawdi-AI/store",
-			repoSubdir: "skills/review-pr",
-			revision: "a".repeat(40),
+			url: "https://github.com/Clawdi-AI/store",
+			path: "skills/review-pr",
+			commit: "a".repeat(40),
 		};
 		const prepared: PreparedHostedCatalogSkill = {
 			skillId: "review-pr",
-			version: 7,
 			source,
 			digest: "b".repeat(64),
 			tarBytes: Buffer.from("exact archive"),
@@ -3957,7 +3956,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			{
 				projection: {
 					skills: {
-						entries: { "review-pr": { enabled: true, version: 7, source } },
+						entries: { "review-pr": { enabled: true, source } },
 					},
 				},
 			},

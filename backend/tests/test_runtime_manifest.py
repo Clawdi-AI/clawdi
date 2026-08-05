@@ -137,33 +137,27 @@ TEST_HERMES_DASHBOARD_AUTH = {
 def test_hosted_runtime_skills_retain_exact_catalog_source() -> None:
     source = {
         "type": "github",
-        "repoUrl": "https://github.com/Clawdi-AI/store",
-        "repoSubdir": "skills/review-pr",
-        "revision": "a" * 40,
+        "url": "https://github.com/Clawdi-AI/store",
+        "path": "skills/review-pr",
+        "commit": "a" * 40,
     }
     skills = HostedRuntimeSkills.model_validate(
-        {
-            "entries": {
-                "review-pr": {"enabled": True, "version": 3, "source": source}
-            }
-        }
+        {"entries": {"review-pr": {"enabled": True, "source": source}}}
     )
 
     assert skills.model_dump(mode="json") == {
-        "entries": {
-            "review-pr": {"enabled": True, "version": 3, "source": source}
-        }
+        "entries": {"review-pr": {"enabled": True, "source": source}}
     }
 
 
 @pytest.mark.parametrize(
     "source_override",
     [
-        {"revision": "main"},
-        {"revision": "A" * 40},
-        {"repoUrl": "https://github.com/Clawdi-AI/store/"},
-        {"repoUrl": f"https://github.com/Clawdi-AI/store/tree/{'a' * 40}"},
-        {"repoSubdir": "skills/../review-pr"},
+        {"commit": "main"},
+        {"commit": "A" * 40},
+        {"url": "https://github.com/Clawdi-AI/store/"},
+        {"url": f"https://github.com/Clawdi-AI/store/tree/{'a' * 40}"},
+        {"path": "skills/../review-pr"},
     ],
 )
 def test_hosted_runtime_skills_reject_mutable_or_noncanonical_source(
@@ -175,18 +169,19 @@ def test_hosted_runtime_skills_reject_mutable_or_noncanonical_source(
                 "entries": {
                     "review-pr": {
                         "enabled": True,
-                        "version": 3,
                         "source": {
                             "type": "github",
-                            "repoUrl": "https://github.com/Clawdi-AI/store",
-                            "repoSubdir": "skills/review-pr",
-                            "revision": "a" * 40,
+                            "url": "https://github.com/Clawdi-AI/store",
+                            "path": "skills/review-pr",
+                            "commit": "a" * 40,
                             **source_override,
                         },
                     }
                 }
             }
         )
+
+
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "skills")
 TEST_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
 TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@1.2.5-test"

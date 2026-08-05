@@ -39,7 +39,7 @@ export type ManagedSkillReservationManager = "hosted-manifest" | "local-setup";
 interface ManagedSkillReservation {
 	target: string;
 	id: string;
-	version: number;
+	version?: number;
 	digest: string;
 	manager: ManagedSkillReservationManager;
 }
@@ -47,7 +47,7 @@ interface ManagedSkillReservation {
 export interface ManagedSkillReservationSnapshot {
 	targetDir: string;
 	id: string;
-	version: number;
+	version?: number;
 	digest: string;
 }
 
@@ -101,9 +101,10 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 			typeof raw.id !== "string" ||
 			basename(target) !== raw.id ||
 			!MANAGED_SKILL_ID_PATTERN.test(raw.id) ||
-			typeof raw.version !== "number" ||
-			!Number.isSafeInteger(raw.version) ||
-			raw.version <= 0 ||
+			(raw.version !== undefined &&
+				(typeof raw.version !== "number" ||
+					!Number.isSafeInteger(raw.version) ||
+					raw.version <= 0)) ||
 			typeof raw.digest !== "string" ||
 			!SHA256_PATTERN.test(raw.digest) ||
 			(raw.manager !== "hosted-manifest" && raw.manager !== "local-setup")
@@ -278,7 +279,7 @@ export function migrateLegacyLocalSetupSkill(input: {
 export function reserveManagedSkill(input: {
 	targetDir: string;
 	id: string;
-	version: number;
+	version?: number;
 	digest: string;
 	manager: ManagedSkillReservationManager;
 }): "created" | "existing" {
@@ -287,8 +288,7 @@ export function reserveManagedSkill(input: {
 	if (
 		basename(target) !== input.id ||
 		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
-		!Number.isSafeInteger(input.version) ||
-		input.version <= 0 ||
+		(input.version !== undefined && (!Number.isSafeInteger(input.version) || input.version <= 0)) ||
 		!SHA256_PATTERN.test(input.digest)
 	) {
 		throw new Error("managed Skill reservation identity is invalid");
@@ -316,7 +316,7 @@ export function installReservedManagedSkill<T>(
 	input: {
 		targetDir: string;
 		id: string;
-		version: number;
+		version?: number;
 		digest: string;
 		manager: ManagedSkillReservationManager;
 	},
@@ -327,8 +327,7 @@ export function installReservedManagedSkill<T>(
 	if (
 		basename(target) !== input.id ||
 		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
-		!Number.isSafeInteger(input.version) ||
-		input.version <= 0 ||
+		(input.version !== undefined && (!Number.isSafeInteger(input.version) || input.version <= 0)) ||
 		!SHA256_PATTERN.test(input.digest)
 	) {
 		throw new Error("managed Skill reservation identity is invalid");

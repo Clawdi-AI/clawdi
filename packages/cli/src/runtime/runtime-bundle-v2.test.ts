@@ -281,31 +281,31 @@ describe("hosted runtime bundle v2", () => {
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 		const source = {
 			type: "github",
-			repoUrl: "https://github.com/Clawdi-AI/store",
-			repoSubdir: "skills/review-pr",
-			revision: "a".repeat(40),
+			url: "https://github.com/Clawdi-AI/store",
+			path: "skills/review-pr",
+			commit: "a".repeat(40),
 		} as const;
 		const load = normalizeHostedRuntimeBundleV2({
 			...raw,
 			manifest: {
 				...manifest,
 				skills: {
-					entries: { "review-pr": { enabled: true, version: 4, source } },
+					entries: { "review-pr": { enabled: true, source } },
 				},
 			},
 		});
 
 		expect(load.manifest.projection?.skills).toEqual({
-			entries: { "review-pr": { enabled: true, version: 4, source } },
+			entries: { "review-pr": { enabled: true, source } },
 		});
 	});
 
 	test.each([
-		["branch revision", { revision: "main" }],
-		["uppercase revision", { revision: "A".repeat(40) }],
-		["tree URL", { repoUrl: `https://github.com/Clawdi-AI/store/tree/${"a".repeat(40)}` }],
-		["trailing repository slash", { repoUrl: "https://github.com/Clawdi-AI/store/" }],
-		["traversal subdirectory", { repoSubdir: "skills/../review-pr" }],
+		["branch commit", { commit: "main" }],
+		["uppercase commit", { commit: "A".repeat(40) }],
+		["tree URL", { url: `https://github.com/Clawdi-AI/store/tree/${"a".repeat(40)}` }],
+		["trailing repository slash", { url: "https://github.com/Clawdi-AI/store/" }],
+		["traversal path", { path: "skills/../review-pr" }],
 	])("rejects catalog Skill source with %s", (_label, override) => {
 		const raw = z
 			.record(z.string(), z.unknown())
@@ -320,12 +320,11 @@ describe("hosted runtime bundle v2", () => {
 						entries: {
 							"review-pr": {
 								enabled: true,
-								version: 1,
 								source: {
 									type: "github",
-									repoUrl: "https://github.com/Clawdi-AI/store",
-									repoSubdir: "skills/review-pr",
-									revision: "a".repeat(40),
+									url: "https://github.com/Clawdi-AI/store",
+									path: "skills/review-pr",
+									commit: "a".repeat(40),
 									...override,
 								},
 							},

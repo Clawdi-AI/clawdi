@@ -126,7 +126,7 @@ def install(payload):
         print(json.dumps({"status": "unchanged"}))
         return
 
-    identifier = source["repoUrl"].removeprefix("https://github.com/") + "/" + source["repoSubdir"]
+    identifier = source["url"].removeprefix("https://github.com/") + "/" + source["path"]
     bundle = SkillBundle(
         name=skill_id,
         files=archive_files(payload),
