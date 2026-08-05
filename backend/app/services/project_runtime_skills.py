@@ -15,13 +15,14 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.runtime import PersistedHostedRuntimeSkills
@@ -34,6 +35,7 @@ from app.services.sync_events import queue_runtime_manifest_changed
 # prevents a desired manifest from succeeding but failing during installation.
 RUNTIME_PROJECT_SKILL_KEY_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 PROJECT_SKILL_RECONCILE_VERSION = 1
+MAX_AGENT_PROJECT_SKILLS = 1000
 _CONNECTED_PROJECT_SKILL_AGENT_TYPES = frozenset({"claude_code", "codex", "hermes", "openclaw"})
 
 
@@ -210,6 +212,103 @@ async def _other_project_skill_keys(
     return set(rows.scalars())
 
 
+async def _linked_project_skill_count(db: AsyncSession, *, agent_id: UUID) -> int:
+    """Count active Cloud Skills this Agent can actually receive."""
+    membership = ProjectMembership.__table__.alias("project_skill_capacity_membership")
+    count = await db.scalar(
+        select(func.count(Skill.id))
+        .select_from(Skill)
+        .join(Project, Project.id == Skill.project_id)
+        .join(
+            AgentProjectBinding,
+            (AgentProjectBinding.project_id == Project.id)
+            & (AgentProjectBinding.agent_id == agent_id),
+        )
+        .join(AgentEnvironment, AgentEnvironment.id == AgentProjectBinding.agent_id)
+        .outerjoin(
+            membership,
+            (membership.c.project_id == Project.id)
+            & (membership.c.member_user_id == AgentEnvironment.user_id),
+        )
+        .where(
+            AgentEnvironment.id == agent_id,
+            AgentEnvironment.archived_at.is_(None),
+            AgentProjectBinding.binding_type == "context",
+            Project.kind == PROJECT_KIND_WORKSPACE,
+            Project.archived_at.is_(None),
+            (Project.user_id == AgentEnvironment.user_id) | membership.c.id.is_not(None),
+            Skill.authority == SKILL_AUTHORITY_CLOUD,
+            Skill.is_active,
+        )
+    )
+    return int(count or 0)
+
+
+def assert_agent_project_skill_total(total: int) -> None:
+    if total <= MAX_AGENT_PROJECT_SKILLS:
+        return
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        detail={
+            "code": "agent_project_skill_limit_exceeded",
+            "message": (
+                "This Agent has too many Project Skills. Remove a Skill or unlink a Project, "
+                "then try again."
+            ),
+        },
+    )
+
+
+async def _assert_project_link_skill_capacity(
+    db: AsyncSession,
+    *,
+    agent_id: UUID,
+    project_id: UUID,
+) -> None:
+    current_count = await _linked_project_skill_count(db, agent_id=agent_id)
+    already_linked = await db.scalar(
+        select(func.count(AgentProjectBinding.id)).where(
+            AgentProjectBinding.agent_id == agent_id,
+            AgentProjectBinding.project_id == project_id,
+            AgentProjectBinding.binding_type == "context",
+        )
+    )
+    if already_linked:
+        assert_agent_project_skill_total(current_count)
+        return
+    added_count = await db.scalar(
+        select(func.count(Skill.id)).where(
+            Skill.project_id == project_id,
+            Skill.authority == SKILL_AUTHORITY_CLOUD,
+            Skill.is_active,
+        )
+    )
+    assert_agent_project_skill_total(current_count + int(added_count or 0))
+
+
+async def _assert_project_skill_write_capacity(
+    db: AsyncSession,
+    *,
+    agent_ids: Iterable[UUID],
+    project_id: UUID,
+    skill_key: str,
+) -> None:
+    already_exists = bool(
+        await db.scalar(
+            select(func.count(Skill.id)).where(
+                Skill.project_id == project_id,
+                Skill.skill_key == skill_key,
+                Skill.authority == SKILL_AUTHORITY_CLOUD,
+                Skill.is_active,
+            )
+        )
+    )
+    increment = 0 if already_exists else 1
+    for agent_id in agent_ids:
+        current_count = await _linked_project_skill_count(db, agent_id=agent_id)
+        assert_agent_project_skill_total(current_count + increment)
+
+
 async def _assert_agent_accepts_project_skills(
     db: AsyncSession,
     *,
@@ -342,6 +441,11 @@ async def assert_project_link_compatible(
         project_id=project_id,
         skill_keys=await _project_skill_keys(db, project_id),
     )
+    await _assert_project_link_skill_capacity(
+        db,
+        agent_id=agent_id,
+        project_id=project_id,
+    )
 
 
 async def assert_project_skill_write_compatible(
@@ -349,6 +453,7 @@ async def assert_project_skill_write_compatible(
     *,
     project_id: UUID,
     skill_key: str,
+    enforce_total_limit: bool = True,
 ) -> list[UUID]:
     """Lock the graph and prove a Cloud Skill write has one runtime owner."""
     agent_ids = await lock_project_runtime_graph(db, project_id)
@@ -358,6 +463,13 @@ async def assert_project_skill_write_compatible(
             agent_id=agent_id,
             project_id=project_id,
             skill_keys={skill_key},
+        )
+    if enforce_total_limit:
+        await _assert_project_skill_write_capacity(
+            db,
+            agent_ids=agent_ids,
+            project_id=project_id,
+            skill_key=skill_key,
         )
     return agent_ids
 

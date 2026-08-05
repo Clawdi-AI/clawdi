@@ -644,12 +644,7 @@ export function SkillDetailContent({
 							</Badge>
 						</div>
 						{skillProject ? (
-							<ProjectIdentity
-								project={skillProject}
-								showOwner
-								showAccess
-								titleClassName="text-sm"
-							/>
+							<ProjectIdentity project={skillProject} showAccess titleClassName="text-sm" />
 						) : sourceProjectName ? (
 							<div className="rounded-md border bg-background/70 px-3 py-2.5">
 								<div className="text-sm font-medium">{sourceProjectName}</div>

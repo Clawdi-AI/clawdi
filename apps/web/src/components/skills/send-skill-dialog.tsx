@@ -106,12 +106,15 @@ export function SendSkillDialog({
 					}),
 				),
 			);
-			await uploadSkillArchive(target, skill.skill_key, blob);
+			await uploadSkillArchive(target, skill.skill_key, blob, { createOnly: true });
 			if (action === "copy") return { sourceRemoved: null };
 			try {
 				unwrap(
 					await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-						params: { path: { project_id: skill.project_id, skill_key: skill.skill_key } },
+						params: {
+							path: { project_id: skill.project_id, skill_key: skill.skill_key },
+							query: { expected_content_hash: skill.content_hash },
+						},
 					}),
 				);
 				return { sourceRemoved: true };

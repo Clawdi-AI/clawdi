@@ -8,7 +8,7 @@ import {
 	isProjectOwner,
 	ProjectKindBadge,
 	type ProjectMetadata,
-	projectAlias,
+	projectSupportingText,
 } from "@/components/projects/project-metadata";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -62,8 +62,8 @@ export function ProjectResourceCard({
 					</>
 				) : undefined
 			}
-			description={projectAlias(project)}
-			descriptionClassName="truncate font-mono"
+			description={projectSupportingText(project)}
+			descriptionClassName="truncate"
 			footer={footer}
 			actions={actions}
 			link={link ?? (project.id ? projectDetailLink(navigationScope, project.id) : undefined)}

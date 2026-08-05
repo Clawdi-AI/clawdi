@@ -131,7 +131,29 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 					slug: "production-credentials",
 				});
 			}
-			return fulfill(route, { items: [], total: 0, page: 1, page_size: 200 });
+			if (url.searchParams.get("project_id"))
+				return fulfill(route, { items: [], total: 0, page: 1, page_size: 200 });
+			return fulfill(route, {
+				items: [
+					{
+						id: "77777777-7777-4777-8777-777777777777",
+						slug: "already-attached",
+						name: "Already attached",
+						is_owner: true,
+						project_ids: [projectId],
+					},
+					{
+						id: "88888888-8888-4888-8888-888888888888",
+						slug: "release-archive",
+						name: "Release archive",
+						is_owner: true,
+						project_ids: [],
+					},
+				],
+				total: 2,
+				page: 1,
+				page_size: 200,
+			});
 		}
 		if (path === `/v1/projects/${projectId}/members`) return fulfill(route, []);
 		if (path === "/v1/dashboard/stats") return fulfill(route, {});
@@ -171,10 +193,33 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		.poll(() => projectResourceRequests.some((request) => request.includes("/v1/skills")))
 		.toBe(true);
 	await expectNoHorizontalOverflow(page);
+	await page.getByRole("button", { name: "Add skill", exact: true }).click();
+	await expect(page).toHaveURL(`/skills?project=${projectId}&add=1`);
+	const directAddDialog = page.getByRole("dialog", { name: "Add skill" });
+	await expect(directAddDialog).toBeVisible();
+	await directAddDialog.getByRole("button", { name: "Cancel" }).click();
+	await expect(page).toHaveURL(`/skills?project=${projectId}`);
+	await page.goBack();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/projects/${projectId}` &&
+			url.searchParams.get("tab") === "skills" &&
+			url.searchParams.get("source") === "on-clawdi" &&
+			url.searchParams.get("d") === "deployment-1"
+		);
+	});
 
 	await projectTabs.getByRole("tab", { name: "Vaults" }).click();
 	await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Attach vault", exact: true }).click();
+	const attachVaultDialog = page.getByRole("dialog", { name: "Attach vault" });
+	await attachVaultDialog.getByLabel("Search Vaults").fill("release");
+	await attachVaultDialog.getByLabel("Existing Vault").click();
+	await expect(page.getByRole("option", { name: "Release archive" })).toBeVisible();
+	await expect(page.getByRole("option", { name: "Already attached" })).toHaveCount(0);
+	await page.keyboard.press("Escape");
+	await attachVaultDialog.getByRole("button", { name: "Cancel" }).click();
 	await page.getByRole("button", { name: "Create vault", exact: true }).click();
 	const createVaultDialog = page.getByRole("dialog", { name: "Create vault" });
 	await createVaultDialog.getByLabel("Vault name").fill("Production Credentials");

@@ -19,6 +19,7 @@ from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, 
 from app.models.user import User
 from app.routes import skills as skill_routes
 from app.routes.skills import _compute_file_tree_hash
+from app.services import project_runtime_skills
 from app.services.file_store import get_file_store
 from app.services.runtime_source import (
     load_runtime_source_batch,
@@ -537,6 +538,74 @@ async def test_link_rejects_project_skill_name_outside_native_runtime_contract(
             select(AgentProjectBinding).where(
                 AgentProjectBinding.agent_id == channel_agent.id,
                 AgentProjectBinding.project_id == workspace_project.id,
+            )
+        )
+    ).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_project_skill_limit_blocks_link_and_first_skill_before_mutation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(project_runtime_skills, "MAX_AGENT_PROJECT_SKILLS", 1)
+    first = await _upload_project_skill(client, workspace_project.id, "first-skill")
+    assert first.status_code == 200, first.text
+    first_link = await _link(
+        client,
+        agent_id=channel_agent.id,
+        project_id=workspace_project.id,
+    )
+    assert first_link.status_code == 200, first_link.text
+
+    full_project = Project(
+        user_id=seed_user.id,
+        name="Full Project",
+        slug=f"full-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    empty_project = Project(
+        user_id=seed_user.id,
+        name="Empty Project",
+        slug=f"empty-limit-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add_all([full_project, empty_project])
+    await db_session.commit()
+    second = await _upload_project_skill(client, full_project.id, "second-skill")
+    assert second.status_code == 200, second.text
+
+    rejected_link = await _link(
+        client,
+        agent_id=channel_agent.id,
+        project_id=full_project.id,
+    )
+    assert rejected_link.status_code == 409, rejected_link.text
+    assert rejected_link.json()["detail"]["code"] == "agent_project_skill_limit_exceeded"
+
+    empty_link = await _link(
+        client,
+        agent_id=channel_agent.id,
+        project_id=empty_project.id,
+    )
+    assert empty_link.status_code == 200, empty_link.text
+    rejected_first_skill = await _upload_project_skill(
+        client,
+        empty_project.id,
+        "over-limit",
+    )
+    assert rejected_first_skill.status_code == 409, rejected_first_skill.text
+    assert rejected_first_skill.json()["detail"]["code"] == ("agent_project_skill_limit_exceeded")
+    assert (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == empty_project.id,
+                Skill.skill_key == "over-limit",
+                Skill.is_active,
             )
         )
     ).scalar_one_or_none() is None

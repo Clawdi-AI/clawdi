@@ -1591,6 +1591,8 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		"Automation Library for exceptionally long production workflow names across several teams";
 	const longContextProjectSlug =
 		"automation-library-for-exceptionally-long-production-workflow-names-across-several-teams";
+	const longContextProjectDescription =
+		"Reusable instructions and protected Vault access for exceptionally long production workflows across several teams";
 	const projectAccessBindings = [
 		{
 			...projectBindings[0],
@@ -1620,6 +1622,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 			id: "project-context-first",
 			name: "Team Knowledge",
 			slug: "team-knowledge",
+			description: "Shared review instructions and protected Vault access",
 			kind: "workspace",
 			origin_environment_id: null,
 			archived_at: null,
@@ -1632,6 +1635,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 			id: "project-context-later",
 			name: longContextProjectName,
 			slug: longContextProjectSlug,
+			description: longContextProjectDescription,
 			kind: "workspace",
 			origin_environment_id: null,
 			archived_at: null,
@@ -1769,6 +1773,16 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(createProjectDialog).toHaveCount(0);
 	await expect.poll(() => projectCreateBodies).toEqual([{ name: "Release Review" }]);
 	expect(projectLinkBodies).toEqual([]);
+	const createdToast = page.locator("[data-sonner-toast]").filter({ hasText: "Project created" });
+	await createdToast.getByRole("button", { name: "Open project" }).click();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === "/projects/project-created" &&
+			url.searchParams.get("from") === "/agents/agent-smoke-1/project-access"
+		);
+	});
+	await page.goBack();
+	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/project-access$/);
 	const addProjectTrigger = projectStack.getByRole("button", {
 		name: "Link project",
 		exact: true,
@@ -1820,12 +1834,17 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		)
 		.toBe("1");
 	const longTitle = projectCards.nth(1).getByRole("heading", { name: longContextProjectName });
-	const longSlug = projectCards.nth(1).getByText(longContextProjectSlug, { exact: true });
+	const longDescription = projectCards.nth(1).getByText(longContextProjectDescription, {
+		exact: true,
+	});
 	expect(await longTitle.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
 		true,
 	);
-	expect(await longSlug.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
-		true,
+	expect(
+		await longDescription.evaluate((element) => element.scrollWidth > element.clientWidth),
+	).toBe(true);
+	await expect(projectCards.nth(1).getByText(longContextProjectSlug, { exact: true })).toHaveCount(
+		0,
 	);
 	expect(
 		await projectStack.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),

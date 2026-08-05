@@ -22,7 +22,11 @@ from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.session import AgentProjectSkillDesiredItem, AgentProjectSkillDesiredResponse
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
-from app.services.project_runtime_skills import project_skill_file_signature
+from app.services.project_runtime_skills import (
+    MAX_AGENT_PROJECT_SKILLS,
+    assert_agent_project_skill_total,
+    project_skill_file_signature,
+)
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RuntimeSourceError,
@@ -40,7 +44,6 @@ _RUNTIME_MANIFEST_CACHE_CONTROL = "no-store, no-transform"
 _PROJECT_SKILL_SUPPORT_DIRS = {"references", "templates", "scripts", "assets", "examples"}
 _MAX_PROJECT_SKILL_FILE_BYTES = 16 * 1024 * 1024
 _MAX_PROJECT_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024
-_MAX_AGENT_PROJECT_SKILLS = 1000
 file_store = get_file_store()
 
 
@@ -142,17 +145,13 @@ async def get_agent_project_skills(
                     Skill.is_active,
                 )
                 .order_by(Skill.skill_key, Skill.project_id, Skill.id)
-                .limit(_MAX_AGENT_PROJECT_SKILLS + 1)
+                .limit(MAX_AGENT_PROJECT_SKILLS + 1)
             )
         )
         .scalars()
         .all()
     )
-    if len(rows) > _MAX_AGENT_PROJECT_SKILLS:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "This Agent has too many linked Project Skills. Unlink a Project, then try again.",
-        )
+    assert_agent_project_skill_total(len(rows))
     seen_keys: set[str] = set()
     for skill in rows:
         if skill.skill_key in seen_keys:

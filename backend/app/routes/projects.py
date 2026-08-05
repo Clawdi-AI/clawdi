@@ -21,6 +21,7 @@ from app.core.project import project_ids_visible_to, resolve_default_write_proje
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
+from app.models.session import AgentEnvironment
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import VaultProjectAttachment
@@ -163,7 +164,7 @@ def _project_response(
     )
 
 
-def _project_count_columns():
+def _project_count_columns(caller_user_id: UUID):
     return (
         select(func.count(Skill.id))
         .where(Skill.project_id == Project.id, Skill.is_active)
@@ -176,7 +177,12 @@ def _project_count_columns():
         .scalar_subquery()
         .label("vault_count"),
         select(func.count(AgentProjectBinding.id))
-        .where(AgentProjectBinding.project_id == Project.id)
+        .join(AgentEnvironment, AgentEnvironment.id == AgentProjectBinding.agent_id)
+        .where(
+            AgentProjectBinding.project_id == Project.id,
+            AgentEnvironment.user_id == caller_user_id,
+            AgentEnvironment.archived_at.is_(None),
+        )
         .correlate(Project)
         .scalar_subquery()
         .label("agent_count"),
@@ -286,7 +292,7 @@ async def list_projects(
         ProjectMembership.project_id == Project.id,
         ProjectMembership.member_user_id == caller_user_id,
     )
-    count_columns = _project_count_columns()
+    count_columns = _project_count_columns(caller_user_id)
     stmt = (
         select(Project, User, ProjectMembership, *count_columns)
         .outerjoin(User, User.id == Project.user_id)
@@ -348,7 +354,7 @@ async def get_project(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     row = (
         await db.execute(
-            select(Project, *_project_count_columns()).where(
+            select(Project, *_project_count_columns(auth.user_id)).where(
                 Project.id == project_uuid,
                 active_project_filter(),
             )
@@ -413,7 +419,9 @@ async def update_project(
     await db.commit()
     await db.refresh(project)
     counts = (
-        await db.execute(select(*_project_count_columns()).where(Project.id == project.id))
+        await db.execute(
+            select(*_project_count_columns(auth.user_id)).where(Project.id == project.id)
+        )
     ).one()
     return _project_response(
         project,

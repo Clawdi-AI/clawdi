@@ -1041,6 +1041,10 @@ async def upload_skill_project(
     project_id: UUID = Path(...),
     skill_key: str = Form(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
     file: UploadFile = File(...),
+    create_only: bool = Form(
+        False,
+        description="Reject the upload if this Project already has an active Skill with this key.",
+    ),
     content_hash: str | None = Form(
         None,
         min_length=64,
@@ -1095,6 +1099,7 @@ async def upload_skill_project(
         skill_key=skill_key,
         data=data,
         content_hash=content_hash,
+        create_only=create_only,
         authority=authority,
         authority_agent_id=authority_agent_id,
     )
@@ -1865,6 +1870,7 @@ async def _do_delete_agent_synced_skill(
     agent_id: UUID,
     project_id: UUID | None,
     skill_key: str,
+    expected_content_hash: str | None = None,
 ) -> SkillDeleteResponse:
     current_project_id = await _agent_sync_project(db, auth, agent_id, lock_agent=True)
     target_project_id = project_id or current_project_id
@@ -1911,6 +1917,17 @@ async def _do_delete_agent_synced_skill(
                     "The old Project row was not claimed by this Agent and cannot be deleted "
                     "through Agent sync."
                 ),
+            },
+        )
+    if expected_content_hash is not None and skill.content_hash != expected_content_hash:
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "stale_content",
+                "message": (
+                    "Skill content changed since it was loaded. Reload it, then try again."
+                ),
+                "current_content_hash": skill.content_hash,
             },
         )
     skill.is_active = False
@@ -1966,6 +1983,13 @@ async def delete_skill_legacy(
 async def delete_skill_project(
     project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    expected_content_hash: str | None = Query(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+        description="Delete only if the active Skill still has this content hash.",
+    ),
     skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
@@ -1988,8 +2012,15 @@ async def delete_skill_project(
             agent_id=authority_agent_id,
             project_id=project_id,
             skill_key=skill_key,
+            expected_content_hash=expected_content_hash,
         )
-    return await _do_delete_skill(db=db, auth=auth, project_id=project_id, skill_key=skill_key)
+    return await _do_delete_skill(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+        expected_content_hash=expected_content_hash,
+    )
 
 
 async def _do_delete_skill(
@@ -1998,6 +2029,7 @@ async def _do_delete_skill(
     auth: AuthContext,
     project_id: UUID,
     skill_key: str,
+    expected_content_hash: str | None = None,
 ) -> SkillDeleteResponse:
     # Advisory lock matches the partial unique index identity, so
     # this delete serializes with any concurrent write to the
@@ -2006,6 +2038,7 @@ async def _do_delete_skill(
         db,
         project_id=project_id,
         skill_key=skill_key,
+        enforce_total_limit=False,
     )
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
@@ -2040,6 +2073,18 @@ async def _do_delete_skill(
                     "This Skill is owned by an Agent filesystem and cannot be deleted "
                     "through Cloud mutation routes."
                 ),
+            },
+        )
+
+    if expected_content_hash is not None and skill.content_hash != expected_content_hash:
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "stale_content",
+                "message": (
+                    "Skill content changed since it was loaded. Reload it, then try again."
+                ),
+                "current_content_hash": skill.content_hash,
             },
         )
 

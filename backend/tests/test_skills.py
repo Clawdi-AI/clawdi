@@ -79,6 +79,61 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: st
 
 
 @pytest.mark.asyncio
+async def test_project_copy_move_preconditions_preserve_existing_skill(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    skill_key = "conflict-safe-copy"
+    original, _ = tar_from_content(
+        skill_key,
+        "---\nname: Conflict safe copy\ndescription: original\n---\n# Original\n",
+    )
+    created = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("original.tar.gz", original, "application/gzip")},
+    )
+    assert created.status_code == 200, created.text
+    original_hash = created.json()["content_hash"]
+
+    replacement, _ = tar_from_content(
+        skill_key,
+        "---\nname: Conflict safe copy\ndescription: replacement\n---\n# Replacement\n",
+    )
+    conflict = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key, "create_only": "true"},
+        files={"file": ("replacement.tar.gz", replacement, "application/gzip")},
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.json()["detail"]["code"] == "skill_name_conflict"
+
+    updated = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("replacement.tar.gz", replacement, "application/gzip")},
+    )
+    assert updated.status_code == 200, updated.text
+    replacement_hash = updated.json()["content_hash"]
+
+    stale_delete = await client.delete(
+        f"/v1/projects/{project_id}/skills/{skill_key}",
+        params={"expected_content_hash": original_hash},
+    )
+    assert stale_delete.status_code == 412, stale_delete.text
+    assert stale_delete.json()["detail"]["current_content_hash"] == replacement_hash
+    current = await client.get(f"/v1/projects/{project_id}/skills/{skill_key}/download")
+    assert current.status_code == 200, current.text
+    assert current.content == replacement
+
+    deleted = await client.delete(
+        f"/v1/projects/{project_id}/skills/{skill_key}",
+        params={"expected_content_hash": replacement_hash},
+    )
+    assert deleted.status_code == 200, deleted.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "content",
     [

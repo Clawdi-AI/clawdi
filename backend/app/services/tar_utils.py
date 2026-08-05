@@ -225,7 +225,7 @@ def _preservable_frontmatter(content: str) -> dict[object, object]:
         raise SkillTextValidationError("Skill frontmatter exceeds the safe size limit")
     try:
         loaded: object = yaml.safe_load(raw)
-    except (UnicodeError, yaml.YAMLError) as exc:
+    except (RecursionError, UnicodeError, yaml.YAMLError) as exc:
         raise SkillTextValidationError("Skill frontmatter is malformed") from exc
     if loaded is None:
         return {}

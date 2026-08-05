@@ -164,7 +164,8 @@ async def get_stats(
                     (SELECT count(*)::integer
                      FROM skills
                      WHERE is_active
-                       AND project_id IN (SELECT id FROM visible_projects)) AS skills_count,
+                       AND authority = 'cloud'
+                       AND project_id IN (SELECT id FROM visible_user_projects)) AS skills_count,
                     (SELECT count(*)::integer
                      FROM memories
                      WHERE user_id = :user_id) AS memories_count,

@@ -19,6 +19,7 @@ export interface ProjectMetadata {
 	id?: string;
 	name: string;
 	slug: string;
+	description?: string | null;
 	kind?: string;
 	origin_environment_id?: string | null;
 	is_owner?: boolean;
@@ -43,15 +44,17 @@ export function displayProjectName(project: Pick<ProjectMetadata, "kind" | "name
 	return project.name;
 }
 
-export function projectAlias(project: Pick<ProjectMetadata, "slug" | "is_owner" | "owner_handle">) {
-	return !isProjectOwner(project) && project.owner_handle
-		? `@${project.owner_handle}/${project.slug}`
-		: project.slug;
-}
-
 function projectOwnerLabel(project: ProjectMetadata) {
 	if (isProjectOwner(project)) return "You";
 	return project.owner_display ?? project.owner_handle ?? "Unknown";
+}
+
+export function projectSupportingText(project: ProjectMetadata) {
+	const description = project.description?.trim();
+	if (description) return description;
+	if (!isProjectOwner(project)) return `Shared by ${projectOwnerLabel(project)}`;
+	if (project.kind === "environment") return "Private Agent Workspace";
+	return "Project you own";
 }
 
 export function isCustomProject(project: Pick<ProjectMetadata, "kind">): boolean {
@@ -81,9 +84,7 @@ export function ProjectIdentity({
 	className,
 	badges,
 	showKind = true,
-	showOwner = true,
 	showAccess = true,
-	showAlias = true,
 	showAgent = true,
 	showIcon = true,
 	titleClassName,
@@ -93,16 +94,14 @@ export function ProjectIdentity({
 	className?: string;
 	badges?: ReactNode;
 	showKind?: boolean;
-	showOwner?: boolean;
 	showAccess?: boolean;
-	showAlias?: boolean;
 	showAgent?: boolean;
 	showIcon?: boolean;
 	titleClassName?: string;
 }) {
 	const projectAgent = showAgent && project.kind === "environment" ? agent : null;
-	const showOwnerLine = showOwner && !isProjectOwner(project);
 	const agentLine = projectAgent ? projectAgentLabel(projectAgent) : null;
+	const supportingText = projectSupportingText(project);
 	return (
 		<div className={cn("flex min-w-0 items-start gap-3", className)}>
 			{showIcon ? <ProjectIcon project={project} agent={agent} /> : null}
@@ -118,16 +117,9 @@ export function ProjectIdentity({
 					{badges}
 					{showAccess ? <ProjectAccessBadge project={project} /> : null}
 				</div>
-				{showAlias || showOwnerLine || projectAgent ? (
+				{supportingText || projectAgent ? (
 					<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-						{showAlias ? (
-							<span className="min-w-0 truncate font-mono" translate="no">
-								{projectAlias(project)}
-							</span>
-						) : null}
-						{showOwnerLine ? (
-							<span className="truncate">Owner: {projectOwnerLabel(project)}</span>
-						) : null}
+						<span className="min-w-0 truncate">{supportingText}</span>
 						{agentLine ? (
 							<span className="min-w-0 truncate" translate="no">
 								Agent: {agentLine}
@@ -418,7 +410,6 @@ export function ProjectCompactPicker({
 							<ProjectIdentity
 								project={project}
 								agent={projectAgentFor(project, agentsById)}
-								showOwner={false}
 								showAccess
 								titleClassName="text-sm"
 							/>
@@ -444,14 +435,8 @@ function ProjectPickerValue({
 				<span className="truncate text-sm leading-5 font-semibold">
 					{displayProjectName(project)}
 				</span>
-				<span className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
-					<span className="shrink-0">{projectPickerTypeText(project)}</span>
-					<span aria-hidden="true" className="text-muted-foreground/60">
-						·
-					</span>
-					<span className="min-w-0 truncate font-mono" translate="no">
-						{projectAlias(project)}
-					</span>
+				<span className="min-w-0 truncate text-xs leading-4 text-muted-foreground">
+					{projectSupportingText(project)}
 				</span>
 			</span>
 		</span>
@@ -474,9 +459,7 @@ function ProjectPickerOption({
 					<ProjectTypeBadge project={project} />
 				</div>
 				<div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-					<span className="min-w-0 truncate font-mono" translate="no">
-						{projectAlias(project)}
-					</span>
+					<span className="min-w-0 truncate">{projectSupportingText(project)}</span>
 					<span className="shrink-0">·</span>
 					<span className="shrink-0">{projectPickerAccessText(project)}</span>
 					{project.kind === "environment" && agent ? (
@@ -520,11 +503,6 @@ function ProjectPickerAllItem({
 			</span>
 		</span>
 	);
-}
-
-function projectPickerTypeText(project: ProjectMetadata) {
-	if (project.is_owner === false) return "Shared Project";
-	return ownedProjectKindText(project, "full");
 }
 
 function projectCompactKindText(project: ProjectMetadata) {

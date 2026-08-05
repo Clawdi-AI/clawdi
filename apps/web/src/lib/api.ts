@@ -163,11 +163,17 @@ async function readJson<T>(response: Response): Promise<T> {
 export function useSkillArchiveUploader() {
 	const { getToken } = useAuthToken();
 	return useCallback(
-		async (projectId: string, skillKey: string, archive: Blob): Promise<SkillUploadResponse> => {
+		async (
+			projectId: string,
+			skillKey: string,
+			archive: Blob,
+			options?: { createOnly?: boolean },
+		): Promise<SkillUploadResponse> => {
 			const fileName = `${skillKey.replace(/\//g, "-")}.tar.gz`;
 			const form = new FormData();
 			form.append("skill_key", skillKey);
 			form.append("file", archive, fileName);
+			if (options?.createOnly) form.append("create_only", "true");
 
 			const headers = new Headers();
 			const token = await getToken();

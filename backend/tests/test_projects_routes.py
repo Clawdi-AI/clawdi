@@ -1,11 +1,15 @@
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import select
 
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
+from app.models.user import User
 from app.models.vault import Vault, VaultProjectAttachment
 from app.services import sync_events
+from tests.conftest import create_env_with_project
 
 pytestmark = pytest.mark.asyncio
 
@@ -69,6 +73,26 @@ async def test_project_detail_reports_server_side_resource_counts(
     workspace_project,
     channel_agent,
 ):
+    other_user = User(
+        clerk_id=f"project-count-other-{workspace_project.id}",
+        email=f"project-count-other-{workspace_project.id}@clawdi.local",
+        name="Other Project User",
+    )
+    db_session.add(other_user)
+    await db_session.flush()
+    other_agent = await create_env_with_project(
+        db_session,
+        user_id=other_user.id,
+        machine_id=f"project-count-other-{workspace_project.id}",
+        machine_name="Other User Agent",
+    )
+    archived_agent = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"project-count-archived-{workspace_project.id}",
+        machine_name="Archived Agent",
+    )
+    archived_agent.archived_at = datetime.now(UTC)
     vault = Vault(user_id=seed_user.id, slug="counted-vault", name="Counted Vault")
     db_session.add(vault)
     await db_session.flush()
@@ -86,6 +110,20 @@ async def test_project_detail_reports_server_side_resource_counts(
             VaultProjectAttachment(vault_id=vault.id, project_id=workspace_project.id),
             AgentProjectBinding(
                 agent_id=channel_agent.id,
+                project_id=workspace_project.id,
+                binding_type="context",
+                priority=1,
+                created_by_user_id=seed_user.id,
+            ),
+            AgentProjectBinding(
+                agent_id=other_agent.id,
+                project_id=workspace_project.id,
+                binding_type="context",
+                priority=1,
+                created_by_user_id=seed_user.id,
+            ),
+            AgentProjectBinding(
+                agent_id=archived_agent.id,
                 project_id=workspace_project.id,
                 binding_type="context",
                 priority=1,

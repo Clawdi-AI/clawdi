@@ -21,12 +21,14 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
+import { Textarea } from "@/components/ui/textarea";
 import { ApiError, useOpenApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
@@ -188,7 +190,7 @@ export default function ProjectsPage() {
 						</div>
 						<div className="space-y-1.5">
 							<Label htmlFor="project-description">Description</Label>
-							<Input
+							<Textarea
 								id="project-description"
 								name="project-description"
 								value={newProjectDescription}
@@ -196,9 +198,10 @@ export default function ProjectsPage() {
 								placeholder="What should Agents use this Project for?"
 								autoComplete="off"
 								onChange={(event) => setNewProjectDescription(event.target.value)}
+								className="min-h-24"
 							/>
 						</div>
-						<div className="flex justify-end gap-2">
+						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
 								Cancel
 							</Button>
@@ -206,7 +209,7 @@ export default function ProjectsPage() {
 								<Plus className="size-3.5" />
 								{createProject.isPending ? "Creating…" : "Create project"}
 							</Button>
-						</div>
+						</DialogFooter>
 					</form>
 				</DialogContent>
 			</Dialog>

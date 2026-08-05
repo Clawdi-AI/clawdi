@@ -3971,6 +3971,12 @@ export interface components {
             skill_key: string;
             /** File */
             file: string;
+            /**
+             * Create Only
+             * @description Reject the upload if this Project already has an active Skill with this key.
+             * @default false
+             */
+            create_only: boolean;
             /** Content Hash */
             content_hash?: string | null;
         };
@@ -11333,7 +11339,10 @@ export interface operations {
     };
     delete_skill_project_v1_projects__project_id__skills__skill_key__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Delete only if the active Skill still has this content hash. */
+                expected_content_hash?: string | null;
+            };
             header?: {
                 "X-Clawdi-Skill-Sync-Protocol"?: string | null;
             };

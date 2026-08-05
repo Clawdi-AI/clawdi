@@ -201,6 +201,8 @@ export default function ProjectDetailPage({
 	const [skillsPage, setSkillsPage] = useState(1);
 	const [vaultsPage, setVaultsPage] = useState(1);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
+	const returnHref = searchParams.get("from");
+	const safeAgentReturnHref = returnHref?.startsWith("/agents/") ? returnHref : null;
 	useEffect(() => {
 		setSkillsPage(1);
 		setVaultsPage(1);
@@ -265,7 +267,9 @@ export default function ProjectDetailPage({
 						href: projectDetailHrefForScope(scope, projectId),
 						label: projectName ? `Back to ${projectName}` : "Back to Project",
 					}
-			: projectsTarget;
+			: safeAgentReturnHref
+				? { href: safeAgentReturnHref, label: "Back to Agent Projects" }
+				: projectsTarget;
 	const workspaceAgent = $api.useQuery(
 		"get",
 		"/v1/agents/{agent_id}",
@@ -652,7 +656,7 @@ export default function ProjectDetailPage({
 							: focus === "skills"
 								? "Skills this Agent uses through this linked Project."
 								: focus === "vaults"
-									? "Vaults this Agent can resolve through this Project."
+									? "Vaults this Agent can use through this Project. Key values stay protected."
 									: "This Agent uses the Project's Skills and attached Vaults as one bundle."
 						: projectDetailDescription(project, isOwner)
 				}
@@ -778,7 +782,7 @@ export default function ProjectDetailPage({
 							) : null}
 							{canManageProjectSkills ? (
 								<Button
-									render={<Link to="/skills" search={{ project: project.id }} />}
+									render={<Link to="/skills" search={{ project: project.id, add: 1 }} />}
 									nativeButton={false}
 									variant="outline"
 									size="sm"
@@ -896,7 +900,6 @@ export default function ProjectDetailPage({
 							{isOwner ? (
 								<ProjectVaultActions
 									projectId={project.id}
-									attachedVaultIds={new Set((vaults.data?.items ?? []).map((vault) => vault.id))}
 									contextLabel={isWorkspace ? "Workspace" : "Project"}
 									onChanged={refresh}
 								/>
@@ -992,7 +995,7 @@ export default function ProjectDetailPage({
 					id="people"
 					title="People"
 					count={peopleCount}
-					description="Members see skill and key names; their agents resolve key values through the CLI."
+					description="Members see Skills and key names. Key values stay protected, and their linked Agents can use them."
 					action={
 						<ShareProjectDialog
 							projectId={project.id}
@@ -1055,14 +1058,14 @@ export default function ProjectDetailPage({
 			{!isAgentScope && localTab === "agents" ? (
 				<HubSection
 					id="agents"
-					title="Agents"
+					title="Your Agents"
 					count={agentCount}
 					description={
 						project.kind === "environment"
 							? "Agent that owns this Workspace."
 							: project.kind === "personal"
 								? "Private account resources are not linked to individual Agents."
-								: "Agents using this Project's Skills and attached Vaults."
+								: "Agents you own that use this Project's Skills and attached Vaults."
 					}
 				>
 					{boundAgents.isLoading ? (
@@ -1082,7 +1085,7 @@ export default function ProjectDetailPage({
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
 										? "Private account resources have no Agent links."
-										: "No Agents are linked yet. Link this Project to let an Agent use its Skills and attached Vaults."
+										: "None of your Agents are linked yet. Link this Project to let one use its Skills and attached Vaults."
 							}
 						/>
 					) : (
@@ -1754,18 +1757,17 @@ function UseProjectWithAgentDialog({
 
 function ProjectVaultActions({
 	projectId,
-	attachedVaultIds,
 	contextLabel,
 	onChanged,
 }: {
 	projectId: string;
-	attachedVaultIds: ReadonlySet<string>;
 	contextLabel: "Workspace" | "Project";
 	onChanged: () => void;
 }) {
 	const api = useApi();
 	const [vaultName, setVaultName] = useState("");
 	const [selectedVaultId, setSelectedVaultId] = useState("");
+	const [attachSearch, setAttachSearch] = useState("");
 	const [attachOpen, setAttachOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
 	const accountVaults = useQuery({
@@ -1782,9 +1784,15 @@ function ProjectVaultActions({
 				{ pageSize: 200, resourceName: "account Vaults" },
 			),
 	});
-	const attachableVaults = (accountVaults.data?.items ?? []).filter(
-		(vault) => vault.is_owner !== false && !attachedVaultIds.has(vault.id),
+	const availableVaults = (accountVaults.data?.items ?? []).filter(
+		(vault) => vault.is_owner !== false && !(vault.project_ids ?? []).includes(projectId),
 	);
+	const normalizedAttachSearch = attachSearch.trim().toLowerCase();
+	const attachableVaults = normalizedAttachSearch
+		? availableVaults.filter((vault) =>
+				[vault.name, vault.slug].join(" ").toLowerCase().includes(normalizedAttachSearch),
+			)
+		: availableVaults;
 	const attachableItems = attachableVaults.map((vault) => ({
 		value: vault.id,
 		label: vault.name,
@@ -1808,7 +1816,10 @@ function ProjectVaultActions({
 			setSelectedVaultId("");
 			setAttachOpen(false);
 			onChanged();
-			toast.success(`Vault attached to ${contextLabel}`);
+			toast.success(`Vault attached to ${contextLabel}`, {
+				description:
+					"Its key values stay protected, and attached Projects and Agents can use them.",
+			});
 		},
 		onError: (error) =>
 			toast.error(`Couldn't attach vault to ${contextLabel}`, {
@@ -1831,7 +1842,9 @@ function ProjectVaultActions({
 			setVaultName("");
 			setCreateOpen(false);
 			onChanged();
-			toast.success(`Vault created for this ${contextLabel}`);
+			toast.success(`Vault created for this ${contextLabel}`, {
+				description: "Its key values stay protected, and this Project or Workspace can use them.",
+			});
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
@@ -1853,7 +1866,10 @@ function ProjectVaultActions({
 				open={attachOpen}
 				onOpenChange={setAttachOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open) setSelectedVaultId("");
+					if (!open) {
+						setSelectedVaultId("");
+						setAttachSearch("");
+					}
 				}}
 			>
 				<DialogContent className="sm:max-w-md">
@@ -1881,7 +1897,7 @@ function ProjectVaultActions({
 								</Button>
 							</DialogFooter>
 						</div>
-					) : attachableVaults.length === 0 ? (
+					) : availableVaults.length === 0 ? (
 						<div className="space-y-4">
 							<p className="text-sm text-muted-foreground">
 								All account-owned Vaults are already attached to this {contextLabel}.
@@ -1900,28 +1916,46 @@ function ProjectVaultActions({
 								if (selectedVaultId && !attach.isPending) attach.mutate(selectedVaultId);
 							}}
 						>
-							<Label htmlFor={`project-vault-attachment-${projectId}`}>Existing Vault</Label>
-							<Select
-								items={attachableItems}
-								value={selectedVaultId}
-								onValueChange={(value) => {
-									if (value !== null) setSelectedVaultId(value);
-								}}
-							>
-								<SelectTrigger
-									id={`project-vault-attachment-${projectId}`}
-									className="min-w-0 flex-1"
-								>
-									<SelectValue placeholder="Choose a Vault…" />
-								</SelectTrigger>
-								<SelectContent>
-									{attachableVaults.map((vault) => (
-										<SelectItem key={vault.id} value={vault.id}>
-											{vault.name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+							<div className="space-y-1.5">
+								<Label htmlFor={`project-vault-search-${projectId}`}>Search Vaults</Label>
+								<Input
+									id={`project-vault-search-${projectId}`}
+									value={attachSearch}
+									onChange={(event) => {
+										setAttachSearch(event.target.value);
+										setSelectedVaultId("");
+									}}
+									placeholder="Search Vaults…"
+								/>
+							</div>
+							{attachableVaults.length === 0 ? (
+								<p className="text-sm text-muted-foreground">No Vaults match that search.</p>
+							) : (
+								<>
+									<Label htmlFor={`project-vault-attachment-${projectId}`}>Existing Vault</Label>
+									<Select
+										items={attachableItems}
+										value={selectedVaultId}
+										onValueChange={(value) => {
+											if (value !== null) setSelectedVaultId(value);
+										}}
+									>
+										<SelectTrigger
+											id={`project-vault-attachment-${projectId}`}
+											className="min-w-0 flex-1"
+										>
+											<SelectValue placeholder="Choose a Vault…" />
+										</SelectTrigger>
+										<SelectContent>
+											{attachableVaults.map((vault) => (
+												<SelectItem key={vault.id} value={vault.id}>
+													{vault.name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</>
+							)}
 							<DialogFooter>
 								<Button type="button" variant="ghost" onClick={() => setAttachOpen(false)}>
 									Cancel

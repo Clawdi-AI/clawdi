@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, Link2, Plus, Trash2 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -43,8 +44,13 @@ import { Spinner } from "@/components/ui/spinner";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
+import { projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { agentResourceScope, type ResourceNavigationScope } from "@/lib/resource-navigation";
+import {
+	agentResourceScope,
+	type ResourceNavigationScope,
+	resourceCollectionTarget,
+} from "@/lib/resource-navigation";
 import { errorMessage } from "@/lib/utils";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -118,6 +124,7 @@ function AgentProjectsPanel({
 	onChanged: () => void;
 }) {
 	const api = useApi();
+	const router = useRouter();
 	const [contextProjectId, setContextProjectId] = useState("");
 	const [linkOpen, setLinkOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -161,12 +168,18 @@ function AgentProjectsPanel({
 
 	const createProject = useMutation({
 		mutationFn: async (name: string) => unwrap(await api.POST("/v1/projects", { body: { name } })),
-		onSuccess: () => {
+		onSuccess: (project) => {
 			setNewProjectName("");
 			setCreateOpen(false);
 			onChanged();
+			const returnTarget = resourceCollectionTarget(navigationScope, "projects");
+			const openHref = `${projectDetailHref(project.id)}?from=${encodeURIComponent(returnTarget.href)}`;
 			toast.success("Project created", {
 				description: "Link it when this Agent should use its Skills and attached Vaults.",
+				action: {
+					label: "Open project",
+					onClick: () => void router.navigate({ href: openHref }),
+				},
 			});
 		},
 		onError: (error) =>

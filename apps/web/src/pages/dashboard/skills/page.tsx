@@ -69,6 +69,10 @@ function SkillsPageInner() {
 		"target",
 		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
 	);
+	const [addParam, setAddParam] = useQueryState(
+		"add",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(1);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -127,6 +131,18 @@ function SkillsPageInner() {
 			isBrowserWritableSkillProject(selectedProject) &&
 			isProjectOwner(selectedProject),
 	);
+	useEffect(() => {
+		if (addParam !== "1" || !projectResolved) return;
+		if (selectedProject && writable) {
+			setCreateOpen(true);
+			return;
+		}
+		void setAddParam("");
+	}, [addParam, projectResolved, selectedProject, setAddParam, writable]);
+	const handleCreateOpenChange = (nextOpen: boolean) => {
+		setCreateOpen(nextOpen);
+		if (!nextOpen && addParam === "1") void setAddParam("");
+	};
 
 	const selectProject = (projectId: string) => {
 		void setProjectParam(projectId);
@@ -308,7 +324,7 @@ function SkillsPageInner() {
 				<>
 					<CreateSkillDialog
 						open={createOpen}
-						onOpenChange={setCreateOpen}
+						onOpenChange={handleCreateOpenChange}
 						project={selectedProject}
 					/>
 					<ImportSkillDialog
