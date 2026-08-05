@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { WAVersion } from "baileys";
 
@@ -16,7 +17,6 @@ export type SidecarConfig = {
 	apiToken: string;
 	stateRoot: string;
 	logLevel: string;
-	proxyUrl?: string;
 	webVersion: WAVersion;
 	providerInbox: {
 		maxEvents: number;
@@ -30,6 +30,7 @@ export type SidecarSessionConfig = Omit<SidecarConfig, "stateRoot"> & {
 };
 
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConfig {
+	assertNetworkNamespaceGuard(env.CLAWDI_WA_NETWORK_NAMESPACE_MARKER);
 	const apiToken = parseApiToken(
 		readRequired(
 			env.CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN,
@@ -52,7 +53,6 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 		apiToken,
 		stateRoot,
 		logLevel: nonEmpty(env.CLAWDI_WA_SIDECAR_LOG_LEVEL) ?? "info",
-		...parseProxyUrl(env.CLAWDI_WA_SIDECAR_PROXY_URL),
 		webVersion: parseAuditedWhatsAppWebVersion(
 			nonEmpty(env.CLAWDI_WA_WEB_VERSION) ?? AUDITED_WHATSAPP_WEB_VERSION_TEXT,
 		),
@@ -74,27 +74,24 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 	return config;
 }
 
-function parseProxyUrl(raw: string | undefined): { proxyUrl?: string } {
-	const value = nonEmpty(raw);
-	if (!value) return {};
-	let url: URL;
+function assertNetworkNamespaceGuard(rawMarkerPath: string | undefined): void {
+	const markerPath = nonEmpty(rawMarkerPath);
+	if (!markerPath) return;
+	if (resolve(markerPath) !== markerPath || basename(markerPath) !== "network-namespace.ready") {
+		throw new Error("CLAWDI_WA_NETWORK_NAMESPACE_MARKER must be an absolute readiness marker path");
+	}
+	const expected = `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()} ${statSync("/proc/self/ns/net").ino}`;
+	let actual: string;
 	try {
-		url = new URL(value);
+		actual = readFileSync(markerPath, "utf8").trim();
 	} catch {
-		throw new Error("CLAWDI_WA_SIDECAR_PROXY_URL must be a valid HTTP proxy URL");
+		throw new Error("WhatsApp network namespace guard is not ready");
 	}
-	if (
-		url.protocol !== "http:" ||
-		!url.hostname ||
-		url.username ||
-		url.password ||
-		url.pathname !== "/" ||
-		url.search ||
-		url.hash
-	) {
-		throw new Error("CLAWDI_WA_SIDECAR_PROXY_URL must be an origin-only HTTP URL");
+	if (actual !== expected) {
+		throw new Error(
+			"WhatsApp network namespace guard does not match this boot and network namespace",
+		);
 	}
-	return { proxyUrl: url.origin };
 }
 
 function parseSocketPath(raw: string | undefined): string | undefined {

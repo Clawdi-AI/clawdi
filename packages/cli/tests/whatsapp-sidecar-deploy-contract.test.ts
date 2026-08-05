@@ -19,8 +19,8 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy.match(/^ {2}whatsapp-baileys:$/gm)).toHaveLength(1);
 		expect(deploy).toContain("service: clawdi-whatsapp-baileys");
 		expect(deploy).toContain('ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true"');
-		expect(deploy).toContain('? "kamal" : "bridge"');
-		expect(deploy).toContain("CLAWDI_WA_SIDECAR_PROXY_URL");
+		expect(deploy).toContain('? "container:clawdi-whatsapp-netns" : "bridge"');
+		expect(deploy).not.toContain("CLAWDI_WA_SIDECAR_PROXY_URL");
 		expect(deploy).toContain("/home/phala/clawdi-whatsapp/state");
 		expect(deploy).toContain("/home/phala/clawdi-whatsapp/run");
 		expect(deploy).toContain("CLAWDI_WA_SIDECAR_STATE_ROOT: /data");
@@ -29,25 +29,32 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy).not.toContain("whatsapp_accounts");
 	});
 
-	test("gates a pinned userspace Tailscale outbound proxy", () => {
+	test("gates a pinned kernel-mode Tailscale network namespace", () => {
+		expect(deploy.match(/^ {2}whatsapp-netns:$/gm)).toHaveLength(1);
+		expect(deploy.match(/^ {2}whatsapp-egress-guard:$/gm)).toHaveLength(1);
 		expect(deploy.match(/^ {2}whatsapp-tailscale:$/gm)).toHaveLength(1);
+		expect(deploy).toContain(
+			"registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c",
+		);
 		expect(deploy).toContain(
 			"tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0",
 		);
 		expect(deploy).toContain("TS_STATE_DIR: /var/lib/tailscale");
-		expect(deploy).toContain('TS_USERSPACE: "true"');
+		expect(deploy).toContain('TS_USERSPACE: "false"');
 		expect(deploy).toContain('TS_AUTH_ONCE: "true"');
-		expect(deploy).toContain("TS_OUTBOUND_HTTP_PROXY_LISTEN: :8080");
 		expect(deploy).toContain("--exit-node-allow-lan-access=false");
-		expect(deploy).not.toContain("/dev/net/tun");
-		expect(deploy).not.toContain("NET_ADMIN");
+		expect(deploy).toContain("/dev/net/tun:/dev/net/tun");
+		expect(deploy).toContain("NET_ADMIN");
+		expect(deploy).toContain("NET_RAW");
+		expect(deploy).toContain("iptables -I OUTPUT 1 -m owner --uid-owner 1000");
+		expect(deploy).toContain("network-namespace.ready");
 		expect(deploy).toContain("TS_AUTHKEY");
 		expect(workflow).toContain('*[!A-Za-z0-9_-]*|"")');
 		expect(workflow).toContain('[ "${#TS_AUTHKEY}" -lt 20 ]');
 		expect(workflow).toContain('[ "${#TS_AUTHKEY}" -gt 512 ]');
 	});
 
-	test("preflights proxy egress before recreating the sidecar", () => {
+	test("preflights transparent egress before recreating the sidecar", () => {
 		const helperCall = workflow.indexOf("scripts/deploy-whatsapp-sidecar.sh");
 		const appDeploy = workflow.indexOf(
 			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
@@ -59,9 +66,10 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deployHelper).toContain("kamal accessory directories whatsapp-baileys");
 		expect(workflow).toContain("scripts/deploy-whatsapp-sidecar.sh");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-tailscale");
+		expect(deployHelper).toContain("kamal accessory reboot whatsapp-egress-guard");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-baileys");
-		expect(deployHelper).toContain("egress-healthcheck.js");
-		expect(deployHelper.indexOf("egress-healthcheck.js")).toBeLessThan(
+		expect(deployHelper).toContain("docker run --rm --network container:");
+		expect(deployHelper.indexOf("docker run --rm --network container:")).toBeLessThan(
 			deployHelper.indexOf("kamal accessory reboot whatsapp-baileys"),
 		);
 	});
@@ -70,8 +78,8 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deployHelper).toContain("actual_network=");
 		expect(deployHelper).toContain("'{{.HostConfig.NetworkMode}}'");
 		expect(deployHelper).toContain('[[ "${actual_network}" == "${desired_network}" ]]');
-		expect(deployHelper).toContain("actual_proxy=");
-		expect(deployHelper).not.toContain("SandboxID");
+		expect(deployHelper).toContain("container_netns_inode");
+		expect(deployHelper).toContain("/proc/${pid}/ns/net");
 	});
 
 	test("keeps state private and exposes only a read-only Unix socket to the app", () => {

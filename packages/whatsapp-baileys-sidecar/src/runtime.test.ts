@@ -280,23 +280,6 @@ describe("physical Baileys runtime", () => {
 		await runtime.stop();
 	});
 
-	it("reconnects a proxied socket after rc14 reports proxy outage as 408", async () => {
-		const harness = createHarness();
-		const runtime = new BaileysSocketRuntime(
-			{ ...sidecarConfig(), proxyUrl: "http://proxy.test:8080" },
-			harness.dependencies,
-		);
-		await runtime.start();
-		harness.events.emit("connection.update", {
-			connection: "close",
-			lastDisconnect: { error: { output: { statusCode: DisconnectReason.timedOut } } },
-		});
-		await new Promise((resolve) => setTimeout(resolve, 3_100));
-		expect(harness.socketConfigurations).toHaveLength(2);
-		expect(runtime.health().lastDisconnectReason).not.toBe("remote_logged_out");
-		await runtime.stop();
-	});
-
 	it("quarantines unexpected provider logout until explicit recovery", async () => {
 		const harness = createHarness();
 		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
@@ -346,42 +329,6 @@ describe("physical Baileys runtime", () => {
 		expect(runtimeSource).not.toContain("fetchLatestBaileysVersion");
 		expect(runtimeSource).not.toContain("useMultiFileAuthState");
 		await runtime.stop();
-	});
-
-	it("configures every audited Baileys proxy transport only when enabled", async () => {
-		const directHarness = createHarness();
-		const direct = new BaileysSocketRuntime(sidecarConfig(), directHarness.dependencies);
-		await direct.start();
-		expect(directHarness.socketConfigurations[0]).not.toHaveProperty("agent");
-		expect(directHarness.socketConfigurations[0]).not.toHaveProperty("fetchAgent");
-		expect(directHarness.socketConfigurations[0]?.options).toBeUndefined();
-		await direct.stop();
-
-		const proxyHarness = createHarness();
-		const proxied = new BaileysSocketRuntime(
-			{ ...sidecarConfig(), proxyUrl: "http://proxy.test:8080" },
-			proxyHarness.dependencies,
-		);
-		await proxied.start();
-		expect(proxyHarness.socketConfigurations[0]?.agent).toBeDefined();
-		expect(proxyHarness.socketConfigurations[0]?.fetchAgent).toBeDefined();
-		expect(proxyHarness.socketConfigurations[0]?.options).toMatchObject({
-			dispatcher: expect.anything(),
-		});
-		await proxied.stop();
-		await expect(proxied.stop()).resolves.toBeUndefined();
-	});
-
-	it("closes provider state when construction fails before proxy ownership", () => {
-		const harness = createHarness({ failQuarantineRead: true });
-		expect(
-			() =>
-				new BaileysSocketRuntime(
-					{ ...sidecarConfig(), proxyUrl: "http://proxy.test:8080" },
-					harness.dependencies,
-				),
-		).toThrow("injected quarantine read failure");
-		expect(harness.stateClosed).toBe(true);
 	});
 
 	it("persists creds.update and fail-stops the socket on auth persistence failure", async () => {
@@ -583,7 +530,6 @@ type HarnessOptions = {
 	failRetryWrite?: boolean;
 	cancelFailures?: number;
 	logoutFailures?: number;
-	failQuarantineRead?: boolean;
 	onAppendProviderEvents?: () => void;
 	onStoreRetryMessage?: () => void;
 	onRelayMessage?: () => void;
@@ -638,7 +584,6 @@ function createHarness(options: HarnessOptions = {}) {
 			Object.assign(creds, update);
 		},
 		physicalAuthQuarantineReason() {
-			if (options.failQuarantineRead) throw new Error("injected quarantine read failure");
 			return physicalAuthQuarantineReason;
 		},
 		quarantinePhysicalAuth(reason: string) {

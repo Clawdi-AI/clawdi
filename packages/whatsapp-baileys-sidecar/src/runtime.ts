@@ -14,7 +14,6 @@ import pino, { type Logger } from "pino";
 
 import { AUDITED_PROVIDER_RELEASE } from "./audited-version.js";
 import type { SidecarSessionConfig } from "./config.js";
-import { createProxyTransports, type ProxyTransports } from "./proxy.js";
 import {
 	isLinkedAuthenticationCreds,
 	type ProviderMessageEvent,
@@ -46,10 +45,6 @@ const TRANSIENT_DISCONNECT_REASONS = new Set<number>([
 ]);
 
 type SocketConfiguration = Parameters<typeof makeWASocket>[0];
-type ProxyRequestOptions = NonNullable<SocketConfiguration["options"]> & {
-	dispatcher: ProxyTransports["dispatcher"];
-};
-
 type ProviderSocketEvents = {
 	on(event: "creds.update", listener: (update: Partial<AuthenticationCreds>) => void): void;
 	on(
@@ -108,8 +103,6 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private readonly providerState: ProviderState;
 	private readonly socketFactory: ProviderSocketFactory;
 	private stateClosed = false;
-	private readonly proxyTransports: ProxyTransports | undefined;
-	private proxyClosePromise: Promise<void> | undefined;
 	private pairingMethod: "qr" | "code" | undefined;
 	private pairingQr: string | undefined;
 	private pairingQrExpiresAt: number | undefined;
@@ -139,7 +132,6 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		let quarantineReason: string | undefined;
 		try {
 			quarantineReason = this.providerState.physicalAuthQuarantineReason();
-			this.proxyTransports = config.proxyUrl ? createProxyTransports(config.proxyUrl) : undefined;
 		} catch (error: unknown) {
 			this.providerState.close();
 			throw error;
@@ -192,8 +184,6 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			}
 		} finally {
 			this.closeState();
-			this.proxyClosePromise ??= this.proxyTransports?.close() ?? Promise.resolve();
-			await this.proxyClosePromise;
 		}
 	}
 
@@ -420,9 +410,6 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		this.clearReconnectTimer();
 		if (this.socket) return;
 		this.status = "connecting";
-		const proxyOptions: ProxyRequestOptions | undefined = this.proxyTransports
-			? { dispatcher: this.proxyTransports.dispatcher }
-			: undefined;
 		const socket = this.socketFactory({
 			version: this.config.webVersion,
 			auth: this.providerState.state,
@@ -430,16 +417,6 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			printQRInTerminal: false,
 			syncFullHistory: false,
 			markOnlineOnConnect: false,
-			// Audited rc14 routes WebSocketClient, Node HTTPS uploads, and
-			// native fetch through these three distinct SocketConfig fields.
-			// https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Types/Socket.ts
-			...(this.proxyTransports
-				? {
-						agent: this.proxyTransports.agent,
-						fetchAgent: this.proxyTransports.fetchAgent,
-						options: proxyOptions,
-					}
-				: {}),
 			msgRetryCounterCache: this.providerState.retryCounterCache,
 			getMessage: async (key) =>
 				this.providerState.getRetryMessage(key.remoteJid, key.id) ?? { conversation: "" },
