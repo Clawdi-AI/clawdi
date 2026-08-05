@@ -1569,8 +1569,8 @@ function FilesTab({
 							<div>
 								<h2 className="text-base font-semibold">Couldn’t open Files</h2>
 								<p className="mt-1 text-sm text-muted-foreground">
-									The embedded page could not be displayed. If your sign-in needs attention,
-									open Files in a new tab and then retry here.
+									The embedded page could not be displayed. If your sign-in needs attention, open
+									Files in a new tab and then retry here.
 								</p>
 							</div>
 							<div className="flex flex-wrap justify-center gap-2">

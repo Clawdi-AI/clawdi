@@ -7,9 +7,9 @@ import {
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	readlinkSync,
-	readdirSync,
 	renameSync,
 	rmSync,
 	symlinkSync,
@@ -38,9 +38,7 @@ const FILE_BROWSER_PREVIOUS = "previous";
 const FILE_BROWSER_CANDIDATES = "candidates";
 const FILE_BROWSER_RECEIPT = "files";
 
-type FileBrowserCompanion = NonNullable<
-	NonNullable<RuntimeManifest["companions"]>["files"]
->;
+type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["files"]>;
 type FileBrowserAsset = FileBrowserCompanion["assets"][keyof FileBrowserCompanion["assets"]];
 
 export interface FileBrowserInstallReceiptTarget {
@@ -165,7 +163,10 @@ export function fileBrowserCompanionMutationPlan(
 	};
 }
 
-function renderFileBrowserConfig(companion: NonNullable<FileBrowserCompanion>, paths: RuntimePaths): string {
+function renderFileBrowserConfig(
+	companion: NonNullable<FileBrowserCompanion>,
+	paths: RuntimePaths,
+): string {
 	return stringifyYaml({
 		server: {
 			listen: companion.listen,
@@ -335,17 +336,7 @@ function ensureFileBrowserSandbox(paths: RuntimePaths): void {
 function defaultDownload(url: string, destination: string, paths: RuntimePaths): void {
 	const result = spawnRuntimeUserCommand(
 		"curl",
-		[
-			"-fsSL",
-			"--proto",
-			"=https",
-			"--tlsv1.2",
-			"--retry",
-			"3",
-			"-o",
-			destination,
-			url,
-		],
+		["-fsSL", "--proto", "=https", "--tlsv1.2", "--retry", "3", "-o", destination, url],
 		paths.userHome,
 		paths.companionInstallRoot,
 		{ timeoutMs: 300_000, maxBufferBytes: 64 * 1024 },
@@ -480,7 +471,8 @@ export function ensureFileBrowserCompanion(
 	}
 	const current = () => currentRevision(companion, paths, asset.sha256, config);
 	const expected = current();
-	if (expected !== desired) throw new Error("Files companion candidate did not pass activation verification");
+	if (expected !== desired)
+		throw new Error("Files companion candidate did not pass activation verification");
 	return {
 		receiptKey: FILE_BROWSER_RECEIPT,
 		receiptTarget: {

@@ -74,6 +74,14 @@ import {
 	readRuntimeAuthToken,
 } from "./auth-token";
 import {
+	ensureFileBrowserCompanion,
+	type FileBrowserCompanionInstallOptions,
+	fileBrowserCompanionMutationPlan,
+	fileBrowserCompanionProgram,
+	gcFileBrowserCompanionCandidates,
+	probeFileBrowserReadiness,
+} from "./file-browser-companion";
+import {
 	adoptableLegacyHostedBundledSkill,
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
@@ -98,14 +106,6 @@ import {
 	resolveManagedGatewayModelOverrides,
 } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
-import {
-	ensureFileBrowserCompanion,
-	type FileBrowserCompanionInstallOptions,
-	fileBrowserCompanionMutationPlan,
-	fileBrowserCompanionProgram,
-	gcFileBrowserCompanionCandidates,
-	probeFileBrowserReadiness,
-} from "./file-browser-companion";
 import {
 	emptyRuntimeInstallReceipts,
 	type RuntimeInstallReceiptEntry,
@@ -5323,8 +5323,7 @@ function mutationAncestorMetadataTargets(
 		const resolvedBoundary = resolvedBoundaries.find((boundary) => {
 			const relativeTarget = relative(boundary, resolvedTarget);
 			return (
-				relativeTarget === "" ||
-				(!relativeTarget.startsWith("..") && !isAbsolute(relativeTarget))
+				relativeTarget === "" || (!relativeTarget.startsWith("..") && !isAbsolute(relativeTarget))
 			);
 		});
 		if (!resolvedBoundary) {
@@ -5513,9 +5512,7 @@ export function convergeRuntimeManifest(
 			);
 		}
 		if (!opts.systemdApply) {
-			throw new Error(
-				"Files companion requires systemd apply and readiness hooks",
-			);
+			throw new Error("Files companion requires systemd apply and readiness hooks");
 		}
 	}
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
@@ -5665,10 +5662,7 @@ export function convergeRuntimeManifest(
 			opts.fileBrowserInstallOptions,
 		);
 		if (filesInstall) {
-			installReceiptTargets.companions.set(
-				filesInstall.receiptKey,
-				filesInstall.receiptTarget,
-			);
+			installReceiptTargets.companions.set(filesInstall.receiptKey, filesInstall.receiptTarget);
 		}
 		observations.clear();
 		for (const [name, runtime] of runtimeEntries) {

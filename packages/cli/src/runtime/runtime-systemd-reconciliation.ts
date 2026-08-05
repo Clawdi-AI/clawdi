@@ -1139,35 +1139,37 @@ export function planRuntimeSystemdUserMutations(
 		paths.systemdUserRoot,
 		join(paths.systemdUserRoot, "default.target.wants"),
 	]);
-	const writtenUnits = programs.map((program) => {
-		if (program.runtime === "files") return null;
-		const name = runtimeSystemdProgramName(program);
-		const unitName = systemdUnitFileName(name);
-		unitNames.add(unitName);
-		const unitPath = join(paths.systemdUserRoot, unitName);
-		environmentTargets.add(systemdEnvironmentFilePath(paths, name));
-		targets.add(unitPath);
-		const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
-		targets.add(enablementPath);
-		symlinkTargets.add(enablementPath);
-		if (officialRuntimeServiceInstallArgs(program)) {
-			if (program.runtime === "openclaw") {
-				// OpenClaw's official Linux installer writes the base unit in place and
-				// preserves the previous unit beside it. Both are official-user
-				// transaction mutations:
-				// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L985-L1004
-				targets.add(`${unitPath}.bak`);
-				// The same installer may write its owner-only environment file under
-				// the OpenClaw state directory:
-				// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L1099-L1170
-				targets.add(join(paths.userHome, ".openclaw", "gateway.systemd.env"));
+	const writtenUnits = programs
+		.map((program) => {
+			if (program.runtime === "files") return null;
+			const name = runtimeSystemdProgramName(program);
+			const unitName = systemdUnitFileName(name);
+			unitNames.add(unitName);
+			const unitPath = join(paths.systemdUserRoot, unitName);
+			environmentTargets.add(systemdEnvironmentFilePath(paths, name));
+			targets.add(unitPath);
+			const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
+			targets.add(enablementPath);
+			symlinkTargets.add(enablementPath);
+			if (officialRuntimeServiceInstallArgs(program)) {
+				if (program.runtime === "openclaw") {
+					// OpenClaw's official Linux installer writes the base unit in place and
+					// preserves the previous unit beside it. Both are official-user
+					// transaction mutations:
+					// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L985-L1004
+					targets.add(`${unitPath}.bak`);
+					// The same installer may write its owner-only environment file under
+					// the OpenClaw state directory:
+					// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L1099-L1170
+					targets.add(join(paths.userHome, ".openclaw", "gateway.systemd.env"));
+				}
+				const dropInPath = systemdDropInFilePath(paths, name);
+				targets.add(dropInPath);
+				metadataTargets.add(dirname(dropInPath));
 			}
-			const dropInPath = systemdDropInFilePath(paths, name);
-			targets.add(dropInPath);
-			metadataTargets.add(dirname(dropInPath));
-		}
-		return unitPath;
-	}).filter((path): path is string => path !== null);
+			return unitPath;
+		})
+		.filter((path): path is string => path !== null);
 
 	if (existsSync(paths.systemdUserRoot)) {
 		const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));

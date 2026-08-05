@@ -33,6 +33,7 @@ import {
 	resolveManagedGatewayModelOverrides,
 } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
+import { readRuntimeInstallReceipts } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
 	restoreRuntimeLiveSnapshot,
@@ -61,7 +62,6 @@ import {
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
-import { readRuntimeInstallReceipts } from "./install-receipts";
 import {
 	hostedManifestToRuntimeManifest,
 	loadCommittedRuntimeManifest,
@@ -650,11 +650,9 @@ function filesManifestLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
 	};
 }
 
-function filesApplyHooks(input: {
-	activationApplied?: boolean;
-	onActivate?: () => void;
-	onRollback?: () => void;
-} = {}) {
+function filesApplyHooks(
+	input: { activationApplied?: boolean; onActivate?: () => void; onRollback?: () => void } = {},
+) {
 	return {
 		activateEgressPrerequisite: successfulPrerequisiteActivation,
 		activate: () => {
@@ -5220,10 +5218,10 @@ exit 42
 		expect(unit).toContain("User=10001");
 		expect(unit).toContain("Group=10001");
 		expect(unit).toContain(`BindPaths=${paths.userHome}:${paths.userHome}`);
+		expect(unit).toContain(`BindPaths=${paths.fileBrowserStateRoot}:${paths.fileBrowserStateRoot}`);
 		expect(unit).toContain(
-			`BindPaths=${paths.fileBrowserStateRoot}:${paths.fileBrowserStateRoot}`,
+			`BindReadOnlyPaths=${paths.fileBrowserConfig}:${paths.fileBrowserConfig}`,
 		);
-		expect(unit).toContain(`BindReadOnlyPaths=${paths.fileBrowserConfig}:${paths.fileBrowserConfig}`);
 		expect(unit).toContain("ProtectSystem=strict");
 		expect(unit).toContain("CapabilityBoundingSet=");
 		expect(readRuntimeInstallReceipts(paths)?.companions.files).toMatchObject({
@@ -5245,8 +5243,7 @@ exit 42
 		const originalManifest = filesManifest(paths, { generation: 1, binary: originalBinary });
 		const readyOptions = {
 			fileBrowserInstallOptions: {
-				download: (_url: string, destination: string) =>
-					writeFileSync(destination, originalBinary),
+				download: (_url: string, destination: string) => writeFileSync(destination, originalBinary),
 				versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
 			},
 			fileBrowserReadinessProbe: () => true,
@@ -5261,7 +5258,10 @@ exit 42
 		const active = join(paths.companionInstallRoot, "active", "filebrowser");
 		const originalActiveTarget = resolve(dirname(active), readlinkSync(dirname(active)));
 		const originalConfig = readFileSync(paths.fileBrowserConfig, "utf8");
-		const originalUnit = readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8");
+		const originalUnit = readFileSync(
+			join(paths.systemdSystemRoot, "clawdi-files.service"),
+			"utf8",
+		);
 		const originalReceipts = readFileSync(
 			join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"),
 			"utf8",
@@ -5273,18 +5273,14 @@ exit 42
 			binary: desiredBinary,
 		});
 		let hashFailureCommits = 0;
-		const hashFailure = convergeRuntimeManifest(
-			filesManifestLoad(hashFailureManifest),
-			paths,
-			{
-				...readyOptions,
-				fileBrowserInstallOptions: {
-					download: (_url, destination) => writeFileSync(destination, "wrong digest\n"),
-					versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
-				},
-				commitAuthority: () => hashFailureCommits++,
+		const hashFailure = convergeRuntimeManifest(filesManifestLoad(hashFailureManifest), paths, {
+			...readyOptions,
+			fileBrowserInstallOptions: {
+				download: (_url, destination) => writeFileSync(destination, "wrong digest\n"),
+				versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
 			},
-		);
+			commitAuthority: () => hashFailureCommits++,
+		});
 		expect(hashFailure.installErrors.join("\n")).toContain("Files companion SHA256 mismatch");
 		expect(hashFailureCommits).toBe(0);
 		expect(readFileSync(active, "utf8")).toBe(originalBinary);
@@ -5304,16 +5300,12 @@ exit 42
 		});
 		let readinessCommits = 0;
 		let rollbacks = 0;
-		const readinessFailure = convergeRuntimeManifest(
-			filesManifestLoad(readinessManifest),
-			paths,
-			{
-				...readyOptions,
-				fileBrowserReadinessProbe: () => false,
-				systemdApply: filesApplyHooks({ onRollback: () => rollbacks++ }),
-				commitAuthority: () => readinessCommits++,
-			},
-		);
+		const readinessFailure = convergeRuntimeManifest(filesManifestLoad(readinessManifest), paths, {
+			...readyOptions,
+			fileBrowserReadinessProbe: () => false,
+			systemdApply: filesApplyHooks({ onRollback: () => rollbacks++ }),
+			commitAuthority: () => readinessCommits++,
+		});
 		expect(readinessFailure.installErrors.join("\n")).toContain(
 			"Files companion readiness failed at http://127.0.0.1:9120/health",
 		);
@@ -5342,7 +5334,10 @@ exit 42
 				fileBrowserReadinessProbe: () => true,
 				systemdApply: filesApplyHooks(),
 			});
-		expect(install(filesManifest(paths, { generation: 1, binary: firstBinary }), firstBinary).installErrors).toEqual([]);
+		expect(
+			install(filesManifest(paths, { generation: 1, binary: firstBinary }), firstBinary)
+				.installErrors,
+		).toEqual([]);
 		const secondManifest = filesManifest(paths, { generation: 2, binary: secondBinary });
 		expect(install(secondManifest, secondBinary).installErrors).toEqual([]);
 		const activeTarget = resolve(
