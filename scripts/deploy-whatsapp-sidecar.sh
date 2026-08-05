@@ -6,9 +6,13 @@ readonly egress_service="clawdi-whatsapp-tailscale"
 readonly proxy_url="http://${egress_service}:8080"
 
 remote_inspect() {
-	kamal server exec "docker container inspect --format '$1' '$2'" 2>/dev/null || true
+	kamal server exec \
+		"printf 'CLAWDI_INSPECT=%s\\n' \"\$(docker container inspect --format '$1' '$2')\"" \
+		2>/dev/null |
+		grep -Eo 'CLAWDI_INSPECT=[^[:space:]]*' |
+		tail -n 1 |
+		cut -d= -f2- || true
 }
-last_match() { grep -Eo "$1" | tail -n 1 || true; }
 
 egress_enabled=false
 if [[ "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" == true ]]; then
@@ -32,33 +36,54 @@ fi
 
 kamal accessory directories whatsapp-baileys
 kamal server exec \
-	"test \"\$(stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/state')\" = '1000:1000:700' && \
+	"test -d '/home/phala/clawdi-whatsapp/state' && \
+	 test ! -L '/home/phala/clawdi-whatsapp/state' && \
+	 test \"\$(realpath -e '/home/phala/clawdi-whatsapp/state')\" = '/home/phala/clawdi-whatsapp/state' && \
+	 test \"\$(stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/state')\" = '1000:1000:700' && \
+	 test -d '/home/phala/clawdi-whatsapp/run' && \
+	 test ! -L '/home/phala/clawdi-whatsapp/run' && \
+	 test \"\$(realpath -e '/home/phala/clawdi-whatsapp/run')\" = '/home/phala/clawdi-whatsapp/run' && \
 	 test \"\$(stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/run')\" = '1000:1000:770'"
-current_revision="$(remote_inspect '{{ index .Config.Labels "io.clawdi.whatsapp-sidecar.deployment-revision" }}' "${sidecar_service}" | last_match '[0-9a-f]{64}')"
-actual_network="$(remote_inspect '{{.HostConfig.NetworkMode}}' "${sidecar_service}" | last_match '[A-Za-z0-9_.:-]+')"
-actual_proxy="$(remote_inspect '{{range .Config.Env}}{{println .}}{{end}}' "${sidecar_service}" | grep -Eo 'CLAWDI_WA_SIDECAR_PROXY_URL=[^[:space:]]+' | tail -n 1 || true)"
+current_revision="$(remote_inspect '{{ index .Config.Labels "io.clawdi.whatsapp-sidecar.deployment-revision" }}' "${sidecar_service}")"
+actual_network="$(remote_inspect '{{.HostConfig.NetworkMode}}' "${sidecar_service}")"
+actual_env_json="$(remote_inspect '{{json .Config.Env}}' "${sidecar_service}")"
+actual_proxy="$(printf '%s\n' "${actual_env_json}" | grep -Eo 'CLAWDI_WA_SIDECAR_PROXY_URL=[^" ]+' | tail -n 1 || true)"
 desired_proxy=""
 [[ "${egress_enabled}" == true ]] && desired_proxy="CLAWDI_WA_SIDECAR_PROXY_URL=${proxy_url}"
+desired_network=bridge
+[[ "${egress_enabled}" == true ]] && desired_network=kamal
 sidecar_needs_reboot=false
 [[ "${current_revision}" == "${SIDECAR_REVISION}" ]] || sidecar_needs_reboot=true
-[[ "${actual_network}" == kamal ]] || sidecar_needs_reboot=true
+[[ "${actual_network}" == "${desired_network}" ]] || sidecar_needs_reboot=true
 [[ "${actual_proxy}" == "${desired_proxy}" ]] || sidecar_needs_reboot=true
 
 if [[ "${egress_enabled}" == true ]]; then
-	current_egress_revision="$(remote_inspect '{{ index .Config.Labels "io.clawdi.whatsapp-egress.config-revision" }}' "${egress_service}" | last_match '[0-9a-f]{64}')"
-	egress_running="$(remote_inspect '{{.State.Running}}' "${egress_service}" | last_match 'true|false')"
+	current_egress_revision="$(remote_inspect '{{ index .Config.Labels "io.clawdi.whatsapp-egress.config-revision" }}' "${egress_service}")"
+	egress_running="$(remote_inspect '{{.State.Running}}' "${egress_service}")"
 	if [[ "${current_egress_revision}" != "${WHATSAPP_TAILSCALE_CONFIG_REVISION}" || "${egress_running}" != true ]]; then
 		kamal accessory directories whatsapp-tailscale
 		kamal accessory reboot whatsapp-tailscale
 	fi
 	# Use the exact Undici proxy path used by Baileys native fetch. This runs
 	# before replacing a direct sidecar, so a failed first cutover preserves it.
-	kamal accessory exec whatsapp-baileys \
-		"node /app/packages/whatsapp-baileys-sidecar/dist/egress-healthcheck.js '${WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP}'"
+	egress_ready=false
+	for _attempt in $(seq 1 12); do
+		if kamal accessory exec whatsapp-baileys \
+			"node /app/packages/whatsapp-baileys-sidecar/dist/egress-healthcheck.js '${WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP}'" \
+			>/dev/null 2>&1; then
+			egress_ready=true
+			break
+		fi
+		sleep 5
+	done
+	[[ "${egress_ready}" == true ]] || { echo "WhatsApp Tailscale egress failed readiness" >&2; exit 1; }
 fi
 
 if [[ "${sidecar_needs_reboot}" == true ]]; then
 	kamal accessory reboot whatsapp-baileys
+	kamal server exec \
+		"test \"\$(docker container inspect --format '{{.Config.Image}}' '${sidecar_service}')\" = \
+		 'ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:${DEPLOY_IMAGE_VERSION}'"
 fi
 
 ready=false

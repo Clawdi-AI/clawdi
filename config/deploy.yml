@@ -115,6 +115,7 @@ accessories:
         remote: /var/lib/tailscale
         mode: "700"
     options:
+      cap-drop: ALL
       read-only: true
       security-opt: no-new-privileges:true
       tmpfs: /tmp:rw,noexec,nosuid,nodev,size=16m
@@ -134,7 +135,7 @@ accessories:
     service: clawdi-whatsapp-baileys
     image: ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:<%= ENV.fetch("DEPLOY_IMAGE_VERSION") %>
     host: <%= ENV.fetch("DEPLOY_HOST") %>
-    network: kamal
+    network: <%= ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" ? "kamal" : "bridge" %>
     directories:
       - local: /home/phala/clawdi-whatsapp/state
         remote: /data

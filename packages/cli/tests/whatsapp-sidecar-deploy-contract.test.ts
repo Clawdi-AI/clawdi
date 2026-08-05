@@ -19,7 +19,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy.match(/^ {2}whatsapp-baileys:$/gm)).toHaveLength(1);
 		expect(deploy).toContain("service: clawdi-whatsapp-baileys");
 		expect(deploy).toContain('ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true"');
-		expect(deploy).toContain("network: kamal");
+		expect(deploy).toContain('? "kamal" : "bridge"');
 		expect(deploy).toContain("CLAWDI_WA_SIDECAR_PROXY_URL");
 		expect(deploy).toContain("/home/phala/clawdi-whatsapp/state");
 		expect(deploy).toContain("/home/phala/clawdi-whatsapp/run");
@@ -69,7 +69,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 	test("compares desired and actual network mode independently of image revision", () => {
 		expect(deployHelper).toContain("actual_network=");
 		expect(deployHelper).toContain("'{{.HostConfig.NetworkMode}}'");
-		expect(deployHelper).toContain('[[ "${actual_network}" == kamal ]]');
+		expect(deployHelper).toContain('[[ "${actual_network}" == "${desired_network}" ]]');
 		expect(deployHelper).toContain("actual_proxy=");
 		expect(deployHelper).not.toContain("SandboxID");
 	});

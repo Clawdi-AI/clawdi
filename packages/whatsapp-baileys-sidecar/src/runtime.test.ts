@@ -367,6 +367,19 @@ describe("physical Baileys runtime", () => {
 		expect(proxyHarness.socketConfigurations[0]?.fetchAgent).toBeDefined();
 		expect(proxyHarness.socketConfigurations[0]?.options?.dispatcher).toBeDefined();
 		await proxied.stop();
+		await expect(proxied.stop()).resolves.toBeUndefined();
+	});
+
+	it("closes provider state when construction fails before proxy ownership", () => {
+		const harness = createHarness({ failQuarantineRead: true });
+		expect(
+			() =>
+				new BaileysSocketRuntime(
+					{ ...sidecarConfig(), proxyUrl: "http://proxy.test:8080" },
+					harness.dependencies,
+				),
+		).toThrow("injected quarantine read failure");
+		expect(harness.stateClosed).toBe(true);
 	});
 
 	it("persists creds.update and fail-stops the socket on auth persistence failure", async () => {
@@ -568,6 +581,7 @@ type HarnessOptions = {
 	failRetryWrite?: boolean;
 	cancelFailures?: number;
 	logoutFailures?: number;
+	failQuarantineRead?: boolean;
 	onAppendProviderEvents?: () => void;
 	onStoreRetryMessage?: () => void;
 	onRelayMessage?: () => void;
@@ -622,6 +636,7 @@ function createHarness(options: HarnessOptions = {}) {
 			Object.assign(creds, update);
 		},
 		physicalAuthQuarantineReason() {
+			if (options.failQuarantineRead) throw new Error("injected quarantine read failure");
 			return physicalAuthQuarantineReason;
 		},
 		quarantinePhysicalAuth(reason: string) {

@@ -11,7 +11,14 @@ export type ProxyTransports = {
 export function createProxyTransports(proxyUrl: string): ProxyTransports {
 	const agent = new HttpsProxyAgent(proxyUrl);
 	const fetchAgent = new HttpsProxyAgent(proxyUrl);
-	const dispatcher = new ProxyAgent(proxyUrl);
+	let dispatcher: ProxyAgent;
+	try {
+		dispatcher = new ProxyAgent(proxyUrl);
+	} catch (error: unknown) {
+		agent.destroy();
+		fetchAgent.destroy();
+		throw error;
+	}
 	return {
 		agent,
 		fetchAgent,

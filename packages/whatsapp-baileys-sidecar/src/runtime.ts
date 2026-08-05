@@ -106,6 +106,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private readonly socketFactory: ProviderSocketFactory;
 	private stateClosed = false;
 	private readonly proxyTransports: ProxyTransports | undefined;
+	private proxyClosePromise: Promise<void> | undefined;
 	private pairingMethod: "qr" | "code" | undefined;
 	private pairingQr: string | undefined;
 	private pairingQrExpiresAt: number | undefined;
@@ -123,7 +124,6 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		// emits only its own generic lifecycle logs at the configured level.
 		this.baileysLogger = pino({ level: "silent" });
 		this.socketFactory = dependencies.socketFactory ?? defaultProviderSocketFactory;
-		this.proxyTransports = config.proxyUrl ? createProxyTransports(config.proxyUrl) : undefined;
 		this.providerState =
 			dependencies.providerState ??
 			new SQLiteProviderState(
@@ -133,7 +133,14 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				config.providerInbox,
 				(operation, error) => this.markStateFatal(operation, error),
 			);
-		const quarantineReason = this.providerState.physicalAuthQuarantineReason();
+		let quarantineReason: string | undefined;
+		try {
+			quarantineReason = this.providerState.physicalAuthQuarantineReason();
+			this.proxyTransports = config.proxyUrl ? createProxyTransports(config.proxyUrl) : undefined;
+		} catch (error: unknown) {
+			this.providerState.close();
+			throw error;
+		}
 		if (quarantineReason) {
 			this.fatalReason = quarantineReason;
 			this.lastDisconnectReason = quarantineReason;
@@ -182,7 +189,8 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			}
 		} finally {
 			this.closeState();
-			await this.proxyTransports?.close();
+			this.proxyClosePromise ??= this.proxyTransports?.close() ?? Promise.resolve();
+			await this.proxyClosePromise;
 		}
 	}
 
