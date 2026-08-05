@@ -37,6 +37,27 @@ between backend processes and the singleton. Account/session UUIDs are not
 deployment configuration. Do not add per-account secrets, accessories,
 host-root variables, or JSON registries.
 
+### Mount policy
+
+Kamal 2.12 `directories` are deliberate Docker bind mounts: Kamal creates the
+host directory, applies its configured mode, and then emits `--volume` for the
+container. Use Docker named volumes only for replaceable caches such as
+`clawdi-fastembed`. Keep credential state and the Unix socket on narrow,
+explicit host paths because operators must be able to validate ownership,
+snapshot local block storage, restore one physical authority, and share the
+socket with backend roles. Raw `volumes` entries are limited to read-only
+consumers of an existing directory or generated file; writable accessory paths
+use `directories` so creation and modes remain under Kamal control.
+
+The deployment gate rejects symlinked or redirected paths and requires exact
+UID, GID, and modes for Baileys state (`0700`), the socket directory (`0770`),
+Tailscale identity (`0700`), and the guard directory (`0700`). The generated
+resolver is atomically replaced as a regular `0600` file. The guard publishes
+its `0644` marker atomically inside a non-world-traversable directory, and
+Baileys receives that directory read-only. Do not replace these mounts with a
+host root, Docker socket, network filesystem, or an automatically pruned
+volume.
+
 ## Optional Tailscale exit-node egress
 
 The checked-in configuration is inert by default. Merging it does not create a

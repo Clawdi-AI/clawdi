@@ -173,13 +173,16 @@ accessories:
       ip6tables -C "$chain" -j REJECT 2>/dev/null || ip6tables -A "$chain" -j REJECT;
       ip6tables -C OUTPUT -m owner --uid-owner 1000 -j "$chain" 2>/dev/null || ip6tables -I OUTPUT 1 -m owner --uid-owner 1000 -j "$chain";
       marker="$(cat /proc/sys/kernel/random/boot_id) $(stat -Lc %i /proc/self/ns/net)";
-      printf "%s\n" "$marker" > /guard/network-namespace.ready.tmp;
-      mv /guard/network-namespace.ready.tmp /guard/network-namespace.ready;
+      marker_tmp="$(mktemp /guard/.network-namespace.ready.XXXXXX)";
+      { printf "%s\n" "$marker" > "$marker_tmp" &&
+      chmod 644 "$marker_tmp" &&
+      mv -T "$marker_tmp" /guard/network-namespace.ready; } ||
+      { rm -f -- "$marker_tmp"; exit 1; };
       exec sleep infinity'
     directories:
       - local: /home/phala/clawdi-whatsapp/egress-guard
         remote: /guard
-        mode: "755"
+        mode: "700"
     options:
       entrypoint: /bin/sh
       cap-drop: ALL
