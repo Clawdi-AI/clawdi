@@ -134,11 +134,11 @@ TEST_HERMES_DASHBOARD_AUTH = {
 }
 
 
-def test_hosted_runtime_skills_retain_exact_catalog_source() -> None:
+def test_hosted_runtime_skills_retain_exact_repository_root_source() -> None:
     source = {
         "type": "github",
         "url": "https://github.com/Clawdi-AI/store",
-        "path": "skills/review-pr",
+        "path": "",
         "commit": "a" * 40,
     }
     skills = HostedRuntimeSkills.model_validate(

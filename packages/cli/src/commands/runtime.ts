@@ -46,9 +46,9 @@ import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
-	type PreparedHostedCatalogSkill,
-	prepareHostedCatalogSkillArchives,
-} from "../runtime/hosted-catalog-skill-archive";
+	type PreparedHostedSourcedSkill,
+	prepareHostedSourcedSkillArchives,
+} from "../runtime/hosted-sourced-skill-archive";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
@@ -1086,7 +1086,7 @@ interface RuntimeApplyOptions {
 	manifestIdentity?: RuntimeManifestIdentity;
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
-	preparedHostedCatalogSkills?: ReadonlyMap<string, PreparedHostedCatalogSkill>;
+	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
 }
 
 interface RuntimeManifestIdentity {
@@ -2537,9 +2537,9 @@ async function applyRuntimeDesiredState(
 	if (cliUpdate.selfReexec) {
 		return { kind: "cli_handoff", cliUpdate };
 	}
-	const preparedHostedCatalogSkills =
-		opts.preparedHostedCatalogSkills ??
-		(await prepareHostedCatalogSkillArchives(load.manifest, paths));
+	const preparedHostedSourcedSkills =
+		opts.preparedHostedSourcedSkills ??
+		(await prepareHostedSourcedSkillArchives(load.manifest, paths));
 	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
 	let systemdApply = {
@@ -2550,7 +2550,7 @@ async function applyRuntimeDesiredState(
 	let egressPrerequisiteActivated = false;
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
-		preparedHostedCatalogSkills,
+		preparedHostedSourcedSkills,
 		commitAuthority: (committedConvergence, authority) => {
 			if (opts.requireSystemdApplied && !systemdApply.applied) {
 				throw new Error("systemd apply did not activate the rendered runtime manifest");

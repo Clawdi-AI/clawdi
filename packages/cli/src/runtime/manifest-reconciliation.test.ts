@@ -27,12 +27,12 @@ import {
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
 import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
-import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {
 	hostedAiProviderCatalog,
 	resolveManagedGatewayModelOverrides,
 } from "./hosted-provider-resolution";
+import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	captureRuntimeLiveSnapshot,
 	restoreRuntimeLiveSnapshot,
@@ -4062,7 +4062,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			path: "skills/review-pr",
 			commit: "a".repeat(40),
 		};
-		const prepared: PreparedHostedCatalogSkill = {
+		const prepared: PreparedHostedSourcedSkill = {
 			skillId: "review-pr",
 			source,
 			sourceIdentity:
@@ -4094,7 +4094,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		writeFileSync(join(skillDir, "SKILL.md"), "user-owned collision\n");
 		expect(() =>
 			convergeRuntimeManifest(manifestLoad(desiredManifest, "catalog-collision"), paths, {
-				preparedHostedCatalogSkills: new Map([[prepared.skillId, prepared]]),
+				preparedHostedSourcedSkills: new Map([[prepared.skillId, prepared]]),
 				hostedHermesSkillExactSourceDriver: {
 					install: () => "installed",
 					verifyOwned: () => false,
@@ -4118,7 +4118,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				if (installs.length === 1) throw new Error("lost native install response");
 				return "unchanged" as const;
 			},
-			verifyOwned: (input: { skill: PreparedHostedCatalogSkill }) => {
+			verifyOwned: (input: { skill: PreparedHostedSourcedSkill }) => {
 				verifyCalls += 1;
 				return (
 					input.skill.sourceIdentity === prepared.sourceIdentity &&
@@ -4134,7 +4134,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 		};
 		const options = {
-			preparedHostedCatalogSkills: new Map([[prepared.skillId, prepared]]),
+			preparedHostedSourcedSkills: new Map([[prepared.skillId, prepared]]),
 			hostedHermesSkillExactSourceDriver: nativeReconciler,
 		};
 		const lostResponse = convergeRuntimeManifest(
@@ -4186,7 +4186,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			),
 			paths,
 			{
-				preparedHostedCatalogSkills: new Map(),
+				preparedHostedSourcedSkills: new Map(),
 				hostedHermesSkillExactSourceDriver: nativeReconciler,
 			},
 		);

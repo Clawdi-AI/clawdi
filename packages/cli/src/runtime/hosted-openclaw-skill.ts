@@ -1,6 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
+import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
 	managedSkillReceiptMatchesIdentity,
@@ -28,9 +28,9 @@ export interface HostedOpenClawSkillDriver {
 	install(input: {
 		home: string;
 		workspaceRoot: string;
-		skill: PreparedHostedCatalogSkill;
+		skill: PreparedHostedSourcedSkill;
 	}): "installed" | "unchanged";
-	verifyOwned(input: { workspaceRoot: string; skill: PreparedHostedCatalogSkill }): boolean;
+	verifyOwned(input: { workspaceRoot: string; skill: PreparedHostedSourcedSkill }): boolean;
 	cleanupManifestOwned(input: {
 		workspaceRoot: string;
 		skillId: string;
