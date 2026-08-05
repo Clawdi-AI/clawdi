@@ -258,14 +258,15 @@ jobs:
           bun run --cwd packages/cli test:internal
           tests/whatsapp-sidecar-deploy-contract.test.ts
           tests/clawdi-image-release-workflow.test.ts
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
       - name: Kamal 2.12 render contract
         run: |
-          gem install kamal -v '2.12.0' --no-document
-          scripts/test-kamal-whatsapp-sidecar-render.sh
-          scripts/test-deploy-whatsapp-sidecar.sh
+          docker run --rm \
+            --volume "$PWD:/repo:ro" \
+            --workdir /repo \
+            ruby:3.4.10-bookworm@sha256:8ff02c55f0467a3d03bc6c41b7500f9f0b30086a1861c601cd4e9dc5b8536a66 \
+            bash -c "gem install kamal -v '2.12.0' --no-document && \
+              scripts/test-kamal-whatsapp-sidecar-render.sh && \
+              scripts/test-deploy-whatsapp-sidecar.sh"
       - name: Build production sidecar image
         run: >-
           docker build

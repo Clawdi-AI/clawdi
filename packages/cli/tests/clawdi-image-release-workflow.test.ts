@@ -173,6 +173,15 @@ describe("backend image release workflow contract", () => {
 	});
 
 	test("pins the audited Kamal release and keeps the remote deploy lock fail-fast", () => {
+		const sidecarKamalContract = backendCi.jobs.sidecar?.steps?.find(
+			(step) => step.name === "Kamal 2.12 render contract",
+		);
+		expect(sidecarKamalContract?.run).toContain("docker run --rm");
+		expect(sidecarKamalContract?.run).toContain(
+			"ruby:3.4.10-bookworm@sha256:8ff02c55f0467a3d03bc6c41b7500f9f0b30086a1861c601cd4e9dc5b8536a66",
+		);
+		expect(backendCiSource).not.toContain("ruby/setup-ruby");
+
 		const kamalDeploy = imageRelease.jobs["deploy-vps"]?.steps?.find(
 			(step) => step.name === "Kamal deploy",
 		);
