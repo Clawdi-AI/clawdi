@@ -4534,7 +4534,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(page).toHaveTitle("Memories · Clawdi");
 	await expect(page.locator('[data-slot="breadcrumb-page"]')).toHaveText("Memories");
 	await expect(
-		main.getByText("Memories are account-wide and available across all agents.", {
+		main.getByText("Memories and provider settings belong to this account. Changes here affect all agents.", {
 			exact: true,
 		}),
 	).toHaveCount(1);
@@ -4600,7 +4600,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
 	await expect(page).toHaveTitle("Connectors · Clawdi");
 	await expect(
-		main.getByText("Account-wide connectors available across all agents.", {
+		main.getByText("Connections belong to this account. Connecting or disconnecting here affects all agents.", {
 			exact: true,
 		}),
 	).toBeVisible();
@@ -4669,18 +4669,18 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	});
 	const removeProjectDialog = page.getByRole("alertdialog", { name: "Unlink this Project?" });
 	await expect(removeProjectDialog).toContainText(
-		"Hosted Shared Knowledge will leave this Agent's Vault resolution order.",
+		"This Agent will no longer use Vaults through Hosted Shared Knowledge.",
 	);
 	await removeProjectDialog.getByRole("button", { name: "Cancel" }).click();
 	await expect(projectStack.getByLabel("Project to link")).toHaveCount(0);
-	await projectStack.getByRole("button", { name: "Link existing", exact: true }).click();
+	await projectStack.getByRole("button", { name: "Link project", exact: true }).click();
 	const addProjectDialog = page.getByTestId("agent-project-add-dialog");
 	await expect(addProjectDialog).toBeVisible();
 	const compactProjectPicker = addProjectDialog.getByLabel("Project to link");
 	await compactProjectPicker.click();
 	await page.getByRole("option", { name: /Hosted Project Choice/ }).click();
 	await expect(
-		addProjectDialog.getByRole("button", { name: "Link Project", exact: true }),
+		addProjectDialog.getByRole("button", { name: "Link project", exact: true }),
 	).toBeEnabled();
 	await addProjectDialog.getByRole("button", { name: "Cancel" }).click();
 	await projectStack.screenshot({ path: testInfo.outputPath("hosted-agent-projects-desktop.png") });
@@ -4730,7 +4730,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("button", { name: /Add to agent/i })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "People", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Attach Vault", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills${query}`,
@@ -4825,7 +4825,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Attach Vault", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-vaults-desktop.png") });
 	const hostedVaultLink = main.getByRole("link", { name: "Open vault Hosted Scoped Vault" });
 	await page.setViewportSize({ width: 390, height: 844 });

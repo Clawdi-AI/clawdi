@@ -601,15 +601,15 @@ export default function ProjectDetailPage({
 					isAgentScope
 						? isWorkspace
 							? focus === "skills"
-								? "Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
+								? "Skills installed in this Agent's Workspace. Skills synced from the Agent are read-only."
 								: focus === "vaults"
 									? "Vaults attached to this Agent's Workspace."
-									: "This Agent's fixed Workspace for installed Skills and attached Vaults."
+									: "Skills and Vaults available directly to this Agent."
 							: focus === "skills"
 								? "Skills stored and managed in this Project. Linking it does not install them on the Agent."
 								: focus === "vaults"
-									? "Vaults this Agent can resolve through this Project."
-									: "Skills stay managed in this Project; its Vaults join the Agent's runtime resolution."
+									? "Vaults available to this Agent through this Project."
+									: "This Agent can use the Project's attached Vaults. Its Skills remain in the Project."
 						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
 				}
 				status={
@@ -657,8 +657,8 @@ export default function ProjectDetailPage({
 					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<span>
-							Linking makes attached Vaults available in Agent runtime resolution. Skills stay
-							stored and managed in this Project until separately installed on an Agent.
+							Linking makes attached Vaults available to an Agent. Project Skills remain separate
+							until you install them on that Agent.
 						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
@@ -691,10 +691,10 @@ export default function ProjectDetailPage({
 				description={
 					isAgentScope
 						? isWorkspace
-							? "Installed Skills in this Agent's fixed Workspace."
+							? "Skills installed in this Agent's Workspace."
 							: "Skills are stored and managed in this Project; linking does not install them."
 						: project.kind === "environment"
-							? "Read-only projections authored on this Agent's filesystem."
+							? "Skills synced from this Agent. Manage them on the Agent."
 							: isOwner
 								? "Reusable instructions stored in this Project."
 								: "Readable instructions shared by the owner."
@@ -813,7 +813,7 @@ export default function ProjectDetailPage({
 					isAgentScope
 						? isWorkspace
 							? "Vaults attached to this Agent's Workspace."
-							: "Vaults this Agent can use through this Project."
+							: "Vaults available to this Agent through this Project."
 						: isOwner
 							? "API keys and secrets this Project can use."
 							: "Read-only vaults shared through this Project."
@@ -956,7 +956,7 @@ export default function ProjectDetailPage({
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You have viewer access to stored Skills and Vault key names. Install Skills on an Agent separately; attached Vaults can participate in runtime resolution after linking the Project."
+					description="You can view this Project's Skills and Vault key names. Link the Project to let an Agent use its attached Vaults; install Skills separately."
 				>
 					<SharedAccessPanel
 						project={project}
@@ -975,10 +975,10 @@ export default function ProjectDetailPage({
 					count={agentCount}
 					description={
 						project.kind === "environment"
-							? "Home Agent for this managed Workspace."
+							? "Agent that owns this Workspace."
 							: project.kind === "personal"
 								? "This Global Project belongs to your account and is not linked to individual Agents."
-								: "Agents linked to this Project for Vault runtime resolution."
+								: "Agents that can use this Project's attached Vaults."
 					}
 				>
 					{boundAgents.isLoading || environments.isLoading ? (
@@ -1006,7 +1006,7 @@ export default function ProjectDetailPage({
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
 										? "Global Project belongs to your account and has no Agent links."
-										: "No Agents are linked yet. Linking adds attached Vaults to runtime resolution; it does not install Skills."
+										: "No Agents are linked yet. Linking makes attached Vaults available; Skills are installed separately."
 							}
 						/>
 					) : (
@@ -1167,10 +1167,10 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLab
 	if (project.kind === "workspace") {
 		return isOwner
 			? `${typeLabel} you own. Install Skills and attach Vaults here, share the Project, then link it to Agents when needed. Linking does not install its Skills.`
-			: `${typeLabel} shared with you. Its Skills stay stored here, while attached Vaults can join an Agent's runtime resolution after you link the Project.`;
+			: `${typeLabel} shared with you. Its Skills stay here; link the Project to let an Agent use its attached Vaults.`;
 	}
 	if (project.kind === "environment") {
-		return `${typeLabel} ${access}. This Workspace belongs to one connected Agent. It is managed for you and cannot be shared.`;
+		return `${typeLabel} ${access}. This Workspace belongs to one connected Agent and cannot be shared.`;
 	}
 	if (project.kind === "personal") {
 		return `${typeLabel} ${access}. This is your account default for resources that are not tied to one workflow or agent.`;
@@ -1237,8 +1237,8 @@ function SharedAccessPanel({
 					<h2 className="text-sm font-semibold">You Have Viewer Access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					You can read this Project and link it to an Agent. Its attached Vaults then join runtime
-					resolution; its Skills stay stored here until separately installed on the Agent.
+					You can view this Project and link it to an Agent. The Agent can then use its attached
+					Vaults; install Project Skills separately.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -1265,8 +1265,8 @@ function SharedAccessPanel({
 					<AlertDialogHeader>
 						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
 						<AlertDialogDescription>
-							This removes your read-only membership. Your Agents will stop resolving attached
-							Vaults through this Project; Project Skills remain separate from Agent installs.
+							This removes your read-only membership. Your Agents will lose access to Vaults through
+							this Project; Project Skills remain separate from Agent installs.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -1344,7 +1344,7 @@ function UseProjectWithAgentDialog({
 			qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(selectedAgentId) });
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			toast.success("Project linked", {
-				description: `${projectName}'s attached Vaults now participate in ${agentName}'s runtime resolution. Skills remain stored in the Project until separately installed on the Agent.`,
+				description: `${agentName} can now use ${projectName}'s attached Vaults. Project Skills remain separate until installed on the Agent.`,
 				action: {
 					label: "Open Agent",
 					onClick: () =>
@@ -1367,8 +1367,8 @@ function UseProjectWithAgentDialog({
 				<DialogHeader>
 					<DialogTitle>Link project to Agent</DialogTitle>
 					<DialogDescription>
-						Link {projectName} as a context Project. Attached Vaults join runtime resolution; Skills
-						remain stored here and must be installed on the Agent separately.
+						Link {projectName} to make its attached Vaults available to the Agent. Project Skills
+						remain separate until you install them on the Agent.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -1461,7 +1461,7 @@ function UseProjectWithAgentDialog({
 										<div className="font-medium">Already Linked</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											Open the Agent&apos;s {AGENT_PROJECTS_SECTION_LABEL} section to review its
-											Vault resolution priority or unlink it.
+											Project order or unlink it.
 										</p>
 									</div>
 								</div>
@@ -1471,8 +1471,8 @@ function UseProjectWithAgentDialog({
 									<div>
 										<div className="font-medium">Link as Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Attached Vaults join the selected Agent&apos;s runtime resolution. Skills stay
-											stored in this Project until separately installed on the Agent.
+											The selected Agent can use attached Vaults. Project Skills remain separate
+											until installed on the Agent.
 										</p>
 									</div>
 								</div>

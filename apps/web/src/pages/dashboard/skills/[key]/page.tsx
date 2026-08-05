@@ -377,7 +377,7 @@ export function SkillDetailContent({
 			return;
 		}
 		if (!capabilities?.canDelete) {
-			toast.error("This Skill is read-only in Cloud");
+			toast.error("This Skill is read-only here");
 			return;
 		}
 		uninstall.mutate();
@@ -389,7 +389,7 @@ export function SkillDetailContent({
 	const agentCaption = isAgentSyncProjection
 		? skillAgentLabel
 			? `synced from ${skillAgentLabel}`
-			: "synced from Agent runtime"
+			: "synced from Agent"
 		: sourceProjectName
 			? `stored in ${sourceProjectName}`
 			: null;
@@ -467,10 +467,7 @@ export function SkillDetailContent({
 							</div>
 							<div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
 								{!accessKnown ? null : isReadOnly ? (
-									<Badge
-										variant="secondary"
-										title="Cloud mutations are disabled for this Skill's authority or Project."
-									>
+									<Badge variant="secondary" title="This Skill is managed elsewhere.">
 										{capabilities?.badgeLabel ?? "Read-only"}
 									</Badge>
 								) : !isEditing ? (
@@ -664,7 +661,7 @@ export function SkillDetailContent({
 									</div>
 									<p className="text-xs text-muted-foreground">
 										{isAgentSyncProjection
-											? "This read-only instruction file was projected from the Agent runtime."
+											? "This instruction file was synced from the Agent and is managed there."
 											: "This instruction file is stored in the Project. Install the Skill on an Agent separately to run it."}
 									</p>
 								</div>
@@ -693,7 +690,7 @@ export function SkillDetailContent({
 									</div>
 									<p className="text-xs text-muted-foreground">
 										{isAgentSyncProjection
-											? "The Agent runtime reported this Skill, but its read-only projection does not include an instruction body yet."
+											? "This Skill was synced from the Agent, but its instructions are not available yet."
 											: "This Project Skill has no editable instruction body."}
 									</p>
 								</div>
@@ -705,7 +702,7 @@ export function SkillDetailContent({
 								variant="inset"
 								description={
 									isAgentSyncProjection
-										? "When the Agent uploads its Skill file content, the read-only preview will appear here."
+										? "The preview will appear after the Agent syncs its Skill files."
 										: "No instruction content is stored for this Skill."
 								}
 							/>

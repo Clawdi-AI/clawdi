@@ -643,7 +643,7 @@ function SkillsPageInner() {
 					</AlertTitle>
 					<AlertDescription>
 						{targetProject.kind === "environment"
-							? "Agent Skills are authored on the Agent filesystem and sync here as read-only projections. Rename, edit, or remove them on the Agent."
+							? "Skills in this Workspace are managed on the Agent and sync here as read-only. Rename, edit, or remove them on the Agent."
 							: `You can view Skills stored in ${displayProjectName(targetProject)}, but only the owner can add or remove them.`}
 					</AlertDescription>
 				</Alert>

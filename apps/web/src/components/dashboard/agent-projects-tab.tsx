@@ -305,10 +305,10 @@ function AgentProjectsPanel({
 		},
 		onSuccess: () => {
 			onChanged();
-			toast.success("Vault resolution priority updated");
+			toast.success("Project order updated");
 		},
 		onError: (error) =>
-			toast.error("Couldn't update Vault resolution priority", {
+			toast.error("Couldn't update Project order", {
 				description: errorMessage(error),
 			}),
 	});
@@ -389,12 +389,12 @@ function AgentProjectsPanel({
 			) : contexts.length === 0 ? (
 				<EmptyState
 					variant="inset"
-					description="No Projects are linked yet. Skills stay stored in each Project; Vaults attached to linked Projects join this Agent's runtime resolution order."
+					description="No Projects are linked yet. Linking a Project makes its attached Vaults available to this Agent; Skills remain separate."
 				/>
 			) : (
 				<ol
 					className={HERO_GRID_CLASS}
-					aria-label="Linked Projects in Vault resolution order"
+					aria-label="Linked Projects in Vault priority order"
 					data-testid="agent-project-grid"
 				>
 					{contexts.map((binding, position) => {
@@ -439,7 +439,7 @@ function AgentProjectsPanel({
 												title="Unlink this Project?"
 												description={
 													<>
-														<p>{projectName} will leave this Agent's Vault resolution order.</p>
+														<p>This Agent will no longer use Vaults through {projectName}.</p>
 														<p>
 															Its Skills stay stored in the Project, and its Vault attachments are
 															unchanged.
@@ -484,7 +484,8 @@ function AgentProjectsPanel({
 					<DialogHeader>
 						<DialogTitle>Link project</DialogTitle>
 						<DialogDescription>
-							Link a Custom or shared Project. This does not install its Skills on the Agent.
+							Choose a Project to make its attached Vaults available to this Agent. Skills are
+							installed separately.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -504,9 +505,7 @@ function AgentProjectsPanel({
 								disabled={linkContext.isPending}
 							/>
 						) : (
-							<p className="text-sm text-muted-foreground">
-								No Custom or shared Projects are available to link.
-							</p>
+							<p className="text-sm text-muted-foreground">No Projects are available to link.</p>
 						)}
 						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => setLinkOpen(false)}>

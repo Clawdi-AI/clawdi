@@ -47,7 +47,7 @@ export function skillCapabilities(
 	project: Pick<Project, "kind" | "is_owner"> | null | undefined,
 ): SkillCapabilities {
 	if (skill.authority === "agent_sync") {
-		return readOnlyCapabilities("agent-sync", "Agent projection · Read-only");
+		return readOnlyCapabilities("agent-sync", "Synced from Agent · Read-only");
 	}
 	const projectKind = skill.project_kind ?? project?.kind;
 	if (projectKind === "environment") {
