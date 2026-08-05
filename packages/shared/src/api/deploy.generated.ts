@@ -241,7 +241,8 @@ export interface paths {
         /** List V2 Workspace Skills */
         get: operations["list_v2_workspace_skills_v2_deployments__deployment_id__workspace_skills_get"];
         put?: never;
-        post?: never;
+        /** Install V2 Workspace Skill */
+        post: operations["install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -256,8 +257,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Install V2 Workspace Skill */
-        put: operations["install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__put"];
+        put?: never;
         post?: never;
         /** Uninstall V2 Workspace Skill */
         delete: operations["uninstall_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__delete"];
@@ -2286,6 +2286,13 @@ export interface components {
             /** Failure Message */
             failure_message?: string | null;
         };
+        /** V2WorkspaceSkillInstallRequest */
+        V2WorkspaceSkillInstallRequest: {
+            /** Repo */
+            repo: string;
+            /** Path */
+            path?: string | null;
+        };
         /** V2WorkspaceSkillListResponse */
         V2WorkspaceSkillListResponse: {
             /**
@@ -3162,7 +3169,7 @@ export interface operations {
             };
         };
     };
-    install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__put: {
+    install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills_post: {
         parameters: {
             query?: never;
             header: {
@@ -3171,11 +3178,14 @@ export interface operations {
             };
             path: {
                 deployment_id: string;
-                skill_key: string;
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WorkspaceSkillInstallRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

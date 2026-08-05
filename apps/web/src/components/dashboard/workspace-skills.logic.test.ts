@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { components } from "@/lib/api-schemas";
 import {
 	mergeWorkspaceRuntimeSkills,
+	parseWorkspaceSkillGitHubInput,
 	workspaceSkillInstallCommand,
 	workspaceSkillMutationsAvailable,
 	workspaceSkillRemoveCommand,
-	workspaceSkillStatusLabel,
 } from "./workspace-skills.logic";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -53,12 +53,6 @@ describe("Workspace Skill runtime authority", () => {
 		expect(workspaceSkillMutationsAvailable(undefined, null)).toBe(false);
 	});
 
-	test("uses stable desired-state copy", () => {
-		expect(workspaceSkillStatusLabel("managed")).toBe("Managed");
-		expect(workspaceSkillStatusLabel("requested")).toBe("Requested");
-		expect(workspaceSkillStatusLabel("failed")).toBe("Failed");
-	});
-
 	test("keeps manifest desired state authoritative and agent_sync projections read-only", () => {
 		const inventory = mergeWorkspaceRuntimeSkills(
 			[projection("projected")],
@@ -67,7 +61,7 @@ describe("Workspace Skill runtime authority", () => {
 					skill_key: "manifest-owned",
 					source: {
 						type: "github",
-						url: "https://github.com/Clawdi-AI/store",
+						url: "https://github.com/example/skills",
 						path: "skills/manifest-owned",
 						commit: "a".repeat(40),
 					},
@@ -78,7 +72,7 @@ describe("Workspace Skill runtime authority", () => {
 					skill_key: "failed",
 					source: {
 						type: "github",
-						url: "https://github.com/Clawdi-AI/store",
+						url: "https://github.com/example/skills",
 						path: "skills/failed",
 						commit: "b".repeat(40),
 					},
@@ -86,54 +80,15 @@ describe("Workspace Skill runtime authority", () => {
 					failure_message: "Retry pending.",
 				},
 			],
-			[
-				{
-					skill_key: "available",
-					name: "available",
-					description: "Catalog Skill",
-					emoji: "✨",
-					category: "tools",
-					featured: false,
-					headline: "",
-					languages: [],
-					trust_level: "community",
-					tags: [],
-					status: "active",
-					installable: true,
-					connector_requirements: [],
-				},
-				{
-					skill_key: "projected",
-					name: "projected",
-					description: "Catalog collision",
-					emoji: "✨",
-					category: "tools",
-					featured: false,
-					headline: "",
-					languages: [],
-					trust_level: "community",
-					tags: [],
-					status: "active",
-					installable: true,
-					connector_requirements: [],
-				},
-			],
 		);
 
 		expect(inventory.find((item) => item.entity.skill_key === "projected")).toMatchObject({
 			desired: null,
-			installable: false,
 			cloudProjection: { authority: "agent_sync" },
-		});
-		expect(inventory.find((item) => item.entity.skill_key === "available")).toMatchObject({
-			desired: null,
-			installable: true,
-			cloudProjection: null,
 		});
 		const manifestOwned = inventory.find((item) => item.entity.skill_key === "manifest-owned");
 		expect(manifestOwned).toMatchObject({
 			desired: { status: "managed" },
-			installable: false,
 			cloudProjection: null,
 		});
 		expect(manifestOwned?.entity).toEqual({
@@ -141,12 +96,24 @@ describe("Workspace Skill runtime authority", () => {
 			name: "manifest-owned",
 			description: null,
 			source: "Agent Workspace",
-			source_repo: "https://github.com/Clawdi-AI/store",
+			source_repo: "https://github.com/example/skills",
 		});
 		expect(inventory.find((item) => item.entity.skill_key === "failed")?.desired).toMatchObject({
 			status: "failed",
 			failure_message: "Retry pending.",
 		});
+	});
+
+	test("parses the GitHub repository input used by the install dialog", () => {
+		expect(parseWorkspaceSkillGitHubInput("owner/repo/path/to-skill")).toEqual({
+			repo: "owner/repo",
+			path: "path/to-skill",
+		});
+		expect(parseWorkspaceSkillGitHubInput("https://github.com/owner/repo/")).toEqual({
+			repo: "owner/repo",
+			path: undefined,
+		});
+		expect(() => parseWorkspaceSkillGitHubInput("missing-repo")).toThrow("owner/repo");
 	});
 
 	test("builds only the real connected CLI handoff commands", () => {
@@ -166,20 +133,18 @@ describe("Workspace Skill runtime authority", () => {
 					skill_key: "desired",
 					source: {
 						type: "github",
-						url: "https://github.com/Clawdi-AI/store",
+						url: "https://github.com/example/skills",
 						path: "skills/desired",
 						commit: "c".repeat(40),
 					},
 					status: "requested",
 				},
 			],
-			[],
 		);
 
 		expect(inventory).toHaveLength(1);
 		expect(inventory[0]).toMatchObject({
 			desired: { status: "requested" },
-			installable: false,
 		});
 	});
 });

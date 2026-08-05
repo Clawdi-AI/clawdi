@@ -192,15 +192,12 @@ describe("managed model catalog", () => {
 });
 
 describe("deployment Skill authority", () => {
-	it("uses catalog discovery and only V2 desired-state Workspace Skill mutations", async () => {
+	it("uses only V2 Workspace Skill reads and GitHub source mutations", async () => {
 		const requests: Request[] = [];
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
 			const path = new URL(request.url).pathname;
-			if (path === "/v1/skills/catalog") {
-				return jsonResponse({ items: [], total: 0 });
-			}
-			if (path === "/v2/deployments/hdep_test/workspace-skills") {
+			if (path === "/v2/deployments/hdep_test/workspace-skills" && request.method === "GET") {
 				return jsonResponse({
 					deployment_id: "hdep_test",
 					deployment_resource_version: "rv-skills",
@@ -209,23 +206,30 @@ describe("deployment Skill authority", () => {
 					items: [],
 				});
 			}
-			if (path === "/v2/deployments/hdep_test/workspace-skills/review-pr") {
+			if (
+				(path === "/v2/deployments/hdep_test/workspace-skills" && request.method === "POST") ||
+				path === "/v2/deployments/hdep_test/workspace-skills/review-pr"
+			) {
 				return jsonResponse({
 					deployment_id: "hdep_test",
-					deployment_resource_version: request.method === "PUT" ? "rv-installed" : "rv-removed",
-					manifest_generation: request.method === "PUT" ? 5 : 6,
+					deployment_resource_version: request.method === "POST" ? "rv-installed" : "rv-removed",
+					manifest_generation: request.method === "POST" ? 5 : 6,
 					skill_key: "review-pr",
-					desired_state: request.method === "PUT" ? "present" : "absent",
+					desired_state: request.method === "POST" ? "present" : "absent",
 					status: "requested",
 				});
 			}
 			throw new Error(`Unexpected request: ${request.method} ${path}`);
 		});
 
-		await expect(client.listSkillCatalog()).resolves.toEqual({ items: [], total: 0 });
 		await expect(client.listWorkspaceSkills("hdep_test")).resolves.toMatchObject({ items: [] });
 		await expect(
-			client.installWorkspaceSkill("hdep_test", "review-pr", "rv-skills", "install-attempt"),
+			client.installWorkspaceSkill(
+				"hdep_test",
+				{ repo: "example/skills", path: "review-pr" },
+				"rv-skills",
+				"install-attempt",
+			),
 		).resolves.toMatchObject({
 			desired_state: "present",
 			status: "requested",
@@ -236,12 +240,12 @@ describe("deployment Skill authority", () => {
 			desired_state: "absent",
 		});
 
-		expect(requests.map((request) => request.method)).toEqual(["GET", "GET", "PUT", "DELETE"]);
-		expect(new URL(requests[0]?.url ?? "https://invalid").searchParams.get("limit")).toBe("200");
-		expect(requests[2]?.headers.get("If-Match")).toBe('"rv-skills"');
-		expect(requests[2]?.headers.get("Idempotency-Key")).toBe("install-attempt");
-		expect(requests[3]?.headers.get("If-Match")).toBe('"rv-installed"');
-		expect(requests[3]?.headers.get("Idempotency-Key")).toBe("remove-attempt");
+		expect(requests.map((request) => request.method)).toEqual(["GET", "POST", "DELETE"]);
+		expect(await requests[1]?.json()).toEqual({ repo: "example/skills", path: "review-pr" });
+		expect(requests[1]?.headers.get("If-Match")).toBe('"rv-skills"');
+		expect(requests[1]?.headers.get("Idempotency-Key")).toBe("install-attempt");
+		expect(requests[2]?.headers.get("If-Match")).toBe('"rv-installed"');
+		expect(requests[2]?.headers.get("Idempotency-Key")).toBe("remove-attempt");
 		expect(
 			requests.every((request) => request.headers.get("Authorization") === "Bearer test-token"),
 		).toBe(true);
@@ -249,13 +253,13 @@ describe("deployment Skill authority", () => {
 
 	it("refetches V2 desired state after a CAS conflict and keeps one idempotency key", async () => {
 		const requests: Request[] = [];
-		let putCount = 0;
+		let postCount = 0;
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
 			const path = new URL(request.url).pathname;
-			if (path === "/v2/deployments/hdep_test/workspace-skills/review-pr") {
-				putCount += 1;
-				if (putCount === 1) {
+			if (path === "/v2/deployments/hdep_test/workspace-skills" && request.method === "POST") {
+				postCount += 1;
+				if (postCount === 1) {
 					return jsonResponse(
 						{
 							detail: {
@@ -288,13 +292,18 @@ describe("deployment Skill authority", () => {
 		});
 
 		await expect(
-			client.installWorkspaceSkill("hdep_test", "review-pr", "rv-stale", "same-attempt"),
+			client.installWorkspaceSkill(
+				"hdep_test",
+				{ repo: "example/skills", path: "review-pr" },
+				"rv-stale",
+				"same-attempt",
+			),
 		).resolves.toMatchObject({
 			desired_state: "present",
 			status: "requested",
 		});
 
-		expect(requests.map((request) => request.method)).toEqual(["PUT", "GET", "PUT"]);
+		expect(requests.map((request) => request.method)).toEqual(["POST", "GET", "POST"]);
 		expect(requests[0]?.headers.get("If-Match")).toBe('"rv-stale"');
 		expect(requests[2]?.headers.get("If-Match")).toBe('"rv-fresh"');
 		expect(requests[0]?.headers.get("Idempotency-Key")).toBe("same-attempt");
@@ -317,12 +326,17 @@ describe("deployment Skill authority", () => {
 		});
 
 		await expect(
-			client.installWorkspaceSkill("hdep_test", "clawdi", "rv-current", "reserved-attempt"),
+			client.installWorkspaceSkill(
+				"hdep_test",
+				{ repo: "example/skills", path: "clawdi" },
+				"rv-current",
+				"reserved-attempt",
+			),
 		).rejects.toMatchObject({
 			status: 409,
 			payload: { detail: { code: "workspace_skill_reserved" } },
 		});
-		expect(requests.map((request) => request.method)).toEqual(["PUT"]);
+		expect(requests.map((request) => request.method)).toEqual(["POST"]);
 	});
 });
 

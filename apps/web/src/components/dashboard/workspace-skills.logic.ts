@@ -3,7 +3,8 @@ import type { SkillCardEntity } from "@/components/skills/skill-card";
 import type { components } from "@/lib/api-schemas";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type HostedSkillCatalogItem = DeployComponents["schemas"]["V1SkillCatalogItem"];
+type HostedWorkspaceSkillInstallRequest =
+	DeployComponents["schemas"]["V2WorkspaceSkillInstallRequest"];
 type HostedWorkspaceSkillDesiredItem = DeployComponents["schemas"]["V2WorkspaceSkillDesiredItem"];
 type HostedWorkspaceSkillListResponse = DeployComponents["schemas"]["V2WorkspaceSkillListResponse"];
 type WorkspaceSkillStatusBoundary = Omit<HostedWorkspaceSkillListResponse, "capability"> & {
@@ -14,7 +15,6 @@ export type WorkspaceRuntimeSkill = {
 	entity: SkillCardEntity;
 	cloudProjection: SkillSummary | null;
 	desired: HostedWorkspaceSkillDesiredItem | null;
-	installable: boolean;
 };
 
 export function workspaceSkillMutationsAvailable(
@@ -24,40 +24,29 @@ export function workspaceSkillMutationsAvailable(
 	return !error && status?.capability?.available === true;
 }
 
-export function workspaceSkillStatusLabel(
-	status: HostedWorkspaceSkillDesiredItem["status"],
-): "Managed" | "Requested" | "Failed" {
-	if (status === "failed") return "Failed";
-	return status === "requested" ? "Requested" : "Managed";
-}
-
 export function mergeWorkspaceRuntimeSkills(
 	projections: readonly SkillSummary[],
 	desiredItems: readonly HostedWorkspaceSkillDesiredItem[],
-	catalog: readonly HostedSkillCatalogItem[],
 ): WorkspaceRuntimeSkill[] {
 	const projectionByKey = new Map(projections.map((skill) => [skill.skill_key, skill]));
 	const desiredByKey = new Map(desiredItems.map((skill) => [skill.skill_key, skill]));
-	const catalogByKey = new Map(catalog.map((skill) => [skill.skill_key, skill]));
-	const keys = new Set([...projectionByKey.keys(), ...desiredByKey.keys(), ...catalogByKey.keys()]);
+	const keys = new Set([...projectionByKey.keys(), ...desiredByKey.keys()]);
 
 	return [...keys]
 		.map((skillKey): WorkspaceRuntimeSkill => {
 			const projection = projectionByKey.get(skillKey);
 			const desired = desiredByKey.get(skillKey);
-			const catalogItem = catalogByKey.get(skillKey);
 			return {
 				entity:
 					projection ??
 					workspaceRuntimeSkillEntity(skillKey, {
-						name: catalogItem?.name || skillKey,
-						description: catalogItem?.description ?? null,
-						source: desired ? "Agent Workspace" : "Skill catalog",
-						sourceRepo: catalogItem?.homepage ?? desired?.source.url ?? null,
+						name: skillKey,
+						description: null,
+						source: "Agent Workspace",
+						sourceRepo: desired?.source.url ?? null,
 					}),
 				cloudProjection: projection ?? null,
 				desired: desired ?? null,
-				installable: !desired && !projection && catalogItem?.installable === true,
 			};
 		})
 		.sort(
@@ -66,6 +55,21 @@ export function mergeWorkspaceRuntimeSkills(
 				Number(Boolean(right.cloudProjection)) - Number(Boolean(left.cloudProjection)) ||
 				left.entity.name.localeCompare(right.entity.name),
 		);
+}
+
+export function parseWorkspaceSkillGitHubInput(input: string): HostedWorkspaceSkillInstallRequest {
+	const clean = input
+		.trim()
+		.replace(/^https?:\/\/github\.com\//, "")
+		.replace(/\/$/, "");
+	const parts = clean.split("/").filter(Boolean);
+	if (parts.length < 2) {
+		throw new Error("Enter as `owner/repo` or `owner/repo/path-to-skill`.");
+	}
+	return {
+		repo: `${parts[0]}/${parts[1]}`,
+		path: parts.length > 2 ? parts.slice(2).join("/") : undefined,
+	};
 }
 
 function workspaceRuntimeSkillEntity(
