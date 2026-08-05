@@ -2,6 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 describe("hosted agent detail header", () => {
+	test("embeds owner SSO Files without credentials and keeps a top-level launch", () => {
+		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+
+		expect(source).toContain("function FilesTab(");
+		expect(source).toContain("src={url}");
+		expect(source).toContain('title="Files"');
+		expect(source).toContain('target="_blank"');
+		expect(source).toContain("Open in new tab");
+		expect(source).toContain("Opening Files…");
+		expect(source).toContain("Couldn’t open Files");
+		expect(source).not.toContain("fileBrowserPassword");
+		expect(source).not.toContain("Files credentials");
+	});
+
 	test("shows Cloud origin only on the established Overview title", () => {
 		const detailSource = readFileSync(
 			new URL("./hosted-agent-detail.tsx", import.meta.url),

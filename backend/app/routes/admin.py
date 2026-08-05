@@ -2180,6 +2180,7 @@ def _runtime_state_values(
         "locale": body.locale.model_dump(mode="json"),
         "system": body.system.model_dump(exclude_none=True, mode="json"),
         "egress_engine": optional_wire_value("egress_engine"),
+        "companions": optional_wire_value("companions"),
         "runtimes": {
             name: runtime.model_dump(exclude_none=True, mode="json")
             for name, runtime in body.runtimes.items()

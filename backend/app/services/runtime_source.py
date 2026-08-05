@@ -35,6 +35,7 @@ from app.schemas.runtime import (
     HostedRuntimeRecovery,
     HostedRuntimeSystem,
     HostedRuntimeTools,
+    HostedRuntimeCompanions,
     PersistedHostedRuntimeSkills,
     is_canonical_secret_ref,
     validate_clawdi_cli_package_spec,
@@ -242,6 +243,11 @@ def render_runtime_source(
         egress_profiles = (
             HostedEgressProfiles.model_validate(state.egress_profiles)
             if state.egress_profiles is not None
+            else None
+        )
+        companions = (
+            HostedRuntimeCompanions.model_validate(state.companions)
+            if state.companions is not None
             else None
         )
     except ValidationError as exc:
@@ -477,6 +483,10 @@ def render_runtime_source(
         )
     if egress_engine is not None:
         manifest["egressEngine"] = egress_engine.model_dump(
+            exclude_none=True, exclude_unset=True, mode="json"
+        )
+    if companions is not None and companions.files is not None:
+        manifest["companions"] = companions.model_dump(
             exclude_none=True, exclude_unset=True, mode="json"
         )
     if egress_profiles is not None:

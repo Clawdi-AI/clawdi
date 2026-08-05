@@ -25,6 +25,7 @@ import {
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
+import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
 import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
 import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
@@ -47,6 +48,11 @@ import {
 	runtimeUserMutationTargets,
 } from "./manifest";
 import {
+	FILE_BROWSER_AMD64_SHA256,
+	FILE_BROWSER_ARM64_SHA256,
+	FILE_BROWSER_COMMIT,
+	FILE_BROWSER_VERSION,
+	fileBrowserCompanionSchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	hostedRuntimeManifestFixtureResponseSchema,
 	hostedRuntimeManifestResponseSchema,
@@ -55,6 +61,7 @@ import {
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
+import { readRuntimeInstallReceipts } from "./install-receipts";
 import {
 	hostedManifestToRuntimeManifest,
 	loadCommittedRuntimeManifest,
@@ -555,6 +562,111 @@ esac
 `,
 	);
 	chmodSync(input.path, 0o700);
+}
+
+type FilesCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["files"]>;
+
+function filesCompanion(accessRevision = "a".repeat(64)): FilesCompanion {
+	const audience = "clawdi-files:hdep_reconcile";
+	return {
+		kind: "filebrowser",
+		version: FILE_BROWSER_VERSION,
+		commit: FILE_BROWSER_COMMIT,
+		listen: "0.0.0.0",
+		port: 9120,
+		baseURL: "/",
+		healthPath: "/health",
+		sourceRoot: "/home/clawdi",
+		stateRoot: "/var/lib/clawdi/filebrowser",
+		assets: {
+			amd64: {
+				url: `https://github.com/gtsteffaniak/filebrowser/releases/download/${FILE_BROWSER_VERSION}/linux-amd64-filebrowser`,
+				sha256: FILE_BROWSER_AMD64_SHA256,
+			},
+			arm64: {
+				url: `https://github.com/gtsteffaniak/filebrowser/releases/download/${FILE_BROWSER_VERSION}/linux-arm64-filebrowser`,
+				sha256: FILE_BROWSER_ARM64_SHA256,
+			},
+		},
+		auth: {
+			method: "jwt",
+			algorithm: "ES256",
+			header: "X-JWT-Assertion",
+			userIdentifier: "sub",
+			groupsClaim: "groups",
+			publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(120)}\n-----END PUBLIC KEY-----\n`,
+			audience,
+			subject: "deployment:hdep_reconcile:owner",
+			requiredGroup: `${audience}:${accessRevision}`,
+			accessRevision,
+		},
+	};
+}
+
+function filesManifest(
+	paths: RuntimePaths,
+	input: { generation: number; binary: string; accessRevision?: string },
+): RuntimeManifest {
+	const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
+	writeFakeGatewayCli({
+		path: command,
+		runtime: "openclaw",
+		unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+	});
+	const companion = filesCompanion(input.accessRevision);
+	Reflect.set(
+		companion.assets.amd64,
+		"sha256",
+		createHash("sha256").update(input.binary).digest("hex"),
+	);
+	return baseManifest(
+		paths,
+		{
+			openclaw: {
+				enabled: true,
+				run: runSettings(command, ["gateway", "run"]),
+				services: {},
+			},
+		},
+		{
+			generation: input.generation,
+			issuedAt: `2026-08-05T00:00:${String(input.generation).padStart(2, "0")}.000Z`,
+			openclawGatewayAuth: hostedOpenClawNativeAuth(),
+			projection: {
+				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+				system: hostedSystemFixture(),
+			},
+			companions: { files: companion },
+		},
+	);
+}
+
+function filesManifestLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
+	const load = manifestLoad(manifest, `files-generation-${manifest.generation}`);
+	if (!load.applyContext) throw new Error("Files test apply context is missing");
+	return {
+		...load,
+		applyContext: { ...load.applyContext, backend: "incus" },
+	};
+}
+
+function filesApplyHooks(input: {
+	activationApplied?: boolean;
+	onActivate?: () => void;
+	onRollback?: () => void;
+} = {}) {
+	return {
+		activateEgressPrerequisite: successfulPrerequisiteActivation,
+		activate: () => {
+			input.onActivate?.();
+			return {
+				applied: input.activationApplied ?? true,
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
+			};
+		},
+		rollback: () => input.onRollback?.(),
+	};
 }
 
 afterEach(() => {
@@ -5060,6 +5172,229 @@ exit 42
 			"bundle-token",
 		);
 		expect(runtimeSecretValue(projected, "env://OPENCLAW_GATEWAY_TOKEN")).toBeNull();
+	});
+
+	test("installs the pinned Files companion post-boot and reconverges idempotently", () => {
+		const paths = tempRuntimePaths();
+		const binary = "#!/bin/sh\nprintf 'test File Browser'\n";
+		const manifest = filesManifest(paths, { generation: 1, binary });
+		let downloads = 0;
+		let activations = 0;
+		let authorityCommits = 0;
+		const options = {
+			fileBrowserInstallOptions: {
+				download: (_url: string, destination: string) => {
+					downloads++;
+					writeFileSync(destination, binary);
+				},
+				versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+			},
+			fileBrowserReadinessProbe: (url: string) => url === "http://127.0.0.1:9120/health",
+			systemdApply: filesApplyHooks({ onActivate: () => activations++ }),
+			commitAuthority: () => authorityCommits++,
+		};
+
+		const first = convergeRuntimeManifest(filesManifestLoad(manifest), paths, options);
+		expect(first.installErrors).toEqual([]);
+		expect(downloads).toBe(1);
+		expect(activations).toBe(1);
+		expect(authorityCommits).toBe(1);
+		const active = join(paths.companionInstallRoot, "active", "filebrowser");
+		expect(readFileSync(active, "utf8")).toBe(binary);
+		const config = readFileSync(paths.fileBrowserConfig, "utf8");
+		expect(config).toContain("listen: 0.0.0.0");
+		expect(config).toContain("port: 9120");
+		expect(config).toContain("path: /home/clawdi");
+		expect(config).toContain("ignoreSymlinks: true");
+		expect(config).toContain("disableWebDAV: true");
+		expect(config).toContain("password:\n      enabled: false");
+		expect(config).toContain("share: false");
+		const unitPath = join(paths.systemdSystemRoot, "clawdi-files.service");
+		const unit = readFileSync(unitPath, "utf8");
+		expect(first.outputs.systemdSystemUnits).toContain(unitPath);
+		expect(first.outputs.systemdUserUnits).not.toContain(
+			join(paths.systemdUserRoot, "clawdi-files.service"),
+		);
+		expect(unit).toContain(`RootDirectory=${paths.fileBrowserRootfs}`);
+		expect(unit).toContain("User=10001");
+		expect(unit).toContain("Group=10001");
+		expect(unit).toContain(`BindPaths=${paths.userHome}:${paths.userHome}`);
+		expect(unit).toContain(
+			`BindPaths=${paths.fileBrowserStateRoot}:${paths.fileBrowserStateRoot}`,
+		);
+		expect(unit).toContain(`BindReadOnlyPaths=${paths.fileBrowserConfig}:${paths.fileBrowserConfig}`);
+		expect(unit).toContain("ProtectSystem=strict");
+		expect(unit).toContain("CapabilityBoundingSet=");
+		expect(readRuntimeInstallReceipts(paths)?.companions.files).toMatchObject({
+			desiredRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
+			currentRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
+		});
+
+		const second = convergeRuntimeManifest(filesManifestLoad(manifest), paths, options);
+		expect(second.installErrors).toEqual([]);
+		expect(downloads).toBe(1);
+		expect(activations).toBe(2);
+		expect(authorityCommits).toBe(2);
+		expect(readFileSync(active, "utf8")).toBe(binary);
+	});
+
+	test("rolls Files candidate, config, receipts, and systemd back on hash or readiness failure", () => {
+		const paths = tempRuntimePaths();
+		const originalBinary = "original Files binary\n";
+		const originalManifest = filesManifest(paths, { generation: 1, binary: originalBinary });
+		const readyOptions = {
+			fileBrowserInstallOptions: {
+				download: (_url: string, destination: string) =>
+					writeFileSync(destination, originalBinary),
+				versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+			},
+			fileBrowserReadinessProbe: () => true,
+			systemdApply: filesApplyHooks(),
+		};
+		const initial = convergeRuntimeManifest(
+			filesManifestLoad(originalManifest),
+			paths,
+			readyOptions,
+		);
+		expect(initial.installErrors).toEqual([]);
+		const active = join(paths.companionInstallRoot, "active", "filebrowser");
+		const originalActiveTarget = resolve(dirname(active), readlinkSync(dirname(active)));
+		const originalConfig = readFileSync(paths.fileBrowserConfig, "utf8");
+		const originalUnit = readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8");
+		const originalReceipts = readFileSync(
+			join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"),
+			"utf8",
+		);
+
+		const desiredBinary = "desired Files binary\n";
+		const hashFailureManifest = filesManifest(paths, {
+			generation: 2,
+			binary: desiredBinary,
+		});
+		let hashFailureCommits = 0;
+		const hashFailure = convergeRuntimeManifest(
+			filesManifestLoad(hashFailureManifest),
+			paths,
+			{
+				...readyOptions,
+				fileBrowserInstallOptions: {
+					download: (_url, destination) => writeFileSync(destination, "wrong digest\n"),
+					versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+				},
+				commitAuthority: () => hashFailureCommits++,
+			},
+		);
+		expect(hashFailure.installErrors.join("\n")).toContain("Files companion SHA256 mismatch");
+		expect(hashFailureCommits).toBe(0);
+		expect(readFileSync(active, "utf8")).toBe(originalBinary);
+		expect(resolve(dirname(active), readlinkSync(dirname(active)))).toBe(originalActiveTarget);
+		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(originalConfig);
+		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
+			originalUnit,
+		);
+		expect(
+			readFileSync(join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"), "utf8"),
+		).toBe(originalReceipts);
+
+		const readinessManifest = filesManifest(paths, {
+			generation: 3,
+			binary: originalBinary,
+			accessRevision: "b".repeat(64),
+		});
+		let readinessCommits = 0;
+		let rollbacks = 0;
+		const readinessFailure = convergeRuntimeManifest(
+			filesManifestLoad(readinessManifest),
+			paths,
+			{
+				...readyOptions,
+				fileBrowserReadinessProbe: () => false,
+				systemdApply: filesApplyHooks({ onRollback: () => rollbacks++ }),
+				commitAuthority: () => readinessCommits++,
+			},
+		);
+		expect(readinessFailure.installErrors.join("\n")).toContain(
+			"Files companion readiness failed at http://127.0.0.1:9120/health",
+		);
+		expect(readinessCommits).toBe(0);
+		expect(rollbacks).toBe(1);
+		expect(readFileSync(active, "utf8")).toBe(originalBinary);
+		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(originalConfig);
+		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
+			originalUnit,
+		);
+		expect(
+			readFileSync(join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"), "utf8"),
+		).toBe(originalReceipts);
+	});
+
+	test("retains active and previous Files candidates while collecting only orphan installs", () => {
+		const paths = tempRuntimePaths();
+		const firstBinary = "first Files candidate\n";
+		const secondBinary = "second Files candidate\n";
+		const install = (manifest: RuntimeManifest, binary: string) =>
+			convergeRuntimeManifest(filesManifestLoad(manifest), paths, {
+				fileBrowserInstallOptions: {
+					download: (_url, destination) => writeFileSync(destination, binary),
+					versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+				},
+				fileBrowserReadinessProbe: () => true,
+				systemdApply: filesApplyHooks(),
+			});
+		expect(install(filesManifest(paths, { generation: 1, binary: firstBinary }), firstBinary).installErrors).toEqual([]);
+		const secondManifest = filesManifest(paths, { generation: 2, binary: secondBinary });
+		expect(install(secondManifest, secondBinary).installErrors).toEqual([]);
+		const activeTarget = resolve(
+			paths.companionInstallRoot,
+			readlinkSync(join(paths.companionInstallRoot, "active")),
+		);
+		const previousTarget = resolve(
+			paths.companionInstallRoot,
+			readlinkSync(join(paths.companionInstallRoot, "previous")),
+		);
+		const orphan = join(paths.companionInstallRoot, "candidates", "c".repeat(64));
+		mkdirSync(orphan, { recursive: true });
+
+		expect(gcFileBrowserCompanionCandidates(secondManifest, paths)).toEqual([orphan]);
+		expect(existsSync(activeTarget)).toBe(true);
+		expect(existsSync(previousTarget)).toBe(true);
+		expect(existsSync(orphan)).toBe(false);
+	});
+
+	test("requires trusted Incus context and rejects user-overridden Files contracts", () => {
+		const paths = tempRuntimePaths();
+		const binary = "Files gate fixture\n";
+		const manifest = filesManifest(paths, { generation: 1, binary });
+		const untrusted = manifestLoad(manifest, "files-without-incus-context");
+		expect(() => convergeRuntimeManifest(untrusted, paths)).toThrow(
+			"Files companion requires a hosted v2 bundle and trusted Incus runtime context",
+		);
+		expect(existsSync(paths.companionInstallRoot)).toBe(false);
+		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-files.service"))).toBe(false);
+		expect(() => convergeRuntimeManifest(filesManifestLoad(manifest), paths)).toThrow(
+			"Files companion requires systemd apply and readiness hooks",
+		);
+		expect(existsSync(paths.companionInstallRoot)).toBe(false);
+		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-files.service"))).toBe(false);
+
+		const pinned = filesCompanion();
+		expect(fileBrowserCompanionSchema.safeParse(pinned).success).toBe(true);
+		expect(fileBrowserCompanionSchema.safeParse({ ...pinned, port: 9000 }).success).toBe(false);
+		expect(
+			fileBrowserCompanionSchema.safeParse({
+				...pinned,
+				listen: "127.0.0.1",
+			}).success,
+		).toBe(false);
+		expect(
+			fileBrowserCompanionSchema.safeParse({
+				...pinned,
+				assets: {
+					...pinned.assets,
+					amd64: { ...pinned.assets.amd64, sha256: "d".repeat(64) },
+				},
+			}).success,
+		).toBe(false);
 	});
 
 	test("rejects direct convergence without an explicit apply context", () => {

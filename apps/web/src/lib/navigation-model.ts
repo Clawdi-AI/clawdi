@@ -1,4 +1,5 @@
 import {
+	FolderOpen,
 	LayoutDashboard,
 	type LucideIcon,
 	MessagesSquare,
@@ -23,6 +24,7 @@ export type AgentSectionId =
 	| "projects"
 	| "vaults"
 	| "console"
+	| "files"
 	| "terminal"
 	| "connectors"
 	| "ai"
@@ -287,6 +289,15 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		tooltip: "Use this agent's browser interface",
 		variants: ["hosted"],
 	},
+	files: {
+		id: "files",
+		label: "Files",
+		icon: FolderOpen,
+		tint: "bg-identity-3-bg text-identity-3-fg",
+		description: "Browse and edit files in this agent's Workspace.",
+		tooltip: "Browse this agent's Workspace",
+		variants: ["hosted"],
+	},
 	terminal: {
 		id: "terminal",
 		label: "Terminal",
@@ -407,7 +418,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "operate",
 		label: "Tools",
-		itemIds: ["console", "terminal", "channels", "ai"],
+		itemIds: ["console", "files", "terminal", "channels", "ai"],
 		separated: false,
 	},
 	{ id: "settings", label: null, itemIds: ["settings"], separated: true },

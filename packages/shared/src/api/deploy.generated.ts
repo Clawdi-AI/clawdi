@@ -1867,6 +1867,7 @@ export interface components {
             };
             /** Runtime Ui Endpoint */
             runtime_ui_endpoint?: (components["schemas"]["V2HermesRuntimeUiEndpointInfo"] | components["schemas"]["V2OpenClawRuntimeUiEndpointInfo"]) | null;
+            files_endpoint?: components["schemas"]["V2HostedFilesEndpointInfo"] | null;
             accepted_operation?: components["schemas"]["LongRunningOperation"] | null;
             commercial_display?: components["schemas"]["V2HostedDeploymentCommercialDisplay"];
             /**
@@ -1881,6 +1882,11 @@ export interface components {
             upgrade_available: boolean;
             upgrade_eligibility: components["schemas"]["V2HostedComputeUpgradeEligibility"];
             compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"] | null;
+        };
+        /** V2HostedFilesEndpointInfo */
+        V2HostedFilesEndpointInfo: {
+            /** Url */
+            url: string;
         };
         /** V2HostedUsageAgentBreakdown */
         V2HostedUsageAgentBreakdown: {

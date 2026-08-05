@@ -1395,6 +1395,7 @@ describe("runtime manifest services", () => {
 					},
 				},
 				channelPlugins: {},
+				companions: {},
 			},
 			paths,
 		);

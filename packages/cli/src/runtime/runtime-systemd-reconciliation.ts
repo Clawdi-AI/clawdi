@@ -1140,6 +1140,7 @@ export function planRuntimeSystemdUserMutations(
 		join(paths.systemdUserRoot, "default.target.wants"),
 	]);
 	const writtenUnits = programs.map((program) => {
+		if (program.runtime === "files") return null;
 		const name = runtimeSystemdProgramName(program);
 		const unitName = systemdUnitFileName(name);
 		unitNames.add(unitName);
@@ -1166,7 +1167,7 @@ export function planRuntimeSystemdUserMutations(
 			metadataTargets.add(dirname(dropInPath));
 		}
 		return unitPath;
-	});
+	}).filter((path): path is string => path !== null);
 
 	if (existsSync(paths.systemdUserRoot)) {
 		const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
@@ -1412,6 +1413,81 @@ function writeRuntimeSystemdUserProgram(input: {
 	});
 }
 
+function systemdBindPath(source: string, destination: string = source): string {
+	return `${systemdPath(source)}:${systemdPath(destination)}`;
+}
+
+function writeFileBrowserSystemdUnit(input: {
+	program: RuntimeSystemdUserProgram;
+	manifest: RuntimeManifest;
+	paths: RuntimePaths;
+	runtimeRevision: Parameters<typeof runtimeSystemdProgramRevision>[4];
+}): string {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const uid = runtimeUserUid(runtimeUser);
+	const gid = runtimeUserGid(runtimeUser);
+	if (uid === 0 || gid === 0) throw new Error("Files companion systemd identity must be non-root");
+	const path = join(input.paths.systemdSystemRoot, "clawdi-files.service");
+	const revision = input.runtimeRevision(input.manifest, "files", undefined, null);
+	const lines = [
+		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
+		"[Unit]",
+		"Description=Clawdi hosted Files companion",
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=simple",
+		`User=${uid}`,
+		`Group=${gid}`,
+		`RootDirectory=${systemdPath(input.paths.fileBrowserRootfs)}`,
+		"MountAPIVFS=yes",
+		`BindPaths=${systemdBindPath(input.paths.userHome)}`,
+		`BindPaths=${systemdBindPath(input.paths.fileBrowserStateRoot)}`,
+		`BindReadOnlyPaths=${systemdBindPath(input.paths.fileBrowserConfig)}`,
+		`BindReadOnlyPaths=${systemdBindPath(input.program.command)}`,
+		`WorkingDirectory=${systemdPath(input.program.cwd)}`,
+		...systemdUnitEnvironmentLines({
+			HOME: input.paths.userHome,
+			CLAWDI_RUNTIME_REV: revision,
+		}),
+		`ExecStart=${systemdExec(input.program.command, input.program.args)}`,
+		"Restart=always",
+		"RestartSec=2",
+		"KillMode=mixed",
+		"TimeoutStopSec=30",
+		"UMask=0077",
+		"NoNewPrivileges=true",
+		"PrivateTmp=true",
+		"PrivateDevices=true",
+		"ProtectSystem=strict",
+		`ReadWritePaths=${systemdPath(input.paths.userHome)} ${systemdPath(input.paths.fileBrowserStateRoot)}`,
+		"ProtectKernelTunables=true",
+		"ProtectKernelModules=true",
+		"ProtectKernelLogs=true",
+		"ProtectControlGroups=true",
+		"ProtectClock=true",
+		"ProtectProc=invisible",
+		"ProcSubset=pid",
+		"LockPersonality=true",
+		"RestrictSUIDSGID=true",
+		"RestrictRealtime=true",
+		"RestrictNamespaces=true",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		"CapabilityBoundingSet=",
+		"AmbientCapabilities=",
+		"SystemCallArchitectures=native",
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"",
+	];
+	mkdirSync(input.paths.systemdSystemRoot, { recursive: true });
+	writePrivateFileAtomic(path, lines.join("\n"), { mode: 0o644, dirMode: 0o755 });
+	makeRootOwned(path);
+	return path;
+}
+
 function officialRuntimeSystemdPrograms(
 	programs: RuntimeSystemdUserProgram[],
 ): RuntimeSystemdUserProgram[] {
@@ -1495,10 +1571,13 @@ export function writeRuntimeSystemdState(input: {
 	const desiredSystemUnitNames = [
 		...(daemonAuthTokenFile ? ["clawdi-runtime-watch.service", "clawdi-daemon.service"] : []),
 		...(activeEgressProgram ? ["clawdi-runtime-sidecar.service"] : []),
+		...(runtimePrograms.some((program) => program.runtime === "files")
+			? ["clawdi-files.service"]
+			: []),
 	];
-	const desiredUserUnitNames = runtimePrograms.map((program) =>
-		systemdUnitFileName(runtimeSystemdProgramName(program)),
-	);
+	const desiredUserUnitNames = runtimePrograms
+		.filter((program) => program.runtime !== "files")
+		.map((program) => systemdUnitFileName(runtimeSystemdProgramName(program)));
 	const staleFiles = planStaleRuntimeSystemdFiles(
 		paths,
 		desiredSystemUnitNames,
@@ -1572,6 +1651,17 @@ export function writeRuntimeSystemdState(input: {
 	}
 
 	for (const program of runtimePrograms) {
+		if (program.runtime === "files") {
+			systemUnits.push(
+				writeFileBrowserSystemdUnit({
+					program,
+					manifest,
+					paths,
+					runtimeRevision,
+				}),
+			);
+			continue;
+		}
 		userUnits.push(
 			writeRuntimeSystemdUserProgram({
 				program,

@@ -28,6 +28,15 @@ HostedRuntimeLanguage = Literal[
 ]
 HostedRuntimeName = Literal["openclaw", "hermes"]
 
+FILE_BROWSER_VERSION = "v1.5.0-stable"
+FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6"
+FILE_BROWSER_AMD64_SHA256 = (
+    "8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e"
+)
+FILE_BROWSER_ARM64_SHA256 = (
+    "3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f"
+)
+
 _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _EGRESS_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _EGRESS_PROFILE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_.]*$")
@@ -63,6 +72,77 @@ _MANAGED_EGRESS_PLACEHOLDER_VALUE = "clawdi-egress-placeholder"
 HostedRuntimeSecretValues = dict[str, SecretStr]
 _HOSTED_RUNTIME_SECRET_VALUE_LIMIT = 128
 _HOSTED_RUNTIME_SECRET_TOTAL_PLAINTEXT_LIMIT = 262_144
+
+
+class HostedFileBrowserAsset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class HostedFileBrowserAssets(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amd64: HostedFileBrowserAsset
+    arm64: HostedFileBrowserAsset
+
+    @model_validator(mode="after")
+    def validate_pins(self) -> "HostedFileBrowserAssets":
+        release = (
+            "https://github.com/gtsteffaniak/filebrowser/releases/download/"
+            f"{FILE_BROWSER_VERSION}"
+        )
+        expected = {
+            "amd64": (f"{release}/linux-amd64-filebrowser", FILE_BROWSER_AMD64_SHA256),
+            "arm64": (f"{release}/linux-arm64-filebrowser", FILE_BROWSER_ARM64_SHA256),
+        }
+        for arch, asset in (("amd64", self.amd64), ("arm64", self.arm64)):
+            url, digest = expected[arch]
+            if asset.url != url or asset.sha256 != digest:
+                raise ValueError(f"Files {arch} artifact must match the pinned release")
+        return self
+
+
+class HostedFileBrowserAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["jwt"]
+    algorithm: Literal["ES256"]
+    header: Literal["X-JWT-Assertion"]
+    userIdentifier: Literal["sub"]
+    groupsClaim: Literal["groups"]
+    publicKeyPem: str = Field(
+        min_length=100,
+        max_length=4096,
+        pattern=r"^-----BEGIN PUBLIC KEY-----\n[\s\S]+\n-----END PUBLIC KEY-----\n?$",
+    )
+    audience: str = Field(min_length=1, max_length=256)
+    subject: str = Field(min_length=1, max_length=256)
+    requiredGroup: str = Field(min_length=1, max_length=256)
+    accessRevision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class HostedFileBrowserCompanion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["filebrowser"]
+    version: Literal["v1.5.0-stable"]
+    commit: Literal["79552f8adb27c3e29934c4001660eb98f4aab5d6"]
+    listen: Literal["0.0.0.0"]
+    port: Literal[9120]
+    baseURL: Literal["/"]
+    healthPath: Literal["/health"]
+    sourceRoot: Literal["/home/clawdi"]
+    stateRoot: Literal["/var/lib/clawdi/filebrowser"]
+    assets: HostedFileBrowserAssets
+    auth: HostedFileBrowserAuth
+
+
+class HostedRuntimeCompanions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    files: HostedFileBrowserCompanion | None = None
 
 
 def is_canonical_secret_ref(value: str) -> bool:

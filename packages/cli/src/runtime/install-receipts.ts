@@ -18,6 +18,7 @@ const runtimeInstallReceiptsSchema = z
 		schemaVersion: z.literal("clawdi.runtimeInstallReceipts.v1"),
 		officialServices: z.record(z.string().min(1), installReceiptEntrySchema),
 		channelPlugins: z.record(z.string().min(1), installReceiptEntrySchema),
+		companions: z.record(z.string().min(1), installReceiptEntrySchema).default({}),
 	})
 	.strict();
 
@@ -29,6 +30,7 @@ export function emptyRuntimeInstallReceipts(): RuntimeInstallReceipts {
 		schemaVersion: "clawdi.runtimeInstallReceipts.v1",
 		officialServices: {},
 		channelPlugins: {},
+		companions: {},
 	};
 }
 

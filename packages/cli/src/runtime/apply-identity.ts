@@ -82,6 +82,7 @@ export type RuntimeManifestSource = z.infer<typeof runtimeManifestSourceSchema>;
 const runtimeContextFileSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeContext.v2"),
+		backend: z.literal("incus").optional(),
 		apply: runtimeApplyIdentitySchema,
 		cliPackageSpec: hostedCliPackageSpecSchema.or(
 			z.literal(HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE),
@@ -94,6 +95,7 @@ type RuntimeContextFile = z.infer<typeof runtimeContextFileSchema>;
 
 export interface RuntimeApplyContext {
 	kind: "context-file";
+	backend?: "incus";
 	identity: RuntimeApplyIdentity;
 	cliPackageSpec: string;
 	manifestSource: RuntimeManifestSource;
@@ -111,6 +113,7 @@ export function readRuntimeApplyContext(
 	const parsed = readRuntimeContextFile(contextPath);
 	return {
 		kind: "context-file",
+		...(parsed.backend === undefined ? {} : { backend: parsed.backend }),
 		identity: parsed.apply,
 		cliPackageSpec: parsed.cliPackageSpec,
 		manifestSource: parsed.manifestSource,
