@@ -9,24 +9,24 @@ export type ProxyTransports = {
 };
 
 export function createProxyTransports(proxyUrl: string): ProxyTransports {
-	const agent = new HttpsProxyAgent(proxyUrl);
-	const fetchAgent = new HttpsProxyAgent(proxyUrl);
-	let dispatcher: ProxyAgent;
+	let agent: HttpsProxyAgent<string> | undefined;
+	let fetchAgent: HttpsProxyAgent<string> | undefined;
 	try {
-		dispatcher = new ProxyAgent(proxyUrl);
+		agent = new HttpsProxyAgent(proxyUrl);
+		fetchAgent = new HttpsProxyAgent(proxyUrl);
+		const dispatcher = new ProxyAgent(proxyUrl);
+		const transports = { agent, fetchAgent, dispatcher };
+		return {
+			...transports,
+			async close() {
+				transports.agent.destroy();
+				transports.fetchAgent.destroy();
+				await transports.dispatcher.close();
+			},
+		};
 	} catch (error: unknown) {
-		agent.destroy();
-		fetchAgent.destroy();
+		agent?.destroy();
+		fetchAgent?.destroy();
 		throw error;
 	}
-	return {
-		agent,
-		fetchAgent,
-		dispatcher,
-		async close() {
-			agent.destroy();
-			fetchAgent.destroy();
-			await dispatcher.close();
-		},
-	};
 }

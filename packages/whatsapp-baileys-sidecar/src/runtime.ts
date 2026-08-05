@@ -46,6 +46,9 @@ const TRANSIENT_DISCONNECT_REASONS = new Set<number>([
 ]);
 
 type SocketConfiguration = Parameters<typeof makeWASocket>[0];
+type ProxyRequestOptions = NonNullable<SocketConfiguration["options"]> & {
+	dispatcher: ProxyTransports["dispatcher"];
+};
 
 type ProviderSocketEvents = {
 	on(event: "creds.update", listener: (update: Partial<AuthenticationCreds>) => void): void;
@@ -417,6 +420,9 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		this.clearReconnectTimer();
 		if (this.socket) return;
 		this.status = "connecting";
+		const proxyOptions: ProxyRequestOptions | undefined = this.proxyTransports
+			? { dispatcher: this.proxyTransports.dispatcher }
+			: undefined;
 		const socket = this.socketFactory({
 			version: this.config.webVersion,
 			auth: this.providerState.state,
@@ -431,7 +437,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				? {
 						agent: this.proxyTransports.agent,
 						fetchAgent: this.proxyTransports.fetchAgent,
-						options: { dispatcher: this.proxyTransports.dispatcher },
+						options: proxyOptions,
 					}
 				: {}),
 			msgRetryCounterCache: this.providerState.retryCounterCache,

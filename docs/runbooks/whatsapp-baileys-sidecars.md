@@ -24,8 +24,9 @@ Kamal declares one fixed `whatsapp-baileys` accessory in `config/deploy.yml`:
 - socket: `/run/clawdi-whatsapp/sidecar.sock`, mode `0660`;
 - app mount: the run directory only, read-only;
 - root filesystem: read-only, all capabilities dropped, no new privileges;
-- network: the private Kamal network; optional Tailscale proxy egress publishes
-  no host port;
+- network: Docker bridge by default; only when optional Tailscale egress is
+  enabled do Baileys and its proxy share the private Kamal network; neither
+  configuration publishes a host port;
 - restart policy: Kamal 2.12's `unless-stopped`, so an ordinary host reboot
   starts the same singleton against the same durable state root;
 - identity: numeric UID/GID `1000:1000` for the Kamal SSH user, backend, and sidecar.

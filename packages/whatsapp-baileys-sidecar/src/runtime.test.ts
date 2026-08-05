@@ -354,7 +354,7 @@ describe("physical Baileys runtime", () => {
 		await direct.start();
 		expect(directHarness.socketConfigurations[0]).not.toHaveProperty("agent");
 		expect(directHarness.socketConfigurations[0]).not.toHaveProperty("fetchAgent");
-		expect(directHarness.socketConfigurations[0]?.options?.dispatcher).toBeUndefined();
+		expect(directHarness.socketConfigurations[0]?.options).toBeUndefined();
 		await direct.stop();
 
 		const proxyHarness = createHarness();
@@ -365,7 +365,9 @@ describe("physical Baileys runtime", () => {
 		await proxied.start();
 		expect(proxyHarness.socketConfigurations[0]?.agent).toBeDefined();
 		expect(proxyHarness.socketConfigurations[0]?.fetchAgent).toBeDefined();
-		expect(proxyHarness.socketConfigurations[0]?.options?.dispatcher).toBeDefined();
+		expect(proxyHarness.socketConfigurations[0]?.options).toMatchObject({
+			dispatcher: expect.anything(),
+		});
 		await proxied.stop();
 		await expect(proxied.stop()).resolves.toBeUndefined();
 	});
