@@ -549,6 +549,15 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
             "entries": {
                 "clawdi": {"enabled": True, "version": 1},
                 "removed": {"enabled": False, "version": 2},
+                "review-pr": {
+                    "enabled": True,
+                    "source": {
+                        "type": "github",
+                        "url": "https://github.com/Clawdi-AI/store",
+                        "path": "skills/review-pr",
+                        "commit": "a" * 40,
+                    },
+                },
             }
         },
         tools={**CANONICAL_CODEX_TOOLS, "catalog": "clawdi-default"},
@@ -593,6 +602,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     assert canonical.json()["desired"]["managed_skills"] == [
         {"id": "clawdi", "enabled": True, "version": 1},
         {"id": "removed", "enabled": False, "version": 2},
+        {"id": "review-pr", "enabled": True, "version": 1},
     ]
     serialized = canonical.text.lower()
     assert "secretref" not in serialized

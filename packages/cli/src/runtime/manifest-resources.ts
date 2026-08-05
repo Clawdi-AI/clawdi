@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasAsciiControlCharacter } from "../lib/github-skill-archive";
 import { secretRefSchema } from "./egress-profiles";
 
 const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
@@ -92,7 +93,58 @@ export const hostedMcpDesiredStateSchema = z
 	})
 	.strict();
 
-export const hostedSkillEntryDesiredStateSchema = z
+const exactGitCommitSchema = z.string().regex(/^[a-f0-9]{40}$/);
+
+function isCanonicalGithubRepositoryUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return (
+			url.protocol === "https:" &&
+			url.hostname === "github.com" &&
+			!url.username &&
+			!url.password &&
+			!url.search &&
+			!url.hash &&
+			/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(url.pathname)
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isSafeRepositoryPath(value: string): boolean {
+	const segments = value.split("/");
+	return (
+		value === value.trim() &&
+		segments.length > 0 &&
+		segments.every(
+			(segment) =>
+				segment.length > 0 &&
+				segment !== "." &&
+				segment !== ".." &&
+				!segment.includes("\\") &&
+				!hasAsciiControlCharacter(segment),
+		)
+	);
+}
+
+export const hostedSkillSourceSchema = z
+	.object({
+		type: z.literal("github"),
+		url: z
+			.string()
+			.max(500)
+			.refine(isCanonicalGithubRepositoryUrl, "must be a canonical GitHub repository URL"),
+		path: z
+			.string()
+			.max(500)
+			.refine(isSafeRepositoryPath, "must be a safe repository-relative directory"),
+		commit: exactGitCommitSchema,
+	})
+	.strict();
+export type HostedSkillSource = z.infer<typeof hostedSkillSourceSchema>;
+
+const hostedBundledSkillEntryDesiredStateSchema = z
 	.object({
 		enabled: z.boolean(),
 		// Expand-phase compatibility for enabled-only manifests is pinned to the
@@ -100,6 +152,18 @@ export const hostedSkillEntryDesiredStateSchema = z
 		version: z.number().int().positive().default(1),
 	})
 	.strict();
+
+const hostedSourcedSkillEntryDesiredStateSchema = z
+	.object({
+		enabled: z.boolean(),
+		source: hostedSkillSourceSchema,
+	})
+	.strict();
+
+export const hostedSkillEntryDesiredStateSchema = z.union([
+	hostedBundledSkillEntryDesiredStateSchema,
+	hostedSourcedSkillEntryDesiredStateSchema,
+]);
 
 export const hostedSkillsDesiredStateSchema = z
 	.object({

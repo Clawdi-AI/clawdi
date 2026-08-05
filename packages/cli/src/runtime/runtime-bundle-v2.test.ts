@@ -274,6 +274,67 @@ describe("hosted runtime bundle v2", () => {
 		});
 	});
 
+	test("retains an exact immutable catalog Skill source", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		const source = {
+			type: "github",
+			url: "https://github.com/Clawdi-AI/store",
+			path: "skills/review-pr",
+			commit: "a".repeat(40),
+		} as const;
+		const load = normalizeHostedRuntimeBundleV2({
+			...raw,
+			manifest: {
+				...manifest,
+				skills: {
+					entries: { "review-pr": { enabled: true, source } },
+				},
+			},
+		});
+
+		expect(load.manifest.projection?.skills).toEqual({
+			entries: { "review-pr": { enabled: true, source } },
+		});
+	});
+
+	test.each([
+		["branch commit", { commit: "main" }],
+		["uppercase commit", { commit: "A".repeat(40) }],
+		["tree URL", { url: `https://github.com/Clawdi-AI/store/tree/${"a".repeat(40)}` }],
+		["trailing repository slash", { url: "https://github.com/Clawdi-AI/store/" }],
+		["traversal path", { path: "skills/../review-pr" }],
+	])("rejects catalog Skill source with %s", (_label, override) => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					skills: {
+						entries: {
+							"review-pr": {
+								enabled: true,
+								source: {
+									type: "github",
+									url: "https://github.com/Clawdi-AI/store",
+									path: "skills/review-pr",
+									commit: "a".repeat(40),
+									...override,
+								},
+							},
+						},
+					},
+				},
+			}),
+		).toThrow();
+	});
+
 	test.each([
 		"latest",
 		"1",
@@ -299,7 +360,6 @@ describe("hosted runtime bundle v2", () => {
 	});
 
 	test.each([
-		"source",
 		"variant",
 		"path",
 		"content",

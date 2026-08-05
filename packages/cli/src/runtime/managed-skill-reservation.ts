@@ -39,9 +39,18 @@ export type ManagedSkillReservationManager = "hosted-manifest" | "local-setup";
 interface ManagedSkillReservation {
 	target: string;
 	id: string;
-	version: number;
-	digest: string;
+	version?: number;
+	digest?: string;
+	sourceIdentity?: string;
 	manager: ManagedSkillReservationManager;
+}
+
+export interface ManagedSkillReservationSnapshot {
+	targetDir: string;
+	id: string;
+	version?: number;
+	digest?: string;
+	sourceIdentity?: string;
 }
 
 interface ManagedSkillReservationLedger {
@@ -94,11 +103,11 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 			typeof raw.id !== "string" ||
 			basename(target) !== raw.id ||
 			!MANAGED_SKILL_ID_PATTERN.test(raw.id) ||
-			typeof raw.version !== "number" ||
-			!Number.isSafeInteger(raw.version) ||
-			raw.version <= 0 ||
-			typeof raw.digest !== "string" ||
-			!SHA256_PATTERN.test(raw.digest) ||
+			(raw.version !== undefined &&
+				(typeof raw.version !== "number" ||
+					!Number.isSafeInteger(raw.version) ||
+					raw.version <= 0)) ||
+			!reservationIdentityIsValid(raw) ||
 			(raw.manager !== "hosted-manifest" && raw.manager !== "local-setup")
 		) {
 			throw new Error("managed Skill ownership state is invalid");
@@ -107,7 +116,8 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 			target,
 			id: raw.id,
 			version: raw.version,
-			digest: raw.digest,
+			digest: typeof raw.digest === "string" ? raw.digest : undefined,
+			sourceIdentity: typeof raw.sourceIdentity === "string" ? raw.sourceIdentity : undefined,
 			manager: raw.manager,
 		};
 	}
@@ -164,6 +174,34 @@ export function managedSkillReservationOwner(
 	} catch {
 		return "indeterminate";
 	}
+}
+
+export function managedSkillReservations(
+	manager: ManagedSkillReservationManager,
+): ManagedSkillReservationSnapshot[] {
+	const ledger = readLedger(ledgerPath());
+	return Object.values(ledger.reservations)
+		.filter((reservation) => reservation.manager === manager)
+		.map((reservation) => ({
+			targetDir: reservation.target,
+			id: reservation.id,
+			version: reservation.version,
+			digest: reservation.digest,
+			sourceIdentity: reservation.sourceIdentity,
+		}))
+		.sort((left, right) => left.targetDir.localeCompare(right.targetDir));
+}
+
+function reservationIdentityIsValid(value: {
+	digest?: unknown;
+	sourceIdentity?: unknown;
+}): boolean {
+	const hasDigest = typeof value.digest === "string" && SHA256_PATTERN.test(value.digest);
+	const hasSourceIdentity =
+		typeof value.sourceIdentity === "string" &&
+		value.sourceIdentity.startsWith("github\0") &&
+		value.sourceIdentity.length <= 2048;
+	return hasDigest !== hasSourceIdentity;
 }
 
 export function shouldIgnoreUserSkill(targetDir: string, skillId = basename(targetDir)): boolean {
@@ -256,8 +294,9 @@ export function migrateLegacyLocalSetupSkill(input: {
 export function reserveManagedSkill(input: {
 	targetDir: string;
 	id: string;
-	version: number;
-	digest: string;
+	version?: number;
+	digest?: string;
+	sourceIdentity?: string;
 	manager: ManagedSkillReservationManager;
 }): "created" | "existing" {
 	const path = ledgerPath();
@@ -265,9 +304,8 @@ export function reserveManagedSkill(input: {
 	if (
 		basename(target) !== input.id ||
 		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
-		!Number.isSafeInteger(input.version) ||
-		input.version <= 0 ||
-		!SHA256_PATTERN.test(input.digest)
+		(input.version !== undefined && (!Number.isSafeInteger(input.version) || input.version <= 0)) ||
+		!reservationIdentityIsValid(input)
 	) {
 		throw new Error("managed Skill reservation identity is invalid");
 	}
@@ -283,6 +321,7 @@ export function reserveManagedSkill(input: {
 			id: input.id,
 			version: input.version,
 			digest: input.digest,
+			sourceIdentity: input.sourceIdentity,
 			manager,
 		};
 		writeLedger(path, ledger);
@@ -294,8 +333,9 @@ export function installReservedManagedSkill<T>(
 	input: {
 		targetDir: string;
 		id: string;
-		version: number;
-		digest: string;
+		version?: number;
+		digest?: string;
+		sourceIdentity?: string;
 		manager: ManagedSkillReservationManager;
 	},
 	install: () => T,
@@ -305,9 +345,8 @@ export function installReservedManagedSkill<T>(
 	if (
 		basename(target) !== input.id ||
 		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
-		!Number.isSafeInteger(input.version) ||
-		input.version <= 0 ||
-		!SHA256_PATTERN.test(input.digest)
+		(input.version !== undefined && (!Number.isSafeInteger(input.version) || input.version <= 0)) ||
+		!reservationIdentityIsValid(input)
 	) {
 		throw new Error("managed Skill reservation identity is invalid");
 	}
@@ -322,6 +361,7 @@ export function installReservedManagedSkill<T>(
 			id: input.id,
 			version: input.version,
 			digest: input.digest,
+			sourceIdentity: input.sourceIdentity,
 			manager: input.manager,
 		};
 		writeLedger(path, ledger);

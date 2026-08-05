@@ -5,7 +5,6 @@ import {
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
 	runtimeEnvironmentId,
-	runtimeSupportsSkillInstall,
 } from "@/hosted/runtimes";
 
 describe("deploymentRuntime", () => {
@@ -89,12 +88,5 @@ describe("runtimeEnvironmentId", () => {
 
 	test("returns undefined when the backend has not projected an environment id", () => {
 		expect(runtimeEnvironmentId(hostedDeploymentFixture())).toBeUndefined();
-	});
-});
-
-describe("hosted runtime Skill capabilities", () => {
-	test("allows deployment Skill mutations only for OpenClaw", () => {
-		expect(runtimeSupportsSkillInstall("openclaw")).toBe(true);
-		expect(runtimeSupportsSkillInstall("hermes")).toBe(false);
 	});
 });

@@ -76,7 +76,7 @@ beforeEach(() => {
 	writeExecutable(join(stubDir, "codex"), "#!/bin/sh\nexit 0\n");
 	writeExecutable(
 		join(stubDir, "openclaw"),
-		'#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
+		'#!/bin/sh\nif [ "$*" = "agents list --json" ]; then printf \'[{"id":"main","workspace":"%s/.openclaw/agents/main"}]\\n\' "$HOME"; exit 0; fi\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
 	);
 	writeExecutable(join(stubDir, "systemctl"), "#!/bin/sh\nexit 0\n");
 	writeExecutable(join(stubDir, "launchctl"), "#!/bin/sh\nexit 0\n");

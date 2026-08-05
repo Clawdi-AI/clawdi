@@ -1555,6 +1555,8 @@ type HostedApiStubOptions = {
 		idempotencyKey: string | null;
 		ifMatch: string | null;
 	}>;
+	workspaceSkillRequests?: string[];
+	workspaceSkillsByDeploymentId?: Readonly<Record<string, readonly unknown[]>>;
 	walletState?: typeof walletState;
 	walletRequests?: string[];
 	walletResponses?: StubResponse[];
@@ -1815,6 +1817,17 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 						? { ...acceptedOperation, done: false, response: null }
 						: acceptedOperation,
 				},
+			});
+		}
+		const workspaceSkillsMatch = p.match(/^\/v2\/deployments\/([^/]+)\/workspace-skills$/);
+		if (workspaceSkillsMatch && r.request().method() === "GET") {
+			const deploymentId = decodeURIComponent(workspaceSkillsMatch[1] ?? "");
+			options.workspaceSkillRequests?.push(r.request().url());
+			return fulfillJson(r, {
+				deployment_id: deploymentId,
+				deployment_resource_version: "rv-workspace-skills",
+				manifest_generation: 1,
+				items: options.workspaceSkillsByDeploymentId?.[deploymentId] ?? [],
 			});
 		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
@@ -3131,25 +3144,33 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "memories", "connectors", "model-provider", "channels"]);
+	).toEqual([
+		"projects",
+		"skills",
+		"memories",
+		"vaults",
+		"connectors",
+		"model-provider",
+		"channels",
+	]);
 	expect(
 		await page
 			.locator("#hosted-recent-sessions, #agent-overview-resources")
 			.evaluateAll((headings) => headings.map((heading) => heading.id)),
 	).toEqual(["hosted-recent-sessions", "agent-overview-resources"]);
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(5);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(7);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(5);
+	).toHaveCount(7);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0, 0, 0]);
+	).toEqual([0, 0, 0, 0, 0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		5,
+		7,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -3166,7 +3187,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.getByTestId("agent-project-grid")).toHaveCount(0);
 	expect(agentProjectRequests).toHaveLength(1);
 	expect(skillRequests).toEqual([]);
-	expect(vaultRequests).toEqual([]);
+	expect(vaultRequests).toHaveLength(1);
+	expect(new URL(vaultRequests[0] ?? "http://invalid").searchParams.get("project_id")).toBe(
+		"project-hosted",
+	);
 	const viewAllSessions = page
 		.locator("#hosted-recent-sessions")
 		.locator("..")
@@ -3281,8 +3305,22 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(compute.getByText("CPU", { exact: true })).toHaveCount(0);
 	await expect(compute.getByText("Memory", { exact: true })).toHaveCount(0);
 	await expect(compute.getByText("Storage", { exact: true })).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="skills"]')).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
+		"No skills installed",
+	);
+	await expect(overview.locator('[data-overview-module="vaults"]')).toContainText("1 vault");
+	await expect(
+		overview.locator('[data-overview-module="skills"]').getByRole("link", { name: "Skills" }),
+	).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+	await expect(
+		overview.locator('[data-overview-module="vaults"]').getByRole("link", { name: "Vaults" }),
+	).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
 	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
 	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText(
 		"2 connected",
@@ -3322,7 +3360,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
-	await expect(overview.locator("[data-overview-module]")).toHaveCount(5);
+	await expect(overview.locator("[data-overview-module]")).toHaveCount(7);
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
@@ -3337,7 +3375,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(3);
+	expect(resourceGeometry).toHaveLength(5);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -3352,8 +3390,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await resourceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "memories", "connectors"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3]);
+	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	const toolGeometry = await toolsGrid
 		.locator("[data-overview-module]")
@@ -3377,13 +3415,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
@@ -3618,8 +3656,8 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 	).toBeLessThanOrEqual(1);
 	expect(skeletonBoxes[0]?.height).toBeGreaterThanOrEqual(64);
 	expect(skeletonBoxes[0]?.height).toBeLessThanOrEqual(72);
-	await expect(overview.locator('[data-overview-module="skills"]')).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="skills"]')).toHaveCount(1);
+	await expect(overview.locator('[data-overview-module="vaults"]')).toHaveCount(1);
 	await expect(overview.getByText("Details pending", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Loading…", { exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
@@ -3645,7 +3683,7 @@ test("hosted inventory loading skeleton matches the compact overview geometry", 
 
 	const skeleton = page.locator("[data-agent-detail-skeleton]");
 	await expect(skeleton).toBeVisible();
-	await expect(skeleton.locator("[data-overview-module-skeleton]")).toHaveCount(5);
+	await expect(skeleton.locator("[data-overview-module-skeleton]")).toHaveCount(7);
 	await expect(skeleton.getByTestId("overview-session-skeleton-row")).toHaveCount(3);
 	const moduleBoxes = await skeleton
 		.locator("[data-overview-module-skeleton]")
@@ -3761,7 +3799,7 @@ test("hosted Sessions tab uses its own pagination without the Overview request",
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("20");
 });
 
-test("hosted overview keeps Project collections absent and distinguishes empty channels", async ({
+test("hosted overview keeps Workspace resources scoped and distinguishes empty channels", async ({
 	page,
 }) => {
 	await stubHostedApi(page, {
@@ -3775,8 +3813,10 @@ test("hosted overview keeps Project collections absent and distinguishes empty c
 	);
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
-	await expect(overview.locator('[data-overview-module="skills"]')).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
+		"No skills installed",
+	);
+	await expect(overview.locator('[data-overview-module="vaults"]')).toContainText("1 vault");
 	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
 		"No channels connected",
 	);
@@ -3872,7 +3912,9 @@ test("hosted overview shows a true empty Projects state", async ({ page }) => {
 			.locator('[data-overview-module="projects"]')
 			.getByText("No projects added", { exact: true }),
 	).toBeVisible();
-	await expect(page.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
+		"Unavailable right now",
+	);
 });
 
 for (const deploymentStatus of ["creating", "starting"] as const) {
@@ -4347,8 +4389,8 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		...railHostedDeployment,
 		config_info: {
 			...railHostedDeployment.config_info,
-			runtime: "openclaw" as const,
-			clawdi_cloud_environments: { openclaw: railHostedEnvironmentId },
+			runtime: "hermes" as const,
+			clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
 		},
 	};
 	await stubHostedApi(page, {
@@ -4358,21 +4400,28 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		deployments: [resourceHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 	});
-	const runtimeSkillFixture = {
-		name: "Runtime review",
-		description: "Review pull requests",
-		source: "Agent runtime",
-		bundled: false,
-		skill_key: "review-pr",
-		always: false,
-		disabled: false,
-		blocked_by_allowlist: false,
-		eligible: true,
-		requirements: {},
-		missing: {},
-		config_checks: [],
-	};
-	let installedRuntimeSkills = [runtimeSkillFixture];
+	let workspaceResourceVersion = "rv-workspace-skills-1";
+	let workspaceManifestGeneration = 4;
+	let desiredWorkspaceSkills = [
+		{
+			skill_key: "review-pr",
+			version: 3,
+			source: {
+				type: "github",
+				url: "https://github.com/Clawdi-AI/store",
+				path: "skills/review-pr",
+				commit: "a".repeat(40),
+			},
+			status: "managed",
+			failure_message: null,
+		},
+	];
+	const workspaceSkillMutations: Array<{
+		method: string;
+		skillKey: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
 	await page.route("**/v1/skills/catalog**", async (route) => {
 		await fulfillJson(route, {
 			items: [
@@ -4396,28 +4445,68 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			total: 1,
 		});
 	});
-	await page.route(`**/v1/deployments/${railHostedDeployment.id}/skills**`, async (route) => {
-		const request = route.request();
-		const path = new URL(request.url()).pathname;
-		if (request.method() === "GET") {
-			await fulfillJson(route, { skills: installedRuntimeSkills });
-			return;
-		}
-		if (request.method() === "POST" && path.endsWith("/deploy-helper/install")) {
-			installedRuntimeSkills = [
-				...installedRuntimeSkills,
-				{
-					...runtimeSkillFixture,
-					name: "Deploy helper",
-					description: "Deploy safely",
-					skill_key: "deploy-helper",
-				},
-			];
-			await fulfillJson(route, { ok: true, skill_key: "deploy-helper", status: "installed" });
-			return;
-		}
-		await fulfillJson(route, { detail: "Unexpected runtime Skill request" }, 400);
-	});
+	await page.route(
+		`**/v2/deployments/${railHostedDeployment.id}/workspace-skills**`,
+		async (route) => {
+			const request = route.request();
+			const path = new URL(request.url()).pathname;
+			if (request.method() === "GET" && path.endsWith("/workspace-skills")) {
+				await fulfillJson(route, {
+					deployment_id: railHostedDeployment.id,
+					deployment_resource_version: workspaceResourceVersion,
+					manifest_generation: workspaceManifestGeneration,
+					capability: { available: true, reason: "available" },
+					items: desiredWorkspaceSkills,
+				});
+				return;
+			}
+			const skillKey = decodeURIComponent(path.split("/").at(-1) ?? "");
+			if ((request.method() === "PUT" || request.method() === "DELETE") && skillKey) {
+				workspaceSkillMutations.push({
+					method: request.method(),
+					skillKey,
+					idempotencyKey: request.headers()["idempotency-key"] ?? null,
+					ifMatch: request.headers()["if-match"] ?? null,
+				});
+				workspaceManifestGeneration += 1;
+				workspaceResourceVersion = `rv-workspace-skills-${workspaceManifestGeneration}`;
+				const source = {
+					type: "github" as const,
+					url: "https://github.com/Clawdi-AI/store",
+					path: `skills/${skillKey}`,
+					commit: "b".repeat(40),
+				};
+				if (request.method() === "PUT") {
+					desiredWorkspaceSkills = [
+						...desiredWorkspaceSkills.filter((item) => item.skill_key !== skillKey),
+						{
+							skill_key: skillKey,
+							version: 1,
+							source,
+							status: "requested",
+							failure_message: null,
+						},
+					];
+				} else {
+					desiredWorkspaceSkills = desiredWorkspaceSkills.filter(
+						(item) => item.skill_key !== skillKey,
+					);
+				}
+				await fulfillJson(route, {
+					deployment_id: railHostedDeployment.id,
+					deployment_resource_version: workspaceResourceVersion,
+					manifest_generation: workspaceManifestGeneration,
+					skill_key: skillKey,
+					desired_state: request.method() === "PUT" ? "present" : "absent",
+					source: request.method() === "PUT" ? source : null,
+					status: "requested",
+					failure_message: null,
+				});
+				return;
+			}
+			await fulfillJson(route, { detail: "Unexpected Workspace Skill request" }, 400);
+		},
+	);
 
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
@@ -4656,7 +4745,6 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("button", { name: /Add to agent/i })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "People", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Install on Agent", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Attach Vault", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
 		"href",
@@ -4687,12 +4775,17 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveCount(0);
-	await expect(
-		main.getByText("Agent runtime is the install authority", { exact: true }),
-	).toBeVisible();
-	await main.getByRole("button", { name: "Install on Agent", exact: true }).click();
+	await main.getByRole("button", { name: "Install", exact: true }).click();
 	await expect(main.getByText("Deploy helper", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Uninstall from Agent" }).last()).toBeVisible();
+	await expect(main.getByText("Requested", { exact: true }).last()).toBeVisible();
+	await expect(main.getByRole("button", { name: "Uninstall", exact: true }).last()).toBeVisible();
+	expect(workspaceSkillMutations).toHaveLength(1);
+	expect(workspaceSkillMutations[0]).toMatchObject({
+		method: "PUT",
+		skillKey: "deploy-helper",
+		ifMatch: '"rv-workspace-skills-1"',
+	});
+	expect(workspaceSkillMutations[0]?.idempotencyKey).toMatch(/^workspace-skill-install-/);
 	await expect(main.getByRole("button", { name: /Attach Vault/i })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-mobile.png") });
 	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();

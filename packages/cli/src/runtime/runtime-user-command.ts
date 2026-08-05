@@ -165,12 +165,16 @@ export function spawnRuntimeUserCommand(
 	cwd: string,
 	options: {
 		egressSystemCaFile?: string;
+		hermesHome?: string;
 		input?: string;
 		maxBufferBytes?: number;
 		timeoutMs?: number;
 	} = {},
 ): ReturnType<typeof spawnSync> {
-	const env = runtimeUserCommandEnv(home, options);
+	const env: NodeJS.ProcessEnv = {
+		...runtimeUserCommandEnv(home, options),
+		...(options.hermesHome ? { HERMES_HOME: options.hermesHome } : {}),
+	};
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
 		if (commandExists("gosu")) {

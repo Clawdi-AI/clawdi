@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pull } from "../../src/commands/pull";
@@ -33,6 +33,7 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 let tmpHome: string;
 let origHome: string | undefined;
 let origHomeOverrides: AgentHomeOverrideSnapshot = {};
+let origPath: string | undefined;
 
 function setup(agent: AgentKey) {
 	origHome = process.env.HOME;
@@ -40,12 +41,37 @@ function setup(agent: AgentKey) {
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
+	if (agent === "openclaw") {
+		origPath = process.env.PATH;
+		const bin = join(tmpHome, "bin");
+		mkdirSync(bin, { recursive: true });
+		const command = join(bin, "openclaw");
+		writeFileSync(
+			command,
+			`#!/bin/sh
+if [ "$*" = "agents list --json" ]; then printf '[{"id":"main","workspace":"%s/.openclaw/agents/main"}]\n' "$HOME"; exit 0; fi
+if [ "$1 $2" = "skills install" ]; then
+  source="$3"; shift 3; slug=""
+  while [ "$#" -gt 0 ]; do [ "$1" = "--as" ] && slug="$2" && shift; shift; done
+  rm -rf "$HOME/.openclaw/agents/main/skills/$slug"
+  mkdir -p "$HOME/.openclaw/agents/main/skills/$slug"
+  cp -R "$source/." "$HOME/.openclaw/agents/main/skills/$slug/"
+  exit 0
+fi
+exit 1
+`,
+		);
+		chmodSync(command, 0o755);
+		process.env.PATH = `${bin}:${origPath ?? ""}`;
+	}
 }
 
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
 	restoreAgentHomeOverrides(origHomeOverrides);
+	if (origPath !== undefined) process.env.PATH = origPath;
+	origPath = undefined;
 	origHomeOverrides = {};
 	process.exitCode = 0;
 	if (tmpHome) cleanupTmp(tmpHome);

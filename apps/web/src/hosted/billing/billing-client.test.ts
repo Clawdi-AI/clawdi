@@ -192,7 +192,7 @@ describe("managed model catalog", () => {
 });
 
 describe("deployment Skill authority", () => {
-	it("uses the reviewed catalog, runtime-status, install, and uninstall operations", async () => {
+	it("uses catalog discovery and only V2 desired-state Workspace Skill mutations", async () => {
 		const requests: Request[] = [];
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
@@ -200,32 +200,129 @@ describe("deployment Skill authority", () => {
 			if (path === "/v1/skills/catalog") {
 				return jsonResponse({ items: [], total: 0 });
 			}
-			if (path === "/v1/deployments/hdep_test/skills") {
-				return jsonResponse({ skills: [] });
+			if (path === "/v2/deployments/hdep_test/workspace-skills") {
+				return jsonResponse({
+					deployment_id: "hdep_test",
+					deployment_resource_version: "rv-skills",
+					manifest_generation: 4,
+					capability: { available: true, reason: "available" },
+					items: [],
+				});
 			}
-			if (path === "/v1/deployments/hdep_test/skills/review-pr/install") {
-				return request.method === "POST"
-					? jsonResponse({ ok: true, skill_key: "review-pr", status: "installed" })
-					: jsonResponse({ ok: true, skill_key: "review-pr" });
+			if (path === "/v2/deployments/hdep_test/workspace-skills/review-pr") {
+				return jsonResponse({
+					deployment_id: "hdep_test",
+					deployment_resource_version: request.method === "PUT" ? "rv-installed" : "rv-removed",
+					manifest_generation: request.method === "PUT" ? 5 : 6,
+					skill_key: "review-pr",
+					desired_state: request.method === "PUT" ? "present" : "absent",
+					status: "requested",
+				});
 			}
 			throw new Error(`Unexpected request: ${request.method} ${path}`);
 		});
 
 		await expect(client.listSkillCatalog()).resolves.toEqual({ items: [], total: 0 });
-		await expect(client.getDeploymentSkills("hdep_test")).resolves.toEqual({ skills: [] });
-		await expect(client.installDeploymentSkill("hdep_test", "review-pr")).resolves.toMatchObject({
-			status: "installed",
+		await expect(client.listWorkspaceSkills("hdep_test")).resolves.toMatchObject({ items: [] });
+		await expect(
+			client.installWorkspaceSkill("hdep_test", "review-pr", "rv-skills", "install-attempt"),
+		).resolves.toMatchObject({
+			desired_state: "present",
+			status: "requested",
 		});
-		await expect(client.uninstallDeploymentSkill("hdep_test", "review-pr")).resolves.toMatchObject({
-			ok: true,
+		await expect(
+			client.uninstallWorkspaceSkill("hdep_test", "review-pr", "rv-installed", "remove-attempt"),
+		).resolves.toMatchObject({
+			desired_state: "absent",
 		});
 
-		expect(requests.map((request) => request.method)).toEqual(["GET", "GET", "POST", "DELETE"]);
+		expect(requests.map((request) => request.method)).toEqual(["GET", "GET", "PUT", "DELETE"]);
 		expect(new URL(requests[0]?.url ?? "https://invalid").searchParams.get("limit")).toBe("200");
-		expect(await requests[2]?.json()).toEqual({ enable_after_install: true });
+		expect(requests[2]?.headers.get("If-Match")).toBe('"rv-skills"');
+		expect(requests[2]?.headers.get("Idempotency-Key")).toBe("install-attempt");
+		expect(requests[3]?.headers.get("If-Match")).toBe('"rv-installed"');
+		expect(requests[3]?.headers.get("Idempotency-Key")).toBe("remove-attempt");
 		expect(
 			requests.every((request) => request.headers.get("Authorization") === "Bearer test-token"),
 		).toBe(true);
+	});
+
+	it("refetches V2 desired state after a CAS conflict and keeps one idempotency key", async () => {
+		const requests: Request[] = [];
+		let putCount = 0;
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			const path = new URL(request.url).pathname;
+			if (path === "/v2/deployments/hdep_test/workspace-skills/review-pr") {
+				putCount += 1;
+				if (putCount === 1) {
+					return jsonResponse(
+						{
+							detail: {
+								code: "resource_version_mismatch",
+								message: "Workspace desired state changed.",
+							},
+						},
+						412,
+					);
+				}
+				return jsonResponse({
+					deployment_id: "hdep_test",
+					deployment_resource_version: "rv-installed",
+					manifest_generation: 5,
+					skill_key: "review-pr",
+					desired_state: "present",
+					status: "requested",
+				});
+			}
+			if (path === "/v2/deployments/hdep_test/workspace-skills") {
+				return jsonResponse({
+					deployment_id: "hdep_test",
+					deployment_resource_version: "rv-fresh",
+					manifest_generation: 4,
+					capability: { available: true, reason: "available" },
+					items: [],
+				});
+			}
+			throw new Error(`Unexpected request: ${request.method} ${path}`);
+		});
+
+		await expect(
+			client.installWorkspaceSkill("hdep_test", "review-pr", "rv-stale", "same-attempt"),
+		).resolves.toMatchObject({
+			desired_state: "present",
+			status: "requested",
+		});
+
+		expect(requests.map((request) => request.method)).toEqual(["PUT", "GET", "PUT"]);
+		expect(requests[0]?.headers.get("If-Match")).toBe('"rv-stale"');
+		expect(requests[2]?.headers.get("If-Match")).toBe('"rv-fresh"');
+		expect(requests[0]?.headers.get("Idempotency-Key")).toBe("same-attempt");
+		expect(requests[2]?.headers.get("Idempotency-Key")).toBe("same-attempt");
+	});
+
+	it("surfaces a semantic Workspace Skill conflict without retrying", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			return jsonResponse(
+				{
+					detail: {
+						code: "workspace_skill_reserved",
+						message: "The bundled clawdi Skill is manifest-managed.",
+					},
+				},
+				409,
+			);
+		});
+
+		await expect(
+			client.installWorkspaceSkill("hdep_test", "clawdi", "rv-current", "reserved-attempt"),
+		).rejects.toMatchObject({
+			status: 409,
+			payload: { detail: { code: "workspace_skill_reserved" } },
+		});
+		expect(requests.map((request) => request.method)).toEqual(["PUT"]);
 	});
 });
 

@@ -25,7 +25,8 @@ import {
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
-import { loadHostedBundledSkill } from "./hosted-bundled-skill";
+import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
+import type { PreparedHostedCatalogSkill } from "./hosted-catalog-skill-archive";
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {
 	hostedAiProviderCatalog,
@@ -36,6 +37,7 @@ import {
 	restoreRuntimeLiveSnapshot,
 	runtimeRootLiveMutationTargets,
 } from "./live-state-snapshot";
+import { shouldIgnoreUserSkill } from "./managed-skill-reservation";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
@@ -532,6 +534,18 @@ EOF
     ;;
   "gateway uninstall")
     rm -f '${input.unitPath}'
+    ;;
+  "agents list --json")
+    printf '[{"id":"main","workspace":"%s"}]\n' "$PWD"
+    ;;
+  "skills install "*)
+    source_dir="$3"
+    skill_id="$7"
+    mkdir -p "$PWD/skills"
+    rm -rf "$PWD/skills/$skill_id"
+    cp -R "$source_dir" "$PWD/skills/$skill_id"
+    mkdir -p "$PWD/skills/$skill_id/.openclaw"
+    printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
     ;;
   *)
     printf 'unexpected ${input.runtime} command: %s\\n' "$*" >&2
@@ -3923,6 +3937,194 @@ describe("runtime manifest reconciliation invariants", () => {
 		}
 	});
 
+	test("reconciles exact-source Hermes Workspace Skills through paired manifest ownership", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n");
+		chmodSync(hermesCommand, 0o755);
+		const source = {
+			type: "github" as const,
+			url: "https://github.com/Clawdi-AI/store",
+			path: "skills/review-pr",
+			commit: "a".repeat(40),
+		};
+		const prepared: PreparedHostedCatalogSkill = {
+			skillId: "review-pr",
+			source,
+			sourceIdentity:
+				"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
+				"a".repeat(40),
+			archiveSha256: "b".repeat(64),
+			tarBytes: Buffer.from("exact archive"),
+		};
+		const desiredManifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: runSettings(hermesCommand, ["gateway"]),
+					services: {},
+				},
+			},
+			{
+				projection: {
+					skills: {
+						entries: { "review-pr": { enabled: true, source } },
+					},
+				},
+			},
+		);
+		const skillDir = join(paths.userHome, ".hermes", "skills", "review-pr");
+		const userOwnedSibling = join(paths.userHome, ".hermes", "skills", "user-owned");
+		mkdirSync(skillDir, { recursive: true });
+		writeFileSync(join(skillDir, "SKILL.md"), "user-owned collision\n");
+		expect(() =>
+			convergeRuntimeManifest(manifestLoad(desiredManifest, "catalog-collision"), paths, {
+				preparedHostedCatalogSkills: new Map([[prepared.skillId, prepared]]),
+				hostedHermesSkillExactSourceDriver: {
+					install: () => "installed",
+					verifyOwned: () => false,
+					uninstall: () => "removed",
+				},
+			}),
+		).toThrow(`refusing to replace unmanaged review-pr skill at ${skillDir}`);
+		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(false);
+		rmSync(skillDir, { recursive: true, force: true });
+		mkdirSync(userOwnedSibling, { recursive: true });
+		writeFileSync(join(userOwnedSibling, "SKILL.md"), "keep me\n");
+
+		const installs: boolean[] = [];
+		let verifyCalls = 0;
+		let uninstalls = 0;
+		const nativeReconciler = {
+			install: (input: { previouslyReserved: boolean }) => {
+				installs.push(input.previouslyReserved);
+				mkdirSync(skillDir, { recursive: true });
+				writeFileSync(join(skillDir, "SKILL.md"), "manifest-owned\n");
+				if (installs.length === 1) throw new Error("lost native install response");
+				return "unchanged" as const;
+			},
+			verifyOwned: (input: { skill: PreparedHostedCatalogSkill }) => {
+				verifyCalls += 1;
+				return (
+					input.skill.sourceIdentity === prepared.sourceIdentity &&
+					JSON.stringify(input.skill.source) === JSON.stringify(prepared.source) &&
+					existsSync(join(skillDir, "SKILL.md")) &&
+					readFileSync(join(skillDir, "SKILL.md"), "utf8") === "manifest-owned\n"
+				);
+			},
+			uninstall: () => {
+				uninstalls += 1;
+				rmSync(skillDir, { recursive: true, force: true });
+				return "removed" as const;
+			},
+		};
+		const options = {
+			preparedHostedCatalogSkills: new Map([[prepared.skillId, prepared]]),
+			hostedHermesSkillExactSourceDriver: nativeReconciler,
+		};
+		const lostResponse = convergeRuntimeManifest(
+			manifestLoad(desiredManifest, "catalog-lost-native-response"),
+			paths,
+			options,
+		);
+		expect(lostResponse.installErrors.join("\n")).toContain("lost native install response");
+		expect(installs).toEqual([false]);
+		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(false);
+		expect(existsSync(skillDir)).toBe(false);
+
+		mkdirSync(skillDir, { recursive: true });
+		writeFileSync(join(skillDir, "SKILL.md"), "forged user bytes\n");
+		expect(() =>
+			convergeRuntimeManifest(
+				manifestLoad(desiredManifest, "catalog-forged-partial-commit"),
+				paths,
+				options,
+			),
+		).toThrow(`refusing to replace unmanaged review-pr skill at ${skillDir}`);
+		expect(verifyCalls).toBe(1);
+		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(false);
+
+		writeFileSync(join(skillDir, "SKILL.md"), "manifest-owned\n");
+		const installed = convergeRuntimeManifest(
+			manifestLoad(desiredManifest, "catalog-recover-native-commit"),
+			paths,
+			options,
+		);
+		expect(installed.installErrors).toEqual([]);
+		expect(installs).toEqual([false, true]);
+		expect(verifyCalls).toBe(2);
+		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(true);
+		expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toBe("manifest-owned\n");
+
+		const repaired = convergeRuntimeManifest(
+			manifestLoad(desiredManifest, "catalog-repair"),
+			paths,
+			options,
+		);
+		expect(repaired.installErrors).toEqual([]);
+		expect(installs).toEqual([false, true, true]);
+
+		const removed = convergeRuntimeManifest(
+			manifestLoad(
+				{ ...desiredManifest, projection: { skills: { entries: {} } } },
+				"catalog-remove",
+			),
+			paths,
+			{
+				preparedHostedCatalogSkills: new Map(),
+				hostedHermesSkillExactSourceDriver: nativeReconciler,
+			},
+		);
+		expect(removed.installErrors).toEqual([]);
+		expect(uninstalls).toBe(1);
+		expect(existsSync(skillDir)).toBe(false);
+		expect(readFileSync(join(userOwnedSibling, "SKILL.md"), "utf8")).toBe("keep me\n");
+		expect(shouldIgnoreUserSkill(userOwnedSibling, "user-owned")).toBe(false);
+	});
+
+	test("removes only strictly identified legacy bundled OpenClaw Skills without requiring a new receipt", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const workspaceRoot = join(paths.userHome, "clawdi");
+		const target = join(workspaceRoot, "skills", "clawdi");
+		const source = resolve(import.meta.dir, "../..", "skills", "hosted-versions", "1", "clawdi");
+		const bundle = loadHostedBundledSkill("clawdi", 1, source);
+		reconcileHostedBundledSkill({ bundle, targetDir: target, reserved: true });
+		const manifest = baseManifest(
+			paths,
+			{ openclaw: { enabled: true, run: runSettings(command, ["gateway"]), services: {} } },
+			{ projection: { skills: { entries: {} } } },
+		);
+		let guardedCleanupCalls = 0;
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "legacy-openclaw-remove"),
+			paths,
+			{
+				hostedOpenClawSkillDriver: {
+					installDirectory: () => "installed",
+					install: () => "installed",
+					verifyOwned: () => false,
+					cleanupManifestOwned: () => {
+						guardedCleanupCalls += 1;
+						return "removed";
+					},
+				},
+			},
+		);
+		expect(result.installErrors).toEqual([]);
+		expect(guardedCleanupCalls).toBe(0);
+		expect(existsSync(target)).toBe(false);
+	});
+
 	test("restores exact root and runtime-user targets before systemd rollback reconciliation", () => {
 		const paths = tempRuntimePaths();
 		const workspaceRoot = join(paths.userHome, "clawdi");
@@ -4206,7 +4408,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			join(paths.userHome, ".hermes", "SOUL.md"),
 			join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi"),
 			join(paths.userHome, ".codex", "config.toml"),
-			join(paths.userHome, ".openclaw", "agents", "main", "skills", "clawdi"),
+			join(workspaceRoot, "skills", "clawdi"),
 			join(paths.userHome, ".hermes", "skills", "clawdi"),
 			join(paths.localEnvironments, "openclaw.json"),
 			join(paths.systemdUserRoot, "clawdi-openclaw.service"),

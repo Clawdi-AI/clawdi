@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { agentOverviewGroups } from "@/lib/agent-capabilities";
-import { agentNavigationSectionIds } from "@/lib/navigation-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 
 describe("agent overview registry", () => {
 	test("only registers supported sections with real summaries", () => {
 		for (const variant of ["connected", "hosted"] as const) {
-			const supported = new Set(agentNavigationSectionIds(variant));
 			for (const module of agentOverviewGroups(variant).flatMap((group) => group.modules))
-				expect(supported.has(module.section)).toBe(true);
+				expect(AGENT_SECTION_NAVIGATION_ITEMS[module.section].variants).toContain(variant);
 		}
 	});
 	test("shares resource summaries and keeps hosted operations separate", () => {
@@ -18,7 +17,9 @@ describe("agent overview registry", () => {
 		expect(hosted.map((group) => group.id)).toEqual(["resources", "operate"]);
 		expect(connected[0]?.modules.map((module) => module.id)).toEqual([
 			"projects",
+			"skills",
 			"memories",
+			"vaults",
 			"connectors",
 		]);
 		expect(hosted[0]?.modules).toEqual(connected[0]?.modules);

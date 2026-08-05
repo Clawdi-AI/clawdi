@@ -5356,6 +5356,13 @@ export interface components {
             deviceAuthRequired: false;
             activation: components["schemas"]["HostedOpenClawGatewayActivation"];
         };
+        /** HostedRuntimeBundledSkillEntry */
+        HostedRuntimeBundledSkillEntry: {
+            /** Enabled */
+            enabled: boolean;
+            /** Version */
+            version: number;
+        };
         /** HostedRuntimeConfiguredDesiredState */
         HostedRuntimeConfiguredDesiredState: {
             /**
@@ -5630,19 +5637,32 @@ export interface components {
             /** Prependpath */
             prependPath?: string[] | null;
         };
-        /** HostedRuntimeSkillEntry */
-        HostedRuntimeSkillEntry: {
-            /** Enabled */
-            enabled: boolean;
-            /** Version */
-            version: number;
+        /** HostedRuntimeSkillSource */
+        HostedRuntimeSkillSource: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "github";
+            /** Url */
+            url: string;
+            /** Path */
+            path: string;
+            /** Commit */
+            commit: string;
         };
         /** HostedRuntimeSkills */
         HostedRuntimeSkills: {
             /** Entries */
             entries: {
-                [key: string]: components["schemas"]["HostedRuntimeSkillEntry"];
+                [key: string]: components["schemas"]["HostedRuntimeBundledSkillEntry"] | components["schemas"]["HostedRuntimeSourcedSkillEntry"];
             };
+        };
+        /** HostedRuntimeSourcedSkillEntry */
+        HostedRuntimeSourcedSkillEntry: {
+            /** Enabled */
+            enabled: boolean;
+            source: components["schemas"]["HostedRuntimeSkillSource"];
         };
         /** HostedRuntimeStdioMcpServer */
         HostedRuntimeStdioMcpServer: {

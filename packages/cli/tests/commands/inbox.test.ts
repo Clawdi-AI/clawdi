@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +25,7 @@ let origClawdiHome: string | undefined;
 let origAuthToken: string | undefined;
 let origApiUrl: string | undefined;
 let agentHomeOverrides: AgentHomeOverrideSnapshot;
+let origPath: string | undefined;
 
 const rawToken = "a".repeat(43);
 
@@ -64,6 +65,19 @@ beforeEach(() => {
 	delete process.env.CLAWDI_HOME;
 	delete process.env.CLAWDI_AUTH_TOKEN;
 	process.env.CLAWDI_API_URL = "https://api.test";
+	origPath = process.env.PATH;
+	const bin = join(tmpHome, "bin");
+	mkdirSync(bin, { recursive: true });
+	const command = join(bin, "openclaw");
+	writeFileSync(
+		command,
+		`#!/bin/sh
+if [ "$*" = "agents list --json" ]; then printf '[{"id":"main","workspace":"%s/.openclaw/agents/main"}]\n' "$HOME"; exit 0; fi
+exit 1
+`,
+	);
+	chmodSync(command, 0o755);
+	process.env.PATH = `${bin}:${origPath ?? ""}`;
 });
 
 afterEach(() => {
@@ -76,6 +90,8 @@ afterEach(() => {
 	if (origApiUrl) process.env.CLAWDI_API_URL = origApiUrl;
 	else delete process.env.CLAWDI_API_URL;
 	restoreAgentHomeOverrides(agentHomeOverrides);
+	if (origPath !== undefined) process.env.PATH = origPath;
+	else delete process.env.PATH;
 	rmSync(tmpHome, { recursive: true, force: true });
 	process.exitCode = 0;
 });

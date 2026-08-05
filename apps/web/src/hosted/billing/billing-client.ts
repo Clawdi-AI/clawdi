@@ -28,9 +28,8 @@ import type {
 	HostedDeployRequestStatus,
 	HostedEventStreamSnapshotHandoff,
 	HostedSkillCatalogResponse,
-	HostedSkillInstallResponse,
-	HostedSkillsStatusResponse,
-	HostedSkillUninstallResponse,
+	HostedWorkspaceSkillListResponse,
+	HostedWorkspaceSkillMutationResponse,
 	PortalRequest,
 	WalletAutoReloadRequest,
 	WalletTopupRequest,
@@ -38,6 +37,7 @@ import type {
 import {
 	BillingApiError,
 	BillingNetworkError,
+	billingErrorDetail,
 	DeploymentConflictError,
 	DeploymentRequestTerminalError,
 	isRetryableError,
@@ -160,6 +160,13 @@ function strongResourceEtag(resourceVersion: string): string {
 
 function isPreconditionConflict(error: unknown): error is BillingApiError {
 	return error instanceof BillingApiError && (error.status === 409 || error.status === 412);
+}
+
+function isWorkspaceSkillResourceVersionConflict(error: unknown): error is BillingApiError {
+	return (
+		error instanceof BillingApiError &&
+		(error.status === 412 || billingErrorDetail(error)?.code === "resource_version_mismatch")
+	);
 }
 
 function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingApiError {
@@ -400,6 +407,52 @@ export function createBillingClient(
 		}
 		throw new DeploymentConflictError();
 	};
+	const listWorkspaceSkills = async (
+		deploymentId: string,
+	): Promise<HostedWorkspaceSkillListResponse> =>
+		unwrapDeploy(
+			await api.GET("/v2/deployments/{deployment_id}/workspace-skills", {
+				params: { path: { deployment_id: deploymentId } },
+			}),
+		);
+	const mutateWorkspaceSkill = async (
+		deploymentId: string,
+		skillKey: string,
+		resourceVersion: string,
+		idempotencyKey: string,
+		action: "install" | "uninstall",
+	): Promise<HostedWorkspaceSkillMutationResponse> => {
+		let currentResourceVersion = resourceVersion;
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			const params = {
+				path: { deployment_id: deploymentId, skill_key: skillKey },
+				header: {
+					"Idempotency-Key": idempotencyKey,
+					"If-Match": strongResourceEtag(currentResourceVersion),
+				},
+			};
+			try {
+				return unwrapDeploy(
+					action === "install"
+						? await api.PUT("/v2/deployments/{deployment_id}/workspace-skills/{skill_key}", {
+								params,
+							})
+						: await api.DELETE("/v2/deployments/{deployment_id}/workspace-skills/{skill_key}", {
+								params,
+							}),
+				);
+			} catch (error) {
+				if (!isWorkspaceSkillResourceVersionConflict(error)) throw error;
+				if (attempt === 0) {
+					currentResourceVersion = (await listWorkspaceSkills(deploymentId))
+						.deployment_resource_version;
+					continue;
+				}
+				throw new DeploymentConflictError({ cause: error });
+			}
+		}
+		throw new DeploymentConflictError();
+	};
 
 	return {
 		getManagedModelCatalog: async () =>
@@ -487,31 +540,21 @@ export function createBillingClient(
 					params: { query: { limit: 200 } },
 				}),
 			),
-		getDeploymentSkills: async (deploymentId: string): Promise<HostedSkillsStatusResponse> =>
-			unwrapDeploy(
-				await api.GET("/v1/deployments/{deployment_id}/skills", {
-					params: { path: { deployment_id: deploymentId } },
-				}),
-			),
-		installDeploymentSkill: async (
+		listWorkspaceSkills,
+		installWorkspaceSkill: async (
 			deploymentId: string,
 			skillKey: string,
-		): Promise<HostedSkillInstallResponse> =>
-			unwrapDeploy(
-				await api.POST("/v1/deployments/{deployment_id}/skills/{skill_key}/install", {
-					params: { path: { deployment_id: deploymentId, skill_key: skillKey } },
-					body: { enable_after_install: true },
-				}),
-			),
-		uninstallDeploymentSkill: async (
+			resourceVersion: string,
+			idempotencyKey: string,
+		): Promise<HostedWorkspaceSkillMutationResponse> =>
+			mutateWorkspaceSkill(deploymentId, skillKey, resourceVersion, idempotencyKey, "install"),
+		uninstallWorkspaceSkill: async (
 			deploymentId: string,
 			skillKey: string,
-		): Promise<HostedSkillUninstallResponse> =>
-			unwrapDeploy(
-				await api.DELETE("/v1/deployments/{deployment_id}/skills/{skill_key}/install", {
-					params: { path: { deployment_id: deploymentId, skill_key: skillKey } },
-				}),
-			),
+			resourceVersion: string,
+			idempotencyKey: string,
+		): Promise<HostedWorkspaceSkillMutationResponse> =>
+			mutateWorkspaceSkill(deploymentId, skillKey, resourceVersion, idempotencyKey, "uninstall"),
 
 		listDeployments: async (): Promise<HostedDeployment[]> =>
 			unwrapDeploymentList(unwrapDeploy(await api.GET("/v2/deployments"))),

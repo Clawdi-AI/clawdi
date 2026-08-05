@@ -1,9 +1,16 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
-import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { extractTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
+import {
+	collectManagedSkillTree,
+	managedSkillTreesEqual,
+	withTargetTreeRollback,
+} from "../runtime/managed-skill-delivery";
 import {
 	migrateLegacyLocalSetupSkill,
 	mutateUserSkillTarget,
@@ -17,6 +24,11 @@ import type {
 	RawSkill,
 	SessionMessage,
 } from "./base";
+import {
+	listOpenClawAgentWorkspaces,
+	openClawAgentId,
+	resolveOpenClawAgentWorkspace,
+} from "./openclaw-workspace";
 import { getOpenClawHome, SKIP_DIRS } from "./paths";
 import { readCommandVersion } from "./version";
 
@@ -27,7 +39,7 @@ function agentsRoot() {
 	return join(openclawDir(), "agents");
 }
 function agentId() {
-	return process.env.OPENCLAW_AGENT_ID || "main";
+	return openClawAgentId();
 }
 function agentDir() {
 	// Single-agent path used for *write* operations (skill install, MCP
@@ -40,8 +52,12 @@ function sessionsDir() {
 function sessionsIndexPath() {
 	return join(sessionsDir(), "sessions.json");
 }
+function activeAgentWorkspace() {
+	return resolveOpenClawAgentWorkspace(agentId());
+}
+
 function skillsDir() {
-	return join(agentDir(), "skills");
+	return join(activeAgentWorkspace(), "skills");
 }
 
 /**
@@ -304,15 +320,15 @@ export class OpenClawAdapter implements AgentAdapter {
 			digest: managedSkillDirectoryDigest,
 		});
 
-		// Skills can live under any `agents/<id>/skills/` — iterate every
-		// agent the user has on disk so a deployment with multiple
+		// Skills live in each official agent workspace — iterate every
+		// configured workspace so a deployment with multiple
 		// personalities (issue #28) doesn't lose six of seven skill sets.
 		// Dedup by `skillKey`: identical names across agents collapse to
 		// the first occurrence (server-side `skill_key` is per-user, so
 		// we'd 409 on the second push anyway). Warn on collision so the
 		// user can rename or pick an explicit OPENCLAW_AGENT_ID.
-		for (const agentRoot of listAgentDirs()) {
-			const dir = join(agentRoot, "skills");
+		for (const agent of listOpenClawAgentWorkspaces()) {
+			const dir = join(agent.workspace, "skills");
 			migrateLegacyLocalSetupSkill({
 				targetDir: join(dir, "clawdi"),
 				id: "clawdi",
@@ -379,20 +395,21 @@ export class OpenClawAdapter implements AgentAdapter {
 		// silently dropping those skills. Pre-fix the cross-agent
 		// enumerator silently lost OpenClaw skills under any
 		// agent other than the active one.
+		const root = skillsDir();
 		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir(), "clawdi"),
+			targetDir: join(root, "clawdi"),
 			id: "clawdi",
 			version: 1,
 			digest: managedSkillDirectoryDigest,
 		});
-		if (!existsSync(skillsDir())) return [];
+		if (!existsSync(root)) return [];
 		const out: string[] = [];
-		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
+		for (const entry of readdirSync(root, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (shouldIgnoreUserSkill(join(skillsDir(), entry.name), entry.name)) continue;
-			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
+			if (shouldIgnoreUserSkill(join(root, entry.name), entry.name)) continue;
+			const skillMd = join(root, entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 			out.push(entry.name);
 		}
@@ -415,11 +432,66 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const root = skillsDir();
-		const targetDir = join(root, key);
-		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
-			mutateUserSkillTarget(targetDir, key, mutation),
-		);
+		await this.installOfficialSkillArchive(key, key, tarGzBytes);
+	}
+
+	private async installOfficialSkillArchive(
+		archiveKey: string,
+		installedSlug: string,
+		tarGzBytes: Buffer,
+	): Promise<void> {
+		const workspace = activeAgentWorkspace();
+		const targetDir = join(workspace, "skills", installedSlug);
+		const stagingRoot = mkdtempSync(join(tmpdir(), "clawdi-openclaw-install-"));
+		try {
+			await extractTarGz(stagingRoot, tarGzBytes);
+			const sourceDir = join(stagingRoot, archiveKey);
+			if (!existsSync(join(sourceDir, "SKILL.md")))
+				throw new Error("Skill archive is missing SKILL.md");
+			mutateUserSkillTarget(targetDir, installedSlug, () =>
+				withTargetTreeRollback({
+					target: targetDir,
+					operation: () => {
+						const result = spawnSync(
+							"openclaw",
+							[
+								"skills",
+								"install",
+								sourceDir,
+								"--agent",
+								agentId(),
+								"--as",
+								installedSlug,
+								"--force",
+							],
+							{
+								encoding: "utf8",
+								env: process.env,
+								maxBuffer: 1024 * 1024,
+								timeout: 120_000,
+							},
+						);
+						if (result.status !== 0) {
+							throw new Error(
+								`OpenClaw official Skill install failed: ${(result.stderr || result.stdout).trim() || "unknown error"}`,
+							);
+						}
+						if (activeAgentWorkspace() !== workspace) {
+							throw new Error("OpenClaw agent workspace changed during Skill install");
+						}
+						const sourceTree = collectManagedSkillTree(sourceDir);
+						const installedTree = collectManagedSkillTree(targetDir, {
+							exclude: new Set([".openclaw/source-origin.json"]),
+						});
+						if (!managedSkillTreesEqual(sourceTree, installedTree)) {
+							throw new Error(`OpenClaw installed an unexpected Skill tree in ${workspace}`);
+						}
+					},
+				}),
+			);
+		} finally {
+			rmSync(stagingRoot, { recursive: true, force: true });
+		}
 	}
 
 	async writeSharedSkillArchive(
@@ -427,12 +499,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		ownerHandle: string,
 		tarGzBytes: Buffer,
 	): Promise<void> {
-		await replaceSkillArchiveTarGz(
-			key,
-			this.getSkillsRootDir(),
-			this.getSharedSkillPath(key, ownerHandle),
-			tarGzBytes,
-		);
+		await this.installOfficialSkillArchive(key, `${key}__${ownerHandle}`, tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

@@ -4,6 +4,7 @@ import { ClaudeCodeAdapter } from "./claude-code";
 import { CodexAdapter } from "./codex";
 import { HermesAdapter } from "./hermes";
 import { OpenClawAdapter } from "./openclaw";
+import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
 import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome } from "./paths";
 
 // Agent identity is declared as a literal tuple so `AgentType` doesn't depend
@@ -85,8 +86,7 @@ export function agentSkillTargetDir(
 	const home = homeOverride ?? adapterRegistry[agentType]?.home();
 	if (!home) return null;
 	if (agentType === "openclaw") {
-		const openclawAgentId = process.env.OPENCLAW_AGENT_ID || "main";
-		return join(home, "agents", openclawAgentId, "skills", skillName);
+		return join(resolveOpenClawAgentWorkspace(), "skills", skillName);
 	}
 	if (agentType === "claude_code" || agentType === "codex" || agentType === "hermes") {
 		return join(home, "skills", skillName);

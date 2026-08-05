@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "@/lib/api-schemas";
 import {
-	hostedSkillInstallOutcome,
 	mergeWorkspaceRuntimeSkills,
 	workspaceSkillInstallCommand,
+	workspaceSkillMutationsAvailable,
 	workspaceSkillRemoveCommand,
+	workspaceSkillStatusLabel,
 } from "./workspace-skills.logic";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -31,33 +32,58 @@ function projection(skillKey: string): SkillSummary {
 }
 
 describe("Workspace Skill runtime authority", () => {
-	test("uses runtime status for install and locked-removal controls", () => {
+	test("fails closed unless the read capability is explicitly available", () => {
+		const status = {
+			deployment_id: "dep_test",
+			deployment_resource_version: "rv_test",
+			manifest_generation: 1,
+			capability: { available: true, reason: "available" as const },
+		};
+		expect(workspaceSkillMutationsAvailable(status, null)).toBe(true);
+		expect(
+			workspaceSkillMutationsAvailable(
+				{ ...status, capability: { available: false, reason: "rollout_not_enabled" } },
+				null,
+			),
+		).toBe(false);
+		expect(workspaceSkillMutationsAvailable(status, new Error("status unavailable"))).toBe(false);
+		expect(workspaceSkillMutationsAvailable({ ...status, capability: undefined }, null)).toBe(
+			false,
+		);
+		expect(workspaceSkillMutationsAvailable(undefined, null)).toBe(false);
+	});
+
+	test("uses stable desired-state copy", () => {
+		expect(workspaceSkillStatusLabel("managed")).toBe("Managed");
+		expect(workspaceSkillStatusLabel("requested")).toBe("Requested");
+		expect(workspaceSkillStatusLabel("failed")).toBe("Failed");
+	});
+
+	test("keeps manifest desired state authoritative and agent_sync projections read-only", () => {
 		const inventory = mergeWorkspaceRuntimeSkills(
-			[projection("projected"), projection("available")],
+			[projection("projected")],
 			[
 				{
-					name: "projected",
-					skill_key: "projected",
-					always: false,
-					bundled: false,
-					disabled: false,
-					blocked_by_allowlist: false,
-					eligible: true,
-					requirements: {},
-					missing: {},
-					config_checks: [],
+					skill_key: "manifest-owned",
+					source: {
+						type: "github",
+						url: "https://github.com/Clawdi-AI/store",
+						path: "skills/manifest-owned",
+						commit: "a".repeat(40),
+					},
+					status: "managed",
+					failure_message: null,
 				},
 				{
-					name: "runtime core",
-					skill_key: "runtime-core",
-					always: true,
-					bundled: true,
-					disabled: false,
-					blocked_by_allowlist: false,
-					eligible: true,
-					requirements: {},
-					missing: {},
-					config_checks: [],
+					skill_key: "failed",
+					source: {
+						type: "github",
+						url: "https://github.com/Clawdi-AI/store",
+						path: "skills/failed",
+						commit: "b".repeat(40),
+					},
+					status: "failed",
+					failure_message: "Retry pending.",
 				},
 			],
 			[
@@ -76,37 +102,51 @@ describe("Workspace Skill runtime authority", () => {
 					installable: true,
 					connector_requirements: [],
 				},
+				{
+					skill_key: "projected",
+					name: "projected",
+					description: "Catalog collision",
+					emoji: "✨",
+					category: "tools",
+					featured: false,
+					headline: "",
+					languages: [],
+					trust_level: "community",
+					tags: [],
+					status: "active",
+					installable: true,
+					connector_requirements: [],
+				},
 			],
 		);
 
 		expect(inventory.find((item) => item.entity.skill_key === "projected")).toMatchObject({
-			installed: true,
-			locked: false,
+			desired: null,
 			installable: false,
 			cloudProjection: { authority: "agent_sync" },
 		});
 		expect(inventory.find((item) => item.entity.skill_key === "available")).toMatchObject({
-			installed: false,
+			desired: null,
 			installable: true,
-			cloudProjection: { authority: "agent_sync" },
-		});
-		const runtimeOnly = inventory.find((item) => item.entity.skill_key === "runtime-core");
-		expect(runtimeOnly).toMatchObject({
-			installed: true,
-			locked: true,
 			cloudProjection: null,
 		});
-		expect(runtimeOnly?.entity).toEqual({
-			skill_key: "runtime-core",
-			name: "runtime core",
-			description: null,
-			source: "Agent runtime",
-			source_repo: null,
+		const manifestOwned = inventory.find((item) => item.entity.skill_key === "manifest-owned");
+		expect(manifestOwned).toMatchObject({
+			desired: { status: "managed" },
+			installable: false,
+			cloudProjection: null,
 		});
-		expect(runtimeOnly?.entity).not.toHaveProperty("authority");
-		expect(runtimeOnly?.entity).not.toHaveProperty("id");
-		expect(runtimeOnly?.entity).not.toHaveProperty("version");
-		expect(runtimeOnly?.entity).not.toHaveProperty("updated_at");
+		expect(manifestOwned?.entity).toEqual({
+			skill_key: "manifest-owned",
+			name: "manifest-owned",
+			description: null,
+			source: "Agent Workspace",
+			source_repo: "https://github.com/Clawdi-AI/store",
+		});
+		expect(inventory.find((item) => item.entity.skill_key === "failed")?.desired).toMatchObject({
+			status: "failed",
+			failure_message: "Retry pending.",
+		});
 	});
 
 	test("builds only the real connected CLI handoff commands", () => {
@@ -118,33 +158,28 @@ describe("Workspace Skill runtime authority", () => {
 		);
 	});
 
-	test("keeps status-backed Skills when discovery metadata is unavailable", () => {
+	test("keeps desired Skills when discovery metadata is unavailable", () => {
 		const inventory = mergeWorkspaceRuntimeSkills(
 			[],
 			[
 				{
-					name: "installed",
-					skill_key: "installed",
-					always: false,
-					bundled: false,
-					disabled: false,
-					blocked_by_allowlist: false,
-					eligible: true,
-					requirements: {},
-					missing: {},
-					config_checks: [],
+					skill_key: "desired",
+					source: {
+						type: "github",
+						url: "https://github.com/Clawdi-AI/store",
+						path: "skills/desired",
+						commit: "c".repeat(40),
+					},
+					status: "requested",
 				},
 			],
 			[],
 		);
 
 		expect(inventory).toHaveLength(1);
-		expect(inventory[0]).toMatchObject({ installed: true, installable: false });
-	});
-
-	test("treats gateway detection timeout as pending runtime truth", () => {
-		expect(hostedSkillInstallOutcome({ ok: false, status: "pending" })).toBe("pending");
-		expect(hostedSkillInstallOutcome({ ok: true, status: "installed" })).toBe("installed");
-		expect(hostedSkillInstallOutcome({ ok: false, status: "failed" })).toBe("failed");
+		expect(inventory[0]).toMatchObject({
+			desired: { status: "requested" },
+			installable: false,
+		});
 	});
 });

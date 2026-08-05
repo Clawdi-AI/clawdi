@@ -21,9 +21,14 @@ import {
 	overviewProjectsModule,
 	useOverviewConnectorsModule,
 	useOverviewMemoriesModule,
+	useOverviewVaultsModule,
+	useOverviewWorkspaceSkillsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
-import { linkedAgentProjectCount } from "@/components/dashboard/agent-project-scope";
+import {
+	linkedAgentProjectCount,
+	resolveAgentWorkspaceProjectId,
+} from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
@@ -44,6 +49,7 @@ import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownersh
 import {
 	type AgentRouteSearch,
 	type AgentSectionId,
+	agentProjectResourceLink,
 	agentSectionLabel,
 	agentSectionLink,
 	agentSessionDetailLink,
@@ -148,6 +154,24 @@ export function ConnectedAgentDetail({
 		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});
 	const resourceScope = agentResourceScope(id, routeSearch);
+	const workspaceProjectId = agent
+		? resolveAgentWorkspaceProjectId(projectBindings ?? [], agent.default_project_id)
+		: null;
+	const workspaceResolution = projectBindingsLoading
+		? "loading"
+		: blockingProjectBindingsError || !workspaceProjectId
+			? "unavailable"
+			: "ready";
+	const skillsModule = useOverviewWorkspaceSkillsModule({
+		projectId: workspaceProjectId,
+		resolution: workspaceResolution,
+		enabled: overviewEnabled,
+	});
+	const vaultsModule = useOverviewVaultsModule({
+		projectIds: workspaceProjectId ? [workspaceProjectId] : [],
+		resolution: workspaceResolution,
+		enabled: overviewEnabled,
+	});
 	const memoriesModule = useOverviewMemoriesModule({ enabled: overviewEnabled });
 	const connectorsModule = useOverviewConnectorsModule({ enabled: overviewEnabled });
 	return (
@@ -266,7 +290,19 @@ export function ConnectedAgentDetail({
 											error: blockingProjectBindingsError,
 										},
 									}),
+									skills: {
+										...skillsModule,
+										link: workspaceProjectId
+											? agentProjectResourceLink(id, workspaceProjectId, "skills", routeSearch)
+											: null,
+									},
 									memories: memoriesModule,
+									vaults: {
+										...vaultsModule,
+										link: workspaceProjectId
+											? agentProjectResourceLink(id, workspaceProjectId, "vaults", routeSearch)
+											: null,
+									},
 									connectors: connectorsModule,
 								}}
 							/>

@@ -125,7 +125,7 @@ Note the "X new, Y updated, Z unchanged" total from the push output — you'll c
 
 ## Verify live sync (recommended)
 
-`clawdi setup` installs the sync daemon by default. Agent Skill changes flow from the Agent filesystem to their read-only Cloud projection; the dashboard never installs, edits, or removes Agent Skill files. Verify the daemon is running:
+`clawdi setup` installs the sync daemon by default. Connected Skills sync from the Agent and are managed there. For Hosted managed Workspace Skills, the dashboard can request installation or removal, while the runtime remains the only writer of Skill files. Verify the daemon is running:
 
 ```bash
 clawdi daemon status

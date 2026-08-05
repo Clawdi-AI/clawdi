@@ -46,6 +46,10 @@ import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
+	type PreparedHostedCatalogSkill,
+	prepareHostedCatalogSkillArchives,
+} from "../runtime/hosted-catalog-skill-archive";
+import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
@@ -1082,6 +1086,7 @@ interface RuntimeApplyOptions {
 	manifestIdentity?: RuntimeManifestIdentity;
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
+	preparedHostedCatalogSkills?: ReadonlyMap<string, PreparedHostedCatalogSkill>;
 }
 
 interface RuntimeManifestIdentity {
@@ -2088,7 +2093,7 @@ async function runtimeInitLocked(
 			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded, paths);
 			const contentRevision = runtimePublicContentRevision(convergenceLoad);
 			const applyIdentity = convergenceLoad.applyContext?.identity ?? null;
-			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
+			applyResult = await applyRuntimeDesiredState(convergenceLoad, paths, {
 				authorityCommit: (convergence, authority) =>
 					commitRuntimeAppliedState({
 						load: convergenceLoad,
@@ -2391,7 +2396,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			paths,
 		);
 		const applyIdentity = loaded.applyContext?.identity ?? null;
-		const applyResult = applyRuntimeDesiredState(loaded, paths, {
+		const applyResult = await applyRuntimeDesiredState(loaded, paths, {
 			authorityCommit: (convergence, authority) =>
 				commitRuntimeAppliedState({
 					load: loaded,
@@ -2509,11 +2514,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 	}
 }
 
-function applyRuntimeDesiredState(
+async function applyRuntimeDesiredState(
 	load: RuntimeManifestLoad,
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: RuntimeApplyOptions = {},
-): RuntimeApplyResult {
+): Promise<RuntimeApplyResult> {
 	let cliUpdate: RuntimeCliUpdateResult;
 	try {
 		cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
@@ -2532,6 +2537,9 @@ function applyRuntimeDesiredState(
 	if (cliUpdate.selfReexec) {
 		return { kind: "cli_handoff", cliUpdate };
 	}
+	const preparedHostedCatalogSkills =
+		opts.preparedHostedCatalogSkills ??
+		(await prepareHostedCatalogSkillArchives(load.manifest, paths));
 	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
 	let systemdApply = {
@@ -2542,6 +2550,7 @@ function applyRuntimeDesiredState(
 	let egressPrerequisiteActivated = false;
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
+		preparedHostedCatalogSkills,
 		commitAuthority: (committedConvergence, authority) => {
 			if (opts.requireSystemdApplied && !systemdApply.applied) {
 				throw new Error("systemd apply did not activate the rendered runtime manifest");

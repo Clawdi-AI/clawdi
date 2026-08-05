@@ -942,19 +942,19 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(3);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(5);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(3);
+	).toHaveCount(5);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0]);
+	).toEqual([0, 0, 0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		3,
+		5,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -968,7 +968,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "memories", "connectors"]);
+	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	expect(
 		await page
 			.locator("#connected-recent-sessions, #agent-overview-resources")
@@ -981,8 +981,14 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.getByText("Default Project", { exact: true })).toHaveCount(0);
 	await expect(overview.getByTestId("agent-project-grid")).toHaveCount(0);
 	expect(projectRequests).toHaveLength(1);
-	expect(skillRequests).toEqual([]);
-	expect(vaultRequests).toEqual([]);
+	expect(skillRequests).toHaveLength(1);
+	expect(new URL(skillRequests[0] ?? "http://invalid").searchParams.get("project_id")).toBe(
+		"project-smoke",
+	);
+	expect(vaultRequests).toHaveLength(1);
+	expect(new URL(vaultRequests[0] ?? "http://invalid").searchParams.get("project_id")).toBe(
+		"project-smoke",
+	);
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText(
 		"smoke-machine.local",
 	);
@@ -1058,8 +1064,14 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	).toBeLessThanOrEqual(2);
 	await expect(overview.locator('[data-slot="badge"]')).toHaveCount(0);
 	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="skills"]')).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("1 skill");
+	await expect(overview.locator('[data-overview-module="vaults"]')).toContainText("1 vault");
+	await expect(
+		overview.locator('[data-overview-module="skills"]').getByRole("link", { name: "Skills" }),
+	).toHaveAttribute("href", "/agents/agent-smoke-1/project-access/project-smoke/skills");
+	await expect(
+		overview.locator('[data-overview-module="vaults"]').getByRole("link", { name: "Vaults" }),
+	).toHaveAttribute("href", "/agents/agent-smoke-1/project-access/project-smoke/vaults");
 	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
 	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText(
 		"2 connected",
@@ -1089,14 +1101,14 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(skillsLink).toHaveAttribute("data-active", "");
 	await expect(vaultsLink).not.toHaveAttribute("data-active", "");
 	await page.goto("/agents/agent-smoke-1");
-	await expect(overview.locator("[data-overview-module]")).toHaveCount(3);
+	await expect(overview.locator("[data-overview-module]")).toHaveCount(5);
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	const resourceGrid = overview.locator('[data-overview-layout="three-column"]');
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(3);
+	expect(resourceGeometry).toHaveLength(5);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -1118,15 +1130,15 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await resourceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "memories", "connectors"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3]);
+	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));

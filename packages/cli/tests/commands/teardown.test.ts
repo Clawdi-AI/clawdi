@@ -126,7 +126,7 @@ function installOpenClawStub(): string {
 	const openclawPath = join(stubDir, "openclaw");
 	writeFileSync(
 		openclawPath,
-		'#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
+		'#!/bin/sh\nif [ "$*" = "agents list --json" ]; then printf \'[{"id":"main","workspace":"%s/.openclaw/agents/main"}]\\n\' "$HOME"; exit 0; fi\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
 		{
 			mode: 0o755,
 		},

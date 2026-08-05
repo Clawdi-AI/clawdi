@@ -601,7 +601,7 @@ export default function ProjectDetailPage({
 					isAgentScope
 						? isWorkspace
 							? focus === "skills"
-								? "Skills installed in this Agent's Workspace. Cloud projection content is read-only."
+								? "Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
 								: focus === "vaults"
 									? "Vaults attached to this Agent's Workspace."
 									: "This Agent's fixed Workspace for installed Skills and attached Vaults."
