@@ -10,6 +10,16 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.37
+
+Package: `clawdi@0.13.37`
+
+### Fixed
+
+- Hosted runtime convergence now uses the standard `runuser` fallback for
+  runtime-user CA checks and systemd operations when an image intentionally
+  omits `gosu`.
+
 ## Clawdi CLI v0.13.36
 
 Package: `clawdi@0.13.36`

@@ -25,6 +25,29 @@ export function commandResolvable(command: string): boolean {
 	return isAbsolute(command) ? executableExists(command) : commandExists(command);
 }
 
+export function buildRuntimeUserCommand(
+	currentUid: number | undefined,
+	runtimeUid: number,
+	runtimeUser: string,
+	command: string,
+	args: string[],
+	isCommandAvailable: (name: string) => boolean = commandExists,
+): { command: string; args: string[] } {
+	if (currentUid === runtimeUid) return { command, args };
+	if (currentUid !== 0) {
+		throw new Error(
+			`cannot run command as runtime user ${runtimeUser}: current uid ${String(currentUid)} is not root`,
+		);
+	}
+	if (isCommandAvailable("gosu")) {
+		return { command: "gosu", args: [runtimeUser, command, ...args] };
+	}
+	if (isCommandAvailable("runuser")) {
+		return { command: "runuser", args: ["-u", runtimeUser, "--", command, ...args] };
+	}
+	throw new Error(`cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`);
+}
+
 export function runningAsRoot(): boolean {
 	return typeof process.geteuid === "function" && process.geteuid() === 0;
 }

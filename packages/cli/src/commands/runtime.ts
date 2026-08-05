@@ -59,7 +59,11 @@ import {
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
-import { runtimeUserUid } from "../runtime/runtime-user-command";
+import {
+	buildRuntimeUserCommand,
+	commandExists,
+	runtimeUserUid,
+} from "../runtime/runtime-user-command";
 import {
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
@@ -1717,14 +1721,13 @@ function runtimeUserSystemctlResult(
 	const runtimeUser = runtimeUserName();
 	if (process.getuid?.() === 0 && runtimeUser !== "root") {
 		const uid = commandOutput("id", ["-u", runtimeUser]).trim();
-		return runCommandResult("gosu", [
-			runtimeUser,
-			"env",
+		const child = buildRuntimeUserCommand(process.getuid?.(), Number(uid), runtimeUser, "env", [
 			...runtimeUserSystemdEnvArgs(paths, runtimeUser, uid),
 			"systemctl",
 			"--user",
 			...args,
 		]);
+		return runCommandResult(child.command, child.args);
 	}
 	return runCommandResult(systemctlPath(), ["--user", ...args]);
 }
@@ -1741,10 +1744,16 @@ export function buildRuntimeUserReadCommand(
 	runtimeUid: number,
 	runtimeUser: string,
 	path: string,
+	isCommandAvailable: (name: string) => boolean = commandExists,
 ): { command: string; args: string[] } {
-	return currentUid === runtimeUid
-		? { command: "test", args: ["-r", path] }
-		: { command: "gosu", args: [runtimeUser, "test", "-r", path] };
+	return buildRuntimeUserCommand(
+		currentUid,
+		runtimeUid,
+		runtimeUser,
+		"test",
+		["-r", path],
+		isCommandAvailable,
+	);
 }
 
 function commandOutput(command: string, args: string[]): string {
