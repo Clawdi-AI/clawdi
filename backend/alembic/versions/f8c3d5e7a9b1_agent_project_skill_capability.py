@@ -20,19 +20,59 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column(
         "agent_environments",
+        sa.Column("connected_agent_registered_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "agent_environments",
         sa.Column("project_skill_reconcile_version", sa.Integer(), nullable=True),
+    )
+    op.add_column(
+        "agent_environments",
+        sa.Column("project_skill_reconcile_observed_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.create_check_constraint(
+        "ck_agent_envs_connected_registration_origin",
+        "agent_environments",
+        "connected_agent_registered_at IS NULL OR registration_key IS NOT NULL",
     )
     op.create_check_constraint(
         "ck_agent_environments_project_skill_reconcile_version",
         "agent_environments",
-        "project_skill_reconcile_version IS NULL OR project_skill_reconcile_version >= 1",
+        "project_skill_reconcile_version IS NULL OR project_skill_reconcile_version = 1",
+    )
+    op.create_check_constraint(
+        "ck_agent_environments_project_skill_reconcile_eligibility",
+        "agent_environments",
+        "project_skill_reconcile_version IS NULL OR connected_agent_registered_at IS NOT NULL",
+    )
+    op.create_check_constraint(
+        "ck_agent_environments_project_skill_reconcile_observation",
+        "agent_environments",
+        "(project_skill_reconcile_version IS NULL) = (project_skill_reconcile_observed_at IS NULL)",
     )
 
 
 def downgrade() -> None:
     op.drop_constraint(
+        "ck_agent_environments_project_skill_reconcile_observation",
+        "agent_environments",
+        type_="check",
+    )
+    op.drop_constraint(
+        "ck_agent_environments_project_skill_reconcile_eligibility",
+        "agent_environments",
+        type_="check",
+    )
+    op.drop_constraint(
         "ck_agent_environments_project_skill_reconcile_version",
         "agent_environments",
         type_="check",
     )
+    op.drop_column("agent_environments", "project_skill_reconcile_observed_at")
     op.drop_column("agent_environments", "project_skill_reconcile_version")
+    op.drop_constraint(
+        "ck_agent_envs_connected_registration_origin",
+        "agent_environments",
+        type_="check",
+    )
+    op.drop_column("agent_environments", "connected_agent_registered_at")

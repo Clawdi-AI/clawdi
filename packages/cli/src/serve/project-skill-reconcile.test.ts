@@ -57,7 +57,10 @@ describe("Connected Project Skill reconcile", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	async function desiredSkill(skillKey: string, marker: string): Promise<{
+	async function desiredSkill(
+		skillKey: string,
+		marker: string,
+	): Promise<{
 		desired: Desired;
 		archive: Buffer;
 	}> {
@@ -80,12 +83,20 @@ describe("Connected Project Skill reconcile", () => {
 		};
 	}
 
-	function serveInventory(skills: Array<{ desired: Desired; archive: Buffer }>): string[] {
+	function serveInventory(skills: Array<{ desired: Desired; archive: Buffer }>): {
+		archiveRequests: string[];
+		capabilityReports: string[];
+	} {
 		const archiveRequests: string[] = [];
+		const capabilityReports: string[] = [];
 		const byHash = new Map(skills.map(({ desired, archive }) => [desired.content_hash, archive]));
 		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 			const request = input instanceof Request ? input : new Request(input, init);
 			const url = new URL(request.url);
+			if (url.pathname === "/v1/runtime/project-skill-capability") {
+				capabilityReports.push(await request.text());
+				return new Response(null, { status: 204 });
+			}
 			if (url.pathname === "/v1/runtime/project-skills") {
 				return new Response(
 					JSON.stringify({ agent_id: agentId, skills: skills.map(({ desired }) => desired) }),
@@ -101,12 +112,12 @@ describe("Connected Project Skill reconcile", () => {
 					})
 				: new Response("missing", { status: 404 });
 		}) as typeof fetch;
-		return archiveRequests;
+		return { archiveRequests, capabilityReports };
 	}
 
 	it("installs the complete desired inventory through the existing adapter and records ownership", async () => {
 		const alpha = await desiredSkill("alpha", "Alpha");
-		const requests = serveInventory([alpha]);
+		const { archiveRequests, capabilityReports } = serveInventory([alpha]);
 		const adapter = new CodexAdapter();
 
 		await reconcileConnectedProjectSkills({
@@ -116,22 +127,25 @@ describe("Connected Project Skill reconcile", () => {
 		});
 
 		expect(readFileSync(adapter.getSkillPath("alpha"), "utf8")).toContain("# Alpha");
-		expect(requests).toHaveLength(1);
-		expect(
-			readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "alpha" }),
-		).toEqual({
-			agent_type: "codex",
-			local_skill_key: "alpha",
-			source_project_id: projectId,
-			source_skill_key: "alpha",
-			content_hash: alpha.desired.content_hash,
-			reconcile_agent_id: agentId,
-		});
+		expect(archiveRequests).toHaveLength(1);
+		expect(capabilityReports.map((body) => JSON.parse(body))).toEqual([
+			{ project_skill_reconcile_version: 1 },
+		]);
+		expect(readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "alpha" })).toEqual(
+			{
+				agent_type: "codex",
+				local_skill_key: "alpha",
+				source_project_id: projectId,
+				source_skill_key: "alpha",
+				content_hash: alpha.desired.content_hash,
+				reconcile_agent_id: agentId,
+			},
+		);
 	});
 
 	it("fails closed on an unowned local collision without downloading or overwriting", async () => {
 		const alpha = await desiredSkill("alpha", "Cloud");
-		const requests = serveInventory([alpha]);
+		const { archiveRequests } = serveInventory([alpha]);
 		const adapter = new CodexAdapter();
 		mkdirSync(join(process.env.CODEX_HOME ?? "", "skills", "alpha"), { recursive: true });
 		writeFileSync(adapter.getSkillPath("alpha"), "# Local Workspace Skill\n");
@@ -143,10 +157,8 @@ describe("Connected Project Skill reconcile", () => {
 				adapter,
 			}),
 		).rejects.toThrow("already exists in this Agent's Workspace");
-		expect(readFileSync(adapter.getSkillPath("alpha"), "utf8")).toBe(
-			"# Local Workspace Skill\n",
-		);
-		expect(requests).toHaveLength(0);
+		expect(readFileSync(adapter.getSkillPath("alpha"), "utf8")).toBe("# Local Workspace Skill\n");
+		expect(archiveRequests).toHaveLength(0);
 	});
 
 	it("removes only exact daemon-owned materializations", async () => {

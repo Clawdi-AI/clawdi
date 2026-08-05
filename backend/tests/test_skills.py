@@ -1432,7 +1432,7 @@ async def test_list_skills_releases_db_transaction_before_inline_content_fetch(
             await self._delegate.put(key, data, content_type)
 
         async def get(self, key: str) -> bytes:
-            assert key.endswith("/inline.tar.gz")
+            assert key.endswith(f"/{upload.json()['content_hash']}.tar.gz")
             assert not db_session.in_transaction()
             return tar_bytes
 

@@ -49,6 +49,12 @@ def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
 
 
+def _is_object_collection(
+    value: object,
+) -> TypeGuard[list[object] | tuple[object, ...] | set[object]]:
+    return isinstance(value, (list, tuple, set))
+
+
 def validate_tar(data: bytes) -> int:
     """Validate a tar.gz archive. Returns file count.
 
@@ -241,14 +247,14 @@ def _preservable_frontmatter(content: str) -> dict[object, object]:
             if "\x00" in value:
                 raise SkillTextValidationError("Skill frontmatter must not contain NUL characters")
             continue
-        if isinstance(value, dict):
+        if _is_object_dict(value):
             identity = id(value)
             if identity in seen:
                 continue
             seen.add(identity)
             pending.extend(value.keys())
             pending.extend(value.values())
-        elif isinstance(value, (list, tuple, set)):
+        elif _is_object_collection(value):
             identity = id(value)
             if identity in seen:
                 continue

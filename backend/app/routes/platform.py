@@ -810,7 +810,9 @@ async def platform_upsert_runtime_state(
         request=request,
         idempotency_key=idempotency_key,
     )
-    new_workspace_skill_keys = set(body.skills.entries) if body.skills is not None else set()
+    new_workspace_skill_keys: set[str] = (
+        set(body.skills.entries) if body.skills is not None else set()
+    )
     await assert_agent_workspace_skill_write_compatible(
         db,
         agent_id=agent_id,

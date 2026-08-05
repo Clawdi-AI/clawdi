@@ -3,27 +3,37 @@ from __future__ import annotations
 import hmac
 import io
 import tarfile
+from datetime import UTC, datetime
 from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_cli_auth
+from app.core.auth import (
+    AuthContext,
+    is_connected_agent_principal,
+    require_auth_scopes,
+    require_cli_auth,
+)
 from app.core.config import settings
 from app.core.database import get_runtime_snapshot_session, get_session
 from app.models.agent_project_binding import AgentProjectBinding
+from app.models.api_key import ApiKey
+from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
+from app.schemas.runtime import ProjectSkillCapabilityReport
 from app.schemas.session import AgentProjectSkillDesiredItem, AgentProjectSkillDesiredResponse
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
     MAX_AGENT_PROJECT_SKILLS,
+    agent_supports_project_skills,
     assert_agent_project_skill_total,
     project_skill_file_signature,
 )
@@ -108,6 +118,67 @@ def _authorized_environment_id(auth: AuthContext, requested_environment_id: UUID
     return requested_environment_id
 
 
+@router.put("/project-skill-capability", status_code=status.HTTP_204_NO_CONTENT)
+async def report_project_skill_capability(
+    body: ProjectSkillCapabilityReport,
+    requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
+    auth: AuthContext = Depends(require_cli_auth),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Renew the short-lived Connected Project Skill reconciliation lease."""
+    require_auth_scopes(auth, "skills:write")
+    agent_id = _authorized_environment_id(auth, requested_environment_id)
+    agent = await _connected_agent(db, auth=auth, agent_id=agent_id)
+    agent.project_skill_reconcile_version = body.project_skill_reconcile_version
+    agent.project_skill_reconcile_observed_at = datetime.now(UTC)
+    await db.commit()
+
+
+async def _connected_agent(
+    db: AsyncSession,
+    *,
+    auth: AuthContext,
+    agent_id: UUID,
+) -> AgentEnvironment:
+    has_environment_bound_key = exists().where(
+        ApiKey.environment_id == AgentEnvironment.id,
+    )
+    row = (
+        await db.execute(
+            select(AgentEnvironment, HostedRuntimeState, has_environment_bound_key)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == auth.user_id,
+                AgentEnvironment.archived_at.is_(None),
+            )
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    agent, hosted_v2_state, has_environment_bound_key = row
+    if (
+        not is_connected_agent_principal(auth)
+        or agent.registration_key is None
+        or agent.connected_agent_registered_at is None
+        or hosted_v2_state is not None
+        or has_environment_bound_key
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "connected_agent_required",
+                "message": (
+                    "Project Skill capability reports are only accepted from Connected Agents."
+                ),
+            },
+        )
+    return agent
+
+
 @router.get("/project-skills", response_model=AgentProjectSkillDesiredResponse)
 async def get_agent_project_skills(
     requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
@@ -115,7 +186,22 @@ async def get_agent_project_skills(
     db: AsyncSession = Depends(get_session),
 ) -> AgentProjectSkillDesiredResponse:
     """Return one Agent's complete linked-Project Skill inventory."""
+    require_auth_scopes(auth, "skills:read")
     agent_id = _authorized_environment_id(auth, requested_environment_id)
+    agent = await _connected_agent(db, auth=auth, agent_id=agent_id)
+    if not agent_supports_project_skills(
+        agent,
+        None,
+        None,
+        has_environment_bound_key=False,
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "project_skill_delivery_update_required",
+                "message": "Update this Agent, then try again.",
+            },
+        )
     membership = ProjectMembership.__table__.alias("desired_project_skill_membership")
     rows = (
         (

@@ -28,6 +28,15 @@ HostedRuntimeLanguage = Literal[
 ]
 HostedRuntimeName = Literal["openclaw", "hermes"]
 
+
+class ProjectSkillCapabilityReport(BaseModel):
+    """Current Connected Agent observation, separate from deployment generations."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    project_skill_reconcile_version: Literal[1]
+
+
 _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _EGRESS_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _EGRESS_PROFILE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_.]*$")

@@ -29,12 +29,14 @@ from app.core.auth import (
     AuthContext,
     get_auth,
     invalidate_api_key_auth_cache,
+    is_connected_agent_principal,
     require_scope,
     require_web_auth,
 )
 from app.core.config import settings
 from app.core.database import get_session, runtime_snapshot_session
 from app.models.agent_project_binding import AgentProjectBinding
+from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
@@ -90,6 +92,7 @@ from app.schemas.session import (
 )
 from app.services import memory_extraction
 from app.services.agent_environments import (
+    clear_connected_agent_registration,
     local_machine_registration_key,
     register_agent_environment,
 )
@@ -254,12 +257,32 @@ async def _register_agent_identity(
             os_name=body.os,
             sort_order=await _next_environment_sort_order(db, auth.user_id),
             registration_key=registration_key,
+            commit=False,
         )
     except IntegrityError:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "concurrent registration race; retry the request",
         ) from None
+    connected_registration = False
+    if is_connected_agent_principal(auth):
+        hosted_state = await db.get(HostedRuntimeState, registered.env.id)
+        environment_bound_key_id = await db.scalar(
+            select(ApiKey.id).where(ApiKey.environment_id == registered.env.id).limit(1)
+        )
+        connected_registration = hosted_state is None and environment_bound_key_id is None
+    if connected_registration:
+        # This is origin evidence, not capability evidence. A current Connected
+        # Agent must still renew its separate short-lived Project Skill lease.
+        # Existing Hosted V2 state or a Legacy V1 environment-bound key is
+        # positive deployment evidence and prevents an account-level CLI token
+        # from reclassifying that durable Agent identity.
+        registered.env.connected_agent_registered_at = datetime.now(UTC)
+    else:
+        # A managed or environment-bound registration is positive evidence
+        # against the Connected runtime shape; do not retain an earlier lease.
+        clear_connected_agent_registration(registered.env)
+    await db.commit()
     return EnvironmentCreatedResponse(id=str(registered.env.id))
 
 
@@ -1777,7 +1800,6 @@ class SyncHeartbeatRequest(BaseModel):
     # boundary defense, not a regression for correct clients.
     queue_depth: int | None = Field(default=None, ge=0)
     dropped_count_delta: int | None = Field(default=None, ge=0)
-    project_skill_reconcile_version: int | None = Field(default=None, ge=1, le=1)
     runtime_observed: HostedRuntimeObserved | None = None
 
     @field_validator("runtime_observed", mode="before")
@@ -1917,7 +1939,6 @@ async def sync_heartbeat(
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
-    new_project_skill_reconcile_version = body.project_skill_reconcile_version
     runtime_observed = body.runtime_observed
     hosted_state = None
     observation = None
@@ -1951,7 +1972,6 @@ async def sync_heartbeat(
         )
         or bool(body.dropped_count_delta)
         or not env.sync_enabled
-        or env.project_skill_reconcile_version != new_project_skill_reconcile_version
         or observed_changed
     )
     # Even with no state change, refresh last_sync_at on a bounded
@@ -1966,7 +1986,6 @@ async def sync_heartbeat(
         return
     env.last_sync_at = now
     env.last_sync_error = new_error
-    env.project_skill_reconcile_version = new_project_skill_reconcile_version
     if new_revision is not None:
         env.last_revision_seen = new_revision
     if body.queue_depth is not None and body.queue_depth > env.queue_depth_high_water_since_start:

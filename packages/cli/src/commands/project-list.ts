@@ -106,7 +106,7 @@ export async function projectListCommand(opts: {
 		if (!opts.includeEnvs && environmentProjects.length > 0 && !opts.sharedWithMe) {
 			console.log(
 				chalk.gray(
-						`Hidden Agent Workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
+					`Hidden Agent Workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
 				),
 			);
 		}

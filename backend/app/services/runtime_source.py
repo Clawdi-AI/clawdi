@@ -276,11 +276,12 @@ async def load_runtime_source_batch(
                 runtime_row.environment,
                 runtime_row.state,
                 runtime_row.observation,
+                has_environment_bound_key=False,
             )
         ):
             # Existing Vault-only bindings predate Project Skill delivery. Keep
             # those links usable, but never render the new source shape until
-            # this exact Hosted Agent has proven a compatible, Ready CLI.
+            # this exact Hosted V2 deployment has proven a compatible, Ready CLI.
             continue
         project_skills.setdefault(environment_id, []).append(
             RuntimeProjectSkill(
@@ -312,7 +313,7 @@ def _project_runtime_skills(
     entries: dict[str, Any] = {}
     if workspace_skills is not None:
         raw_entries = workspace_skills.get("entries")
-        if not isinstance(raw_entries, dict):
+        if not _is_string_object_dict(raw_entries):
             raise RuntimeSourceError("Hosted runtime skills state is invalid")
         entries.update(raw_entries)
 

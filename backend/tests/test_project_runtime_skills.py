@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 import httpx
@@ -15,12 +16,14 @@ from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.routes import skills as skill_routes
 from app.routes.skills import _compute_file_tree_hash
 from app.services import project_runtime_skills
 from app.services.file_store import get_file_store
+from app.services.project_runtime_skills import CONNECTED_PROJECT_SKILL_CAPABILITY_TTL
 from app.services.runtime_source import (
     load_runtime_source_batch,
     render_runtime_source,
@@ -68,6 +71,61 @@ async def _link(
         f"/v1/agents/{agent_id}/project-bindings/context",
         json={"project_id": str(project_id)},
     )
+
+
+def _set_auth(auth: AuthContext) -> None:
+    async def current_auth() -> AuthContext:
+        return auth
+
+    app.dependency_overrides[get_auth] = current_auth
+    app.dependency_overrides[get_auth_short_session] = current_auth
+
+
+def _connected_agent_auth(user: User) -> AuthContext:
+    return AuthContext(
+        user=user,
+        api_key=ApiKey(
+            user_id=user.id,
+            key_hash="0" * 64,
+            key_prefix="clawdi_test",
+            label="test",
+            environment_id=None,
+            scopes=["skills:read", "skills:write"],
+            managed=False,
+        ),
+    )
+
+
+async def _report_connected_project_skill_capability(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    *,
+    user: User,
+    agent_id: uuid.UUID,
+) -> httpx.Response:
+    _set_auth(_connected_agent_auth(user))
+    try:
+        agent = await db_session.get(AgentEnvironment, agent_id)
+        assert agent is not None
+        registered = await client.post(
+            "/v1/agents",
+            json={
+                "machine_id": agent.machine_id,
+                "machine_name": agent.machine_name,
+                "agent_type": agent.agent_type,
+                "agent_version": agent.agent_version,
+                "os": agent.os,
+            },
+        )
+        assert registered.status_code == 200, registered.text
+        assert registered.json()["id"] == str(agent_id)
+        return await client.put(
+            "/v1/runtime/project-skill-capability",
+            params={"environment_id": str(agent_id)},
+            json={"project_skill_reconcile_version": 1},
+        )
+    finally:
+        _set_auth(AuthContext(user=user))
 
 
 async def _make_runtime_renderable(
@@ -238,11 +296,13 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
         "message": "Update this Agent, then try again.",
     }
 
-    heartbeat = await client.post(
-        f"/v1/agents/{environment_project.origin_environment_id}/sync-heartbeat",
-        json={"project_skill_reconcile_version": 1},
+    capability = await _report_connected_project_skill_capability(
+        client,
+        db_session,
+        user=seed_user,
+        agent_id=environment_project.origin_environment_id,
     )
-    assert heartbeat.status_code == 204, heartbeat.text
+    assert capability.status_code == 204, capability.text
 
     connected_workspace_conflict = Project(
         user_id=seed_user.id,
@@ -299,15 +359,26 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
     )
     assert connected_link.status_code == 200, connected_link.text
 
-    # An older daemon omits the explicit capability field. Every heartbeat
-    # rewrites the evidence, so a downgrade fails closed for subsequent
-    # Project Skill additions and removals without disturbing the existing
+    # A downgraded Connected Agent still emits the byte-frozen heartbeat contract,
+    # but it cannot renew the separate Project Skill lease. Once that observation
+    # is stale, every graph mutation fails closed without disturbing the existing
     # linked Project or its Vault access.
     downgraded = await client.post(
         f"/v1/agents/{environment_project.origin_environment_id}/sync-heartbeat",
         json={},
     )
     assert downgraded.status_code == 204, downgraded.text
+    connected_agent = await db_session.get(
+        AgentEnvironment,
+        environment_project.origin_environment_id,
+    )
+    assert connected_agent is not None
+    assert connected_agent.connected_agent_registered_at is not None
+    assert connected_agent.project_skill_reconcile_version == 1
+    connected_agent.project_skill_reconcile_observed_at = (
+        datetime.now(UTC) - CONNECTED_PROJECT_SKILL_CAPABILITY_TTL - timedelta(seconds=1)
+    )
+    await db_session.commit()
     rejected_connected_write = await _upload_project_skill(
         client,
         workspace_project.id,
@@ -335,6 +406,38 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
             )
         )
     ).scalar_one_or_none() is not None
+
+    _set_auth(
+        AuthContext(
+            user=seed_user,
+            api_key=ApiKey(
+                user_id=seed_user.id,
+                key_hash="1" * 64,
+                key_prefix="clawdi_test",
+                label="stale-connected-agent",
+                environment_id=environment_project.origin_environment_id,
+                scopes=["skills:read", "skills:write"],
+                managed=False,
+            ),
+        )
+    )
+    stale_workspace_write = await client.post(
+        f"/v1/agents/{environment_project.origin_environment_id}/skills/sync/upload",
+        data={"skill_key": "stale-workspace-write"},
+        files={
+            "file": (
+                "stale-workspace-write.tar.gz",
+                _skill_archive("stale-workspace-write"),
+                "application/gzip",
+            )
+        },
+    )
+    _set_auth(AuthContext(user=seed_user))
+    assert stale_workspace_write.status_code == 409, stale_workspace_write.text
+    assert stale_workspace_write.json()["detail"] == {
+        "code": "project_skill_delivery_update_required",
+        "message": "Update this Agent, then try again.",
+    }
 
     empty_project = Project(
         user_id=seed_user.id,
@@ -366,8 +469,142 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
 
 
 @pytest.mark.asyncio
+async def test_connected_capability_report_rejects_hosted_v2_deployment(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    _set_auth(_connected_agent_auth(seed_user))
+    try:
+        hosted_v2_report = await client.put(
+            "/v1/runtime/project-skill-capability",
+            params={"environment_id": str(channel_agent.id)},
+            json={"project_skill_reconcile_version": 1},
+        )
+    finally:
+        _set_auth(AuthContext(user=seed_user))
+    assert hosted_v2_report.status_code == 409, hosted_v2_report.text
+    assert hosted_v2_report.json()["detail"]["code"] == "connected_agent_required"
+    await db_session.refresh(channel_agent)
+    assert channel_agent.connected_agent_registered_at is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_v1_hosted_identity_cannot_report_or_read_project_desired(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    environment_project: Project,
+):
+    legacy_v1_agent_id = environment_project.origin_environment_id
+    assert legacy_v1_agent_id is not None
+    legacy_v1_agent = await db_session.get(AgentEnvironment, legacy_v1_agent_id)
+    assert legacy_v1_agent is not None
+    # Historical Admin registration without an explicit environment_id used
+    # this same implicit registration shape. Legacy V1 Hosted then ran with a
+    # persisted environment-bound key; managed=False/scopes=None was supported.
+    # See _admin_register_environment and test_deploy_key_minted_with_full_access_by_default.
+    assert legacy_v1_agent.registration_key is not None
+    legacy_v1_runtime_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="2" * 64,
+        key_prefix="clawdi_test",
+        label="legacy-v1-hosted",
+        environment_id=legacy_v1_agent_id,
+        scopes=None,
+        managed=False,
+    )
+    db_session.add(legacy_v1_runtime_key)
+    await db_session.commit()
+
+    _set_auth(AuthContext(user=seed_user, api_key=legacy_v1_runtime_key))
+    legacy_v1_reregister = await client.post(
+        "/v1/agents",
+        json={
+            "machine_id": legacy_v1_agent.machine_id,
+            "machine_name": legacy_v1_agent.machine_name,
+            "agent_type": legacy_v1_agent.agent_type,
+            "agent_version": legacy_v1_agent.agent_version,
+            "os": legacy_v1_agent.os,
+        },
+    )
+    assert legacy_v1_reregister.status_code == 200, legacy_v1_reregister.text
+    await db_session.refresh(legacy_v1_agent)
+    assert legacy_v1_agent.connected_agent_registered_at is None
+
+    # The durable Agent identity must win even if the caller itself is a valid
+    # unbound OAuth CLI principal. Otherwise an account-level token could turn
+    # a Legacy V1 Hosted row into a Connected Agent by registering or reporting once.
+    _set_auth(
+        AuthContext(
+            user=seed_user,
+            oauth_cli=True,
+            oauth_access_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+    )
+    oauth_reregister = await client.post(
+        "/v1/agents",
+        json={
+            "machine_id": legacy_v1_agent.machine_id,
+            "machine_name": legacy_v1_agent.machine_name,
+            "agent_type": legacy_v1_agent.agent_type,
+            "agent_version": legacy_v1_agent.agent_version,
+            "os": legacy_v1_agent.os,
+        },
+    )
+    assert oauth_reregister.status_code == 200, oauth_reregister.text
+    assert oauth_reregister.json()["id"] == str(legacy_v1_agent_id)
+    await db_session.refresh(legacy_v1_agent)
+    assert legacy_v1_agent.connected_agent_registered_at is None
+
+    legacy_v1_report = await client.put(
+        "/v1/runtime/project-skill-capability",
+        params={"environment_id": str(legacy_v1_agent_id)},
+        json={"project_skill_reconcile_version": 1},
+    )
+    assert legacy_v1_report.status_code == 409, legacy_v1_report.text
+    assert legacy_v1_report.json()["detail"]["code"] == "connected_agent_required"
+    legacy_v1_desired = await client.get(
+        "/v1/runtime/project-skills",
+        params={"environment_id": str(legacy_v1_agent_id)},
+    )
+    assert legacy_v1_desired.status_code == 409, legacy_v1_desired.text
+    assert legacy_v1_desired.json()["detail"]["code"] == "connected_agent_required"
+
+    # Removing the historical runtime key must not turn absence of negative
+    # evidence into Connected eligibility. The positive origin marker is still
+    # NULL because the attempted self-managed registration was not eligible.
+    await db_session.delete(legacy_v1_runtime_key)
+    await db_session.commit()
+    report_after_key_removal = await client.put(
+        "/v1/runtime/project-skill-capability",
+        params={"environment_id": str(legacy_v1_agent_id)},
+        json={"project_skill_reconcile_version": 1},
+    )
+    _set_auth(AuthContext(user=seed_user))
+    assert report_after_key_removal.status_code == 409, report_after_key_removal.text
+    assert report_after_key_removal.json()["detail"]["code"] == "connected_agent_required"
+    await db_session.refresh(legacy_v1_agent)
+    assert legacy_v1_agent.connected_agent_registered_at is None
+    assert legacy_v1_agent.project_skill_reconcile_version is None
+    assert legacy_v1_agent.project_skill_reconcile_observed_at is None
+
+    uploaded = await _upload_project_skill(client, workspace_project.id, "legacy-v1-closed")
+    assert uploaded.status_code == 200, uploaded.text
+    rejected_link = await _link(
+        client,
+        agent_id=legacy_v1_agent_id,
+        project_id=workspace_project.id,
+    )
+    assert rejected_link.status_code == 409, rejected_link.text
+    assert rejected_link.json()["detail"]["code"] == "project_skill_delivery_update_required"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("unsupported_evidence", ["unobserved", "old-cli"])
-async def test_unsupported_hosted_agent_rejects_link_and_project_skill_render(
+async def test_unsupported_hosted_v2_deployment_rejects_link_and_project_skill_render(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
@@ -408,7 +645,7 @@ async def test_unsupported_hosted_agent_rejects_link_and_project_skill_render(
 
     # Links created before this source shape existed may already be present.
     # Preserve their Vault access, but do not expose Project Skill intent to an
-    # old or unobserved Hosted CLI merely because the binding row exists.
+    # old or unobserved Hosted V2 CLI merely because the binding row exists.
     db_session.add(
         AgentProjectBinding(
             agent_id=channel_agent.id,
@@ -453,11 +690,13 @@ async def test_agent_workspace_upload_rejects_linked_project_key_before_projecti
     assert agent_id is not None
     uploaded = await _upload_project_skill(client, workspace_project.id, "shared-key")
     assert uploaded.status_code == 200, uploaded.text
-    heartbeat = await client.post(
-        f"/v1/agents/{agent_id}/sync-heartbeat",
-        json={"project_skill_reconcile_version": 1},
+    capability = await _report_connected_project_skill_capability(
+        client,
+        db_session,
+        user=seed_user,
+        agent_id=agent_id,
     )
-    assert heartbeat.status_code == 204, heartbeat.text
+    assert capability.status_code == 204, capability.text
     linked = await _link(client, agent_id=agent_id, project_id=workspace_project.id)
     assert linked.status_code == 200, linked.text
 

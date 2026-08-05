@@ -93,6 +93,7 @@ from app.schemas.platform import PlatformOwner
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
+    clear_connected_agent_registration,
     local_machine_registration_key,
     register_agent_environment,
 )
@@ -1624,8 +1625,13 @@ async def _admin_register_environment(
             registration_key=None
             if body.environment_id is not None
             else local_machine_registration_key(body.machine_id, body.agent_type),
+            commit=False,
         )
         env = registered.env
+        # Admin registration is a hosted/managed origin, including the
+        # historical implicit Legacy V1 shape that had registration_key.
+        clear_connected_agent_registration(env)
+        await db.commit()
     except AgentEnvironmentIdConflict as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
@@ -1829,7 +1835,9 @@ async def _admin_upsert_runtime_state(
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
 
-    new_workspace_skill_keys = set(body.skills.entries) if body.skills is not None else set()
+    new_workspace_skill_keys: set[str] = (
+        set(body.skills.entries) if body.skills is not None else set()
+    )
     await assert_agent_workspace_skill_write_compatible(
         db,
         agent_id=environment_id,

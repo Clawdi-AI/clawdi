@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { AgentAdapter } from "../adapters/base";
-import { ApiClient, unwrap } from "../lib/api-client";
+import { type ApiClient, unwrap } from "../lib/api-client";
 import { readBoundedResponseBytes } from "../lib/github-skill-archive";
 import {
 	commitProjectSkillMaterialization,
@@ -140,12 +140,19 @@ export async function reconcileConnectedProjectSkills(input: {
 		"agentType" | "getSkillPath" | "listSkillKeys" | "writeSkillArchive" | "removeLocalSkill"
 	>;
 }): Promise<void> {
+	unwrap(
+		await input.api.PUT("/v1/runtime/project-skill-capability", {
+			params: { query: { environment_id: input.agentId } },
+			body: { project_skill_reconcile_version: 1 },
+		}),
+	);
 	const response = unwrap(
 		await input.api.GET("/v1/runtime/project-skills", {
 			params: { query: { environment_id: input.agentId } },
 		}),
 	) as DesiredInventory;
-	if (response.agent_id !== input.agentId) throw new Error("Project Skill inventory Agent mismatch");
+	if (response.agent_id !== input.agentId)
+		throw new Error("Project Skill inventory Agent mismatch");
 	const desiredByKey = new Map<string, DesiredSkill>();
 	for (const desired of response.skills ?? []) {
 		if (desiredByKey.has(desired.skill_key)) {
@@ -195,7 +202,10 @@ export async function reconcileConnectedProjectSkills(input: {
 		if (!missingOwnedKeys.has(desired.skill_key) && hasExactProjectSkillMaterialization(next)) {
 			continue;
 		}
-		downloads.set(desired.skill_key, await downloadDesiredArchive(input.api, input.agentId, desired));
+		downloads.set(
+			desired.skill_key,
+			await downloadDesiredArchive(input.api, input.agentId, desired),
+		);
 	}
 	for (const receipt of ownedReceipts) {
 		if (!missingOwnedKeys.has(receipt.local_skill_key)) continue;

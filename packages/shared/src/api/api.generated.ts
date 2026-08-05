@@ -1571,6 +1571,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runtime/project-skill-capability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Report Project Skill Capability
+         * @description Renew the short-lived Connected Project Skill reconciliation lease.
+         */
+        put: operations["report_project_skill_capability_v1_runtime_project_skill_capability_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runtime/project-skills": {
         parameters: {
             query?: never;
@@ -6238,6 +6258,17 @@ export interface components {
              */
             member_count: number;
         };
+        /**
+         * ProjectSkillCapabilityReport
+         * @description Current Connected Agent observation, separate from deployment generations.
+         */
+        ProjectSkillCapabilityReport: {
+            /**
+             * Project Skill Reconcile Version
+             * @constant
+             */
+            project_skill_reconcile_version: 1;
+        };
         /** ProjectUpdate */
         ProjectUpdate: {
             /** Name */
@@ -7483,8 +7514,6 @@ export interface components {
             queue_depth?: number | null;
             /** Dropped Count Delta */
             dropped_count_delta?: number | null;
-            /** Project Skill Reconcile Version */
-            project_skill_reconcile_version?: number | null;
             runtime_observed?: components["schemas"]["HostedRuntimeObservedV2"] | null;
         };
         /**
@@ -10915,6 +10944,39 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_project_skill_capability_v1_runtime_project_skill_capability_put: {
+        parameters: {
+            query?: {
+                environment_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectSkillCapabilityReport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

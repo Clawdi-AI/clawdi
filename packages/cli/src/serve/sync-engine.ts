@@ -173,6 +173,12 @@ export function reconcileDelayMs(random: () => number = Math.random): number {
 	return Math.round(RECONCILE_INTERVAL_MS + offset);
 }
 
+export function connectedProjectSkillDeliveryEnabled(runtimeMode: string | undefined): boolean {
+	// `hosted` covers both Legacy V1 and Hosted V2 deployment processes.
+	// Neither deployment generation may use the Connected Agent capability lease.
+	return runtimeMode?.trim().toLowerCase() !== "hosted";
+}
+
 export function projectRefreshDelayMs(random: () => number = Math.random): number {
 	const offset = (random() - 0.5) * 2 * PROJECT_REFRESH_JITTER_MS;
 	return Math.round(PROJECT_REFRESH_INTERVAL_MS + offset);
@@ -285,8 +291,9 @@ interface EngineOpts {
 }
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
-	const connectedProjectSkillDelivery =
-		process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() !== "hosted";
+	const connectedProjectSkillDelivery = connectedProjectSkillDeliveryEnabled(
+		process.env.CLAWDI_RUNTIME_MODE,
+	);
 	// Pass the engine's abort signal so any in-flight HTTP call
 	// (heartbeat, project refresh, Skill projection, etc.) unwinds
 	// immediately when SSE auth fails or shutdown is requested,
@@ -897,7 +904,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// revision. Cloud bytes are never read or applied locally.
 		(async () => {
 			while (!opts.abort.aborted) {
-				await sleep(5 * 60_000, opts.abort);
+				await sleep(reconcileDelayMs(), opts.abort);
 				if (opts.abort.aborted) return;
 				try {
 					await reconcileProjectSkills();
@@ -2163,9 +2170,6 @@ async function heartbeatLoop(
 					dropped_count_delta: dropped,
 					last_revision_seen: fields.last_revision_seen,
 					last_sync_error: fields.last_sync_error,
-					...(process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() !== "hosted"
-						? { project_skill_reconcile_version: 1 }
-						: {}),
 					...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
 				},
 			});

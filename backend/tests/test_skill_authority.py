@@ -441,7 +441,10 @@ async def test_agent_project_cloud_content_and_install_mutations_fail_closed(
     environment_project,
 ):
     content_payload = {
-        "content": "---\nname: denied\ndescription: denied\n---\n# Denied\n",
+        "name": "Denied",
+        "description": "denied",
+        "instructions": "# Denied",
+        "content_hash": "0" * 64,
     }
     browser_content = await client.put(
         f"/v1/projects/{environment_project.id}/skills/denied/content",

@@ -1411,15 +1411,15 @@ projectCmd
 		async (opts: {
 			json?: boolean;
 			sharedWithMe?: boolean;
-				owned?: boolean;
-				includeEnvs?: boolean;
-				includeWorkspaces?: boolean;
-			}) => {
-				const { projectListCommand } = await import("./commands/project-list.js");
-				await projectListCommand({
-					...opts,
-					includeEnvs: opts.includeWorkspaces === true || opts.includeEnvs === true,
-				});
+			owned?: boolean;
+			includeEnvs?: boolean;
+			includeWorkspaces?: boolean;
+		}) => {
+			const { projectListCommand } = await import("./commands/project-list.js");
+			await projectListCommand({
+				...opts,
+				includeEnvs: opts.includeWorkspaces === true || opts.includeEnvs === true,
+			});
 		},
 	);
 
