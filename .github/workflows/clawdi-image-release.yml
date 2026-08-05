@@ -224,6 +224,8 @@ jobs:
         env:
           KAMAL_SECRETS: ${{ secrets.KAMAL_SECRETS }}
           CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: ${{ secrets.CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN }}
+          TS_AUTHKEY: ${{ secrets.WHATSAPP_TAILSCALE_AUTHKEY }}
+          WHATSAPP_TAILSCALE_EGRESS_ENABLED: ${{ vars.WHATSAPP_TAILSCALE_EGRESS_ENABLED }}
         run: |
           test -n "$CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN"
           case "$CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN" in
@@ -245,6 +247,26 @@ jobs:
           mv "$secrets_tmp" .kamal/secrets
           printf 'CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN=%s\n' \
             "$CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN" >> .kamal/secrets
+          if [ "$WHATSAPP_TAILSCALE_EGRESS_ENABLED" = true ]; then
+            case "$TS_AUTHKEY" in
+              *[!A-Za-z0-9_-]*|"")
+                echo "WHATSAPP_TAILSCALE_AUTHKEY has an invalid format" >&2
+                exit 1
+                ;;
+            esac
+            case "$TS_AUTHKEY" in
+              tskey-*) ;;
+              *)
+                echo "WHATSAPP_TAILSCALE_AUTHKEY has an invalid format" >&2
+                exit 1
+                ;;
+            esac
+            if [ "${#TS_AUTHKEY}" -lt 20 ] || [ "${#TS_AUTHKEY}" -gt 512 ]; then
+              echo "WHATSAPP_TAILSCALE_AUTHKEY has an invalid length" >&2
+              exit 1
+            fi
+            printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY" >> .kamal/secrets
+          fi
           chmod 600 .kamal/secrets
 
       - uses: ./.github/actions/setup-bun-ci
@@ -270,81 +292,11 @@ jobs:
           DEPLOY_SSH_PROXY_COMMAND: ${{ secrets.DEPLOY_SSH_PROXY_COMMAND }}
           DEPLOY_IMAGE_VERSION: ${{ needs.build.outputs.image_tag }}
           SIDECAR_REVISION: ${{ needs.build.outputs.sidecar_revision }}
+          WHATSAPP_TAILSCALE_EGRESS_ENABLED: ${{ vars.WHATSAPP_TAILSCALE_EGRESS_ENABLED }}
+          WHATSAPP_TAILSCALE_EXIT_NODE: ${{ vars.WHATSAPP_TAILSCALE_EXIT_NODE }}
+          WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP: ${{ vars.WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP }}
         run: |
           gem install kamal -v '2.12.0' --no-document
           test "$(kamal version)" = "2.12.0"
-          kamal accessory directories whatsapp-baileys
-          kamal server exec \
-            "test -d '/home/phala/clawdi-whatsapp/state' && \
-             test ! -L '/home/phala/clawdi-whatsapp/state' && \
-             test \"\$(realpath -e '/home/phala/clawdi-whatsapp/state')\" = \
-               '/home/phala/clawdi-whatsapp/state' && \
-             test \"\$(stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/state')\" = '1000:1000:700' && \
-             test -d '/home/phala/clawdi-whatsapp/run' && \
-             test ! -L '/home/phala/clawdi-whatsapp/run' && \
-             test \"\$(realpath -e '/home/phala/clawdi-whatsapp/run')\" = \
-               '/home/phala/clawdi-whatsapp/run' && \
-             test \"\$(stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/run')\" = '1000:1000:770'"
-          current_sidecar_inspect="$(
-            kamal server exec \
-              "docker container inspect --format '{{ index .Config.Labels \"io.clawdi.whatsapp-sidecar.deployment-revision\" }}' 'clawdi-whatsapp-baileys'"
-          )"
-          current_sidecar_revision="$(
-            printf '%s\n' "$current_sidecar_inspect" |
-              grep -Eo '[0-9a-f]{64}' |
-              tail -n 1 || true
-          )"
-          sidecar_changed=false
-          if [ "$current_sidecar_revision" != "$SIDECAR_REVISION" ]; then
-            sidecar_changed=true
-          fi
-          if [ "$sidecar_changed" = true ]; then
-            kamal accessory reboot whatsapp-baileys
-            kamal server exec \
-              "test \"\$(docker container inspect --format '{{.Config.Image}}' 'clawdi-whatsapp-baileys')\" = \
-               'ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:${{ needs.build.outputs.image_tag }}'"
-          else
-            echo "WhatsApp sidecar deployment revision is unchanged; preserving the running process."
-          fi
-          ready=false
-          for _attempt in $(seq 1 30); do
-            if kamal accessory exec whatsapp-baileys --reuse \
-              "node /app/packages/whatsapp-baileys-sidecar/dist/healthcheck.js" \
-              >/dev/null 2>&1; then
-              ready=true
-              break
-            fi
-            sleep 2
-          done
-          if [ "$ready" != true ]; then
-            echo "WhatsApp sidecar failed readiness" >&2
-            exit 1
-          fi
-          if [ "$sidecar_changed" = true ]; then
-            postgres_output="$(
-              kamal accessory exec postgres --reuse \
-                "psql -U clawdi -d clawdi -Atqc \"SELECT id::text FROM channel_accounts WHERE provider = 'whatsapp' AND visibility = 'public' AND user_id IS NULL AND status = 'active' AND archived_at IS NULL AND config->>'connection_mode' = 'baileys_managed' AND config->>'phone_number' ~ '^[1-9][0-9]{6,14}$' ORDER BY id\""
-            )"
-            managed_session_ids="$(
-              printf '%s\n' "$postgres_output" |
-                grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}' |
-                sort -u || true
-            )"
-            for session_id in $managed_session_ids; do
-              recovered=false
-              for _attempt in $(seq 1 30); do
-                if kamal accessory exec whatsapp-baileys --reuse \
-                  "node /app/packages/whatsapp-baileys-sidecar/dist/healthcheck.js ${session_id}" \
-                  >/dev/null 2>&1; then
-                  recovered=true
-                  break
-                fi
-                sleep 2
-              done
-              if [ "$recovered" != true ]; then
-                echo "Managed WhatsApp session failed post-restart recovery: ${session_id}" >&2
-                exit 1
-              fi
-            done
-          fi
+          scripts/deploy-whatsapp-sidecar.sh
           kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"

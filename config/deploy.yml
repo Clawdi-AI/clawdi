@@ -100,11 +100,102 @@ volumes:
   - /home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro
 
 accessories:
+<% if ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" %>
+  whatsapp-netns:
+    service: clawdi-whatsapp-netns
+    # Kubernetes' official, immutable pause image owns the pod-style network
+    # namespace. Workloads join it with Docker's container network mode.
+    image: registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: kamal
+    labels:
+      io.clawdi.whatsapp-netns.config-revision: <%= ENV.fetch("WHATSAPP_TAILSCALE_CONFIG_REVISION") %>
+    options:
+      read-only: true
+      cap-drop: ALL
+      security-opt: no-new-privileges:true
+
+  whatsapp-tailscale:
+    service: clawdi-whatsapp-tailscale
+    # Official image and immutable multi-architecture manifest for v1.98.10.
+    # https://hub.docker.com/r/tailscale/tailscale/tags?name=v1.98.10
+    image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: container:clawdi-whatsapp-netns
+    labels:
+      io.clawdi.whatsapp-egress.config-revision: <%= ENV.fetch("WHATSAPP_TAILSCALE_CONFIG_REVISION") %>
+    directories:
+      - local: /home/phala/clawdi-whatsapp/tailscale-state
+        remote: /var/lib/tailscale
+        mode: "700"
+    options:
+      cap-drop: ALL
+      cap-add:
+        - NET_ADMIN
+        - NET_RAW
+      # iptables-legacy opens a raw control socket; dropping Docker defaults
+      # therefore also requires restoring NET_RAW (verified with this image).
+      device: /dev/net/tun:/dev/net/tun
+      read-only: true
+      security-opt: no-new-privileges:true
+      tmpfs:
+        - /tmp:rw,noexec,nosuid,nodev,size=16m
+        - /var/run/tailscale:rw,noexec,nosuid,nodev,size=4m
+    env:
+      clear:
+        TS_STATE_DIR: /var/lib/tailscale
+        TS_USERSPACE: "false"
+        TS_AUTH_ONCE: "true"
+        # Quad100 only receives exit-node/default resolvers when CorpDNS is on.
+        TS_ACCEPT_DNS: "true"
+        TS_EXTRA_ARGS: "--exit-node=<%= ENV.fetch('WHATSAPP_TAILSCALE_EXIT_NODE') %> --exit-node-allow-lan-access=false"
+        TS_HOSTNAME: clawdi-whatsapp-egress
+      secret:
+        - TS_AUTHKEY
+
+  whatsapp-egress-guard:
+    service: clawdi-whatsapp-egress-guard
+    image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: container:clawdi-whatsapp-netns
+    labels:
+      io.clawdi.whatsapp-egress.config-revision: <%= ENV.fetch("WHATSAPP_TAILSCALE_CONFIG_REVISION") %>
+    cmd: >-
+      -ceu 'chain=CLAWDI_WA_EGRESS;
+      iptables -N "$chain" 2>/dev/null || true;
+      iptables -C "$chain" -o lo -d 127.0.0.1/32 -j ACCEPT 2>/dev/null || iptables -A "$chain" -o lo -d 127.0.0.1/32 -j ACCEPT;
+      iptables -C "$chain" -o tailscale0 -j ACCEPT 2>/dev/null || iptables -A "$chain" -o tailscale0 -j ACCEPT;
+      iptables -C "$chain" -j REJECT 2>/dev/null || iptables -A "$chain" -j REJECT;
+      iptables -C OUTPUT -m owner --uid-owner 1000 -j "$chain" 2>/dev/null || iptables -I OUTPUT 1 -m owner --uid-owner 1000 -j "$chain";
+      ip6tables -N "$chain" 2>/dev/null || true;
+      ip6tables -C "$chain" -o lo -d ::1/128 -j ACCEPT 2>/dev/null || ip6tables -A "$chain" -o lo -d ::1/128 -j ACCEPT;
+      ip6tables -C "$chain" -o tailscale0 -j ACCEPT 2>/dev/null || ip6tables -A "$chain" -o tailscale0 -j ACCEPT;
+      ip6tables -C "$chain" -j REJECT 2>/dev/null || ip6tables -A "$chain" -j REJECT;
+      ip6tables -C OUTPUT -m owner --uid-owner 1000 -j "$chain" 2>/dev/null || ip6tables -I OUTPUT 1 -m owner --uid-owner 1000 -j "$chain";
+      marker="$(cat /proc/sys/kernel/random/boot_id) $(stat -Lc %i /proc/self/ns/net)";
+      printf "%s\n" "$marker" > /guard/network-namespace.ready.tmp;
+      mv /guard/network-namespace.ready.tmp /guard/network-namespace.ready;
+      exec sleep infinity'
+    directories:
+      - local: /home/phala/clawdi-whatsapp/egress-guard
+        remote: /guard
+        mode: "755"
+    options:
+      entrypoint: /bin/sh
+      cap-drop: ALL
+      cap-add:
+        - NET_ADMIN
+        - NET_RAW
+      read-only: true
+      security-opt: no-new-privileges:true
+      tmpfs: /tmp:rw,noexec,nosuid,nodev,size=4m
+<% end %>
+
   whatsapp-baileys:
     service: clawdi-whatsapp-baileys
     image: ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:<%= ENV.fetch("DEPLOY_IMAGE_VERSION") %>
     host: <%= ENV.fetch("DEPLOY_HOST") %>
-    network: bridge
+    network: <%= ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" ? "container:clawdi-whatsapp-netns" : "bridge" %>
     directories:
       - local: /home/phala/clawdi-whatsapp/state
         remote: /data
@@ -112,6 +203,11 @@ accessories:
       - local: /home/phala/clawdi-whatsapp/run
         remote: /run/clawdi-whatsapp
         mode: "770"
+<% if ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" %>
+    volumes:
+      - /home/phala/clawdi-whatsapp/tailscale-resolv.conf:/etc/resolv.conf:ro
+      - /home/phala/clawdi-whatsapp/egress-guard:/run/clawdi-egress-guard:ro
+<% end %>
     options:
       memory: 2g # bounded headroom for multiple isolated provider sessions
       pids-limit: 128
@@ -125,6 +221,9 @@ accessories:
         CLAWDI_WA_SIDECAR_STATE_ROOT: /data
         CLAWDI_WA_SIDECAR_SOCKET_PATH: /run/clawdi-whatsapp/sidecar.sock
         CLAWDI_WA_SIDECAR_LOG_LEVEL: info
+<% if ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" %>
+        CLAWDI_WA_NETWORK_NAMESPACE_MARKER: /run/clawdi-egress-guard/network-namespace.ready
+<% end %>
       secret:
         - CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN
 

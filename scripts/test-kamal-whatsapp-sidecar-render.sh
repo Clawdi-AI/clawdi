@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 render_root="$(mktemp -d)"
 rendered_config="${render_root}/rendered.yml"
+rendered_egress_config="${render_root}/rendered-egress.yml"
 expected_version="0123456789abcdef0123456789abcdef01234567"
 
 cleanup() {
@@ -19,6 +20,7 @@ secret_keys=(
 	KAMAL_REGISTRY_USERNAME
 	KAMAL_REGISTRY_PASSWORD
 	CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN
+	TS_AUTHKEY
 	POSTGRES_PASSWORD
 	PGBACKREST_REPO1_PATH
 	PGBACKREST_REPO1_S3_BUCKET
@@ -42,10 +44,60 @@ secret_keys=(
 	MEMORY_EMBEDDING_BASE_URL
 	VAULT_ENCRYPTION_KEY
 )
+
 for key in "${secret_keys[@]}"; do
 	printf '%s=fake-render-value\n' "${key}" >> "${render_root}/.kamal/secrets"
 done
 chmod 600 "${render_root}/.kamal/secrets"
+
+(
+	cd "${render_root}"
+	WHATSAPP_TAILSCALE_EGRESS_ENABLED=true \
+		WHATSAPP_TAILSCALE_EXIT_NODE=exit-node.example.ts.net \
+		WHATSAPP_TAILSCALE_CONFIG_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+		DEPLOY_HOST=192.0.2.10 \
+		DEPLOY_IMAGE_VERSION="${expected_version}" \
+		kamal config --version "${expected_version}" > "${rendered_egress_config}"
+	WHATSAPP_TAILSCALE_EGRESS_ENABLED=true \
+		WHATSAPP_TAILSCALE_EXIT_NODE=exit-node.example.ts.net \
+		WHATSAPP_TAILSCALE_CONFIG_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+		DEPLOY_HOST=192.0.2.10 \
+		DEPLOY_IMAGE_VERSION="${expected_version}" \
+		ruby - "${render_root}/config/deploy.yml" "${expected_version}" <<'RUBY'
+require "kamal"
+require "pathname"
+
+config_path, expected_version = ARGV
+config = Kamal::Configuration.create_from(
+  config_file: Pathname.new(config_path),
+  version: expected_version
+)
+commands = config.accessories.to_h do |accessory|
+  [accessory.name, Kamal::Commands::Accessory.new(config, name: accessory.name).run]
+end
+
+def option?(command, flag, value)
+  command.each_cons(2).any? { |pair| pair[0] == flag && pair[1].delete('"') == value }
+end
+
+raise "infra did not own the Kamal bridge namespace" unless option?(commands.fetch("whatsapp-netns"), "--network", "kamal")
+tailscale = commands.fetch("whatsapp-tailscale")
+raise "Tailscale did not join infra" unless option?(tailscale, "--network", "container:clawdi-whatsapp-netns")
+raise "Tailscale lost NET_ADMIN" unless option?(tailscale, "--cap-add", "NET_ADMIN")
+raise "Tailscale lost NET_RAW" unless option?(tailscale, "--cap-add", "NET_RAW")
+raise "Tailscale lost tun" unless option?(tailscale, "--device", "/dev/net/tun:/dev/net/tun")
+guard = commands.fetch("whatsapp-egress-guard")
+raise "guard did not join infra" unless option?(guard, "--network", "container:clawdi-whatsapp-netns")
+raise "guard entrypoint drifted" unless option?(guard, "--entrypoint", "/bin/sh")
+sidecar = commands.fetch("whatsapp-baileys")
+raise "sidecar did not join infra" unless option?(sidecar, "--network", "container:clawdi-whatsapp-netns")
+raise "sidecar lost UDS bind" unless option?(sidecar, "--volume", "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp")
+raise "sidecar lost guard marker bind" unless option?(sidecar, "--volume", "/home/phala/clawdi-whatsapp/egress-guard:/run/clawdi-egress-guard:ro")
+raise "sidecar lost guard marker env" unless sidecar.include?(
+  'CLAWDI_WA_NETWORK_NAMESPACE_MARKER="/run/clawdi-egress-guard/network-namespace.ready"'
+)
+RUBY
+)
 
 (
 	cd "${render_root}"
@@ -80,6 +132,25 @@ config.accessories.each do |accessory|
   raise "#{accessory.name} retained a json-file log option" if command.include?("--log-opt")
 end
 
+whatsapp_command = Kamal::Commands::Accessory.new(config, name: "whatsapp-baileys").run
+app_socket_volume = "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro"
+unless config.raw_config.volumes.include?(app_socket_volume)
+  raise "backend roles lost the read-only WhatsApp Unix socket directory"
+end
+unless whatsapp_command.each_cons(2).include?([ "--network", "bridge" ])
+  raise "disabled WhatsApp sidecar did not preserve bridge networking"
+end
+unless whatsapp_command.each_cons(2).include?(
+  [ "--volume", "/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp" ]
+)
+  raise "WhatsApp sidecar lost its read-write Unix socket directory"
+end
+unless whatsapp_command.include?(
+  'CLAWDI_WA_SIDECAR_SOCKET_PATH="/run/clawdi-whatsapp/sidecar.sock"'
+)
+  raise "WhatsApp sidecar socket path drifted"
+end
+
 proxy_args = config.proxy_run(config.primary_host).docker_options_args
 unless proxy_args.each_cons(2).include?(expected_logging_args)
   raise "kamal-proxy logging did not render journald"
@@ -99,3 +170,34 @@ grep -Fq 'remote: "/run/clawdi-whatsapp"' "${rendered_config}"
 grep -Fq 'CLAWDI_WA_SIDECAR_STATE_ROOT: "/data"' "${rendered_config}"
 grep -Fq 'CLAWDI_WA_SIDECAR_SOCKET_PATH: "/run/clawdi-whatsapp/sidecar.sock"' \
 	"${rendered_config}"
+grep -Fq 'network: bridge' "${rendered_config}"
+grep -Fq '/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro' "${rendered_config}"
+test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_config}")" -eq 0
+test "$(grep -Ec '^  whatsapp-netns:$' "${rendered_config}")" -eq 0
+test "$(grep -Ec '^  whatsapp-egress-guard:$' "${rendered_config}")" -eq 0
+
+test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_egress_config}")" -eq 1
+test "$(grep -Ec '^  whatsapp-netns:$' "${rendered_egress_config}")" -eq 1
+test "$(grep -Ec '^  whatsapp-egress-guard:$' "${rendered_egress_config}")" -eq 1
+grep -Fq 'image: registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
+	"${rendered_egress_config}"
+grep -Fq 'service: clawdi-whatsapp-tailscale' "${rendered_egress_config}"
+grep -Fq 'image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0' \
+	"${rendered_egress_config}"
+test "$(grep -Fc 'network: container:clawdi-whatsapp-netns' "${rendered_egress_config}")" -eq 3
+grep -Fq "TS_USERSPACE: 'false'" "${rendered_egress_config}"
+grep -Fq "TS_ACCEPT_DNS: 'true'" "${rendered_egress_config}"
+grep -Fq '      - NET_ADMIN' "${rendered_egress_config}"
+grep -Fq '      - NET_RAW' "${rendered_egress_config}"
+! grep -Fq 'CLAWDI_WA_SIDECAR_PROXY_URL' "${rendered_egress_config}"
+! grep -Fq 'TS_OUTBOUND_HTTP_PROXY_LISTEN' "${rendered_egress_config}"
+test "$(grep -Fc 'cap-drop: ALL' "${rendered_egress_config}")" -ge 4
+grep -Fq "TS_AUTH_ONCE: 'true'" "${rendered_egress_config}"
+grep -Fq 'io.clawdi.whatsapp-egress.config-revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+	"${rendered_egress_config}"
+grep -Fq 'TS_EXTRA_ARGS: "--exit-node=exit-node.example.ts.net --exit-node-allow-lan-access=false"' \
+	"${rendered_egress_config}"
+grep -Fq 'local: "/home/phala/clawdi-whatsapp/tailscale-state"' "${rendered_egress_config}"
+grep -Fq 'local: "/home/phala/clawdi-whatsapp/run"' "${rendered_egress_config}"
+grep -Fq 'CLAWDI_WA_SIDECAR_SOCKET_PATH: "/run/clawdi-whatsapp/sidecar.sock"' \
+	"${rendered_egress_config}"
