@@ -13,7 +13,6 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { SkillCard } from "@/components/skills/skill-card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -118,7 +117,10 @@ function HostedWorkspaceSkillsPanelContent({
 		onSuccess: (result, variables) => {
 			void queryClient.invalidateQueries({ queryKey: statusKey });
 			if (result.status === "failed") {
-				toast.error("Skill update needs attention", {
+				if (variables.action === "install") {
+					setInstallError("Update failed. We'll retry automatically.");
+				}
+				toast.error("Update failed", {
 					description: "We'll retry automatically.",
 				});
 				return;
@@ -232,14 +234,6 @@ function HostedWorkspaceSkillsPanelContent({
 								actions={
 									item.desired ? (
 										<div className="flex flex-wrap items-center gap-2">
-											{item.desired.status === "failed" ? (
-												<div className="flex flex-wrap items-center gap-2">
-													<Badge variant="destructive">Update failed</Badge>
-													<span className="text-xs text-muted-foreground">
-														We'll retry automatically.
-													</span>
-												</div>
-											) : null}
 											{canMutate ? (
 												<ConfirmAction
 													title={`Uninstall ${item.entity.name} from Agent?`}
@@ -266,8 +260,6 @@ function HostedWorkspaceSkillsPanelContent({
 												</ConfirmAction>
 											) : null}
 										</div>
-									) : item.cloudProjection ? (
-										<Badge variant="secondary">Synced from Agent · Read-only</Badge>
 									) : null
 								}
 								skillLink={(cloudSkill) =>

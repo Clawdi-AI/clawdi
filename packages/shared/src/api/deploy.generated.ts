@@ -38,26 +38,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/skills/catalog": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Skill Catalog
-         * @description List/search curated skill catalog entries. Public endpoint, no auth required.
-         */
-        get: operations["skill_catalog_v1_skills_catalog_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/ai-providers/managed/models": {
         parameters: {
             query?: never;
@@ -1042,88 +1022,6 @@ export interface components {
         V1AgentEnvironmentsResponse: {
             /** Environment Ids */
             environment_ids: string[];
-        };
-        /** V1SkillCatalogItem */
-        V1SkillCatalogItem: {
-            /** Skill Key */
-            skill_key: string;
-            /** Name */
-            name: string;
-            /** Description */
-            description: string;
-            /** Emoji */
-            emoji: string;
-            /** Category */
-            category: string;
-            /** Featured */
-            featured: boolean;
-            /**
-             * Headline
-             * @default
-             */
-            headline: string;
-            /** Homepage */
-            homepage?: string | null;
-            /**
-             * Languages
-             * @default []
-             */
-            languages: string[];
-            /**
-             * Trust Level
-             * @default community
-             */
-            trust_level: string;
-            /**
-             * Tags
-             * @default []
-             */
-            tags: string[];
-            /**
-             * Status
-             * @default active
-             */
-            status: string;
-            /**
-             * Installable
-             * @default false
-             */
-            installable: boolean;
-            /**
-             * Connector Requirements
-             * @default []
-             */
-            connector_requirements: components["schemas"]["V1SkillConnectorRequirementItem"][];
-        };
-        /** V1SkillCatalogResponse */
-        V1SkillCatalogResponse: {
-            /** Items */
-            items: components["schemas"]["V1SkillCatalogItem"][];
-            /**
-             * Total
-             * @default 0
-             */
-            total: number;
-        };
-        /** V1SkillConnectorRequirementItem */
-        V1SkillConnectorRequirementItem: {
-            /** App Name */
-            app_name: string;
-            /**
-             * Reason
-             * @default
-             */
-            reason: string;
-            /**
-             * Required
-             * @default true
-             */
-            required: boolean;
-            /**
-             * Rank
-             * @default 0
-             */
-            rank: number;
         };
         /** V1UserFeatureResolution */
         V1UserFeatureResolution: {
@@ -2410,40 +2308,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V1UserResponse"];
-                };
-            };
-        };
-    };
-    skill_catalog_v1_skills_catalog_get: {
-        parameters: {
-            query?: {
-                q?: string | null;
-                category?: string | null;
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V1SkillCatalogResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -113,6 +113,7 @@ function isCanonicalGithubRepositoryUrl(value: string): boolean {
 }
 
 function isSafeRepositoryPath(value: string): boolean {
+	if (value === "") return true;
 	const segments = value.split("/");
 	return (
 		value === value.trim() &&

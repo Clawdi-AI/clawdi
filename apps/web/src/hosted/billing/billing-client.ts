@@ -53,14 +53,6 @@ const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);
 
 const REQUEST_TIMEOUT_MS = 20_000;
 
-function raiseMissingWorkspaceSkillInstallRequest(): never {
-	throw new Error("Workspace Skill install request is required");
-}
-
-function raiseMissingWorkspaceSkillKey(): never {
-	throw new Error("Workspace Skill key is required");
-}
-
 export { isDeployApiConfigured };
 
 type DeployResult<T> = { data?: T; error?: unknown; response: Response };
@@ -80,6 +72,10 @@ type MutationHeaders = {
 	"Idempotency-Key": string;
 	"If-Match": string;
 };
+
+type WorkspaceSkillMutation =
+	| { action: "install"; request: HostedWorkspaceSkillInstallRequest }
+	| { action: "uninstall"; skillKey: string };
 
 function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Response> {
 	const caller = init?.signal ?? request.signal;
@@ -425,11 +421,9 @@ export function createBillingClient(
 		);
 	const mutateWorkspaceSkill = async (
 		deploymentId: string,
-		skillKey: string | null,
-		installRequest: HostedWorkspaceSkillInstallRequest | null,
+		mutation: WorkspaceSkillMutation,
 		resourceVersion: string,
 		idempotencyKey: string,
-		action: "install" | "uninstall",
 	): Promise<HostedWorkspaceSkillMutationResponse> => {
 		let currentResourceVersion = resourceVersion;
 		for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -439,9 +433,9 @@ export function createBillingClient(
 			};
 			try {
 				return unwrapDeploy(
-					action === "install"
+					mutation.action === "install"
 						? await api.POST("/v2/deployments/{deployment_id}/workspace-skills", {
-								body: installRequest ?? raiseMissingWorkspaceSkillInstallRequest(),
+								body: mutation.request,
 								params: {
 									path: { deployment_id: deploymentId },
 									header: headers,
@@ -451,7 +445,7 @@ export function createBillingClient(
 								params: {
 									path: {
 										deployment_id: deploymentId,
-										skill_key: skillKey ?? raiseMissingWorkspaceSkillKey(),
+										skill_key: mutation.skillKey,
 									},
 									header: headers,
 								},
@@ -557,7 +551,12 @@ export function createBillingClient(
 			resourceVersion: string,
 			idempotencyKey: string,
 		): Promise<HostedWorkspaceSkillMutationResponse> =>
-			mutateWorkspaceSkill(deploymentId, null, request, resourceVersion, idempotencyKey, "install"),
+			mutateWorkspaceSkill(
+				deploymentId,
+				{ action: "install", request },
+				resourceVersion,
+				idempotencyKey,
+			),
 		uninstallWorkspaceSkill: async (
 			deploymentId: string,
 			skillKey: string,
@@ -566,11 +565,9 @@ export function createBillingClient(
 		): Promise<HostedWorkspaceSkillMutationResponse> =>
 			mutateWorkspaceSkill(
 				deploymentId,
-				skillKey,
-				null,
+				{ action: "uninstall", skillKey },
 				resourceVersion,
 				idempotencyKey,
-				"uninstall",
 			),
 
 		listDeployments: async (): Promise<HostedDeployment[]> =>

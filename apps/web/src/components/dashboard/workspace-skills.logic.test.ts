@@ -113,7 +113,20 @@ describe("Workspace Skill runtime authority", () => {
 			repo: "owner/repo",
 			path: undefined,
 		});
+		expect(parseWorkspaceSkillGitHubInput("  owner/repo/path with spaces/  ")).toEqual({
+			repo: "owner/repo",
+			path: "path with spaces",
+		});
 		expect(() => parseWorkspaceSkillGitHubInput("missing-repo")).toThrow("owner/repo");
+		expect(() => parseWorkspaceSkillGitHubInput("https://gitlab.com/owner/repo")).toThrow(
+			"github.com",
+		);
+		expect(() => parseWorkspaceSkillGitHubInput("https://github.com/owner/repo?q=1")).toThrow(
+			"canonical",
+		);
+		expect(() => parseWorkspaceSkillGitHubInput("https://user@github.com/owner/repo")).toThrow(
+			"canonical",
+		);
 	});
 
 	test("builds only the real connected CLI handoff commands", () => {

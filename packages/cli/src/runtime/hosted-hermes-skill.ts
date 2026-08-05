@@ -61,7 +61,8 @@ function rawSkillUrl(skill: PreparedHostedCatalogSkill): string {
 		.split("/")
 		.map((segment) => encodeURIComponent(segment))
 		.join("/");
-	return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${skill.source.commit}/${encodedPath}/SKILL.md`;
+	const skillPath = encodedPath ? `${encodedPath}/SKILL.md` : "SKILL.md";
+	return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${skill.source.commit}/${skillPath}`;
 }
 
 function runHermes(input: { home: string; appRoot: string }, args: string[]) {

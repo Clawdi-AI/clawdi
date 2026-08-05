@@ -90,15 +90,13 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const source = {
 			type: "github" as const,
 			url: "https://github.com/Clawdi-AI/store",
-			path: "skills/review-pr",
+			path: "",
 			commit: "a".repeat(40),
 		};
 		const skill: PreparedHostedCatalogSkill = {
 			skillId: "review-pr",
 			source,
-			sourceIdentity:
-				"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
-				"a".repeat(40),
+			sourceIdentity: `github\0review-pr\0https://github.com/Clawdi-AI/store\0\0${"a".repeat(40)}`,
 			archiveSha256: "b".repeat(64),
 			tarBytes: readFileSync(archive),
 		};
@@ -117,6 +115,8 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		expect(readFileSync(join(target, "references", "guide.md"), "utf8")).toBe("Pinned guide\n");
 		expect(existsSync(join(target, "skill.json"))).toBe(false);
 		expect(readFileSync(commandLog, "utf8")).not.toContain("--force");
+		expect(readFileSync(commandLog, "utf8")).toContain(`/${source.commit}/SKILL.md`);
+		expect(readFileSync(commandLog, "utf8")).not.toContain(`/${source.commit}//SKILL.md`);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 		const receiptBytes = readFileSync(receipt);
 		rmSync(receipt);
