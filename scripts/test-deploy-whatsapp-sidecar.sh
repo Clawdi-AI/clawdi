@@ -101,6 +101,7 @@ test "$infra" -lt "$tailscale" && test "$tailscale" -lt "$guard"
 test "$guard" -lt "$preflight" && test "$preflight" -lt "$sidecar"
 grep -q 'accessory stop whatsapp-baileys' "$transition"
 grep -q 'iptables -C OUTPUT -m owner --uid-owner 1000' "$transition"
+grep -q 'AbortSignal.timeout(15000)' "$transition"
 
 reenable="$(run reenable true)"
 stop="$(grep -n 'accessory stop whatsapp-baileys' "$reenable" | head -n 1 | cut -d: -f1)"

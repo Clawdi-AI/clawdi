@@ -70,6 +70,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-egress-guard");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-baileys");
 		expect(deployHelper).toContain("docker run --rm --network container:");
+		expect(deployHelper).toContain("AbortSignal.timeout(15000)");
 		expect(deployHelper.indexOf("docker run --rm --network container:")).toBeLessThan(
 			deployHelper.indexOf("kamal accessory reboot whatsapp-baileys"),
 		);

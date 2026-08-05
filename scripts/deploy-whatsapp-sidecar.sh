@@ -160,7 +160,7 @@ if [[ "${egress_enabled}" == true ]]; then
 
 	# Run as the production UID in the exact shared namespace. This is a native
 	# fetch with no proxy dispatcher, so it covers the transparent network path.
-	observed_ip="$(remote_value "docker run --rm --network container:${infra_service} --user 1000:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true --volume /home/phala/clawdi-whatsapp/tailscale-resolv.conf:/etc/resolv.conf:ro --entrypoint node ${sidecar_image} -e \"fetch('https://api.ipify.org').then(async r=>{if(!r.ok)throw Error(String(r.status));process.stdout.write((await r.text()).trim())}).catch(e=>{console.error(e);process.exit(1)})\"")"
+	observed_ip="$(remote_value "docker run --rm --network container:${infra_service} --user 1000:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true --volume /home/phala/clawdi-whatsapp/tailscale-resolv.conf:/etc/resolv.conf:ro --entrypoint node ${sidecar_image} -e \"fetch('https://api.ipify.org',{signal:AbortSignal.timeout(15000)}).then(async r=>{if(!r.ok)throw Error(String(r.status));process.stdout.write((await r.text()).trim())}).catch(e=>{console.error(e);process.exit(1)})\"")"
 	[[ "${observed_ip}" == "${WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP}" ]] || { echo "WhatsApp Tailscale public IP preflight failed" >&2; exit 1; }
 	[[ "$(container_netns_inode "${sidecar_service}")" == "${infra_inode}" ]] || sidecar_needs_reboot=true
 fi
