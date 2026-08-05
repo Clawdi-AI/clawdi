@@ -1196,12 +1196,20 @@ async def update_skill_content(
     try:
         if file_key.endswith(".md"):
             previous, _ = tar_from_content(skill_key, previous.decode("utf-8"))
+        existing_skill_md = extract_skill_md(previous, skill_key)
+        if existing_skill_md is None:
+            raise TarValidationError("Archive is missing its exact root SKILL.md")
         data, _ = replace_skill_md(
             previous,
             skill_key,
-            skill_document(payload.name, payload.description, payload.instructions),
+            skill_document(
+                payload.name,
+                payload.description,
+                payload.instructions,
+                existing_content=existing_skill_md,
+            ),
         )
-    except (TarValidationError, UnicodeDecodeError):
+    except (SkillTextValidationError, TarValidationError, UnicodeDecodeError):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "This Skill's files could not be preserved. Retry or import it again.",

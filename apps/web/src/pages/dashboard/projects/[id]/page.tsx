@@ -93,6 +93,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import {
 	agentDeploymentRouteQuery,
@@ -1763,7 +1764,7 @@ function ProjectVaultActions({
 	onChanged: () => void;
 }) {
 	const api = useApi();
-	const [slug, setSlug] = useState("");
+	const [vaultName, setVaultName] = useState("");
 	const [selectedVaultId, setSelectedVaultId] = useState("");
 	const [attachOpen, setAttachOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -1791,6 +1792,7 @@ function ProjectVaultActions({
 	const blockingAccountVaultsError = shouldBlockQueryError(accountVaults.error, accountVaults.data)
 		? accountVaults.error
 		: null;
+	const newVaultSlug = slugFromVaultName(vaultName);
 	const attach = useMutation({
 		mutationFn: async (vaultId: string) => {
 			const vault = attachableVaults.find((candidate) => candidate.id === vaultId);
@@ -1814,20 +1816,22 @@ function ProjectVaultActions({
 			}),
 	});
 	const create = useMutation({
-		mutationFn: async (nextSlug: string) =>
-			unwrap(
+		mutationFn: async (nextName: string) => {
+			const normalizedName = nextName.trim();
+			const slug = slugFromVaultName(normalizedName);
+			if (!slug) throw new Error("Use a Vault name containing letters or numbers");
+			return unwrap(
 				await api.POST("/v1/vault", {
-					params: { query: { create_only: true } },
-					body: { slug: nextSlug, name: nextSlug },
+					params: { query: { project_id: projectId, create_only: true } },
+					body: { slug, name: normalizedName },
 				}),
-			),
+			);
+		},
 		onSuccess: () => {
-			setSlug("");
+			setVaultName("");
 			setCreateOpen(false);
 			onChanged();
-			toast.success("Vault created", {
-				description: `Attach it when this ${contextLabel} should use it.`,
-			});
+			toast.success(`Vault created for this ${contextLabel}`);
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
@@ -1936,45 +1940,51 @@ function ProjectVaultActions({
 				open={createOpen}
 				onOpenChange={setCreateOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open) setSlug("");
+					if (!open) setVaultName("");
 				}}
 			>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
 						<DialogTitle>Create vault</DialogTitle>
 						<DialogDescription>
-							Create an account-owned Vault. Attach it to this {contextLabel} when it is ready to
-							use.
+							Create an account-owned Vault for this {contextLabel}. It will also remain available
+							in your Vault library.
 						</DialogDescription>
 					</DialogHeader>
 					<form
 						className="space-y-4"
 						onSubmit={(event) => {
 							event.preventDefault();
-							if (slug && !create.isPending) create.mutate(slug);
+							if (vaultName.trim() && newVaultSlug && !create.isPending) {
+								create.mutate(vaultName);
+							}
 						}}
 					>
 						<div className="grid gap-2">
-							<Label htmlFor={`project-vault-slug-${projectId}`}>Vault name</Label>
+							<Label htmlFor={`project-vault-name-${projectId}`}>Vault name</Label>
 							<Input
-								id={`project-vault-slug-${projectId}`}
-								name="project-vault-slug"
-								value={slug}
-								onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-								placeholder="github…"
+								id={`project-vault-name-${projectId}`}
+								name="project-vault-name"
+								value={vaultName}
+								onChange={(event) => setVaultName(event.target.value)}
+								placeholder="Production credentials…"
 								autoComplete="off"
-								spellCheck={false}
 								className="min-w-0 flex-1"
 							/>
-							<p className="text-xs text-muted-foreground">
-								Use lowercase letters, numbers, and hyphens. Add keys from the Vault library later.
-							</p>
+							{vaultName.trim() && !newVaultSlug ? (
+								<p className="text-xs text-destructive">
+									Use a name containing letters or numbers.
+								</p>
+							) : null}
 						</div>
 						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
 								Cancel
 							</Button>
-							<Button type="submit" disabled={!slug || create.isPending}>
+							<Button
+								type="submit"
+								disabled={!vaultName.trim() || !newVaultSlug || create.isPending}
+							>
 								{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}
 								Create vault
 							</Button>

@@ -71,6 +71,7 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 	const boundedAgentRequests: string[] = [];
 	const linkedBodies: unknown[] = [];
 	const updateBodies: unknown[] = [];
+	const vaultCreateRequests: Array<{ url: URL; body: unknown }> = [];
 
 	await page.addInitScript(() => localStorage.setItem("clawdi-theme", "dark"));
 	await page.setViewportSize({ width: 390, height: 844 });
@@ -123,6 +124,13 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		}
 		if (path === "/v1/vault") {
 			projectResourceRequests.push(request.url());
+			if (request.method() === "POST") {
+				vaultCreateRequests.push({ url, body: request.postDataJSON() });
+				return fulfill(route, {
+					id: "66666666-6666-4666-8666-666666666666",
+					slug: "production-credentials",
+				});
+			}
 			return fulfill(route, { items: [], total: 0, page: 1, page_size: 200 });
 		}
 		if (path === `/v1/projects/${projectId}/members`) return fulfill(route, []);
@@ -163,6 +171,30 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		.poll(() => projectResourceRequests.some((request) => request.includes("/v1/skills")))
 		.toBe(true);
 	await expectNoHorizontalOverflow(page);
+
+	await projectTabs.getByRole("tab", { name: "Vaults" }).click();
+	await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Create vault", exact: true }).click();
+	const createVaultDialog = page.getByRole("dialog", { name: "Create vault" });
+	await createVaultDialog.getByLabel("Vault name").fill("Production Credentials");
+	await createVaultDialog.getByRole("button", { name: "Create vault" }).click();
+	await expect(createVaultDialog).toHaveCount(0);
+	await expect.poll(() => vaultCreateRequests).toHaveLength(1);
+	expect(vaultCreateRequests[0]?.body).toEqual({
+		slug: "production-credentials",
+		name: "Production Credentials",
+	});
+	expect(vaultCreateRequests[0]?.url.searchParams.get("project_id")).toBe(projectId);
+	expect(vaultCreateRequests[0]?.url.searchParams.get("create_only")).toBe("true");
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/projects/${projectId}` &&
+			url.searchParams.get("tab") === "vaults" &&
+			url.searchParams.get("source") === "on-clawdi" &&
+			url.searchParams.get("d") === "deployment-1"
+		);
+	});
 
 	await page
 		.getByRole("tablist", { name: "Project pages" })

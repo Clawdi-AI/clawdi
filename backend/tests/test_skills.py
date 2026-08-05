@@ -14,6 +14,7 @@ import uuid
 
 import httpx
 import pytest
+import yaml
 from sqlalchemy import select
 
 from app.core.auth import AuthContext
@@ -236,7 +237,24 @@ async def test_edit_preserves_imported_support_files(
     project_id: str,
 ):
     skill_key = "preserve-files"
-    original_md = b"---\nname: Preserve files\ndescription: Imported\n---\n\nUse the references.\n"
+    original_md = b"""---
+name: Preserve files
+description: Imported
+license: Apache-2.0
+compatibility:
+  runtimes:
+    - openclaw
+    - hermes
+  options:
+    retries: 3
+    strict: true
+tags:
+  - review
+  - safety
+---
+
+Use the references.
+"""
     archive = _archive_with_files(
         skill_key,
         {
@@ -256,7 +274,7 @@ async def test_edit_preserves_imported_support_files(
         f"/v1/projects/{project_id}/skills/{skill_key}/content",
         json={
             "name": "Preserve files",
-            "description": "Edited without losing files",
+            "description": None,
             "instructions": "Read references/notes.md, then run scripts/check.sh.",
             "content_hash": uploaded.json()["content_hash"],
         },
@@ -275,8 +293,54 @@ async def test_edit_preserves_imported_support_files(
         assert script is not None and script.read() == b"#!/bin/sh\nexit 0\n"
         assert skill_md is not None
         rendered = skill_md.read().decode()
-    assert "description: Edited without losing files" in rendered
-    assert "Read references/notes.md" in rendered
+    raw_frontmatter, body = rendered.removeprefix("---\n").split("\n---\n", 1)
+    metadata = yaml.safe_load(raw_frontmatter)
+    assert metadata == {
+        "name": "Preserve files",
+        "license": "Apache-2.0",
+        "compatibility": {
+            "runtimes": ["openclaw", "hermes"],
+            "options": {"retries": 3, "strict": True},
+        },
+        "tags": ["review", "safety"],
+    }
+    assert body.strip() == "Read references/notes.md, then run scripts/check.sh."
+
+
+@pytest.mark.asyncio
+async def test_edit_fails_closed_without_exact_root_skill_md(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    skill_key = "missing-root-document"
+    archive = _archive_with_files(
+        skill_key,
+        {
+            "references/SKILL.md": b"---\nname: Nested only\nunknown: keep-me\n---\nNested.\n",
+            "references/notes.md": b"Must remain unchanged.\n",
+        },
+    )
+    uploaded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("missing-root-document.tar.gz", archive, "application/gzip")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    edited = await client.put(
+        f"/v1/projects/{project_id}/skills/{skill_key}/content",
+        json={
+            "name": "Replacement",
+            "description": None,
+            "instructions": "This must not be written.",
+            "content_hash": uploaded.json()["content_hash"],
+        },
+    )
+    assert edited.status_code == 409, edited.text
+
+    downloaded = await client.get(f"/v1/projects/{project_id}/skills/{skill_key}/download")
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == archive
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,11 @@ GZIP_MAGIC = b"\x1f\x8b"
 # the route's INSERT and turns into a database error.
 _FM_NAME_MAX = 200
 _FM_DESCRIPTION_MAX = 2000
+_FRONTMATTER_BYTES_MAX = 64 * 1024
+_FRONTMATTER_RE = re.compile(
+    r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)",
+    re.DOTALL,
+)
 
 
 class TarValidationError(ValueError):
@@ -112,19 +117,25 @@ def validate_tar(data: bytes) -> int:
         raise TarValidationError(f"Invalid tar archive: {e}") from e
 
 
-def extract_skill_md(data: bytes) -> str | None:
+def extract_skill_md(data: bytes, skill_key: str | None = None) -> str | None:
     """Extract SKILL.md content from a tar.gz archive.
 
-    Searches for any file named SKILL.md at any depth.
+    With a Skill key, requires its exact root document. Legacy callers may
+    continue searching for the first SKILL.md at any depth.
     """
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+            expected_name = f"{skill_key}/SKILL.md" if skill_key is not None else None
             for member in tf:
-                if member.isfile() and PurePosixPath(member.name).name == "SKILL.md":
+                if member.isfile() and (
+                    member.name == expected_name
+                    if expected_name is not None
+                    else PurePosixPath(member.name).name == "SKILL.md"
+                ):
                     f = tf.extractfile(member)
                     if f:
                         return f.read().decode("utf-8")
-    except tarfile.TarError:
+    except (OSError, tarfile.TarError):
         return None
     return None
 
@@ -198,19 +209,97 @@ def replace_skill_md(data: bytes, skill_key: str, content: str) -> tuple[bytes, 
     return output.getvalue(), file_count
 
 
-def skill_document(name: str, description: str | None, instructions: str) -> str:
-    """Render Web fields into the runtime SKILL.md contract server-side."""
+def _preservable_frontmatter(content: str) -> dict[object, object]:
+    """Load bounded existing metadata without silently normalizing it away."""
     import yaml
 
-    metadata = {"name": name.strip()}
+    if "\x00" in content:
+        raise SkillTextValidationError("SKILL.md must not contain NUL characters")
+    match = _FRONTMATTER_RE.match(content)
+    if match is None:
+        if re.match(r"\A---[ \t]*(?:\r?\n|\Z)", content):
+            raise SkillTextValidationError("Skill frontmatter is malformed")
+        return {}
+    raw = match.group(1)
+    if len(raw.encode("utf-8")) > _FRONTMATTER_BYTES_MAX:
+        raise SkillTextValidationError("Skill frontmatter exceeds the safe size limit")
+    try:
+        loaded: object = yaml.safe_load(raw)
+    except (UnicodeError, yaml.YAMLError) as exc:
+        raise SkillTextValidationError("Skill frontmatter is malformed") from exc
+    if loaded is None:
+        return {}
+    if not _is_object_dict(loaded):
+        raise SkillTextValidationError("Skill frontmatter must be a mapping")
+
+    pending: list[object] = [loaded]
+    seen: set[int] = set()
+    visited = 0
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            if "\x00" in value:
+                raise SkillTextValidationError("Skill frontmatter must not contain NUL characters")
+            continue
+        if isinstance(value, dict):
+            identity = id(value)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple, set)):
+            identity = id(value)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            pending.extend(value)
+        visited += 1
+        if visited > 10_000:
+            raise SkillTextValidationError("Skill frontmatter is too complex")
+
+    metadata = dict(loaded)
+    try:
+        rendered = yaml.safe_dump(
+            metadata,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
+    except (RecursionError, UnicodeError, yaml.YAMLError) as exc:
+        raise SkillTextValidationError("Skill frontmatter cannot be preserved safely") from exc
+    if len(rendered.encode("utf-8")) > _FRONTMATTER_BYTES_MAX:
+        raise SkillTextValidationError("Skill frontmatter exceeds the safe size limit")
+    return metadata
+
+
+def skill_document(
+    name: str,
+    description: str | None,
+    instructions: str,
+    *,
+    existing_content: str | None = None,
+) -> str:
+    """Render Web fields while preserving non-editable imported metadata."""
+    import yaml
+
+    metadata = _preservable_frontmatter(existing_content) if existing_content is not None else {}
+    metadata["name"] = name.strip()
     if description and description.strip():
         metadata["description"] = description.strip()
-    frontmatter = yaml.safe_dump(
-        metadata,
-        allow_unicode=True,
-        default_flow_style=False,
-        sort_keys=False,
-    ).rstrip()
+    else:
+        metadata.pop("description", None)
+    try:
+        frontmatter = yaml.safe_dump(
+            metadata,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        ).rstrip()
+    except (RecursionError, UnicodeError, yaml.YAMLError) as exc:
+        raise SkillTextValidationError("Skill frontmatter cannot be preserved safely") from exc
+    if len(frontmatter.encode("utf-8")) > _FRONTMATTER_BYTES_MAX:
+        raise SkillTextValidationError("Skill frontmatter exceeds the safe size limit")
     return f"---\n{frontmatter}\n---\n\n{instructions.strip()}\n"
 
 
@@ -242,7 +331,6 @@ def parse_frontmatter(content: str) -> dict[str, str]:
     # frontmatter (real-world skills are <1 KiB) and bounds
     # parser CPU/memory worst case.
     raw = match.group(1)
-    _FRONTMATTER_BYTES_MAX = 64 * 1024
     if len(raw.encode("utf-8")) > _FRONTMATTER_BYTES_MAX:
         return {}
 

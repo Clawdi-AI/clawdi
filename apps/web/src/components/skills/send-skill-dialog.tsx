@@ -2,16 +2,16 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Copy } from "lucide-react";
-import { type ReactElement, useEffect, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { displayProjectName } from "@/components/projects/project-metadata";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
@@ -51,7 +51,7 @@ export function SendSkillDialog({
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [target, setTarget] = useState("");
-	const [removeFromSource, setRemoveFromSource] = useState(false);
+	const sendLockedRef = useRef(false);
 
 	const projectsQuery = $api.useQuery(
 		"get",
@@ -89,7 +89,7 @@ export function SendSkillDialog({
 	);
 
 	const send = useMutation({
-		mutationFn: async () => {
+		mutationFn: async (action: "copy" | "move") => {
 			if (!target) throw new Error("Choose a destination first");
 			if (!skill.project_id) throw new Error("Open this Skill from its Project and try again");
 			const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
@@ -107,7 +107,7 @@ export function SendSkillDialog({
 				),
 			);
 			await uploadSkillArchive(target, skill.skill_key, blob);
-			if (!removeFromSource) return { sourceRemoved: null };
+			if (action === "copy") return { sourceRemoved: null };
 			try {
 				unwrap(
 					await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
@@ -123,22 +123,36 @@ export function SendSkillDialog({
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			const targetLabel =
 				projectTargets.find((candidate) => candidate.value === target)?.label ?? "the destination";
-			toast.success(sourceRemoved ? "Skill moved" : "Skill copied", {
-				description:
-					`${skill.name} is now available in ${targetLabel}.` +
-					(sourceRemoved === false
-						? " The source copy could not be removed; remove it after checking the new copy."
-						: ""),
-			});
+			toast.success(
+				sourceRemoved === true
+					? "Skill moved"
+					: sourceRemoved === false
+						? "Skill copied, but not removed"
+						: "Skill copied",
+				{
+					description:
+						`${skill.name} is now available in ${targetLabel}.` +
+						(sourceRemoved === false
+							? " It could not be removed from the source; remove it after checking the new copy."
+							: ""),
+				},
+			);
 			setOpen(false);
 		},
 		onError: (e) => toast.error("Couldn't copy or move skill", { description: errorMessage(e) }),
+		onSettled: () => {
+			sendLockedRef.current = false;
+		},
 	});
+	const submit = (action: "copy" | "move") => {
+		if (sendLockedRef.current || send.isPending) return;
+		sendLockedRef.current = true;
+		send.mutate(action);
+	};
 
 	useEffect(() => {
 		if (!open) return;
 		setTarget("");
-		setRemoveFromSource(false);
 	}, [open]);
 
 	const trigger = children ?? (
@@ -154,7 +168,6 @@ export function SendSkillDialog({
 			onOpenChangeComplete={(nextOpen) => {
 				if (!nextOpen) {
 					setTarget("");
-					setRemoveFromSource(false);
 				}
 			}}
 		>
@@ -205,24 +218,31 @@ export function SendSkillDialog({
 							title="Couldn't load destinations"
 						/>
 					) : null}
-					<div className="flex items-center gap-2">
-						<Checkbox
-							id="send-skill-move"
-							checked={removeFromSource}
-							onCheckedChange={(v) => setRemoveFromSource(v === true)}
-						/>
-						<Label htmlFor="send-skill-move" className="text-sm font-normal">
-							Remove from the source after copying (move)
-						</Label>
-					</div>
-					<Button
-						className="w-full"
-						disabled={!target || send.isPending || !!destinationLoadError}
-						onClick={() => send.mutate()}
-					>
-						{send.isPending ? <Spinner /> : <ArrowRight className="size-3.5" />}
-						{removeFromSource ? "Move skill" : "Copy skill"}
-					</Button>
+					<DialogFooter>
+						<Button
+							variant="outline"
+							disabled={!target || send.isPending || !!destinationLoadError}
+							onClick={() => submit("copy")}
+						>
+							{send.isPending && send.variables === "copy" ? (
+								<Spinner />
+							) : (
+								<Copy className="size-3.5" />
+							)}
+							Copy skill
+						</Button>
+						<Button
+							disabled={!target || send.isPending || !!destinationLoadError}
+							onClick={() => submit("move")}
+						>
+							{send.isPending && send.variables === "move" ? (
+								<Spinner />
+							) : (
+								<ArrowRight className="size-3.5" />
+							)}
+							Move skill
+						</Button>
+					</DialogFooter>
 				</div>
 			</DialogContent>
 		</Dialog>
