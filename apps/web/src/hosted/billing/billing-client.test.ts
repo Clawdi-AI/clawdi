@@ -662,6 +662,54 @@ describe("declarative deployment mutations", () => {
 		});
 	});
 
+	it("completes deletion when the deployment is definitively absent", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			if (request.method === "GET") {
+				return jsonResponse({ detail: "Deployment not found" }, 404);
+			}
+			return jsonResponse({ deployment_id: "hdep_absent", status: "absent" });
+		});
+
+		await expect(
+			client.deleteDeployment(
+				"hdep_absent",
+				{ subscription_choice: "cancel_subscription" },
+				"intent-absent",
+				"rv-last-known",
+			),
+		).resolves.toEqual({ deploymentId: "hdep_absent", operation: null });
+		expect(requests.map((request) => request.method)).toEqual(["GET", "DELETE"]);
+		expect(requests[1]?.headers.get("Idempotency-Key")).toBe("intent-absent");
+		expect(requests[1]?.headers.get("If-Match")).toBe('"rv-last-known"');
+	});
+
+	it("keeps transient absent-deletion failures rejected", async () => {
+		const client = testClient(async (request) => {
+			if (request.method === "GET") {
+				return jsonResponse(
+					hostedDeploymentFixture({ id: "hdep_transient", resourceVersion: "rv-transient" }),
+				);
+			}
+			return jsonResponse(
+				{
+					detail: "Cloud ownership or cleanup could not be confirmed.",
+					code: "cloud_cleanup_temporarily_unavailable",
+				},
+				503,
+			);
+		});
+
+		await expect(
+			client.deleteDeployment(
+				"hdep_transient",
+				{ subscription_choice: "cancel_subscription" },
+				"intent-transient",
+			),
+		).rejects.toMatchObject({ status: 503 });
+	});
+
 	it("releases lifecycle and settings mutations as soon as their LROs are accepted", async () => {
 		const requests: Request[] = [];
 		const client = testClient(async (request) => {
@@ -715,7 +763,10 @@ describe("declarative deployment mutations", () => {
 		]);
 
 		expect(
-			accepted.every((item) => !item.operation.done && item.deploymentId === "hdep_test"),
+			accepted.every(
+				(item) =>
+					item.operation !== null && !item.operation.done && item.deploymentId === "hdep_test",
+			),
 		).toBe(true);
 		expect(
 			requests.filter((request) => new URL(request.url).pathname.startsWith("/v2/operations/")),
