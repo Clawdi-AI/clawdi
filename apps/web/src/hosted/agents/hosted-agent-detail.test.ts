@@ -54,4 +54,12 @@ describe("hosted agent detail header", () => {
 		);
 		expect(source).not.toContain("Vaults, profile, and channels");
 	});
+
+	test("uses the shared billing query contract for overview workspace skills", () => {
+		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+
+		expect(source).toContain("queryKey: billingKeys.workspaceSkills(deployment.resource.id)");
+		expect(source).toContain("enabled: isRunningStatus(deploymentStatus)");
+		expect(source).toContain("retry: billingQueryRetry");
+	});
 });

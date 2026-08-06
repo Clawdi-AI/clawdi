@@ -151,12 +151,14 @@ import {
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorNormalizer,
+	billingQueryRetry,
 	normalizeBillingError,
 	PlanChangePendingError,
 	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
+	billingKeys,
 	useCancelSubscription,
 	useChangePlan,
 	useCheckPlanChange,
@@ -1131,8 +1133,10 @@ function OverviewTab({
 				? "unavailable"
 				: "ready";
 	const runtimeSkills = useQuery({
-		queryKey: ["hosted", "deployments", deployment.resource.id, "skills"],
+		queryKey: billingKeys.workspaceSkills(deployment.resource.id),
 		queryFn: () => billingClient.listWorkspaceSkills(deployment.resource.id),
+		enabled: isRunningStatus(deploymentStatus),
+		retry: billingQueryRetry,
 	});
 	const skillsModule = runtimeSkills.isLoading
 		? { description: <OverviewDescriptionSkeleton label="skills" /> }

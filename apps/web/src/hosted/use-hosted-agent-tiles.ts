@@ -199,7 +199,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	};
 	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
 	const failure = deploymentFailurePresentation(d);
-	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv ?? null, failure);
+	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv, failure);
 	const cardStatus: AgentCardStatusProjection = {
 		visual: {
 			label: runtimeStatus.primary.label,
