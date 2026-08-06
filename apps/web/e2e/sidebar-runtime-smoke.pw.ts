@@ -844,9 +844,6 @@ async function expectSidebarNavigationGroups(
 		else await expect(heading).toHaveCount(0);
 		await expect(groups.nth(index).getByRole("link")).toHaveText(group.items);
 	}
-	await expect(
-		groups.locator('[data-slot="sidebar-group-label"]').filter({ hasText: /^Resources$/ }),
-	).toHaveCount(1);
 	await expect(groups.locator('[data-slot="sidebar-group-label"]:empty')).toHaveCount(0);
 }
 
@@ -914,8 +911,8 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
 		{ label: null, items: ["Overview", "Sessions"] },
-		{ label: "Resources", items: ["Projects", "Memories", "Connectors"] },
-		{ label: "Workspace", items: ["Skills", "Vaults"] },
+		{ label: "Workspace", items: ["Projects", "Skills", "Vaults"] },
+		{ label: "Shared", items: ["Memories", "Connectors"] },
 		{ label: null, items: ["Settings"] },
 	]);
 });
@@ -929,14 +926,14 @@ test("connected primary Project navigation stays hidden until scope resolves", a
 
 	await page.goto("/agents/agent-smoke-1");
 	const sidebar = page.getByTestId("app-sidebar");
-	await expect(sidebar.getByRole("group", { name: "Resources", exact: true })).toBeVisible();
-	await expect(sidebar.getByRole("group", { name: "Workspace", exact: true })).toHaveCount(0);
+	const workspaceGroup = sidebar.getByRole("group", { name: "Workspace", exact: true });
+	await expect(workspaceGroup).toBeVisible();
+	await expect(workspaceGroup.getByRole("link")).toHaveText(["Projects"]);
+	await expect(sidebar.getByRole("group", { name: "Shared", exact: true })).toBeVisible();
 
 	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
 	releaseBindings();
-	const projectGroup = sidebar.getByRole("group", { name: "Workspace", exact: true });
-	await expect(projectGroup).toBeVisible();
-	await expect(projectGroup.getByRole("link")).toHaveText(["Skills", "Vaults"]);
+	await expect(workspaceGroup.getByRole("link")).toHaveText(["Projects", "Skills", "Vaults"]);
 	expect(
 		await sidebar.locator('[data-slot="sidebar-group-label"]').allTextContents(),
 	).not.toContain("Smoke Project");
@@ -1016,18 +1013,19 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 			"[data-overview-module] a a, [data-overview-module] a button, [data-overview-module] button a",
 		),
 	).toHaveCount(0);
-	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Shared", exact: true })).toBeVisible();
 	await expect(overview.locator("[data-overview-access-scope]")).toHaveCount(0);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
+	).toEqual(["projects", "skills", "vaults", "memories", "connectors"]);
 	expect(
 		await page
-			.locator("#connected-recent-sessions, #agent-overview-resources")
+			.locator("#connected-recent-sessions, #agent-overview-workspace, #agent-overview-shared")
 			.evaluateAll((headings) => headings.map((heading) => heading.id)),
-	).toEqual(["connected-recent-sessions", "agent-overview-resources"]);
+	).toEqual(["connected-recent-sessions", "agent-overview-workspace", "agent-overview-shared"]);
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Smoke Project",
@@ -1158,11 +1156,16 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.locator("[data-overview-module]")).toHaveCount(5);
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
-	const resourceGrid = overview.locator('[data-overview-layout="three-column"]');
-	const resourceGeometry = await resourceGrid
+	const workspaceGrid = overview.locator(
+		'section[aria-labelledby="agent-overview-workspace"] [data-overview-layout="three-column"]',
+	);
+	const sharedGrid = overview.locator(
+		'section[aria-labelledby="agent-overview-shared"] [data-overview-layout="three-column"]',
+	);
+	const resourceGeometry = await workspaceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(5);
+	expect(resourceGeometry).toHaveLength(3);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -1181,18 +1184,22 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		expect(Math.abs(box.height - (sessionBoxes[0]?.height ?? 0))).toBeLessThanOrEqual(2);
 	}
 	expect(
-		await resourceGrid
+		await workspaceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	).toEqual(["projects", "skills", "vaults"]);
+	await expectOverviewResourceGeometry(workspaceGrid, [3]);
+	await expectOverviewResourceGeometry(sharedGrid, [2]);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [2, 1]);
+	await expectOverviewResourceGeometry(sharedGrid, [2]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));

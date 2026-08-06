@@ -3146,9 +3146,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const overviewTitleRow = overviewHeading.locator("..");
 	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
-	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible({
+	await expect(overview.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
+	await expect(overview.getByRole("heading", { name: "Shared", exact: true })).toBeVisible();
 	await expect(overview.locator("[data-overview-access-scope]")).toHaveCount(0);
 	expect(
 		await overview
@@ -3157,17 +3158,17 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	).toEqual([
 		"projects",
 		"skills",
-		"memories",
 		"vaults",
+		"memories",
 		"connectors",
 		"model-provider",
 		"channels",
 	]);
 	expect(
 		await page
-			.locator("#hosted-recent-sessions, #agent-overview-resources")
+			.locator("#hosted-recent-sessions, #agent-overview-workspace, #agent-overview-shared")
 			.evaluateAll((headings) => headings.map((heading) => heading.id)),
-	).toEqual(["hosted-recent-sessions", "agent-overview-resources"]);
+	).toEqual(["hosted-recent-sessions", "agent-overview-workspace", "agent-overview-shared"]);
 	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(7);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
@@ -3376,16 +3377,19 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
-	const resourceGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-resources"] [data-overview-layout="three-column"]',
+	const workspaceGrid = overview.locator(
+		'section[aria-labelledby="agent-overview-workspace"] [data-overview-layout="three-column"]',
+	);
+	const sharedGrid = overview.locator(
+		'section[aria-labelledby="agent-overview-shared"] [data-overview-layout="three-column"]',
 	);
 	const toolsGrid = overview.locator(
 		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="three-column"]',
 	);
-	const resourceGeometry = await resourceGrid
+	const resourceGeometry = await workspaceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(5);
+	expect(resourceGeometry).toHaveLength(3);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -3397,11 +3401,12 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		).toBeLessThanOrEqual(2);
 	}
 	expect(
-		await resourceGrid
+		await workspaceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	).toEqual(["projects", "skills", "vaults"]);
+	await expectOverviewResourceGeometry(workspaceGrid, [3]);
+	await expectOverviewResourceGeometry(sharedGrid, [2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	const toolGeometry = await toolsGrid
 		.locator("[data-overview-module]")
@@ -3425,13 +3430,16 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [2, 1]);
+	await expectOverviewResourceGeometry(sharedGrid, [2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
@@ -3973,7 +3981,8 @@ for (const deploymentStatus of ["creating", "starting"] as const) {
 			await expect(panel.getByText(detail, { exact: true })).toHaveCount(0);
 		await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
 		await expect(main.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
-		await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
+		await expect(main.getByRole("heading", { name: "Workspace", exact: true })).toHaveCount(0);
+		await expect(main.getByRole("heading", { name: "Shared", exact: true })).toHaveCount(0);
 		await expect(main.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(0);
 		await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 		expect(sessionRequests).toEqual([]);
@@ -4008,7 +4017,8 @@ test("starting with an existing projection keeps lifecycle status in Compute", a
 		/\/settings/,
 	);
 	await expect(main.getByTestId("hosted-initial-deployment-panel")).toHaveCount(0);
-	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Shared", exact: true })).toBeVisible();
 });
 
 test("an accepted restart stays action-free and visibly restarting in Compute", async ({
@@ -4061,7 +4071,8 @@ test("hosted unavailable status stays inside Compute", async ({ page }, testInfo
 	const main = page.locator("main");
 	const overview = main.locator('[data-agent-overview="hosted"]');
 	const compute = main.locator('[data-overview-status="compute"]');
-	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Shared", exact: true })).toBeVisible();
 	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
 	await expect(compute).toContainText("Status unavailable");
 	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
@@ -4512,10 +4523,10 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(groups).toHaveCount(5);
 	await expect(groups.nth(0).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
 	await expect(groups.nth(0).getByRole("link")).toHaveText(["Overview", "Sessions"]);
-	await expect(groups.nth(1).locator('[data-slot="sidebar-group-label"]')).toHaveText("Resources");
-	await expect(groups.nth(1).getByRole("link")).toHaveText(["Projects", "Memories", "Connectors"]);
-	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText("Workspace");
-	await expect(groups.nth(2).getByRole("link")).toHaveText(["Skills", "Vaults"]);
+	await expect(groups.nth(1).locator('[data-slot="sidebar-group-label"]')).toHaveText("Workspace");
+	await expect(groups.nth(1).getByRole("link")).toHaveText(["Projects", "Skills", "Vaults"]);
+	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText("Shared");
+	await expect(groups.nth(2).getByRole("link")).toHaveText(["Memories", "Connectors"]);
 	await expect(groups.nth(3).locator('[data-slot="sidebar-group-label"]')).toHaveText("Tools");
 	await expect(groups.nth(3).getByRole("link")).toHaveText([
 		"Agent Interface",
@@ -4531,8 +4542,8 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const query = `?source=on-clawdi&d=${railHostedDeployment.id}`;
 	const main = page.locator("main");
 	await page.setViewportSize({ width: 2000, height: 1000 });
-	await expect(groups.nth(1).getByRole("link", { name: "Memories", exact: true })).toBeVisible();
-	await expect(groups.nth(1).getByRole("link", { name: "Connectors", exact: true })).toBeVisible();
+	await expect(groups.nth(2).getByRole("link", { name: "Memories", exact: true })).toBeVisible();
+	await expect(groups.nth(2).getByRole("link", { name: "Connectors", exact: true })).toBeVisible();
 	await page.goto(`/agents/${railHostedEnvironmentId}/memories${query}`);
 	await expect(page).toHaveURL(
 		(url) =>

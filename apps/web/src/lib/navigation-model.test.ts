@@ -101,7 +101,7 @@ describe("sidebar navigation model", () => {
 		]);
 	});
 
-	test("keeps only directly navigable Agent resources in one navigation group", () => {
+	test("separates one Agent's workspace from account-wide shared resources", () => {
 		const connectedGroups = agentNavigationGroups("connected");
 		expect(groupShape(connectedGroups)).toEqual([
 			{
@@ -114,11 +114,16 @@ describe("sidebar navigation model", () => {
 				],
 			},
 			{
-				id: "resources",
-				label: "Resources",
+				id: "workspace",
+				label: "Workspace",
+				separated: false,
+				items: [{ id: "projects", label: "Projects" }],
+			},
+			{
+				id: "shared",
+				label: "Shared",
 				separated: false,
 				items: [
-					{ id: "projects", label: "Projects" },
 					{ id: "memories", label: "Memories" },
 					{ id: "connectors", label: "Connectors" },
 				],
@@ -130,7 +135,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectNavigationHeadings(connectedGroups, ["Resources"]);
+		expectNavigationHeadings(connectedGroups, ["Workspace", "Shared"]);
 
 		const hostedGroups = agentNavigationGroups("hosted");
 		expect(groupShape(hostedGroups)).toEqual([
@@ -144,11 +149,16 @@ describe("sidebar navigation model", () => {
 				],
 			},
 			{
-				id: "resources",
-				label: "Resources",
+				id: "workspace",
+				label: "Workspace",
+				separated: false,
+				items: [{ id: "projects", label: "Projects" }],
+			},
+			{
+				id: "shared",
+				label: "Shared",
 				separated: false,
 				items: [
-					{ id: "projects", label: "Projects" },
 					{ id: "memories", label: "Memories" },
 					{ id: "connectors", label: "Connectors" },
 				],
@@ -171,7 +181,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectNavigationHeadings(hostedGroups, ["Resources", "Tools"]);
+		expectNavigationHeadings(hostedGroups, ["Workspace", "Shared", "Tools"]);
 
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
