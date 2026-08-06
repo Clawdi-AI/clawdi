@@ -189,6 +189,75 @@ export const hostedFixtureCliPayloadPolicySchema = hostedCliPayloadPolicySchema.
 
 const sha256Schema = z.string().regex(/^[a-fA-F0-9]{64}$/);
 
+export const FILE_BROWSER_VERSION = "v1.5.0-stable";
+export const FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6";
+export const FILE_BROWSER_PORT = 9120;
+export const FILE_BROWSER_AMD64_SHA256 =
+	"8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e";
+export const FILE_BROWSER_ARM64_SHA256 =
+	"3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f";
+
+const fileBrowserAssetSchema = z
+	.object({
+		url: z.string().url(),
+		sha256: sha256Schema,
+	})
+	.strict();
+
+export const fileBrowserCompanionSchema = z
+	.object({
+		kind: z.literal("filebrowser"),
+		version: z.literal(FILE_BROWSER_VERSION),
+		commit: z.literal(FILE_BROWSER_COMMIT),
+		listen: z.literal("0.0.0.0"),
+		port: z.literal(FILE_BROWSER_PORT),
+		baseURL: z.literal("/"),
+		healthPath: z.literal("/health"),
+		sourceRoot: z.literal("/home/clawdi"),
+		stateRoot: z.literal("/var/lib/clawdi/filebrowser"),
+		assets: z
+			.object({
+				amd64: fileBrowserAssetSchema.extend({
+					url: z.literal(
+						`https://github.com/gtsteffaniak/filebrowser/releases/download/${FILE_BROWSER_VERSION}/linux-amd64-filebrowser`,
+					),
+					sha256: z.literal(FILE_BROWSER_AMD64_SHA256),
+				}),
+				arm64: fileBrowserAssetSchema.extend({
+					url: z.literal(
+						`https://github.com/gtsteffaniak/filebrowser/releases/download/${FILE_BROWSER_VERSION}/linux-arm64-filebrowser`,
+					),
+					sha256: z.literal(FILE_BROWSER_ARM64_SHA256),
+				}),
+			})
+			.strict(),
+		auth: z
+			.object({
+				method: z.literal("jwt"),
+				algorithm: z.literal("HS256"),
+				header: z.literal("X-JWT-Assertion"),
+				userIdentifier: z.literal("sub"),
+				groupsClaim: z.literal("groups"),
+				secret: z
+					.string()
+					.min(43)
+					.max(128)
+					.regex(/^[A-Za-z0-9_-]+$/),
+				audience: z.string().min(1).max(256),
+				subject: z.string().min(1).max(256),
+				requiredGroup: z.string().min(1).max(256),
+				accessRevision: z.string().regex(/^[a-f0-9]{64}$/),
+			})
+			.strict(),
+	})
+	.strict();
+
+const runtimeCompanionsSchema = z
+	.object({
+		files: fileBrowserCompanionSchema.optional(),
+	})
+	.strict();
+
 export const egressEngineSchema = z.object({
 	type: z.literal("mitmproxy"),
 	version: z.string().min(1),
@@ -238,6 +307,7 @@ const runtimeDesiredStateShape = {
 	}),
 	clawdiCli: cliPayloadPolicySchema.optional(),
 	egressEngine: egressEngineSchema.optional(),
+	companions: runtimeCompanionsSchema.optional(),
 	runtimes: z.record(runtimeNameSchema, runtimeSchema),
 	openclawGatewayAuth: openclawGatewayAuthSchema.optional(),
 	hermesDashboardAuth: hermesDashboardAuthSchema.optional(),
@@ -618,6 +688,7 @@ const hostedRuntimeManifestBaseSchema = z
 			.strict(),
 		controlPlane: hostedControlPlaneSchema,
 		egressEngine: egressEngineSchema.strict().optional(),
+		companions: runtimeCompanionsSchema.optional(),
 		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
 		providers: z.record(z.string().min(1), hostedProviderSchema),
 		liveSync: hostedLiveSyncSchema,
@@ -641,6 +712,25 @@ function validateHostedRuntimeManifest(
 	manifest: HostedRuntimeManifestBase,
 	ctx: z.RefinementCtx,
 ): void {
+	const files = manifest.companions?.files;
+	if (files) {
+		const expectedAudience = `clawdi-files:${manifest.deploymentId}`;
+		const expectedSubject = `deployment:${manifest.deploymentId}:owner`;
+		const expectedGroup = `${expectedAudience}:${files.auth.accessRevision}`;
+		for (const [field, actual, expected] of [
+			["audience", files.auth.audience, expectedAudience],
+			["subject", files.auth.subject, expectedSubject],
+			["requiredGroup", files.auth.requiredGroup, expectedGroup],
+		] as const) {
+			if (actual !== expected) {
+				ctx.addIssue({
+					code: "custom",
+					message: `Files ${field} must be bound to this deployment and access revision`,
+					path: ["companions", "files", "auth", field],
+				});
+			}
+		}
+	}
 	const runtimeKeys = Object.keys(manifest.runtimes);
 	const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
 	if (!manifest.runtimes[manifest.runtime]) {

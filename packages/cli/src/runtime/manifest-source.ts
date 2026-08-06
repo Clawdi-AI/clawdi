@@ -449,6 +449,7 @@ export function hostedManifestToRuntimeManifest(
 		},
 		clawdiCli: { ...hosted.clawdiCli },
 		egressEngine: hosted.egressEngine,
+		companions: hosted.companions,
 		runtimes: {
 			[selectedRuntime]: {
 				enabled: runtime.enabled,

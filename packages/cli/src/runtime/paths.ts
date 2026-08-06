@@ -28,6 +28,9 @@ export interface RuntimePaths {
 	egressEngineStatus: string;
 	maintainedRoot: string;
 	egressEngineMaintainedRoot: string;
+	companionInstallRoot: string;
+	fileBrowserStateRoot: string;
+	fileBrowserConfig: string;
 	cacheRoot: string;
 	manifestLastGood: string;
 	appliedState: string;
@@ -139,6 +142,9 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		egressEngineStatus: join(serviceStateRoot, "status", "egress-engine.json"),
 		maintainedRoot: join(serviceStateRoot, "maintained"),
 		egressEngineMaintainedRoot: join(serviceStateRoot, "maintained", "egress-engine", "mitmproxy"),
+		companionInstallRoot: join(serviceStateRoot, "companions", "files"),
+		fileBrowserStateRoot: join(serviceStateRoot, "filebrowser"),
+		fileBrowserConfig: join(serviceStateRoot, "config", "filebrowser.yaml"),
 		cacheRoot,
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
 		appliedState: join(serviceStateRoot, "status", "runtime-applied.json"),

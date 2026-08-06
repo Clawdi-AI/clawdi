@@ -137,6 +137,75 @@ TEST_HERMES_DASHBOARD_AUTH = {
 }
 
 
+def _files_companion(deployment_id: str, access_revision: str = "a" * 64) -> dict:
+    audience = f"clawdi-files:{deployment_id}"
+    release = "https://github.com/gtsteffaniak/filebrowser/releases/download/v1.5.0-stable"
+    return {
+        "files": {
+            "kind": "filebrowser",
+            "version": "v1.5.0-stable",
+            "commit": "79552f8adb27c3e29934c4001660eb98f4aab5d6",
+            "listen": "0.0.0.0",
+            "port": 9120,
+            "baseURL": "/",
+            "healthPath": "/health",
+            "sourceRoot": "/home/clawdi",
+            "stateRoot": "/var/lib/clawdi/filebrowser",
+            "assets": {
+                "amd64": {
+                    "url": f"{release}/linux-amd64-filebrowser",
+                    "sha256": "8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e",
+                },
+                "arm64": {
+                    "url": f"{release}/linux-arm64-filebrowser",
+                    "sha256": "3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f",
+                },
+            },
+            "auth": {
+                "method": "jwt",
+                "algorithm": "HS256",
+                "header": "X-JWT-Assertion",
+                "userIdentifier": "sub",
+                "groupsClaim": "groups",
+                "secret": "s" * 43,
+                "audience": audience,
+                "subject": f"deployment:{deployment_id}:owner",
+                "requiredGroup": f"{audience}:{access_revision}",
+                "accessRevision": access_revision,
+            },
+        }
+    }
+
+
+def test_hosted_files_companion_enforces_pins_and_deployment_binding() -> None:
+    deployment_id = "hdep_files_contract"
+    companion = _files_companion(deployment_id)
+    body = _runtime_state_body(
+        str(uuid4()),
+        deployment_id=deployment_id,
+        companions=companion,
+    )
+
+    validated = AdminRuntimeStateUpsert.model_validate(body)
+    assert validated.companions is not None
+    assert validated.companions.model_dump(mode="json") == companion
+
+    for field, value in (
+        ("audience", "clawdi-files:hdep_other"),
+        ("subject", "deployment:hdep_other:owner"),
+        ("requiredGroup", f"clawdi-files:{deployment_id}:{'b' * 64}"),
+    ):
+        invalid = json.loads(json.dumps(body))
+        invalid["companions"]["files"]["auth"][field] = value
+        with pytest.raises(ValidationError, match="Files authentication must be bound"):
+            AdminRuntimeStateUpsert.model_validate(invalid)
+
+    unpinned = json.loads(json.dumps(body))
+    unpinned["companions"]["files"]["assets"]["amd64"]["sha256"] = "d" * 64
+    with pytest.raises(ValidationError, match="pinned release"):
+        AdminRuntimeStateUpsert.model_validate(unpinned)
+
+
 def test_hosted_runtime_skills_retain_exact_repository_root_source() -> None:
     source = {
         "type": "github",
@@ -185,7 +254,13 @@ def test_hosted_runtime_skills_reject_mutable_or_noncanonical_source(
         )
 
 
-OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "skills")
+OPTIONAL_RUNTIME_STATE_FIELDS = (
+    "egress_engine",
+    "companions",
+    "egress_profiles",
+    "mcp",
+    "skills",
+)
 TEST_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
 TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@1.2.5-test"
 
@@ -2239,6 +2314,58 @@ async def test_runtime_manifest_includes_egress_engine_pin(
 
 
 @pytest.mark.asyncio
+async def test_runtime_state_projects_and_backward_compatibly_clears_files_companion(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-files-{uuid4().hex[:8]}",
+        machine_name="Runtime Files companion",
+        agent_type="openclaw",
+    )
+    body = _runtime_state_body(str(env.id))
+    companion = _files_companion(body["deployment_id"])
+    body["companions"] = companion
+
+    written = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+    assert written.status_code == 200, written.text
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    assert state.companions == companion
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+    assert response.status_code == 200, response.text
+    assert response.json()["manifest"]["companions"] == companion
+
+    update = {**body, "generation": body["generation"] + 1}
+    update.pop("companions")
+    cleared = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=update,
+    )
+    assert cleared.status_code == 200, cleared.text
+    await db_session.refresh(state)
+    assert state.companions is None
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+    assert response.status_code == 200, response.text
+    assert "companions" not in response.json()["manifest"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "runtime",
     ["openclaw", "hermes"],
@@ -2993,6 +3120,7 @@ async def test_admin_runtime_state_clears_optional_state(
     assert state is not None
     assert state.generation == 8
     assert state.egress_engine is None
+    assert state.companions is None
     assert state.egress_profiles is None
     assert state.mcp is None
     assert state.skills is None

@@ -80,6 +80,7 @@ function makeRootReadableDir(path: string): void {
 }
 
 export interface RuntimeSystemdUserProgram {
+	programKind: "runtime" | "file-browser";
 	runtime: RuntimeName;
 	service: RuntimeServiceName | null;
 	command: string;
@@ -231,6 +232,7 @@ export function buildRuntimeSystemdUserProgram(input: {
 			: input.config.command;
 
 	return {
+		programKind: "runtime",
 		runtime: input.config.runtime,
 		service: input.config.service,
 		command,
@@ -246,6 +248,7 @@ function hashToUInt16(input: string): number {
 }
 
 function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
+	if (program.programKind === "file-browser") return "clawdi-files";
 	const officialName = officialRuntimeSystemdProgramName(program);
 	if (officialName) return officialName;
 	if (!program.service) return `clawdi-${systemdUnitNameSegment(program.runtime)}`;
@@ -268,6 +271,12 @@ function runtimeSystemdProgramRevision(
 		providerProjectionRevision: string | null,
 	) => string,
 ): string {
+	if (program.programKind === "file-browser") {
+		return runtimeImpactRevision({
+			companion: manifest.companions?.files ?? null,
+			providerProjectionRevision: null,
+		});
+	}
 	if (program.service) return runtimeServiceProgramRevision(program);
 	return runtimeRevision(
 		manifest,
@@ -1139,34 +1148,37 @@ export function planRuntimeSystemdUserMutations(
 		paths.systemdUserRoot,
 		join(paths.systemdUserRoot, "default.target.wants"),
 	]);
-	const writtenUnits = programs.map((program) => {
-		const name = runtimeSystemdProgramName(program);
-		const unitName = systemdUnitFileName(name);
-		unitNames.add(unitName);
-		const unitPath = join(paths.systemdUserRoot, unitName);
-		environmentTargets.add(systemdEnvironmentFilePath(paths, name));
-		targets.add(unitPath);
-		const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
-		targets.add(enablementPath);
-		symlinkTargets.add(enablementPath);
-		if (officialRuntimeServiceInstallArgs(program)) {
-			if (program.runtime === "openclaw") {
-				// OpenClaw's official Linux installer writes the base unit in place and
-				// preserves the previous unit beside it. Both are official-user
-				// transaction mutations:
-				// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L985-L1004
-				targets.add(`${unitPath}.bak`);
-				// The same installer may write its owner-only environment file under
-				// the OpenClaw state directory:
-				// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L1099-L1170
-				targets.add(join(paths.userHome, ".openclaw", "gateway.systemd.env"));
+	const writtenUnits = programs
+		.map((program) => {
+			if (program.programKind === "file-browser") return null;
+			const name = runtimeSystemdProgramName(program);
+			const unitName = systemdUnitFileName(name);
+			unitNames.add(unitName);
+			const unitPath = join(paths.systemdUserRoot, unitName);
+			environmentTargets.add(systemdEnvironmentFilePath(paths, name));
+			targets.add(unitPath);
+			const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
+			targets.add(enablementPath);
+			symlinkTargets.add(enablementPath);
+			if (officialRuntimeServiceInstallArgs(program)) {
+				if (program.runtime === "openclaw") {
+					// OpenClaw's official Linux installer writes the base unit in place and
+					// preserves the previous unit beside it. Both are official-user
+					// transaction mutations:
+					// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L985-L1004
+					targets.add(`${unitPath}.bak`);
+					// The same installer may write its owner-only environment file under
+					// the OpenClaw state directory:
+					// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L1099-L1170
+					targets.add(join(paths.userHome, ".openclaw", "gateway.systemd.env"));
+				}
+				const dropInPath = systemdDropInFilePath(paths, name);
+				targets.add(dropInPath);
+				metadataTargets.add(dirname(dropInPath));
 			}
-			const dropInPath = systemdDropInFilePath(paths, name);
-			targets.add(dropInPath);
-			metadataTargets.add(dirname(dropInPath));
-		}
-		return unitPath;
-	});
+			return unitPath;
+		})
+		.filter((path): path is string => path !== null);
 
 	if (existsSync(paths.systemdUserRoot)) {
 		const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
@@ -1240,6 +1252,7 @@ function planStaleRuntimeSystemdFiles(
 		"clawdi-runtime-watch.service",
 		"clawdi-daemon.service",
 		"clawdi-runtime-sidecar.service",
+		"clawdi-files.service",
 	]);
 	if (existsSync(paths.systemdSystemRoot)) {
 		for (const entry of readdirSync(paths.systemdSystemRoot)) {
@@ -1412,6 +1425,61 @@ function writeRuntimeSystemdUserProgram(input: {
 	});
 }
 
+function writeFileBrowserSystemdUnit(input: {
+	program: RuntimeSystemdUserProgram;
+	manifest: RuntimeManifest;
+	paths: RuntimePaths;
+}): string {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const uid = runtimeUserUid(runtimeUser);
+	const gid = runtimeUserGid(runtimeUser);
+	if (uid === 0 || gid === 0) throw new Error("Files companion systemd identity must be non-root");
+	return writeSystemdSystemUnit({
+		paths: input.paths,
+		name: "clawdi-files",
+		description: "Clawdi hosted Files companion",
+		command: input.program.command,
+		args: input.program.args,
+		cwd: input.program.cwd,
+		env: {
+			HOME: input.paths.userHome,
+			CLAWDI_RUNTIME_REV: runtimeImpactRevision({
+				companion: input.manifest.companions?.files ?? null,
+			}),
+		},
+		extraUnitLines: ["After=network-online.target", "Wants=network-online.target"],
+		extraServiceLines: [
+			`User=${uid}`,
+			`Group=${gid}`,
+			"UMask=0077",
+			"NoNewPrivileges=true",
+			"PrivateTmp=true",
+			"PrivateDevices=true",
+			"ProtectSystem=strict",
+			"ProtectHome=tmpfs",
+			`BindPaths=${systemdPath(input.paths.userHome)}`,
+			`ReadWritePaths=${systemdPath(input.paths.userHome)} ${systemdPath(input.paths.fileBrowserStateRoot)}`,
+			`ReadOnlyPaths=${systemdPath(input.paths.fileBrowserConfig)} ${systemdPath(input.program.command)}`,
+			"ProtectKernelTunables=true",
+			"ProtectKernelModules=true",
+			"ProtectKernelLogs=true",
+			"ProtectControlGroups=true",
+			"ProtectClock=true",
+			"ProtectProc=invisible",
+			"ProcSubset=pid",
+			"LockPersonality=true",
+			"RestrictSUIDSGID=true",
+			"RestrictRealtime=true",
+			"RestrictNamespaces=true",
+			"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+			"CapabilityBoundingSet=",
+			"AmbientCapabilities=",
+			"SystemCallArchitectures=native",
+			"TasksMax=128",
+		],
+	});
+}
+
 function officialRuntimeSystemdPrograms(
 	programs: RuntimeSystemdUserProgram[],
 ): RuntimeSystemdUserProgram[] {
@@ -1495,10 +1563,13 @@ export function writeRuntimeSystemdState(input: {
 	const desiredSystemUnitNames = [
 		...(daemonAuthTokenFile ? ["clawdi-runtime-watch.service", "clawdi-daemon.service"] : []),
 		...(activeEgressProgram ? ["clawdi-runtime-sidecar.service"] : []),
+		...(runtimePrograms.some((program) => program.programKind === "file-browser")
+			? ["clawdi-files.service"]
+			: []),
 	];
-	const desiredUserUnitNames = runtimePrograms.map((program) =>
-		systemdUnitFileName(runtimeSystemdProgramName(program)),
-	);
+	const desiredUserUnitNames = runtimePrograms
+		.filter((program) => program.programKind !== "file-browser")
+		.map((program) => systemdUnitFileName(runtimeSystemdProgramName(program)));
 	const staleFiles = planStaleRuntimeSystemdFiles(
 		paths,
 		desiredSystemUnitNames,
@@ -1572,6 +1643,16 @@ export function writeRuntimeSystemdState(input: {
 	}
 
 	for (const program of runtimePrograms) {
+		if (program.programKind === "file-browser") {
+			systemUnits.push(
+				writeFileBrowserSystemdUnit({
+					program,
+					manifest,
+					paths,
+				}),
+			);
+			continue;
+		}
 		userUnits.push(
 			writeRuntimeSystemdUserProgram({
 				program,

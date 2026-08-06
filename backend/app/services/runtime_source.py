@@ -38,6 +38,7 @@ from app.schemas.runtime import (
     HostedCodexProviderProjection,
     HostedEgressEngine,
     HostedEgressProfiles,
+    HostedRuntimeCompanions,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
     HostedRuntimeName,
@@ -400,6 +401,14 @@ def render_runtime_source(
     except ValidationError as exc:
         raise RuntimeSourceError("Hosted runtime egress state is invalid") from exc
     try:
+        companions = (
+            HostedRuntimeCompanions.model_validate(state.companions)
+            if state.companions is not None
+            else None
+        )
+    except ValidationError as exc:
+        raise RuntimeSourceError("Hosted runtime companion state is invalid") from exc
+    try:
         tools = HostedRuntimeTools.model_validate(state.tools)
     except ValidationError as exc:
         raise RuntimeSourceError("Hosted runtime tools state is invalid") from exc
@@ -637,6 +646,10 @@ def render_runtime_source(
         )
     if egress_engine is not None:
         manifest["egressEngine"] = egress_engine.model_dump(
+            exclude_none=True, exclude_unset=True, mode="json"
+        )
+    if companions is not None and companions.files is not None:
+        manifest["companions"] = companions.model_dump(
             exclude_none=True, exclude_unset=True, mode="json"
         )
     if egress_profiles is not None:

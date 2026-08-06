@@ -74,6 +74,14 @@ import {
 	readRuntimeAuthToken,
 } from "./auth-token";
 import {
+	ensureFileBrowserCompanion,
+	type FileBrowserCompanionInstallOptions,
+	fileBrowserCompanionMutationPlan,
+	fileBrowserCompanionProgram,
+	gcFileBrowserCompanionCandidates,
+	probeFileBrowserReadiness,
+} from "./file-browser-companion";
+import {
 	adoptableLegacyHostedBundledSkill,
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
@@ -336,6 +344,7 @@ interface RuntimeInstallReceiptTarget {
 interface RuntimeInstallReceiptTargets {
 	officialServices: Map<string, RuntimeInstallReceiptTarget>;
 	channelPlugins: Map<string, RuntimeInstallReceiptTarget>;
+	companions: Map<string, RuntimeInstallReceiptTarget>;
 }
 
 // Supported by `openclaw plugins inspect <id> --json`. The command returns
@@ -4415,6 +4424,7 @@ function commitRuntimeInstallReceipts(
 	const receipts = emptyRuntimeInstallReceipts();
 	commitRuntimeInstallReceiptGroup(receipts.officialServices, targets.officialServices);
 	commitRuntimeInstallReceiptGroup(receipts.channelPlugins, targets.channelPlugins);
+	commitRuntimeInstallReceiptGroup(receipts.companions, targets.companions);
 	writeRuntimeInstallReceipts(receipts, paths);
 }
 
@@ -4821,6 +4831,8 @@ function planRuntimeSystemdUserPrograms(input: {
 			if (program) programs.push(program);
 		}
 	}
+	const filesProgram = fileBrowserCompanionProgram(input.manifest, input.paths);
+	if (filesProgram) programs.push(filesProgram);
 	return programs;
 }
 
@@ -5304,13 +5316,14 @@ function mutationAncestorMetadataTargets(
 		const resolvedTarget = resolve(target);
 		const resolvedBoundary = resolvedBoundaries.find((boundary) => {
 			const relativeTarget = relative(boundary, resolvedTarget);
-			return Boolean(
-				relativeTarget && !relativeTarget.startsWith("..") && !isAbsolute(relativeTarget),
+			return (
+				relativeTarget === "" || (!relativeTarget.startsWith("..") && !isAbsolute(relativeTarget))
 			);
 		});
 		if (!resolvedBoundary) {
 			throw new Error(`runtime mutation target is outside managed user roots: ${resolvedTarget}`);
 		}
+		if (resolvedTarget === resolvedBoundary) continue;
 		let parent = dirname(resolvedTarget);
 		while (parent !== resolvedBoundary) {
 			metadata.add(parent);
@@ -5333,6 +5346,8 @@ function runtimeManagedMutationPlan(input: {
 	systemdUserUnits: string[];
 } {
 	const rootTargets = new Set(runtimeRootLiveMutationTargets(input.manifest, input.paths));
+	const filesMutation = fileBrowserCompanionMutationPlan(input.manifest, input.paths);
+	for (const target of filesMutation.rootTargets) rootTargets.add(target);
 	rootTargets.add(runtimeInstallReceiptsPath(input.paths));
 	const rootMetadataTargets = new Set<string>();
 	if (
@@ -5367,6 +5382,7 @@ function runtimeManagedMutationPlan(input: {
 				input.observations,
 			),
 			...systemd.targets,
+			...filesMutation.runtimeUserTargets,
 		]),
 	].sort();
 	const rootTargetsList = [...rootTargets].sort();
@@ -5376,15 +5392,20 @@ function runtimeManagedMutationPlan(input: {
 		const commandPath = runtimeCommandPath(name, projectionHome);
 		return commandPath ? [commandPath] : [];
 	});
+	const runtimeUserBoundaries = [
+		input.paths.userHome,
+		input.paths.clawdiHome,
+		...filesMutation.runtimeUserTrustedRoots,
+	];
 	const runtimeUserMetadataTargets = [
 		...new Set([
 			...systemd.metadataTargets,
 			input.paths.userHome,
 			input.paths.clawdiHome,
-			...mutationAncestorMetadataTargets(runtimeUserTargets, [
-				input.paths.userHome,
-				input.paths.clawdiHome,
-			]),
+			...filesMutation.runtimeUserTrustedRoots.filter(
+				(boundary) => !runtimeUserTargets.includes(boundary),
+			),
+			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserBoundaries),
 		]),
 	].sort();
 	const runtimeUserOwnershipTargets = [
@@ -5395,10 +5416,11 @@ function runtimeManagedMutationPlan(input: {
 			rootTargets: rootTargetsList,
 			trustedRootDirectories: runtimeRootLiveMutationDirectories(input.manifest, input.paths),
 			runtimeUserTargets,
-			runtimeUserTrustedRoots: [input.paths.clawdiHome, input.paths.userHome],
+			runtimeUserTrustedRoots: runtimeUserBoundaries,
 			runtimeUserSymlinkTargets: [
 				...new Set([
 					...systemd.symlinkTargets,
+					...filesMutation.runtimeUserSymlinkTargets,
 					...runtimeCommandTargets.filter((target) => runtimeUserTargets.includes(target)),
 				]),
 			].sort(),
@@ -5460,6 +5482,8 @@ export function convergeRuntimeManifest(
 		egressEngineEnsureOptions?: EnsureRuntimeMitmproxyOptions;
 		systemdApply?: RuntimeSystemdApplyHooks;
 		executeOfficialServiceInstallers?: boolean;
+		fileBrowserInstallOptions?: FileBrowserCompanionInstallOptions;
+		fileBrowserReadinessProbe?: (url: string) => boolean;
 		preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
 		hostedHermesSkillExactSourceDriver?: HostedHermesSkillExactSourceDriver;
 		hostedOpenClawSkillDriver?: HostedOpenClawSkillDriver;
@@ -5470,6 +5494,20 @@ export function convergeRuntimeManifest(
 	const applyContext = load.applyContext;
 	if (!applyContext) {
 		throw new Error("runtime manifest convergence requires an explicit apply context");
+	}
+	if (manifest.companions?.files) {
+		if (
+			paths.mode !== "hosted" ||
+			manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2" ||
+			applyContext.backend !== "incus"
+		) {
+			throw new Error(
+				"Files companion requires a hosted v2 bundle and trusted Incus runtime context",
+			);
+		}
+		if (!opts.systemdApply) {
+			throw new Error("Files companion requires systemd apply and readiness hooks");
+		}
 	}
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
@@ -5501,6 +5539,7 @@ export function convergeRuntimeManifest(
 	const installReceiptTargets: RuntimeInstallReceiptTargets = {
 		officialServices: new Map(),
 		channelPlugins: new Map(),
+		companions: new Map(),
 	};
 	const previousProjectedProviderIds = appliedState?.projectedProviderIds ?? {};
 	const projectedProviderIds: Record<string, string[]> = {};
@@ -5610,6 +5649,15 @@ export function convergeRuntimeManifest(
 		// before any official installer or CLI command drops privilege. Modes are
 		// intentionally preserved, so private runtime state stays private.
 		ensureRuntimeUserOwnershipBoundaries(mutationPlan.runtimeUserOwnershipTargets);
+		const filesInstall = ensureFileBrowserCompanion(
+			manifest,
+			paths,
+			previousInstallReceipts?.companions.files,
+			opts.fileBrowserInstallOptions,
+		);
+		if (filesInstall) {
+			installReceiptTargets.companions.set(filesInstall.receiptKey, filesInstall.receiptTarget);
+		}
 		observations.clear();
 		for (const [name, runtime] of runtimeEntries) {
 			const observation = observeRuntimeInstall(name, runtime, projectionHome);
@@ -6257,6 +6305,7 @@ export function convergeRuntimeManifest(
 			if (!activation.applied) {
 				throw new Error("systemd runtime services did not reach required readiness");
 			}
+			probeFileBrowserReadiness(manifest, { probe: opts.fileBrowserReadinessProbe });
 		}
 		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
 			manifestLastGood = writeLastGoodManifest(
@@ -6322,6 +6371,15 @@ export function convergeRuntimeManifest(
 					? { egressSidecarSecretRevision: desiredEgressSidecarSecretRevision }
 					: {}),
 			});
+			try {
+				gcFileBrowserCompanionCandidates(manifest, paths);
+			} catch (cleanupError) {
+				console.warn(
+					`post-commit Files companion candidate cleanup deferred: ${
+						cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+					}`,
+				);
+			}
 			try {
 				for (const cleanupError of removeStaleRuntimeSystemdFiles(paths, systemdUnits.staleFiles)) {
 					console.warn(`post-commit systemd file cleanup deferred: ${cleanupError}`);
