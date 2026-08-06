@@ -13,7 +13,6 @@ import { cn } from "@/lib/utils";
 /** Single-line Agent name for compact meta rows. Runtime belongs in a
  * separate metadata field; it is never appended to the canonical name. */
 export function AgentInline({
-	deploymentName,
 	name,
 	displayName,
 	defaultName,
@@ -21,7 +20,6 @@ export function AgentInline({
 	type,
 	className,
 }: {
-	deploymentName?: string | null | undefined;
 	name?: string | null | undefined;
 	displayName?: string | null | undefined;
 	defaultName?: string | null | undefined;
@@ -30,15 +28,13 @@ export function AgentInline({
 	className?: string;
 }) {
 	const hasIdentity = Boolean(
-		cleanAgentName(deploymentName) ||
-			cleanAgentName(displayName) ||
+		cleanAgentName(displayName) ||
 			cleanAgentName(defaultName) ||
 			cleanAgentName(name) ||
 			cleanMachineName(machineName) ||
 			type,
 	);
 	const identity = agentIdentity({
-		deployment_name: deploymentName,
 		name,
 		display_name: displayName,
 		default_name: defaultName,
@@ -107,7 +103,6 @@ function sourceFromOwnershipKind(kind: AgentOwnershipKind): AgentSourceKind | nu
 }
 
 export type AgentIdentityInput = {
-	deployment_name?: string | null;
 	name?: string | null;
 	display_name?: string | null;
 	default_name?: string | null;
@@ -123,16 +118,12 @@ export type AgentIdentity = {
 };
 
 export function agentIdentity(env: AgentIdentityInput): AgentIdentity {
-	const hasDeploymentIdentity = env.deployment_name !== undefined && env.deployment_name !== null;
-	const deploymentName = cleanAgentName(env.deployment_name) || null;
 	const customName = cleanAgentName(env.display_name) || null;
 	const defaultName = cleanAgentName(env.default_name) || null;
 	const apiName = cleanAgentName(env.name) || null;
 	const machineName = cleanMachineName(env.machine_name) || null;
 	const runtimeName = agentTypeLabel(env.agent_type);
-	const primaryLabel = hasDeploymentIdentity
-		? (deploymentName ?? runtimeName)
-		: (customName ?? defaultName ?? apiName ?? machineName ?? runtimeName);
+	const primaryLabel = customName ?? defaultName ?? apiName ?? machineName ?? runtimeName;
 	const secondaryLabel = runtimeName !== primaryLabel ? runtimeName : null;
 	return {
 		primaryLabel,
@@ -309,18 +300,6 @@ export function cleanMachineName(raw: string | null | undefined): string {
 	return cleaned;
 }
 
-/** Middle-truncate generated deployment names for display. A fleet of
- * `openclaw-164ec696-744994f657-mgc9m` tiles is unreadable, and
- * END-truncation (`truncate`) cuts the final group — the only part
- * that distinguishes two clones. Keep runtime prefix + last group:
- * `openclaw…mgc9m`. Human-chosen names pass through untouched; the
- * full name stays available via the title tooltip. */
-export function displayMachineName(name: string): string {
-	const m = name.match(/^([a-z][a-z0-9_]*)-(?:[0-9a-f]{6,}-)+([a-z0-9]{4,12})$/i);
-	if (!m) return name;
-	return `${m[1]}…${m[2]}`;
-}
-
 const NAME_CLASS: Record<AgentIconSize, string> = {
 	xs: "text-xs font-medium",
 	sm: "text-sm font-medium",
@@ -409,7 +388,7 @@ export function AgentLabel({
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
 					<span className={cn("truncate leading-tight", NAME_CLASS[size])} title={titleText}>
-						{displayMachineName(titleText)}
+						{titleText}
 					</span>
 					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
 				</div>

@@ -46,7 +46,6 @@ import {
 	agentDisplayName,
 	agentSourceKindLabel,
 	agentTypeLabel,
-	displayMachineName,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
@@ -802,7 +801,7 @@ function SortableAgentRailItem({
 	});
 	const kind = agentTileChromeKind(agent);
 	const label = agent.name;
-	const caption = displayMachineName(agent.name);
+	const caption = agent.name;
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(transform),
 		transition: isDragging ? undefined : transition,
@@ -1159,7 +1158,6 @@ function FocusHeader({
 	}
 
 	const name = activeAgentName ?? "Agent";
-	const displayName = displayMachineName(name);
 	const meta = activeAgent ? agentHeaderMeta(activeAgent, activeAgentKind) : null;
 	const activityLabel =
 		activeAgentKind === "cloud" ? null : (meta?.activityLabel ?? "Agent details unavailable");
@@ -1172,7 +1170,7 @@ function FocusHeader({
 	return (
 		<div className="min-w-0 text-left">
 			<div className="flex min-w-0 items-center gap-2" title={name}>
-				<span className="truncate text-sm font-semibold leading-5">{displayName}</span>
+				<span className="truncate text-sm font-semibold leading-5">{name}</span>
 				{activeAgentKind === "cloud" ? (
 					activeAgent ? (
 						<AgentSourceBadgeForEnvironment

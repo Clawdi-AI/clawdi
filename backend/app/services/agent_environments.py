@@ -296,10 +296,6 @@ async def _refresh_agent_environment(
         clear_connected_agent_registration(env)
         if default_name and default_name.strip():
             env.default_name = default_name.strip()
-            # Hosted V2 owns its Agent name in the deployment spec. Clear any
-            # older dashboard override so every Cloud API projection resolves
-            # to that same control-plane name.
-            env.display_name = None
     if not env.default_project_id:
         project_name = env.default_name or _agent_project_label(machine_name, agent_type)
         healing_project = Project(

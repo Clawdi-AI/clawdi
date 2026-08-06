@@ -491,8 +491,7 @@ export function HostedAgentDetail({
 	};
 	const agent = projection.status === "resolved" ? projection.data : null;
 	const agentTitle = agentDisplayName({
-		...(agent ?? {}),
-		deployment_name: deployment.resource.spec.name,
+		name: deployment.resource.spec.name,
 		agent_type: runtime,
 	});
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
@@ -1859,7 +1858,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	const isRunning = isRunningStatus(status);
 	const isStarting = isStartingStatus(status);
 	const label = agentDisplayName({
-		deployment_name: deployment.resource.spec.name,
+		name: deployment.resource.spec.name,
 		agent_type: deployment.resource.spec.runtime,
 	});
 	const client = useBillingClient();

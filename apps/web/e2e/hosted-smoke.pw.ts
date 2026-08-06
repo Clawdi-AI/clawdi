@@ -874,10 +874,10 @@ const railConnectedCloudAgent = {
 const railHostedCloudAgent = {
 	...sharedLegacyCloudAgent,
 	id: railHostedEnvironmentId,
-	name: "Hermes 3",
-	default_name: "Hermes 3",
+	name: "e2e-2",
+	default_name: "e2e-2",
 	machine_name: "hermes-3.local",
-	display_name: "Hermes 3",
+	display_name: null,
 	sort_order: 0,
 };
 
@@ -4590,7 +4590,6 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
 	await expect(page.getByTestId("app-sidebar").getByText("e2e-2", { exact: true })).toBeVisible();
-	await expect(page.getByText("Hermes 3", { exact: true })).toHaveCount(0);
 	const groups = page
 		.getByTestId("app-sidebar")
 		.locator('[data-slot="sidebar-content"] > [data-slot="sidebar-group"]');

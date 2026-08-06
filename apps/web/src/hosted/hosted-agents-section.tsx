@@ -39,7 +39,7 @@ function HostedDeletionFailureNotices({ deployments }: { deployments: HostedDepl
 				const failure = deploymentFailurePresentation(deployment);
 				if (failure?.failedVerb !== "delete") return null;
 				const name = agentDisplayName({
-					deployment_name: deployment.resource.spec.name,
+					name: deployment.resource.spec.name,
 					agent_type: deployment.resource.spec.runtime,
 				});
 				const retrySafe = failure.retryable !== false;

@@ -48,7 +48,7 @@ export function HostedDeploymentDeleteAction({
 		isComputeSubscriptionRenewing(subscription);
 	const periodEnd = formatShortDate(subscription?.current_period_end);
 	const name = agentDisplayName({
-		deployment_name: deployment.resource.spec.name,
+		name: deployment.resource.spec.name,
 		agent_type: deployment.resource.spec.runtime,
 	});
 

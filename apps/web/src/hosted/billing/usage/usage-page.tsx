@@ -52,7 +52,6 @@ type ModelBreakdown = HostedUsageSummary["by_model"][number];
 type DayBreakdown = HostedUsageSummary["by_day"][number];
 
 type UsageAgentIdentity = {
-	deploymentName: string | null;
 	name: string | null;
 	displayName: string | null;
 	defaultName: string | null;
@@ -101,7 +100,6 @@ function sortModelBreakdown(left: ModelBreakdown, right: ModelBreakdown): number
 
 function usageAgentIdentity(agent: AgentBreakdown): UsageAgentIdentity {
 	return {
-		deploymentName: agent.agent_name ?? null,
 		name: agent.agent_name ?? null,
 		displayName: null,
 		defaultName: null,
@@ -112,8 +110,7 @@ function usageAgentIdentity(agent: AgentBreakdown): UsageAgentIdentity {
 
 function usageAgentTileIdentity(tile: AgentTile): UsageAgentIdentity {
 	return {
-		deploymentName: tile.source === "on-clawdi" ? tile.name : null,
-		name: tile.env?.name ?? tile.name,
+		name: tile.source === "on-clawdi" ? tile.name : (tile.env?.name ?? tile.name),
 		displayName: tile.env?.display_name ?? null,
 		defaultName: tile.env?.default_name ?? null,
 		machineName: tile.env?.machine_name ?? null,
@@ -123,7 +120,6 @@ function usageAgentTileIdentity(tile: AgentTile): UsageAgentIdentity {
 
 function usageAgentText(identity: UsageAgentIdentity): string {
 	const label = agentIdentity({
-		deployment_name: identity.deploymentName,
 		name: identity.name,
 		display_name: identity.displayName,
 		default_name: identity.defaultName,
@@ -265,7 +261,6 @@ function UsageFilters({
 							<SelectItem key={agent.id} value={agent.id}>
 								<div className="flex min-w-0 flex-1 items-center justify-between gap-3">
 									<AgentInline
-										deploymentName={agent.identity.deploymentName}
 										name={agent.identity.name}
 										displayName={agent.identity.displayName}
 										defaultName={agent.identity.defaultName}

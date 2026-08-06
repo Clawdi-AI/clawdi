@@ -11,7 +11,6 @@ import {
 	agentDisplayName,
 	agentIdentity,
 	compareAgentEnvironments,
-	displayMachineName,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
@@ -263,7 +262,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 					<span className="flex min-w-0 items-center gap-1.5">
 						{statusVisual ? <AgentStatusDot visual={statusVisual} /> : null}
 						<span className="min-w-0 truncate" title={tile.name}>
-							{displayMachineName(tile.name)}
+							{tile.name}
 						</span>
 					</span>
 				}

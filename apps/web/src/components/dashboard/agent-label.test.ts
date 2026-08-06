@@ -18,28 +18,24 @@ describe("cleanMachineName", () => {
 });
 
 describe("agentDisplayName", () => {
-	test("uses the Hosted deployment name instead of a runtime projection name", () => {
-		expect(
-			agentIdentity({
-				deployment_name: "e2e-2",
-				display_name: "Hermes 3",
-				default_name: "Hermes 3",
-				agent_type: "hermes",
-			}),
-		).toEqual({ primaryLabel: "e2e-2", secondaryLabel: "Hermes" });
+	test("uses a direct canonical name without appending the runtime", () => {
+		expect(agentIdentity({ name: "e2e-2", agent_type: "hermes" })).toEqual({
+			primaryLabel: "e2e-2",
+			secondaryLabel: "Hermes",
+		});
 	});
 
-	test("does not guess whether a Hosted deployment name is user-facing", () => {
+	test("does not guess whether a canonical name is user-facing", () => {
 		expect(
 			agentDisplayName({
-				deployment_name: "clawdi-v2-deployment-10",
+				name: "clawdi-v2-deployment-10",
 				agent_type: "openclaw",
 			}),
 		).toBe("clawdi-v2-deployment-10");
 	});
 
-	test("preserves user-provided Hosted deployment names exactly", () => {
-		expect(agentDisplayName({ deployment_name: "hermes-research", agent_type: "hermes" })).toBe(
+	test("preserves user-provided canonical names exactly", () => {
+		expect(agentDisplayName({ name: "hermes-research", agent_type: "hermes" })).toBe(
 			"hermes-research",
 		);
 	});

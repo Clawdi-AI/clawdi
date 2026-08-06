@@ -2205,27 +2205,6 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
 
     agent_id = uuid.uuid4()
-    legacy = await admin_client.post(
-        "/v1/admin/environments",
-        headers=_AUTH,
-        json={
-            "target_clerk_id": seed_user.clerk_id,
-            "environment_id": str(agent_id),
-            "machine_id": "admin-agent-alias",
-            "machine_name": "admin-agent-pod",
-            "agent_type": "codex",
-            "agent_version": "1.0.0",
-            "os_name": "linux",
-        },
-    )
-    assert legacy.status_code == 200, legacy.text
-
-    legacy_env = (
-        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
-    ).scalar_one()
-    legacy_env.display_name = "Hermes 3"
-    await db_session.commit()
-
     created = await admin_client.post(
         "/v1/admin/agents",
         headers=_AUTH,

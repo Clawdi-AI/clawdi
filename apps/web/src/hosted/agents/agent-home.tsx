@@ -371,7 +371,7 @@ function DeploymentChooser({
 				{matches.map((match) => {
 					const { deployment } = match;
 					const name = agentDisplayName({
-						deployment_name: deployment.resource.spec.name,
+						name: deployment.resource.spec.name,
 						agent_type: deployment.resource.spec.runtime,
 					});
 					return (
