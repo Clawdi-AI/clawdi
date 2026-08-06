@@ -348,10 +348,10 @@ export function canDelete(status: DeploymentStatus): boolean {
 		case "restarting":
 		case "updating":
 		case "failed":
-		case "unknown":
 			return true;
 		case "deleting":
 		case "deleted":
+		case "unknown":
 			return false;
 		default:
 			return exhaustive(status);

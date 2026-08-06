@@ -23,6 +23,17 @@ describe("query refresh presentation contract", () => {
 		const projectsPage = source("pages/dashboard/projects/page.tsx");
 		const vaults = source("components/vault/vaults-surface.tsx");
 		const projectDetail = source("pages/dashboard/projects/[id]/page.tsx");
+		const resolvedAgentBranch = hostedAgentHome.slice(
+			hostedAgentHome.lastIndexOf("if (deployment)"),
+			hostedAgentHome.indexOf("if (requestedHostedAgent)"),
+		);
+		const unresolvedAgentBranch = hostedAgentHome.slice(
+			hostedAgentHome.indexOf("if (requestedHostedAgent)"),
+			hostedAgentHome.indexOf(
+				"<ConnectedAgentDetail",
+				hostedAgentHome.indexOf("if (requestedHostedAgent)"),
+			),
+		);
 
 		expect(billingHistory).toContain("shouldBlockQueryError(history.error, history.data)");
 		expect(subscriptionDialog).toContain(
@@ -38,6 +49,10 @@ describe("query refresh presentation contract", () => {
 		expect(hostedAgentHome).not.toContain("requestedHostedAgent && !deployment && isFetching");
 		expect(hostedAgentHome).toContain("disabled={manualChecking}");
 		expect(hostedAgentHome).toContain("!focusManager.isFocused() || isFetchingRef.current");
+		expect(resolvedAgentBranch).toContain("<HostedAgentDetail");
+		expect(unresolvedAgentBranch).toContain("Check again");
+		expect(unresolvedAgentBranch).not.toContain("HostedDeploymentDeleteAction");
+		expect(unresolvedAgentBranch).not.toContain("Delete");
 		expect(connectedAgentDetail).toContain(
 			"isApiNotFoundError(error) || shouldBlockQueryError(error, agent)",
 		);
