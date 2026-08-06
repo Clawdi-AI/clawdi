@@ -33,10 +33,11 @@ Hosted mode is an explicit CLI contract selected by
 command policy is built into the CLI. The image substrate supplies mode and
 runtime-user facts; the provisioner atomically delivers the root-owned strict
 `0400` `/etc/clawdi/runtime-context.json`, containing the apply tuple, exact CLI
-package pin, and typed manifest URL plus bootstrap bearer. The CLI validates
-the context and fails closed before datasource access. It has no ambient
-manifest selector, auth selector, local-manifest path, or substrate-specific
-datasource branch.
+package pin, and typed manifest URL plus bootstrap bearer. On the current Incus
+substrate, the Incus file API atomically replaces that single file; no wrapper
+directory is part of the filesystem ABI. The CLI validates the context and
+fails closed before datasource access. It has no ambient manifest selector,
+auth selector, local-manifest path, or substrate-specific datasource branch.
 
 Hosted runtime manifests use the single canonical `/v1/runtime/manifest`
 datasource contract. The typed context URL may carry normal query parameters,

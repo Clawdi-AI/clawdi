@@ -214,12 +214,17 @@ official binary. Clawdi does not intercept that command. After an updater
 replaces files, the process manager may restart the relevant official program,
 but the update transaction remains owned by the runtime.
 
-The bootstrap boundary is deliberately small: systemd creates `/etc/clawdi`,
+The bootstrap boundary is deliberately small: systemd owns `/etc/clawdi`,
 `/var/lib/clawdi`, `/var/cache/clawdi`, and `/run/clawdi` through its
 `ConfigurationDirectory=`, `StateDirectory=`, `CacheDirectory=`, and
 `RuntimeDirectory=` directives before invoking the root-owned image bootstrap
-entrypoint by absolute path. The durable roots are root-owned `0700`;
-`/run/clawdi` is `0711` only so named tenant handoff files can be traversed.
+entrypoint by absolute path. The configuration, state, and cache roots are
+root-owned `0700`; `/run/clawdi` is root-owned `0711` and uses
+`RuntimeDirectoryPreserve=restart`. Runtime convergence relies on those
+systemd-owned roots instead of recursively hardening their ownership. The run
+root is searchable only for the two explicit platform-to-tenant handoff
+classes: the egress CA and per-unit tenant environment files. All other
+platform files remain private or are exposed only to dedicated system services.
 That entrypoint reads the exact managed CLI pin from the canonical runtime
 context, installs it under a root-only versioned npm prefix, atomically activates
 `/var/lib/clawdi/maintained/clawdi/bin/clawdi`, and runs
@@ -771,8 +776,8 @@ installs and hands off to the selected package or fails before applying the new
 desired state.
 
 When only the exact CLI package changes and the capability image remains
-compatible, the substrate may rotate the fixed runtime-context directory in
-place without replacing the workload. The running watcher first requires the
+compatible, the substrate may atomically replace the single fixed runtime-context
+file without replacing the workload. The running watcher first requires the
 context `cliPackageSpec` to match the fetched manifest package, installs and
 verifies that exact package, atomically activates it, and exits cleanly. The
 `Restart=always` systemd unit then starts the watcher from the absolute managed
@@ -992,11 +997,16 @@ resolve secret material; the corresponding exact `secret://` reference does.
 The runtime context is a substrate-neutral filesystem ABI. Every substrate
 atomically delivers the root-owned `0400` `/etc/clawdi/runtime-context.json`.
 The CLI always reads the same fixed path on every convergence and does not
-branch on substrate. This contract does not itself implement Docker/Compose or
-VPS provisioner products. `runtime init`, `runtime watch`, and `runtime sidecar`
-reject non-Hosted execution, and manifest convergence or bundle-channel
-projection invoked as a library requires an explicit apply context. Process
-environment is not an Apply identity or secret authority.
+branch on substrate. The retired wrapper-directory shape accommodated historical
+Kubernetes projected-Secret delivery and directory bind mounts; a single-file
+bind mount would have pinned the old inode across replacement. The current Incus
+substrate pushes the file through the Incus file API, so neither constraint
+applies: the delivery contract atomically replaces that one file. This contract
+does not itself implement Docker/Compose or VPS provisioner products. The
+`runtime init`, `runtime watch`, and `runtime sidecar` commands reject non-Hosted
+execution, and manifest convergence or bundle-channel projection invoked as a
+library requires an explicit apply context. Process environment is not an Apply
+identity or secret authority.
 
 The CLI separates root-owned configuration, durable state, disposable cache,
 and ephemeral runtime handoffs. Important outputs include:
