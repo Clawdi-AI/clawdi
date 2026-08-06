@@ -782,6 +782,57 @@ function RailFocusButton({
 	);
 }
 
+/**
+ * One rail tile for every rail entry (Console, agents): identical item
+ * geometry, so the absolute active marker lands on the same x for all of
+ * them. Sortable entries inject dnd-kit refs/props from outside.
+ */
+function RailTileButton({
+	itemRef,
+	itemStyle,
+	itemClassName,
+	itemTestId,
+	render,
+	label,
+	caption,
+	active,
+	className,
+	showTooltip = true,
+	children,
+}: {
+	itemRef?: React.Ref<HTMLLIElement>;
+	itemStyle?: React.CSSProperties;
+	itemClassName?: string;
+	itemTestId?: string;
+	render: React.ReactElement;
+	label: string;
+	caption?: string;
+	active: boolean;
+	className?: string;
+	showTooltip?: boolean;
+	children: React.ReactNode;
+}) {
+	return (
+		<SidebarMenuItem
+			ref={itemRef}
+			data-testid={itemTestId}
+			style={itemStyle}
+			className={cn("relative h-16 w-full", itemClassName)}
+		>
+			<RailFocusButton
+				render={render}
+				label={label}
+				caption={caption}
+				active={active}
+				className={className}
+				showTooltip={showTooltip}
+			>
+				{children}
+			</RailFocusButton>
+		</SidebarMenuItem>
+	);
+}
+
 function SortableAgentRailItem({
 	agent,
 	active,
@@ -821,55 +872,49 @@ function SortableAgentRailItem({
 	};
 
 	return (
-		<SidebarMenuItem
-			ref={setNodeRef}
-			data-testid="app-sidebar-agent-tile"
-			style={style}
-			className={cn(
-				"group/agent-rail-item relative h-16 w-full touch-pan-y will-change-transform",
-				isDragging && "opacity-80",
-			)}
+		<RailTileButton
+			itemRef={setNodeRef}
+			itemTestId="app-sidebar-agent-tile"
+			itemStyle={style}
+			itemClassName={cn("touch-pan-y will-change-transform", isDragging && "opacity-80")}
+			render={
+				<button
+					ref={setActivatorNodeRef}
+					type="button"
+					disabled={!agent.href}
+					onClick={activateAgent}
+					{...attributes}
+					aria-disabled={agent.href ? undefined : true}
+					aria-describedby={agent.env ? attributes["aria-describedby"] : undefined}
+					aria-roledescription={agent.env ? attributes["aria-roledescription"] : undefined}
+					{...listeners}
+				/>
+			}
+			label={label}
+			caption={caption}
+			active={active}
+			className={cn("touch-pan-y", agent.href && "cursor-pointer")}
+			showTooltip={showTooltip}
 		>
-			<RailFocusButton
-				render={
-					<button
-						ref={setActivatorNodeRef}
-						type="button"
-						disabled={!agent.href}
-						onClick={activateAgent}
-						{...attributes}
-						aria-disabled={agent.href ? undefined : true}
-						aria-describedby={agent.env ? attributes["aria-describedby"] : undefined}
-						aria-roledescription={agent.env ? attributes["aria-roledescription"] : undefined}
-						{...listeners}
-					/>
-				}
-				label={label}
-				caption={caption}
-				active={active}
-				className={cn("touch-pan-y", agent.href && "cursor-pointer")}
-				showTooltip={showTooltip}
-			>
-				<span className="relative inline-flex rounded-md">
-					<AgentIcon agent={agent.agentType} size="rail" avatarUrl={agent.avatarUrl} />
-					{kind === "cloud" ? (
-						<span
-							data-agent-rail-corner-marker="cloud"
-							className="-top-1 -right-1 pointer-events-none absolute z-10"
-						>
-							<AgentSourceBadge source="hosted" iconOnly />
-						</span>
-					) : kind === "legacy" ? (
-						<span
-							data-agent-rail-corner-marker="legacy"
-							className="-top-1 -right-1 pointer-events-none absolute z-10"
-						>
-							<LegacyAgentBadge iconOnly />
-						</span>
-					) : null}
-				</span>
-			</RailFocusButton>
-		</SidebarMenuItem>
+			<span className="relative inline-flex rounded-md">
+				<AgentIcon agent={agent.agentType} size="rail" avatarUrl={agent.avatarUrl} />
+				{kind === "cloud" ? (
+					<span
+						data-agent-rail-corner-marker="cloud"
+						className="-top-1 -right-1 pointer-events-none absolute z-10"
+					>
+						<AgentSourceBadge source="hosted" iconOnly />
+					</span>
+				) : kind === "legacy" ? (
+					<span
+						data-agent-rail-corner-marker="legacy"
+						className="-top-1 -right-1 pointer-events-none absolute z-10"
+					>
+						<LegacyAgentBadge iconOnly />
+					</span>
+				) : null}
+			</span>
+		</RailTileButton>
 	);
 }
 
@@ -1009,24 +1054,22 @@ function FocusRailContent({
 			<SidebarSeparator className="mx-auto w-8" />
 
 			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-2.5 pt-2.5 pb-[calc(var(--header-height)+0.75rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-				<SidebarMenu className="items-center">
-					<SidebarMenuItem>
-						<RailFocusButton
-							render={<Link to="/" onClick={onNavigate} />}
-							label="Console"
-							caption="Console"
-							active={!activeAgentId}
-							showTooltip={showTooltips}
+				<SidebarMenu className="w-full items-center">
+					<RailTileButton
+						render={<Link to="/" onClick={onNavigate} />}
+						label="Console"
+						caption="Console"
+						active={!activeAgentId}
+						showTooltip={showTooltips}
+					>
+						<IconChip
+							size="sm"
+							tint={RESOURCE_TINT_CLASSES.overview}
+							className="size-9 [&>svg]:size-4.5"
 						>
-							<IconChip
-								size="sm"
-								tint={RESOURCE_TINT_CLASSES.overview}
-								className="size-9 [&>svg]:size-4.5"
-							>
-								<LayoutDashboard />
-							</IconChip>
-						</RailFocusButton>
-					</SidebarMenuItem>
+							<LayoutDashboard />
+						</IconChip>
+					</RailTileButton>
 				</SidebarMenu>
 
 				<SidebarSeparator className="mx-auto w-8" />
