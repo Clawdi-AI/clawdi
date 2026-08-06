@@ -66,7 +66,6 @@ export function ProjectResourceCard({
 			actions={actions}
 			link={detailLink}
 			ariaLabel={`Open ${projectName}`}
-			interactive={Boolean(detailLink)}
 			className={className}
 		/>
 	);
@@ -90,7 +89,6 @@ export function UnavailableProjectResourceCard({
 			badges={<Badge variant="outline">Access unavailable</Badge>}
 			footer={footer}
 			actions={actions}
-			interactive={false}
 		/>
 	);
 }

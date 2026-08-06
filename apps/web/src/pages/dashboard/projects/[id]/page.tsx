@@ -1172,7 +1172,7 @@ export default function ProjectDetailPage({
 										{...agentSectionLink(env.id, "projects")}
 										className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 									>
-										<span className="sr-only">Open agent {displayAgentName(env)}</span>
+										<span className="sr-only">Open agent {agentDisplayName(env)}</span>
 									</Link>
 								</div>
 							))}
@@ -1596,12 +1596,12 @@ function UseProjectWithAgentDialog({
 	const projectName = displayProjectName(project);
 	const [selectedAgentId, setSelectedAgentId] = useState("");
 	const orderedEnvironments = useMemo(
-		() => [...environments].sort(compareEnvironmentsForUse),
+		() => [...environments].sort(compareAgentEnvironments),
 		[environments],
 	);
 	const agentItems = orderedEnvironments.map((env) => ({
 		value: env.id,
-		label: displayAgentName(env),
+		label: agentDisplayName(env),
 	}));
 	const selectedEnv = orderedEnvironments.find((env) => env.id === selectedAgentId) ?? null;
 	const projectIsHome = selectedEnv?.default_project_id === project.id;
@@ -1631,7 +1631,7 @@ function UseProjectWithAgentDialog({
 			);
 		},
 		onSuccess: () => {
-			const agentName = selectedEnv ? displayAgentName(selectedEnv) : "the agent";
+			const agentName = selectedEnv ? agentDisplayName(selectedEnv) : "the agent";
 			qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(selectedAgentId) });
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			toast.success("Project linked", {
@@ -1708,7 +1708,7 @@ function UseProjectWithAgentDialog({
 										<SelectItem
 											key={env.id}
 											value={env.id}
-											label={displayAgentName(env)}
+											label={agentDisplayName(env)}
 											className="py-2"
 										>
 											<AgentLabel
@@ -2092,14 +2092,6 @@ function ProjectVaultActions({
 			</Dialog>
 		</>
 	);
-}
-
-function compareEnvironmentsForUse(a: Env, b: Env) {
-	return compareAgentEnvironments(a, b);
-}
-
-function displayAgentName(env: Env) {
-	return agentDisplayName(env);
 }
 
 function EmptyLine({ message }: { message: string }) {

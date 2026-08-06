@@ -67,10 +67,38 @@ export function SkillCard({
 					search: cloudSkill.project_id ? { project: cloudSkill.project_id } : undefined,
 				}
 			: (skillLink(cloudSkill) ?? undefined);
+	const cardActions =
+		actions || canSend || canUninstall ? (
+			<>
+				{actions}
+				{canSend && cloudSkill ? <SendSkillDialog skill={cloudSkill} /> : null}
+				{canUninstall ? (
+					<ConfirmAction
+						title={`Remove ${skill.name} from Project?`}
+						description={<p>Other Projects keep their copies.</p>}
+						confirmLabel="Remove from project"
+						destructive
+						onConfirm={() => {
+							if (!cloudSkill?.project_id) return;
+							return onUninstall?.(cloudSkill.skill_key, cloudSkill.project_id);
+						}}
+					>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							disabled={uninstallPending}
+							className="text-muted-foreground hover:text-destructive"
+							aria-label={`Remove ${skill.name} from Project`}
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					</ConfirmAction>
+				) : null}
+			</>
+		) : undefined;
 	return (
 		<HeroCard
 			className="min-h-28 gap-2"
-			interactive={Boolean(detailLink)}
 			icon={
 				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
 					{id.emoji}
@@ -111,34 +139,7 @@ export function SkillCard({
 				) : null,
 				skill.updated_at ? relativeTime(skill.updated_at) : null,
 			]}
-			actions={
-				<>
-					{actions}
-					{canSend && cloudSkill ? <SendSkillDialog skill={cloudSkill} /> : null}
-					{canUninstall ? (
-						<ConfirmAction
-							title={`Remove ${skill.name} from Project?`}
-							description={<p>Other Projects keep their copies.</p>}
-							confirmLabel="Remove from project"
-							destructive
-							onConfirm={() => {
-								if (!cloudSkill?.project_id) return;
-								return onUninstall?.(cloudSkill.skill_key, cloudSkill.project_id);
-							}}
-						>
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								disabled={uninstallPending}
-								className="text-muted-foreground hover:text-destructive"
-								aria-label={`Remove ${skill.name} from Project`}
-							>
-								<Trash2 className="size-3.5" />
-							</Button>
-						</ConfirmAction>
-					) : null}
-				</>
-			}
+			actions={cardActions}
 			link={detailLink}
 			ariaLabel={`Open ${skill.name}`}
 		/>

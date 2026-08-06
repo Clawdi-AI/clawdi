@@ -389,7 +389,6 @@ export function HeroCard({
 	actions,
 	link,
 	ariaLabel,
-	interactive = true,
 	className,
 	titleClassName,
 	descriptionClassName,
@@ -404,7 +403,6 @@ export function HeroCard({
 	actions?: ReactNode;
 	link?: EntityCardLinkOptions;
 	ariaLabel?: string;
-	interactive?: boolean;
 	className?: string;
 	titleClassName?: string;
 	descriptionClassName?: string;
@@ -414,7 +412,7 @@ export function HeroCard({
 	return (
 		<EntityCardChassis
 			variant="resource"
-			interactive={interactive}
+			interactive={Boolean(link)}
 			className={cn("flex min-h-36 flex-col gap-3", className)}
 		>
 			{icon || actions ? (
