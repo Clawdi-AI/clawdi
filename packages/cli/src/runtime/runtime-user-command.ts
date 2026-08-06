@@ -238,10 +238,33 @@ function runtimeUserCommandEnv(
 				}
 			: {}),
 	};
+	clearTenantToolLocationOverrides(env);
 	if (options.egressSystemCaFile) {
 		applyEgressTransparentRuntimeEnv(env, { caFile: options.egressSystemCaFile });
 	}
 	return env;
+}
+
+export function clearTenantToolLocationOverrides(env: NodeJS.ProcessEnv): void {
+	for (const key of [
+		"NPM_CONFIG_PREFIX",
+		"npm_config_prefix",
+		"NPM_CONFIG_CACHE",
+		"npm_config_cache",
+		"XDG_CONFIG_HOME",
+		"XDG_CACHE_HOME",
+		"XDG_DATA_HOME",
+		"XDG_STATE_HOME",
+		"HERMES_HOME",
+		"UV_CACHE_DIR",
+		"UV_PYTHON_INSTALL_DIR",
+		"UV_PYTHON_BIN_DIR",
+		"UV_TOOL_DIR",
+		"UV_TOOL_BIN_DIR",
+		"UV_MANAGED_PYTHON",
+	] as const) {
+		delete env[key];
+	}
 }
 
 export function runtimeUserGid(runtimeUser: string): number {
@@ -280,11 +303,7 @@ export function makeRuntimeUserOwned(path: string): void {
 	const uid = Number.parseInt(resolved.stdout.trim(), 10);
 	const gid = Number.parseInt(group.stdout.trim(), 10);
 	if (!Number.isFinite(uid) || !Number.isFinite(gid)) return;
-	try {
-		chownSync(path, uid, gid);
-	} catch {
-		// Best effort for local development without the configured system user.
-	}
+	chownSync(path, uid, gid);
 }
 
 export function withRuntimeUserFileAccess<T>(
@@ -307,7 +326,6 @@ export function spawnRuntimeUserCommand(
 	cwd: string,
 	options: {
 		egressSystemCaFile?: string;
-		hermesHome?: string;
 		input?: string;
 		maxBufferBytes?: number;
 		timeoutMs?: number;
@@ -332,7 +350,6 @@ export function spawnRuntimeUserCommand(
 	return spawnSync(child.command, child.args, {
 		env: {
 			...runtimeUserCommandEnv(home, runtimeUid, options),
-			...(options.hermesHome ? { HERMES_HOME: options.hermesHome } : {}),
 			...child.env,
 		},
 		cwd,

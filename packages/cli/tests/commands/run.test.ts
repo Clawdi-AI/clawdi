@@ -118,7 +118,7 @@ describe("run command project folder selection", () => {
 					HTTPS_PROXY: "http://127.0.0.1:19090",
 					CLAWDI_PROVIDER_PLACEHOLDER_TOKEN: "clawdi-egress-placeholder",
 				},
-				configPath: "/var/lib/clawdi/config/run/openclaw.json",
+				configPath: "/etc/clawdi/run/openclaw.json",
 			},
 			{
 				currentUid: 0,
@@ -173,7 +173,7 @@ describe("run command project folder selection", () => {
 					HTTPS_PROXY: "http://127.0.0.1:19090",
 					SSL_CERT_FILE: "/run/clawdi/egress-scratch/sidecars/test/ca.pem",
 				},
-				configPath: "/var/lib/clawdi/config/run/hermes.json",
+				configPath: "/etc/clawdi/run/hermes.json",
 			},
 			{
 				currentUid: 0,
@@ -215,7 +215,7 @@ describe("run command project folder selection", () => {
 					args: [],
 					cwd: "/home/clawdi",
 					env: { CLAWDI_RUNTIME_USER: "clawdi" },
-					configPath: "/var/lib/clawdi/config/run/openclaw.json",
+					configPath: "/etc/clawdi/run/openclaw.json",
 				},
 				{
 					currentUid: 0,
@@ -232,7 +232,7 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
 		mkdirSync(runConfigRoot, { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(
@@ -279,7 +279,7 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
 		mkdirSync(runConfigRoot, { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(
@@ -331,7 +331,7 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
 		mkdirSync(runConfigRoot, { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(
@@ -383,7 +383,7 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const openclawPath = join(tmpRoot, "home", "clawdi", ".openclaw", "bin", "openclaw");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
 		mkdirSync(runConfigRoot, { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".openclaw", "bin"), { recursive: true });
 		writeFileSync(
@@ -430,7 +430,7 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const openclawPath = join(tmpRoot, "home", "clawdi", ".openclaw", "bin", "openclaw");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
 		mkdirSync(runConfigRoot, { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".openclaw", "bin"), { recursive: true });
 		writeFileSync(
@@ -472,7 +472,7 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
 		mkdirSync(runConfigRoot, { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(
@@ -520,7 +520,7 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
 		mkdirSync(runConfigRoot, { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(
@@ -561,10 +561,10 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
-		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
+		const egressProfileBundle = join(tmpRoot, "etc", "clawdi", "egress", "profiles.json");
 		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
+		mkdirSync(join(tmpRoot, "etc", "clawdi", "egress"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(egressProfileBundle, "{}\n");
 		writeFileSync(
@@ -627,10 +627,10 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
-		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
+		const egressProfileBundle = join(tmpRoot, "etc", "clawdi", "egress", "profiles.json");
 		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
+		mkdirSync(join(tmpRoot, "etc", "clawdi", "egress"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(egressProfileBundle, "{}\n");
 		writeFileSync(
@@ -668,10 +668,10 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(serviceStateRoot, "config", "run");
-		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
+		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
+		const egressProfileBundle = join(tmpRoot, "etc", "clawdi", "egress", "profiles.json");
 		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
+		mkdirSync(join(tmpRoot, "etc", "clawdi", "egress"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(
 			egressProfileBundle,
@@ -733,8 +733,8 @@ describe("run command project folder selection", () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
-		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
-		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
+		const egressProfileBundle = join(tmpRoot, "etc", "clawdi", "egress", "profiles.json");
+		mkdirSync(join(tmpRoot, "etc", "clawdi", "egress"), { recursive: true });
 		writeFileSync(
 			egressProfileBundle,
 			JSON.stringify({
@@ -773,7 +773,12 @@ describe("run command project folder selection", () => {
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
-		process.env.PATH = `${join(serviceStateRoot, "bin")}:/usr/local/bin:/usr/bin`;
+		process.env.PATH = `${join(
+			serviceStateRoot,
+			"maintained",
+			"clawdi",
+			"bin",
+		)}:/usr/local/bin:/usr/bin`;
 		delete process.env.CLAWDI_AUTH_TOKEN;
 
 		await run(["node", "--version"], {}, spawnImpl);
@@ -787,9 +792,9 @@ describe("run command project folder selection", () => {
 	it("does not inject cloud-managed AI provider keys into hosted runtime commands", async () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
-		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
+		const egressProfileBundle = join(tmpRoot, "etc", "clawdi", "egress", "profiles.json");
 		const catalogDir = join(fakeClawdiHome, "ai-providers");
-		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
+		mkdirSync(join(tmpRoot, "etc", "clawdi", "egress"), { recursive: true });
 		mkdirSync(catalogDir, { recursive: true });
 		writeFileSync(
 			egressProfileBundle,

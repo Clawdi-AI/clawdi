@@ -24,7 +24,7 @@ RUN apt-get update \
 
 RUN groupadd --gid 1000 clawdi-test \
 	&& useradd --uid 1000 --gid 1000 --home-dir /tmp/clawdi-home --no-create-home clawdi-test \
-	&& install -d -m 0755 -o clawdi-test -g clawdi-test /etc/clawdi/runtime-context
+	&& install -d -m 0755 -o clawdi-test -g clawdi-test /etc/clawdi
 
 ENV HOME=/tmp/clawdi-home \
 	USER=clawdi-test \

@@ -1957,19 +1957,9 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		process.exitCode = 2;
 		return;
 	}
-	return withRuntimeConvergeLockAsync(paths, () => runtimeInitLocked(opts, paths, mode, bootId));
-}
-
-async function runtimeInitLocked(
-	opts: RuntimeInitOptions,
-	paths: ReturnType<typeof getRuntimePaths>,
-	mode: "hosted",
-	bootId: string,
-): Promise<void> {
-	const hostPolicy = readHostPolicy(paths.hostPolicy);
 	try {
 		ensureRuntimeStateDirs(paths);
-	} catch (e) {
+	} catch (error) {
 		const status = repairStatus(
 			{
 				bootId,
@@ -1978,7 +1968,7 @@ async function runtimeInitLocked(
 				exitCode: 20,
 				errors: [
 					`could not create runtime state directories: ${
-						e instanceof Error ? e.message : String(e)
+						error instanceof Error ? error.message : String(error)
 					}`,
 				],
 			},
@@ -1989,6 +1979,16 @@ async function runtimeInitLocked(
 		process.exitCode = 20;
 		return;
 	}
+	return withRuntimeConvergeLockAsync(paths, () => runtimeInitLocked(opts, paths, mode, bootId));
+}
+
+async function runtimeInitLocked(
+	opts: RuntimeInitOptions,
+	paths: ReturnType<typeof getRuntimePaths>,
+	mode: "hosted",
+	bootId: string,
+): Promise<void> {
+	const hostPolicy = readHostPolicy(paths.hostPolicy);
 	try {
 		const reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
 		if (reconciliation.selfReexec) {
@@ -3086,7 +3086,7 @@ export function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig):
 	const egressCa = readFileSync(config.caCertPath, "utf-8");
 	writePrivateFileAtomic(config.systemCaBundle, `${systemCa.trimEnd()}\n${egressCa.trimEnd()}\n`, {
 		mode: 0o640,
-		dirMode: 0o755,
+		dirMode: 0o711,
 	});
 	if (runningAsRootCommand()) chownSync(config.systemCaBundle, 0, config.runtimeGid);
 	chmodSync(config.systemCaBundle, 0o640);
@@ -3181,7 +3181,7 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 			name: "Service state",
 			ok: existsSync(paths.serviceStateRoot) && writable(paths.serviceStateRoot),
 			detail: paths.serviceStateRoot,
-			hint: "The hosted service-state volume must be writable by the runtime user.",
+			hint: "The hosted service-state directory must be writable by the platform service.",
 		},
 		{
 			name: "Runtime HOME",

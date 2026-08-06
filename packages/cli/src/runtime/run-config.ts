@@ -220,10 +220,7 @@ export function buildRuntimeRunInvocation(
 	paths = getRuntimePaths(),
 ): RuntimeRunInvocation {
 	const pathPrefix = read.config.prependPath.join(":");
-	const currentPath = withoutPathEntry(
-		withoutPathEntry(baseEnv.PATH ?? "", runtimeManagedBinDir(paths)),
-		dirname(paths.cliManagedBin),
-	);
+	const currentPath = withoutPathEntry(baseEnv.PATH ?? "", dirname(paths.cliManagedBin));
 	const env = {
 		...baseEnv,
 		...read.config.env,
@@ -249,10 +246,6 @@ export function buildRuntimeRunInvocation(
 		env,
 		configPath: read.path,
 	};
-}
-
-export function runtimeManagedBinDir(paths = getRuntimePaths()): string {
-	return join(paths.serviceStateRoot, "bin");
 }
 
 export function withoutPathEntry(path: string, entry: string): string {

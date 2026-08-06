@@ -497,8 +497,8 @@ describe("runtime manifest services", () => {
 			process.umask(previousUmask);
 		}
 		expect(result.installErrors).toEqual([]);
-		expect(statSync(dirname(paths.systemdEnvRoot)).mode & 0o777).toBe(0o755);
-		expect(statSync(paths.systemdEnvRoot).mode & 0o777).toBe(0o755);
+		expect(statSync(paths.systemdRuntimeRoot).mode & 0o777).toBe(0o711);
+		expect(statSync(paths.systemdEnvRoot).mode & 0o777).toBe(0o711);
 		expect(result.outputs.runConfigs.map((path) => path.split("/").at(-1)).sort()).toEqual([
 			"hermes+dashboard.json",
 			"hermes.json",
@@ -548,6 +548,15 @@ describe("runtime manifest services", () => {
 			"utf8",
 		);
 		expect(runtimeWatchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
+		expect(runtimeWatchUnit).toContain("ConfigurationDirectory=clawdi");
+		expect(runtimeWatchUnit).toContain("ConfigurationDirectoryMode=0700");
+		expect(runtimeWatchUnit).toContain("StateDirectory=clawdi");
+		expect(runtimeWatchUnit).toContain("StateDirectoryMode=0700");
+		expect(runtimeWatchUnit).toContain("CacheDirectory=clawdi");
+		expect(runtimeWatchUnit).toContain("CacheDirectoryMode=0700");
+		expect(runtimeWatchUnit).toContain("RuntimeDirectory=clawdi");
+		expect(runtimeWatchUnit).toContain("RuntimeDirectoryMode=0711");
+		expect(runtimeWatchUnit).toContain("RuntimeDirectoryPreserve=restart");
 		expect(runtimeWatchUnit).toContain("TasksMax=infinity");
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
 		expect(runtimeWatchEnv).not.toContain("runtime-byok-value");

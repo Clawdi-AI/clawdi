@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import chalk from "chalk";
 import { readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import { inspectAiProviderAuth } from "../lib/ai-provider-test";
@@ -33,7 +34,6 @@ import {
 	type RuntimeRunInvocation,
 	readRuntimeRunConfigForCommand,
 	readRuntimeServiceRunConfig,
-	runtimeManagedBinDir,
 	withoutPathEntry,
 } from "../runtime/run-config";
 import {
@@ -305,7 +305,7 @@ function hostedGenericRunInvocation(
 		: null;
 	const env = {
 		...baseEnv,
-		PATH: withoutPathEntry(baseEnv.PATH ?? "", runtimeManagedBinDir(paths)),
+		PATH: withoutPathEntry(baseEnv.PATH ?? "", dirname(paths.cliManagedBin)),
 	};
 	if (egressProfileBundle) applyEgressTransparentRuntimeEnv(env);
 	return {

@@ -73,7 +73,6 @@ function runHermes(input: { home: string; appRoot: string }, args: string[]) {
 		input.home,
 		input.appRoot,
 		{
-			hermesHome: join(input.home, ".hermes"),
 			timeoutMs: 120_000,
 			maxBufferBytes: 1024 * 1024,
 		},

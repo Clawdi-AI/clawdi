@@ -25,6 +25,7 @@ import {
 } from "../../src/runtime/manifest-contract";
 import type { RuntimeManifestLoad } from "../../src/runtime/manifest-source";
 import { getRuntimePaths } from "../../src/runtime/paths";
+import { ensureRuntimeStateDirs } from "../../src/runtime/state";
 
 const REAL_SYSTEMD_GATE = "CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD";
 
@@ -88,6 +89,7 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	process.env.CLAWDI_AUTH_TOKEN = "real-systemd-test-auth-token";
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	const paths = getRuntimePaths({ mode: "hosted" });
+	ensureRuntimeStateDirs(paths);
 	rmSync(join(paths.systemdUserRoot, "openclaw-gateway.service"), {
 		recursive: true,
 		force: true,
@@ -226,6 +228,7 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	process.env.CLAWDI_AUTH_TOKEN = "real-filebrowser-systemd-test-auth-token";
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	const paths = getRuntimePaths({ mode: "hosted" });
+	ensureRuntimeStateDirs(paths);
 	rmSync(join(paths.systemdUserRoot, "openclaw-gateway.service"), {
 		recursive: true,
 		force: true,
@@ -242,6 +245,7 @@ const fs = require("fs");
 const http = require("http");
 const existing = fs.readFileSync(${JSON.stringify(tenantExisting)}, "utf8");
 fs.writeFileSync(${JSON.stringify(serviceCreated)}, existing);
+fs.mkdirSync(${JSON.stringify(join(paths.fileBrowserStateRoot, "cache"))});
 fs.writeFileSync(${JSON.stringify(join(paths.fileBrowserStateRoot, "filebrowser.db"))}, "service-state\\n");
 http.createServer((request, response) => {
   if (request.url === "/read-new") {
@@ -279,7 +283,6 @@ http.createServer((request, response) => {
 				baseURL: "/",
 				healthPath: "/health",
 				sourceRoot: runtimeHome,
-				stateRoot: "/var/lib/clawdi/filebrowser",
 				assets: {
 					amd64: {
 						url: `${release}/linux-amd64-filebrowser`,
@@ -386,7 +389,7 @@ http.createServer((request, response) => {
 	const candidatesRoot = join(paths.fileBrowserInstallRoot, "candidates");
 	const activeCandidate = join(candidatesRoot, binarySha256);
 	const activeBinary = join(activeCandidate, "filebrowser");
-	const receipt = join(paths.serviceStateRoot, "status", "runtime-install-receipts.json");
+	const receipt = paths.installReceipts;
 	for (const path of [
 		paths.fileBrowserInstallRoot,
 		candidatesRoot,
@@ -399,8 +402,8 @@ http.createServer((request, response) => {
 		expect(statSync(path).gid).toBe(0);
 	}
 	expect(statSync(paths.fileBrowserConfig).uid).toBe(0);
-	expect(statSync(paths.fileBrowserConfig).gid).toBe(serviceGid);
-	expect(statSync(paths.fileBrowserConfig).mode & 0o777).toBe(0o640);
+	expect(statSync(paths.fileBrowserConfig).gid).toBe(0);
+	expect(statSync(paths.fileBrowserConfig).mode & 0o777).toBe(0o600);
 	expect(statSync(paths.fileBrowserStateRoot).uid).toBe(serviceUid);
 	expect(statSync(paths.fileBrowserStateRoot).gid).toBe(serviceGid);
 	expect(statSync(paths.fileBrowserStateRoot).mode & 0o777).toBe(0o700);

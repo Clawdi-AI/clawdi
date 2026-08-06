@@ -2,8 +2,6 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	accessSync,
-	chmodSync,
-	chownSync,
 	constants,
 	existsSync,
 	mkdirSync,
@@ -199,7 +197,7 @@ export function applyRuntimeCliDesiredState(
 	}
 	validatePackageSpec(packageSpec);
 	const registry = cliRegistry(manifest);
-	const current = hardenCurrentCliInstall(paths, readBootstrapStatus(paths.cliBootstrapStatus));
+	const current = readBootstrapStatus(paths.cliBootstrapStatus);
 	if (isCurrentCliInstall(current, paths, packageSpec, registry)) {
 		return baseResult("current", paths, {
 			packageSpec,
@@ -358,65 +356,8 @@ function readBootstrapStatus(path: string): RuntimeCliBootstrapStatus | null {
 	}
 }
 
-function hardenCurrentCliInstall(
-	paths: RuntimePaths,
-	status: RuntimeCliBootstrapStatus | null,
-): RuntimeCliBootstrapStatus | null {
-	hardenExistingManagedCliBoundary(paths, status);
-	return status;
-}
-
-function hardenExistingManagedCliBoundary(
-	paths: RuntimePaths,
-	status: RuntimeCliBootstrapStatus | null,
-): void {
-	for (const path of [
-		dirname(dirname(paths.cliManagedBin)),
-		dirname(paths.cliManagedBin),
-		paths.cliNpmPrefix,
-		paths.cliNpmCache,
-	]) {
-		if (existsSync(path)) secureManagedCliPath(path, 0o700);
-	}
-	for (const path of [paths.cliBootstrapStatus, paths.cliUpgradeState]) {
-		if (existsSync(path)) secureManagedCliPath(path, 0o600);
-	}
-	if (
-		status?.activeTarget &&
-		isManagedCliTarget(paths, status.activeTarget) &&
-		existsSync(status.activeTarget)
-	) {
-		hardenManagedCliInstall(
-			paths,
-			status.activeTarget,
-			status.npmPrefix ?? prefixForActiveTarget(status.activeTarget),
-		);
-	}
-}
-
-function hardenManagedCliInstall(
-	paths: RuntimePaths,
-	activeTarget: string,
-	npmPrefix: string,
-): void {
-	if (!isManagedCliTarget(paths, activeTarget) || !isManagedCliPrefix(paths, npmPrefix)) {
-		throw new Error(`managed clawdi CLI target escapes the root-only npm prefix: ${activeTarget}`);
-	}
-	for (const path of [paths.cliNpmPrefix, join(paths.cliNpmPrefix, "packages"), npmPrefix]) {
-		if (existsSync(path)) secureManagedCliPath(path, 0o700);
-	}
-	if (existsSync(dirname(activeTarget))) secureManagedCliPath(dirname(activeTarget), 0o700);
-	secureManagedCliPath(activeTarget, 0o700);
-}
-
 function ensureManagedCliDirectory(path: string): void {
-	mkdirSync(path, { recursive: true, mode: 0o700 });
-	secureManagedCliPath(path, 0o700);
-}
-
-function secureManagedCliPath(path: string, mode: number): void {
-	if (typeof process.getuid === "function" && process.getuid() === 0) chownSync(path, 0, 0);
-	chmodSync(path, mode);
+	mkdirSync(path, { recursive: true });
 }
 
 function isManagedCliPrefix(paths: RuntimePaths, path: string): boolean {
@@ -500,7 +441,6 @@ function verifiedActiveCliIdentity(
 	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
 
 	try {
-		hardenManagedCliInstall(paths, activeTarget, npmPrefix);
 		const before = cliVerificationIdentity(activeTarget);
 		if (!before) return null;
 		const version = smokeCliVersion(activeTarget);
@@ -571,7 +511,6 @@ function recoverCurrentCliInstallFromActiveLink(
 	const activeTarget = activeLinkTarget(paths.cliManagedBin);
 	if (activeTarget !== join(npmPrefix, "bin", "clawdi")) return null;
 	if (!isManagedCliTarget(paths, activeTarget)) return null;
-	hardenManagedCliInstall(paths, activeTarget, npmPrefix);
 	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
 	const before = cliVerificationIdentity(activeTarget);
 	if (!before) return null;
@@ -602,6 +541,9 @@ function installCliPackage(
 	version: string;
 	verification: RuntimeCliVerification;
 } {
+	// The version-specific prefix is load-bearing: a fresh candidate is verified
+	// before cliManagedBin switches atomically, and the journal can restore the
+	// previous target without relying on an in-place npm rollback.
 	const installPlan = cliInstallPlan(paths, packageSpec, registry);
 	if (isBadCliVersion(paths, packageSpec, registry, installPlan.version)) {
 		throw new Error(
@@ -659,7 +601,6 @@ function installCliPackage(
 	if (!isExecutable(activeTarget)) {
 		throw new Error(`npm install completed but clawdi bin is missing: ${activeTarget}`);
 	}
-	hardenManagedCliInstall(paths, activeTarget, npmPrefix);
 	const before = cliVerificationIdentity(activeTarget);
 	if (!before)
 		throw new Error(`installed clawdi bin disappeared before verification: ${activeTarget}`);

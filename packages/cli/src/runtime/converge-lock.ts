@@ -1,6 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
-import type { RuntimePaths } from "./paths";
+import { DEFAULT_RUN_ROOT, type RuntimePaths } from "./paths";
 
 function ownerPath(lockDir: string): string {
 	return join(lockDir, "owner.json");
@@ -83,9 +91,12 @@ function sleepSync(ms: number): void {
 }
 
 function lockPath(paths: RuntimePaths): string {
-	const lockRoot = join(paths.runRoot, "locks");
+	if (paths.runRoot === DEFAULT_RUN_ROOT && !existsSync(paths.runRoot)) {
+		throw new Error(`platform directory must be created by systemd: ${paths.runRoot}`);
+	}
+	const lockRoot = dirname(paths.convergeLock);
 	mkdirSync(lockRoot, { recursive: true });
-	return join(lockRoot, "converge.lock");
+	return paths.convergeLock;
 }
 
 function tryAcquire(lockDir: string, timeoutMs: number, startedAt: number): boolean {

@@ -67,7 +67,7 @@ function ledgerPath(): string {
 	const root = process.env.CLAWDI_SERVICE_STATE_DIR?.trim();
 	const mode = process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase();
 	if (mode === "hosted" || root) {
-		return join(root || "/var/lib/clawdi", "config", "projections", LEDGER_FILE);
+		return join(getRuntimePaths({ mode: "hosted" }).projectionRoot, LEDGER_FILE);
 	}
 	return join(getClawdiDir(), "managed-resources", LEDGER_FILE);
 }

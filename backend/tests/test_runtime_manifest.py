@@ -149,7 +149,6 @@ def _filebrowser_companion(deployment_id: str, access_revision: str = "a" * 64) 
             "baseURL": "/",
             "healthPath": "/health",
             "sourceRoot": "/home/clawdi",
-            "stateRoot": "/var/lib/clawdi/filebrowser",
             "assets": {
                 "amd64": {
                     "url": f"{release}/linux-amd64-filebrowser",
