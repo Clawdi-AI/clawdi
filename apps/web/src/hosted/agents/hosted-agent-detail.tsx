@@ -3228,13 +3228,25 @@ function HostedAgentSettingsTab({
 	projectionAvailable: boolean;
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
+	const updateDeployment = useUpdateDeployment();
+	const updateInProgress =
+		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
+
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
 			<div className="flex flex-col gap-8">
 				{projectionAvailable ? (
 					<AgentSettingsPanel
 						environmentId={environmentId}
-						deploymentName={deployment.resource.spec.name}
+						nameControl={{
+							value: deployment.resource.spec.name,
+							pending: updateDeployment.isPending || updateInProgress,
+							onSave: (name) =>
+								updateDeployment.mutate({
+									id: deployment.resource.id,
+									update: { name },
+								}),
+						}}
 					/>
 				) : (
 					<ProjectionDependentUnavailable label="Profile settings" />

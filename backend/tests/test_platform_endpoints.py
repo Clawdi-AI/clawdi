@@ -435,6 +435,34 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
 
 
 @pytest.mark.asyncio
+async def test_platform_agent_reregistration_updates_its_name(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    body = _agent_body(owner, agent_id)
+
+    first = await platform_client.post(
+        "/v1/platform/agents",
+        headers=_headers(f"agent-name-create-{uuid.uuid4().hex}"),
+        json={**body, "default_name": "Research"},
+    )
+    renamed = await platform_client.post(
+        "/v1/platform/agents",
+        headers=_headers(f"agent-name-update-{uuid.uuid4().hex}"),
+        json={**body, "default_name": "Writing"},
+    )
+
+    assert first.status_code == 200, first.text
+    assert renamed.status_code == 200, renamed.text
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    assert agent.default_name == "Writing"
+
+
+@pytest.mark.asyncio
 async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_revision(
     platform_client,
     db_session,

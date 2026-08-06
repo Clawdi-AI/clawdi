@@ -51,11 +51,15 @@ function updateEnvironmentCaches(queryClient: QueryClient, environment: Environm
 export function AgentSettingsPanel({
 	environmentId,
 	className,
-	deploymentName,
+	nameControl,
 }: {
 	environmentId: string;
 	className?: string;
-	deploymentName?: string;
+	nameControl?: {
+		value: string;
+		pending: boolean;
+		onSave: (name: string) => void;
+	};
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -74,7 +78,8 @@ export function AgentSettingsPanel({
 		params: { path: { agent_id: environmentId } },
 	});
 
-	const serverDraftName = agent ? (agent.display_name ? agent.display_name : "") : undefined;
+	const serverDraftName =
+		nameControl?.value ?? (agent ? (agent.display_name ? agent.display_name : "") : undefined);
 
 	useEffect(() => {
 		if (serverDraftName === undefined) return;
@@ -169,12 +174,12 @@ export function AgentSettingsPanel({
 		uploadMutation.mutate(file);
 	};
 	const normalizedDraftName = draftName.trim() || null;
-	const currentCustomName = agent?.display_name ? agent.display_name : null;
-	const nameChanged =
-		!deploymentName && Boolean(agent) && normalizedDraftName !== currentCustomName;
+	const currentName = nameControl?.value ?? (agent?.display_name ? agent.display_name : null);
+	const nameChanged = Boolean(agent) && normalizedDraftName !== currentName;
+	const nameMutationPending = nameControl?.pending ?? updateIdentity.isPending;
 	const guardedBySurface = useUnsavedNavigationState({
 		dirty: nameChanged,
-		busy: updateIdentity.isPending,
+		busy: nameMutationPending,
 	});
 
 	if (isLoading) {
@@ -206,12 +211,13 @@ export function AgentSettingsPanel({
 		ownership,
 	});
 	const isBusy =
-		updateIdentity.isPending ||
+		nameMutationPending ||
 		uploadMutation.isPending ||
 		clearAvatar.isPending ||
 		disconnect.isPending;
-	const displayName = deploymentName ?? agentDisplayName(agent);
-	const defaultDisplayName = deploymentName ?? agentDisplayName({ ...agent, display_name: null });
+	const displayName = nameControl?.value ?? agentDisplayName(agent);
+	const defaultDisplayName =
+		nameControl?.value ?? agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
@@ -221,8 +227,8 @@ export function AgentSettingsPanel({
 			{guardedBySurface ? null : (
 				<UnsavedNavigationGuard
 					dirty={nameChanged}
-					busy={updateIdentity.isPending}
-					description="Your display name will return to the last value saved on the server."
+					busy={nameMutationPending}
+					description="Your agent name will return to the last value saved on the server."
 				/>
 			)}
 			<input
@@ -249,41 +255,51 @@ export function AgentSettingsPanel({
 				</div>
 			</div>
 
-			{deploymentName ? null : (
-				<SettingsSection
-					title="Display name"
-					description="Use a short name that distinguishes this agent from others."
-				>
-					<div className="flex max-w-2xl flex-col gap-3">
-						<div className="flex flex-col gap-2 lg:flex-row">
-							<Label htmlFor="agent-display-name" className="sr-only">
-								Display name
-							</Label>
-							<Input
-								id="agent-display-name"
-								name="display_name"
-								value={draftName}
-								maxLength={120}
-								placeholder={defaultDisplayName}
-								autoComplete="off"
-								onChange={(event) => setDraftName(event.target.value)}
-							/>
-							<Button
-								type="button"
-								size="sm"
-								variant={nameChanged ? "default" : "outline"}
-								className="lg:h-9 lg:min-w-20"
-								disabled={!nameChanged || updateIdentity.isPending}
-								onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
-							>
-								{updateIdentity.isPending ? (
-									<Spinner data-icon="inline-start" />
-								) : (
-									<Save data-icon="inline-start" />
-								)}
-								Save
-							</Button>
-						</div>
+			<SettingsSection
+				title="Name"
+				description="Use a short name that distinguishes this agent from others."
+			>
+				<div className="flex max-w-2xl flex-col gap-3">
+					<div className="flex flex-col gap-2 lg:flex-row">
+						<Label htmlFor="agent-display-name" className="sr-only">
+							Agent name
+						</Label>
+						<Input
+							id="agent-display-name"
+							name={nameControl ? "name" : "display_name"}
+							value={draftName}
+							maxLength={nameControl ? 64 : 120}
+							placeholder={defaultDisplayName}
+							autoComplete="off"
+							onChange={(event) => setDraftName(event.target.value)}
+						/>
+						<Button
+							type="button"
+							size="sm"
+							variant={nameChanged ? "default" : "outline"}
+							className="lg:h-9 lg:min-w-20"
+							disabled={
+								!nameChanged ||
+								nameMutationPending ||
+								(Boolean(nameControl) && normalizedDraftName === null)
+							}
+							onClick={() => {
+								if (nameControl) {
+									if (normalizedDraftName) nameControl.onSave(normalizedDraftName);
+									return;
+								}
+								updateIdentity.mutate({ display_name: normalizedDraftName });
+							}}
+						>
+							{nameMutationPending ? (
+								<Spinner data-icon="inline-start" />
+							) : (
+								<Save data-icon="inline-start" />
+							)}
+							Save
+						</Button>
+					</div>
+					{nameControl ? null : (
 						<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
 							<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
 							<Button
@@ -298,9 +314,9 @@ export function AgentSettingsPanel({
 								Use default name
 							</Button>
 						</div>
-					</div>
-				</SettingsSection>
-			)}
+					)}
+				</div>
+			</SettingsSection>
 
 			<SettingsSection title="Avatar" description="Shown in the sidebar, pickers, and agent lists.">
 				<div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
