@@ -1955,7 +1955,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Smoke Codex", "Workspace", "Skills"]);
+	).toHaveText(["Smoke Codex", "Skills"]);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("connected-workspace-skills-desktop.png") });
 	await page.screenshot({
@@ -1971,7 +1971,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Smoke Codex", "Workspace", "Vaults"]);
+	).toHaveText(["Smoke Codex", "Vaults"]);
 	await expect(main.getByText("Project: Smoke Project", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await expect(
@@ -2115,7 +2115,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Smoke Codex", "Workspace", "Vaults", "Scoped Vault"]);
+	).toHaveText(["Smoke Codex", "Vaults", "Scoped Vault"]);
 	await expect(main.getByRole("button", { name: "Vaults" })).toHaveCount(0);
 	await expect(
 		main
@@ -2278,7 +2278,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Smoke Codex", "Workspace", "Skills", "Scoped Skill"]);
+	).toHaveText(["Smoke Codex", "Skills", "Scoped Skill"]);
 	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
 	const agentSkillsLink = main
