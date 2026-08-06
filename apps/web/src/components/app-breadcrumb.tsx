@@ -1,9 +1,13 @@
 "use client";
 
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { Fragment } from "react";
 import { buildAppBreadcrumbTrail } from "@/components/app-breadcrumb-model";
-import { useBreadcrumbSegmentTitles, useBreadcrumbTitle } from "@/components/breadcrumb-title";
+import {
+	useBreadcrumbSegmentTitles,
+	useBreadcrumbTitle,
+	useCommittedBreadcrumbRoute,
+} from "@/components/breadcrumb-title";
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -13,8 +17,7 @@ import {
 	BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 export function AppBreadcrumb() {
-	const pathname = useLocation({ select: (location) => location.pathname });
-	const routeSearch = useLocation({ select: (location) => location.search });
+	const { pathname, search: routeSearch } = useCommittedBreadcrumbRoute();
 	const overrideTitle = useBreadcrumbTitle();
 	const segmentTitles = useBreadcrumbSegmentTitles();
 	const trail = buildAppBreadcrumbTrail({
