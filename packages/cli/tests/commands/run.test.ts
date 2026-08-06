@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import { buildRuntimeChildSpawn, run } from "../../src/commands/run";
 import { setProjectFolderLink } from "../../src/lib/project-folders";
+import { createPrivilegeDropResolver } from "../../src/runtime/runtime-user-command";
 import { jsonResponse, mockFetch } from "./helpers";
 
 interface SpawnCall {
@@ -119,11 +120,33 @@ describe("run command project folder selection", () => {
 				},
 				configPath: "/var/lib/clawdi/config/run/openclaw.json",
 			},
-			{ isRoot: true, commandExists: (command) => command === "gosu" },
+			{
+				currentUid: 0,
+				runtimeUid: 10_001,
+				runtimeGid: 10_001,
+				resolver: createPrivilegeDropResolver((command) => command === "setpriv"),
+			},
 		);
 
-		expect(child.command).toBe("gosu");
-		expect(child.args).toEqual(["clawdi", "/home/clawdi/.openclaw/bin/openclaw", "gateway", "run"]);
+		expect(child.command).toBe("setpriv");
+		expect(child.args).toEqual([
+			"--reuid=10001",
+			"--regid=10001",
+			"--init-groups",
+			"--",
+			"env",
+			"HOME=/home/clawdi",
+			"USER=clawdi",
+			"LOGNAME=clawdi",
+			"/home/clawdi/.openclaw/bin/openclaw",
+			"gateway",
+			"run",
+		]);
+		expect(child.env).toMatchObject({
+			HOME: "/home/clawdi",
+			USER: "clawdi",
+			LOGNAME: "clawdi",
+		});
 		expect(child.env.USER).toBe("clawdi");
 		expect(child.env.LOGNAME).toBe("clawdi");
 		expect(child.env.HOME).toBe("/home/clawdi");
@@ -152,7 +175,12 @@ describe("run command project folder selection", () => {
 				},
 				configPath: "/var/lib/clawdi/config/run/hermes.json",
 			},
-			{ isRoot: true, commandExists: (command) => command === "runuser" },
+			{
+				currentUid: 0,
+				runtimeUid: 10_001,
+				runtimeGid: 10_001,
+				resolver: createPrivilegeDropResolver((command) => command === "runuser"),
+			},
 		);
 
 		expect(child.command).toBe("runuser");
@@ -161,6 +189,10 @@ describe("run command project folder selection", () => {
 			"-u",
 			"clawdi",
 			"--",
+			"env",
+			"HOME=/home/clawdi",
+			"USER=clawdi",
+			"LOGNAME=clawdi",
 			"/home/clawdi/.local/bin/hermes",
 			"dashboard",
 		]);
@@ -185,9 +217,14 @@ describe("run command project folder selection", () => {
 					env: { CLAWDI_RUNTIME_USER: "clawdi" },
 					configPath: "/var/lib/clawdi/config/run/openclaw.json",
 				},
-				{ isRoot: true, commandExists: () => false },
+				{
+					currentUid: 0,
+					runtimeUid: 10_001,
+					runtimeGid: 10_001,
+					resolver: createPrivilegeDropResolver(() => false),
+				},
 			),
-		).toThrow("neither gosu nor runuser is available");
+		).toThrow("cannot drop privileges to clawdi: no supported mechanism");
 	});
 
 	it("runs hosted runtime commands from managed run config without login", async () => {

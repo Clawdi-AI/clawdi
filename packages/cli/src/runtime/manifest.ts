@@ -203,6 +203,7 @@ import {
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import {
+	buildRuntimeUserCommand,
 	commandExists,
 	commandResolvable,
 	executableExists,
@@ -1051,7 +1052,7 @@ function runtimeInstallerExecution(
 } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	const env = runtimeInstallerEnv(name, install);
-	if (!runningAsRoot() || !runtimeUser || runtimeUser === "root") {
+	if (!runtimeUser || runtimeUser === "root") {
 		return {
 			command: "bash",
 			args: [installerPath, ...install.args],
@@ -1060,42 +1061,16 @@ function runtimeInstallerExecution(
 		};
 	}
 
-	const userEnv = {
-		...env,
-		USER: runtimeUser,
-		LOGNAME: runtimeUser,
+	const child = buildRuntimeUserCommand(runtimeUser, install.home, "bash", [
+		installerPath,
+		...install.args,
+	]);
+	return {
+		command: child.command,
+		args: child.args,
+		env: { ...env, ...child.env },
+		executionUser: runtimeUser,
 	};
-	if (commandExists("gosu")) {
-		return {
-			command: "gosu",
-			args: [runtimeUser, "bash", installerPath, ...install.args],
-			env: userEnv,
-			executionUser: runtimeUser,
-		};
-	}
-	if (commandExists("runuser")) {
-		return {
-			command: "runuser",
-			args: [
-				"-u",
-				runtimeUser,
-				"--",
-				"env",
-				`HOME=${install.home}`,
-				`USER=${runtimeUser}`,
-				`LOGNAME=${runtimeUser}`,
-				"bash",
-				installerPath,
-				...install.args,
-			],
-			env,
-			executionUser: runtimeUser,
-		};
-	}
-
-	throw new Error(
-		`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
-	);
 }
 
 function runtimeInstallerEnv(name: string, install: RuntimeInstall): NodeJS.ProcessEnv {

@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import chalk from "chalk";
 import { readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import { inspectAiProviderAuth } from "../lib/ai-provider-test";
@@ -37,6 +36,10 @@ import {
 	runtimeManagedBinDir,
 	withoutPathEntry,
 } from "../runtime/run-config";
+import {
+	buildRuntimeUserCommand,
+	type PrivilegeDropResolver,
+} from "../runtime/runtime-user-command";
 
 interface RunOpts {
 	project?: string;
@@ -65,8 +68,10 @@ interface RuntimeChildSpawn {
 }
 
 interface RuntimeChildWrapOptions {
-	isRoot?: boolean;
-	commandExists?: (command: string) => boolean;
+	currentUid?: number;
+	runtimeUid?: number;
+	runtimeGid?: number;
+	resolver?: PrivilegeDropResolver;
 }
 
 export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn = spawn) {
@@ -354,10 +359,8 @@ export function buildRuntimeChildSpawn(
 	options: RuntimeChildWrapOptions = {},
 ): RuntimeChildSpawn {
 	const runtimeUser = invocation.env.CLAWDI_RUNTIME_USER?.trim();
-	const isRoot = options.isRoot ?? runningAsRoot();
-	const hasCommand = options.commandExists ?? commandExists;
 	const childEnv = runtimeChildEnv(invocation.env, runtimeUser);
-	if (!isRoot || !runtimeUser || runtimeUser === "root") {
+	if (!runtimeUser || runtimeUser === "root") {
 		return {
 			command: invocation.command,
 			args: invocation.args,
@@ -365,32 +368,19 @@ export function buildRuntimeChildSpawn(
 			cwd: invocation.cwd,
 		};
 	}
-	if (hasCommand("gosu")) {
-		return {
-			command: "gosu",
-			args: [runtimeUser, invocation.command, ...invocation.args],
-			env: childEnv,
-			cwd: invocation.cwd,
-		};
-	}
-	if (hasCommand("runuser")) {
-		return {
-			command: "runuser",
-			args: [
-				"--preserve-environment",
-				"-u",
-				runtimeUser,
-				"--",
-				invocation.command,
-				...invocation.args,
-			],
-			env: childEnv,
-			cwd: invocation.cwd,
-		};
-	}
-	throw new Error(
-		`running as root with CLAWDI_RUNTIME_USER=${runtimeUser}, but neither gosu nor runuser is available`,
+	const child = buildRuntimeUserCommand(
+		runtimeUser,
+		childEnv.HOME ?? `/home/${runtimeUser}`,
+		invocation.command,
+		invocation.args,
+		options,
 	);
+	return {
+		command: child.command,
+		args: child.args,
+		env: { ...childEnv, ...child.env },
+		cwd: invocation.cwd,
+	};
 }
 
 function runtimeChildEnv(
@@ -401,29 +391,9 @@ function runtimeChildEnv(
 	delete childEnv.CLAWDI_AUTH_TOKEN;
 	delete childEnv.CLAWDI_EGRESS_SECRET_FILE;
 	if (runtimeUser && runtimeUser !== "root") {
-		childEnv.USER = runtimeUser;
-		childEnv.LOGNAME = runtimeUser;
 		childEnv.HOME ||= `/home/${runtimeUser}`;
 	}
 	return childEnv;
-}
-
-function runningAsRoot(): boolean {
-	return typeof process.getuid === "function" && process.getuid() === 0;
-}
-
-function commandExists(command: string): boolean {
-	const path = process.env.PATH ?? "";
-	for (const dir of path.split(":")) {
-		if (!dir) continue;
-		try {
-			accessSync(join(dir, command), constants.X_OK);
-			return true;
-		} catch {
-			// Try the next PATH entry.
-		}
-	}
-	return false;
 }
 
 const SIGNAL_EXIT_CODES: Record<string, number> = {

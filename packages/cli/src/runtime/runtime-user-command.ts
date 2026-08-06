@@ -26,31 +26,177 @@ export function commandResolvable(command: string): boolean {
 	return isAbsolute(command) ? executableExists(command) : commandExists(command);
 }
 
+const PRIVILEGE_DROP_STRATEGIES = [
+	{ mechanism: "setpriv", supportsNumericIdentity: true },
+	{ mechanism: "runuser", supportsNumericIdentity: false },
+	{ mechanism: "su", supportsNumericIdentity: false },
+] as const;
+
+type ExternalPrivilegeDropMechanism = (typeof PRIVILEGE_DROP_STRATEGIES)[number]["mechanism"];
+export type PrivilegeDropMechanism = "none" | ExternalPrivilegeDropMechanism;
+type PrivilegeDropTargetKind = "named" | "numeric";
+
+interface PrivilegeDropResolutionInput {
+	currentUid: number | undefined;
+	targetUid: number;
+	targetUser: string;
+	targetKind: PrivilegeDropTargetKind;
+}
+
+export interface PrivilegeDropResolver {
+	resolve(input: PrivilegeDropResolutionInput): PrivilegeDropMechanism;
+}
+
+export function createPrivilegeDropResolver(
+	isCommandAvailable: (name: string) => boolean = commandExists,
+): PrivilegeDropResolver {
+	let resolved: ExternalPrivilegeDropMechanism | null | undefined;
+
+	return {
+		resolve(input): PrivilegeDropMechanism {
+			if (input.currentUid === input.targetUid) return "none";
+			if (input.currentUid !== 0) {
+				throw new Error(`cannot drop privileges to ${input.targetUser}: no supported mechanism`);
+			}
+
+			if (resolved === undefined) {
+				resolved = null;
+				for (const strategy of PRIVILEGE_DROP_STRATEGIES) {
+					if (isCommandAvailable(strategy.mechanism)) {
+						resolved = strategy.mechanism;
+						break;
+					}
+				}
+			}
+
+			const strategy = PRIVILEGE_DROP_STRATEGIES.find(
+				(candidate) => candidate.mechanism === resolved,
+			);
+			if (
+				resolved === null ||
+				(input.targetKind === "numeric" && !strategy?.supportsNumericIdentity)
+			) {
+				throw new Error(`cannot drop privileges to ${input.targetUser}: no supported mechanism`);
+			}
+			return resolved;
+		},
+	};
+}
+
+const privilegeDropResolver = createPrivilegeDropResolver();
+
+interface BuildRuntimeUserCommandOptions {
+	currentUid?: number;
+	runtimeUid?: number;
+	runtimeGid?: number;
+	resolver?: PrivilegeDropResolver;
+	environment?: Record<string, string>;
+}
+
+interface RuntimeUserCommandDescriptor {
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+}
+
 export function buildRuntimeUserCommand(
-	currentUid: number | undefined,
-	runtimeUid: number,
 	runtimeUser: string,
+	home: string,
 	command: string,
 	args: string[],
-	isCommandAvailable: (name: string) => boolean = commandExists,
+	options: BuildRuntimeUserCommandOptions = {},
+): RuntimeUserCommandDescriptor {
+	const env = {
+		...options.environment,
+		HOME: home,
+		USER: runtimeUser,
+		LOGNAME: runtimeUser,
+	};
+	const childCommand = "env";
+	const childArgs = [
+		...Object.entries(env).map(([key, value]) => `${key}=${value}`),
+		command,
+		...args,
+	];
+	const runtimeUid = options.runtimeUid ?? runtimeUserUid(runtimeUser);
+	const mechanism = (options.resolver ?? privilegeDropResolver).resolve({
+		currentUid: options.currentUid ?? effectiveUid(),
+		targetUid: runtimeUid,
+		targetUser: runtimeUser,
+		targetKind: "named",
+	});
+	if (mechanism === "none") return { command, args, env };
+	if (mechanism === "setpriv") {
+		const runtimeGid = options.runtimeGid ?? runtimeUserGid(runtimeUser);
+		return {
+			command: mechanism,
+			args: [
+				`--reuid=${runtimeUid}`,
+				`--regid=${runtimeGid}`,
+				"--init-groups",
+				"--",
+				childCommand,
+				...childArgs,
+			],
+			env,
+		};
+	}
+	if (mechanism === "runuser") {
+		return {
+			command: mechanism,
+			args: ["--preserve-environment", "-u", runtimeUser, "--", childCommand, ...childArgs],
+			env,
+		};
+	}
+	return {
+		command: mechanism,
+		args: [
+			"--preserve-environment",
+			"--shell",
+			"/bin/sh",
+			"--command",
+			'exec "$0" "$@"',
+			runtimeUser,
+			childCommand,
+			...childArgs,
+		],
+		env,
+	};
+}
+
+export function buildNumericUserCommand(
+	uid: number,
+	gid: number,
+	command: string,
+	args: string[],
+	options: { currentUid?: number; resolver?: PrivilegeDropResolver } = {},
 ): { command: string; args: string[] } {
-	if (currentUid === runtimeUid) return { command, args };
-	if (currentUid !== 0) {
-		throw new Error(
-			`cannot run command as runtime user ${runtimeUser}: current uid ${String(currentUid)} is not root`,
-		);
+	const targetUser = `${uid}:${gid}`;
+	if (uid === 0 || gid === 0) {
+		throw new Error(`cannot drop privileges to ${targetUser}: target identity must be non-root`);
 	}
-	if (isCommandAvailable("gosu")) {
-		return { command: "gosu", args: [runtimeUser, command, ...args] };
+	const mechanism = (options.resolver ?? privilegeDropResolver).resolve({
+		currentUid: options.currentUid ?? effectiveUid(),
+		targetUid: uid,
+		targetUser,
+		targetKind: "numeric",
+	});
+	if (mechanism === "none") return { command, args };
+	if (mechanism === "setpriv") {
+		return {
+			command: mechanism,
+			args: [`--reuid=${uid}`, `--regid=${gid}`, "--clear-groups", "--", command, ...args],
+		};
 	}
-	if (isCommandAvailable("runuser")) {
-		return { command: "runuser", args: ["-u", runtimeUser, "--", command, ...args] };
-	}
-	throw new Error(`cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`);
+	throw new Error(`cannot drop privileges to ${targetUser}: no supported mechanism`);
 }
 
 export function runningAsRoot(): boolean {
 	return typeof process.geteuid === "function" && process.geteuid() === 0;
+}
+
+function effectiveUid(): number | undefined {
+	return process.geteuid?.() ?? process.getuid?.();
 }
 
 export function runtimeUserUid(runtimeUser: string): number {
@@ -75,16 +221,11 @@ function linuxUid(value: string): number | null {
 
 function runtimeUserCommandEnv(
 	home: string,
+	runtimeUid: number | null,
 	options: { egressSystemCaFile?: string } = {},
 ): NodeJS.ProcessEnv {
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	const effectiveUid = typeof process.geteuid === "function" ? process.geteuid() : null;
-	const uid =
-		runtimeUser && runtimeUser !== "root" && (runningAsRoot() || effectiveUid !== null)
-			? String(runningAsRoot() ? runtimeUserUid(runtimeUser) : effectiveUid)
-			: null;
-	const runtimeDir = uid ? `/run/user/${uid}` : null;
-	const env = {
+	const runtimeDir = runtimeUid === null ? null : `/run/user/${runtimeUid}`;
+	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		HOME: home,
 		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
@@ -170,44 +311,30 @@ export function spawnRuntimeUserCommand(
 		input?: string;
 		maxBufferBytes?: number;
 		timeoutMs?: number;
+		runtimeUser?: string;
+		runtimeUid?: number;
+		runtimeGid?: number;
+		resolver?: PrivilegeDropResolver;
 	} = {},
 ): ReturnType<typeof spawnSync> {
-	const env: NodeJS.ProcessEnv = {
-		...runtimeUserCommandEnv(home, options),
-		...(options.hermesHome ? { HERMES_HOME: options.hermesHome } : {}),
-	};
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
-		if (commandExists("gosu")) {
-			return spawnSync("gosu", [runtimeUser, command, ...args], {
-				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
-				cwd,
-				encoding: "utf8",
-				input: options.input,
-				maxBuffer: options.maxBufferBytes,
-				timeout: options.timeoutMs,
-			});
-		}
-		if (commandExists("runuser")) {
-			return spawnSync(
-				"runuser",
-				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
-				{
-					env,
-					cwd,
-					encoding: "utf8",
-					input: options.input,
-					maxBuffer: options.maxBufferBytes,
-					timeout: options.timeoutMs,
-				},
-			);
-		}
-		throw new Error(
-			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
-		);
-	}
-	return spawnSync(command, args, {
-		env,
+	const runtimeUser = options.runtimeUser ?? process.env.CLAWDI_RUNTIME_USER?.trim();
+	const dropsToRuntimeUser = Boolean(runtimeUser && runtimeUser !== "root");
+	const runtimeUid = dropsToRuntimeUser
+		? (options.runtimeUid ?? runtimeUserUid(runtimeUser ?? ""))
+		: null;
+	const child = dropsToRuntimeUser
+		? buildRuntimeUserCommand(runtimeUser ?? "", home, command, args, {
+				runtimeUid: runtimeUid ?? undefined,
+				runtimeGid: options.runtimeGid,
+				resolver: options.resolver,
+			})
+		: { command, args, env: {} };
+	return spawnSync(child.command, child.args, {
+		env: {
+			...runtimeUserCommandEnv(home, runtimeUid, options),
+			...(options.hermesHome ? { HERMES_HOME: options.hermesHome } : {}),
+			...child.env,
+		},
 		cwd,
 		encoding: "utf8",
 		input: options.input,
@@ -222,36 +349,30 @@ export function runRuntimeUserCommand(
 	stdin: string,
 	home: string,
 	cwd: string,
-	options: { egressSystemCaFile?: string; timeoutMs?: number } = {},
+	options: {
+		egressSystemCaFile?: string;
+		timeoutMs?: number;
+		runtimeUser?: string;
+		runtimeUid?: number;
+		runtimeGid?: number;
+		resolver?: PrivilegeDropResolver;
+	} = {},
 ): void {
-	const env = runtimeUserCommandEnv(home, options);
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
-		if (commandExists("gosu")) {
-			execFileSync("gosu", [runtimeUser, command, ...args], {
-				input: stdin,
-				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
-				cwd,
-				stdio: "pipe",
-				timeout: options.timeoutMs,
-			});
-			return;
-		}
-		if (commandExists("runuser")) {
-			execFileSync(
-				"runuser",
-				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
-				{ input: stdin, env, cwd, stdio: "pipe", timeout: options.timeoutMs },
-			);
-			return;
-		}
-		throw new Error(
-			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
-		);
-	}
-	execFileSync(command, args, {
+	const runtimeUser = options.runtimeUser ?? process.env.CLAWDI_RUNTIME_USER?.trim();
+	const dropsToRuntimeUser = Boolean(runtimeUser && runtimeUser !== "root");
+	const runtimeUid = dropsToRuntimeUser
+		? (options.runtimeUid ?? runtimeUserUid(runtimeUser ?? ""))
+		: null;
+	const child = dropsToRuntimeUser
+		? buildRuntimeUserCommand(runtimeUser ?? "", home, command, args, {
+				runtimeUid: runtimeUid ?? undefined,
+				runtimeGid: options.runtimeGid,
+				resolver: options.resolver,
+			})
+		: { command, args, env: {} };
+	execFileSync(child.command, child.args, {
 		input: stdin,
-		env,
+		env: { ...runtimeUserCommandEnv(home, runtimeUid, options), ...child.env },
 		cwd,
 		stdio: "pipe",
 		timeout: options.timeoutMs,
