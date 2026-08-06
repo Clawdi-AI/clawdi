@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { validateHostedDeployPersona } from "@clawdi/shared/api";
-import { DEPLOY_ASSISTANT_NAME_MAX_LENGTH } from "@/hosted/billing/deploy/deploy-request";
+import { DEPLOY_AGENT_NAME_MAX_LENGTH } from "@/hosted/billing/deploy/deploy-request";
 
 const wizardSource = readFileSync(new URL("./deploy-wizard.tsx", import.meta.url), "utf8");
 const deployPageSource = readFileSync(
@@ -67,15 +67,15 @@ describe("deploy wizard personalization", () => {
 		expect(wizardSource).toContain('htmlFor="agent-name"');
 		expect(wizardSource).toContain('<Label htmlFor="agent-name">Name in Clawdi</Label>');
 		expect(wizardSource).toContain('id="agent-name"');
-		expect(wizardSource).toContain("maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}");
-		expect(DEPLOY_ASSISTANT_NAME_MAX_LENGTH).toBe(64);
+		expect(wizardSource).toContain("maxLength={DEPLOY_AGENT_NAME_MAX_LENGTH}");
+		expect(DEPLOY_AGENT_NAME_MAX_LENGTH).toBe(64);
 		expect(
-			validateHostedDeployPersona({ assistantName: "", language: "en", timezone: "Etc/UTC" }),
-		).toContainEqual({ field: "assistantName", message: "Enter a name for this agent." });
+			validateHostedDeployPersona({ agentName: "", language: "en", timezone: "Etc/UTC" }),
+		).toContainEqual({ field: "agentName", message: "Enter a name for this agent." });
 		expect(wizardSource).not.toContain("Used to identify this agent in Clawdi.");
 		expect(wizardSource).toContain("runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME)");
-		expect(wizardSource).toContain("assistantNameEditedRef");
-		expect(wizardSource).toContain("deployAssistantNameAfterRuntimeChange");
+		expect(wizardSource).toContain("agentNameEditedRef");
+		expect(wizardSource).toContain("deployAgentNameAfterRuntimeChange");
 		expect(wizardSource).toContain("required");
 		expect(wizardSource).toContain("aria-invalid={nameError ? true : undefined}");
 		expect(wizardSource).toContain('"agent-name-error agent-name-count"');

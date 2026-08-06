@@ -96,6 +96,12 @@ class AdminAgentCreate(BaseModel):
     agent_id: UUID | None = None
     machine_id: str
     machine_name: str
+    default_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Canonical Agent name supplied by the owning control plane.",
+    )
     agent_type: str
     agent_version: str | None = None
     os_name: str = "linux"

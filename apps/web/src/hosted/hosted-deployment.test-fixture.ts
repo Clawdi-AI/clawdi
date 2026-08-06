@@ -49,6 +49,7 @@ export function hostedDeploymentFixture(
 	return {
 		resource: {
 			id: options.id ?? "dep_test",
+			name: options.name ?? "Test deployment",
 			owner_user_id: "usr_test",
 			commercial_revision: 0,
 			deployment_target: "saas",
@@ -64,7 +65,6 @@ export function hostedDeploymentFixture(
 				desired_lifecycle: options.desiredLifecycle ?? "running",
 				runtime,
 				runtime_version: options.runtimeVersion ?? "latest",
-				name: options.name ?? "Test deployment",
 				resources: options.resources ?? { vcpu: 1, memory_mib: 1024, disk_gib: 10 },
 				agents: [],
 				ports: [],

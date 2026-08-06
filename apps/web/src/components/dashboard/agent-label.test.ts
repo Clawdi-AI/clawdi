@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	agentDisplayName,
-	agentTextLabel,
+	agentIdentity,
 	cleanMachineName,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -18,6 +18,41 @@ describe("cleanMachineName", () => {
 });
 
 describe("agentDisplayName", () => {
+	test("uses a direct canonical name without appending the runtime", () => {
+		expect(agentIdentity({ name: "e2e-2", agent_type: "hermes" })).toEqual({
+			primaryLabel: "e2e-2",
+			secondaryLabel: "Hermes",
+		});
+	});
+
+	test("does not guess whether a canonical name is user-facing", () => {
+		expect(
+			agentDisplayName({
+				name: "clawdi-v2-deployment-10",
+				agent_type: "openclaw",
+			}),
+		).toBe("clawdi-v2-deployment-10");
+	});
+
+	test("preserves user-provided canonical names exactly", () => {
+		expect(agentDisplayName({ name: "hermes-research", agent_type: "hermes" })).toBe(
+			"hermes-research",
+		);
+	});
+
+	test("only cleans hostname suffixes from machine metadata", () => {
+		expect(
+			agentDisplayName({
+				display_name: "research.local",
+				machine_name: "runtime.local",
+				agent_type: "hermes",
+			}),
+		).toBe("research.local");
+		expect(agentDisplayName({ machine_name: "runtime.local", agent_type: "hermes" })).toBe(
+			"runtime",
+		);
+	});
+
 	test("uses the default Agent name before machine metadata", () => {
 		expect(
 			agentDisplayName({
@@ -62,28 +97,6 @@ describe("agentDisplayName", () => {
 				agent_type: "codex",
 			}),
 		).toBe("Hosted Codex");
-	});
-
-	test("keeps runtime as a secondary label when the primary name is not the runtime", () => {
-		expect(
-			agentTextLabel(
-				{
-					default_name: "Research Agent",
-					machine_name: "Research Agent",
-					agent_type: "codex",
-				},
-				{ ownershipKind: "cloud" },
-			),
-		).toBe("Cloud · Research Agent · Codex");
-	});
-
-	test("formats a projected name without duplicating the runtime label", () => {
-		expect(
-			agentTextLabel(
-				{ name: "deployment-create-id", agent_type: "hermes" },
-				{ ownershipKind: "cloud", formatName: () => "Hermes" },
-			),
-		).toBe("Cloud · Hermes");
 	});
 });
 

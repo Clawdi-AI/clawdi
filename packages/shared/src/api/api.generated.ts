@@ -6056,6 +6056,11 @@ export interface components {
             machine_id: string;
             /** Machine Name */
             machine_name: string;
+            /**
+             * Default Name
+             * @description Canonical Agent name supplied by the owning control plane.
+             */
+            default_name?: string | null;
             /** Agent Type */
             agent_type: string;
             /** Agent Version */

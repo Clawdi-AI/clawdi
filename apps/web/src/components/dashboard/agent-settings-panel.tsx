@@ -51,11 +51,9 @@ function updateEnvironmentCaches(queryClient: QueryClient, environment: Environm
 export function AgentSettingsPanel({
 	environmentId,
 	className,
-	formatName,
 }: {
 	environmentId: string;
 	className?: string;
-	formatName?: (name: string) => string;
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -74,11 +72,7 @@ export function AgentSettingsPanel({
 		params: { path: { agent_id: environmentId } },
 	});
 
-	const serverDraftName = agent
-		? agent.display_name
-			? (formatName?.(agent.display_name) ?? agent.display_name)
-			: ""
-		: undefined;
+	const serverDraftName = agent ? (agent.display_name ? agent.display_name : "") : undefined;
 
 	useEffect(() => {
 		if (serverDraftName === undefined) return;
@@ -173,10 +167,8 @@ export function AgentSettingsPanel({
 		uploadMutation.mutate(file);
 	};
 	const normalizedDraftName = draftName.trim() || null;
-	const currentCustomName = agent?.display_name
-		? (formatName?.(agent.display_name) ?? agent.display_name)
-		: null;
-	const nameChanged = Boolean(agent) && normalizedDraftName !== currentCustomName;
+	const currentName = agent?.display_name ? agent.display_name : null;
+	const nameChanged = Boolean(agent) && normalizedDraftName !== currentName;
 	const guardedBySurface = useUnsavedNavigationState({
 		dirty: nameChanged,
 		busy: updateIdentity.isPending,
@@ -215,10 +207,8 @@ export function AgentSettingsPanel({
 		uploadMutation.isPending ||
 		clearAvatar.isPending ||
 		disconnect.isPending;
-	const rawDisplayName = agentDisplayName(agent);
-	const rawDefaultDisplayName = agentDisplayName({ ...agent, display_name: null });
-	const displayName = formatName?.(rawDisplayName) ?? rawDisplayName;
-	const defaultDisplayName = formatName?.(rawDefaultDisplayName) ?? rawDefaultDisplayName;
+	const displayName = agentDisplayName(agent);
+	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
@@ -229,7 +219,7 @@ export function AgentSettingsPanel({
 				<UnsavedNavigationGuard
 					dirty={nameChanged}
 					busy={updateIdentity.isPending}
-					description="Your display name will return to the last value saved on the server."
+					description="Your agent name will return to the last value saved on the server."
 				/>
 			)}
 			<input
@@ -257,13 +247,13 @@ export function AgentSettingsPanel({
 			</div>
 
 			<SettingsSection
-				title="Display name"
+				title="Name"
 				description="Use a short name that distinguishes this agent from others."
 			>
 				<div className="flex max-w-2xl flex-col gap-3">
 					<div className="flex flex-col gap-2 lg:flex-row">
 						<Label htmlFor="agent-display-name" className="sr-only">
-							Display name
+							Agent name
 						</Label>
 						<Input
 							id="agent-display-name"

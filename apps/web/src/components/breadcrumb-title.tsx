@@ -12,7 +12,6 @@ import {
 	useMemo,
 	useState,
 } from "react";
-import { type AgentSectionId, agentSectionHref, agentSectionLabel } from "@/lib/agent-routes";
 import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
 
 /**
@@ -169,34 +168,6 @@ export function useSetBreadcrumbSegmentTitle(
 		setSegmentTitle(href, title?.trim() || null, context, routeKey);
 		return () => setSegmentTitle(href, null, undefined, routeKey);
 	}, [context, href, routeKey, setSegmentTitle, title]);
-}
-
-export function useSetAgentBreadcrumbTitle({
-	agentId,
-	agentTitle,
-	section = "overview",
-	title,
-}: {
-	agentId?: string | null;
-	agentTitle?: string | null;
-	section?: AgentSectionId;
-	/**
-	 * Optional title for the current route's final segment. Omit it to use
-	 * the agent name on Overview and the canonical section label elsewhere.
-	 */
-	title?: string | null;
-}) {
-	const normalizedAgentTitle = agentTitle?.trim() || null;
-	const agentHref = agentId ? agentSectionHref(agentId) : null;
-	const currentTitle =
-		title !== undefined
-			? title
-			: section === "overview"
-				? normalizedAgentTitle
-				: agentSectionLabel(section);
-
-	useSetBreadcrumbSegmentTitle(agentHref, normalizedAgentTitle);
-	useSetBreadcrumbTitle(currentTitle);
 }
 
 function normalizeBreadcrumbHref(href: string | null | undefined): string | null {

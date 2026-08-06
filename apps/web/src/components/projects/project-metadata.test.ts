@@ -11,7 +11,7 @@ describe("projectAgentLabel", () => {
 				machine_name: "Shared Hosted Compute",
 				agent_type: "codex",
 			}),
-		).toBe("Research Agent · Codex");
+		).toBe("Research Agent");
 	});
 
 	test("prefers the display name across Project surfaces", () => {
@@ -23,6 +23,6 @@ describe("projectAgentLabel", () => {
 				machine_name: "Shared Hosted Compute",
 				agent_type: "codex",
 			}),
-		).toBe("Launch runner · Codex");
+		).toBe("Launch runner");
 	});
 });

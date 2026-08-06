@@ -18,7 +18,6 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import type { HostedUsageSummary, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -100,11 +99,8 @@ function sortModelBreakdown(left: ModelBreakdown, right: ModelBreakdown): number
 }
 
 function usageAgentIdentity(agent: AgentBreakdown): UsageAgentIdentity {
-	const fallbackName = agent.agent_name
-		? deploymentDisplayName(agent.agent_name, agent.agent_type ?? undefined)
-		: null;
 	return {
-		name: fallbackName,
+		name: agent.agent_name ?? null,
 		displayName: null,
 		defaultName: null,
 		machineName: null,
@@ -130,9 +126,7 @@ function usageAgentText(identity: UsageAgentIdentity): string {
 		machine_name: identity.machineName,
 		agent_type: identity.type,
 	});
-	return label.secondaryLabel
-		? `${label.primaryLabel} · ${label.secondaryLabel}`
-		: label.primaryLabel;
+	return label.primaryLabel;
 }
 
 function usageAgentOptions(

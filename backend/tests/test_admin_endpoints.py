@@ -2213,6 +2213,7 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
             "agent_id": str(agent_id),
             "machine_id": "admin-agent-alias",
             "machine_name": "admin-agent-pod",
+            "default_name": "e2e-2",
             "agent_type": "codex",
             "agent_version": "1.0.0",
             "os_name": "linux",
@@ -2225,7 +2226,8 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
         await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
     ).scalar_one()
     assert env.user_id == seed_user.id
-    assert env.default_name == "Codex"
+    assert env.default_name == "e2e-2"
+    assert env.display_name is None
     assert env.registration_key is None
 
     await ensure_canonical_codex_tool_provider(db_session, seed_user)

@@ -3,6 +3,7 @@
 import { useRouter } from "@tanstack/react-router";
 import { type ReactElement, useRef, useState } from "react";
 import { toast } from "sonner";
+import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -16,7 +17,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { useDeleteDeployment } from "@/hosted/agents/deployment-hooks";
 import type { DeploymentDeleteRequest, HostedDeployment } from "@/hosted/billing/contracts";
 import {
@@ -47,7 +47,10 @@ export function HostedDeploymentDeleteAction({
 		computeFundingMode(deployment.current_plan_slug, subscription) === "subscription" &&
 		isComputeSubscriptionRenewing(subscription);
 	const periodEnd = formatShortDate(subscription?.current_period_end);
-	const name = deploymentDisplayName(deployment.resource.spec.name);
+	const name = agentDisplayName({
+		name: deployment.resource.name,
+		agent_type: deployment.resource.spec.runtime,
+	});
 
 	async function runDelete() {
 		if (locked.current) return;

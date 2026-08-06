@@ -10,12 +10,8 @@ import {
 } from "@/lib/agent-ownership";
 import { cn } from "@/lib/utils";
 
-/** Single-line, inline-flow agent identity for meta rows where
- * the parent layout is `text` rather than `flex column` (e.g.
- * the session detail header where icon+name+type sits next to
- * project path and timestamp on one line). Wraps the same
- * `agentIdentity` fallback as the block-form `<AgentLabel>`,
- * so the inline and block variants stay in lockstep. */
+/** Single-line Agent name for compact meta rows. Runtime belongs in a
+ * separate metadata field; it is never appended to the canonical name. */
 export function AgentInline({
 	name,
 	displayName,
@@ -32,9 +28,9 @@ export function AgentInline({
 	className?: string;
 }) {
 	const hasIdentity = Boolean(
-		cleanMachineName(displayName) ||
-			cleanMachineName(defaultName) ||
-			cleanMachineName(name) ||
+		cleanAgentName(displayName) ||
+			cleanAgentName(defaultName) ||
+			cleanAgentName(name) ||
 			cleanMachineName(machineName) ||
 			type,
 	);
@@ -46,13 +42,11 @@ export function AgentInline({
 		agent_type: type,
 	});
 	const title = identity.primaryLabel;
-	const subtitle = identity.secondaryLabel;
 	if (!hasIdentity) return null;
 	return (
 		<span className={cn("inline-flex items-center gap-1.5", className)}>
 			<AgentIcon agent={type} size="xs" />
 			<span className="font-medium text-foreground">{title}</span>
-			{subtitle ? <span>· {subtitle}</span> : null}
 		</span>
 	);
 }
@@ -124,9 +118,9 @@ export type AgentIdentity = {
 };
 
 export function agentIdentity(env: AgentIdentityInput): AgentIdentity {
-	const customName = cleanMachineName(env.display_name) || null;
-	const defaultName = cleanMachineName(env.default_name) || null;
-	const apiName = cleanMachineName(env.name) || null;
+	const customName = cleanAgentName(env.display_name) || null;
+	const defaultName = cleanAgentName(env.default_name) || null;
+	const apiName = cleanAgentName(env.name) || null;
 	const machineName = cleanMachineName(env.machine_name) || null;
 	const runtimeName = agentTypeLabel(env.agent_type);
 	const primaryLabel = customName ?? defaultName ?? apiName ?? machineName ?? runtimeName;
@@ -138,10 +132,11 @@ export function agentIdentity(env: AgentIdentityInput): AgentIdentity {
 }
 
 export function agentDisplayName(env: AgentIdentityInput): string {
-	// Ownership affects badges, actions, and lifecycle chrome, not naming.
-	// The Cloud API AgentEnvironment is the identity record for every agent
-	// source, so all sources share the same display fallback.
 	return agentIdentity(env).primaryLabel;
+}
+
+function cleanAgentName(value: string | null | undefined): string {
+	return value?.trim() ?? "";
 }
 
 export function agentSourceLabel(source: AgentSourceKind): string {
@@ -261,29 +256,6 @@ export function AgentSourceBadgeForEnvironment({
 	);
 }
 
-export function agentTextLabel(
-	env: AgentIdentityInput & { id?: string | null },
-	{
-		includeSource = true,
-		ownershipKind = "connected",
-		formatName,
-	}: {
-		includeSource?: boolean;
-		ownershipKind?: AgentOwnershipKind;
-		formatName?: (name: string) => string;
-	} = {},
-): string {
-	const identity = agentIdentity(env);
-	const source = sourceFromOwnershipKind(ownershipKind);
-	const primaryLabel = formatName?.(identity.primaryLabel) ?? identity.primaryLabel;
-	const parts = [
-		includeSource && source === "hosted" ? agentSourceLabel("hosted") : null,
-		primaryLabel,
-		identity.secondaryLabel !== primaryLabel ? identity.secondaryLabel : null,
-	].filter((part): part is string => Boolean(part));
-	return parts.join(" · ");
-}
-
 export function compareAgentEnvironments(
 	a: {
 		id?: string | null;
@@ -328,18 +300,6 @@ export function cleanMachineName(raw: string | null | undefined): string {
 	return cleaned;
 }
 
-/** Middle-truncate generated deployment names for display. A fleet of
- * `openclaw-164ec696-744994f657-mgc9m` tiles is unreadable, and
- * END-truncation (`truncate`) cuts the final group — the only part
- * that distinguishes two clones. Keep runtime prefix + last group:
- * `openclaw…mgc9m`. Human-chosen names pass through untouched; the
- * full name stays available via the title tooltip. */
-export function displayMachineName(name: string): string {
-	const m = name.match(/^([a-z][a-z0-9_]*)-(?:[0-9a-f]{6,}-)+([a-z0-9]{4,12})$/i);
-	if (!m) return name;
-	return `${m[1]}…${m[2]}`;
-}
-
 const NAME_CLASS: Record<AgentIconSize, string> = {
 	xs: "text-xs font-medium",
 	sm: "text-sm font-medium",
@@ -373,7 +333,6 @@ export function AgentLabel({
 	meta,
 	titleAdornment,
 	className,
-	formatName,
 }: {
 	name?: string | null | undefined;
 	machineName: string | null | undefined;
@@ -398,7 +357,6 @@ export function AgentLabel({
 	 * subtitle wraps. */
 	titleAdornment?: ReactNode;
 	className?: string;
-	formatName?: (name: string) => string;
 }) {
 	const typeLabel = agentTypeLabel(type);
 	const identity = agentIdentity({
@@ -410,7 +368,7 @@ export function AgentLabel({
 	});
 	const cleanedMachine = cleanMachineName(machineName);
 	const rawTitleText = primary === "type" ? typeLabel : identity.primaryLabel;
-	const titleText = formatName?.(rawTitleText) ?? rawTitleText;
+	const titleText = rawTitleText;
 	// The disambiguator is the OTHER field — when title is the type
 	// we surface the machine name (and vice versa). Suppressed if
 	// it'd duplicate the title (e.g. hosted tiles whose
@@ -430,7 +388,7 @@ export function AgentLabel({
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
 					<span className={cn("truncate leading-tight", NAME_CLASS[size])} title={titleText}>
-						{displayMachineName(titleText)}
+						{titleText}
 					</span>
 					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
 				</div>

@@ -643,7 +643,7 @@ describe("declarative deployment mutations", () => {
 		await client.setDeploymentDesiredState("hdep_stop", "stopped", "intent-stop");
 		await client.restartDeployment("hdep_restart", "intent-restart");
 		await client.resetRuntimeUiAccess("hdep_access", "intent-access-reset");
-		await client.updateDeployment("hdep_update", { name: "Renamed" }, "intent-update");
+		await client.updateDeployment("hdep_update", { language: "zh-CN" }, "intent-update");
 		await client.deleteDeployment(
 			"hdep_delete",
 			{ subscription_choice: "keep_subscription" },

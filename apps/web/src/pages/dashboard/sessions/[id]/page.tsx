@@ -13,8 +13,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentInline, agentDisplayName } from "@/components/dashboard/agent-label";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailBackLink } from "@/components/detail/back-link";
 import {
 	DetailMeta,
@@ -247,19 +247,7 @@ export function SessionDetailContent({
 		: null;
 	const sessionAgentIdentity = session ? sessionAgentIdentityInput(session) : null;
 	const detailAgentIdentity = scopedAgent ?? sessionAgentIdentity;
-	const agentBreadcrumbTitle = session
-		? scopedAgent
-			? agentDisplayName(scopedAgent)
-			: sessionAgentIdentity
-				? agentDisplayName(sessionAgentIdentity)
-				: null
-		: null;
-	useSetAgentBreadcrumbTitle({
-		agentId,
-		agentTitle: agentBreadcrumbTitle,
-		section: "sessions",
-		title: summaryText,
-	});
+	useSetBreadcrumbTitle(summaryText);
 
 	if (isSessionLoading) {
 		return (

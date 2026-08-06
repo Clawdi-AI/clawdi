@@ -29,7 +29,7 @@ import {
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
 import {
@@ -105,7 +105,7 @@ import {
 	useUnsavedNavigationState,
 } from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
+import { isCloudEnvId } from "@/hosted/agent-route";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
 	useDeploymentLifecycle,
@@ -490,17 +490,14 @@ export function HostedAgentDetail({
 		}
 	};
 	const agent = projection.status === "resolved" ? projection.data : null;
-	const name = agent
-		? deploymentDisplayName(agentDisplayName(agent), runtime)
-		: deploymentDisplayName(deployment.resource.spec.name, runtime);
-	const runtimeLabel = runtimeDisplayName(runtime);
-	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
+	const agentTitle = agent
+		? agentDisplayName(agent)
+		: deploymentProjectionQueryable
+			? null
+			: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
+	const availableAgentTitle = agentTitle ?? "Agent";
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
-	useSetAgentBreadcrumbTitle({
-		agentId: environmentId,
-		agentTitle,
-		section: activeTab,
-	});
+	useSetBreadcrumbTitle(activeTab === "overview" ? agentTitle : agentSectionLabel(activeTab));
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);
@@ -535,7 +532,7 @@ export function HostedAgentDetail({
 					: cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6"),
 			)}
 		>
-			{isLiveToolTab ? <h1 className="sr-only">{agentTitle}</h1> : null}
+			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
 			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4"}>
 				{isLiveToolTab ? null : (
 					<PageHeader
@@ -616,7 +613,7 @@ export function HostedAgentDetail({
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "terminal" ? (
-						<TerminalTab deployment={deployment} />
+						<TerminalTab deployment={deployment} agentName={availableAgentTitle} />
 					) : null}
 					{activeTab === "sessions" ? (
 						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
@@ -644,7 +641,7 @@ export function HostedAgentDetail({
 							<ChannelsTab
 								environmentId={environmentId}
 								agentType={runtime}
-								agentName={name}
+								agentName={availableAgentTitle}
 								routeSearch={routeSearch}
 							/>
 						) : (
@@ -661,7 +658,6 @@ export function HostedAgentDetail({
 						<HostedAgentSettingsTab
 							environmentId={environmentId}
 							deployment={deployment}
-							runtime={runtime}
 							projectionAvailable={projection.status === "resolved"}
 							onDeleteAccepted={onDeleteAccepted}
 						/>
@@ -1859,14 +1855,17 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 	);
 }
 
-function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
+function TerminalTab({
+	deployment,
+	agentName,
+}: {
+	deployment: HostedDeployment;
+	agentName: string;
+}) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
 	const isStarting = isStartingStatus(status);
-	const label = deploymentDisplayName(
-		deployment.resource.spec.name,
-		deployment.resource.spec.runtime,
-	);
+	const label = agentName;
 	const client = useBillingClient();
 	const terminal = useSensitiveAction(({ id }: { id: string }) => client.createTerminalSession(id));
 	const { isPending: isOpeningTerminal, execute: createTerminalSession } = terminal;
@@ -3226,22 +3225,19 @@ function LinkedChannelRow({
 function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
-	runtime,
 	projectionAvailable,
 	onDeleteAccepted,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
-	runtime: Runtime;
 	projectionAvailable: boolean;
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
-	const formatName = useCallback((name: string) => deploymentDisplayName(name, runtime), [runtime]);
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
 			<div className="flex flex-col gap-8">
 				{projectionAvailable ? (
-					<AgentSettingsPanel environmentId={environmentId} formatName={formatName} />
+					<AgentSettingsPanel environmentId={environmentId} />
 				) : (
 					<ProjectionDependentUnavailable label="Profile settings" />
 				)}

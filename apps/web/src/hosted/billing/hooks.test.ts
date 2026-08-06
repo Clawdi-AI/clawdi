@@ -176,7 +176,7 @@ describe("refreshCheckoutReturnQueries", () => {
 
 		expect(deploymentsCalls).toBe(2);
 		expect(walletCalls).toBe(2);
-		expect(result?.[0]?.resource.spec.name).toBe("Performance agent after checkout");
+		expect(result?.[0]?.resource.name).toBe("Performance agent after checkout");
 		expect(qc.getQueryData<{ balance_cents: number }>(billingKeys.wallet)?.balance_cents).toBe(
 			5_000,
 		);

@@ -3,7 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { AlertCircle, LifeBuoy } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { AgentSourceBadge } from "@/components/dashboard/agent-label";
+import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentsCard,
 	AgentTileGrid,
@@ -13,7 +13,6 @@ import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { SectionLabel } from "@/components/section-label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -39,7 +38,10 @@ function HostedDeletionFailureNotices({ deployments }: { deployments: HostedDepl
 			{deployments.map((deployment) => {
 				const failure = deploymentFailurePresentation(deployment);
 				if (failure?.failedVerb !== "delete") return null;
-				const name = deploymentDisplayName(deployment.resource.spec.name);
+				const name = agentDisplayName({
+					name: deployment.resource.name,
+					agent_type: deployment.resource.spec.runtime,
+				});
 				const retrySafe = failure.retryable !== false;
 				return (
 					<Alert key={deployment.resource.id} variant="destructive">
@@ -132,6 +134,14 @@ export function HostedAgentsSection({
 	});
 	const connectedTiles = unified.connectedTiles;
 	const agentTiles = unified.tiles;
+	if (envsLoading) {
+		return (
+			<div data-hosted="true" className="space-y-4">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
+				<AgentsCard agents={[]} isLoading />
+			</div>
+		);
+	}
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!unified.error` so a transient hosted-fetch failure surfaces in
 	// AgentsCard's error banner instead of dropping silently into the
@@ -239,6 +249,14 @@ export function HostedAgentsByCompute({
 	});
 	const hostedTiles = unified.hostedTiles;
 	const connectedTiles = unified.connectedTiles;
+	if (envsLoading) {
+		return (
+			<div data-hosted="true" className="space-y-6">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
+				<AgentsCard agents={[]} isLoading />
+			</div>
+		);
+	}
 
 	const isEmptyState =
 		!envsLoading &&
