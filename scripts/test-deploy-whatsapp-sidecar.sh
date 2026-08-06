@@ -29,7 +29,7 @@ case "$*" in
      echo CLAWDI_VALUE=container:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
    else
      case "${SCENARIO}" in
-       reenable|preflight_fail|stop_failure|stop_still_running|stopped_disabled) echo CLAWDI_VALUE=bridge ;;
+       reenable|stop_failure|stop_still_running|stopped_disabled) echo CLAWDI_VALUE=bridge ;;
        disable) echo CLAWDI_VALUE=container:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
        *) echo CLAWDI_VALUE=container:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
      esac
@@ -57,8 +57,6 @@ case "$*" in
    [[ -f "${FAKE_LOG}.guard-stopped" && ! -f "${FAKE_LOG}.guard-rebooted" ]] && echo CLAWDI_VALUE= || echo CLAWDI_VALUE=777 ;;
  *"docker exec"*"stat -Lc %i /proc/self/ns/net"*) echo CLAWDI_VALUE=777 ;;
  *"docker run --rm --network container:clawdi-whatsapp-netns"*"--entrypoint stat"*) echo CLAWDI_VALUE=777 ;;
- *"docker run --rm --network container:clawdi-whatsapp-netns"*"api.ipify.org"*)
-   [[ "${SCENARIO}" == preflight_fail ]] && echo CLAWDI_VALUE=198.51.100.9 || echo CLAWDI_VALUE=203.0.113.8 ;;
  *"psql"*) : ;;
 esac
 FAKE
@@ -72,7 +70,6 @@ run() {
 		SIDECAR_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 		DEPLOY_IMAGE_VERSION=0123456789abcdef0123456789abcdef01234567 \
 		WHATSAPP_TAILSCALE_EGRESS_ENABLED="$enabled" WHATSAPP_TAILSCALE_EXIT_NODE=exit.test \
-		WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP=203.0.113.8 \
 		"$root/scripts/deploy-whatsapp-sidecar.sh" >/dev/null
 	echo "$log"
 }
@@ -83,7 +80,6 @@ run_failure() {
 		SIDECAR_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 		DEPLOY_IMAGE_VERSION=0123456789abcdef0123456789abcdef01234567 \
 		WHATSAPP_TAILSCALE_EGRESS_ENABLED=true WHATSAPP_TAILSCALE_EXIT_NODE=exit.test \
-		WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP=203.0.113.8 \
 		"$root/scripts/deploy-whatsapp-sidecar.sh" >/dev/null 2>&1; then
 		echo "expected ${scenario} to fail" >&2
 		exit 1
@@ -95,40 +91,34 @@ transition="$(run transition true)"
 infra="$(grep -n 'accessory reboot whatsapp-netns' "$transition" | cut -d: -f1)"
 tailscale="$(grep -n 'accessory reboot whatsapp-tailscale' "$transition" | tail -n 1 | cut -d: -f1)"
 guard="$(grep -n 'accessory reboot whatsapp-egress-guard' "$transition" | tail -n 1 | cut -d: -f1)"
-preflight="$(grep -n 'api.ipify.org' "$transition" | cut -d: -f1)"
 sidecar="$(grep -n 'accessory reboot whatsapp-baileys' "$transition" | tail -n 1 | cut -d: -f1)"
 test "$infra" -lt "$tailscale" && test "$tailscale" -lt "$guard"
-test "$guard" -lt "$preflight" && test "$preflight" -lt "$sidecar"
+test "$guard" -lt "$sidecar"
 grep -q 'accessory stop whatsapp-baileys' "$transition"
 grep -q 'iptables -C OUTPUT -m owner --uid-owner 1000' "$transition"
-grep -q 'AbortSignal.timeout(15000)' "$transition"
+grep -q "stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/tailscale-state'" "$transition"
+grep -q "stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/egress-guard'" "$transition"
+grep -q "mktemp '/home/phala/clawdi-whatsapp/.tailscale-resolv.conf.XXXXXX'" "$transition"
+grep -q "stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/tailscale-resolv.conf'" "$transition"
+grep -q 'test ! -L /guard/network-namespace.ready' "$transition"
 
 reenable="$(run reenable true)"
 stop="$(grep -n 'accessory stop whatsapp-baileys' "$reenable" | head -n 1 | cut -d: -f1)"
-preflight="$(grep -n 'api.ipify.org' "$reenable" | cut -d: -f1)"
+guard_ready="$(grep -n 'iptables -C OUTPUT -m owner --uid-owner 1000' "$reenable" | cut -d: -f1)"
 reboot="$(grep -n 'accessory reboot whatsapp-baileys' "$reenable" | cut -d: -f1)"
-test "$stop" -lt "$preflight" && test "$preflight" -lt "$reboot"
+test "$stop" -lt "$guard_ready" && test "$guard_ready" -lt "$reboot"
 ! grep -q 'accessory reboot whatsapp-netns' "$reenable"
-
-failed="$(run_failure preflight_fail)"
-grep -q 'accessory stop whatsapp-baileys' "$failed"
-grep -q 'api.ipify.org' "$failed"
-! grep -q 'accessory reboot whatsapp-baileys' "$failed"
 
 stop_failure="$(run_failure stop_failure)"
 grep -q 'accessory stop whatsapp-baileys' "$stop_failure"
-! grep -q 'api.ipify.org' "$stop_failure"
 stop_still_running="$(run_failure stop_still_running)"
 grep -q 'accessory stop whatsapp-baileys' "$stop_still_running"
-! grep -q 'api.ipify.org' "$stop_still_running"
 
 steady="$(run steady true)"
-grep -q 'api.ipify.org' "$steady"
 ! grep -q 'accessory reboot whatsapp-baileys' "$steady"
 
 disable="$(run disable false)"
 grep -q 'accessory reboot whatsapp-baileys' "$disable"
-! grep -q 'api.ipify.org' "$disable"
 
 stopped_enabled="$(run stopped_enabled true)"
 grep -q 'accessory reboot whatsapp-baileys' "$stopped_enabled"

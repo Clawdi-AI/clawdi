@@ -37,6 +37,33 @@ between backend processes and the singleton. Account/session UUIDs are not
 deployment configuration. Do not add per-account secrets, accessories,
 host-root variables, or JSON registries.
 
+### Mount policy
+
+Kamal 2.12 `directories` are deliberate Docker bind mounts: Kamal creates the
+host directory, applies its configured mode, and then emits `--volume` for the
+container. Use Docker named volumes only for replaceable caches such as
+`clawdi-fastembed`. Keep credential state and the Unix socket on narrow,
+explicit host paths because operators must be able to validate ownership,
+snapshot local block storage, restore one physical authority, and share the
+socket with backend roles. Raw `volumes` entries are limited to read-only
+consumers of an existing directory or generated file; writable accessory paths
+use `directories` so creation and modes remain under Kamal control.
+
+The deployment gate rejects symlinked or redirected paths and requires exact
+UID, GID, and modes for Baileys state (`0700`), the socket directory (`0770`),
+Tailscale identity (`0700`), and the guard directory (`0700`). The generated
+resolver is atomically replaced as a regular `0600` file. The guard publishes
+its `0644` marker atomically inside a non-world-traversable directory, and
+Baileys receives that directory read-only. Do not replace these mounts with a
+host root, Docker socket, network filesystem, or an automatically pruned
+volume.
+
+The kernel-networking containers keep a read-only root filesystem and bounded
+`/tmp` and `/run` tmpfs mounts; `/run` carries the iptables lock files. After
+dropping all default capabilities, they retain `DAC_OVERRIDE` only so their
+root process can access the two Kamal-created `0700` bind mounts, plus the
+network capabilities required for TUN and firewall setup.
+
 ## Optional Tailscale exit-node egress
 
 The checked-in configuration is inert by default. Merging it does not create a
@@ -47,8 +74,6 @@ the following are provisioned in the release environment:
   lowercase value is the activation switch);
 - repository variable `WHATSAPP_TAILSCALE_EXIT_NODE`, set to the stable
   Tailscale DNS name or IP of an approved exit node;
-- repository variable `WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP`, set to that exit
-  node's exact public IPv4 address;
 - repository secret `WHATSAPP_TAILSCALE_AUTHKEY`, set to a tagged, one-off,
   pre-authorized, non-ephemeral key whose ACL grants only the required tailnet
   access. Persistent state keeps the node identity after bootstrap; if that
@@ -91,7 +116,7 @@ new marker. Docker canonicalizes each consumer's network mode to
 `/proc/self/ns/net` inodes from a bounded probe joined to the current owner and
 from inside each consumer; it needs Docker access but no host `/proc/<pid>` or
 root access. Drifted consumers are rebuilt in strict infra, Tailscale, guard,
-public-IP preflight, Baileys order.
+Baileys order.
 
 The shared network namespace does not carry the local control channel: both
 backend roles continue to mount
@@ -100,12 +125,11 @@ Baileys mounts the same host directory read-write and listens on
 `/run/clawdi-whatsapp/sidecar.sock`. The UDS therefore remains host-volume
 communication and is independent of Tailscale egress.
 
-Every enabled release runs a native `fetch` as UID 1000 in the shared namespace
-and requires the exact configured public IP before starting Baileys. This check
-has no application proxy settings and exercises the transparent route. A
+Every enabled release requires the kernel Tailscale interface, matching shared
+network namespace, and IPv4/IPv6 guard rules before starting Baileys. A
 Tailscale restart does not remove guard rules because the pause container owns
 the namespace; a pause restart forces both consumers to be recreated after the
-new guard marker and exact-IP preflight.
+new guard marker.
 
 To disable egress, set the activation variable to `false` (or remove it) and
 release. Deployment compares the running network mode and namespace inode with

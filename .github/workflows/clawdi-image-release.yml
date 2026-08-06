@@ -294,7 +294,6 @@ jobs:
           SIDECAR_REVISION: ${{ needs.build.outputs.sidecar_revision }}
           WHATSAPP_TAILSCALE_EGRESS_ENABLED: ${{ vars.WHATSAPP_TAILSCALE_EGRESS_ENABLED }}
           WHATSAPP_TAILSCALE_EXIT_NODE: ${{ vars.WHATSAPP_TAILSCALE_EXIT_NODE }}
-          WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP: ${{ vars.WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP }}
         run: |
           gem install kamal -v '2.12.0' --no-document
           test "$(kamal version)" = "2.12.0"
