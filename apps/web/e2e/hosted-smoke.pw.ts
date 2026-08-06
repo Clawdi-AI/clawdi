@@ -4662,6 +4662,16 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			level: 1,
 		}),
 	).toBeVisible();
+	await expect(
+		page
+			.getByRole("navigation", { name: "breadcrumb" })
+			.locator('[data-slot="breadcrumb-item"]:visible'),
+	).toHaveText([
+		"Agents",
+		"Hosted agent · Hermes",
+		"Memories",
+		"Hosted and connected agents share this memory",
+	]);
 	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveCount(0);
@@ -4711,6 +4721,11 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			url.searchParams.get("d") === railHostedDeployment.id,
 	);
 	await expect(main.getByRole("heading", { name: "GitHub", level: 1 })).toBeVisible();
+	await expect(
+		page
+			.getByRole("navigation", { name: "breadcrumb" })
+			.locator('[data-slot="breadcrumb-item"]:visible'),
+	).toHaveText(["Agents", "Hosted agent · Hermes", "Connectors", "GitHub"]);
 	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveCount(0);
 	const hostedConnectorsLink = page
@@ -4900,6 +4915,12 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	});
 	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 1280, height: 1200 });
+	await expect(
+		page
+			.getByRole("navigation", { name: "breadcrumb" })
+			.locator('[data-slot="breadcrumb-item"]:visible'),
+	).toHaveText(["Agents", "Hosted agent · Hermes", "Workspace", "Skills"]);
+	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-desktop.png") });
 	await page.screenshot({
 		path: testInfo.outputPath("hosted-workspace-sidebar-desktop.png"),
@@ -4917,11 +4938,13 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const focusedVaultsHeading = main.getByRole("heading", { name: "Vaults", level: 1 });
 	await expect(focusedVaultsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Vaults · Clawdi");
+	await expect(
+		page
+			.getByRole("navigation", { name: "breadcrumb" })
+			.locator('[data-slot="breadcrumb-item"]:visible'),
+	).toHaveText(["Agents", "Hosted agent · Hermes", "Workspace", "Vaults"]);
 	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveAttribute(
-		"href",
-		`/agents/${railHostedEnvironmentId}${query}`,
-	);
+	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await expect(
 		focusedVaultsHeading.locator("xpath=../../..").locator(".bg-identity-4-bg svg.lucide-key"),
 	).toBeVisible();
@@ -4945,10 +4968,12 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		);
 	});
 	await expect(main.getByRole("heading", { name: "Hosted Scoped Vault", level: 1 })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Vaults" })).toHaveAttribute(
-		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults${query}`,
-	);
+	await expect(
+		page
+			.getByRole("navigation", { name: "breadcrumb" })
+			.locator('[data-slot="breadcrumb-item"]:visible'),
+	).toHaveText(["Agents", "Hosted agent · Hermes", "Workspace", "Vaults", "Hosted Scoped Vault"]);
+	await expect(main.getByRole("button", { name: "Vaults" })).toHaveCount(0);
 	await expect(
 		main
 			.getByRole("navigation", { name: "breadcrumb" })
@@ -4957,7 +4982,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults${query}`,
 	);
-	await expect(main.getByRole("link", { name: "Workspace" })).toHaveAttribute(
+	await expect(main.getByRole("link", { name: "Workspace" }).last()).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,
 	);
@@ -4995,7 +5020,7 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 	).toEqual(["LI", "LI", "LI", "LI", "LI"]);
 	await expect(breadcrumb.locator('[data-slot="breadcrumb-item"]:visible')).toHaveText([
 		"Agents",
-		"Agent",
+		"Hosted agent · Hermes",
 		"Memories",
 	]);
 	await expect(breadcrumb.locator('[data-slot="breadcrumb-separator"]:visible')).toHaveCount(2);
@@ -5378,6 +5403,11 @@ test("hosted Agent Skill details retain deployment context and stay inside bound
 		`/agents/${railHostedEnvironmentId}/skills/hosted-detail?project=project-hosted&${deploymentQuery}`,
 	);
 	await expect(main.getByRole("heading", { name: "Hosted detail Skill", level: 1 })).toBeVisible();
+	await expect(
+		page
+			.getByRole("navigation", { name: "breadcrumb" })
+			.locator('[data-slot="breadcrumb-item"]:visible'),
+	).toHaveText(["Agents", "Hosted agent · Hermes", "Workspace", "Skills", "Hosted detail Skill"]);
 	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
 	await expect(
@@ -5403,20 +5433,30 @@ test("hosted Agent Skill details retain deployment context and stay inside bound
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}/skills/hosted-context-only?${deploymentQuery}`,
 	);
-	await expect(
-		main.getByText("Project not available to this Agent", { exact: true }),
-	).toBeVisible();
-	expect(skillDetailRequests).toHaveLength(requestsBeforeOmittedProject);
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/agents/${railHostedEnvironmentId}/skills/hosted-context-only` &&
+			url.searchParams.get("project") === "project-hosted" &&
+			url.searchParams.get("source") === "on-clawdi" &&
+			url.searchParams.get("d") === railHostedDeployment.id
+		);
+	});
+	await expect(main.getByText("Skill not found", { exact: true })).toBeVisible();
+	expect(skillDetailRequests).toHaveLength(requestsBeforeOmittedProject + 1);
+	expect(new URL(skillDetailRequests.at(-1) ?? "").pathname).toBe(
+		"/v1/projects/project-hosted/skills/hosted-context-only",
+	);
 
+	const requestsBeforeExplicitContext = skillDetailRequests.length;
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}/skills/hosted-context-only?project=${contextProjectId}&${deploymentQuery}`,
 	);
 	await expect(
 		main.getByRole("heading", { name: "Hosted context-only Skill", level: 1 }),
 	).toBeVisible();
-	const contextProjectRequests = skillDetailRequests.filter((request) =>
-		new URL(request).pathname.endsWith("/skills/hosted-context-only"),
-	);
+	const contextProjectRequests = skillDetailRequests
+		.slice(requestsBeforeExplicitContext)
+		.filter((request) => new URL(request).pathname.endsWith("/skills/hosted-context-only"));
 	expect(contextProjectRequests.map((request) => new URL(request).pathname)).toEqual([
 		`/v1/projects/${contextProjectId}/skills/hosted-context-only`,
 	]);

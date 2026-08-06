@@ -10,6 +10,7 @@ import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
+import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -31,7 +32,11 @@ import {
 	useDisconnect,
 } from "@/lib/connectors-data";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { LIBRARY_RESOURCE_SCOPE, type ResourceNavigationScope } from "@/lib/resource-navigation";
+import {
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+	resourceCollectionTarget,
+} from "@/lib/resource-navigation";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -71,6 +76,7 @@ function DetailSkeletonShell() {
 }
 
 function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigationScope }) {
+	const collectionTarget = resourceCollectionTarget(scope, "connectors");
 	// OAuth from hosted mode redirects directly back to this page (no
 	// intermediary callback route). Composio sometimes signals failure
 	// via `?error=…` and sometimes via `?status=error|failed` with no
@@ -257,6 +263,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	if (isLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+				<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
 				<DetailSkeleton />
 			</div>
 		);
@@ -269,6 +276,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	if (isApiNotFoundError(appQ.error) || shouldBlockQueryError(appQ.error, appQ.data)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+				<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
 				{isApiNotFoundError(appQ.error) ? (
 					<EmptyState
 						icon={Plug}
@@ -290,6 +298,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+			<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
 			{scope.kind === "agent" ? (
 				<Alert>
 					<Plug />

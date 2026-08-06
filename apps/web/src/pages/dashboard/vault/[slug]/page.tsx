@@ -18,7 +18,7 @@ import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
@@ -59,6 +59,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
 import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
+import { agentDeploymentRouteQuery, agentProjectDetailHref } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
@@ -171,6 +172,24 @@ export default function VaultDetailPage({
 	const projectById = useMemo(
 		() => new Map((projects.data ?? []).map((p) => [p.id, p])),
 		[projects.data],
+	);
+	const breadcrumbProject = requestedProjectId ? projectById.get(requestedProjectId) : null;
+	const breadcrumbProjectTitle =
+		requestedBinding?.binding_type === "primary"
+			? "Workspace"
+			: breadcrumbProject
+				? displayProjectName(breadcrumbProject)
+				: null;
+	useSetBreadcrumbSegmentTitle(
+		scope.kind === "agent" && requestedProjectId
+			? agentProjectDetailHref(
+					scope.agentId,
+					requestedProjectId,
+					agentDeploymentRouteQuery(scope.agentQuery),
+				)
+			: null,
+		breadcrumbProjectTitle,
+		requestedBinding?.binding_type === "primary" ? "workspace" : undefined,
 	);
 
 	const keys = useQuery({
@@ -518,7 +537,7 @@ export default function VaultDetailPage({
 				nativeButton={false}
 				variant="ghost"
 				size="sm"
-				className="w-fit"
+				className="w-fit sm:hidden"
 			>
 				<ArrowLeft className="mr-1.5 size-4" />
 				{backTarget.label}

@@ -457,6 +457,7 @@ export default function ProjectDetailPage({
 	useSetBreadcrumbSegmentTitle(
 		scope.kind === "agent" ? agentProjectDetailHref(scope.agentId, projectId) : null,
 		isWorkspace ? "Workspace" : projectName,
+		isWorkspace ? "workspace" : undefined,
 	);
 	useSetBreadcrumbTitle(
 		projectName
@@ -624,7 +625,7 @@ export default function ProjectDetailPage({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<ProjectReturnLink target={pageReturnTarget} />
+			<ProjectReturnLink target={pageReturnTarget} mobileOnly />
 
 			<PageHeader
 				title={
@@ -1246,14 +1247,20 @@ function HubSection({
 	);
 }
 
-function ProjectReturnLink({ target }: { target: ResourceNavigationTarget }) {
+function ProjectReturnLink({
+	target,
+	mobileOnly = false,
+}: {
+	target: ResourceNavigationTarget;
+	mobileOnly?: boolean;
+}) {
 	return (
 		<Button
 			render={<Link to={target.href} />}
 			nativeButton={false}
 			variant="ghost"
 			size="sm"
-			className="w-fit"
+			className={cn("w-fit", mobileOnly && "sm:hidden")}
 		>
 			<ArrowLeft className="mr-1.5 size-4" />
 			{target.label}
