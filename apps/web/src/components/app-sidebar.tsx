@@ -730,7 +730,7 @@ function RailFocusButton({
 			aria-label={label}
 			className={cn(
 				hasCaption
-					? "h-[4.5rem] w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
+					? "h-16 w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
 					: "size-11 justify-center rounded-lg p-0",
 				className,
 			)}
@@ -739,7 +739,7 @@ function RailFocusButton({
 			{caption ? (
 				<span
 					className={cn(
-						"line-clamp-2 block h-[26px] max-w-16 overflow-hidden text-center text-2xs font-medium break-words",
+						"block max-w-16 truncate text-center text-2xs font-medium",
 						active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
 					)}
 					title={label}
@@ -754,7 +754,7 @@ function RailFocusButton({
 		<div
 			className={cn(
 				"group/rail-focus relative flex min-w-0 items-center justify-center",
-				hasCaption ? "h-[4.5rem] w-full" : "size-11",
+				hasCaption ? "h-16 w-full" : "size-11",
 			)}
 		>
 			<span
@@ -763,7 +763,7 @@ function RailFocusButton({
 					"absolute -left-2.5 w-1 rounded-r-full bg-sidebar-foreground/70 opacity-0 transition-[height,opacity] duration-200 ease-out",
 					active
 						? hasCaption
-							? "h-11 opacity-100"
+							? "h-10 opacity-100"
 							: "h-8 opacity-100"
 						: "h-2 group-hover/rail-focus:h-4 group-hover/rail-focus:opacity-50",
 				)}
@@ -826,7 +826,7 @@ function SortableAgentRailItem({
 			data-testid="app-sidebar-agent-tile"
 			style={style}
 			className={cn(
-				"group/agent-rail-item relative h-[4.5rem] w-full touch-pan-y will-change-transform",
+				"group/agent-rail-item relative h-16 w-full touch-pan-y will-change-transform",
 				isDragging && "opacity-80",
 			)}
 		>
@@ -1018,7 +1018,11 @@ function FocusRailContent({
 							active={!activeAgentId}
 							showTooltip={showTooltips}
 						>
-							<IconChip size="sm" tint={RESOURCE_TINT_CLASSES.overview}>
+							<IconChip
+								size="sm"
+								tint={RESOURCE_TINT_CLASSES.overview}
+								className="size-9 [&>svg]:size-4.5"
+							>
 								<LayoutDashboard />
 							</IconChip>
 						</RailFocusButton>
