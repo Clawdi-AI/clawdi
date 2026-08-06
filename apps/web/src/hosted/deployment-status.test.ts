@@ -100,7 +100,7 @@ describe("DeploymentStatus", () => {
 		expect(canStart(status)).toBe(false);
 		expect(canStop(status)).toBe(false);
 		expect(canRestart(status)).toBe(false);
-		expect(canDelete(status)).toBe(true);
+		expect(canDelete(status)).toBe(false);
 		expect(canQueryDeploymentProjection(status)).toBe(false);
 	});
 
@@ -221,9 +221,9 @@ describe("DeploymentStatus", () => {
 	test("disables delete once deletion is in progress or complete", () => {
 		expect(canDelete(parseDeploymentStatus("running"))).toBe(true);
 		expect(canDelete(parseDeploymentStatus("failed"))).toBe(true);
-		expect(canDelete(parseDeploymentStatus("future_status"))).toBe(true);
 		expect(canDelete(parseDeploymentStatus("deleting"))).toBe(false);
 		expect(canDelete(parseDeploymentStatus("deleted"))).toBe(false);
+		expect(canDelete(parseDeploymentStatus("future_status"))).toBe(false);
 	});
 
 	test("classifies whether any deployment is non-terminal", () => {
