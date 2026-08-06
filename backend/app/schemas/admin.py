@@ -28,6 +28,7 @@ from app.schemas.platform import PlatformOwner
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
+    HostedRuntimeCompanions,
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
@@ -144,6 +145,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     locale: HostedRuntimeLocale
     system: HostedRuntimeSystem
     egress_engine: HostedEgressEngine | None = None
+    companions: HostedRuntimeCompanions | None = None
     runtimes: dict[str, HostedRuntimeDesiredState]
     live_sync: HostedRuntimeLiveSync
     recovery: HostedRuntimeRecovery
@@ -179,6 +181,22 @@ class AdminRuntimeStateUpsert(BaseModel):
         if len(value) != 1:
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
+
+    @model_validator(mode="after")
+    def _validate_filebrowser_binding(self) -> AdminRuntimeStateUpsert:
+        filebrowser = self.companions.filebrowser if self.companions is not None else None
+        if filebrowser is None:
+            return self
+        expected_audience = f"clawdi-files:{self.deployment_id}"
+        expected_subject = f"deployment:{self.deployment_id}:owner"
+        expected_group = f"{expected_audience}:{filebrowser.auth.accessRevision}"
+        if (
+            filebrowser.auth.audience != expected_audience
+            or filebrowser.auth.subject != expected_subject
+            or filebrowser.auth.requiredGroup != expected_group
+        ):
+            raise ValueError("Files authentication must be bound to this deployment revision")
+        return self
 
 
 class AdminRuntimeStateResponse(BaseModel):

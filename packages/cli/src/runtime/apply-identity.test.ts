@@ -33,6 +33,7 @@ function contextFile(root: string): string {
 		path,
 		JSON.stringify({
 			schemaVersion: "clawdi.runtimeContext.v2",
+			backend: "incus",
 			apply: {
 				generation: 8,
 				manifestETag: '"manifest-8"',
@@ -80,6 +81,7 @@ describe("runtime apply identity", () => {
 		const context = readRuntimeApplyContext(path);
 		expect(context).toEqual({
 			kind: "context-file",
+			backend: "incus",
 			identity: {
 				generation: 8,
 				manifestETag: '"manifest-8"',
