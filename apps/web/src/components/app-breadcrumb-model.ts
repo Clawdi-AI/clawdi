@@ -69,10 +69,7 @@ function buildAgentBreadcrumbTrail(
 	const deploymentQuery = agentDeploymentRouteQuery(search);
 	const agentHref = agentSectionHref(route.agentId, "overview", deploymentQuery);
 	const agentTitle = segmentTitle(segmentTitles, agentHref);
-	const trail: AppBreadcrumbTrailItem[] = [
-		{ key: "agents", label: "Agents", href: "/agents" },
-		{ key: "agent", label: agentTitle, href: agentHref },
-	];
+	const trail: AppBreadcrumbTrailItem[] = [{ key: "agent", label: agentTitle, href: agentHref }];
 
 	if (route.section === "overview") {
 		return finishTrail(trail, overrideTitle ?? agentTitle);

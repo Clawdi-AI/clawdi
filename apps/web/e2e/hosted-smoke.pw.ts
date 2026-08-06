@@ -4667,7 +4667,6 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
 	).toHaveText([
-		"Agents",
 		"Hosted agent · Hermes",
 		"Memories",
 		"Hosted and connected agents share this memory",
@@ -4725,7 +4724,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Agents", "Hosted agent · Hermes", "Connectors", "GitHub"]);
+	).toHaveText(["Hosted agent · Hermes", "Connectors", "GitHub"]);
 	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveCount(0);
 	const hostedConnectorsLink = page
@@ -4919,7 +4918,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Agents", "Hosted agent · Hermes", "Workspace", "Skills"]);
+	).toHaveText(["Hosted agent · Hermes", "Workspace", "Skills"]);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-desktop.png") });
 	await page.screenshot({
@@ -4942,7 +4941,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Agents", "Hosted agent · Hermes", "Workspace", "Vaults"]);
+	).toHaveText(["Hosted agent · Hermes", "Workspace", "Vaults"]);
 	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await expect(
@@ -4972,7 +4971,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Agents", "Hosted agent · Hermes", "Workspace", "Vaults", "Hosted Scoped Vault"]);
+	).toHaveText(["Hosted agent · Hermes", "Workspace", "Vaults", "Hosted Scoped Vault"]);
 	await expect(main.getByRole("button", { name: "Vaults" })).toHaveCount(0);
 	await expect(
 		main
@@ -5017,13 +5016,12 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 		await breadcrumb.evaluate((element) =>
 			Array.from(element.children).map((child) => child.tagName),
 		),
-	).toEqual(["LI", "LI", "LI", "LI", "LI"]);
+	).toEqual(["LI", "LI", "LI"]);
 	await expect(breadcrumb.locator('[data-slot="breadcrumb-item"]:visible')).toHaveText([
-		"Agents",
 		"Hosted agent · Hermes",
 		"Memories",
 	]);
-	await expect(breadcrumb.locator('[data-slot="breadcrumb-separator"]:visible')).toHaveCount(2);
+	await expect(breadcrumb.locator('[data-slot="breadcrumb-separator"]:visible')).toHaveCount(1);
 	await page.screenshot({
 		path: testInfo.outputPath("responsive-breadcrumb-desktop.png"),
 		fullPage: false,
@@ -5407,7 +5405,7 @@ test("hosted Agent Skill details retain deployment context and stay inside bound
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Agents", "Hosted agent · Hermes", "Workspace", "Skills", "Hosted detail Skill"]);
+	).toHaveText(["Hosted agent · Hermes", "Workspace", "Skills", "Hosted detail Skill"]);
 	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
 	await expect(
