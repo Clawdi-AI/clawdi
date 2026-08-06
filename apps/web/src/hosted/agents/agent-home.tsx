@@ -21,7 +21,11 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
+import {
+	agentRouteTargetsHostedDeployment,
+	deploymentDisplayName,
+	isCloudEnvId,
+} from "@/hosted/agent-identity";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -36,6 +40,7 @@ import {
 	agentDeploymentSelector,
 	agentRouteIdsEqual,
 	agentRouteOwnsSection,
+	agentRouteSource,
 	agentSectionLink,
 	bindAgentDeploymentSearch,
 	CONNECTED_AGENT_SECTION_IDS,
@@ -91,9 +96,13 @@ export function AgentHome({
 		refetch,
 	} = useAgentDeployment(environmentId, deploymentSelector);
 	const isCloudEnvironmentId = isCloudEnvId(environmentId);
-	const requestedFromCloudRedirect = routeSearch.source === "on-clawdi";
-	const requestedHostedAgent =
-		requestedFromCloudRedirect || Boolean(deploymentSelector) || !isCloudEnvironmentId;
+	const routeSource = agentRouteSource(routeSearch);
+	const requestedFromCloudRedirect = routeSource === "on-clawdi";
+	const requestedHostedAgent = agentRouteTargetsHostedDeployment(
+		environmentId,
+		routeSource,
+		deploymentSelector,
+	);
 	const unresolvedHostedAgent =
 		requestedHostedAgent && !deployment && ambiguousMatches.length === 0 && !error && !isLoading;
 	const shouldAutoRefetchUnresolvedHostedAgent =

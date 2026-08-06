@@ -4173,6 +4173,78 @@ test("empty accounts without deploy access only get the connected-agent path", a
 	);
 });
 
+test("connected Agent Workspace Skills stay on the connected path", async ({ page }) => {
+	const projectId = "project-connected-workspace";
+	const skillRequests: string[] = [];
+	const workspaceSkillRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [],
+		cloudAgents: [railConnectedCloudAgent],
+		agentProjectBindings: [
+			{
+				id: "binding-connected-primary",
+				agent_id: railConnectedEnvironmentId,
+				project_id: projectId,
+				binding_type: "primary",
+				priority: 0,
+				default_write_enabled: true,
+				created_at: "2026-07-15T00:00:00Z",
+			},
+		],
+		agentProjects: [
+			{
+				id: projectId,
+				name: "Connected Workspace",
+				slug: "connected-workspace",
+				kind: "environment",
+				origin_environment_id: railConnectedEnvironmentId,
+				archived_at: null,
+				created_at: "2026-07-15T00:00:00Z",
+				is_owner: true,
+				owner_display: "Hosted User",
+				owner_handle: "hosted-user",
+			},
+		],
+		skillsByProjectId: {
+			[projectId]: [
+				{
+					id: "skill-connected-review",
+					skill_key: "review-pr",
+					name: "Review pull request",
+					description: "Review changes before merging",
+					version: 1,
+					source: "agent_sync",
+					authority: "agent_sync",
+					source_repo: null,
+					agent_types: ["hermes"],
+					file_count: 1,
+					content_hash: "c".repeat(64),
+					is_active: true,
+					created_at: "2026-07-15T00:00:00Z",
+					updated_at: "2026-07-15T00:00:00Z",
+					project_id: projectId,
+					project_name: "Connected Workspace",
+					project_kind: "environment",
+				},
+			],
+		},
+		skillRequests,
+		workspaceSkillRequests,
+	});
+
+	await page.goto(`/agents/${railConnectedEnvironmentId}/project-access/${projectId}/skills`);
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+	await expect(main.getByText("Install on the Agent", { exact: true })).toBeVisible();
+	await expect(main.getByText("Review pull request", { exact: true })).toBeVisible();
+	await expect(main.getByText("Couldn't load the Agent runtime", { exact: true })).toHaveCount(0);
+	await expect.poll(() => skillRequests.length).toBe(1);
+	expect(new URL(skillRequests[0] ?? "http://invalid").searchParams.get("project_id")).toBe(
+		projectId,
+	);
+	expect(workspaceSkillRequests).toEqual([]);
+});
+
 test("returning accounts keep hosted management but hide new deploys when denied", async ({
 	page,
 }) => {

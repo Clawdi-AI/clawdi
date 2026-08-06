@@ -245,6 +245,10 @@ export function agentDeploymentSelector(query?: AgentRouteQuery): string | null 
 	return selector || null;
 }
 
+export function agentRouteSource(query?: AgentRouteQuery): string | null {
+	return agentRouteSearchParams(query).get("source")?.trim() || null;
+}
+
 export function agentDeploymentRouteQuery(
 	query?: AgentRouteQuery,
 ): RouteSearchParamsRecord | undefined {
