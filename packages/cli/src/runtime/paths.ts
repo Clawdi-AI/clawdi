@@ -14,7 +14,6 @@ export interface RuntimePaths {
 	localEnvironments: string;
 	serveState: string;
 	hostPolicy: string;
-	shareRoot: string;
 	serviceStateRoot: string;
 	oauthCredentialRoot: string;
 	managedConfig: string;
@@ -108,7 +107,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	const clawdiHome = defaultClawdiHome(mode, userHome);
 	const serviceStateRoot = envPath("CLAWDI_SERVICE_STATE_DIR") ?? "/var/lib/clawdi";
 	const runRoot = envPath("CLAWDI_RUN_DIR") ?? "/run/clawdi";
-	const shareRoot = envPath("CLAWDI_SHARE_DIR") ?? "/usr/share/clawdi";
 	const managedCliRoot = join(serviceStateRoot, "managed-cli");
 	const npmRoot = join(serviceStateRoot, "npm");
 	const cacheRoot = join(serviceStateRoot, "cache");
@@ -125,7 +123,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		localEnvironments: join(clawdiHome, "environments"),
 		serveState: join(clawdiHome, "serve"),
 		hostPolicy: getHostPolicyPath(),
-		shareRoot,
 		serviceStateRoot,
 		oauthCredentialRoot: join(serviceStateRoot, "oauth-credentials"),
 		managedConfig: join(serviceStateRoot, "config", "clawdi.json"),

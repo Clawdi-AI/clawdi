@@ -111,7 +111,6 @@ export function configPaths(opts: { json?: boolean } = {}) {
 		},
 		hosted: {
 			hostPolicy: hostedPaths.hostPolicy,
-			shareRoot: hostedPaths.shareRoot,
 			serviceStateRoot: hostedPaths.serviceStateRoot,
 			managedConfig: hostedPaths.managedConfig,
 			syncState: hostedPaths.syncState,
