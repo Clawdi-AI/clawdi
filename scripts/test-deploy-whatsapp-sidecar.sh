@@ -8,6 +8,8 @@ cat > "${tmp}/bin/kamal" <<'FAKE'
 set -euo pipefail
 echo "$*" >> "${FAKE_LOG}"
 case "$*" in
+ *"docker network inspect --format '{{.EnableIPv6}}' kamal"*)
+   [[ "${SCENARIO}" == ipv6_underlay ]] && exit 1 || : ;;
  *"accessory stop whatsapp-baileys"*)
    [[ "${SCENARIO}" == stop_failure ]] && exit 1
    [[ "${SCENARIO}" == stop_still_running ]] || touch "${FAKE_LOG}.sidecar-stopped" ;;
@@ -96,6 +98,9 @@ test "$infra" -lt "$tailscale" && test "$tailscale" -lt "$guard"
 test "$guard" -lt "$sidecar"
 grep -q 'accessory stop whatsapp-baileys' "$transition"
 grep -q 'iptables -C OUTPUT -m owner --uid-owner 1000' "$transition"
+grep -q "docker network inspect --format '{{.EnableIPv6}}' kamal" "$transition"
+grep -q "/bin/sh -ceu 'ip link show tailscale0" "$transition"
+! grep -q 'ip6tables' "$transition"
 grep -q "stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/tailscale-state'" "$transition"
 grep -q "stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/egress-guard'" "$transition"
 grep -q "mktemp '/home/phala/clawdi-whatsapp/.tailscale-resolv.conf.XXXXXX'" "$transition"
@@ -113,6 +118,9 @@ stop_failure="$(run_failure stop_failure)"
 grep -q 'accessory stop whatsapp-baileys' "$stop_failure"
 stop_still_running="$(run_failure stop_still_running)"
 grep -q 'accessory stop whatsapp-baileys' "$stop_still_running"
+ipv6_underlay="$(run_failure ipv6_underlay)"
+grep -q "docker network inspect --format '{{.EnableIPv6}}' kamal" "$ipv6_underlay"
+! grep -q 'accessory stop whatsapp-baileys' "$ipv6_underlay"
 
 steady="$(run steady true)"
 ! grep -q 'accessory reboot whatsapp-baileys' "$steady"

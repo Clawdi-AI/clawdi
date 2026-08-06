@@ -87,18 +87,25 @@ mode. Tailscale uses the official v1.98.10 image pinned by immutable digest,
 `/dev/net/tun`, and only `NET_ADMIN` plus `NET_RAW` (required by the image's
 iptables-legacy control socket after dropping Docker's default capabilities).
 Its identity persists under `/home/phala/clawdi-whatsapp/tailscale-state`.
+Its disposable container layer remains writable because Tailscale's Linux
+direct DNS manager updates `/etc/resolv.conf` and stores its backup in `/etc`;
+the persistent state and guard mounts keep their narrower permissions.
 The exit-node argument explicitly disables LAN access.
 `TS_AUTH_ONCE=true` makes the auth key a bootstrap credential: subsequent
 container replacements reuse the persisted node identity instead of requiring
 the key to remain valid.
 
-The guard installs IPv4 and IPv6 OUTPUT chains matching only numeric UID 1000.
-That UID may use `tailscale0` and the exact local loopback address; every other
-interface is rejected. Tailscaled runs as root, so its underlay remains able to
-reach the Tailscale control plane and DERP. If `tailscale0` or its route
-disappears, Baileys traffic selects the bridge interface and is rejected rather
-than falling back. Baileys uses `100.100.100.100` through a read-only resolver
-file, so Docker's `127.0.0.11` underlay DNS is not an escape path.
+The deploy helper requires Docker's standard `kamal` underlay network to report
+`EnableIPv6=false` before it stops or replaces Baileys. The guard therefore
+installs one IPv4 OUTPUT chain matching only numeric UID 1000, covering every
+possible direct underlay route. That UID may use `tailscale0` and the exact local
+loopback address; every other interface is rejected. Tailscaled runs as root, so
+its underlay remains able to reach the Tailscale control plane and DERP.
+Tailscale still provides both IPv4 and IPv6 on `tailscale0`; the Docker-facing
+`eth0` has no IPv6 address or route. If `tailscale0` or its routes disappear,
+IPv4 bridge fallback is rejected and no IPv6 underlay exists. Baileys uses
+`100.100.100.100` through a read-only resolver file, so Docker's `127.0.0.11`
+underlay DNS is not an escape path.
 `TS_ACCEPT_DNS=true` is still required: in v1.98.10, disabled CorpDNS returns
 from `dnsConfigForNetmap` before exit-node/default resolvers are populated for
 Quad100. Enabling it makes Quad100 use the tailnet and exit-node DNS policy;
@@ -125,8 +132,9 @@ Baileys mounts the same host directory read-write and listens on
 `/run/clawdi-whatsapp/sidecar.sock`. The UDS therefore remains host-volume
 communication and is independent of Tailscale egress.
 
-Every enabled release requires the kernel Tailscale interface, matching shared
-network namespace, and IPv4/IPv6 guard rules before starting Baileys. A
+Every enabled release requires an IPv4-only Docker underlay, the kernel
+Tailscale interface, matching shared network namespace, and the IPv4 guard
+rules before starting Baileys. A
 Tailscale restart does not remove guard rules because the pause container owns
 the namespace; a pause restart forces both consumers to be recreated after the
 new guard marker.

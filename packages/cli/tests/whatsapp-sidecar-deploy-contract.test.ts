@@ -48,6 +48,9 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy).toContain("NET_ADMIN");
 		expect(deploy).toContain("NET_RAW");
 		expect(deploy).toContain("iptables -I OUTPUT 1 -m owner --uid-owner 1000");
+		expect(deploy).not.toContain("ip6tables");
+		expect(deployHelper).toContain("docker network inspect --format '{{.EnableIPv6}}' kamal");
+		expect(deployHelper).toContain("/bin/sh -ceu 'ip link show tailscale0");
 		expect(deploy).toContain("network-namespace.ready");
 		expect(deploy).toContain("TS_AUTHKEY");
 		expect(workflow).toContain('*[!A-Za-z0-9_-]*|"")');
