@@ -22,6 +22,15 @@ export function isCloudEnvId(value: string): boolean {
 	return CLOUD_ENV_ID_RE.test(value);
 }
 
+/** Preserve explicit Cloud intent while allowing UUID-backed connected Agents. */
+export function agentRouteTargetsHostedDeployment(
+	environmentId: string,
+	source: string | null | undefined,
+	deploymentSelector: string | null | undefined,
+): boolean {
+	return source === "on-clawdi" || Boolean(deploymentSelector) || !isCloudEnvId(environmentId);
+}
+
 /**
  * Keep user-given deployment names intact while preserving the existing
  * runtime-prefix cleanup for generated runtime labels.

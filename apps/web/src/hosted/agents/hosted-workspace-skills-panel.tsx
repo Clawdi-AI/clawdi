@@ -10,6 +10,7 @@ import {
 	parseWorkspaceSkillGitHubInput,
 	workspaceSkillMutationsAvailable,
 } from "@/components/dashboard/workspace-skills.logic";
+import { ConnectedWorkspaceSkillsPanel } from "@/components/dashboard/workspace-skills-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { SkillCard } from "@/components/skills/skill-card";
@@ -27,12 +28,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { agentRouteTargetsHostedDeployment } from "@/hosted/agent-identity";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import type { AgentRouteQuery } from "@/lib/agent-routes";
-import { agentSkillDetailLink } from "@/lib/agent-routes";
+import { agentRouteSource, agentSkillDetailLink } from "@/lib/agent-routes";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 type WorkspaceSkillMutation =
@@ -60,6 +63,8 @@ function HostedWorkspaceSkillsPanelContent({
 	routeSearch,
 	deploymentSelector,
 }: HostedWorkspaceSkillsPanelProps) {
+	const api = useApi();
+	const $api = useOpenApi();
 	const billingClient = useBillingClient();
 	const queryClient = useQueryClient();
 	const actionLockedRef = useRef(false);
@@ -69,7 +74,33 @@ function HostedWorkspaceSkillsPanelContent({
 	const deploymentResolution = useAgentDeployment(agentId, deploymentSelector);
 	const deployment = deploymentResolution.deployment;
 	const deploymentId = deployment?.resource.id ?? null;
+	const requestedHostedAgent = agentRouteTargetsHostedDeployment(
+		agentId,
+		agentRouteSource(routeSearch),
+		deploymentSelector,
+	);
+	const isConnectedAgent =
+		deploymentResolution.membershipResolved &&
+		!deployment &&
+		deploymentResolution.ambiguousMatches.length === 0 &&
+		!requestedHostedAgent;
 	const statusKey = ["hosted", "deployments", deploymentId, "skills"] as const;
+	const connectedAgent = $api.useQuery(
+		"get",
+		"/v1/agents/{agent_id}",
+		{ params: { path: { agent_id: agentId } } },
+		{ enabled: isConnectedAgent },
+	);
+	const connectedSkills = useQuery({
+		queryKey: ["skills", "connected-workspace", projectId],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/v1/skills", {
+					params: { query: { project_id: projectId, page: 1, page_size: 200 } },
+				}),
+			),
+		enabled: isConnectedAgent,
+	});
 
 	const status = useQuery({
 		queryKey: statusKey,
@@ -151,8 +182,46 @@ function HostedWorkspaceSkillsPanelContent({
 		}
 	};
 
-	if (deploymentResolution.isLoading) {
+	if (
+		deploymentResolution.isLoading ||
+		(!deploymentResolution.membershipResolved && !deployment && !deploymentResolution.error)
+	) {
 		return <WorkspaceSkillSkeleton />;
+	}
+	if (isConnectedAgent) {
+		const blockingAgentError = shouldBlockQueryError(connectedAgent.error, connectedAgent.data);
+		if (blockingAgentError) {
+			return (
+				<ApiErrorPanel
+					error={blockingAgentError}
+					onRetry={() => {
+						void connectedAgent.refetch();
+					}}
+					title="Couldn't load the Agent identity"
+				/>
+			);
+		}
+		if (!connectedAgent.data) return <WorkspaceSkillSkeleton />;
+		return (
+			<ConnectedWorkspaceSkillsPanel
+				agentId={agentId}
+				projectId={projectId}
+				routeSearch={routeSearch}
+				agentType={connectedAgent.data.agent_type}
+				projections={(connectedSkills.data?.items ?? []).filter(
+					(skill) => skill.authority === "agent_sync",
+				)}
+				isLoading={connectedSkills.isLoading}
+				projectionError={
+					shouldBlockQueryError(connectedSkills.error, connectedSkills.data)
+						? connectedSkills.error
+						: undefined
+				}
+				onRetryProjections={() => {
+					void connectedSkills.refetch();
+				}}
+			/>
+		);
 	}
 	if (deploymentResolution.error || !deployment) {
 		return (
