@@ -5331,6 +5331,7 @@ function runtimeManagedMutationPlan(input: {
 	runtimeUserOwnershipTargets: string[];
 	staleOfficialUnits: string[];
 	systemdUserUnits: string[];
+	systemdDriftErrors: string[];
 } {
 	const rootTargets = new Set(runtimeRootLiveMutationTargets(input.manifest, input.paths));
 	rootTargets.add(runtimeInstallReceiptsPath(input.paths));
@@ -5421,6 +5422,7 @@ function runtimeManagedMutationPlan(input: {
 		runtimeUserOwnershipTargets,
 		staleOfficialUnits: systemd.staleOfficialUnits,
 		systemdUserUnits: systemd.unitNames,
+		systemdDriftErrors: systemd.driftErrors,
 	};
 }
 
@@ -5588,6 +5590,22 @@ export function convergeRuntimeManifest(
 		programs: plannedRuntimePrograms,
 		observations,
 	});
+	if (mutationPlan.systemdDriftErrors.length > 0) {
+		installErrors.push(...mutationPlan.systemdDriftErrors);
+		return runtimeConvergenceWithoutApply({
+			load,
+			paths,
+			workspaceRoot,
+			enabledRuntimes,
+			installErrors,
+			projectedProviderIds: Object.fromEntries(
+				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
+					runtime,
+					[...providerIds],
+				]),
+			),
+		});
+	}
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
 	const liveSnapshot = captureRuntimeLiveSnapshot(mutationPlan.snapshot);
 	let systemdActivationApplied = false;

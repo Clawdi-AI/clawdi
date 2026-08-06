@@ -7516,7 +7516,8 @@ fi
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
 			const gatewayEnv = readSystemdEnvFile(paths, "openclaw-gateway");
-			expect(watchEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token-watch"');
+			expect(watchEnv).not.toContain("gateway-token-watch");
+			expect(watchEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 			expect(gatewayEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token-watch"');
 			expect(watchEnv).not.toContain("file-runtime-token");
 			const patchText = readFileSync(openclawPatch, "utf-8");

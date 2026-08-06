@@ -582,7 +582,6 @@ describe("hosted runtime bundle v2", () => {
 		expect(watchUnit).toContain(`EnvironmentFile=${watchEnvPath}`);
 		const gatewayTokenLine = 'OPENCLAW_GATEWAY_TOKEN="openclaw-gateway-token-golden"';
 		const watchEnv = readFileSync(watchEnvPath, "utf-8");
-		expect(watchEnv).toContain(gatewayTokenLine);
 		expect(statSync(watchEnvPath).mode & 0o777).toBe(0o600);
 		const sidecarOnlySecrets = [
 			"runtime-auth-token-golden",
@@ -590,8 +589,14 @@ describe("hosted runtime bundle v2", () => {
 			"123456789:telegram-agent-golden",
 			mcpSecret,
 		];
-		for (const secret of sidecarOnlySecrets) expect(watchEnv).not.toContain(secret);
-		expect(watchEnv).toContain("999999999:9ded1453047ec0a48ec3b735075f7448");
+		for (const secret of [
+			...sidecarOnlySecrets,
+			"openclaw-gateway-token-golden",
+			"999999999:9ded1453047ec0a48ec3b735075f7448",
+		]) {
+			expect(watchEnv).not.toContain(secret);
+		}
+		expect(watchEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 		expect(
 			readFileSync(join(paths.systemdEnvRoot, "openclaw-gateway.service.env"), "utf-8"),
 		).toContain(gatewayTokenLine);
