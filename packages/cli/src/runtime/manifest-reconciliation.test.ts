@@ -26,10 +26,7 @@ import {
 } from "./applied-state";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
-import {
-	FILE_BROWSER_SERVICE_GROUP,
-	FILE_BROWSER_SERVICE_USER,
-} from "./file-browser-isolation";
+import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-browser-isolation";
 import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {

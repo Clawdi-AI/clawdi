@@ -18,10 +18,7 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
 import { runtimeContentSha256 } from "./applied-state";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
-import {
-	FILE_BROWSER_SERVICE_GROUP,
-	FILE_BROWSER_SERVICE_USER,
-} from "./file-browser-isolation";
+import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-browser-isolation";
 import type { RuntimeInstallReceiptEntry, RuntimeInstallReceipts } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
