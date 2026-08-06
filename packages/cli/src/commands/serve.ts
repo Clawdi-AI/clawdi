@@ -1592,15 +1592,5 @@ function resolveEnvironmentId(agentType: AgentType, registeredCount: number): st
 		const fromEnv = process.env.CLAWDI_ENVIRONMENT_ID;
 		if (fromEnv) return fromEnv;
 	}
-	// Last resort: read /etc/clawdi/env-id (writable mount in
-	// the pod entrypoint). Skipped on host.
-	const podPath = "/etc/clawdi/env-id";
-	if (registeredCount === 1 && existsSync(podPath)) {
-		try {
-			return readFileSync(podPath, "utf-8").trim();
-		} catch {
-			/* fall through */
-		}
-	}
 	return null;
 }

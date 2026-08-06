@@ -15,10 +15,11 @@ export function executableExists(path: string): boolean {
 }
 
 export function commandExists(name: string): boolean {
-	for (const dir of (process.env.PATH ?? "").split(":")) {
-		if (dir && executableExists(join(dir, name))) return true;
-	}
-	return false;
+	const result = spawnSync("/bin/sh", ["-c", 'command -v "$1" >/dev/null 2>&1', "sh", name], {
+		env: process.env,
+		stdio: "ignore",
+	});
+	return result.status === 0;
 }
 
 export function commandResolvable(command: string): boolean {
