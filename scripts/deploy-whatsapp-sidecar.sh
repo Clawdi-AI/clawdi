@@ -71,7 +71,7 @@ if [[ "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" == true ]]; then
 	WHATSAPP_TAILSCALE_CONFIG_REVISION="$(printf '%s\n' \
 		'registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
 		"${tailscale_image}" \
-		'kernel-netns-uid-killswitch-v4-runtime-permissions' \
+		'kernel-netns-ipv4-underlay-uid-killswitch-container-shell-readiness-writable-dns' \
 		"${WHATSAPP_TAILSCALE_EXIT_NODE}" | sha256sum | cut -d ' ' -f 1)"
 	export WHATSAPP_TAILSCALE_CONFIG_REVISION
 elif [[ -n "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" && "${WHATSAPP_TAILSCALE_EGRESS_ENABLED}" != false ]]; then
@@ -98,6 +98,12 @@ sidecar_needs_reboot=false
 [[ "${sidecar_running}" == true ]] || sidecar_needs_reboot=true
 
 if [[ "${egress_enabled}" == true ]]; then
+	# Kamal's standard Docker network is the only underlay. Keep it IPv4-only so
+	# the UID firewall below covers every possible direct egress interface;
+	# Tailscale continues to provide both IPv4 and IPv6 on tailscale0.
+	kamal server exec \
+		"test \"\$(docker network inspect --format '{{.EnableIPv6}}' kamal)\" = false"
+
 	# A sidecar left on bridge by a previous disabled release must lose direct
 	# egress before preparing the guarded Tailscale namespace.
 	if [[ "${actual_network}" != "${desired_network}" ]]; then
@@ -143,7 +149,7 @@ if [[ "${egress_enabled}" == true ]]; then
 	tailscale_ready=false
 	for _attempt in $(seq 1 24); do
 		if kamal accessory exec whatsapp-tailscale --reuse \
-			"ip link show tailscale0 >/dev/null && tailscale status --json >/dev/null" \
+			"/bin/sh -ceu 'ip link show tailscale0 >/dev/null; tailscale status --json | grep -Eq \"\\\"BackendState\\\"[[:space:]]*:[[:space:]]*\\\"Running\\\"\"'" \
 			>/dev/null 2>&1; then
 			tailscale_ready=true
 			break
@@ -163,13 +169,12 @@ if [[ "${egress_enabled}" == true ]]; then
 	guard_ready=false
 	for _attempt in $(seq 1 12); do
 		if kamal accessory exec whatsapp-egress-guard --reuse \
-			"iptables -C OUTPUT -m owner --uid-owner 1000 -j CLAWDI_WA_EGRESS && \
-			 iptables -C CLAWDI_WA_EGRESS -o tailscale0 -j ACCEPT && \
-			 iptables -C CLAWDI_WA_EGRESS -j REJECT && \
-			 ip6tables -C OUTPUT -m owner --uid-owner 1000 -j CLAWDI_WA_EGRESS && \
-			 test -f /guard/network-namespace.ready && \
-			 test ! -L /guard/network-namespace.ready && \
-			 test \"\$(stat -c '%a' /guard/network-namespace.ready)\" = 644" \
+			"/bin/sh -ceu 'iptables -C OUTPUT -m owner --uid-owner 1000 -j CLAWDI_WA_EGRESS; \
+			 iptables -C CLAWDI_WA_EGRESS -o tailscale0 -j ACCEPT; \
+			 iptables -C CLAWDI_WA_EGRESS -j REJECT; \
+			 test -f /guard/network-namespace.ready; \
+			 test ! -L /guard/network-namespace.ready; \
+			 test \"\$(stat -c %a /guard/network-namespace.ready)\" = 644'" \
 			>/dev/null 2>&1; then
 			guard_ready=true
 			break
