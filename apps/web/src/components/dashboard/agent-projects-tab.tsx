@@ -273,13 +273,17 @@ function AgentProjectsPanel({
 			description="Projects linked to this Agent."
 			actions={
 				<>
-					<Button size="sm" disabled={actionsDisabled} onClick={() => setCreateOpen(true)}>
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={actionsDisabled}
+						onClick={() => setCreateOpen(true)}
+					>
 						<Plus className="size-3.5" />
 						Create project
 					</Button>
 					<Button
 						size="sm"
-						variant="outline"
 						disabled={actionsDisabled}
 						onClick={() => {
 							setContextProjectId("");

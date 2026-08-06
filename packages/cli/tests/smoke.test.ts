@@ -218,7 +218,7 @@ describe("CLI smoke — src entry", () => {
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
 		const runRoot = join(root, "run", "clawdi");
-		const contextPath = join(root, "runtime-context", "runtime-context.json");
+		const contextPath = join(root, "runtime-context.json");
 		mkdirSync(dirname(policyPath), { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(
@@ -258,9 +258,9 @@ describe("CLI smoke — src entry", () => {
 			expect(parsed.datasource).toBe("RuntimeSource");
 			expect(parsed.hostPolicy.valid).toBe(true);
 			expect(parsed.paths.serviceStateRoot).toBe(serviceStateRoot);
-			expect(existsSync(join(serviceStateRoot, "cache", "boot-status.json"))).toBe(true);
+			expect(existsSync(join(serviceStateRoot, "status", "boot-status.json"))).toBe(true);
 			const cloudResult = JSON.parse(
-				readFileSync(join(serviceStateRoot, "boot", "result.json"), "utf-8"),
+				readFileSync(join(serviceStateRoot, "status", "cloud-result.json"), "utf-8"),
 			);
 			expect(cloudResult.v1.stage).toBe("local");
 			expect(cloudResult.v1.errors).toEqual(parsed.errors);
@@ -283,7 +283,7 @@ describe("CLI smoke — src entry", () => {
 		const policyPath = join(root, "etc", "clawdi", "missing-host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
 		const runRoot = join(root, "run", "clawdi");
-		const contextPath = join(root, "runtime-context", "runtime-context.json");
+		const contextPath = join(root, "runtime-context.json");
 		mkdirSync(home, { recursive: true });
 
 		try {
@@ -306,7 +306,7 @@ describe("CLI smoke — src entry", () => {
 			expect(parsed.hostPolicy.source).toBe("builtin");
 			expect(parsed.hostPolicy.path).toBeUndefined();
 			expect(parsed.errors[0]).toContain("could not fetch runtime manifest");
-			expect(existsSync(join(serviceStateRoot, "cache", "boot-status.json"))).toBe(true);
+			expect(existsSync(join(serviceStateRoot, "status", "boot-status.json"))).toBe(true);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

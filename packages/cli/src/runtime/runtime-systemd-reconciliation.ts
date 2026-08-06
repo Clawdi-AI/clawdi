@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
-	chownSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -22,12 +21,17 @@ import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-br
 import type { RuntimeInstallReceiptEntry, RuntimeInstallReceipts } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
-import type { RuntimePaths } from "./paths";
+import {
+	DEFAULT_RUN_ROOT,
+	DEFAULT_SERVICE_STATE_ROOT,
+	type RuntimePaths,
+	SYSTEMD_FILE_BROWSER_STATE_DIRECTORY,
+	SYSTEMD_PLATFORM_DIRECTORY,
+} from "./paths";
 import {
 	type RuntimeName,
 	type RuntimeRunConfig,
 	type RuntimeServiceName,
-	runtimeManagedBinDir,
 	withoutPathEntry,
 } from "./run-config";
 import {
@@ -40,7 +44,6 @@ import {
 	commandResolvable,
 	executableExists,
 	makeRuntimeUserOwned,
-	runningAsRoot,
 	runRuntimeUserCommand,
 	runtimeEgressGid,
 	runtimeEgressUid,
@@ -59,25 +62,6 @@ function runtimeCommandPath(name: string, home: string): string | null {
 	if (name === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
 	if (name === "hermes") return join(home, ".local", "bin", "hermes");
 	return null;
-}
-
-function makeRootOwned(path: string): void {
-	if (!runningAsRoot()) return;
-	try {
-		chownSync(path, 0, 0);
-	} catch {
-		/* Best effort outside hosted Linux. */
-	}
-}
-
-function makeRootReadableDir(path: string): void {
-	mkdirSync(path, { recursive: true });
-	makeRootOwned(path);
-	try {
-		chmodSync(path, 0o755);
-	} catch {
-		/* Best effort outside POSIX. */
-	}
 }
 
 export interface RuntimeSystemdUserProgram {
@@ -207,7 +191,7 @@ export function buildRuntimeSystemdUserProgram(input: {
 	if (!input.config.enabled) return null;
 
 	const currentPath = withoutPathEntry(
-		withoutPathEntry(runtimeSystemdPath(input.paths), runtimeManagedBinDir(input.paths)),
+		runtimeSystemdPath(input.paths),
 		dirname(input.paths.cliManagedBin),
 	);
 	const pathPrefix = input.config.prependPath.join(":");
@@ -303,8 +287,7 @@ function systemdUnitNameSegment(value: string): string {
 
 function runtimeSystemdPath(paths: RuntimePaths): string {
 	return [
-		join(paths.serviceStateRoot, "bin"),
-		join(paths.userHome, ".local", "bin"),
+		paths.userLocalBin,
 		join(paths.userHome, ".openclaw", "bin"),
 		process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	].join(":");
@@ -337,6 +320,16 @@ function systemdQuote(value: string): string {
 
 function systemdExec(command: string, args: string[]): string {
 	return [command, ...args].map(systemdQuote).join(" ");
+}
+
+function fileBrowserSystemdExec(command: string): string {
+	return `${systemdQuote(command)} "-c" "\${CREDENTIALS_DIRECTORY}/filebrowser.yaml"`;
+}
+
+function fileBrowserVersionProbeExec(command: string, version: string, commit: string): string {
+	const script =
+		'output=$("$1" version 2>&1) || exit $?; case "$output" in *"$2"*) ;; *) exit 65 ;; esac; case "$output" in *"$3"*) ;; *) exit 65 ;; esac';
+	return systemdExec("/bin/sh", ["-c", script, "sh", command, version, commit.slice(0, 7)]);
 }
 
 function systemdPath(value: string): string {
@@ -724,8 +717,12 @@ function writeSystemdEnvironmentFile(input: {
 	owner: "root" | "runtime-user";
 	env: Record<string, string>;
 }): string {
-	makeRootReadableDir(dirname(input.paths.systemdEnvRoot));
-	makeRootReadableDir(input.paths.systemdEnvRoot);
+	mkdirSync(input.paths.systemdRuntimeRoot, { recursive: true, mode: 0o711 });
+	chmodSync(input.paths.systemdRuntimeRoot, 0o711);
+	mkdirSync(input.paths.systemdEnvRoot, { recursive: true, mode: 0o711 });
+	// This is a deliberate handoff directory: tenant-owned 0600 environment
+	// files must be traversable without making sibling platform files readable.
+	chmodSync(input.paths.systemdEnvRoot, 0o711);
 	const path = systemdEnvironmentFilePath(input.paths, input.name);
 	const lines = Object.entries(input.env)
 		.sort(([a], [b]) => a.localeCompare(b))
@@ -737,10 +734,9 @@ function writeSystemdEnvironmentFile(input: {
 		});
 	writePrivateFileAtomic(path, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n${lines.join("\n")}\n`, {
 		mode: 0o600,
-		dirMode: 0o755,
+		dirMode: 0o711,
 	});
 	if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
-	else makeRootOwned(path);
 	return path;
 }
 
@@ -772,8 +768,10 @@ function writeSystemdUnit(input: {
 	env: Record<string, string>;
 	revisionEnv?: Record<string, string>;
 	unitEnv?: Record<string, string>;
+	execStart?: string;
 	serviceType?: "simple" | "oneshot" | "notify";
 	restart?: boolean;
+	directoryKind?: "platform" | "file-browser";
 	extraUnitLines?: string[];
 	extraServiceLines?: string[];
 	wantedBy: "multi-user.target" | "default.target";
@@ -802,10 +800,30 @@ function writeSystemdUnit(input: {
 		`# ClawdiEnvironmentRevision=${envRevision}`,
 		`Type=${input.serviceType ?? "simple"}`,
 		`WorkingDirectory=${systemdPath(input.cwd)}`,
+		...(input.directoryKind === "platform"
+			? [
+					`ConfigurationDirectory=${SYSTEMD_PLATFORM_DIRECTORY}`,
+					"ConfigurationDirectoryMode=0700",
+					`StateDirectory=${SYSTEMD_PLATFORM_DIRECTORY}`,
+					"StateDirectoryMode=0700",
+					`CacheDirectory=${SYSTEMD_PLATFORM_DIRECTORY}`,
+					"CacheDirectoryMode=0700",
+					// Runtime state is prepared before convergence: the boot prep unit owns
+					// the production root for the entire boot, while ensureRuntimeStateDirs()
+					// creates non-default roots. Do not bind the shared root to this service.
+				]
+			: input.directoryKind === "file-browser"
+				? [
+						`StateDirectory=${SYSTEMD_FILE_BROWSER_STATE_DIRECTORY}`,
+						"StateDirectoryMode=0700",
+						`RuntimeDirectory=${SYSTEMD_FILE_BROWSER_STATE_DIRECTORY}`,
+						"RuntimeDirectoryMode=0700",
+					]
+				: []),
 		...(input.unitEnv ? systemdUnitEnvironmentLines(input.unitEnv) : []),
 		...(input.extraServiceLines ?? []),
 		`EnvironmentFile=${systemdPath(envFile)}`,
-		`ExecStart=${systemdExec(input.command, input.args)}`,
+		`ExecStart=${input.execStart ?? systemdExec(input.command, input.args)}`,
 		...(input.restart === false
 			? []
 			: ["Restart=always", "RestartSec=2", "KillMode=mixed", "TimeoutStopSec=30"]),
@@ -819,7 +837,6 @@ function writeSystemdUnit(input: {
 		if (input.owner === "runtime-user") makeRuntimeUserOwned(input.root);
 		writePrivateFileAtomic(path, `${lines.join("\n")}`, { mode: 0o644, dirMode: 0o755 });
 		if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
-		else makeRootOwned(path);
 		return path;
 	};
 	return input.owner === "runtime-user"
@@ -1389,9 +1406,11 @@ export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<str
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_USER: "clawdi",
-		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
-		CLAWDI_RUN_DIR: paths.runRoot,
 		PATH: runtimeSystemdPath(paths),
+		...(paths.serviceStateRoot === DEFAULT_SERVICE_STATE_ROOT
+			? {}
+			: { CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot }),
+		...(paths.runRoot === DEFAULT_RUN_ROOT ? {} : { CLAWDI_RUN_DIR: paths.runRoot }),
 	};
 	return environment;
 }
@@ -1452,13 +1471,17 @@ function writeFileBrowserSystemdUnit(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
 }): string {
+	const companion = input.manifest.companions?.filebrowser;
+	if (!companion) throw new Error("Files systemd unit requires a companion manifest");
 	return writeSystemdSystemUnit({
 		paths: input.paths,
 		name: "clawdi-files",
 		description: "Clawdi hosted Files companion",
 		command: input.program.command,
 		args: input.program.args,
+		execStart: fileBrowserSystemdExec(input.paths.fileBrowserServiceBinary),
 		cwd: input.program.cwd,
+		directoryKind: "file-browser",
 		env: {
 			HOME: "/nonexistent",
 			CLAWDI_RUNTIME_REV: runtimeImpactRevision({
@@ -1469,6 +1492,15 @@ function writeFileBrowserSystemdUnit(input: {
 		extraServiceLines: [
 			`User=${FILE_BROWSER_SERVICE_USER}`,
 			`Group=${FILE_BROWSER_SERVICE_GROUP}`,
+			`LoadCredential=filebrowser.yaml:${systemdPath(input.paths.fileBrowserConfig)}`,
+			// Publish only this verified executable into the component service's
+			// private runtime directory; the platform state root stays untraversable.
+			`BindReadOnlyPaths=${systemdPath(input.program.command)}:${systemdPath(input.paths.fileBrowserServiceBinary)}:norbind`,
+			`ExecStartPre=${fileBrowserVersionProbeExec(
+				input.paths.fileBrowserServiceBinary,
+				companion.version,
+				companion.commit,
+			)}`,
 			"UMask=0077",
 			"NoNewPrivileges=true",
 			"PrivateTmp=true",
@@ -1476,8 +1508,7 @@ function writeFileBrowserSystemdUnit(input: {
 			"ProtectSystem=strict",
 			"ProtectHome=tmpfs",
 			`BindPaths=${systemdPath(input.paths.userHome)}`,
-			`ReadWritePaths=${systemdPath(input.paths.userHome)} ${systemdPath(input.paths.fileBrowserStateRoot)}`,
-			`ReadOnlyPaths=${systemdPath(input.paths.fileBrowserConfig)} ${systemdPath(input.program.command)}`,
+			`ReadWritePaths=${systemdPath(input.paths.userHome)}`,
 			`NoExecPaths=${systemdPath(input.paths.userHome)} ${systemdPath(input.paths.fileBrowserStateRoot)}`,
 			"ProtectKernelTunables=true",
 			"ProtectKernelModules=true",
@@ -1542,7 +1573,12 @@ export function writeRuntimeSidecarSystemdUnit(input: {
 		},
 		serviceType: "notify",
 		extraUnitLines: [`Before=user@${input.identity.runtimeUid}.service`],
-		extraServiceLines: ["NotifyAccess=main"],
+		extraServiceLines: [
+			"NotifyAccess=main",
+			// The egress process drops to its dedicated UID. Publish only the
+			// verified engine into this unit's private mount namespace.
+			`BindReadOnlyPaths=${systemdPath(input.program.engine.binaryPath)}:${systemdPath(input.paths.egressServiceBinary)}:norbind`,
+		],
 	});
 }
 
@@ -1606,6 +1642,7 @@ export function writeRuntimeSystemdState(input: {
 				command: paths.cliManagedBin,
 				args: ["runtime", "watch"],
 				cwd: workspaceRoot,
+				directoryKind: "platform",
 				env: {
 					...commonEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
@@ -1628,7 +1665,7 @@ export function writeRuntimeSystemdState(input: {
 					...commonEnvironment,
 					CLAWDI_ENVIRONMENT_ID: manifest.environmentId,
 					CLAWDI_SERVE_MODE: "container",
-					CLAWDI_STATE_DIR: join(paths.serviceStateRoot, "daemon"),
+					CLAWDI_STATE_DIR: paths.daemonStateRoot,
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 					CLAWDI_NO_AUTO_UPDATE: "1",
 					CLAWDI_NO_UPDATE_CHECK: "1",

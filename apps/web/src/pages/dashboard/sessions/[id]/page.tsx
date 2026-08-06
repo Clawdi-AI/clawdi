@@ -16,16 +16,11 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailBackLink } from "@/components/detail/back-link";
-import {
-	DetailMeta,
-	DetailNotFound,
-	DetailPanel,
-	DetailStats,
-	DetailTitle,
-} from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailPanel, DetailStats } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { MessageList } from "@/components/sessions/message-list";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
@@ -291,9 +286,9 @@ export function SessionDetailContent({
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<DetailBackLink href={sessionsHref} label="Sessions" />
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0 flex-1 space-y-2">
-					<DetailTitle>{summaryText}</DetailTitle>
+			<PageHeader
+				title={summaryText}
+				status={
 					<DetailMeta>
 						<AgentInline
 							name={detailAgentIdentity?.name ?? null}
@@ -332,9 +327,11 @@ export function SessionDetailContent({
 							</>
 						) : null}
 					</DetailMeta>
-				</div>
-				<SessionShareControls sessionId={session.id} isShared={session.is_shared ?? false} />
-			</div>
+				}
+				actions={
+					<SessionShareControls sessionId={session.id} isShared={session.is_shared ?? false} />
+				}
+			/>
 
 			<SessionSidebar relatedRefs={session.related_refs} />
 
@@ -582,8 +579,7 @@ function LoadMoreSentinel({
 function DetailSkeleton() {
 	return (
 		<div className="space-y-5">
-			<Skeleton className="h-5 w-64" />
-			<Skeleton className="h-3.5 w-48" />
+			<PageHeaderSkeleton actions description={false} />
 			<div className="flex gap-3">
 				<Skeleton className="h-6 w-20 rounded-full" />
 				<Skeleton className="h-4 w-24" />

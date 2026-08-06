@@ -1,13 +1,11 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
-import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailNotFound } from "@/components/detail/layout";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
@@ -39,16 +37,7 @@ export function AgentResourceRouteGate({
 	if (agent.isLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
-				<Button
-					render={<Link to="/agents" />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="size-4" />
-					Back to Agents
-				</Button>
+				<DetailBackLink href="/agents" label="Agents" mobileOnly={false} />
 				<Skeleton className="h-8 w-40" />
 				<Skeleton className="h-24 w-full rounded-lg" />
 			</div>
@@ -59,16 +48,11 @@ export function AgentResourceRouteGate({
 		const agentMissing = isApiNotFoundError(blockingError) || (!blockingError && !agent.data);
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
-				<Button
-					render={<Link to={agentMissing ? "/agents" : returnHref} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="size-4" />
-					Back to {agentMissing ? "Agents" : returnLabel}
-				</Button>
+				<DetailBackLink
+					href={agentMissing ? "/agents" : returnHref}
+					label={agentMissing ? "Agents" : returnLabel}
+					mobileOnly={false}
+				/>
 				{agentMissing ? (
 					<DetailNotFound
 						title="Agent not found"
@@ -129,7 +113,7 @@ function AgentProjectAccessGate({
 	if (projectId && bindings.isLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
-				<AgentProjectReturnLink href={returnHref} label={returnLabel} />
+				<DetailBackLink href={returnHref} label={returnLabel} mobileOnly={false} />
 				<Skeleton className="h-8 w-40" />
 				<Skeleton className="h-24 w-full rounded-lg" />
 			</div>
@@ -139,7 +123,7 @@ function AgentProjectAccessGate({
 	if (blockingError || !projectIsBound) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
-				<AgentProjectReturnLink href={returnHref} label={returnLabel} />
+				<DetailBackLink href={returnHref} label={returnLabel} mobileOnly={false} />
 				{blockingError ? (
 					<ApiErrorPanel
 						error={blockingError}
@@ -163,19 +147,4 @@ function AgentProjectAccessGate({
 	}
 
 	return children;
-}
-
-function AgentProjectReturnLink({ href, label }: { href: string; label: string }) {
-	return (
-		<Button
-			render={<Link to={href} />}
-			nativeButton={false}
-			variant="ghost"
-			size="sm"
-			className="w-fit"
-		>
-			<ArrowLeft className="size-4" />
-			Back to {label}
-		</Button>
-	);
 }

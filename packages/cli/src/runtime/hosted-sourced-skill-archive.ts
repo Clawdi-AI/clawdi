@@ -48,7 +48,7 @@ function sourceIdentity(skillId: string, source: HostedSkillSource): string {
 
 function cachePaths(paths: RuntimePaths, skillId: string, source: HostedSkillSource) {
 	const key = sha256(sourceIdentity(skillId, source));
-	const root = join(paths.cacheRoot, "workspace-skills", key);
+	const root = join(paths.hostedSkillArchiveRoot, key);
 	return { archive: join(root, "skill.tar.gz"), receipt: join(root, "receipt.json") };
 }
 

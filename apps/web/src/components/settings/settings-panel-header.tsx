@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { HeaderActionGroup } from "@/components/header-action-group";
 
 export function SettingsPanelHeader({
 	title,
@@ -18,11 +19,7 @@ export function SettingsPanelHeader({
 				<h2 className="text-lg font-semibold tracking-tight">{title}</h2>
 				{description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
 			</div>
-			{actions ? (
-				<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
-					{actions}
-				</div>
-			) : null}
+			{actions ? <HeaderActionGroup>{actions}</HeaderActionGroup> : null}
 		</div>
 	);
 }

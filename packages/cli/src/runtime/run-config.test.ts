@@ -92,7 +92,7 @@ describe("runtime run config services", () => {
 				runtime,
 				["hermes"],
 				{
-					PATH: `${join(paths.serviceStateRoot, "bin")}:${dirname(paths.cliManagedBin)}:/usr/bin`,
+					PATH: `${dirname(paths.cliManagedBin)}:/usr/bin`,
 				},
 				paths,
 			).env.PATH,

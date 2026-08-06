@@ -27,6 +27,7 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
@@ -444,7 +445,7 @@ function Mem0KeyForm({
 				<Label htmlFor="mem0-api-key" className="text-xs font-medium">
 					Mem0 API key
 				</Label>
-				<div className="flex gap-2">
+				<div className="flex flex-col gap-2 sm:flex-row">
 					<Input
 						id="mem0-api-key"
 						name="mem0-api-key"
@@ -459,7 +460,11 @@ function Mem0KeyForm({
 							if (e.key === "Enter" && apiKey) void submit();
 						}}
 					/>
-					<Button onClick={() => void submit()} disabled={!apiKey || isPending}>
+					<Button
+						className="w-full sm:w-auto"
+						onClick={() => void submit()}
+						disabled={!apiKey || isPending}
+					>
 						{isPending ? <Spinner /> : <Key />}
 						Save API Key
 					</Button>
@@ -505,7 +510,17 @@ function AddMemoryForm() {
 						A note your AI recalls across all agents and machines.
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-3">
+				<form
+					className="space-y-3"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (content.trim() && !secretFinding && !createMemory.isPending) {
+							createMemory.mutate({
+								body: { content, category: addCategory, source: "web" },
+							});
+						}
+					}}
+				>
 					<div className="space-y-1.5">
 						<Label htmlFor="memory-content" className="sr-only">
 							Memory content
@@ -527,7 +542,7 @@ function AddMemoryForm() {
 							title="Use Vault for secrets"
 						/>
 					) : null}
-					<div className="flex items-center justify-between gap-2">
+					<div className="space-y-1.5">
 						<div className="flex items-center gap-2">
 							<Label htmlFor="memory-category" className="text-sm text-muted-foreground">
 								Category
@@ -551,20 +566,20 @@ function AddMemoryForm() {
 								</SelectContent>
 							</Select>
 						</div>
+					</div>
+					<DialogFooter>
+						<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+							Cancel
+						</Button>
 						<Button
-							onClick={() =>
-								content.trim() &&
-								createMemory.mutate({
-									body: { content, category: addCategory, source: "web" },
-								})
-							}
+							type="submit"
 							disabled={!content.trim() || !!secretFinding || createMemory.isPending}
 						>
 							{createMemory.isPending ? <Spinner /> : <Plus />}
 							Save memory
 						</Button>
-					</div>
-				</div>
+					</DialogFooter>
+				</form>
 			</DialogContent>
 		</Dialog>
 	);

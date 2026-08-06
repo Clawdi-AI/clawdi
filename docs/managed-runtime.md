@@ -148,12 +148,20 @@ flowchart TB
     Init --> Durable
     Init --> Ephemeral
 
+    subgraph Configuration["Platform configuration: /etc/clawdi"]
+        RunConfigs[run/<runtime>.json]
+        Projections[projections/<runtime>.json]
+    end
+
     subgraph Durable["Durable non-secret state: /var/lib/clawdi"]
-        RunConfigs[config/run/<runtime>.json]
-        Projections[config/projections/<runtime>.json]
         Inventory[install-inventory/<runtime>.json]
-        CliBin[root-only managed-cli/bin/clawdi]
+        CliBin[root-only maintained/clawdi/bin/clawdi]
         UserUnits[$HOME/.config/systemd/user/*.service]
+    end
+
+    subgraph Cache["Disposable cache: /var/cache/clawdi"]
+        LastGood[manifest and secret last-good fallbacks]
+        NpmCache[managed CLI npm download cache]
     end
 
     subgraph Ephemeral["Ephemeral runtime state: $CLAWDI_RUN_DIR"]
@@ -206,11 +214,20 @@ official binary. Clawdi does not intercept that command. After an updater
 replaces files, the process manager may restart the relevant official program,
 but the update transaction remains owned by the runtime.
 
-The bootstrap boundary is deliberately small: systemd prepares its runtime
-directories and runtime-user manager, then calls the root-owned image bootstrap
-entrypoint by absolute path. That entrypoint reads the exact managed CLI pin
-from the canonical runtime context, installs it under the root-only npm prefix, atomically activates
-`/var/lib/clawdi/managed-cli/bin/clawdi`, and runs
+The bootstrap boundary is deliberately small: systemd owns `/etc/clawdi`,
+`/var/lib/clawdi`, `/var/cache/clawdi`, and `/run/clawdi` through its
+`ConfigurationDirectory=`, `StateDirectory=`, `CacheDirectory=`, and
+`RuntimeDirectory=` directives before invoking the root-owned image bootstrap
+entrypoint by absolute path. The configuration, state, and cache roots are
+root-owned `0700`; `/run/clawdi` is root-owned `0711` and uses
+`RuntimeDirectoryPreserve=restart`. Runtime convergence relies on those
+systemd-owned roots instead of recursively hardening their ownership. The run
+root is searchable only for the two explicit platform-to-tenant handoff
+classes: the egress CA and per-unit tenant environment files. All other
+platform files remain private or are exposed only to dedicated system services.
+That entrypoint reads the exact managed CLI pin from the canonical runtime
+context, installs it under a root-only versioned npm prefix, atomically activates
+`/var/lib/clawdi/maintained/clawdi/bin/clawdi`, and runs
 `runtime init --non-interactive`. `runtime init` is the local administrator
 convergence step. It invokes official non-interactive service installers for
 desired runtime gateway base units inside the managed apply boundary, writes
@@ -285,12 +302,12 @@ self-update is disabled.
 
 The manifest pins one direct File Browser executable per architecture and
 provides a deployment-specific HS256 secret. Convergence downloads into a
-private `.staging-*` directory, verifies the exact SHA256 and version/commit
-probe, then atomically renames it to
-`companions/filebrowser/candidates/<sha256>/filebrowser`. It rejects staging symlinks
-or non-directories, executes the content-addressed candidate directly, and
+private `.staging-*` directory, verifies the exact SHA256, then atomically renames it to
+`maintained/filebrowser/candidates/<sha256>/filebrowser`. It rejects staging symlinks
+or non-directories. The service's unit-private bind mount runs the pinned
+version/commit probe in `ExecStartPre=` before executing the content-addressed candidate, and
 garbage-collects older candidates only after applied authority commits. The
-existing manifest snapshot covers the desired candidate, root/service-owned `0640`
+existing manifest snapshot covers the desired candidate, root-only `0600`
 configuration, install receipt, systemd unit/environment file, and applied
 state, so a download, verification, systemd, or readiness failure restores the
 previous exact pre-image. There is no separate active/previous link state or
@@ -299,8 +316,10 @@ hand-built chroot.
 `clawdi-files.service` runs as the dedicated non-login `clawdi-files` system
 UID/GID, never as the tenant runtime user. CLI/root reconciliation is the only
 identity, installer, updater, ACL, and unit controller. Candidate
-directories and binaries are root-owned; configuration is root-owned and
-service-group-readable; DB/cache state is service-owned `0700`; install
+directories and binaries are root-owned; systemd copies the root-only config
+into the unit through `LoadCredential=` and publishes only the verified binary
+through a unit-private `BindReadOnlyPaths=` mount. DB/cache state lives in the
+service-owned `0700` `StateDirectory=clawdi-files`; install
 receipts remain root-only `0600`. The tenant cannot replace those assets, read
 the derived JWT secret or state, signal the distinct-UID process, or control
 the system unit.
@@ -717,31 +736,28 @@ future agent.
 
 ## Managed CLI privilege boundary
 
-The shared `/var/lib/clawdi/bin` directory remains traversable because it also
-contains explicitly intended runtime-user tools such as the Codex shim. It must
-not contain a `clawdi` entry. The active managed CLI instead lives at
-`/var/lib/clawdi/managed-cli/bin/clawdi`; its parent directories, active npm
-package prefix under `/var/lib/clawdi/npm`, and executable target are root-owned
-and mode `0700`. The image bootstrap entrypoint is also root-owned and mode
-`0700`.
+The active managed CLI lives at
+`/var/lib/clawdi/maintained/clawdi/bin/clawdi`. Its version-specific package
+prefixes live under `/var/lib/clawdi/maintained/clawdi/npm`; the npm download
+cache is disposable data under `/var/cache/clawdi/npm`. The custom prefix is
+load-bearing: each exact version is installed separately, verified, and then
+activated by an atomic symlink switch, while the durable transaction journal
+can restore the prior target. An in-place npm global install would remove that
+activation and rollback boundary.
 
 Root system services use the absolute managed CLI path for watch, daemon, and
 sidecar commands. OpenClaw and Hermes user services execute their official
-binaries and keep `/var/lib/clawdi/managed-cli/bin` and `/var/lib/clawdi/npm`
-out of `PATH`. The interactive runtime-user shell may retain
-`/var/lib/clawdi/bin` for explicit tools such as Codex without exposing the
-managed CLI.
+binaries and do not add any platform install directory to `PATH`. Tenant tools
+use their normal home locations and inherited npm/XDG location overrides are
+cleared before official installers run. Hosted Codex is the narrow exception:
+its exact managed package is isolated under
+`~/.local/share/clawdi/codex` so the stable `~/.local/bin/codex` transparent-
+egress wrapper can delegate to it without replacing the tenant's general npm
+global tree.
 
-CLI self-upgrade verifies a new exact package before making its target and npm
-prefix root-only, then atomically switches the active link inside the root-only
-managed directory. Reconciliation also removes the legacy shared-bin link and
-best-effort tightens a writable baked image shim. That last step is migration
-defense, not a rollout guarantee: a container with a read-only root filesystem
-cannot have its baked shim retrofitted in place. Full non-discoverability for an
-existing workload therefore requires the paired hosted image containing the
-root-only shim, the matching exact CLI package, and workload replacement or
-recreation. Manifest reconciliation alone cannot retrofit an old read-only
-container.
+CLI self-upgrade verifies a new exact package before atomically switching the
+active link inside the root-only managed directory. There is no shared
+`/var/lib/clawdi/bin` compatibility path and no migration or dual-path read.
 
 The image bootstrap and CLI self-upgrade are independent atomic activation
 owners. If the image bootstrap replaces the active CLI while an older activated
@@ -760,8 +776,8 @@ installs and hands off to the selected package or fails before applying the new
 desired state.
 
 When only the exact CLI package changes and the capability image remains
-compatible, the substrate may rotate the fixed runtime-context directory in
-place without replacing the workload. The running watcher first requires the
+compatible, the substrate may atomically replace the single fixed runtime-context
+file without replacing the workload. The running watcher first requires the
 context `cliPackageSpec` to match the fetched manifest package, installs and
 verifies that exact package, atomically activates it, and exits cleanly. The
 `Restart=always` systemd unit then starts the watcher from the absolute managed
@@ -953,7 +969,7 @@ CONFIG convergence fields are separate from hosted provider COMPUTE convergence
 fields such as desired or observed replica generation.
 
 Strict-v2 workloads provide their bootstrap and apply authority through the
-single fixed file `/etc/clawdi/runtime-context/runtime-context.json`. The file
+single fixed file `/etc/clawdi/runtime-context.json`. The file
 is a strict `clawdi.runtimeContext.v2` object containing an `apply` tuple
 (`generation`, `manifestETag`, `applyReceiptId`, and `bootNonce`), an exact
 `cliPackageSpec`, and a typed HTTP `manifestSource` with bearer auth. Business
@@ -969,7 +985,7 @@ explicit test-installer gate is enabled. `manifestETag` names the
 Hosted control-plane snapshot and is persisted separately from the fetched
 bundle's HTTP ETag, which remains the strong validator derived from
 `sourceRevision`; the two values are intentionally independent. This lets one
-atomic context-directory replacement advance bootstrap and apply identity;
+atomic context-file replacement advance bootstrap and apply identity;
 bundle ETag/generation changes carry desired config and business-secret
 rotation. `bootNonce` remains a workload-boot identity rather than a
 config-generation identity.
@@ -979,39 +995,39 @@ variable delivered to the target process. They never identify, transport, or
 resolve secret material; the corresponding exact `secret://` reference does.
 
 The runtime context is a substrate-neutral filesystem ABI. Every substrate
-delivers the complete `/etc/clawdi/runtime-context/` directory containing only
-the root-owned `0400` `runtime-context.json`: Kubernetes uses a read-only
-projected Secret directory without `subPath`; Docker or Compose uses a read-only
-directory bind/secret rather than a single-file bind that pins an inode; and a
-managed bare-VPS provisioner stages and atomically replaces the directory view.
+atomically delivers the root-owned `0400` `/etc/clawdi/runtime-context.json`.
 The CLI always reads the same fixed path on every convergence and does not
-branch on substrate. This contract does not itself implement Docker/Compose or
-VPS provisioner products. `runtime init`, `runtime watch`, and `runtime sidecar`
-reject non-Hosted execution, and manifest convergence or bundle-channel
-projection invoked as a library requires an explicit apply context. Process
-environment is not an Apply identity or secret authority.
+branch on substrate. The retired wrapper-directory shape accommodated historical
+Kubernetes projected-Secret delivery and directory bind mounts; a single-file
+bind mount would have pinned the old inode across replacement. The current Incus
+substrate pushes the file through the Incus file API, so neither constraint
+applies: the delivery contract atomically replaces that one file. This contract
+does not itself implement Docker/Compose or VPS provisioner products. The
+`runtime init`, `runtime watch`, and `runtime sidecar` commands reject non-Hosted
+execution, and manifest convergence or bundle-channel projection invoked as a
+library requires an explicit apply context. Process environment is not an Apply
+identity or secret authority.
 
-The CLI writes durable non-secret state under the service state root. Important
-outputs include:
+The CLI separates root-owned configuration, durable state, disposable cache,
+and ephemeral runtime handoffs. Important outputs include:
 
 | Output | Purpose |
 | --- | --- |
-| `config/clawdi.json` | Redacted managed runtime config |
-| `sync/runtimes.json` | Runtime sync state |
-| `cache/manifest.last-good.json` | Last successfully applied effective, channel-projected manifest for offline recovery |
-| `cache/runtime-secrets.last-good.json` | Root-only `0600` reference-scoped set of active `secret://` values required to reproduce last-good |
-| `status/runtime-applied.json` | Root-only `0600` Agent v2 authority for one ETag, source revision, instance, checkpoint `generation`, optional `applyGeneration`, private recoverability content identity, source provider IDs, and target-specific projected provider IDs |
-| `install-inventory/<runtime>.json` | Install/verify observation |
-| `companions/filebrowser/candidates/<sha256>/filebrowser` | Root-owned, verified, content-addressed Files executable selected directly by the manifest |
-| `config/filebrowser.yaml` | Root-owned, `clawdi-files`-group-readable File Browser configuration with the deployment-scoped JWT secret |
-| `filebrowser/` | Dedicated-service-owned `0700` File Browser DB and cache state |
-| `managed-cli/bin/clawdi` | Root-only active managed CLI link used by system services |
-| `npm/` | Root-only managed CLI package prefixes and active targets |
-| `config/projections/<runtime>.json` | Runtime projection payload |
-| `config/projections/managed-mcp-servers.json` | Canonical v2 managed MCP server-name ownership ledger per runtime, written atomically only after the full native-config apply succeeds |
-| `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |
-| `$CLAWDI_RUN_DIR/secrets/*` | Short-lived token and secret files for the current runtime session |
-| `$CLAWDI_RUN_DIR/systemd/env/*.service.env` | Ephemeral env files for local systemd services, including short-lived runtime secrets |
+| `/etc/clawdi/clawdi.json` | Redacted managed runtime config |
+| `/etc/clawdi/filebrowser.yaml` | Root-only `0600` File Browser configuration loaded through systemd credentials |
+| `/etc/clawdi/projections/*` and `/etc/clawdi/run/*` | Managed projections and `clawdi run` launch config |
+| `/var/lib/clawdi/sync/runtimes.json` | Runtime sync state |
+| `/var/lib/clawdi/status/*` | Boot, apply, upgrade, provider, egress, watch, and receipt status/result files |
+| `/var/lib/clawdi/install-inventory/<runtime>.json` | Install/verify observation |
+| `/var/lib/clawdi/maintained/filebrowser/candidates/<sha256>/filebrowser` | Root-owned, verified Files executable |
+| `/var/lib/clawdi/maintained/clawdi/` | Root-only managed CLI activation and versioned package prefixes |
+| `/var/lib/clawdi-files/` | `clawdi-files`-owned `0700` DB and component cache state |
+| `/var/cache/clawdi/manifest.last-good.json` | Refetchable last-good manifest fallback |
+| `/var/cache/clawdi/runtime-secrets.last-good.json` | Root-only refetchable secret fallback for offline recovery |
+| `/var/cache/clawdi/npm/` | Managed CLI npm download cache |
+| `/run/clawdi/secrets/*` | Short-lived root/egress service secret files |
+| `/run/clawdi/systemd/env/*.service.env` | Root-owned system-service env files or tenant-owned `0600` user-service env handoffs |
+| `/run/clawdi/egress/systemd/ca.pem` | Deliberately published root:tenant-group `0640` transparent-egress CA bundle |
 | `$CLAWDI_RUN_DIR/systemd/system/*.service` or `/run/systemd/system/*.service` | Generated system units for root-owned Clawdi support programs |
 | `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units and direct runtime-user programs |
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
@@ -1172,7 +1188,7 @@ Runtime-owned services use the same generated run-config and systemd model, but
 they are not user commands and do not receive command shims. Gateway units must
 come from official service installers. A manifest entry such as
 `runtimes.hermes.services.dashboard` may still write
-`config/run/hermes+dashboard.json`; until Hermes exposes an official dashboard
+`/etc/clawdi/run/hermes+dashboard.json`; until Hermes exposes an official dashboard
 service installer, systemd must run it only as an explicit `clawdi-*`
 compatibility unit:
 

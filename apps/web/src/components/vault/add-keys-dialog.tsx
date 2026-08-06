@@ -13,6 +13,7 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
@@ -378,18 +379,23 @@ export function AddKeysDialog({
 							</div>
 						</div>
 					) : null}
-					<div className="flex items-center justify-between gap-2">
+					<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<span className="text-xs text-muted-foreground tabular-nums">
 							{count} {count === 1 ? "key" : "keys"} detected
 							{importPlan.summary.skipped > 0 ? ` · ${importPlan.summary.skipped} skipped` : ""}
 						</span>
-						<Button
-							onClick={() => void save.execute().catch(() => undefined)}
-							disabled={!canSave || save.isPending}
-						>
-							{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
-							Save {importableCount > 0 ? importableCount : ""}
-						</Button>
+						<DialogFooter className="sm:ml-auto">
+							<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+								Cancel
+							</Button>
+							<Button
+								onClick={() => void save.execute().catch(() => undefined)}
+								disabled={!canSave || save.isPending}
+							>
+								{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
+								Save {importableCount > 0 ? importableCount : ""}
+							</Button>
+						</DialogFooter>
 					</div>
 				</div>
 			</DialogContent>

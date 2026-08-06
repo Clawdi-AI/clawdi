@@ -63,14 +63,14 @@ describe("runtime egress engine maintained fetch", () => {
 		);
 		expect(existsSync(first.binaryPath)).toBe(true);
 		expect(readFileSync(first.binaryPath, "utf-8")).toContain("fake mitmdump");
-		expect(statSync(dirname(paths.egressEngineMaintainedRoot)).mode & 0o777).toBe(0o755);
-		expect(statSync(paths.egressEngineMaintainedRoot).mode & 0o777).toBe(0o755);
+		expect(statSync(dirname(paths.egressEngineMaintainedRoot)).mode & 0o777).toBe(0o700);
+		expect(statSync(paths.egressEngineMaintainedRoot).mode & 0o777).toBe(0o700);
 		expect(second.status).toBe("ready");
 		if (second.status !== "ready") throw new Error(second.error);
 		expect(second.binaryPath).toBe(first.binaryPath);
 	});
 
-	it("repairs legacy egress engine directory permissions on a cache hit", () => {
+	it("does not rewrite a private maintained boundary on a cache hit", () => {
 		const paths = runtimePaths();
 		const pin = {
 			type: "mitmproxy" as const,
@@ -102,15 +102,7 @@ describe("runtime egress engine maintained fetch", () => {
 		expect(result.status).toBe("ready");
 		if (result.status !== "ready") throw new Error(result.error);
 		expect(result.binaryPath).toBe(binaryPath);
-		expect(statSync(egressEngineRoot).mode & 0o777).toBe(0o755);
-		for (const path of [
-			egressEngineRoot,
-			paths.egressEngineMaintainedRoot,
-			versionRoot,
-			cacheDir,
-		]) {
-			expect(statSync(path).mode & 0o005).toBe(0o005);
-		}
+		expect(statSync(egressEngineRoot).mode & 0o777).toBe(0o700);
 		expect(statSync(binaryPath).mode & 0o005).toBe(0o005);
 		expect(statSync(unrelatedPrivateDir).mode & 0o777).toBe(0o700);
 		expect(statSync(unrelatedPrivateFile).mode & 0o777).toBe(0o600);

@@ -72,7 +72,7 @@ export function runtimeRootLiveMutationTargets(
 		paths.egressAddon,
 		paths.egressTransparentEnv,
 		paths.egressSystemCaFile,
-		join(paths.serviceStateRoot, "config", "runtime-live-sync-agents.json"),
+		paths.liveSyncEnvironmentIndex,
 	]);
 	for (const name of ["clawdi-runtime-watch", "clawdi-daemon", "clawdi-runtime-sidecar"]) {
 		const unitName = `${name}.service`;
@@ -197,11 +197,24 @@ function assertRuntimeManagedDirectoryTrusted(path: string): void {
 	if (!stat.isDirectory() || stat.isSymbolicLink()) {
 		throw new Error(`runtime managed directory is not a real directory: ${path}`);
 	}
-	if ((stat.mode & 0o022) !== 0) {
+	if ((stat.mode & 0o022) !== 0 && !hasPrivateOwnedAncestor(path)) {
 		throw new Error(`runtime managed directory is group/world writable: ${path}`);
 	}
 	if (runningAsRoot() && stat.uid !== 0) {
 		throw new Error(`runtime managed directory is not root-owned: ${path}`);
+	}
+}
+
+function hasPrivateOwnedAncestor(path: string): boolean {
+	const expectedUid = process.geteuid?.() ?? process.getuid?.();
+	let current = dirname(resolve(path));
+	for (;;) {
+		const node = lstatSync(current);
+		if (node.isSymbolicLink() || !node.isDirectory()) return false;
+		if (node.uid === expectedUid && (node.mode & 0o077) === 0) return true;
+		const parent = dirname(current);
+		if (parent === current) return false;
+		current = parent;
 	}
 }
 
@@ -281,7 +294,7 @@ function captureRuntimeLiveNode(path: string, requireRootOwner: boolean): Runtim
 	}
 	if (!stat.isDirectory()) throw new Error(`unsupported runtime live-state path: ${path}`);
 	const mode = stat.mode & 0o777;
-	if (requireRootOwner && (mode & 0o022) !== 0) {
+	if (requireRootOwner && (mode & 0o022) !== 0 && !hasPrivateOwnedAncestor(path)) {
 		throw new Error(`runtime live-state snapshot directory is group/world writable: ${path}`);
 	}
 	if (requireRootOwner && runningAsRoot() && stat.uid !== 0) {

@@ -9,7 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
 	assertCurrentEgressIdentity,
@@ -86,6 +86,7 @@ describe("runtime sidecar egress CA projection", () => {
 			writeFileSync(caCertPath, "first-egress-ca\n");
 			publishEgressSystemCaBundle(config);
 			const created = statSync(systemCaBundle);
+			expect(statSync(dirname(systemCaBundle)).mode & 0o777).toBe(0o711);
 			expect(created.mode & 0o777).toBe(0o640);
 			expect(readFileSync(systemCaBundle, "utf-8")).toContain("first-egress-ca");
 			if (process.getuid?.() === 0) {

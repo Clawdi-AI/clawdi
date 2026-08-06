@@ -10,6 +10,20 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.40
+
+Package: `clawdi@0.13.40`
+
+### Changed
+
+- The hosted runtime context is now the single file `/etc/clawdi/runtime-context.json`
+  instead of a directory containing one identically named file.
+- Hosted platform data follows FHS and systemd conventions: configuration under
+  `/etc/clawdi`, durable state under `/var/lib/clawdi`, disposable data under
+  `/var/cache/clawdi`, and runtime data under `/run/clawdi`. systemd owns these
+  roots through its directory directives, and every status file now lives in one
+  place. Tenant tools use their own npm and XDG defaults.
+
 ## Clawdi CLI v0.13.38
 
 Package: `clawdi@0.13.38`

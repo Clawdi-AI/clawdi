@@ -33,7 +33,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
+import {
+	formatResourceCount,
+	getProjectResourceDefinition,
+	projectDetailHref,
+} from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
@@ -244,8 +248,8 @@ export default function ProjectsPage() {
 							key={project.id}
 							project={project}
 							footer={[
-								formatCountLabel(project.skill_count, "skill"),
-								formatCountLabel(project.vault_count, "vault"),
+								formatResourceCount(project.skill_count, "skill"),
+								formatResourceCount(project.vault_count, "vault"),
 								shared && project.owner_display ? `by ${project.owner_display}` : null,
 							]}
 							actions={
@@ -270,11 +274,6 @@ function ProjectShareAction({ project }: { project: ProjectRow }) {
 			</Button>
 		</ShareProjectDialog>
 	);
-}
-
-function formatCountLabel(value: number | null | undefined, noun: string) {
-	if (typeof value !== "number") return null;
-	return `${value} ${value === 1 ? noun : `${noun}s`}`;
 }
 
 function compareProjectsForProductUse(a: ProjectRow, b: ProjectRow) {

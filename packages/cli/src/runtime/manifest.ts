@@ -177,7 +177,6 @@ import {
 	type RuntimeRunConfig,
 	type RuntimeRunSettings,
 	type RuntimeServiceName,
-	runtimeManagedBinDir,
 	runtimeNameSchema,
 	runtimeRunConfigId,
 	runtimeServiceNameSchema,
@@ -204,6 +203,7 @@ import {
 } from "./runtime-systemd-reconciliation";
 import {
 	buildRuntimeUserCommand,
+	clearTenantToolLocationOverrides,
 	commandExists,
 	commandResolvable,
 	executableExists,
@@ -441,17 +441,10 @@ function writeLastGoodSecretValues(
 			dirMode: 0o755,
 		},
 	);
-	makeRootOwned(dirname(paths.managedSecretCacheFile));
-	makeRootOwned(paths.managedSecretCacheFile);
 }
 
 function makeManagedSecretRoot(path: string): void {
-	makeRootOwned(path);
-	try {
-		chmodSync(path, 0o711);
-	} catch {
-		// Best effort for non-POSIX local development environments.
-	}
+	chmodSync(path, 0o711);
 }
 
 function omitSecretRefs(
@@ -936,40 +929,6 @@ function makeEgressIdentityOwned(path: string): void {
 	chownSync(path, uid, gid);
 }
 
-function makeRootOwned(path: string): void {
-	if (!runningAsRoot()) return;
-	try {
-		chownSync(path, 0, 0);
-	} catch {
-		// Best effort for local tests and non-root development environments.
-	}
-}
-
-function makeRootReadableDir(path: string): void {
-	mkdirSync(path, { recursive: true });
-	makeRootOwned(path);
-	try {
-		chmodSync(path, 0o755);
-	} catch {
-		// Best effort for non-POSIX local development environments.
-	}
-}
-
-function publishRootOwnedToolTree(path: string): void {
-	const node = lstatSync(path);
-	if (node.isSymbolicLink()) {
-		if (runningAsRoot()) lchownSync(path, 0, 0);
-		return;
-	}
-	makeRootOwned(path);
-	if (node.isDirectory()) {
-		chmodSync(path, 0o755);
-		for (const entry of readdirSync(path)) publishRootOwnedToolTree(join(path, entry));
-		return;
-	}
-	chmodSync(path, node.mode & 0o111 ? 0o755 : 0o644);
-}
-
 function makeRuntimeUserPrivateDir(path: string, home: string): void {
 	mkdirSync(path, { recursive: true });
 	makeRuntimeUserOwnedAncestors(path, home);
@@ -1041,7 +1000,6 @@ const liveSyncEnvironmentIndexSchema = z
 	.strict();
 
 function runtimeInstallerExecution(
-	name: string,
 	install: RuntimeInstall,
 	installerPath: string,
 ): {
@@ -1051,7 +1009,7 @@ function runtimeInstallerExecution(
 	executionUser: string | null;
 } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	const env = runtimeInstallerEnv(name, install);
+	const env = runtimeInstallerEnv(install);
 	if (!runtimeUser || runtimeUser === "root") {
 		return {
 			command: "bash",
@@ -1073,16 +1031,13 @@ function runtimeInstallerExecution(
 	};
 }
 
-function runtimeInstallerEnv(name: string, install: RuntimeInstall): NodeJS.ProcessEnv {
+function runtimeInstallerEnv(install: RuntimeInstall): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		HOME: install.home,
 		PATH: [join(install.home, ".local", "bin"), process.env.PATH].filter(Boolean).join(":"),
 	};
-	delete env.NPM_CONFIG_PREFIX;
-	delete env.npm_config_prefix;
-	delete env.NPM_CONFIG_CACHE;
-	delete env.npm_config_cache;
+	clearTenantToolLocationOverrides(env);
 	env.SSL_CERT_FILE = SYSTEM_CA_BUNDLE;
 	env.NODE_EXTRA_CA_CERTS = SYSTEM_CA_BUNDLE;
 	env.REQUESTS_CA_BUNDLE = SYSTEM_CA_BUNDLE;
@@ -1090,15 +1045,6 @@ function runtimeInstallerEnv(name: string, install: RuntimeInstall): NodeJS.Proc
 	env.GIT_SSL_CAINFO = SYSTEM_CA_BUNDLE;
 	env.NPM_CONFIG_CAFILE = SYSTEM_CA_BUNDLE;
 	env.npm_config_cafile = SYSTEM_CA_BUNDLE;
-	if (name === "hermes") {
-		const hermesHome = join(install.home, ".hermes");
-		env.HERMES_HOME = hermesHome;
-		env.UV_PYTHON_INSTALL_DIR = join(hermesHome, "uv", "python");
-		env.UV_PYTHON_BIN_DIR = join(hermesHome, "uv", "bin");
-		env.UV_MANAGED_PYTHON = "1";
-		delete env.UV_NO_MANAGED_PYTHON;
-		delete env.UV_PYTHON_DOWNLOADS;
-	}
 	return env;
 }
 
@@ -1215,7 +1161,7 @@ function runOfficialInstaller(
 	const url = executionInstallerUrl(name, install.url);
 	const materialized = materializeInstaller(name, url);
 	try {
-		const execution = runtimeInstallerExecution(name, install, materialized.path);
+		const execution = runtimeInstallerExecution(install, materialized.path);
 		const result = spawnSync(execution.command, execution.args, {
 			cwd: install.home,
 			env: execution.env,
@@ -1670,7 +1616,6 @@ function writeEgressSecretMaterial(
 		return null;
 	}
 	writePrivateFileAtomic(path, material.content, { mode: 0o600, dirMode: 0o700 });
-	makeRootOwned(dirname(path));
 	makeEgressIdentityOwned(path);
 	makeManagedSecretRoot(paths.managedSecretRoot);
 	try {
@@ -1843,22 +1788,11 @@ function writeRuntimeOAuthLedger(
 	providerId: string,
 	snapshot: OAuthCredentialLedgerSnapshot,
 ): void {
-	writeOAuthCredentialLedger(path, { runtime, providerId }, snapshot, {
-		afterWrite: (writtenPath, parent) => {
-			makeRootOwned(writtenPath);
-			makeRootOwned(parent);
-		},
-	});
+	writeOAuthCredentialLedger(path, { runtime, providerId }, snapshot);
 }
 
 function readRuntimeOAuthLedger(path: string): OAuthCredentialLedger | null {
-	return readOAuthCredentialLedger(path, {
-		migrateLegacy: true,
-		afterMigrate: (migratedPath, parent) => {
-			makeRootOwned(migratedPath);
-			makeRootOwned(parent);
-		},
-	});
+	return readOAuthCredentialLedger(path, { migrateLegacy: true });
 }
 
 function decodeJwtExpiryMs(token: string): number | null {
@@ -2756,13 +2690,15 @@ function hostedCodexManagedConfigToml(provider: HostedCodexManagedProvider): str
 
 function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | null {
 	if (process.env.CLAWDI_CODEX_INSTALL_DISABLED === "1") return null;
-	const npmPrefix = join(paths.serviceStateRoot, "codex", "npm");
-	const npmCache = join(paths.serviceStateRoot, "codex", "npm-cache");
+	// Keep the exact managed package separate from the tenant's global npm tree:
+	// ~/.local/bin/codex is the transparent-egress wrapper, while this XDG data
+	// location holds the executable that the wrapper delegates to.
+	const npmPrefix = paths.codexInstallRoot;
 	const realBin = join(npmPrefix, "bin", "codex");
-	const commandPath = join(runtimeManagedBinDir(paths), "codex");
+	const commandPath = paths.codexCommand;
 	let installedVersion = hostedCodexInstalledVersion(npmPrefix);
 	if (installedVersion !== CODEX_NPM_PACKAGE_VERSION || !executableExists(realBin)) {
-		installHostedCodexCli(CODEX_NPM_PACKAGE_SPEC, npmPrefix, npmCache);
+		installHostedCodexCli(CODEX_NPM_PACKAGE_SPEC, npmPrefix, paths);
 		installedVersion = hostedCodexInstalledVersion(npmPrefix);
 	}
 	if (installedVersion !== CODEX_NPM_PACKAGE_VERSION) {
@@ -2773,12 +2709,9 @@ function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | nul
 	if (!executableExists(realBin)) {
 		throw new Error(`Codex npm install did not create ${realBin}`);
 	}
-	makeRootReadableDir(dirname(npmPrefix));
-	publishRootOwnedToolTree(npmPrefix);
-	writeHostedCodexCommandShim(commandPath, realBin);
+	withRuntimeUserFileAccess(() => writeHostedCodexCommandShim(commandPath, realBin));
 	return {
 		commandPath,
-		npmCache,
 		npmPrefix,
 		packageSpec: CODEX_NPM_PACKAGE_SPEC,
 		packageVersion: installedVersion,
@@ -2804,21 +2737,18 @@ function hostedCodexInstalledVersion(npmPrefix: string): string | null {
 	}
 }
 
-function installHostedCodexCli(packageSpec: string, npmPrefix: string, npmCache: string): void {
+function installHostedCodexCli(packageSpec: string, npmPrefix: string, paths: RuntimePaths): void {
 	if (!commandExists("npm")) {
 		throw new Error("Codex runtime add-on install requires npm on PATH");
 	}
-	mkdirSync(npmPrefix, { recursive: true });
-	mkdirSync(npmCache, { recursive: true });
-	const result = spawnSync(
+	withRuntimeUserFileAccess(() => mkdirSync(npmPrefix, { recursive: true }));
+	const result = spawnRuntimeUserCommand(
 		"npm",
 		[
 			"install",
 			"-g",
 			"--prefix",
 			npmPrefix,
-			"--cache",
-			npmCache,
 			"--ignore-scripts",
 			"--fetch-retries",
 			"2",
@@ -2834,26 +2764,20 @@ function installHostedCodexCli(packageSpec: string, npmPrefix: string, npmCache:
 			"--no-update-notifier",
 			packageSpec,
 		],
-		{
-			encoding: "utf8",
-			env: {
-				...process.env,
-				NO_UPDATE_NOTIFIER: "1",
-				NPM_CONFIG_UPDATE_NOTIFIER: "false",
-			},
-			timeout: Number.parseInt(process.env.CLAWDI_CODEX_INSTALL_TIMEOUT ?? "600000", 10),
-		},
+		paths.userHome,
+		paths.userHome,
+		{ timeoutMs: 600_000 },
 	);
 	if (result.status !== 0) {
 		throw new Error(
-			`Codex runtime add-on install failed: ${tail(result.stderr) ?? tail(result.stdout) ?? "npm failed"}`,
+			`Codex runtime add-on install failed: ${tail(result.stderr?.toString()) ?? tail(result.stdout?.toString()) ?? "npm failed"}`,
 		);
 	}
 }
 
 function writeHostedCodexCommandShim(commandPath: string, realBin: string): void {
 	const binDir = dirname(commandPath);
-	makeRootReadableDir(binDir);
+	mkdirSync(binDir, { recursive: true });
 	writePrivateFileAtomic(
 		commandPath,
 		[
@@ -2867,7 +2791,6 @@ function writeHostedCodexCommandShim(commandPath: string, realBin: string): void
 			dirMode: 0o755,
 		},
 	);
-	makeRootOwned(commandPath);
 }
 
 function shellQuote(value: string): string {
@@ -4443,8 +4366,6 @@ function writeEgressEngineStatus(
 		return null;
 	}
 	writeJsonFile(paths.egressEngineStatus, result);
-	makeRootOwned(dirname(paths.egressEngineStatus));
-	makeRootOwned(paths.egressEngineStatus);
 	return result;
 }
 
@@ -4467,9 +4388,8 @@ function requireV2EgressEngineReady(
 function writeEgressAddon(paths: RuntimePaths): { path: string; sha256: string } {
 	const source = resolvePackagedEgressAddon();
 	const content = readFileSync(source, "utf-8");
-	writePrivateFileAtomic(paths.egressAddon, content, { mode: 0o644, dirMode: 0o755 });
-	makeRootOwned(dirname(paths.egressAddon));
-	makeRootOwned(paths.egressAddon);
+	writePrivateFileAtomic(paths.egressAddon, content, { mode: 0o640, dirMode: 0o711 });
+	if (runningAsRoot()) chownSync(paths.egressAddon, 0, runtimeEgressGid());
 	return { path: paths.egressAddon, sha256: sha256String(content) };
 }
 
@@ -4519,7 +4439,7 @@ function writeTransparentEgressEnvFile(input: {
 		CLAWDI_EGRESS_ENGINE_VERSION: input.program.engine.version,
 		CLAWDI_EGRESS_ENGINE_URL: input.program.engine.url,
 		CLAWDI_EGRESS_ENGINE_SHA256: input.program.engine.sha256,
-		CLAWDI_EGRESS_ENGINE_BINARY_PATH: input.program.engine.binaryPath,
+		CLAWDI_EGRESS_ENGINE_BINARY_PATH: input.paths.egressServiceBinary,
 		CLAWDI_EGRESS_ADDON_PATH: input.program.addonPath,
 		CLAWDI_EGRESS_ADDON_SHA256: input.program.addonSha256,
 	};
@@ -4527,11 +4447,9 @@ function writeTransparentEgressEnvFile(input: {
 		.sort(([a], [b]) => a.localeCompare(b))
 		.map(([key, value]) => `${key}=${runtimeEnvironmentFileQuote(value)}`);
 	writePrivateFileAtomic(input.paths.egressTransparentEnv, `${lines.join("\n")}\n`, {
-		mode: 0o644,
-		dirMode: 0o755,
+		mode: 0o600,
+		dirMode: 0o711,
 	});
-	makeRootOwned(dirname(input.paths.egressTransparentEnv));
-	makeRootOwned(input.paths.egressTransparentEnv);
 	return input.paths.egressTransparentEnv;
 }
 
@@ -4626,7 +4544,7 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 }
 
 function liveSyncEnvironmentIndexPath(paths: RuntimePaths): string {
-	return join(paths.serviceStateRoot, "config", "runtime-live-sync-agents.json");
+	return paths.liveSyncEnvironmentIndex;
 }
 
 function readLiveSyncEnvironmentIndex(paths: RuntimePaths): RuntimeName[] {
@@ -4662,7 +4580,6 @@ function writeDaemonAuthToken(
 	const path = ensureRuntimeAuthTokenFile(paths, secretValues ?? {});
 	if (!path) return null;
 	makeManagedSecretRoot(dirname(path));
-	makeRootOwned(path);
 	return path;
 }
 
@@ -5204,6 +5121,13 @@ export function runtimeUserMutationTargets(
 		...hostedChannelCredentialMutationTargets(manifest, home),
 		...channelPluginTargets,
 	]);
+	if (
+		hostedCodexManagedProvider(manifest) ||
+		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
+	) {
+		targets.add(paths.codexInstallRoot);
+		targets.add(paths.codexCommand);
+	}
 	for (const name of HOSTED_RUNTIME_TARGETS) {
 		if (manifest.runtimes[name]?.enabled !== true) continue;
 		const commandPath = runtimeCommandPath(name, home);
@@ -5336,14 +5260,6 @@ function runtimeManagedMutationPlan(input: {
 	for (const target of fileBrowserMutation.rootTargets) rootTargets.add(target);
 	rootTargets.add(runtimeInstallReceiptsPath(input.paths));
 	const rootMetadataTargets = new Set<string>();
-	if (
-		hostedCodexManagedProvider(input.manifest) ||
-		input.manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
-	) {
-		rootTargets.add(join(input.paths.serviceStateRoot, "codex", "npm"));
-		rootTargets.add(join(input.paths.serviceStateRoot, "codex", "npm-cache"));
-		rootTargets.add(join(runtimeManagedBinDir(input.paths), "codex"));
-	}
 	const egressPin = input.manifest.egressEngine;
 	if (egressPin?.type === "mitmproxy") {
 		const cacheDir = join(
@@ -5408,11 +5324,15 @@ function runtimeManagedMutationPlan(input: {
 				...new Set([
 					...rootMetadataTargets,
 					...systemd.metadataTargets,
+					input.paths.configurationRoot,
 					input.paths.serviceStateRoot,
+					input.paths.cacheRoot,
 					input.paths.runRoot,
 					input.paths.systemdSystemRoot,
 					...mutationAncestorMetadataTargets(rootTargetsList, [
+						input.paths.configurationRoot,
 						input.paths.serviceStateRoot,
+						input.paths.cacheRoot,
 						input.paths.runRoot,
 						input.paths.systemdSystemRoot,
 					]),
@@ -5761,16 +5681,22 @@ export function convergeRuntimeManifest(
 			makeRuntimeUserPrivateDir(paths.clawdiHome, paths.userHome);
 			makeRuntimeUserOwned(workspaceRoot);
 		});
-		makeRootReadableDir(paths.installInventory);
-		makeRootReadableDir(paths.projectionRoot);
-		makeRootReadableDir(instanceRoot);
-		makeRootReadableDir(semRoot);
+		for (const directory of [
+			paths.installInventory,
+			paths.projectionRoot,
+			instanceRoot,
+			semRoot,
+			paths.egressProfileRoot,
+		]) {
+			mkdirSync(directory, { recursive: true, mode: 0o755 });
+		}
 		mkdirSync(paths.managedSecretRoot, { recursive: true });
 		makeManagedSecretRoot(paths.managedSecretRoot);
-		makeRootReadableDir(paths.egressProfileRoot);
-		makeRootReadableDir(paths.egressRoot);
+		mkdirSync(paths.egressRoot, { recursive: true, mode: 0o711 });
+		chmodSync(paths.egressRoot, 0o711);
 		makeEgressIdentityPrivateDir(paths.egressCaDir);
-		makeRootReadableDir(dirname(paths.egressSystemCaFile));
+		mkdirSync(dirname(paths.egressSystemCaFile), { recursive: true, mode: 0o711 });
+		chmodSync(dirname(paths.egressSystemCaFile), 0o711);
 		makeRuntimeUserPrivateDir(paths.egressScratchRoot, paths.userHome);
 
 		let manifestLastGood: string | null = null;

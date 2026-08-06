@@ -18,7 +18,6 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { runtimeContentSha256 } from "./applied-state";
 import {
 	ensureFileBrowserServiceIsolation,
-	FILE_BROWSER_SERVICE_USER,
 	type FileBrowserServiceIdentity,
 	type FileBrowserServiceIsolation,
 } from "./file-browser-isolation";
@@ -26,7 +25,7 @@ import type { RuntimeInstallReceiptEntry } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import type { RuntimeSystemdUserProgram } from "./runtime-systemd-reconciliation";
-import { buildRuntimeUserCommand, runningAsRoot } from "./runtime-user-command";
+import { runningAsRoot } from "./runtime-user-command";
 
 const FILE_BROWSER_BINARY = "filebrowser";
 const FILE_BROWSER_CANDIDATES = "candidates";
@@ -140,7 +139,6 @@ export function fileBrowserCompanionMutationPlan(
 		rootTrustedRoots: [paths.fileBrowserInstallRoot],
 		rootTargets: [
 			...(candidateIsValid(paths, asset.sha256) ? [] : [target]),
-			paths.fileBrowserStateRoot,
 			paths.fileBrowserConfig,
 		],
 	};
@@ -235,33 +233,6 @@ function ensureOwnedDirectory(
 	chmodSync(path, mode);
 }
 
-function repairServiceState(path: string, identity: FileBrowserServiceIdentity): void {
-	ensureOwnedDirectory(path, identity, 0o700);
-	for (const entry of readdirSync(path)) {
-		const child = join(path, entry);
-		const stat = lstatSync(child);
-		if (stat.isSymbolicLink()) {
-			throw new Error(`Files companion state contains an unsafe symlink: ${child}`);
-		}
-		if (stat.isDirectory()) {
-			repairServiceState(child, identity);
-			continue;
-		}
-		if (!stat.isFile()) throw new Error(`Files companion state contains an unsafe node: ${child}`);
-		chownSync(child, identity.uid, identity.gid);
-		chmodSync(child, 0o600);
-	}
-}
-
-function makeConfigReadableByService(path: string, identity: FileBrowserServiceIdentity): void {
-	const stat = lstatSync(path);
-	if (!stat.isFile() || stat.isSymbolicLink()) {
-		throw new Error(`Files companion config is not a trusted file: ${path}`);
-	}
-	chmodSync(path, 0o640);
-	chownSync(path, managedRootIdentity().uid, identity.gid);
-}
-
 function defaultDownload(url: string, destination: string, paths: RuntimePaths): void {
 	const result = spawnSync(
 		"curl",
@@ -283,40 +254,10 @@ function defaultDownload(url: string, destination: string, paths: RuntimePaths):
 	}
 }
 
-function defaultVersionProbe(
-	binary: string,
-	paths: RuntimePaths,
-	identity: FileBrowserServiceIdentity,
-): string {
-	const command = buildRuntimeUserCommand(
-		FILE_BROWSER_SERVICE_USER,
-		"/nonexistent",
-		binary,
-		["version"],
-		{
-			currentUid: typeof process.geteuid === "function" ? process.geteuid() : undefined,
-			runtimeUid: identity.uid,
-			runtimeGid: identity.gid,
-		},
-	);
-	const result = spawnSync(command.command, command.args, {
-		cwd: paths.userHome,
-		encoding: "utf8",
-		env: { ...process.env, ...command.env },
-		maxBuffer: 64 * 1024,
-		timeout: 10_000,
-	});
-	if (result.status !== 0) throw new Error("Files companion version probe failed");
-	return [result.stdout, result.stderr]
-		.filter((value): value is string => typeof value === "string")
-		.join("\n");
-}
-
 function installCandidate(
 	companion: NonNullable<FileBrowserCompanion>,
 	paths: RuntimePaths,
 	asset: FileBrowserAsset,
-	identity: FileBrowserServiceIdentity,
 	options: FileBrowserCompanionInstallOptions,
 ): void {
 	const targetRoot = candidateRoot(paths, asset.sha256);
@@ -336,11 +277,11 @@ function installCandidate(
 		chmodSync(binary, 0o755);
 		chownSync(binary, managedRootIdentity().uid, managedRootIdentity().gid);
 		chmodSync(staging, 0o755);
-		const version = options.versionProbe
-			? options.versionProbe(binary)
-			: defaultVersionProbe(binary, paths, identity);
-		if (!version.includes(companion.version) || !version.includes(companion.commit.slice(0, 7))) {
-			throw new Error("Files companion version probe did not match the pinned release");
+		if (options.versionProbe) {
+			const version = options.versionProbe(binary);
+			if (!version.includes(companion.version) || !version.includes(companion.commit.slice(0, 7))) {
+				throw new Error("Files companion version probe did not match the pinned release");
+			}
 		}
 		renameSync(staging, targetRoot);
 	} finally {
@@ -404,20 +345,14 @@ export function ensureFileBrowserCompanion(
 	const candidateWasValid = candidateIsValid(paths, asset.sha256);
 	const verifiedReceipt =
 		previousReceipt?.desiredRevision === desired && previousReceipt.currentRevision === before;
-	const identity = (options.serviceIsolation ?? ensureFileBrowserServiceIsolation)(
-		paths,
-		companion.sourceRoot,
-	);
+	(options.serviceIsolation ?? ensureFileBrowserServiceIsolation)(paths, companion.sourceRoot);
 	ensureOwnedDirectory(paths.fileBrowserInstallRoot, managedRootIdentity(), 0o755);
 	ensureOwnedDirectory(candidatesRoot(paths), managedRootIdentity(), 0o755);
 	cleanStaleStaging(paths);
-	repairServiceState(paths.fileBrowserStateRoot, identity);
-	repairServiceState(join(paths.fileBrowserStateRoot, "cache"), identity);
 	if (!verifiedReceipt || before === null) {
-		installCandidate(companion, paths, asset, identity, options);
-		writePrivateFileAtomic(paths.fileBrowserConfig, config, { mode: 0o640, dirMode: 0o755 });
+		installCandidate(companion, paths, asset, options);
+		writePrivateFileAtomic(paths.fileBrowserConfig, config, { mode: 0o600, dirMode: 0o700 });
 	}
-	makeConfigReadableByService(paths.fileBrowserConfig, identity);
 	const current = () => currentRevision(companion, paths, asset.sha256, config);
 	const expected = current();
 	if (expected !== desired)

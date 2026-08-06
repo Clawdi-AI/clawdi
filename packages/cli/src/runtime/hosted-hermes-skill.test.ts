@@ -32,7 +32,7 @@ function fakeHermesApp(home: string): string {
 		`#!/usr/bin/python3
 import json, os, shutil, sys
 from pathlib import Path
-root = Path(os.environ["HERMES_HOME"]) / "skills"
+root = Path(os.environ["HOME"]) / ".hermes" / "skills"
 with Path(os.environ["FAKE_HERMES_LOG"]).open("a") as log:
     log.write(" ".join(sys.argv[1:]) + chr(10))
 if sys.argv[1:3] == ["skills", "install"]:

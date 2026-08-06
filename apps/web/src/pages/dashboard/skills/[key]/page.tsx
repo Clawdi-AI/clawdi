@@ -32,18 +32,14 @@ import {
 	agentSkillForegroundRefetchInterval,
 } from "@/components/dashboard/agent-skills-query";
 import { DetailBackLink } from "@/components/detail/back-link";
-import {
-	DetailMeta,
-	DetailNotFound,
-	DetailPanel,
-	DetailStats,
-	DetailTitle,
-} from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailPanel, DetailStats } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { IconChip } from "@/components/icon-chip";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { ProjectIdentity } from "@/components/projects/project-metadata";
+import { displayProjectName, ProjectIdentity } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,6 +59,7 @@ import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import {
@@ -74,7 +71,7 @@ import {
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
 // renderer doesn't show "name:" / "description:" lines (already
-// rendered above as DetailTitle + description) and so the closing
+// rendered above in PageHeader) and so the closing
 // `---` doesn't render as a stray `<hr>` next to the Separator.
 function stripFrontmatter(raw: string): string {
 	const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
@@ -85,9 +82,20 @@ function stripFrontmatter(raw: string): string {
 // /skills/page.tsx and /cli-authorize.
 export default function SkillDetailPage({ routeKey }: { routeKey: string }) {
 	return (
-		<Suspense fallback={null}>
+		<Suspense fallback={<SkillDetailRouteSkeleton />}>
 			<SkillDetailPageInner routeKey={routeKey} />
 		</Suspense>
+	);
+}
+
+function SkillDetailRouteSkeleton() {
+	return (
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<DetailBackLink href="/skills" label="Skills" mobileOnly={false} />
+			<PageHeaderSkeleton icon actions />
+			<Skeleton className="h-24 w-full rounded-lg" />
+			<Skeleton className="h-48 w-full rounded-lg" />
+		</div>
 	);
 }
 
@@ -250,7 +258,9 @@ export function SkillDetailContent({
 	const breadcrumbProjectTitle =
 		selectedBinding?.binding_type === "primary"
 			? "Workspace"
-			: skillProject?.name || skill?.project_name || null;
+			: skillProject
+				? displayProjectName(skillProject)
+				: skill?.project_name?.trim() || null;
 	useSetBreadcrumbSegmentTitle(
 		agentId && selectedProjectId
 			? agentProjectDetailHref(agentId, selectedProjectId, agentDeploymentRouteQuery(routeSearch))
@@ -269,6 +279,9 @@ export function SkillDetailContent({
 	const needsExplicitProject =
 		!isAgentScope && !selectedProjectId && Boolean(skill?.project_id && capabilities?.canUpdate);
 	const isReadOnly = capabilities ? !capabilities.canUpdate || !isProjectReady : true;
+	const sourceProjectName = skillProject
+		? displayProjectName(skillProject)
+		: skill?.project_name?.trim() || null;
 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draftName, setDraftName] = useState("");
@@ -389,8 +402,8 @@ export function SkillDetailContent({
 		},
 		onSuccess: async () => {
 			toast.success("Skill removed from Project", {
-				description: skill?.project_name
-					? `Removed from ${skill.project_name}. Other Projects keep their copies.`
+				description: sourceProjectName
+					? `Removed from ${sourceProjectName}. Other Projects keep their copies.`
 					: "Removed from this Project. Other Projects keep their copies.",
 			});
 			await removeDeletedSkillQueries(queryClient, skillKey);
@@ -412,7 +425,6 @@ export function SkillDetailContent({
 		uninstall.mutate();
 	};
 
-	const sourceProjectName = skill?.project_name ?? null;
 	const uninstallLocation = sourceProjectName ? `from ${sourceProjectName}` : "from this Project";
 	const isAgentSyncProjection = skill?.authority === "agent_sync";
 	const agentCaption = isAgentSyncProjection
@@ -475,8 +487,7 @@ export function SkillDetailContent({
 				/>
 			) : viewState === "loading" ? (
 				<div className="space-y-3 py-2" data-testid="agent-skill-detail-loading">
-					<Skeleton className="h-6 w-48" />
-					<Skeleton className="h-4 w-64" />
+					<PageHeaderSkeleton icon actions />
 				</div>
 			) : viewState === "detail" && skill ? (
 				<>
@@ -489,139 +500,141 @@ export function SkillDetailContent({
 							</AlertDescription>
 						</Alert>
 					) : null}
-					<div className="space-y-2">
-						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-							<div className="min-w-0 space-y-2">
-								<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-									<Sparkles className="size-3.5" />
-									<span>Skill</span>
-								</div>
-								<DetailTitle className="truncate">{skill.name}</DetailTitle>
-							</div>
-							<div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
-								{!accessKnown ? null : isReadOnly ? (
-									<Badge
-										variant="secondary"
+					<PageHeader
+						title={skill.name}
+						icon={
+							<IconChip tint={RESOURCE_TINT_CLASSES.skills}>
+								<Sparkles />
+							</IconChip>
+						}
+						description={skill.description ?? undefined}
+						titleAdornment={
+							accessKnown && isReadOnly ? (
+								<Badge
+									variant="secondary"
+									title={
+										needsExplicitProject
+											? "Open this Skill from a Project to make changes."
+											: "This Skill must be changed from its source."
+									}
+								>
+									{needsExplicitProject
+										? "Choose project"
+										: (capabilities?.badgeLabel ?? "Read-only")}
+								</Badge>
+							) : undefined
+						}
+						actions={
+							!accessKnown || isReadOnly ? undefined : !isEditing ? (
+								<>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={startEdit}
+										disabled={!skill.content || !isProjectReady}
 										title={
-											needsExplicitProject
-												? "Open this Skill from a Project to make changes."
-												: "This Skill must be changed from its source."
+											!skill.content
+												? "No instructions are available for this Skill yet"
+												: !isProjectReady
+													? "Project unavailable"
+													: undefined
 										}
 									>
-										{needsExplicitProject
-											? "Choose project"
-											: (capabilities?.badgeLabel ?? "Read-only")}
-									</Badge>
-								) : !isEditing ? (
-									<>
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={startEdit}
-											disabled={!skill.content || !isProjectReady}
-											title={
-												!skill.content
-													? "No instructions are available for this Skill yet"
-													: !isProjectReady
-														? "Project unavailable"
-														: undefined
-											}
-										>
-											<Pencil />
-											Edit
-										</Button>
-										<ConfirmAction
-											title={`Remove ${skill.name} from Project?`}
-											description={
-												<>
-													<p>This removes the skill {uninstallLocation}.</p>
-													<p>
-														Other Projects keep their copies. Add it to this Project again if
-														needed.
-													</p>
-												</>
-											}
-											confirmLabel="Remove from project"
-											destructive
-											onConfirm={onUninstall}
-										>
-											<Button
-												variant="outline"
-												size="sm"
-												disabled={uninstall.isPending || !isProjectReady}
-												title={!isProjectReady ? "Project unavailable" : undefined}
-												className="text-destructive hover:text-destructive"
-											>
-												<Trash2 />
-												Remove from project
-											</Button>
-										</ConfirmAction>
-									</>
-								) : (
-									<>
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={cancelEdit}
-											disabled={saveEdit.isPending}
-										>
-											<X />
-											Cancel
-										</Button>
-										<Button
-											size="sm"
-											onClick={() => saveEdit.mutate()}
-											disabled={
-												saveEdit.isPending ||
-												!draftName.trim() ||
-												!draftInstructions.trim() ||
-												(draftName.trim() === skill.name &&
-													draftDescription.trim() === (skill.description ?? "") &&
-													draftInstructions.trim() === stripFrontmatter(skill.content ?? "").trim())
-											}
-										>
-											<Save />
-											{saveEdit.isPending ? "Saving…" : "Save"}
-										</Button>
-									</>
-								)}
-							</div>
-						</div>
-						<DetailMeta>
-							<span>{isAgentSyncProjection ? "Workspace Skill" : "Project Skill"}</span>
-							{skill.source_repo ? (
-								<>
-									<span>·</span>
-									<a
-										href={`https://github.com/${skill.source_repo}`}
-										target="_blank"
-										rel="noreferrer"
-										className="inline-flex items-center gap-1 hover:text-foreground"
+										<Pencil />
+										Edit
+									</Button>
+									<ConfirmAction
+										title={`Remove ${skill.name} from Project?`}
+										description={
+											<>
+												<p>This removes the skill {uninstallLocation}.</p>
+												<p>
+													Other Projects keep their copies. Add it to this Project again if needed.
+												</p>
+											</>
+										}
+										confirmLabel="Remove from project"
+										destructive
+										onConfirm={onUninstall}
 									>
-										{skill.source_repo}
-										<ExternalLink className="size-3" />
-									</a>
+										<Button
+											variant="outline"
+											size="sm"
+											disabled={uninstall.isPending || !isProjectReady}
+											title={!isProjectReady ? "Project unavailable" : undefined}
+											className="text-destructive hover:text-destructive"
+										>
+											<Trash2 />
+											Remove from project
+										</Button>
+									</ConfirmAction>
 								</>
-							) : null}
-							{agentCaption ? (
+							) : (
 								<>
-									<span>·</span>
-									<span className="inline-flex items-center gap-1">
-										<Laptop className="size-3" />
-										{agentCaption}
-									</span>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={cancelEdit}
+										disabled={saveEdit.isPending}
+									>
+										<X />
+										Cancel
+									</Button>
+									<Button
+										size="sm"
+										onClick={() => saveEdit.mutate()}
+										disabled={
+											saveEdit.isPending ||
+											!draftName.trim() ||
+											!draftInstructions.trim() ||
+											(draftName.trim() === skill.name &&
+												draftDescription.trim() === (skill.description ?? "") &&
+												draftInstructions.trim() === stripFrontmatter(skill.content ?? "").trim())
+										}
+									>
+										<Save />
+										{saveEdit.isPending ? "Saving…" : "Save"}
+									</Button>
 								</>
-							) : null}
-							{skill.created_at ? (
-								<>
-									<span>·</span>
-									<span>
-										{isAgentSyncProjection ? "synced" : "added"} {relativeTime(skill.created_at)}
-									</span>
-								</>
-							) : null}
-						</DetailMeta>
-					</div>
+							)
+						}
+						status={
+							<DetailMeta>
+								<span>{isAgentSyncProjection ? "Workspace Skill" : "Project Skill"}</span>
+								{skill.source_repo ? (
+									<>
+										<span>·</span>
+										<a
+											href={`https://github.com/${skill.source_repo}`}
+											target="_blank"
+											rel="noreferrer"
+											className="inline-flex items-center gap-1 hover:text-foreground"
+										>
+											{skill.source_repo}
+											<ExternalLink className="size-3" />
+										</a>
+									</>
+								) : null}
+								{agentCaption ? (
+									<>
+										<span>·</span>
+										<span className="inline-flex items-center gap-1">
+											<Laptop className="size-3" />
+											{agentCaption}
+										</span>
+									</>
+								) : null}
+								{skill.created_at ? (
+									<>
+										<span>·</span>
+										<span>
+											{isAgentSyncProjection ? "synced" : "added"} {relativeTime(skill.created_at)}
+										</span>
+									</>
+								) : null}
+							</DetailMeta>
+						}
+					/>
 
 					<DetailStats>
 						<Stat icon={Tag} label={`v${skill.version}`} />
@@ -630,10 +643,6 @@ export function SkillDetailContent({
 							label={`${skill.file_count} file${skill.file_count === 1 ? "" : "s"}`}
 						/>
 					</DetailStats>
-
-					{skill.description ? (
-						<p className="text-sm text-muted-foreground">{skill.description}</p>
-					) : null}
 
 					<DetailPanel className="space-y-3">
 						<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

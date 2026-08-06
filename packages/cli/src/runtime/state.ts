@@ -1,9 +1,15 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { HostPolicyReadResult } from "./host-policy";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
-import type { RuntimePaths } from "./paths";
-import { getRuntimePaths } from "./paths";
+import {
+	DEFAULT_CACHE_ROOT,
+	DEFAULT_CONFIGURATION_ROOT,
+	DEFAULT_RUN_ROOT,
+	DEFAULT_SERVICE_STATE_ROOT,
+	getRuntimePaths,
+	type RuntimePaths,
+} from "./paths";
 
 export type RuntimeBootMode = "normal" | "degraded-offline" | "manifest-rejected" | "repair";
 export type RuntimeBootStage = "detect" | "local" | "network" | "auth" | "config" | "final";
@@ -178,9 +184,33 @@ function writeJson(path: string, data: unknown, mode = 0o600): void {
 }
 
 export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
+	for (const [path, systemdPath, mode] of [
+		[paths.configurationRoot, DEFAULT_CONFIGURATION_ROOT, 0o700],
+		[paths.serviceStateRoot, DEFAULT_SERVICE_STATE_ROOT, 0o700],
+		[paths.cacheRoot, DEFAULT_CACHE_ROOT, 0o700],
+		// 0711 is deliberate: only named tenant handoff files below this root
+		// are readable; private subtrees retain their narrower modes.
+		[paths.runRoot, DEFAULT_RUN_ROOT, 0o711],
+	] as const) {
+		const created = !existsSync(path);
+		if (created) {
+			if (path === systemdPath) {
+				throw new Error(`platform directory must be created by systemd: ${path}`);
+			}
+			mkdirSync(path, { recursive: true, mode });
+		}
+		const node = lstatSync(path);
+		if (!node.isDirectory() || node.isSymbolicLink()) {
+			throw new Error(`platform directory is not a trusted directory: ${path}`);
+		}
+		if (created) {
+			// mkdir modes are filtered by umask, but these platform roots have an
+			// exact access contract (including search access on the runtime root).
+			chmodSync(path, mode);
+		}
+	}
 	for (const dir of [
-		paths.cacheRoot,
-		paths.bootRoot,
+		paths.statusRoot,
 		paths.instanceRoot,
 		paths.installInventory,
 		paths.projectionRoot,
@@ -189,9 +219,7 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		paths.systemdSystemRoot,
 		paths.systemdUserRoot,
 		paths.systemdEnvRoot,
-		dirname(paths.managedConfig),
 		dirname(paths.syncState),
-		paths.runRoot,
 		paths.managedSecretRoot,
 	]) {
 		mkdirSync(dir, { recursive: true });

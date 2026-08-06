@@ -144,9 +144,9 @@ describe("WhatsApp sidecar production deployment contract", () => {
 			new Map([
 				[
 					"packages/cli/package.json",
-					replaceOnce(cliPackage, '"version": "0.13.39"', '"version": "0.13.40"'),
+					replaceOnce(cliPackage, '"version": "0.13.40"', '"version": "0.13.41"'),
 				],
-				["bun.lock", replaceOnce(lockfile, '"version": "0.13.39"', '"version": "0.13.40"')],
+				["bun.lock", replaceOnce(lockfile, '"version": "0.13.40"', '"version": "0.13.41"')],
 			]),
 		);
 		const unrelatedDeploy = calculateWhatsAppSidecarDeploymentRevision(
