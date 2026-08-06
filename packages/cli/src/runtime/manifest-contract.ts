@@ -206,7 +206,6 @@ const fileBrowserAssetSchema = z
 
 export const fileBrowserCompanionSchema = z
 	.object({
-		kind: z.literal("filebrowser"),
 		version: z.literal(FILE_BROWSER_VERSION),
 		commit: z.literal(FILE_BROWSER_COMMIT),
 		listen: z.literal("0.0.0.0"),
@@ -254,7 +253,7 @@ export const fileBrowserCompanionSchema = z
 
 const runtimeCompanionsSchema = z
 	.object({
-		files: fileBrowserCompanionSchema.optional(),
+		filebrowser: fileBrowserCompanionSchema.optional(),
 	})
 	.strict();
 
@@ -712,21 +711,21 @@ function validateHostedRuntimeManifest(
 	manifest: HostedRuntimeManifestBase,
 	ctx: z.RefinementCtx,
 ): void {
-	const files = manifest.companions?.files;
-	if (files) {
+	const filebrowser = manifest.companions?.filebrowser;
+	if (filebrowser) {
 		const expectedAudience = `clawdi-files:${manifest.deploymentId}`;
 		const expectedSubject = `deployment:${manifest.deploymentId}:owner`;
-		const expectedGroup = `${expectedAudience}:${files.auth.accessRevision}`;
+		const expectedGroup = `${expectedAudience}:${filebrowser.auth.accessRevision}`;
 		for (const [field, actual, expected] of [
-			["audience", files.auth.audience, expectedAudience],
-			["subject", files.auth.subject, expectedSubject],
-			["requiredGroup", files.auth.requiredGroup, expectedGroup],
+			["audience", filebrowser.auth.audience, expectedAudience],
+			["subject", filebrowser.auth.subject, expectedSubject],
+			["requiredGroup", filebrowser.auth.requiredGroup, expectedGroup],
 		] as const) {
 			if (actual !== expected) {
 				ctx.addIssue({
 					code: "custom",
 					message: `Files ${field} must be bound to this deployment and access revision`,
-					path: ["companions", "files", "auth", field],
+					path: ["companions", "filebrowser", "auth", field],
 				});
 			}
 		}

@@ -137,12 +137,11 @@ TEST_HERMES_DASHBOARD_AUTH = {
 }
 
 
-def _files_companion(deployment_id: str, access_revision: str = "a" * 64) -> dict:
+def _filebrowser_companion(deployment_id: str, access_revision: str = "a" * 64) -> dict:
     audience = f"clawdi-files:{deployment_id}"
     release = "https://github.com/gtsteffaniak/filebrowser/releases/download/v1.5.0-stable"
     return {
-        "files": {
-            "kind": "filebrowser",
+        "filebrowser": {
             "version": "v1.5.0-stable",
             "commit": "79552f8adb27c3e29934c4001660eb98f4aab5d6",
             "listen": "0.0.0.0",
@@ -177,9 +176,9 @@ def _files_companion(deployment_id: str, access_revision: str = "a" * 64) -> dic
     }
 
 
-def test_hosted_files_companion_enforces_pins_and_deployment_binding() -> None:
+def test_hosted_filebrowser_companion_enforces_pins_and_deployment_binding() -> None:
     deployment_id = "hdep_files_contract"
-    companion = _files_companion(deployment_id)
+    companion = _filebrowser_companion(deployment_id)
     body = _runtime_state_body(
         str(uuid4()),
         deployment_id=deployment_id,
@@ -190,18 +189,28 @@ def test_hosted_files_companion_enforces_pins_and_deployment_binding() -> None:
     assert validated.companions is not None
     assert validated.companions.model_dump(mode="json") == companion
 
+    legacy_alias = json.loads(json.dumps(body))
+    legacy_alias["companions"] = {"files": legacy_alias["companions"]["filebrowser"]}
+    with pytest.raises(ValidationError):
+        AdminRuntimeStateUpsert.model_validate(legacy_alias)
+
+    redundant_kind = json.loads(json.dumps(body))
+    redundant_kind["companions"]["filebrowser"]["kind"] = "filebrowser"
+    with pytest.raises(ValidationError):
+        AdminRuntimeStateUpsert.model_validate(redundant_kind)
+
     for field, value in (
         ("audience", "clawdi-files:hdep_other"),
         ("subject", "deployment:hdep_other:owner"),
         ("requiredGroup", f"clawdi-files:{deployment_id}:{'b' * 64}"),
     ):
         invalid = json.loads(json.dumps(body))
-        invalid["companions"]["files"]["auth"][field] = value
+        invalid["companions"]["filebrowser"]["auth"][field] = value
         with pytest.raises(ValidationError, match="Files authentication must be bound"):
             AdminRuntimeStateUpsert.model_validate(invalid)
 
     unpinned = json.loads(json.dumps(body))
-    unpinned["companions"]["files"]["assets"]["amd64"]["sha256"] = "d" * 64
+    unpinned["companions"]["filebrowser"]["assets"]["amd64"]["sha256"] = "d" * 64
     with pytest.raises(ValidationError, match="pinned release"):
         AdminRuntimeStateUpsert.model_validate(unpinned)
 
@@ -2314,7 +2323,7 @@ async def test_runtime_manifest_includes_egress_engine_pin(
 
 
 @pytest.mark.asyncio
-async def test_runtime_state_projects_and_backward_compatibly_clears_files_companion(
+async def test_runtime_state_projects_and_clears_filebrowser_companion(
     admin_client,
     db_session,
     seed_user,
@@ -2327,7 +2336,7 @@ async def test_runtime_state_projects_and_backward_compatibly_clears_files_compa
         agent_type="openclaw",
     )
     body = _runtime_state_body(str(env.id))
-    companion = _files_companion(body["deployment_id"])
+    companion = _filebrowser_companion(body["deployment_id"])
     body["companions"] = companion
 
     written = await admin_client.put(

@@ -18,6 +18,10 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
 import { runtimeContentSha256 } from "./applied-state";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
+import {
+	FILE_BROWSER_SERVICE_GROUP,
+	FILE_BROWSER_SERVICE_USER,
+} from "./file-browser-isolation";
 import type { RuntimeInstallReceiptEntry, RuntimeInstallReceipts } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
@@ -273,7 +277,7 @@ function runtimeSystemdProgramRevision(
 ): string {
 	if (program.programKind === "file-browser") {
 		return runtimeImpactRevision({
-			companion: manifest.companions?.files ?? null,
+			companion: manifest.companions?.filebrowser ?? null,
 			providerProjectionRevision: null,
 		});
 	}
@@ -1430,10 +1434,6 @@ function writeFileBrowserSystemdUnit(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
 }): string {
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const uid = runtimeUserUid(runtimeUser);
-	const gid = runtimeUserGid(runtimeUser);
-	if (uid === 0 || gid === 0) throw new Error("Files companion systemd identity must be non-root");
 	return writeSystemdSystemUnit({
 		paths: input.paths,
 		name: "clawdi-files",
@@ -1442,15 +1442,15 @@ function writeFileBrowserSystemdUnit(input: {
 		args: input.program.args,
 		cwd: input.program.cwd,
 		env: {
-			HOME: input.paths.userHome,
+			HOME: "/nonexistent",
 			CLAWDI_RUNTIME_REV: runtimeImpactRevision({
-				companion: input.manifest.companions?.files ?? null,
+				companion: input.manifest.companions?.filebrowser ?? null,
 			}),
 		},
 		extraUnitLines: ["After=network-online.target", "Wants=network-online.target"],
 		extraServiceLines: [
-			`User=${uid}`,
-			`Group=${gid}`,
+			`User=${FILE_BROWSER_SERVICE_USER}`,
+			`Group=${FILE_BROWSER_SERVICE_GROUP}`,
 			"UMask=0077",
 			"NoNewPrivileges=true",
 			"PrivateTmp=true",
@@ -1460,17 +1460,21 @@ function writeFileBrowserSystemdUnit(input: {
 			`BindPaths=${systemdPath(input.paths.userHome)}`,
 			`ReadWritePaths=${systemdPath(input.paths.userHome)} ${systemdPath(input.paths.fileBrowserStateRoot)}`,
 			`ReadOnlyPaths=${systemdPath(input.paths.fileBrowserConfig)} ${systemdPath(input.program.command)}`,
+			`NoExecPaths=${systemdPath(input.paths.userHome)} ${systemdPath(input.paths.fileBrowserStateRoot)}`,
 			"ProtectKernelTunables=true",
 			"ProtectKernelModules=true",
 			"ProtectKernelLogs=true",
 			"ProtectControlGroups=true",
 			"ProtectClock=true",
+			"ProtectHostname=true",
 			"ProtectProc=invisible",
 			"ProcSubset=pid",
 			"LockPersonality=true",
 			"RestrictSUIDSGID=true",
 			"RestrictRealtime=true",
 			"RestrictNamespaces=true",
+			"KeyringMode=private",
+			"RemoveIPC=true",
 			"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
 			"CapabilityBoundingSet=",
 			"AmbientCapabilities=",

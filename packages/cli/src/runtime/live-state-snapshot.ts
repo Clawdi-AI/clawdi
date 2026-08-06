@@ -79,7 +79,7 @@ export function runtimeRootLiveMutationTargets(
 		result.add(join(paths.systemdSystemRoot, unitName));
 		result.add(join(paths.systemdEnvRoot, `${unitName}.env`));
 	}
-	if (manifest.companions?.files) {
+	if (manifest.companions?.filebrowser) {
 		result.add(join(paths.systemdSystemRoot, "clawdi-files.service"));
 		result.add(join(paths.systemdEnvRoot, "clawdi-files.service.env"));
 	}

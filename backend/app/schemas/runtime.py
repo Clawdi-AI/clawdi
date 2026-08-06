@@ -126,7 +126,6 @@ class HostedFileBrowserAuth(BaseModel):
 class HostedFileBrowserCompanion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["filebrowser"]
     version: Literal["v1.5.0-stable"]
     commit: Literal["79552f8adb27c3e29934c4001660eb98f4aab5d6"]
     listen: Literal["0.0.0.0"]
@@ -142,7 +141,7 @@ class HostedFileBrowserCompanion(BaseModel):
 class HostedRuntimeCompanions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    files: HostedFileBrowserCompanion | None = None
+    filebrowser: HostedFileBrowserCompanion | None = None
 
 
 def is_canonical_secret_ref(value: str) -> bool:

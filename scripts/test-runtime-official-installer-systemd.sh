@@ -13,19 +13,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ ! -d "$repo_root/node_modules" ]]; then
-	echo "node_modules is missing; run bun install --frozen-lockfile first" >&2
-	exit 2
-fi
-
 docker build --quiet --file "$fixture" --tag "$image" "$(dirname -- "$fixture")" >/dev/null
 docker run --detach --privileged \
 	--name "$container" \
 	--tmpfs /run \
 	--tmpfs /run/lock \
 	--tmpfs /tmp:exec \
-	--volume "$repo_root:/repo" \
-	--workdir /repo \
+	--tmpfs /work:exec \
+	--volume "$repo_root:/repo:ro" \
+	--workdir /work \
 	"$image" >/dev/null
 
 for _attempt in $(seq 1 100); do
@@ -49,6 +45,8 @@ for _attempt in $(seq 1 100); do
 done
 docker exec "$container" test -S /run/user/10001/bus
 docker exec "$container" systemctl is-active --quiet user@10001.service
+docker exec "$container" bash -lc \
+	'cp -a /repo/. /work/ && bun install --frozen-lockfile'
 docker exec --env CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD=1 "$container" \
 	bun test --isolate --max-concurrency=1 --timeout 30000 \
 	packages/cli/tests/e2e/runtime-official-installer-systemd.e2e.test.ts

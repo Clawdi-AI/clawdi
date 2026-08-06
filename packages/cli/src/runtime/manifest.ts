@@ -344,7 +344,7 @@ interface RuntimeInstallReceiptTarget {
 interface RuntimeInstallReceiptTargets {
 	officialServices: Map<string, RuntimeInstallReceiptTarget>;
 	channelPlugins: Map<string, RuntimeInstallReceiptTarget>;
-	companions: Map<string, RuntimeInstallReceiptTarget>;
+	companions: Map<"filebrowser", RuntimeInstallReceiptTarget>;
 }
 
 // Supported by `openclaw plugins inspect <id> --json`. The command returns
@@ -4424,8 +4424,25 @@ function commitRuntimeInstallReceipts(
 	const receipts = emptyRuntimeInstallReceipts();
 	commitRuntimeInstallReceiptGroup(receipts.officialServices, targets.officialServices);
 	commitRuntimeInstallReceiptGroup(receipts.channelPlugins, targets.channelPlugins);
-	commitRuntimeInstallReceiptGroup(receipts.companions, targets.companions);
+	const filebrowser = targets.companions.get("filebrowser");
+	if (filebrowser) {
+		receipts.companions.filebrowser = verifiedRuntimeInstallReceipt("filebrowser", filebrowser);
+	}
 	writeRuntimeInstallReceipts(receipts, paths);
+}
+
+function verifiedRuntimeInstallReceipt(
+	key: string,
+	target: RuntimeInstallReceiptTarget,
+): RuntimeInstallReceiptEntry {
+	if (!target.expectedCurrentRevision) {
+		throw new Error(`runtime install receipt target ${key} was not verified`);
+	}
+	const currentRevision = target.currentRevision();
+	if (currentRevision !== target.expectedCurrentRevision) {
+		throw new Error(`runtime install receipt target ${key} changed before commit`);
+	}
+	return { desiredRevision: target.desiredRevision, currentRevision };
 }
 
 function commitRuntimeInstallReceiptGroup(
@@ -4433,14 +4450,7 @@ function commitRuntimeInstallReceiptGroup(
 	targets: Map<string, RuntimeInstallReceiptTarget>,
 ): void {
 	for (const [key, target] of [...targets].sort(([left], [right]) => left.localeCompare(right))) {
-		if (!target.expectedCurrentRevision) {
-			throw new Error(`runtime install receipt target ${key} was not verified`);
-		}
-		const currentRevision = target.currentRevision();
-		if (currentRevision !== target.expectedCurrentRevision) {
-			throw new Error(`runtime install receipt target ${key} changed before commit`);
-		}
-		receipts[key] = { desiredRevision: target.desiredRevision, currentRevision };
+		receipts[key] = verifiedRuntimeInstallReceipt(key, target);
 	}
 }
 
@@ -4831,8 +4841,8 @@ function planRuntimeSystemdUserPrograms(input: {
 			if (program) programs.push(program);
 		}
 	}
-	const filesProgram = fileBrowserCompanionProgram(input.manifest, input.paths);
-	if (filesProgram) programs.push(filesProgram);
+	const fileBrowserProgram = fileBrowserCompanionProgram(input.manifest, input.paths);
+	if (fileBrowserProgram) programs.push(fileBrowserProgram);
 	return programs;
 }
 
@@ -5346,8 +5356,8 @@ function runtimeManagedMutationPlan(input: {
 	systemdUserUnits: string[];
 } {
 	const rootTargets = new Set(runtimeRootLiveMutationTargets(input.manifest, input.paths));
-	const filesMutation = fileBrowserCompanionMutationPlan(input.manifest, input.paths);
-	for (const target of filesMutation.rootTargets) rootTargets.add(target);
+	const fileBrowserMutation = fileBrowserCompanionMutationPlan(input.manifest, input.paths);
+	for (const target of fileBrowserMutation.rootTargets) rootTargets.add(target);
 	rootTargets.add(runtimeInstallReceiptsPath(input.paths));
 	const rootMetadataTargets = new Set<string>();
 	if (
@@ -5382,7 +5392,6 @@ function runtimeManagedMutationPlan(input: {
 				input.observations,
 			),
 			...systemd.targets,
-			...filesMutation.runtimeUserTargets,
 		]),
 	].sort();
 	const rootTargetsList = [...rootTargets].sort();
@@ -5392,19 +5401,12 @@ function runtimeManagedMutationPlan(input: {
 		const commandPath = runtimeCommandPath(name, projectionHome);
 		return commandPath ? [commandPath] : [];
 	});
-	const runtimeUserBoundaries = [
-		input.paths.userHome,
-		input.paths.clawdiHome,
-		...filesMutation.runtimeUserTrustedRoots,
-	];
+	const runtimeUserBoundaries = [input.paths.userHome, input.paths.clawdiHome];
 	const runtimeUserMetadataTargets = [
 		...new Set([
 			...systemd.metadataTargets,
 			input.paths.userHome,
 			input.paths.clawdiHome,
-			...filesMutation.runtimeUserTrustedRoots.filter(
-				(boundary) => !runtimeUserTargets.includes(boundary),
-			),
 			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserBoundaries),
 		]),
 	].sort();
@@ -5414,13 +5416,15 @@ function runtimeManagedMutationPlan(input: {
 	return {
 		snapshot: {
 			rootTargets: rootTargetsList,
-			trustedRootDirectories: runtimeRootLiveMutationDirectories(input.manifest, input.paths),
+			trustedRootDirectories: [
+				...runtimeRootLiveMutationDirectories(input.manifest, input.paths),
+				...fileBrowserMutation.rootTrustedRoots,
+			],
 			runtimeUserTargets,
 			runtimeUserTrustedRoots: runtimeUserBoundaries,
 			runtimeUserSymlinkTargets: [
 				...new Set([
 					...systemd.symlinkTargets,
-					...filesMutation.runtimeUserSymlinkTargets,
 					...runtimeCommandTargets.filter((target) => runtimeUserTargets.includes(target)),
 				]),
 			].sort(),
@@ -5495,7 +5499,7 @@ export function convergeRuntimeManifest(
 	if (!applyContext) {
 		throw new Error("runtime manifest convergence requires an explicit apply context");
 	}
-	if (manifest.companions?.files) {
+	if (manifest.companions?.filebrowser) {
 		if (
 			paths.mode !== "hosted" ||
 			manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2" ||
@@ -5649,14 +5653,17 @@ export function convergeRuntimeManifest(
 		// before any official installer or CLI command drops privilege. Modes are
 		// intentionally preserved, so private runtime state stays private.
 		ensureRuntimeUserOwnershipBoundaries(mutationPlan.runtimeUserOwnershipTargets);
-		const filesInstall = ensureFileBrowserCompanion(
+		const fileBrowserInstall = ensureFileBrowserCompanion(
 			manifest,
 			paths,
-			previousInstallReceipts?.companions.files,
+			previousInstallReceipts?.companions.filebrowser,
 			opts.fileBrowserInstallOptions,
 		);
-		if (filesInstall) {
-			installReceiptTargets.companions.set(filesInstall.receiptKey, filesInstall.receiptTarget);
+		if (fileBrowserInstall) {
+			installReceiptTargets.companions.set(
+				fileBrowserInstall.receiptKey,
+				fileBrowserInstall.receiptTarget,
+			);
 		}
 		observations.clear();
 		for (const [name, runtime] of runtimeEntries) {

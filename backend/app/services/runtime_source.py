@@ -648,7 +648,7 @@ def render_runtime_source(
         manifest["egressEngine"] = egress_engine.model_dump(
             exclude_none=True, exclude_unset=True, mode="json"
         )
-    if companions is not None and companions.files is not None:
+    if companions is not None and companions.filebrowser is not None:
         manifest["companions"] = companions.model_dump(
             exclude_none=True, exclude_unset=True, mode="json"
         )

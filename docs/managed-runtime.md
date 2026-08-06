@@ -274,30 +274,47 @@ Basic authentication provider.
 
 ### Incus Files Companion
 
-Hosted V2 may declare `companions.files` only in a trusted Incus apply context.
+Hosted V2 may declare `companions.filebrowser` only in a trusted Incus apply context.
 The declaration is a server-owned companion program, not a user runtime named
 `files`; systemd planning uses the typed `file-browser` program kind so a real
 user runtime with that name keeps the normal runtime-user unit behavior. The
-companion is installed after boot and does not add File Browser to the base
-runtime image.
+manifest object needs no `kind` field because the `filebrowser` key is its
+strict, singular discriminator. The companion is installed after boot by CLI
+reconciliation; it is not installed during image/CVM boot and upstream
+self-update is disabled.
 
 The manifest pins one direct File Browser executable per architecture and
 provides a deployment-specific HS256 secret. Convergence downloads into a
 private `.staging-*` directory, verifies the exact SHA256 and version/commit
 probe, then atomically renames it to
-`companions/files/candidates/<sha256>/filebrowser`. It rejects staging symlinks
+`companions/filebrowser/candidates/<sha256>/filebrowser`. It rejects staging symlinks
 or non-directories, executes the content-addressed candidate directly, and
 garbage-collects older candidates only after applied authority commits. The
-existing manifest snapshot covers the desired candidate, root-owned `0640`
+existing manifest snapshot covers the desired candidate, root/service-owned `0640`
 configuration, install receipt, systemd unit/environment file, and applied
 state, so a download, verification, systemd, or readiness failure restores the
 previous exact pre-image. There is no separate active/previous link state or
 hand-built chroot.
 
-`clawdi-files.service` runs as the non-root runtime UID/GID. It reuses the
-generated system-unit and environment-file writer and applies systemd's native
+`clawdi-files.service` runs as the dedicated non-login `clawdi-files` system
+UID/GID, never as the tenant runtime user. CLI/root reconciliation is the only
+identity, installer, updater, ACL, and unit controller. Candidate
+directories and binaries are root-owned; configuration is root-owned and
+service-group-readable; DB/cache state is service-owned `0700`; install
+receipts remain root-only `0600`. The tenant cannot replace those assets, read
+the derived JWT secret or state, signal the distinct-UID process, or control
+the system unit.
+
+The CLI grants the service only named-group `rwX` access to `/home/clawdi`
+using recursive access and default POSIX ACLs through the image's existing
+`systemd-tmpfiles` `+ACL` support. Symlinks are not followed, existing content
+is reconciled, and new content inherits reciprocal tenant/service access. The
+base runtime image remains unchanged and contains no File Browser binary,
+configuration, state, service identity, installer, or File Browser-specific
+package. The service reuses the generated system-unit and environment-file
+writer and applies systemd's native
 `ProtectSystem=strict`, `ProtectHome=tmpfs`, `BindPaths`, `ReadWritePaths`,
-`ReadOnlyPaths`, private device/tmp, capability, namespace, and task-limit
+`ReadOnlyPaths`, `NoExecPaths`, private device/tmp, capability, namespace, and task-limit
 controls. File Browser receives its official JWT header configuration with
 password, signup, passkey, sharing, admin, API-token management, realtime, and
 WebDAV disabled. It accepts only the manifest-bound external JWT assertion; no
@@ -306,12 +323,26 @@ contract. When a later manifest omits the companion, normal stale-unit
 reconciliation stops and withdraws only `clawdi-files.service` while preserving
 the selected Hermes or OpenClaw unit.
 
+The unavoidable workspace boundary is content-level: the tenant owns its
+workspace and can edit or delete its contents. It can also make an individual
+file or directory temporarily inaccessible to File Browser by changing its own
+permissions or ACL mask; the next CLI reconciliation repairs the managed ACL
+baseline. This does not grant the tenant control over the managed service,
+binary, configuration, secret, DB/cache state, receipts, unit, or active
+listener. Port 9120 has normal socket exclusivity rather than a separate
+tenant-slice reservation: the tenant cannot displace the running service, but
+can bind 9120 while it is not listening and thereby cause later service
+activation/systemd readiness proof to fail. That remaining availability/DoS
+boundary does not let reconciliation adopt the tenant process as the managed
+unit.
+
 The pinned upstream contracts are File Browser's
 [JWT verifier](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/auth/jwt.go),
 [JWT middleware](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/middleware.go),
 and [authentication settings](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/auth.go),
 plus the documented
-[systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
+[systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)
+and [`systemd-tmpfiles` POSIX ACL types](https://www.freedesktop.org/software/systemd/man/latest/tmpfiles.d.html).
 Repository tests verify the manifest, rollback, and systemd sandbox contracts.
 
 Done: `bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts`
@@ -971,8 +1002,9 @@ outputs include:
 | `cache/runtime-secrets.last-good.json` | Root-only `0600` reference-scoped set of active `secret://` values required to reproduce last-good |
 | `status/runtime-applied.json` | Root-only `0600` Agent v2 authority for one ETag, source revision, instance, checkpoint `generation`, optional `applyGeneration`, private recoverability content identity, source provider IDs, and target-specific projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
-| `companions/files/candidates/<sha256>/filebrowser` | Verified, content-addressed Files executable selected directly by the manifest |
-| `config/filebrowser.yaml` | Root-owned, runtime-group-readable File Browser configuration with the deployment-scoped JWT secret |
+| `companions/filebrowser/candidates/<sha256>/filebrowser` | Root-owned, verified, content-addressed Files executable selected directly by the manifest |
+| `config/filebrowser.yaml` | Root-owned, `clawdi-files`-group-readable File Browser configuration with the deployment-scoped JWT secret |
+| `filebrowser/` | Dedicated-service-owned `0700` File Browser DB and cache state |
 | `managed-cli/bin/clawdi` | Root-only active managed CLI link used by system services |
 | `npm/` | Root-only managed CLI package prefixes and active targets |
 | `config/projections/<runtime>.json` | Runtime projection payload |

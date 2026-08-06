@@ -16,24 +16,23 @@ import { basename, join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { runtimeContentSha256 } from "./applied-state";
+import {
+	ensureFileBrowserServiceIsolation,
+	FILE_BROWSER_SERVICE_USER,
+	type FileBrowserServiceIdentity,
+	type FileBrowserServiceIsolation,
+} from "./file-browser-isolation";
 import type { RuntimeInstallReceiptEntry } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import type { RuntimeSystemdUserProgram } from "./runtime-systemd-reconciliation";
-import {
-	makeRuntimeUserOwned,
-	runningAsRoot,
-	runtimeUserGid,
-	runtimeUserUid,
-	spawnRuntimeUserCommand,
-	withRuntimeUserFileAccess,
-} from "./runtime-user-command";
+import { buildRuntimeUserCommand, runningAsRoot } from "./runtime-user-command";
 
 const FILE_BROWSER_BINARY = "filebrowser";
 const FILE_BROWSER_CANDIDATES = "candidates";
-const FILE_BROWSER_RECEIPT = "files";
+const FILE_BROWSER_RECEIPT = "filebrowser";
 
-type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["files"]>;
+type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
 type FileBrowserAsset = FileBrowserCompanion["assets"][keyof FileBrowserCompanion["assets"]];
 
 export interface FileBrowserInstallReceiptTarget {
@@ -45,6 +44,7 @@ export interface FileBrowserInstallReceiptTarget {
 export interface FileBrowserCompanionInstallOptions {
 	arch?: NodeJS.Architecture;
 	download?: (url: string, destination: string) => void;
+	serviceIsolation?: FileBrowserServiceIsolation;
 	versionProbe?: (binary: string) => string;
 }
 
@@ -56,18 +56,16 @@ export interface FileBrowserCompanionInstallResult {
 }
 
 export interface FileBrowserCompanionMutationPlan {
-	runtimeUserTargets: string[];
-	runtimeUserTrustedRoots: string[];
-	runtimeUserSymlinkTargets: string[];
+	rootTrustedRoots: string[];
 	rootTargets: string[];
 }
 
 function fileBrowser(manifest: RuntimeManifest): FileBrowserCompanion | null {
-	return manifest.companions?.files ?? null;
+	return manifest.companions?.filebrowser ?? null;
 }
 
 function candidatesRoot(paths: RuntimePaths): string {
-	return join(paths.companionInstallRoot, FILE_BROWSER_CANDIDATES);
+	return join(paths.fileBrowserInstallRoot, FILE_BROWSER_CANDIDATES);
 }
 
 function candidateRoot(paths: RuntimePaths, sha256: string): string {
@@ -101,10 +99,27 @@ function candidateIsValid(paths: RuntimePaths, sha256: string): boolean {
 	try {
 		const root = lstatSync(candidateRoot(paths, sha256));
 		if (!root.isDirectory() || root.isSymbolicLink()) return false;
+		const owner = managedRootIdentity();
+		if (root.uid !== owner.uid || root.gid !== owner.gid || (root.mode & 0o777) !== 0o755) {
+			return false;
+		}
 	} catch {
 		return false;
 	}
-	return sha256File(candidateBinary(paths, sha256)) === sha256.toLowerCase();
+	try {
+		const binary = lstatSync(candidateBinary(paths, sha256));
+		const owner = managedRootIdentity();
+		return (
+			binary.isFile() &&
+			!binary.isSymbolicLink() &&
+			binary.uid === owner.uid &&
+			binary.gid === owner.gid &&
+			(binary.mode & 0o777) === 0o755 &&
+			sha256File(candidateBinary(paths, sha256)) === sha256.toLowerCase()
+		);
+	} catch {
+		return false;
+	}
 }
 
 export function fileBrowserCompanionMutationPlan(
@@ -115,28 +130,19 @@ export function fileBrowserCompanionMutationPlan(
 	const companion = fileBrowser(manifest);
 	if (!companion) {
 		return {
-			runtimeUserTargets: [],
-			runtimeUserTrustedRoots: [],
-			runtimeUserSymlinkTargets: [],
+			rootTrustedRoots: [],
 			rootTargets: [],
 		};
 	}
 	const asset = selectedAsset(companion, arch);
 	const target = candidateRoot(paths, asset.sha256);
 	return {
-		runtimeUserTargets: [
+		rootTrustedRoots: [paths.fileBrowserInstallRoot],
+		rootTargets: [
 			...(candidateIsValid(paths, asset.sha256) ? [] : [target]),
-			...(existsSync(paths.fileBrowserStateRoot) ? [] : [paths.fileBrowserStateRoot]),
-			...(existsSync(paths.fileBrowserStateRoot) &&
-			existsSync(join(paths.fileBrowserStateRoot, "cache"))
-				? []
-				: existsSync(paths.fileBrowserStateRoot)
-					? [join(paths.fileBrowserStateRoot, "cache")]
-					: []),
+			paths.fileBrowserStateRoot,
+			paths.fileBrowserConfig,
 		],
-		runtimeUserTrustedRoots: [paths.companionInstallRoot, paths.fileBrowserStateRoot],
-		runtimeUserSymlinkTargets: [],
-		rootTargets: [paths.fileBrowserConfig],
 	};
 }
 
@@ -207,55 +213,65 @@ function renderFileBrowserConfig(
 	});
 }
 
-function expectedRuntimeUserIdentity(): { uid: number; gid: number } | null {
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (runningAsRoot() && runtimeUser && runtimeUser !== "root" && runtimeUser !== "0") {
-		return { uid: runtimeUserUid(runtimeUser), gid: runtimeUserGid(runtimeUser) };
-	}
-	if (typeof process.geteuid !== "function" || typeof process.getegid !== "function") return null;
-	return { uid: process.geteuid(), gid: process.getegid() };
+function managedRootIdentity(): FileBrowserServiceIdentity {
+	if (runningAsRoot()) return { uid: 0, gid: 0 };
+	return {
+		uid: typeof process.geteuid === "function" ? process.geteuid() : 0,
+		gid: typeof process.getegid === "function" ? process.getegid() : 0,
+	};
 }
 
-function assertRuntimeUserDirectory(path: string): void {
+function ensureOwnedDirectory(
+	path: string,
+	identity: FileBrowserServiceIdentity,
+	mode: number,
+): void {
+	if (!existsSync(path)) mkdirSync(path, { recursive: true, mode });
 	const stat = lstatSync(path);
 	if (!stat.isDirectory() || stat.isSymbolicLink()) {
-		throw new Error(`Files companion runtime path is not a trusted directory: ${path}`);
+		throw new Error(`Files companion managed path is not a trusted directory: ${path}`);
 	}
-	if ((stat.mode & 0o777) !== 0o700) {
-		throw new Error(`Files companion runtime directory is not private: ${path}`);
-	}
-	const identity = expectedRuntimeUserIdentity();
-	if (identity && (stat.uid !== identity.uid || stat.gid !== identity.gid)) {
-		throw new Error(`Files companion runtime directory has an unexpected owner: ${path}`);
-	}
-	if (identity && (identity.uid === 0 || identity.gid === 0)) {
-		throw new Error("Files companion must not install as a root filesystem identity");
+	chownSync(path, identity.uid, identity.gid);
+	chmodSync(path, mode);
+}
+
+function repairServiceState(path: string, identity: FileBrowserServiceIdentity): void {
+	ensureOwnedDirectory(path, identity, 0o700);
+	for (const entry of readdirSync(path)) {
+		const child = join(path, entry);
+		const stat = lstatSync(child);
+		if (stat.isSymbolicLink()) {
+			throw new Error(`Files companion state contains an unsafe symlink: ${child}`);
+		}
+		if (stat.isDirectory()) {
+			repairServiceState(child, identity);
+			continue;
+		}
+		if (!stat.isFile()) throw new Error(`Files companion state contains an unsafe node: ${child}`);
+		chownSync(child, identity.uid, identity.gid);
+		chmodSync(child, 0o600);
 	}
 }
 
-function ensureRuntimeUserDirectory(path: string): void {
-	if (!existsSync(path)) {
-		mkdirSync(path, { recursive: true, mode: 0o700 });
-		chmodSync(path, 0o700);
-		makeRuntimeUserOwned(path);
+function makeConfigReadableByService(path: string, identity: FileBrowserServiceIdentity): void {
+	const stat = lstatSync(path);
+	if (!stat.isFile() || stat.isSymbolicLink()) {
+		throw new Error(`Files companion config is not a trusted file: ${path}`);
 	}
-	assertRuntimeUserDirectory(path);
-}
-
-function makeConfigReadableByRuntime(path: string): void {
 	chmodSync(path, 0o640);
-	if (runningAsRoot()) {
-		chownSync(path, 0, runtimeUserGid(process.env.CLAWDI_RUNTIME_USER || "clawdi"));
-	}
+	chownSync(path, managedRootIdentity().uid, identity.gid);
 }
 
 function defaultDownload(url: string, destination: string, paths: RuntimePaths): void {
-	const result = spawnRuntimeUserCommand(
+	const result = spawnSync(
 		"curl",
 		["-fsSL", "--proto", "=https", "--tlsv1.2", "--retry", "3", "-o", destination, url],
-		paths.userHome,
-		paths.companionInstallRoot,
-		{ timeoutMs: 300_000, maxBufferBytes: 64 * 1024 },
+		{
+			cwd: paths.fileBrowserInstallRoot,
+			encoding: "utf8",
+			maxBuffer: 64 * 1024,
+			timeout: 300_000,
+		},
 	);
 	if (result.status !== 0) {
 		const detail = [result.stderr, result.stdout]
@@ -267,10 +283,24 @@ function defaultDownload(url: string, destination: string, paths: RuntimePaths):
 	}
 }
 
-function defaultVersionProbe(binary: string, paths: RuntimePaths): string {
-	const result = spawnRuntimeUserCommand(binary, ["version"], paths.userHome, paths.userHome, {
-		timeoutMs: 10_000,
-		maxBufferBytes: 64 * 1024,
+function defaultVersionProbe(
+	binary: string,
+	paths: RuntimePaths,
+	identity: FileBrowserServiceIdentity,
+): string {
+	const command = buildRuntimeUserCommand(
+		typeof process.geteuid === "function" ? process.geteuid() : undefined,
+		identity.uid,
+		FILE_BROWSER_SERVICE_USER,
+		binary,
+		["version"],
+	);
+	const result = spawnSync(command.command, command.args, {
+		cwd: paths.userHome,
+		encoding: "utf8",
+		env: { ...process.env, HOME: "/nonexistent", USER: FILE_BROWSER_SERVICE_USER },
+		maxBuffer: 64 * 1024,
+		timeout: 10_000,
 	});
 	if (result.status !== 0) throw new Error("Files companion version probe failed");
 	return [result.stdout, result.stderr]
@@ -282,14 +312,13 @@ function installCandidate(
 	companion: NonNullable<FileBrowserCompanion>,
 	paths: RuntimePaths,
 	asset: FileBrowserAsset,
+	identity: FileBrowserServiceIdentity,
 	options: FileBrowserCompanionInstallOptions,
 ): void {
 	const targetRoot = candidateRoot(paths, asset.sha256);
 	if (candidateIsValid(paths, asset.sha256)) return;
-	withRuntimeUserFileAccess(() => rmSync(targetRoot, { recursive: true, force: true }));
-	const staging = withRuntimeUserFileAccess(() =>
-		mkdtempSync(join(candidatesRoot(paths), ".staging-")),
-	);
+	rmSync(targetRoot, { recursive: true, force: true });
+	const staging = mkdtempSync(join(candidatesRoot(paths), ".staging-"));
 	try {
 		const binary = join(staging, FILE_BROWSER_BINARY);
 		if (options.download) options.download(asset.url, binary);
@@ -300,39 +329,38 @@ function installCandidate(
 				`Files companion SHA256 mismatch: expected ${asset.sha256.toLowerCase()}, got ${actualSha256 ?? "unreadable"}`,
 			);
 		}
-		withRuntimeUserFileAccess(() => chmodSync(binary, 0o755));
+		chmodSync(binary, 0o755);
+		chownSync(binary, managedRootIdentity().uid, managedRootIdentity().gid);
+		chmodSync(staging, 0o755);
 		const version = options.versionProbe
 			? options.versionProbe(binary)
-			: defaultVersionProbe(binary, paths);
+			: defaultVersionProbe(binary, paths, identity);
 		if (!version.includes(companion.version) || !version.includes(companion.commit.slice(0, 7))) {
 			throw new Error("Files companion version probe did not match the pinned release");
 		}
-		withRuntimeUserFileAccess(() => renameSync(staging, targetRoot));
+		renameSync(staging, targetRoot);
 	} finally {
-		withRuntimeUserFileAccess(() => rmSync(staging, { recursive: true, force: true }));
+		rmSync(staging, { recursive: true, force: true });
 	}
 }
 
 function cleanStaleStaging(paths: RuntimePaths): string[] {
 	const removed: string[] = [];
-	withRuntimeUserFileAccess(() => {
-		for (const entry of readdirSync(candidatesRoot(paths)).sort()) {
-			if (!entry.startsWith(".staging-")) continue;
-			const path = join(candidatesRoot(paths), entry);
-			const stat = lstatSync(path);
-			if (!stat.isDirectory() || stat.isSymbolicLink()) {
-				throw new Error(`Files companion staging entry is not a trusted directory: ${entry}`);
-			}
-			rmSync(path, { recursive: true });
-			removed.push(path);
+	for (const entry of readdirSync(candidatesRoot(paths)).sort()) {
+		if (!entry.startsWith(".staging-")) continue;
+		const path = join(candidatesRoot(paths), entry);
+		const stat = lstatSync(path);
+		if (!stat.isDirectory() || stat.isSymbolicLink()) {
+			throw new Error(`Files companion staging entry is not a trusted directory: ${entry}`);
 		}
-	});
+		rmSync(path, { recursive: true });
+		removed.push(path);
+	}
 	return removed;
 }
 
 function desiredRevision(companion: NonNullable<FileBrowserCompanion>, config: string): string {
 	return runtimeContentSha256({
-		kind: companion.kind,
 		version: companion.version,
 		commit: companion.commit,
 		assets: companion.assets,
@@ -348,6 +376,8 @@ function currentRevision(
 ): string | null {
 	if (!candidateIsValid(paths, assetSha256)) return null;
 	try {
+		const configStat = lstatSync(paths.fileBrowserConfig);
+		if (!configStat.isFile() || configStat.isSymbolicLink()) return null;
 		if (readFileSync(paths.fileBrowserConfig, "utf8") !== config) return null;
 	} catch {
 		return null;
@@ -370,16 +400,20 @@ export function ensureFileBrowserCompanion(
 	const candidateWasValid = candidateIsValid(paths, asset.sha256);
 	const verifiedReceipt =
 		previousReceipt?.desiredRevision === desired && previousReceipt.currentRevision === before;
-	ensureRuntimeUserDirectory(paths.companionInstallRoot);
-	ensureRuntimeUserDirectory(candidatesRoot(paths));
+	const identity = (options.serviceIsolation ?? ensureFileBrowserServiceIsolation)(
+		paths,
+		companion.sourceRoot,
+	);
+	ensureOwnedDirectory(paths.fileBrowserInstallRoot, managedRootIdentity(), 0o755);
+	ensureOwnedDirectory(candidatesRoot(paths), managedRootIdentity(), 0o755);
 	cleanStaleStaging(paths);
-	ensureRuntimeUserDirectory(paths.fileBrowserStateRoot);
-	ensureRuntimeUserDirectory(join(paths.fileBrowserStateRoot, "cache"));
+	repairServiceState(paths.fileBrowserStateRoot, identity);
+	repairServiceState(join(paths.fileBrowserStateRoot, "cache"), identity);
 	if (!verifiedReceipt || before === null) {
-		installCandidate(companion, paths, asset, options);
+		installCandidate(companion, paths, asset, identity, options);
 		writePrivateFileAtomic(paths.fileBrowserConfig, config, { mode: 0o640, dirMode: 0o755 });
-		makeConfigReadableByRuntime(paths.fileBrowserConfig);
 	}
+	makeConfigReadableByService(paths.fileBrowserConfig, identity);
 	const current = () => currentRevision(companion, paths, asset.sha256, config);
 	const expected = current();
 	if (expected !== desired)
@@ -451,17 +485,15 @@ export function gcFileBrowserCompanionCandidates(
 	if (!companion || !existsSync(candidatesRoot(paths))) return [];
 	const retained = candidateRoot(paths, selectedAsset(companion, arch).sha256);
 	const removed: string[] = [];
-	withRuntimeUserFileAccess(() => {
-		for (const entry of readdirSync(candidatesRoot(paths)).sort()) {
-			const path = join(candidatesRoot(paths), entry);
-			if (path === retained) continue;
-			const stat = lstatSync(path);
-			if (!stat.isDirectory() || stat.isSymbolicLink()) {
-				throw new Error(`Files companion candidate is not a trusted directory: ${basename(path)}`);
-			}
-			rmSync(path, { recursive: true });
-			removed.push(path);
+	for (const entry of readdirSync(candidatesRoot(paths)).sort()) {
+		const path = join(candidatesRoot(paths), entry);
+		if (path === retained) continue;
+		const stat = lstatSync(path);
+		if (!stat.isDirectory() || stat.isSymbolicLink()) {
+			throw new Error(`Files companion candidate is not a trusted directory: ${basename(path)}`);
 		}
-	});
+		rmSync(path, { recursive: true });
+		removed.push(path);
+	}
 	return removed;
 }
