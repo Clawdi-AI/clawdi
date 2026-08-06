@@ -300,24 +300,29 @@ generated system-unit and environment-file writer and applies systemd's native
 `ReadOnlyPaths`, private device/tmp, capability, namespace, and task-limit
 controls. File Browser receives its official JWT header configuration with
 password, signup, passkey, sharing, admin, API-token management, realtime, and
-WebDAV disabled. The route broker supplies a short-lived owner assertion; no
-password, pairing code, access code, or URL token is part of this runtime
-contract. When a later manifest omits the companion, normal stale-unit
+WebDAV disabled. The Hosted ForwardAuth handler supplies a short-lived owner
+assertion; no password, pairing code, access code, or URL token is part of this
+runtime contract. When a later manifest omits the companion, normal stale-unit
 reconciliation stops and withdraws only `clawdi-files.service` while preserving
 the selected Hermes or OpenClaw unit.
 
-The authenticated request path is `Files browser -> Incus Traefik -> cloud
-TanStack ForwardAuth -> Hosted assertion broker -> guest File Browser`. The
-ForwardAuth server route lives beside the cloud dashboard's existing
-`/api/files/authorize` callback, uses the same TanStack Clerk request context,
-and calls the Hosted deploy API with the current owner token, route proof,
-expected Files host, and original URI. Signed-out top-level navigation returns
-to the cloud `/sign-in` route before that callback; iframe requests fail
-closed. This v2 Incus path has no dependency on the Hosted Next.js application
-or the `www` origin. Traefik removes the entire browser `Cookie` header before
-the guest hop; File Browser authenticates every request from its official
-external-JWT header and therefore does not require a child-service session
-cookie or a selective cookie-rewriting proxy.
+The authenticated request path is `Files browser -> Incus Traefik -> private
+Hosted control-plane ForwardAuth -> guest File Browser`. The cloud TanStack
+application is navigation and rendering only: it reads the projected
+`files_endpoint`, embeds it, and offers a new-window link. It owns no Files API,
+authentication endpoint, session cache, or authorization callback. Hosted
+validates the deployment route and owner from its own authority and returns the
+short-lived assertion directly to Traefik. Signed-out top-level navigation goes
+through the existing cloud `/sign-in` surface and returns to the exact
+deployment-derived Files URL; anonymous iframe requests fail visibly.
+
+After successful Files authentication, Traefik removes `Cookie`,
+`Authorization`, and the Files route proof before the guest hop, leaving only
+the external-JWT assertion as authentication material. This whole-cookie
+deletion is a Files-only contract. OpenClaw and Hermes retain their separate
+official cookie/authentication contracts and require separate upstream-backed
+integration work; this companion must not project the Files behavior onto
+either runtime UI.
 
 The pinned upstream contracts are File Browser's
 [JWT verifier](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/auth/jwt.go),
@@ -327,12 +332,11 @@ plus the documented
 [systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
 Reverse-proxy origin/header behavior remains the single topology smoke check
 owned by the hosted control plane; repository tests verify the manifest,
-rollback, sandbox, signed-out callback, and UI eligibility contracts without
-claiming to emulate a real browser/Traefik deployment.
+rollback, sandbox, and UI eligibility contracts without claiming to emulate a
+real browser/Traefik deployment.
 
 Done: `bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts`
-and `bash scripts/test.sh web src/pages/files/files-authorize-route.test.ts
-src/pages/files/files-forward-auth-route.test.ts` exit 0 and report `0 fail`.
+and the web typecheck plus focused hosted-agent UI tests exit 0.
 
 ### Runtime Host Contents
 
