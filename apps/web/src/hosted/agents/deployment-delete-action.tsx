@@ -57,6 +57,7 @@ export function HostedDeploymentDeleteAction({
 			try {
 				await deleteDeployment.mutateAsync({
 					id: deployment.resource.id,
+					resourceVersion: deployment.resource.metadata.resourceVersion,
 					request: {
 						subscription_choice: offerChoice ? choice : "keep_subscription",
 					},
