@@ -32,6 +32,7 @@ type HostedDeploymentFixtureOptions = {
 	aiProviderAuthKinds?: HostedDeployment["ai_provider_auth_kinds"];
 	runtimeUiEndpoint?: HostedDeployment["runtime_ui_endpoint"];
 	filesEndpoint?: HostedDeployment["files_endpoint"];
+	publicEndpoints?: HostedDeployment["public_endpoints"];
 	currentPlanSlug?: HostedDeployment["current_plan_slug"];
 };
 
@@ -95,6 +96,7 @@ export function hostedDeploymentFixture(
 		ai_provider_auth_kinds: options.aiProviderAuthKinds ?? { [runtime]: "managed" },
 		runtime_ui_endpoint: options.runtimeUiEndpoint,
 		files_endpoint: options.filesEndpoint,
+		public_endpoints: options.publicEndpoints ?? [],
 		accepted_operation: options.acceptedOperation,
 		commercial_display: {
 			compute_subscription: options.computeSubscription ?? null,
