@@ -1,5 +1,17 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	closeSync,
+	constants,
+	fstatSync,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import {
 	type ClientRequest,
 	createServer,
@@ -9,7 +21,7 @@ import {
 	type ServerResponse,
 } from "node:http";
 import { isIP } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { getDaemonControlDir, getDaemonControlTokenPath } from "./paths";
 
 const MAX_RPC_BODY_BYTES = 1024 * 1024;
@@ -43,7 +55,7 @@ interface JsonRpcRequest {
 	params?: unknown;
 }
 
-interface ControlRpcServer {
+export interface ControlRpcServer {
 	tokenPath: string;
 	http: { host: string; port: number };
 	rotateToken: () => string;
@@ -211,8 +223,12 @@ function controlRpcAbortError(signal: AbortSignal | undefined): Error {
 
 function resolveControlTokenPaths(config: ControlRpcListenConfig): ControlRpcTokenPaths {
 	if (config.tokenPath) {
+		const tokenParent = dirname(config.tokenPath);
+		if (config.controlDir && resolvePath(config.controlDir) !== resolvePath(tokenParent)) {
+			throw new Error("daemon control token must be inside the configured control directory");
+		}
 		return {
-			controlDir: config.controlDir ?? dirname(config.tokenPath),
+			controlDir: tokenParent,
 			tokenPath: config.tokenPath,
 		};
 	}
@@ -230,16 +246,12 @@ function resolveControlTokenPaths(config: ControlRpcListenConfig): ControlRpcTok
 
 function ensureControlDir(controlDir: string): void {
 	mkdirSync(controlDir, { recursive: true, mode: 0o700 });
-	try {
-		chmodSync(controlDir, 0o700);
-	} catch {
-		/* best effort */
-	}
+	assertSecureControlDirectory(controlDir, currentEffectiveUid());
 }
 
 function ensureControlToken(paths = resolveControlTokenPaths({})): string {
 	ensureControlDir(paths.controlDir);
-	if (existsSync(paths.tokenPath)) {
+	if (pathEntryExists(paths.tokenPath)) {
 		return readControlToken(paths);
 	}
 	return rotateControlToken(paths);
@@ -248,29 +260,145 @@ function ensureControlToken(paths = resolveControlTokenPaths({})): string {
 export function rotateControlToken(paths = resolveControlTokenPaths({})): string {
 	ensureControlDir(paths.controlDir);
 	const token = randomBytes(32).toString("hex");
-	writeFileSync(paths.tokenPath, `${token}\n`, { mode: 0o600 });
+	const temporaryPath = `${paths.tokenPath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
 	try {
-		chmodSync(paths.tokenPath, 0o600);
-	} catch {
-		/* best effort */
+		writeFileSync(temporaryPath, `${token}\n`, { flag: "wx", mode: 0o600 });
+		chmodSync(temporaryPath, 0o600);
+		renameSync(temporaryPath, paths.tokenPath);
+	} catch (error) {
+		try {
+			unlinkSync(temporaryPath);
+		} catch {
+			/* Preserve the original secure-write failure. */
+		}
+		throw error;
 	}
-	return token;
+	return readControlToken(paths);
 }
 
 function readControlToken(paths = resolveControlTokenPaths({})): string {
-	if (!existsSync(paths.tokenPath)) {
+	let pathStat: ReturnType<typeof lstatSync>;
+	try {
+		pathStat = lstatSync(paths.tokenPath);
+	} catch (error) {
+		if (errnoCode(error) !== "ENOENT") {
+			throw new Error(
+				`daemon control token at ${paths.tokenPath} could not be inspected: ${errorMessage(error)}`,
+			);
+		}
 		throw new Error(
 			`daemon control token not found at ${paths.tokenPath}. Start \`clawdi daemon run\` first.`,
 		);
 	}
-	try {
-		chmodSync(paths.tokenPath, 0o600);
-	} catch {
-		/* best effort */
+	if (pathStat.isSymbolicLink()) {
+		throw new Error(`daemon control token at ${paths.tokenPath} must not be a symbolic link`);
 	}
-	const token = readFileSync(paths.tokenPath, "utf-8").trim();
-	if (!token) throw new Error(`daemon control token at ${paths.tokenPath} is empty`);
-	return token;
+
+	const effectiveUid = currentEffectiveUid();
+	assertSecureControlDirectory(paths.controlDir, effectiveUid);
+
+	let fd: number;
+	try {
+		fd = openSync(paths.tokenPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+	} catch (error) {
+		const detail =
+			errnoCode(error) === "ELOOP" ? "must not be a symbolic link" : errorMessage(error);
+		throw new Error(
+			`daemon control token at ${paths.tokenPath} could not be opened safely: ${detail}`,
+		);
+	}
+	try {
+		const tokenStat = fstatSync(fd);
+		if (!tokenStat.isFile()) {
+			throw new Error(`daemon control token at ${paths.tokenPath} must be a regular file`);
+		}
+		assertControlPathOwnershipAndMode(
+			"daemon control token",
+			paths.tokenPath,
+			tokenStat.uid,
+			tokenStat.mode,
+			effectiveUid,
+			0o600,
+		);
+		const token = readFileSync(fd, "utf-8").trim();
+		if (!token) throw new Error(`daemon control token at ${paths.tokenPath} is empty`);
+		return token;
+	} finally {
+		closeSync(fd);
+	}
+}
+
+function currentEffectiveUid(): number {
+	if (typeof process.geteuid !== "function") {
+		throw new Error("daemon control RPC requires effective uid ownership checks");
+	}
+	return process.geteuid();
+}
+
+function assertSecureControlDirectory(controlDir: string, effectiveUid: number): void {
+	let directoryStat: ReturnType<typeof lstatSync>;
+	try {
+		directoryStat = lstatSync(controlDir);
+	} catch (error) {
+		throw new Error(
+			`daemon control directory ${controlDir} could not be inspected: ${errorMessage(error)}`,
+		);
+	}
+	if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+		throw new Error(`daemon control directory ${controlDir} must be a real directory`);
+	}
+	assertControlPathOwnershipAndMode(
+		"daemon control directory",
+		controlDir,
+		directoryStat.uid,
+		directoryStat.mode,
+		effectiveUid,
+		0o700,
+	);
+}
+
+export function assertControlPathOwnershipAndMode(
+	label: string,
+	path: string,
+	actualUid: number,
+	actualMode: number,
+	effectiveUid: number,
+	requiredMode: number,
+): void {
+	if (actualUid !== effectiveUid) {
+		throw new Error(
+			`${label} ${path} must be owned by effective uid ${effectiveUid}; found uid ${actualUid}`,
+		);
+	}
+	const permissions = actualMode & 0o7777;
+	if (permissions !== requiredMode) {
+		throw new Error(
+			`${label} ${path} must have mode ${formatMode(requiredMode)}; found ${formatMode(permissions)}`,
+		);
+	}
+}
+
+function formatMode(mode: number): string {
+	return `0${mode.toString(8).padStart(3, "0")}`;
+}
+
+function pathEntryExists(path: string): boolean {
+	try {
+		lstatSync(path);
+		return true;
+	} catch (error) {
+		if (errnoCode(error) === "ENOENT") return false;
+		throw error;
+	}
+}
+
+function errnoCode(error: unknown): string | undefined {
+	if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+	return typeof error.code === "string" ? error.code : undefined;
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 async function handleHttpRequest(
