@@ -76,24 +76,14 @@ jobs:
       - id: rev
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
       - name: Resolve WhatsApp sidecar deployment revision
         id: sidecar-revision
         run: |
-          revision="$(
-            git ls-tree -r --full-tree HEAD -- \
-              .dockerignore \
-              package.json \
-              bun.lock \
-              tsconfig.base.json \
-              apps/web/package.json \
-              packages/cli/package.json \
-              packages/shared/package.json \
-              packages/whatsapp-baileys-sidecar \
-              config/deploy.yml |
-              awk '$4 !~ /\.test\.ts$/' |
-              sha256sum |
-              cut -d ' ' -f 1
-          )"
+          revision="$(bun run scripts/whatsapp-sidecar-deployment-revision.ts)"
           test "${#revision}" = 64
           echo "revision=${revision}" >> "$GITHUB_OUTPUT"
 

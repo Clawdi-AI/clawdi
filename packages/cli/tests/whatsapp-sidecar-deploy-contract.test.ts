@@ -2,6 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import {
+	calculateWhatsAppSidecarDeploymentRevision,
+	sidecarDependencyClosure,
+} from "../../../scripts/whatsapp-sidecar-deployment-revision";
+
 const repoRoot = resolve(import.meta.dir, "../../..");
 const deploy = readFileSync(resolve(repoRoot, "config/deploy.yml"), "utf8");
 const workflow = readFileSync(
@@ -13,6 +18,21 @@ const dockerfile = readFileSync(
 	resolve(repoRoot, "packages/whatsapp-baileys-sidecar/Dockerfile"),
 	"utf8",
 );
+const lockfile = readFileSync(resolve(repoRoot, "bun.lock"), "utf8");
+const cliPackage = readFileSync(resolve(repoRoot, "packages/cli/package.json"), "utf8");
+const sidecarPackage = readFileSync(
+	resolve(repoRoot, "packages/whatsapp-baileys-sidecar/package.json"),
+	"utf8",
+);
+const sqliteStateSource = readFileSync(
+	resolve(repoRoot, "packages/whatsapp-baileys-sidecar/src/sqlite-state.ts"),
+	"utf8",
+);
+const sqliteStateTestSource = readFileSync(
+	resolve(repoRoot, "packages/whatsapp-baileys-sidecar/src/sqlite-state.test.ts"),
+	"utf8",
+);
+const tsconfigBase = readFileSync(resolve(repoRoot, "tsconfig.base.json"), "utf8");
 
 describe("WhatsApp sidecar production deployment contract", () => {
 	test("uses one fixed business-neutral accessory and a clean session state root", () => {
@@ -116,4 +136,128 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(dockerfile).toContain("HEALTHCHECK");
 		expect(dockerfile).not.toContain("latest");
 	});
+
+	test("keeps CLI-only release metadata outside the sidecar deployment revision", () => {
+		const baseline = calculateWhatsAppSidecarDeploymentRevision(repoRoot);
+		const cliOnly = calculateWhatsAppSidecarDeploymentRevision(
+			repoRoot,
+			new Map([
+				[
+					"packages/cli/package.json",
+					replaceOnce(cliPackage, '"version": "0.13.39"', '"version": "0.13.40"'),
+				],
+				["bun.lock", replaceOnce(lockfile, '"version": "0.13.39"', '"version": "0.13.40"')],
+			]),
+		);
+		const unrelatedDeploy = calculateWhatsAppSidecarDeploymentRevision(
+			repoRoot,
+			new Map([
+				["config/deploy.yml", replaceOnce(deploy, "shared_buffers=512MB", "shared_buffers=513MB")],
+			]),
+		);
+		const testOnly = calculateWhatsAppSidecarDeploymentRevision(
+			repoRoot,
+			new Map([
+				[
+					"packages/whatsapp-baileys-sidecar/src/sqlite-state.test.ts",
+					`${sqliteStateTestSource}\n// test-only revision probe\n`,
+				],
+			]),
+		);
+
+		expect(cliOnly).toBe(baseline);
+		expect(unrelatedDeploy).toBe(baseline);
+		expect(testOnly).toBe(baseline);
+	});
+
+	test("changes revision for every effective sidecar runtime and build input class", () => {
+		const baseline = calculateWhatsAppSidecarDeploymentRevision(repoRoot);
+		const cases: Array<[string, ReadonlyMap<string, string>]> = [
+			[
+				"runtime source",
+				new Map([
+					[
+						"packages/whatsapp-baileys-sidecar/src/sqlite-state.ts",
+						`${sqliteStateSource}\n// runtime revision probe\n`,
+					],
+				]),
+			],
+			[
+				"package manifest copied into the final image",
+				new Map([
+					[
+						"packages/whatsapp-baileys-sidecar/package.json",
+						replaceOnce(sidecarPackage, '"version": "0.1.0"', '"version": "0.1.1"'),
+					],
+				]),
+			],
+			[
+				"resolved transitive dependency",
+				new Map([["bun.lock", replaceOnce(lockfile, "sha512-WK+X8ju8", "sha512-XK+X8ju8")]]),
+			],
+			[
+				"compiler configuration",
+				new Map([
+					[
+						"tsconfig.base.json",
+						replaceOnce(tsconfigBase, '"target": "ES2022"', '"target": "ES2023"'),
+					],
+				]),
+			],
+			[
+				"sidecar accessory configuration",
+				new Map([
+					[
+						"config/deploy.yml",
+						replaceOnce(
+							deploy,
+							"CLAWDI_WA_SIDECAR_LOG_LEVEL: info",
+							"CLAWDI_WA_SIDECAR_LOG_LEVEL: warn",
+						),
+					],
+				]),
+			],
+			[
+				"pinned runtime base image",
+				new Map([
+					[
+						"packages/whatsapp-baileys-sidecar/Dockerfile",
+						replaceOnce(dockerfile, "node:24.18.0-alpine", "node:24.18.1-alpine"),
+					],
+				]),
+			],
+		];
+
+		for (const [label, overrides] of cases) {
+			expect(calculateWhatsAppSidecarDeploymentRevision(repoRoot, overrides), label).not.toBe(
+				baseline,
+			);
+		}
+	});
+
+	test("resolves the pinned sidecar dependency closure instead of hashing the whole lockfile", () => {
+		const closure = sidecarDependencyClosure(lockfile);
+		expect(Object.keys(closure)).toEqual(
+			expect.arrayContaining([
+				"baileys",
+				"baileys/pino",
+				"baileys/pino/pino-abstract-transport",
+				"pino",
+				"protobufjs",
+				"typescript",
+				"@types/node",
+				"vitest",
+			]),
+		);
+		expect(closure).not.toHaveProperty("clawdi");
+		expect(closure).not.toHaveProperty("web");
+	});
 });
+
+function replaceOnce(source: string, current: string, replacement: string): string {
+	const first = source.indexOf(current);
+	if (first < 0 || source.indexOf(current, first + current.length) >= 0) {
+		throw new Error(`expected one revision fixture occurrence of ${current}`);
+	}
+	return `${source.slice(0, first)}${replacement}${source.slice(first + current.length)}`;
+}
