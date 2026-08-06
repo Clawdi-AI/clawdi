@@ -6,7 +6,6 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DashboardStats } from "@/lib/api-schemas";
 import {
 	getProjectResourceDefinition,
@@ -26,26 +25,13 @@ type Resource = {
 	count: number | null;
 };
 
-export type ProjectTypeCounts = {
-	custom: number;
-	global: number;
-	agent: number;
-};
-
-function formatProjectTypeCounts(counts: ProjectTypeCounts) {
-	return `${formatNumber(counts.custom)} Custom · ${formatNumber(counts.global)} Global · ${formatNumber(counts.agent)} Agent`;
-}
-
-function buildResources(stats: DashboardStats, projectCount: number | null): Resource[] {
+function buildResources(stats: DashboardStats): Resource[] {
 	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
 		const definition = getProjectResourceDefinition(id);
 		return {
 			icon: PROJECT_RESOURCE_ICONS[id],
 			definition,
-			count:
-				id === "projects" && projectCount === null
-					? null
-					: projectResourceCount(definition, stats, projectCount ?? 0),
+			count: projectResourceCount(definition, stats, stats.projects_count),
 		};
 	});
 }
@@ -54,26 +40,12 @@ export function ResourcesCard({
 	stats,
 	statsError,
 	onRetryStats,
-	projectCount,
-	projectTypeCounts,
-	projectCountLoading = false,
-	projectCountError,
-	onRetryProjectCount,
 }: {
 	stats: DashboardStats | undefined;
 	statsError?: unknown;
 	onRetryStats?: () => void;
-	projectCount: number | undefined;
-	projectTypeCounts?: ProjectTypeCounts;
-	projectCountLoading?: boolean;
-	projectCountError?: unknown;
-	onRetryProjectCount?: () => void;
 }) {
-	const projectCountUnavailable = Boolean(projectCountError && projectCount === undefined);
-	const ready =
-		stats &&
-		!statsError &&
-		(!projectCountLoading || projectCount !== undefined || projectCountUnavailable);
+	const ready = stats && !statsError;
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">
@@ -89,52 +61,27 @@ export function ResourcesCard({
 						/>
 					</div>
 				) : (
-					<>
-						{projectCountError ? (
-							<div className="border-b px-6 py-4">
-								<ApiErrorPanel
-									error={projectCountError}
-									onRetry={onRetryProjectCount}
-									title="Couldn't load project count"
-								/>
-							</div>
-						) : null}
-						<div className="divide-y">
-							{ready ? (
-								<ProjectResourceGroups
-									resources={buildResources(
-										stats,
-										projectCountUnavailable ? null : (projectCount ?? 0),
-									)}
-									projectTypeCounts={projectCountUnavailable ? undefined : projectTypeCounts}
-								/>
-							) : (
-								PROJECT_RESOURCE_GROUPS.map((group) => (
-									<div key={group.id}>
-										{group.resourceIds.length > 1 ? (
-											<ResourceGroupLabel label={group.label} />
-										) : null}
-										{group.resourceIds.map((id) => (
-											<ResourceRowSkeleton key={id} />
-										))}
-									</div>
-								))
-							)}
-						</div>
-					</>
+					<div className="divide-y">
+						{ready ? (
+							<ProjectResourceGroups resources={buildResources(stats)} />
+						) : (
+							PROJECT_RESOURCE_GROUPS.map((group) => (
+								<div key={group.id}>
+									{group.resourceIds.length > 1 ? <ResourceGroupLabel label={group.label} /> : null}
+									{group.resourceIds.map((id) => (
+										<ResourceRowSkeleton key={id} />
+									))}
+								</div>
+							))
+						)}
+					</div>
 				)}
 			</CardContent>
 		</Card>
 	);
 }
 
-function ProjectResourceGroups({
-	resources,
-	projectTypeCounts,
-}: {
-	resources: Resource[];
-	projectTypeCounts?: ProjectTypeCounts;
-}) {
+function ProjectResourceGroups({ resources }: { resources: Resource[] }) {
 	const byId = new Map(resources.map((resource) => [resource.definition.id, resource]));
 	return (
 		<>
@@ -143,13 +90,7 @@ function ProjectResourceGroups({
 					{group.resourceIds.length > 1 ? <ResourceGroupLabel label={group.label} /> : null}
 					{projectResourceDefinitionsForGroup(group.id).map((definition) => {
 						const resource = byId.get(definition.id);
-						return resource ? (
-							<ResourceRow
-								key={definition.id}
-								resource={resource}
-								projectTypeCounts={projectTypeCounts}
-							/>
-						) : null;
+						return resource ? <ResourceRow key={definition.id} resource={resource} /> : null;
 					})}
 				</div>
 			))}
@@ -173,21 +114,12 @@ function ResourceRowSkeleton() {
 	);
 }
 
-function ResourceRow({
-	resource,
-	projectTypeCounts,
-}: {
-	resource: Resource;
-	projectTypeCounts?: ProjectTypeCounts;
-}) {
+function ResourceRow({ resource }: { resource: Resource }) {
 	const countUnavailable = resource.count === null;
 	const empty = resource.count === 0;
 	const Icon = resource.icon;
 	const { definition } = resource;
-	const scopeLabel =
-		definition.id === "projects" && projectTypeCounts
-			? formatProjectTypeCounts(projectTypeCounts)
-			: projectResourceScopeLabel(definition.projectScope);
+	const scopeLabel = projectResourceScopeLabel(definition.projectScope);
 	const isProjectRow = definition.id === "projects";
 	const count = (
 		<span
@@ -229,14 +161,7 @@ function ResourceRow({
 			<div className="min-w-0 flex-1">
 				<div className="text-sm font-medium">{definition.label}</div>
 			</div>
-			{isProjectRow && projectTypeCounts ? (
-				<Tooltip>
-					<TooltipTrigger render={countCluster} />
-					<TooltipContent side="left">{scopeLabel}</TooltipContent>
-				</Tooltip>
-			) : (
-				countCluster
-			)}
+			{countCluster}
 		</Link>
 	);
 }

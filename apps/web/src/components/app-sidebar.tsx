@@ -35,7 +35,7 @@ import {
 	MessageCircle,
 	Search,
 } from "lucide-react";
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -423,46 +423,42 @@ function AgentSectionList({
 
 	return (
 		<>
-			{groups.map((group) => (
-				<Fragment key={group.id}>
+			{groups.map((group) => {
+				const items = [
+					...group.items.map((item): SidebarNavItem => {
+						return {
+							id: item.id,
+							label: item.label,
+							href: agentSectionHref(agentId, item.id, routeQuery),
+							icon: item.icon,
+							tint: item.tint,
+							tooltip: item.tooltip,
+							active:
+								item.id === "projects"
+									? activeContextProjectResource ||
+										(normalizedActiveSection === "projects" && !activePrimaryProjectResource)
+									: normalizedActiveSection === item.id &&
+										!activePrimaryProjectResource &&
+										!activeContextProjectResource,
+							prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
+						};
+					}),
+					...(group.id === "workspace" ? primaryProjectItems : []),
+					...(group.id === "primary" ? extraPrimaryItems : []),
+				];
+				return (
 					<SidebarNavSection
+						key={group.id}
 						label={group.label}
-						items={[
-							...group.items.map((item): SidebarNavItem => {
-								return {
-									id: item.id,
-									label: item.label,
-									href: agentSectionHref(agentId, item.id, routeQuery),
-									icon: item.icon,
-									tint: item.tint,
-									tooltip: item.tooltip,
-									active:
-										item.id === "projects"
-											? activeContextProjectResource ||
-												(normalizedActiveSection === "projects" && !activePrimaryProjectResource)
-											: normalizedActiveSection === item.id &&
-												!activePrimaryProjectResource &&
-												!activeContextProjectResource,
-									prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
-								};
-							}),
-							...(group.id === "primary" ? extraPrimaryItems : []),
-						]}
+						items={items}
 						separated={group.separated}
 						ariaLabel={
 							group.label ?? (group.id === "settings" ? "Agent settings" : "Primary navigation")
 						}
 						onNavigate={onNavigate}
 					/>
-					{group.id === "resources" && primaryProject ? (
-						<SidebarNavSection
-							label="Workspace"
-							items={primaryProjectItems}
-							onNavigate={onNavigate}
-						/>
-					) : null}
-				</Fragment>
-			))}
+				);
+			})}
 		</>
 	);
 }

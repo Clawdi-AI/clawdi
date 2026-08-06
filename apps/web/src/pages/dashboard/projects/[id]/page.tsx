@@ -5,7 +5,6 @@ import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	ArrowLeft,
 	ArrowRight,
-	BookOpen,
 	Bot,
 	CheckCircle2,
 	ChevronRight,
@@ -13,6 +12,7 @@ import {
 	Eye,
 	Link2,
 	LogOut,
+	Pencil,
 	Plus,
 	Share2,
 	Trash2,
@@ -50,12 +50,9 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
 	isCustomProject,
-	isManagedProject,
 	type ProjectAgentMetadata,
 	ProjectIdentity,
-	ProjectKindBadge,
 	projectAgentFor,
-	projectKindMeta,
 } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { SkillCardGrid } from "@/components/skills/skill-card";
@@ -94,6 +91,9 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import {
 	agentDeploymentRouteQuery,
@@ -112,6 +112,7 @@ import type { components } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
 import { identityFor } from "@/lib/identity";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	libraryManagementTarget,
@@ -123,14 +124,41 @@ import {
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage } from "@/lib/utils";
 
-type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type VaultSummary = components["schemas"]["VaultResponse"];
 type Env = components["schemas"]["AgentResponse"];
-type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
-
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type Member = components["schemas"]["MemberResponse"];
 type CountValue = number | "unavailable";
+type ProjectLocalTab = "overview" | "skills" | "vaults" | "agents" | "access";
+
+const PROJECT_RESOURCE_PAGE_SIZE = 30;
+
+const PROJECT_LOCAL_TABS: readonly { id: ProjectLocalTab; label: string }[] = [
+	{ id: "overview", label: "Overview" },
+	{ id: "skills", label: "Skills" },
+	{ id: "vaults", label: "Vaults" },
+	{ id: "agents", label: "Agents" },
+	{ id: "access", label: "Access" },
+];
+
+function isProjectLocalTab(value: unknown): value is ProjectLocalTab {
+	return typeof value === "string" && PROJECT_LOCAL_TABS.some((tab) => tab.id === value);
+}
+
+function projectLocalTabHref(
+	pathname: string,
+	searchParams: URLSearchParams,
+	tab: ProjectLocalTab,
+): string {
+	const nextSearch = new URLSearchParams(searchParams);
+	nextSearch.set("tab", tab);
+	if (tab !== "overview") {
+		nextSearch.delete("joined");
+		nextSearch.delete("useWithAgent");
+	}
+	const query = nextSearch.toString();
+	return `${pathname}${query ? `?${query}` : ""}`;
+}
 
 const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
@@ -158,21 +186,33 @@ export default function ProjectDetailPage({
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+	const requestedTab = searchParams.get("tab");
+	const localTab: ProjectLocalTab = PROJECT_LOCAL_TABS.some((tab) => tab.id === requestedTab)
+		? (requestedTab as ProjectLocalTab)
+		: "overview";
 	const projectsTarget = resourceCollectionTarget(scope, "projects");
 	const managementTarget = libraryManagementTarget("projects", { projectId });
 	const isAgentScope = scope.kind === "agent";
-	const showSkills = focus !== "vaults";
-	const showVaults = focus !== "skills";
+	const showSkills = isAgentScope ? focus !== "vaults" : localTab === "skills";
+	const showVaults = isAgentScope ? focus !== "skills" : localTab === "vaults";
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
 		searchParams.get("useWithAgent") === "1",
 	);
-	const [installSkillOpen, setInstallSkillOpen] = useState(false);
+	const [skillsPage, setSkillsPage] = useState(1);
+	const [vaultsPage, setVaultsPage] = useState(1);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
+	const returnHref = searchParams.get("from");
+	const safeAgentReturnHref = returnHref?.startsWith("/agents/") ? returnHref : null;
+	useEffect(() => {
+		setSkillsPage(1);
+		setVaultsPage(1);
+	}, [projectId]);
 
-	const projects = $api.useQuery("get", "/v1/projects", {});
+	const projectQuery = $api.useQuery("get", "/v1/projects/{project_id}", {
+		params: { path: { project_id: projectId } },
+	});
 
-	const rows = projects.data ?? [];
-	const project = rows.find((row) => row.id === projectId) ?? null;
+	const project = projectQuery.data ?? null;
 	const projectName = project ? displayProjectName(project) : null;
 	const projectResourceTargets =
 		scope.kind === "agent"
@@ -190,16 +230,18 @@ export default function ProjectDetailPage({
 						agentDeploymentRouteQuery(scope.agentQuery),
 					),
 				}
-			: null;
+			: {
+					skills: projectResourceHref("skills", projectId),
+					vaults: projectResourceHref("vaults", projectId),
+				};
 	const projectNameById = useMemo(
-		() => new Map(rows.map((row) => [row.id, displayProjectName(row)])),
-		[rows],
+		() => new Map(project ? [[project.id, displayProjectName(project)]] : []),
+		[project],
 	);
 	const visibleProjectIds = useMemo(() => new Set([projectId]), [projectId]);
 	const isOwner = project?.is_owner !== false;
 	const canManageSkills = isBrowserWritableSkillProject(project);
 	const isShareableProject = project ? isCustomProject(project) : false;
-	const isManaged = project ? isManagedProject(project) : false;
 	const scopedBindings = useAgentProjectBindings(scope.kind === "agent" ? scope.agentId : "", {
 		enabled: scope.kind === "agent",
 	});
@@ -225,7 +267,9 @@ export default function ProjectDetailPage({
 						href: projectDetailHrefForScope(scope, projectId),
 						label: projectName ? `Back to ${projectName}` : "Back to Project",
 					}
-			: projectsTarget;
+			: safeAgentReturnHref
+				? { href: safeAgentReturnHref, label: "Back to Agent Projects" }
+				: projectsTarget;
 	const workspaceAgent = $api.useQuery(
 		"get",
 		"/v1/agents/{agent_id}",
@@ -258,28 +302,33 @@ export default function ProjectDetailPage({
 		"get",
 		"/v1/agents",
 		{},
-		{ enabled: !isAgentScope && !!project },
+		{ enabled: !isAgentScope && !!project && useWithAgentOpen },
 	);
 	const agentsById = useMemo(
 		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
 		[environments.data],
 	);
 	const projectAgent = project ? projectAgentFor(project, agentsById) : null;
-	const projectType = project ? projectKindMeta(project.kind) : null;
+	const localTabHref = (tab: ProjectLocalTab) => projectLocalTabHref(pathname, searchParams, tab);
+	const selectLocalTab = (tab: ProjectLocalTab) => {
+		void router.navigate({ href: localTabHref(tab), resetScroll: false });
+	};
 
 	const skills = useQuery({
-		queryKey: ["skills", "project-detail", projectId],
+		queryKey: ["skills", "project-detail", projectId, skillsPage],
 		queryFn: async () =>
-			fetchAllPages<SkillSummary>(
-				async (page, pageSize) =>
-					unwrap(
-						await api.GET("/v1/skills", {
-							params: { query: { project_id: projectId, page, page_size: pageSize } },
-						}),
-					),
-				{ pageSize: 200, resourceName: "project skills" },
+			unwrap(
+				await api.GET("/v1/skills", {
+					params: {
+						query: {
+							project_id: projectId,
+							page: skillsPage,
+							page_size: PROJECT_RESOURCE_PAGE_SIZE,
+						},
+					},
+				}),
 			),
-		enabled: showSkills && (!isAgentScope || !!scopedBinding),
+		enabled: showSkills && (!isAgentScope || !!scopedBinding) && !(IS_HOSTED_BUILD && isWorkspace),
 	});
 	const workspaceSkillProjections = useMemo(
 		() => (skills.data?.items ?? []).filter((skill) => skill.authority === "agent_sync"),
@@ -287,19 +336,31 @@ export default function ProjectDetailPage({
 	);
 
 	const vaults = useQuery({
-		queryKey: ["vaults", "project-detail", projectId],
+		queryKey: ["vaults", "project-detail", projectId, vaultsPage],
 		queryFn: async () =>
-			fetchAllPages<VaultSummary>(
-				async (page, pageSize) =>
-					unwrap(
-						await api.GET("/v1/vault", {
-							params: { query: { project_id: projectId, page, page_size: pageSize } },
-						}),
-					),
-				{ pageSize: 200, resourceName: "project vaults" },
+			unwrap(
+				await api.GET("/v1/vault", {
+					params: {
+						query: {
+							project_id: projectId,
+							page: vaultsPage,
+							page_size: PROJECT_RESOURCE_PAGE_SIZE,
+						},
+					},
+				}),
 			),
 		enabled: showVaults && (!isAgentScope || !!scopedBinding),
 	});
+	useEffect(() => {
+		if (skills.data?.total === undefined) return;
+		const pageCount = Math.max(1, Math.ceil(skills.data.total / PROJECT_RESOURCE_PAGE_SIZE));
+		setSkillsPage((page) => Math.min(page, pageCount));
+	}, [skills.data?.total]);
+	useEffect(() => {
+		if (vaults.data?.total === undefined) return;
+		const pageCount = Math.max(1, Math.ceil(vaults.data.total / PROJECT_RESOURCE_PAGE_SIZE));
+		setVaultsPage((page) => Math.min(page, pageCount));
+	}, [vaults.data?.total]);
 
 	// People tile/section — members list is owner-only on the API; viewers
 	// simply don't get the section.
@@ -311,39 +372,22 @@ export default function ProjectDetailPage({
 					params: { path: { project_id: projectId } },
 				}),
 			),
-		enabled: !isAgentScope && !!project && isOwner && isShareableProject,
+		enabled: !isAgentScope && !!project && isOwner && isShareableProject && localTab === "access",
 	});
 
-	// Agents tile/section — which connected agents can use this project:
-	// its home agent (default_project_id) plus every context binding.
-	const boundAgents = useQuery({
-		queryKey: ["project-bound-agents", projectId, (environments.data ?? []).length],
-		enabled: !isAgentScope && !!project && !!environments.data,
-		queryFn: async () => {
-			const envs = environments.data ?? [];
-			const results = await Promise.all(
-				envs.map(async (env) => {
-					if (env.default_project_id === projectId) return { env, home: true };
-					const bindings = unwrap(
-						await api.GET("/v1/agents/{agent_id}/project-bindings", {
-							params: { path: { agent_id: env.id } },
-						}),
-					);
-					return bindings.some((b: AgentProjectBinding) => b.project_id === projectId)
-						? { env, home: false }
-						: null;
-				}),
-			);
-			return results.filter((r): r is { env: Env; home: boolean } => r !== null);
-		},
-	});
+	const boundAgents = $api.useQuery(
+		"get",
+		"/v1/agents",
+		{ params: { query: { project_id: projectId } } },
+		{ enabled: !isAgentScope && !!project && localTab === "agents" },
+	);
 
 	const refresh = () => {
 		qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
 		qc.invalidateQueries({ queryKey: ["vaults"] });
 		qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
-		qc.invalidateQueries({ queryKey: ["project-bound-agents", projectId] });
+		qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 	};
 
 	const removeProjectSkill = useMutation({
@@ -424,7 +468,7 @@ export default function ProjectDetailPage({
 			: null,
 	);
 
-	if (projects.isLoading || (isAgentScope && scopedBindings.isLoading)) {
+	if (projectQuery.isLoading || (isAgentScope && scopedBindings.isLoading)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Skeleton className="h-8 w-24" />
@@ -451,8 +495,8 @@ export default function ProjectDetailPage({
 			? scopedBindings.error
 			: null
 		: null;
-	const blockingProjectError = shouldBlockQueryError(projects.error, projects.data)
-		? projects.error
+	const blockingProjectError = shouldBlockQueryError(projectQuery.error, projectQuery.data)
+		? projectQuery.error
 		: null;
 
 	if (blockingProjectError || blockingScopeError) {
@@ -469,7 +513,7 @@ export default function ProjectDetailPage({
 					<ApiErrorPanel
 						error={blockingError}
 						onRetry={() => {
-							if (blockingProjectError) void projects.refetch();
+							if (blockingProjectError) void projectQuery.refetch();
 							if (blockingScopeError) void scopedBindings.refetch();
 						}}
 						title={
@@ -490,6 +534,18 @@ export default function ProjectDetailPage({
 				<DetailNotFound
 					title="Project not found"
 					message="This Project may have been removed, or your account no longer has access."
+				/>
+			</div>
+		);
+	}
+
+	if (!isAgentScope && project.kind !== "workspace") {
+		return (
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<ProjectReturnLink target={projectsTarget} />
+				<DetailNotFound
+					title="Project not found"
+					message="This page is for user-created Projects. Open an Agent to manage its private Workspace."
 				/>
 			</div>
 		);
@@ -532,30 +588,23 @@ export default function ProjectDetailPage({
 	const blockingMembersError = shouldBlockQueryError(members.error, members.data)
 		? members.error
 		: null;
-	const blockingEnvironmentsError = shouldBlockQueryError(environments.error, environments.data)
-		? environments.error
-		: null;
 	const blockingBoundAgentsError = shouldBlockQueryError(boundAgents.error, boundAgents.data)
 		? boundAgents.error
 		: null;
-	const skillCount: CountValue | undefined =
-		isWorkspace || project.kind === "environment"
+	const skillCount: CountValue | undefined = isAgentScope
+		? isWorkspace || project.kind === "environment"
 			? undefined
 			: blockingSkillsError
 				? "unavailable"
-				: skills.data?.items.length;
-	const vaultCount: CountValue | undefined = blockingVaultsError
-		? "unavailable"
-		: vaults.data?.items.length;
-	const peopleCount: CountValue | undefined = blockingMembersError
-		? "unavailable"
-		: members.data
-			? members.data.length + 1
-			: undefined; // +1 = owner
-	const agentCount: CountValue | undefined =
-		blockingEnvironmentsError || blockingBoundAgentsError
+				: skills.data?.total
+		: project.skill_count;
+	const vaultCount: CountValue | undefined = isAgentScope
+		? blockingVaultsError
 			? "unavailable"
-			: boundAgents.data?.length;
+			: vaults.data?.total
+		: project.vault_count;
+	const peopleCount: CountValue | undefined = project.member_count + 1;
+	const agentCount: CountValue | undefined = project.agent_count;
 
 	const addToAgentDialog = (trigger: ReactElement) => (
 		<UseProjectWithAgentDialog
@@ -582,7 +631,6 @@ export default function ProjectDetailPage({
 					focusedResourceIdentity?.label ??
 					(isWorkspace ? "Workspace" : displayProjectName(project))
 				}
-				titleAdornment={focus || isWorkspace ? undefined : <ProjectKindBadge kind={project.kind} />}
 				icon={
 					focusedResourceIdentity && FocusedResourceIcon ? (
 						<IconChip tint={focusedResourceIdentity.tint}>
@@ -606,22 +654,18 @@ export default function ProjectDetailPage({
 									? "Vaults attached to this Agent's Workspace."
 									: "This Agent's fixed Workspace for installed Skills and attached Vaults."
 							: focus === "skills"
-								? "Skills stored and managed in this Project. Linking it does not install them on the Agent."
+								? "Skills this Agent uses through this linked Project."
 								: focus === "vaults"
-									? "Vaults this Agent can resolve through this Project."
-									: "Skills stay managed in this Project; its Vaults join the Agent's runtime resolution."
-						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
+									? "Vaults this Agent can use through this Project. Key values stay protected."
+									: "This Agent uses the Project's Skills and attached Vaults as one bundle."
+						: projectDetailDescription(project, isOwner)
 				}
 				status={
-					isWorkspace ? undefined : (
-						<span
-							className={
-								focus ? "text-xs text-muted-foreground" : "font-mono text-xs text-muted-foreground"
-							}
-						>
-							{focus ? `Project: ${displayProjectName(project)}` : project.slug}
+					focus && !isWorkspace ? (
+						<span className="text-xs text-muted-foreground">
+							Project: {displayProjectName(project)}
 						</span>
-					)
+					) : undefined
 				}
 				actions={
 					!isAgentScope && isShareableProject ? (
@@ -657,8 +701,7 @@ export default function ProjectDetailPage({
 					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<span>
-							Linking makes attached Vaults available in Agent runtime resolution. Skills stay
-							stored and managed in this Project until separately installed on an Agent.
+							Linking lets an Agent use this Project&apos;s Skills and attached Vaults together.
 						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
@@ -668,18 +711,47 @@ export default function ProjectDetailPage({
 				</Alert>
 			) : null}
 
-			{/* Stat tiles — anchors into the sections below. */}
 			{!isAgentScope ? (
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					{project.kind !== "environment" ? (
-						<StatTile label="Skills" value={skillCount} href="#skills" />
-					) : null}
-					<StatTile label="Vaults" value={vaultCount} href="#vaults" />
-					{isOwner && isShareableProject ? (
-						<StatTile label="People" value={peopleCount} href="#people" />
-					) : null}
-					<StatTile label="Agents" value={agentCount} href="#agents" />
-				</div>
+				<Tabs
+					value={localTab}
+					onValueChange={(value) => {
+						if (isProjectLocalTab(value)) selectLocalTab(value);
+					}}
+				>
+					<TabsList
+						aria-label="Project pages"
+						activateOnFocus
+						className="grid h-auto w-full grid-cols-5 gap-1 rounded-xl border bg-muted/30 p-1 group-data-horizontal/tabs:h-auto"
+					>
+						{PROJECT_LOCAL_TABS.map((tab) => (
+							<TabsTrigger
+								key={tab.id}
+								value={tab.id}
+								className="min-w-0 px-1 py-2 text-xs sm:px-2 sm:text-sm"
+							>
+								{tab.label}
+							</TabsTrigger>
+						))}
+					</TabsList>
+				</Tabs>
+			) : null}
+
+			{!isAgentScope && localTab === "overview" ? (
+				<DetailPanel className="space-y-5">
+					<div className="space-y-1">
+						<h2 className="text-sm font-semibold">Project bundle</h2>
+						<p className="text-sm text-muted-foreground">
+							{project.description ||
+								"Keep reusable Skills and Vault access together, then link the whole Project to any Agent that needs it."}
+						</p>
+					</div>
+					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+						<StatTile label="Skills" value={skillCount} href={localTabHref("skills")} />
+						<StatTile label="Vaults" value={vaultCount} href={localTabHref("vaults")} />
+						<StatTile label="People" value={peopleCount} href={localTabHref("access")} />
+						<StatTile label="Agents" value={agentCount} href={localTabHref("agents")} />
+					</div>
+				</DetailPanel>
 			) : null}
 
 			<HubSection
@@ -692,11 +764,11 @@ export default function ProjectDetailPage({
 					isAgentScope
 						? isWorkspace
 							? "Installed Skills in this Agent's fixed Workspace."
-							: "Skills are stored and managed in this Project; linking does not install them."
+							: "Skills this Agent uses through this linked Project."
 						: project.kind === "environment"
-							? "Read-only projections authored on this Agent's filesystem."
+							? "Skills synced from this Agent. Manage them on the Agent."
 							: isOwner
-								? "Reusable instructions stored in this Project."
+								? "Reusable instructions that belong to this Project."
 								: "Readable instructions shared by the owner."
 				}
 				action={
@@ -709,23 +781,20 @@ export default function ProjectDetailPage({
 								/>
 							) : null}
 							{canManageProjectSkills ? (
-								<Button variant="outline" size="sm" onClick={() => setInstallSkillOpen(true)}>
+								<Button
+									render={<Link to="/skills" search={{ project: project.id, add: 1 }} />}
+									nativeButton={false}
+									variant="outline"
+									size="sm"
+								>
 									<Plus className="size-3.5" />
-									Install skill
+									Add skill
 								</Button>
 							) : null}
 						</>
 					) : undefined
 				}
 			>
-				{canManageProjectSkills ? (
-					<InstallSkillInProjectDialog
-						projectId={project.id}
-						open={installSkillOpen}
-						onOpenChange={setInstallSkillOpen}
-						onChanged={refresh}
-					/>
-				) : null}
 				{blockingWorkspaceAgentError ? (
 					<ApiErrorPanel
 						error={blockingWorkspaceAgentError}
@@ -742,12 +811,6 @@ export default function ProjectDetailPage({
 								projectId={project.id}
 								routeSearch={scope.agentQuery}
 								deploymentSelector={deploymentSelector}
-								projections={workspaceSkillProjections}
-								projectionsLoading={skills.isLoading}
-								projectionError={blockingSkillsError}
-								onRetryProjections={() => {
-									void skills.refetch();
-								}}
 							/>
 						</Suspense>
 					) : workspaceAgent.data ? (
@@ -801,6 +864,13 @@ export default function ProjectDetailPage({
 						}
 					/>
 				)}
+				<ResourcePageControls
+					page={skillsPage}
+					total={skills.data?.total}
+					pageSize={PROJECT_RESOURCE_PAGE_SIZE}
+					isFetching={skills.isFetching}
+					onPageChange={setSkillsPage}
+				/>
 			</HubSection>
 
 			<HubSection
@@ -830,7 +900,6 @@ export default function ProjectDetailPage({
 							{isOwner ? (
 								<ProjectVaultActions
 									projectId={project.id}
-									attachedVaultIds={new Set((vaults.data?.items ?? []).map((vault) => vault.id))}
 									contextLabel={isWorkspace ? "Workspace" : "Project"}
 									onChanged={refresh}
 								/>
@@ -901,14 +970,32 @@ export default function ProjectDetailPage({
 						}
 					/>
 				)}
+				<ResourcePageControls
+					page={vaultsPage}
+					total={vaults.data?.total}
+					pageSize={PROJECT_RESOURCE_PAGE_SIZE}
+					isFetching={vaults.isFetching}
+					onPageChange={setVaultsPage}
+				/>
 			</HubSection>
 
-			{!isAgentScope && isOwner && isShareableProject ? (
+			{!isAgentScope && localTab === "access" && isOwner ? (
+				<ProjectOwnerPanel
+					project={project}
+					onUpdated={() => {
+						refresh();
+						void projectQuery.refetch();
+					}}
+					onArchived={() => void router.navigate({ href: projectsTarget.href })}
+				/>
+			) : null}
+
+			{!isAgentScope && localTab === "access" && isOwner && isShareableProject ? (
 				<HubSection
 					id="people"
 					title="People"
 					count={peopleCount}
-					description="Members see skill and key names; their agents resolve key values through the CLI."
+					description="Members see Skills and key names. Key values stay protected, and their linked Agents can use them."
 					action={
 						<ShareProjectDialog
 							projectId={project.id}
@@ -952,11 +1039,11 @@ export default function ProjectDetailPage({
 				</HubSection>
 			) : null}
 
-			{!isAgentScope && !isOwner ? (
+			{!isAgentScope && localTab === "access" && !isOwner ? (
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You have viewer access to stored Skills and Vault key names. Install Skills on an Agent separately; attached Vaults can participate in runtime resolution after linking the Project."
+					description="You have viewer access. Linked Agents use this Project's Skills and attached Vaults together."
 				>
 					<SharedAccessPanel
 						project={project}
@@ -968,29 +1055,21 @@ export default function ProjectDetailPage({
 				</HubSection>
 			) : null}
 
-			{!isAgentScope ? (
+			{!isAgentScope && localTab === "agents" ? (
 				<HubSection
 					id="agents"
-					title="Agents"
+					title="Your Agents"
 					count={agentCount}
 					description={
 						project.kind === "environment"
-							? "Home Agent for this managed Workspace."
+							? "Agent that owns this Workspace."
 							: project.kind === "personal"
-								? "This Global Project belongs to your account and is not linked to individual Agents."
-								: "Agents linked to this Project for Vault runtime resolution."
+								? "Private account resources are not linked to individual Agents."
+								: "Agents you own that use this Project's Skills and attached Vaults."
 					}
 				>
-					{boundAgents.isLoading || environments.isLoading ? (
+					{boundAgents.isLoading ? (
 						<Skeleton className="h-16 w-full" />
-					) : blockingEnvironmentsError ? (
-						<ApiErrorPanel
-							error={blockingEnvironmentsError}
-							onRetry={() => {
-								void environments.refetch();
-							}}
-							title="Couldn't load agents"
-						/>
 					) : blockingBoundAgentsError ? (
 						<ApiErrorPanel
 							error={blockingBoundAgentsError}
@@ -1005,13 +1084,13 @@ export default function ProjectDetailPage({
 								project.kind === "environment"
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
-										? "Global Project belongs to your account and has no Agent links."
-										: "No Agents are linked yet. Linking adds attached Vaults to runtime resolution; it does not install Skills."
+										? "Private account resources have no Agent links."
+										: "None of your Agents are linked yet. Link this Project to let one use its Skills and attached Vaults."
 							}
 						/>
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
-							{(boundAgents.data ?? []).map(({ env, home }) => (
+							{(boundAgents.data ?? []).map((env) => (
 								<div key={env.id} className="group relative flex items-center gap-3 px-4 py-3">
 									<AgentLabel
 										machineName={env.machine_name}
@@ -1023,7 +1102,7 @@ export default function ProjectDetailPage({
 										titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 										className="min-w-0 flex-1"
 									/>
-									{home ? (
+									{env.default_project_id === project.id ? (
 										<Badge variant="secondary" className="shrink-0">
 											Workspace
 										</Badge>
@@ -1044,10 +1123,6 @@ export default function ProjectDetailPage({
 					)}
 				</HubSection>
 			) : null}
-
-			{!isAgentScope && isOwner && isManaged ? (
-				<ManagedProjectPanel project={project} agent={projectAgent} returnTarget={projectsTarget} />
-			) : null}
 		</div>
 	);
 }
@@ -1061,8 +1136,8 @@ const STAT_TILE_TINTS: Record<string, string> = {
 
 function StatTile({ label, value, href }: { label: string; value?: CountValue; href: string }) {
 	return (
-		<a
-			href={href}
+		<Link
+			to={href}
 			className={cn(
 				"group rounded-xl border border-transparent p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
 				STAT_TILE_TINTS[label] ?? "bg-card",
@@ -1075,7 +1150,52 @@ function StatTile({ label, value, href }: { label: string; value?: CountValue; h
 				{label}
 				<ChevronRight className="size-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
 			</div>
-		</a>
+		</Link>
+	);
+}
+
+function ResourcePageControls({
+	page,
+	total,
+	pageSize,
+	isFetching,
+	onPageChange,
+}: {
+	page: number;
+	total?: number;
+	pageSize: number;
+	isFetching: boolean;
+	onPageChange: (page: number) => void;
+}) {
+	if (total === undefined || total <= pageSize) return null;
+	const pageCount = Math.max(1, Math.ceil(total / pageSize));
+	return (
+		<nav
+			aria-label="Resource pages"
+			className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"
+		>
+			<p className="text-sm text-muted-foreground tabular-nums">
+				Page {page} of {pageCount}
+			</p>
+			<div className="flex items-center gap-2">
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={page <= 1 || isFetching}
+					onClick={() => onPageChange(Math.max(1, page - 1))}
+				>
+					Previous
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={page >= pageCount || isFetching}
+					onClick={() => onPageChange(Math.min(pageCount, page + 1))}
+				>
+					Next
+				</Button>
+			</div>
+		</nav>
 	);
 }
 
@@ -1162,56 +1282,164 @@ function ProjectResourceViewAllLink({
 	);
 }
 
-function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLabel: string) {
+function projectDetailDescription(project: ProjectRow, isOwner: boolean) {
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? `${typeLabel} you own. Install Skills and attach Vaults here, share the Project, then link it to Agents when needed. Linking does not install its Skills.`
-			: `${typeLabel} shared with you. Its Skills stay stored here, while attached Vaults can join an Agent's runtime resolution after you link the Project.`;
+			? "Project you own. Add Skills and attach Vaults, then link the whole bundle to Agents that need it."
+			: "Project shared with you. Linked Agents use its Skills and attached Vaults together.";
 	}
 	if (project.kind === "environment") {
-		return `${typeLabel} ${access}. This Workspace belongs to one connected Agent. It is managed for you and cannot be shared.`;
+		return `Workspace ${access}. This private Workspace belongs to one Agent and cannot be shared.`;
 	}
 	if (project.kind === "personal") {
-		return `${typeLabel} ${access}. This is your account default for resources that are not tied to one workflow or agent.`;
+		return `Private resources ${access}.`;
 	}
-	return `${typeLabel} ${access}. Slug: ${project.slug}`;
+	return `Project ${access}.`;
 }
 
-function ManagedProjectPanel({
+function ProjectOwnerPanel({
 	project,
-	agent,
-	returnTarget,
+	onUpdated,
+	onArchived,
 }: {
 	project: ProjectRow;
-	agent?: ProjectAgentMetadata | null;
-	returnTarget: { href: string; label: string };
+	onUpdated: () => void;
+	onArchived: () => void;
 }) {
-	const description =
-		project.kind === "environment"
-			? "This Workspace is managed by the connected Agent and is not shareable. Create a Project when you need collaboration or reusable resources."
-			: "This Global Project is your account default and is not shareable. Create a Project when you need collaboration or reusable resources.";
+	const api = useApi();
+	const [editOpen, setEditOpen] = useState(false);
+	const [name, setName] = useState(project.name);
+	const [description, setDescription] = useState(project.description ?? "");
+	const update = useMutation({
+		mutationFn: async () =>
+			unwrap(
+				await api.PATCH("/v1/projects/{project_id}", {
+					params: { path: { project_id: project.id } },
+					body: { name: name.trim(), description: description.trim() || null },
+				}),
+			),
+		onSuccess: () => {
+			setEditOpen(false);
+			onUpdated();
+			toast.success("Project updated");
+		},
+		onError: (error) =>
+			toast.error("Couldn't update Project", { description: errorMessage(error) }),
+	});
+	const archive = useMutation({
+		mutationFn: async () =>
+			unwrap(
+				await api.DELETE("/v1/projects/{project_id}", {
+					params: { path: { project_id: project.id } },
+				}),
+			),
+		onSuccess: () => {
+			toast.success("Project archived");
+			onArchived();
+		},
+		onError: (error) =>
+			toast.error("Couldn't archive Project", { description: errorMessage(error) }),
+	});
+
 	return (
 		<DetailPanel className="space-y-4">
-			<div className="space-y-1">
-				<div className="flex items-center gap-2">
-					<BookOpen className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Managed Project</h2>
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+				<div className="space-y-1">
+					<h2 className="text-sm font-semibold">Project settings</h2>
+					<p className="text-xs text-muted-foreground">
+						Update the name and description, or archive this Project when it is no longer used.
+					</p>
 				</div>
-				<p className="text-xs text-muted-foreground">{description}</p>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => {
+						setName(project.name);
+						setDescription(project.description ?? "");
+						setEditOpen(true);
+					}}
+				>
+					<Pencil className="size-3.5" />
+					Edit project
+				</Button>
 			</div>
-			<div className="rounded-md border bg-background/60 p-3">
-				<ProjectIdentity project={project} agent={agent} showKind={false} />
+			<div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+					<div>
+						<p className="text-sm font-medium">Archive project</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							This immediately unlinks every Agent and removes the Project from active views.
+						</p>
+					</div>
+					<ConfirmAction
+						title={`Archive ${displayProjectName(project)}?`}
+						description={
+							<p>
+								Agents will stop using this Project&apos;s Skills and attached Vaults. Historical
+								resource records are retained.
+							</p>
+						}
+						confirmLabel="Archive project"
+						destructive
+						onConfirm={() => archive.mutateAsync()}
+					>
+						<Button variant="destructive" size="sm" disabled={archive.isPending}>
+							{archive.isPending ? <Spinner /> : <Trash2 className="size-3.5" />}
+							Archive project
+						</Button>
+					</ConfirmAction>
+				</div>
 			</div>
-			<Button
-				render={<Link to={returnTarget.href} />}
-				nativeButton={false}
-				variant="outline"
-				size="sm"
-				className="w-full"
-			>
-				Back to {returnTarget.label}
-			</Button>
+
+			<Dialog open={editOpen} onOpenChange={setEditOpen}>
+				<DialogContent className="sm:max-w-lg">
+					<DialogHeader>
+						<DialogTitle>Edit project</DialogTitle>
+						<DialogDescription>
+							These details help people recognize the resource bundle. Existing Agent links stay
+							connected.
+						</DialogDescription>
+					</DialogHeader>
+					<form
+						className="space-y-4"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (name.trim()) update.mutate();
+						}}
+					>
+						<div className="space-y-1.5">
+							<Label htmlFor={`project-name-${project.id}`}>Name</Label>
+							<Input
+								id={`project-name-${project.id}`}
+								value={name}
+								onChange={(event) => setName(event.target.value)}
+								maxLength={200}
+								autoComplete="off"
+							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor={`project-description-${project.id}`}>Description</Label>
+							<Textarea
+								id={`project-description-${project.id}`}
+								value={description}
+								onChange={(event) => setDescription(event.target.value)}
+								maxLength={2000}
+								rows={4}
+							/>
+						</div>
+						<DialogFooter>
+							<Button type="button" variant="ghost" onClick={() => setEditOpen(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!name.trim() || update.isPending}>
+								{update.isPending ? <Spinner /> : null}
+								Save changes
+							</Button>
+						</DialogFooter>
+					</form>
+				</DialogContent>
+			</Dialog>
 		</DetailPanel>
 	);
 }
@@ -1234,11 +1462,11 @@ function SharedAccessPanel({
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Eye className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">You Have Viewer Access</h2>
+					<h2 className="text-sm font-semibold">You have viewer access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					You can read this Project and link it to an Agent. Its attached Vaults then join runtime
-					resolution; its Skills stay stored here until separately installed on the Agent.
+					You can read this Project and link it to an Agent. The Agent then uses the Project&apos;s
+					Skills and attached Vaults together.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -1259,14 +1487,14 @@ function SharedAccessPanel({
 					}
 				>
 					<LogOut className="mr-1.5 size-3.5" />
-					{isLeaving ? "Leaving…" : "Leave Project"}
+					{isLeaving ? "Leaving…" : "Leave project"}
 				</AlertDialogTrigger>
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
 						<AlertDialogDescription>
-							This removes your read-only membership. Your Agents will stop resolving attached
-							Vaults through this Project; Project Skills remain separate from Agent installs.
+							This removes your access and unlinks the Project from your Agents. Those Agents will
+							stop using its Skills and attached Vaults.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -1275,7 +1503,7 @@ function SharedAccessPanel({
 							onClick={onLeave}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							Leave Project
+							Leave project
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -1344,9 +1572,9 @@ function UseProjectWithAgentDialog({
 			qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(selectedAgentId) });
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			toast.success("Project linked", {
-				description: `${projectName}'s attached Vaults now participate in ${agentName}'s runtime resolution. Skills remain stored in the Project until separately installed on the Agent.`,
+				description: `${agentName} can now use ${projectName}'s Skills and attached Vaults.`,
 				action: {
-					label: "Open Agent",
+					label: "Open agent",
 					onClick: () =>
 						void router.navigate({ href: agentSectionHref(selectedAgentId, "projects") }),
 				},
@@ -1367,8 +1595,7 @@ function UseProjectWithAgentDialog({
 				<DialogHeader>
 					<DialogTitle>Link project to Agent</DialogTitle>
 					<DialogDescription>
-						Link {projectName} as a context Project. Attached Vaults join runtime resolution; Skills
-						remain stored here and must be installed on the Agent separately.
+						The Agent will use {projectName}&apos;s Skills and attached Vaults as one bundle.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -1447,9 +1674,9 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">This Project Is the Agent&apos;s Workspace</div>
+										<div className="font-medium">This is the Agent&apos;s Workspace</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											No context link is needed. Workspace Skills and Vaults are managed from the
+											No extra Project link is needed. Edit Workspace Skills and Vaults from the
 											Agent&apos;s Workspace section.
 										</p>
 									</div>
@@ -1458,10 +1685,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Already Linked</div>
+										<div className="font-medium">Already linked</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											Open the Agent&apos;s {AGENT_PROJECTS_SECTION_LABEL} section to review its
-											Vault resolution priority or unlink it.
+											Project order or unlink it.
 										</p>
 									</div>
 								</div>
@@ -1469,10 +1696,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Link as Project</div>
+										<div className="font-medium">Link project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Attached Vaults join the selected Agent&apos;s runtime resolution. Skills stay
-											stored in this Project until separately installed on the Agent.
+											The selected Agent will use this Project&apos;s Skills and attached Vaults
+											together.
 										</p>
 									</div>
 								</div>
@@ -1503,7 +1730,7 @@ function UseProjectWithAgentDialog({
 									}
 									nativeButton={false}
 								>
-									Open Projects
+									Open projects
 								</Button>
 							) : (
 								<Button
@@ -1528,131 +1755,19 @@ function UseProjectWithAgentDialog({
 	);
 }
 
-function InstallSkillInProjectDialog({
-	projectId,
-	open,
-	onOpenChange,
-	onChanged,
-}: {
-	projectId: string;
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
-	onChanged: () => void;
-}) {
-	const api = useApi();
-	const [repoInput, setRepoInput] = useState("");
-	const [error, setError] = useState<string | null>(null);
-	const install = useMutation({
-		mutationFn: async ({ repo, path }: { repo: string; path?: string }) =>
-			unwrap(
-				await api.POST("/v1/projects/{project_id}/skills/install", {
-					params: { path: { project_id: projectId } },
-					body: { repo, path },
-				}),
-			),
-		onSuccess: () => {
-			setRepoInput("");
-			setError(null);
-			onOpenChange(false);
-			onChanged();
-			toast.success("Skill installed", { description: "Saved in this Project." });
-		},
-		onError: (e) => {
-			setError(errorMessage(e));
-		},
-	});
-
-	const submit = () => {
-		setError(null);
-		const trimmed = repoInput.trim();
-		if (!trimmed) return;
-		const clean = trimmed.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
-		const parts = clean.split("/").filter(Boolean);
-		if (parts.length < 2) {
-			setError("Enter as `owner/repo` or `owner/repo/path-to-skill`.");
-			return;
-		}
-		install.mutate({
-			repo: `${parts[0]}/${parts[1]}`,
-			path: parts.length > 2 ? parts.slice(2).join("/") : undefined,
-		});
-	};
-
-	return (
-		<Dialog
-			open={open}
-			onOpenChange={(next) => {
-				if (install.isPending) return;
-				onOpenChange(next);
-			}}
-			onOpenChangeComplete={(next) => {
-				if (!next) {
-					setRepoInput("");
-					setError(null);
-				}
-			}}
-		>
-			<DialogContent className="sm:max-w-md">
-				<DialogHeader>
-					<DialogTitle>Install skill</DialogTitle>
-					<DialogDescription>Install a GitHub Skill into this Project.</DialogDescription>
-				</DialogHeader>
-				<div className="space-y-2">
-					<Label htmlFor={`project-skill-repo-${projectId}`}>GitHub skill repository</Label>
-					<Input
-						id={`project-skill-repo-${projectId}`}
-						name="project-skill-repo"
-						value={repoInput}
-						onChange={(e) => {
-							setRepoInput(e.target.value);
-							setError(null);
-						}}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && !install.isPending) submit();
-						}}
-						placeholder="owner/repo or owner/repo/path…"
-						autoComplete="off"
-						spellCheck={false}
-						aria-invalid={!!error || undefined}
-						className="min-w-0 flex-1"
-					/>
-					<p className="text-xs text-muted-foreground">
-						Use owner/repo or owner/repo/path-to-skill.
-					</p>
-					{error ? <p className="text-xs text-destructive">{error}</p> : null}
-				</div>
-				<DialogFooter>
-					<Button
-						variant="outline"
-						onClick={() => onOpenChange(false)}
-						disabled={install.isPending}
-					>
-						Cancel
-					</Button>
-					<Button onClick={submit} disabled={!repoInput.trim() || install.isPending}>
-						{install.isPending ? <Spinner /> : <Plus className="size-3.5" />}
-						Install skill
-					</Button>
-				</DialogFooter>
-			</DialogContent>
-		</Dialog>
-	);
-}
-
 function ProjectVaultActions({
 	projectId,
-	attachedVaultIds,
 	contextLabel,
 	onChanged,
 }: {
 	projectId: string;
-	attachedVaultIds: ReadonlySet<string>;
 	contextLabel: "Workspace" | "Project";
 	onChanged: () => void;
 }) {
 	const api = useApi();
-	const [slug, setSlug] = useState("");
+	const [vaultName, setVaultName] = useState("");
 	const [selectedVaultId, setSelectedVaultId] = useState("");
+	const [attachSearch, setAttachSearch] = useState("");
 	const [attachOpen, setAttachOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
 	const accountVaults = useQuery({
@@ -1669,9 +1784,15 @@ function ProjectVaultActions({
 				{ pageSize: 200, resourceName: "account Vaults" },
 			),
 	});
-	const attachableVaults = (accountVaults.data?.items ?? []).filter(
-		(vault) => vault.is_owner !== false && !attachedVaultIds.has(vault.id),
+	const availableVaults = (accountVaults.data?.items ?? []).filter(
+		(vault) => vault.is_owner !== false && !(vault.project_ids ?? []).includes(projectId),
 	);
+	const normalizedAttachSearch = attachSearch.trim().toLowerCase();
+	const attachableVaults = normalizedAttachSearch
+		? availableVaults.filter((vault) =>
+				[vault.name, vault.slug].join(" ").toLowerCase().includes(normalizedAttachSearch),
+			)
+		: availableVaults;
 	const attachableItems = attachableVaults.map((vault) => ({
 		value: vault.id,
 		label: vault.name,
@@ -1679,6 +1800,7 @@ function ProjectVaultActions({
 	const blockingAccountVaultsError = shouldBlockQueryError(accountVaults.error, accountVaults.data)
 		? accountVaults.error
 		: null;
+	const newVaultSlug = slugFromVaultName(vaultName);
 	const attach = useMutation({
 		mutationFn: async (vaultId: string) => {
 			const vault = attachableVaults.find((candidate) => candidate.id === vaultId);
@@ -1694,7 +1816,10 @@ function ProjectVaultActions({
 			setSelectedVaultId("");
 			setAttachOpen(false);
 			onChanged();
-			toast.success(`Vault attached to ${contextLabel}`);
+			toast.success(`Vault attached to ${contextLabel}`, {
+				description:
+					"Its key values stay protected, and attached Projects and Agents can use them.",
+			});
 		},
 		onError: (error) =>
 			toast.error(`Couldn't attach vault to ${contextLabel}`, {
@@ -1702,18 +1827,24 @@ function ProjectVaultActions({
 			}),
 	});
 	const create = useMutation({
-		mutationFn: async (nextSlug: string) =>
-			unwrap(
+		mutationFn: async (nextName: string) => {
+			const normalizedName = nextName.trim();
+			const slug = slugFromVaultName(normalizedName);
+			if (!slug) throw new Error("Use a Vault name containing letters or numbers");
+			return unwrap(
 				await api.POST("/v1/vault", {
 					params: { query: { project_id: projectId, create_only: true } },
-					body: { slug: nextSlug, name: nextSlug },
+					body: { slug, name: normalizedName },
 				}),
-			),
+			);
+		},
 		onSuccess: () => {
-			setSlug("");
+			setVaultName("");
 			setCreateOpen(false);
 			onChanged();
-			toast.success("Vault created", { description: `Attached to this ${contextLabel}.` });
+			toast.success(`Vault created for this ${contextLabel}`, {
+				description: "Its key values stay protected, and this Project or Workspace can use them.",
+			});
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
@@ -1735,7 +1866,10 @@ function ProjectVaultActions({
 				open={attachOpen}
 				onOpenChange={setAttachOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open) setSelectedVaultId("");
+					if (!open) {
+						setSelectedVaultId("");
+						setAttachSearch("");
+					}
 				}}
 			>
 				<DialogContent className="sm:max-w-md">
@@ -1763,7 +1897,7 @@ function ProjectVaultActions({
 								</Button>
 							</DialogFooter>
 						</div>
-					) : attachableVaults.length === 0 ? (
+					) : availableVaults.length === 0 ? (
 						<div className="space-y-4">
 							<p className="text-sm text-muted-foreground">
 								All account-owned Vaults are already attached to this {contextLabel}.
@@ -1782,28 +1916,46 @@ function ProjectVaultActions({
 								if (selectedVaultId && !attach.isPending) attach.mutate(selectedVaultId);
 							}}
 						>
-							<Label htmlFor={`project-vault-attachment-${projectId}`}>Existing Vault</Label>
-							<Select
-								items={attachableItems}
-								value={selectedVaultId}
-								onValueChange={(value) => {
-									if (value !== null) setSelectedVaultId(value);
-								}}
-							>
-								<SelectTrigger
-									id={`project-vault-attachment-${projectId}`}
-									className="min-w-0 flex-1"
-								>
-									<SelectValue placeholder="Choose a Vault…" />
-								</SelectTrigger>
-								<SelectContent>
-									{attachableVaults.map((vault) => (
-										<SelectItem key={vault.id} value={vault.id}>
-											{vault.name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+							<div className="space-y-1.5">
+								<Label htmlFor={`project-vault-search-${projectId}`}>Search Vaults</Label>
+								<Input
+									id={`project-vault-search-${projectId}`}
+									value={attachSearch}
+									onChange={(event) => {
+										setAttachSearch(event.target.value);
+										setSelectedVaultId("");
+									}}
+									placeholder="Search Vaults…"
+								/>
+							</div>
+							{attachableVaults.length === 0 ? (
+								<p className="text-sm text-muted-foreground">No Vaults match that search.</p>
+							) : (
+								<>
+									<Label htmlFor={`project-vault-attachment-${projectId}`}>Existing Vault</Label>
+									<Select
+										items={attachableItems}
+										value={selectedVaultId}
+										onValueChange={(value) => {
+											if (value !== null) setSelectedVaultId(value);
+										}}
+									>
+										<SelectTrigger
+											id={`project-vault-attachment-${projectId}`}
+											className="min-w-0 flex-1"
+										>
+											<SelectValue placeholder="Choose a Vault…" />
+										</SelectTrigger>
+										<SelectContent>
+											{attachableVaults.map((vault) => (
+												<SelectItem key={vault.id} value={vault.id}>
+													{vault.name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</>
+							)}
 							<DialogFooter>
 								<Button type="button" variant="ghost" onClick={() => setAttachOpen(false)}>
 									Cancel
@@ -1822,44 +1974,51 @@ function ProjectVaultActions({
 				open={createOpen}
 				onOpenChange={setCreateOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open) setSlug("");
+					if (!open) setVaultName("");
 				}}
 			>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
 						<DialogTitle>Create vault</DialogTitle>
 						<DialogDescription>
-							Create an account-owned Vault and attach it to this {contextLabel}.
+							Create an account-owned Vault for this {contextLabel}. It will also remain available
+							in your Vault library.
 						</DialogDescription>
 					</DialogHeader>
 					<form
 						className="space-y-4"
 						onSubmit={(event) => {
 							event.preventDefault();
-							if (slug && !create.isPending) create.mutate(slug);
+							if (vaultName.trim() && newVaultSlug && !create.isPending) {
+								create.mutate(vaultName);
+							}
 						}}
 					>
 						<div className="grid gap-2">
-							<Label htmlFor={`project-vault-slug-${projectId}`}>Vault name</Label>
+							<Label htmlFor={`project-vault-name-${projectId}`}>Vault name</Label>
 							<Input
-								id={`project-vault-slug-${projectId}`}
-								name="project-vault-slug"
-								value={slug}
-								onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-								placeholder="github…"
+								id={`project-vault-name-${projectId}`}
+								name="project-vault-name"
+								value={vaultName}
+								onChange={(event) => setVaultName(event.target.value)}
+								placeholder="Production credentials…"
 								autoComplete="off"
-								spellCheck={false}
 								className="min-w-0 flex-1"
 							/>
-							<p className="text-xs text-muted-foreground">
-								Use lowercase letters, numbers, and hyphens. Add keys from the Vault library later.
-							</p>
+							{vaultName.trim() && !newVaultSlug ? (
+								<p className="text-xs text-destructive">
+									Use a name containing letters or numbers.
+								</p>
+							) : null}
 						</div>
 						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
 								Cancel
 							</Button>
-							<Button type="submit" disabled={!slug || create.isPending}>
+							<Button
+								type="submit"
+								disabled={!vaultName.trim() || !newVaultSlug || create.isPending}
+							>
 								{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}
 								Create vault
 							</Button>

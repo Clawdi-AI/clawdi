@@ -61,7 +61,6 @@ export function CopyKeysDialog({
 	const [targetChoice, setTargetChoice] = useState("");
 	const [newVaultName, setNewVaultName] = useState("");
 
-	const anyProjectId = vault.project_ids?.[0];
 	const attachedCount = vault.project_ids?.length ?? 0;
 	const verb = mode === "move" ? "Move" : "Copy";
 
@@ -71,14 +70,6 @@ export function CopyKeysDialog({
 		{
 			params: { query: { page_size: 200 } },
 		},
-		{
-			enabled: open,
-		},
-	);
-	const projectsQuery = $api.useQuery(
-		"get",
-		"/v1/projects",
-		{},
 		{
 			enabled: open,
 		},
@@ -108,28 +99,11 @@ export function CopyKeysDialog({
 	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
 	const newVaultSlugTaken =
 		creatingNewVault && newVaultSlug.length > 0 && ownVaults.some((v) => v.slug === newVaultSlug);
-	const writableProject = useMemo(
-		() =>
-			(projectsQuery.data ?? []).find((p) => p.kind === "personal") ??
-			(projectsQuery.data ?? []).find((p) => p.is_owner !== false),
-		[projectsQuery.data],
-	);
-	const newVaultPending = creatingNewVault && (vaultsQuery.isLoading || projectsQuery.isLoading);
+	const newVaultPending = creatingNewVault && vaultsQuery.isLoading;
 	const blockingVaultsError = shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data)
 		? vaultsQuery.error
 		: null;
-	const blockingProjectsError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
-		? projectsQuery.error
-		: null;
-	const newVaultUnavailable =
-		creatingNewVault &&
-		!projectsQuery.isLoading &&
-		!vaultsQuery.isLoading &&
-		!blockingProjectsError &&
-		!blockingVaultsError &&
-		writableProject === undefined;
-	const destinationLoadError =
-		blockingVaultsError ?? (creatingNewVault ? blockingProjectsError : null);
+	const destinationLoadError = blockingVaultsError;
 	const canRun =
 		keys.length > 0 &&
 		!destinationLoadError &&
@@ -139,7 +113,6 @@ export function CopyKeysDialog({
 			newVaultSlug,
 			newVaultSlugTaken,
 			newVaultPending,
-			newVaultUnavailable,
 		);
 
 	const run = useMutation({
@@ -154,10 +127,9 @@ export function CopyKeysDialog({
 				if (ownVaults.some((v) => v.slug === targetSlug)) {
 					throw new Error("A vault with that name already exists");
 				}
-				if (!writableProject) throw new Error("No writable Project available yet");
 				const created = unwrap(
 					await api.POST("/v1/vault", {
-						params: { query: { project_id: writableProject.id, create_only: true } },
+						params: { query: { create_only: true } },
 						body: { slug: targetSlug, name },
 					}),
 				);
@@ -184,7 +156,6 @@ export function CopyKeysDialog({
 								params: {
 									path: { slug: vault.slug },
 									query: {
-										project_id: anyProjectId ?? undefined,
 										vault_id: vault.id,
 										target_vault_id: targetVaultId,
 									},
@@ -206,7 +177,6 @@ export function CopyKeysDialog({
 										params: {
 											path: { slug: vault.slug },
 											query: {
-												project_id: anyProjectId ?? undefined,
 												vault_id: vault.id,
 												global_delete: true,
 											},
@@ -319,11 +289,6 @@ export function CopyKeysDialog({
 										That vault already exists. Choose it from the list or use a different name.
 									</p>
 								) : null}
-								{newVaultUnavailable ? (
-									<p className="max-w-44 text-xs text-destructive">
-										No writable Project is available yet.
-									</p>
-								) : null}
 							</div>
 						) : null}
 					</div>
@@ -332,7 +297,6 @@ export function CopyKeysDialog({
 							error={destinationLoadError}
 							onRetry={() => {
 								if (vaultsQuery.error) void vaultsQuery.refetch();
-								if (creatingNewVault && projectsQuery.error) void projectsQuery.refetch();
 							}}
 							title="Couldn't load destinations"
 						/>
@@ -370,14 +334,9 @@ function runIsBlockedForNewVault(
 	newVaultSlug: string,
 	newVaultSlugTaken: boolean,
 	newVaultPending: boolean,
-	newVaultUnavailable: boolean,
 ): boolean {
 	return (
 		creatingNewVault &&
-		(!newVaultName.trim() ||
-			!newVaultSlug ||
-			newVaultSlugTaken ||
-			newVaultPending ||
-			newVaultUnavailable)
+		(!newVaultName.trim() || !newVaultSlug || newVaultSlugTaken || newVaultPending)
 	);
 }

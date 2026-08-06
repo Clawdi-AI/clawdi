@@ -24,6 +24,7 @@ import { releaseManagedSkill, reserveManagedSkill } from "../runtime/managed-ski
 import { RetryQueue } from "./queue";
 import {
 	classifyHeartbeatFailure,
+	connectedProjectSkillDeliveryEnabled,
 	enqueueChangedSessionsAfterStability,
 	filterValidSkillKeysForSync,
 	heartbeatDelayMs,
@@ -1223,10 +1224,18 @@ describe("live-sync transient failure classification", () => {
 });
 
 describe("reconcileDelayMs", () => {
-	it("keeps cloud reconcile on the safety-net cadence", () => {
+	it("renews the Connected capability lease inside its ten-minute freshness window", () => {
 		expect(reconcileDelayMs(() => 0)).toBe(240_000);
 		expect(reconcileDelayMs(() => 0.5)).toBe(300_000);
 		expect(reconcileDelayMs(() => 1)).toBe(360_000);
+		expect(reconcileDelayMs(() => 1)).toBeLessThan(10 * 60_000);
+	});
+
+	it("keeps Legacy V1 and Hosted V2 deployments off the Connected lease path", () => {
+		expect(connectedProjectSkillDeliveryEnabled("hosted")).toBe(false);
+		expect(connectedProjectSkillDeliveryEnabled(" HOSTED ")).toBe(false);
+		expect(connectedProjectSkillDeliveryEnabled("local")).toBe(true);
+		expect(connectedProjectSkillDeliveryEnabled(undefined)).toBe(true);
 	});
 });
 

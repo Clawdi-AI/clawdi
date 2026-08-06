@@ -100,7 +100,8 @@ async def test_dashboard_stats_uses_bounded_database_round_trips(
     assert data["peak_hour"] == seeded_now.hour
     assert data["current_streak"] == 3
     assert data["longest_streak"] == 4
-    assert data["skills_count"] == 1
+    assert data["projects_count"] == 0
+    assert data["skills_count"] == 0
     assert data["memories_count"] == 1
     assert data["vault_count"] == 1
     assert data["vault_keys_count"] == 1
@@ -237,7 +238,8 @@ async def test_dashboard_stats_matches_visible_inventory_and_one_week_started_at
     assert data["automated_sessions_last_7_days"] == 1
     assert data["top_model_last_7_days"] == "weekly-model"
     assert data["sessions_today"] == 1
-    assert data["skills_count"] == 2
+    assert data["projects_count"] == 1
+    assert data["skills_count"] == 1
     assert data["vault_count"] == 2
 
 

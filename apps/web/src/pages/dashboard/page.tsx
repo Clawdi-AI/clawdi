@@ -15,7 +15,7 @@ import {
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { type AgentGreetingState, agentGreetingSummary } from "@/components/dashboard/greeting";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
-import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
+import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
@@ -31,24 +31,7 @@ import { cn } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
 const RECENT_SESSIONS_CACHE_PAGE_SIZE = 25;
-const DASHBOARD_STALE_MS = 30_000;
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
-
-function countProjectTypes(
-	projects: Array<{ kind?: string | null }> | undefined,
-): ProjectTypeCounts {
-	const counts: ProjectTypeCounts = { custom: 0, global: 0, agent: 0 };
-	for (const project of projects ?? []) {
-		if (project.kind === "personal") {
-			counts.global += 1;
-		} else if (project.kind === "environment") {
-			counts.agent += 1;
-		} else {
-			counts.custom += 1;
-		}
-	}
-	return counts;
-}
 
 // Lazy imports gated on a build-time hosted flag. When the flag is false (OSS),
 // the conditional collapses, the bundler eliminates the `import()` sites, and
@@ -103,20 +86,6 @@ export default function DashboardPage() {
 	);
 
 	const {
-		data: projects,
-		isLoading: projectsLoading,
-		error: projectsError,
-		refetch: refetchProjects,
-	} = $api.useQuery(
-		"get",
-		"/v1/projects",
-		{},
-		{
-			staleTime: DASHBOARD_STALE_MS,
-		},
-	);
-
-	const {
 		data: environments,
 		isLoading: envsLoading,
 		error: envsError,
@@ -152,9 +121,6 @@ export default function DashboardPage() {
 	const sessions = sessionsPage?.items.slice(0, RECENT_SESSIONS_LIMIT);
 	const contribution = stats?.contribution;
 	const blockingStatsError = shouldBlockQueryError(statsError, stats) ? statsError : null;
-	const blockingProjectsError = shouldBlockQueryError(projectsError, projects)
-		? projectsError
-		: null;
 	const blockingEnvsError = shouldBlockQueryError(envsError, environments) ? envsError : null;
 	const blockingSessionsError = shouldBlockQueryError(sessionsError, sessionsPage)
 		? sessionsError
@@ -175,10 +141,6 @@ export default function DashboardPage() {
 	const selfManagedCount = selfManagedTiles.length;
 	const hasAgents = !envsLoading && !blockingEnvsError && selfManagedCount > 0;
 	const ossIsEmptyState = !envsLoading && !blockingEnvsError && selfManagedCount === 0;
-	const projectTypeCounts = useMemo(
-		() => (projects ? countProjectTypes(projects) : undefined),
-		[projects],
-	);
 	const hostedAccessLoading = Boolean(HostedAgentsSection && hostedAccess.isLoading);
 	const cloudDeploymentManagementEnabled = Boolean(HostedAgentsSection);
 	const legacyHostedAgentsEnabled = Boolean(
@@ -340,13 +302,6 @@ export default function DashboardPage() {
 						statsError={blockingStatsError}
 						onRetryStats={() => {
 							void refetchStats();
-						}}
-						projectCount={projects?.length}
-						projectTypeCounts={projectTypeCounts}
-						projectCountLoading={projectsLoading}
-						projectCountError={blockingProjectsError}
-						onRetryProjectCount={() => {
-							void refetchProjects();
 						}}
 					/>
 					<ThisWeekCard

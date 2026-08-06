@@ -1,3 +1,4 @@
+import type { LinkProps } from "@tanstack/react-router";
 import { FolderKanban } from "lucide-react";
 import type { ReactNode } from "react";
 import { HERO_CARD_BASE, HeroCard } from "@/components/entity-card";
@@ -7,7 +8,7 @@ import {
 	isProjectOwner,
 	ProjectKindBadge,
 	type ProjectMetadata,
-	projectAlias,
+	projectSupportingText,
 } from "@/components/projects/project-metadata";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +31,7 @@ export function ProjectResourceCard({
 	actions,
 	showKind = false,
 	navigationScope = LIBRARY_RESOURCE_SCOPE,
+	link,
 	className,
 }: {
 	project: ProjectMetadata;
@@ -37,6 +39,8 @@ export function ProjectResourceCard({
 	actions?: ReactNode;
 	showKind?: boolean;
 	navigationScope?: ResourceNavigationScope;
+	/** Optional collection-local destination while retaining the canonical card. */
+	link?: Pick<LinkProps, "to" | "params" | "search" | "hash">;
 	className?: string;
 }) {
 	const projectName = displayProjectName(project);
@@ -58,11 +62,11 @@ export function ProjectResourceCard({
 					</>
 				) : undefined
 			}
-			description={projectAlias(project)}
-			descriptionClassName="truncate font-mono"
+			description={projectSupportingText(project)}
+			descriptionClassName="truncate"
 			footer={footer}
 			actions={actions}
-			link={project.id ? projectDetailLink(navigationScope, project.id) : undefined}
+			link={link ?? (project.id ? projectDetailLink(navigationScope, project.id) : undefined)}
 			ariaLabel={`Open ${projectName}`}
 			className={className}
 		/>
@@ -70,11 +74,9 @@ export function ProjectResourceCard({
 }
 
 export function UnavailableProjectResourceCard({
-	projectId,
 	footer,
 	actions,
 }: {
-	projectId: string;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
 }) {
@@ -85,7 +87,7 @@ export function UnavailableProjectResourceCard({
 					<FolderKanban />
 				</IconChip>
 			}
-			title={projectId}
+			title="Unavailable Project"
 			badges={<Badge variant="outline">Access unavailable</Badge>}
 			footer={footer}
 			actions={actions}

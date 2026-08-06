@@ -1,4 +1,4 @@
-import { Bot, FolderKanban, Globe2, type LucideIcon } from "lucide-react";
+import { Bot, FolderKanban, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { agentIdentity } from "@/components/dashboard/agent-label";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ export interface ProjectMetadata {
 	id?: string;
 	name: string;
 	slug: string;
+	description?: string | null;
 	kind?: string;
 	origin_environment_id?: string | null;
 	is_owner?: boolean;
@@ -40,19 +41,7 @@ export function isProjectOwner(project: Pick<ProjectMetadata, "is_owner">): bool
 }
 
 export function displayProjectName(project: Pick<ProjectMetadata, "kind" | "name" | "slug">) {
-	if (
-		project.kind === "personal" &&
-		(project.slug === "personal" || ["default", "personal"].includes(project.name.toLowerCase()))
-	) {
-		return "Global";
-	}
 	return project.name;
-}
-
-export function projectAlias(project: Pick<ProjectMetadata, "slug" | "is_owner" | "owner_handle">) {
-	return !isProjectOwner(project) && project.owner_handle
-		? `@${project.owner_handle}/${project.slug}`
-		: project.slug;
 }
 
 function projectOwnerLabel(project: ProjectMetadata) {
@@ -60,12 +49,16 @@ function projectOwnerLabel(project: ProjectMetadata) {
 	return project.owner_display ?? project.owner_handle ?? "Unknown";
 }
 
-export function isCustomProject(project: Pick<ProjectMetadata, "kind">): boolean {
-	return project.kind === "workspace" || !project.kind;
+export function projectSupportingText(project: ProjectMetadata) {
+	const description = project.description?.trim();
+	if (description) return description;
+	if (!isProjectOwner(project)) return `Shared by ${projectOwnerLabel(project)}`;
+	if (project.kind === "environment") return "Private Agent Workspace";
+	return "Project you own";
 }
 
-export function isManagedProject(project: Pick<ProjectMetadata, "kind">): boolean {
-	return project.kind === "environment" || project.kind === "personal";
+export function isCustomProject(project: Pick<ProjectMetadata, "kind">): boolean {
+	return project.kind === "workspace" || !project.kind;
 }
 
 export function projectKindSortRank(kind?: string): number {
@@ -91,9 +84,7 @@ export function ProjectIdentity({
 	className,
 	badges,
 	showKind = true,
-	showOwner = true,
 	showAccess = true,
-	showAlias = true,
 	showAgent = true,
 	showIcon = true,
 	titleClassName,
@@ -103,16 +94,14 @@ export function ProjectIdentity({
 	className?: string;
 	badges?: ReactNode;
 	showKind?: boolean;
-	showOwner?: boolean;
 	showAccess?: boolean;
-	showAlias?: boolean;
 	showAgent?: boolean;
 	showIcon?: boolean;
 	titleClassName?: string;
 }) {
 	const projectAgent = showAgent && project.kind === "environment" ? agent : null;
-	const showOwnerLine = showOwner && !isProjectOwner(project);
 	const agentLine = projectAgent ? projectAgentLabel(projectAgent) : null;
+	const supportingText = projectSupportingText(project);
 	return (
 		<div className={cn("flex min-w-0 items-start gap-3", className)}>
 			{showIcon ? <ProjectIcon project={project} agent={agent} /> : null}
@@ -128,16 +117,9 @@ export function ProjectIdentity({
 					{badges}
 					{showAccess ? <ProjectAccessBadge project={project} /> : null}
 				</div>
-				{showAlias || showOwnerLine || projectAgent ? (
+				{supportingText || projectAgent ? (
 					<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-						{showAlias ? (
-							<span className="min-w-0 truncate font-mono" translate="no">
-								{projectAlias(project)}
-							</span>
-						) : null}
-						{showOwnerLine ? (
-							<span className="truncate">Owner: {projectOwnerLabel(project)}</span>
-						) : null}
+						<span className="min-w-0 truncate">{supportingText}</span>
 						{agentLine ? (
 							<span className="min-w-0 truncate" translate="no">
 								Agent: {agentLine}
@@ -242,13 +224,14 @@ export function ProjectScopePicker({
 	className?: string;
 	triggerClassName?: string;
 }) {
-	const selectedProject = projects.find((project) => project.id === value) ?? null;
+	const visibleProjects = projects.filter((project) => project.kind !== "personal");
+	const selectedProject = visibleProjects.find((project) => project.id === value) ?? null;
 	const agentsById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
 	const selectedAgent = selectedProject ? projectAgentFor(selectedProject, agentsById) : null;
-	const groupedProjects = projectPickerGroups(projects);
+	const groupedProjects = projectPickerGroups(visibleProjects);
 	const projectItems = [
 		...(allowAll ? [{ value: "all", label: allLabel }] : []),
-		...projects.flatMap((project) =>
+		...visibleProjects.flatMap((project) =>
 			project.id ? [{ value: project.id, label: displayProjectName(project) }] : [],
 		),
 	];
@@ -356,11 +339,12 @@ export function ProjectCompactPicker({
 	disabled?: boolean;
 	className?: string;
 }) {
-	const selectedProject = projects.find((project) => project.id === value) ?? null;
+	const visibleProjects = projects.filter((project) => project.kind !== "personal");
+	const selectedProject = visibleProjects.find((project) => project.id === value) ?? null;
 	const agentsById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
 	const projectItems = [
 		...(allowAll ? [{ value: "all", label: allLabel }] : []),
-		...projects.flatMap((project) =>
+		...visibleProjects.flatMap((project) =>
 			project.id ? [{ value: project.id, label: displayProjectName(project) }] : [],
 		),
 	];
@@ -419,14 +403,13 @@ export function ProjectCompactPicker({
 						</div>
 					</SelectItem>
 				) : null}
-				{allowAll && projects.length > 0 ? <SelectSeparator /> : null}
-				{projects.map((project) =>
+				{allowAll && visibleProjects.length > 0 ? <SelectSeparator /> : null}
+				{visibleProjects.map((project) =>
 					project.id ? (
 						<SelectItem key={project.id} value={project.id} className="py-2">
 							<ProjectIdentity
 								project={project}
 								agent={projectAgentFor(project, agentsById)}
-								showOwner={false}
 								showAccess
 								titleClassName="text-sm"
 							/>
@@ -452,14 +435,8 @@ function ProjectPickerValue({
 				<span className="truncate text-sm leading-5 font-semibold">
 					{displayProjectName(project)}
 				</span>
-				<span className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
-					<span className="shrink-0">{projectPickerTypeText(project)}</span>
-					<span aria-hidden="true" className="text-muted-foreground/60">
-						·
-					</span>
-					<span className="min-w-0 truncate font-mono" translate="no">
-						{projectAlias(project)}
-					</span>
+				<span className="min-w-0 truncate text-xs leading-4 text-muted-foreground">
+					{projectSupportingText(project)}
 				</span>
 			</span>
 		</span>
@@ -482,9 +459,7 @@ function ProjectPickerOption({
 					<ProjectTypeBadge project={project} />
 				</div>
 				<div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-					<span className="min-w-0 truncate font-mono" translate="no">
-						{projectAlias(project)}
-					</span>
+					<span className="min-w-0 truncate">{projectSupportingText(project)}</span>
 					<span className="shrink-0">·</span>
 					<span className="shrink-0">{projectPickerAccessText(project)}</span>
 					{project.kind === "environment" && agent ? (
@@ -530,11 +505,6 @@ function ProjectPickerAllItem({
 	);
 }
 
-function projectPickerTypeText(project: ProjectMetadata) {
-	if (project.is_owner === false) return "Shared Project";
-	return ownedProjectKindText(project, "full");
-}
-
 function projectCompactKindText(project: ProjectMetadata) {
 	if (project.is_owner === false) return "Shared";
 	return ownedProjectKindText(project, "compact");
@@ -542,14 +512,13 @@ function projectCompactKindText(project: ProjectMetadata) {
 
 function ownedProjectKindText(
 	project: Pick<ProjectMetadata, "kind">,
-	variant: "full" | "compact" | "badge",
+	_variant: "full" | "compact" | "badge",
 ) {
 	if (project.kind === "workspace" || !project.kind) {
-		return variant === "full" ? "Custom Project" : "Custom";
+		return "Project";
 	}
-	if (project.kind === "personal") return variant === "full" ? "Global Project" : "Global";
+	if (project.kind === "personal") return "Private resources";
 	if (project.kind === "environment") return "Workspace";
-	if (variant === "badge" && project.kind) return project.kind;
 	return "Project";
 }
 
@@ -577,7 +546,7 @@ function ProjectTypeBadge({
 function projectPickerAccessText(project: ProjectMetadata) {
 	if (project.is_owner === false) return "Viewer";
 	if (project.kind === "workspace" || !project.kind) return "Owner";
-	return "Managed";
+	return "Owner";
 }
 
 export function projectKindMeta(kind: string): {
@@ -590,8 +559,8 @@ export function projectKindMeta(kind: string): {
 } {
 	if (kind === "workspace") {
 		return {
-			label: "Custom Project",
-			groupLabel: "Custom Projects",
+			label: "Project",
+			groupLabel: "Projects",
 			description: "Project you create for a workflow, team, or shareable resources.",
 			icon: FolderKanban,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
@@ -601,8 +570,8 @@ export function projectKindMeta(kind: string): {
 	if (kind === "environment") {
 		return {
 			label: "Workspace",
-			groupLabel: "Managed Projects",
-			description: "Workspace managed for one connected Agent.",
+			groupLabel: "Agent Workspaces",
+			description: "Private Workspace permanently used by one Agent.",
 			icon: Bot,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
 			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
@@ -610,18 +579,18 @@ export function projectKindMeta(kind: string): {
 	}
 	if (kind === "personal") {
 		return {
-			label: "Global Project",
-			groupLabel: "Managed Projects",
-			description: "Project for account resources not tied to one Agent or workflow.",
-			icon: Globe2,
+			label: "Private resources",
+			groupLabel: "Private resources",
+			description: "Private account resources.",
+			icon: FolderKanban,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
 			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
 		};
 	}
 	return {
-		label: kind,
-		groupLabel: "Other Projects",
-		description: `Project type: ${kind}`,
+		label: "Project",
+		groupLabel: "Projects",
+		description: "Resource bundle.",
 		icon: FolderKanban,
 		iconClassName: "border-border bg-muted/30 text-muted-foreground",
 		badgeClassName: "border-border bg-muted/30 text-muted-foreground",
@@ -655,14 +624,14 @@ function projectPickerGroups(projects: ProjectMetadata[]) {
 	const shared = projects.filter((project) => !isProjectOwner(project));
 	const groups = [
 		{
-			id: "custom",
-			label: "Custom Projects",
+			id: "projects",
+			label: "Projects",
 			projects: owned.filter(isCustomProject),
 		},
 		{
-			id: "managed",
-			label: "Managed Projects",
-			projects: owned.filter(isManagedProject),
+			id: "workspaces",
+			label: "Agent Workspaces",
+			projects: owned.filter((project) => project.kind === "environment"),
 		},
 		{
 			id: "other",

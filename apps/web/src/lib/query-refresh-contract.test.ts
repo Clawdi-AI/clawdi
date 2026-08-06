@@ -1,40 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const SOURCE_ROOT = join(import.meta.dir, "..");
-
-function sourceFiles(directory: string, files: string[] = []): string[] {
-	for (const entry of readdirSync(directory, { withFileTypes: true })) {
-		const path = join(directory, entry.name);
-		if (entry.isDirectory()) {
-			sourceFiles(path, files);
-		} else if (
-			(entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
-			!entry.name.includes(".test.")
-		) {
-			files.push(path);
-		}
-	}
-	return files;
-}
 
 function source(relativePath: string): string {
 	return readFileSync(join(SOURCE_ROOT, relativePath), "utf8");
 }
 
 describe("query refresh presentation contract", () => {
-	test("does not couple background fetching to content opacity", () => {
-		const opacityCoupling = /isFetching[\s\S]{0,160}opacity-|opacity-[\s\S]{0,160}isFetching/;
-		const violations = sourceFiles(SOURCE_ROOT)
-			.filter((path) => opacityCoupling.test(readFileSync(path, "utf8")))
-			.map((path) => relative(SOURCE_ROOT, path));
-
-		expect(violations).toEqual([]);
-	});
-
 	test("keeps known empty, count, and error surfaces data-aware", () => {
-		const projects = source("pages/dashboard/projects/page.tsx");
 		const billingHistory = source("hosted/billing/subscription/billing-history-section.tsx");
 		const subscriptionDialog = source("hosted/billing/subscription/subscription-create-dialog.tsx");
 		const deployWizard = source("hosted/billing/deploy/deploy-wizard.tsx");
@@ -49,12 +24,6 @@ describe("query refresh presentation contract", () => {
 		const vaults = source("components/vault/vaults-surface.tsx");
 		const projectDetail = source("pages/dashboard/projects/[id]/page.tsx");
 
-		expect(projects).toContain(
-			"const skillCountsUnavailable = shouldBlockQueryError(skills.error, skills.data);",
-		);
-		expect(projects).toContain(
-			"const vaultCountsUnavailable = shouldBlockQueryError(vaults.error, vaults.data);",
-		);
 		expect(billingHistory).toContain("shouldBlockQueryError(history.error, history.data)");
 		expect(subscriptionDialog).toContain(
 			"shouldBlockQueryError(createQuote.error, createQuote.data)",

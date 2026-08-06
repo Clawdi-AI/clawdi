@@ -28,7 +28,10 @@ export function hasAsciiControlCharacter(value: string): boolean {
 export async function readBoundedResponseBytes(
 	response: Response,
 	maxBytes: number,
+	options: { resourceLabel?: string; limitLabel?: string } = {},
 ): Promise<Buffer> {
+	const resourceLabel = options.resourceLabel ?? "GitHub archive";
+	const limitLabel = options.limitLabel ?? "100 MB";
 	if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
 		throw new Error("Response byte limit must be a positive safe integer.");
 	}
@@ -40,10 +43,10 @@ export async function readBoundedResponseBytes(
 		}
 		if (declaredBytes > maxBytes) {
 			await response.body?.cancel("response exceeds byte limit");
-			throw new Error("GitHub archive exceeds the 100 MB download limit.");
+			throw new Error(`${resourceLabel} exceeds the ${limitLabel} download limit.`);
 		}
 	}
-	if (!response.body) throw new Error("GitHub archive response has no body.");
+	if (!response.body) throw new Error(`${resourceLabel} response has no body.`);
 
 	const reader = response.body.getReader();
 	const chunks: Uint8Array[] = [];
@@ -55,7 +58,7 @@ export async function readBoundedResponseBytes(
 			receivedBytes += next.value.byteLength;
 			if (receivedBytes > maxBytes) {
 				await reader.cancel("response exceeds byte limit");
-				throw new Error("GitHub archive exceeds the 100 MB download limit.");
+				throw new Error(`${resourceLabel} exceeds the ${limitLabel} download limit.`);
 			}
 			chunks.push(next.value);
 		}

@@ -9,7 +9,6 @@ import { IconChip } from "@/components/icon-chip";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/api-schemas";
@@ -26,11 +25,7 @@ type SkillLinkBuilder = (skill: SkillSummary) => SkillLinkOptions | null;
 /* Skills are objects, not spreadsheet rows — they get the same card
  * treatment as projects and vaults: emoji identity tile, name, version,
  * description, quiet meta footer ("why so many list designs?" — Marvin).
- *
- * Select mode turns the whole card into a checkbox: curation (batch-move
- * skills out of agent projects into a named Project) is the highest-value
- * job on this page, so selection must be a primary gesture, not a
- * hover-discovered one. */
+ */
 
 export function SkillCard({
 	skill,
@@ -41,10 +36,6 @@ export function SkillCard({
 	actions,
 	onUninstall,
 	uninstallPending = false,
-	selectMode = false,
-	selected = false,
-	onToggleSelect,
-	selectable = true,
 	sourceLabel,
 	skillLink,
 }: {
@@ -57,10 +48,6 @@ export function SkillCard({
 	actions?: ReactNode;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
-	selectMode?: boolean;
-	selected?: boolean;
-	onToggleSelect?: (skill: SkillSummary) => void;
-	selectable?: boolean;
 	/** Provenance chip for cross-project views: where this copy lives. */
 	sourceLabel?: { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
@@ -81,8 +68,7 @@ export function SkillCard({
 	return (
 		<HeroCard
 			className="min-h-28 gap-2"
-			selected={selectMode && selected}
-			interactive={!selectMode && Boolean(detailLink)}
+			interactive={Boolean(detailLink)}
 			icon={
 				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
 					{id.emoji}
@@ -116,71 +102,45 @@ export function SkillCard({
 						<span className="truncate">{sourceLabel.name}</span>
 					</span>
 				) : null,
-				skill.source_repo || skill.source ? (
+				skill.source_repo ? (
 					<span key="source" className="font-mono" translate="no">
-						{skill.source_repo ?? skill.source}
+						{skill.source_repo}
 					</span>
 				) : null,
 				skill.updated_at ? relativeTime(skill.updated_at) : null,
 			]}
 			actions={
-				selectMode ? (
-					selectable ? (
-						<Checkbox
-							checked={selected}
-							tabIndex={-1}
-							aria-hidden
-							className="pointer-events-none shrink-0"
-						/>
-					) : null
-				) : (
-					<div className="flex items-center gap-0.5 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
-						{actions}
-						{canSend && cloudSkill ? <SendSkillDialog skills={[cloudSkill]} /> : null}
-						{canUninstall ? (
-							<ConfirmAction
-								title={`Remove ${skill.name} from Project?`}
-								description={<p>Other Projects keep their copies.</p>}
-								confirmLabel="Remove from Project"
-								destructive
-								onConfirm={() => {
-									if (cloudSkill?.project_id) {
-										onUninstall?.(cloudSkill.skill_key, cloudSkill.project_id);
-									}
-								}}
+				<div className="flex items-center gap-0.5 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
+					{actions}
+					{canSend && cloudSkill ? <SendSkillDialog skill={cloudSkill} /> : null}
+					{canUninstall ? (
+						<ConfirmAction
+							title={`Remove ${skill.name} from Project?`}
+							description={<p>Other Projects keep their copies.</p>}
+							confirmLabel="Remove from project"
+							destructive
+							onConfirm={() => {
+								if (cloudSkill?.project_id) {
+									onUninstall?.(cloudSkill.skill_key, cloudSkill.project_id);
+								}
+							}}
+						>
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								disabled={uninstallPending}
+								className="text-muted-foreground hover:text-destructive"
+								aria-label={`Remove ${skill.name} from Project`}
 							>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									disabled={uninstallPending}
-									className="text-muted-foreground hover:text-destructive"
-									aria-label={`Remove ${skill.name} from Project`}
-								>
-									<Trash2 className="size-3.5" />
-								</Button>
-							</ConfirmAction>
-						) : null}
-					</div>
-				)
+								<Trash2 className="size-3.5" />
+							</Button>
+						</ConfirmAction>
+					) : null}
+				</div>
 			}
-			link={selectMode ? undefined : detailLink}
+			link={detailLink}
 			ariaLabel={`Open ${skill.name}`}
-		>
-			{selectMode && selectable ? (
-				<button
-					type="button"
-					onClick={() => {
-						if (cloudSkill) onToggleSelect?.(cloudSkill);
-					}}
-					aria-pressed={selected}
-					className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-				>
-					<span className="sr-only">
-						{selected ? "Deselect" : "Select"} {skill.name}
-					</span>
-				</button>
-			) : null}
-		</HeroCard>
+		/>
 	);
 }
 
@@ -193,9 +153,6 @@ export function SkillCardGrid({
 	capabilitiesFor,
 	onUninstall,
 	uninstallPending,
-	selectMode = false,
-	selectedKeys,
-	onToggleSelect,
 	sourceLabelFor,
 	skillLink,
 	actionsFor,
@@ -211,10 +168,6 @@ export function SkillCardGrid({
 	capabilitiesFor?: (skill: SkillSummary) => SkillCapabilities;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
-	selectMode?: boolean;
-	/** Selection identity: `${project_id}:${skill_key}` (see skillSelectionKey). */
-	selectedKeys?: Set<string>;
-	onToggleSelect?: (skill: SkillSummary) => void;
 	sourceLabelFor?: (skill: SkillSummary) => { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
 	skillLink?: SkillLinkBuilder;
@@ -251,10 +204,6 @@ export function SkillCardGrid({
 						actions={actionsFor?.(skill)}
 						onUninstall={onUninstall}
 						uninstallPending={uninstallPending}
-						selectMode={selectMode}
-						selectable={capabilities?.canSelect ?? !readOnly}
-						selected={selectedKeys?.has(skillSelectionKey(skill)) ?? false}
-						onToggleSelect={onToggleSelect}
 						sourceLabel={sourceLabelFor?.(skill) ?? null}
 						skillLink={skillLink}
 					/>
@@ -264,6 +213,6 @@ export function SkillCardGrid({
 	);
 }
 
-export function skillSelectionKey(skill: SkillSummary): string {
+function skillSelectionKey(skill: SkillSummary): string {
 	return `${skill.project_id ?? "unknown"}:${skill.skill_key}`;
 }

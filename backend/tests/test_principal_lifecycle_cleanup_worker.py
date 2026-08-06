@@ -5,10 +5,15 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.models.agent_project_binding import AgentProjectBinding
 from app.models.principal_lifecycle import PrincipalLifecycle
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.project_membership import ProjectMembership
+from app.models.user import User
+from app.services import sync_events
 from app.services.principal_lifecycle import (
     PRINCIPAL_CLEANUP_CLAIM_LEASE_SECONDS,
     PrincipalCleanupClaimLostError,
@@ -16,6 +21,7 @@ from app.services.principal_lifecycle import (
     complete_principal_cleanup,
     record_principal_cleanup_failure,
 )
+from tests.conftest import create_env_with_project, create_test_hosted_runtime_state
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.committed_db]
 
@@ -136,3 +142,98 @@ async def test_cleanup_claim_recovers_after_crash_and_rejects_stale_worker(engin
             assert persisted.cleanup_claim_id is None
     finally:
         await _delete_lifecycles(session_factory, [lifecycle.id])
+
+
+async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed_user):
+    now = datetime.now(UTC)
+    nonce = uuid.uuid4().hex
+    owner = User(
+        clerk_id=f"deleted-owner-{nonce}",
+        clerk_issuer=_ISSUER,
+        email=f"deleted-owner-{nonce}@test.dev",
+        name="Deleted owner",
+    )
+    db_session.add(owner)
+    await db_session.flush()
+    project = Project(
+        user_id=owner.id,
+        name="Owner Project",
+        slug=f"owner-project-{nonce[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(project)
+    await db_session.flush()
+    agent = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"member-agent-{nonce[:8]}",
+        machine_name="member-agent",
+        agent_type="openclaw",
+    )
+    await create_test_hosted_runtime_state(db_session, agent, runtime_name="openclaw")
+    lifecycle = PrincipalLifecycle(
+        issuer=_ISSUER,
+        subject=owner.clerk_id,
+        user_id=owner.id,
+        terminated_at=now,
+        next_cleanup_attempt_at=now,
+    )
+    db_session.add_all(
+        [
+            project,
+            lifecycle,
+            ProjectMembership(
+                project_id=project.id,
+                member_user_id=seed_user.id,
+                role="viewer",
+                joined_via="invite",
+                joined_at=now,
+                resolved_owner_handle="deleted-owner",
+            ),
+            AgentProjectBinding(
+                agent_id=agent.id,
+                project_id=project.id,
+                binding_type="context",
+                priority=1,
+                default_write_enabled=False,
+                created_by_user_id=seed_user.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+    lifecycle_id = lifecycle.id
+    project_id = project.id
+    owner_id = owner.id
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=agent.id)
+
+    try:
+        result = await complete_principal_cleanup(db_session, lifecycle_id=lifecycle_id, now=now)
+        await db_session.commit()
+
+        assert result.user_disabled is True
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(agent.id),
+        }
+        assert (
+            await db_session.execute(
+                select(AgentProjectBinding).where(
+                    AgentProjectBinding.agent_id == agent.id,
+                    AgentProjectBinding.project_id == project_id,
+                )
+            )
+        ).scalar_one_or_none() is None
+        assert (
+            await db_session.execute(
+                select(ProjectMembership).where(ProjectMembership.project_id == project_id)
+            )
+        ).scalar_one_or_none() is None
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+        await db_session.rollback()
+        await db_session.execute(
+            delete(PrincipalLifecycle).where(PrincipalLifecycle.id == lifecycle_id)
+        )
+        await db_session.execute(delete(Project).where(Project.id == project_id))
+        await db_session.execute(delete(User).where(User.id == owner_id))
+        await db_session.commit()

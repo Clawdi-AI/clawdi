@@ -18,6 +18,7 @@ class DashboardStatsResponse(BaseModel):
     longest_streak: int
     peak_hour: int
     favorite_model: str | None
+    projects_count: int
     skills_count: int
     memories_count: int
     vault_count: int

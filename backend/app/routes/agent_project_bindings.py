@@ -26,6 +26,12 @@ from app.services.agent_bindings import (
     ensure_context_binding,
     get_owned_agent_or_404,
 )
+from app.services.project_runtime_skills import (
+    assert_project_link_compatible,
+    lock_project_binding_change,
+    lock_project_binding_set_change,
+)
+from app.services.sync_events import queue_environment_runtime_manifest_changed
 
 router = APIRouter(prefix="/agents", tags=["agent-project-bindings"])
 
@@ -68,8 +74,21 @@ async def list_project_bindings(
     changed = False
     stale = [row for row in rows if row.project_id not in visible_project_ids]
     if stale:
+        await lock_project_binding_set_change(
+            db,
+            project_ids=(row.project_id for row in stale),
+            agent_id=agent_id,
+        )
+        # Access may have changed while the cleanup waited for Link/Unlink or a
+        # Project Skill write. Only remove links that are still inaccessible at
+        # the serialized write boundary.
+        visible_project_ids = set(await project_ids_visible_to(db, auth))
+        stale = [row for row in rows if row.project_id not in visible_project_ids]
+        removed_context_binding = any(row.binding_type == "context" for row in stale)
         for row in stale:
             await db.delete(row)
+        if removed_context_binding:
+            await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
         changed = True
         rows = [row for row in rows if row.project_id in visible_project_ids]
 
@@ -131,8 +150,26 @@ async def add_context_project_binding(
     if project.kind != PROJECT_KIND_WORKSPACE:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Only Custom Projects can be linked to an Agent",
+            "Only Projects you create or that are shared with you can be linked",
         )
+    await lock_project_binding_change(db, project_id=project_id, agent_id=agent_id)
+    # Archive/unshare can race the initial picker read. Access and Project kind
+    # must still be valid at the serialized Link boundary.
+    project = await assert_project_visible_to_user(
+        db,
+        user_id=auth.user_id,
+        project_id=project_id,
+    )
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Projects you create or that are shared with you can be linked",
+        )
+    await assert_project_link_compatible(
+        db,
+        agent_id=agent_id,
+        project_id=project_id,
+    )
     if body.priority is not None:
         priority_conflict = (
             await db.execute(
@@ -147,7 +184,7 @@ async def add_context_project_binding(
         if priority_conflict is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Vault resolution priority is already in use",
+                "Project order is already in use",
             )
     binding = await ensure_context_binding(
         db,
@@ -156,6 +193,7 @@ async def add_context_project_binding(
         created_by_user_id=auth.user_id,
         priority=body.priority,
     )
+    await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.commit()
     await db.refresh(binding)
     return _to_response(binding)
@@ -180,7 +218,7 @@ async def reorder_context_project_bindings(
     if len({item.binding_id for item in body.items}) != len(body.items):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate binding_id")
     if len({item.priority for item in body.items}) != len(body.items):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate Vault resolution priority")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate Project order")
 
     current_context_rows = (
         (
@@ -208,7 +246,7 @@ async def reorder_context_project_bindings(
         if item.priority < 1:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "Vault resolution priority must be >= 1",
+                "Project order must be >= 1",
             )
         requested.append((binding, item.priority))
 
@@ -218,7 +256,7 @@ async def reorder_context_project_bindings(
         if binding.id not in requested_ids and binding.priority in requested_priorities:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Vault resolution priority is already in use",
+                "Project order is already in use",
             )
 
     if requested:
@@ -267,6 +305,22 @@ async def delete_project_binding(
             "Workspace cannot be unlinked",
         )
 
+    await lock_project_binding_change(
+        db,
+        project_id=binding.project_id,
+        agent_id=agent_id,
+    )
+    binding = (
+        await db.execute(
+            select(AgentProjectBinding).where(
+                AgentProjectBinding.id == binding_id,
+                AgentProjectBinding.agent_id == agent_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if binding is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Linked Project not found")
     await db.delete(binding)
+    await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.commit()
     return BindingDeleteResponse(status="deleted")

@@ -61,6 +61,7 @@ export { isSafelyTerminalRuntimeObservationFailure } from "../runtime/observatio
 
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
+import { reconcileConnectedProjectSkills } from "./project-skill-reconcile";
 import { type QueueItem, RetryQueue } from "./queue";
 import { watchSessions } from "./sessions-watcher";
 import {
@@ -170,6 +171,12 @@ const TRANSIENT_HEARTBEAT_FAILURES = 3;
 export function reconcileDelayMs(random: () => number = Math.random): number {
 	const offset = (random() - 0.5) * 2 * RECONCILE_JITTER_MS;
 	return Math.round(RECONCILE_INTERVAL_MS + offset);
+}
+
+export function connectedProjectSkillDeliveryEnabled(runtimeMode: string | undefined): boolean {
+	// `hosted` covers both Legacy V1 and Hosted V2 deployment processes.
+	// Neither deployment generation may use the Connected Agent capability lease.
+	return runtimeMode?.trim().toLowerCase() !== "hosted";
 }
 
 export function projectRefreshDelayMs(random: () => number = Math.random): number {
@@ -284,6 +291,9 @@ interface EngineOpts {
 }
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
+	const connectedProjectSkillDelivery = connectedProjectSkillDeliveryEnabled(
+		process.env.CLAWDI_RUNTIME_MODE,
+	);
 	// Pass the engine's abort signal so any in-flight HTTP call
 	// (heartbeat, project refresh, Skill projection, etc.) unwinds
 	// immediately when SSE auth fails or shutdown is requested,
@@ -454,6 +464,39 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		lastPushedHash.set(skillKey, hash);
 	}
 	log.info("engine.skill_projection_claims_loaded", { skill_count: lastPushedHash.size });
+
+	let projectSkillReconcileRunning: Promise<void> | null = null;
+	let projectSkillReconcileRequested = false;
+	const reconcileProjectSkills = (): Promise<void> => {
+		if (!connectedProjectSkillDelivery) return Promise.resolve();
+		projectSkillReconcileRequested = true;
+		if (projectSkillReconcileRunning) return projectSkillReconcileRunning;
+		projectSkillReconcileRunning = (async () => {
+			while (projectSkillReconcileRequested && !opts.abort.aborted) {
+				projectSkillReconcileRequested = false;
+				await reconcileConnectedProjectSkills({
+					api,
+					agentId: opts.environmentId,
+					adapter: opts.adapter,
+				});
+			}
+		})().finally(() => {
+			projectSkillReconcileRunning = null;
+		});
+		return projectSkillReconcileRunning;
+	};
+	if (connectedProjectSkillDelivery) {
+		try {
+			await reconcileProjectSkills();
+			syncHealth.clear("projection", "project_skills");
+		} catch (error) {
+			syncHealth.set("projection", "project_skills", `Project Skills: ${toErrorMessage(error)}`);
+			log.warn("engine.project_skills_reconcile_failed", {
+				origin: "startup",
+				error: toErrorMessage(error),
+			});
+		}
+	}
 
 	// Single auth-failure exit path shared by SSE, listing, heartbeat, and
 	// projection drains. The flag prevents redundant heartbeats/log spam.
@@ -682,14 +725,18 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// in this filesystem, so an SSE change/delete must never write or remove a
 	// local target. Re-scan the key and project the latest local state instead.
 	const onServerEvent = async (event: ServerEvent) => {
-		const invalidatedSkillKey = skillInvalidationKey(event, defaultProjectId);
-		if (!isSkillSyncServerEvent(event)) {
-			log.debug("engine.sse_event_ignored", {
-				type: event.type,
-				environment_id: event.environment_id,
-			});
+		if (event.type === "runtime_manifest_changed") {
+			if (event.environment_id !== opts.environmentId || !connectedProjectSkillDelivery) return;
+			try {
+				await reconcileProjectSkills();
+				syncHealth.clear("projection", "project_skills");
+			} catch (error) {
+				syncHealth.set("projection", "project_skills", `Project Skills: ${toErrorMessage(error)}`);
+				log.warn("engine.project_skills_reconcile_failed", { error: toErrorMessage(error) });
+			}
 			return;
 		}
+		const invalidatedSkillKey = skillInvalidationKey(event, defaultProjectId);
 		if (invalidatedSkillKey === null) {
 			log.debug("engine.sse_event_other_project", {
 				type: event.type,
@@ -857,9 +904,11 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// revision. Cloud bytes are never read or applied locally.
 		(async () => {
 			while (!opts.abort.aborted) {
-				await sleep(5 * 60_000, opts.abort);
+				await sleep(reconcileDelayMs(), opts.abort);
 				if (opts.abort.aborted) return;
 				try {
+					await reconcileProjectSkills();
+					syncHealth.clear("projection", "project_skills");
 					await reconcileAgentSkillProjection({
 						opts,
 						queue,

@@ -311,15 +311,17 @@ async def queue_environment_runtime_manifest_changed(
     user_id: UUID,
     environment_id: UUID,
 ) -> bool:
-    """Queue an event when an environment currently has runtime desired state."""
-    state = (
+    """Queue an exact Agent desired-state invalidation when the Agent is active."""
+    agent = (
         await db.execute(
-            select(HostedRuntimeState).where(
-                HostedRuntimeState.environment_id == environment_id,
+            select(AgentEnvironment.id).where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
     ).scalar_one_or_none()
-    if state is None:
+    if agent is None:
         return False
     queue_runtime_manifest_changed(db, user_id, environment_id)
     return True
@@ -454,6 +456,14 @@ async def bump_skills_revision(
     target_user_ids = {user_id, *member_rows}
     for target_user_id in target_user_ids:
         _queue_for_commit(db, target_user_id, payload)
+    if event_type not in {AGENT_SKILL_CHANGED_EVENT, AGENT_SKILL_DELETED_EVENT}:
+        # Local import avoids a module cycle: Project runtime delivery uses the
+        # queue primitive above, while Cloud Skill changes fan out through it.
+        from app.services.project_runtime_skills import (
+            queue_project_runtime_manifest_changed,
+        )
+
+        await queue_project_runtime_manifest_changed(db, project_id=project_id)
     return new_revision
 
 

@@ -26,6 +26,7 @@ from app.models.user import User
 from app.models.vault import Vault, VaultProjectAttachment
 from app.schemas.sharing import ShareRedeemResponse, ShareUpgradeResponse, UpgradeBody
 from app.services.agent_bindings import attach_project_to_owned_agents
+from app.services.project_runtime_skills import lock_project_change
 from app.services.sharing import ensure_viewer_membership, safe_owner_display
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ async def _resolve_owner_for_link(
             status.HTTP_410_GONE,
             "share no longer available (project removed)",
         )
-    if project.kind != PROJECT_KIND_WORKSPACE:
+    if project.kind != PROJECT_KIND_WORKSPACE or project.archived_at is not None:
         raise HTTPException(
             status.HTTP_410_GONE,
             "share no longer available",
@@ -264,12 +265,13 @@ async def upgrade_share_token(
     db: AsyncSession,
 ) -> ShareUpgradeResponse:
     body = body or UpgradeBody()
+    await lock_project_change(db, ctx.project_id)
     project = (
-        await db.execute(select(Project).where(Project.id == ctx.project_id).with_for_update())
+        await db.execute(select(Project).where(Project.id == ctx.project_id))
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_410_GONE, "project no longer available")
-    if project.kind != PROJECT_KIND_WORKSPACE:
+    if project.kind != PROJECT_KIND_WORKSPACE or project.archived_at is not None:
         raise HTTPException(status.HTTP_410_GONE, "share no longer available")
     if project.user_id == auth.user_id:
         raise HTTPException(

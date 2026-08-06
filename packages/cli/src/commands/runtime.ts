@@ -2539,7 +2539,9 @@ async function applyRuntimeDesiredState(
 	}
 	const preparedHostedSourcedSkills =
 		opts.preparedHostedSourcedSkills ??
-		(await prepareHostedSourcedSkillArchives(load.manifest, paths));
+		(await prepareHostedSourcedSkillArchives(load.manifest, paths, {
+			authToken: load.applyContext?.manifestSource.auth.token,
+		}));
 	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
 	let systemdApply = {

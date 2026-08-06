@@ -21,6 +21,7 @@ from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.core.database import get_runtime_snapshot_session, get_session
 from app.main import app
+from app.models.agent_project_binding import AgentProjectBinding
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
@@ -31,8 +32,10 @@ from app.models.channel import (
     ChannelBotAgentLink,
 )
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
+from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
 from app.routes.sessions import _runtime_observed_health
@@ -501,6 +504,67 @@ def _runtime_state_body(environment_id: str, **overrides) -> dict:
     if set(body["runtimes"]) == {"hermes"} and "system" not in overrides:
         body["system"] = {**TEST_SYSTEM, "hermesDashboardAuth": TEST_HERMES_DASHBOARD_AUTH}
     return body
+
+
+@pytest.mark.asyncio
+async def test_workspace_skill_write_rejects_disabled_linked_project_key(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"disabled-project-conflict-{uuid4().hex[:8]}",
+        machine_name="Disabled Project conflict",
+        agent_type="openclaw",
+    )
+    initial_body = await _write_runtime_state(admin_client, str(env.id))
+    project = Project(
+        user_id=seed_user.id,
+        name="Linked conflict Project",
+        slug=f"linked-conflict-{uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(project)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            AgentProjectBinding(
+                agent_id=env.id,
+                project_id=project.id,
+                binding_type="context",
+                priority=1,
+                default_write_enabled=False,
+                created_by_user_id=seed_user.id,
+            ),
+            Skill(
+                user_id=seed_user.id,
+                project_id=project.id,
+                skill_key="reserved-name",
+                name="Reserved name",
+                description="A disabled Workspace copy would still reserve this key",
+                content_hash="d" * 64,
+                authority=SKILL_AUTHORITY_CLOUD,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json={
+            **initial_body,
+            "generation": initial_body["generation"] + 1,
+            "skills": {"entries": {"reserved-name": {"enabled": False, "version": 1}}},
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == ("agent_workspace_project_skill_name_conflict")
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    assert state.skills is None
 
 
 @pytest.mark.asyncio
@@ -4092,7 +4156,9 @@ async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_cons
         event.remove(engine, "before_cursor_execute", count_selects)
         app.dependency_overrides.clear()
     assert healthy.status_code == 200
-    assert healthy_query_count == 5
+    # One bounded Project Skill graph query joins all requested Agents; the
+    # count remains constant as Agents and linked Projects grow.
+    assert healthy_query_count == 6
     assert missing.status_code == 409
     assert missing.json() == {"detail": "Active runtime channel link has no token material"}
     assert wrong_media_type.status_code == 406

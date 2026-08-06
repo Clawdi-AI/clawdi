@@ -265,6 +265,7 @@ strict = [
     "app/services/principal_lifecycle.py",
     "app/services/principal_lifecycle_cleanup_worker.py",
     "app/services/private_ip.py",
+    "app/services/project_runtime_skills.py",
     "app/services/rate_limiter.py",
     "app/services/runtime_generation.py",
     "app/services/runtime_manifest_resources.py",
