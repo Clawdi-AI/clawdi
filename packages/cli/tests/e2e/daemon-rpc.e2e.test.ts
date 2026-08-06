@@ -340,6 +340,7 @@ function cliEnv(fixture: Fixture, runtimeMode: "local" | "hosted"): Record<strin
 		fixture.contextPath,
 		`${JSON.stringify({
 			schemaVersion: "clawdi.runtimeContext.v2",
+			backend: "incus",
 			apply: {
 				generation: 1,
 				manifestETag: '"frozen-manifest"',

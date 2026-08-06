@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withRuntimeConvergeLockAsync } from "./converge-lock";
@@ -21,6 +21,7 @@ describe("runtime async converge lock", () => {
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
+		mkdirSync(paths.runRoot);
 		const events: string[] = [];
 		let releaseFirst: (() => void) | undefined;
 		const firstGate = new Promise<void>((resolve) => {

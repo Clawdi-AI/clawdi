@@ -29,7 +29,9 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-	return getRuntimePaths({ mode: "hosted" });
+	const paths = getRuntimePaths({ mode: "hosted" });
+	mkdirSync(paths.serviceStateRoot);
+	return paths;
 }
 
 function legacyAppliedState(generation: number): RuntimeAppliedStateV2 {

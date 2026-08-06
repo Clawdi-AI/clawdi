@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 import { canonicalSecretRefSchema, runtimeSecretValue } from "./secret-values";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 export const runtimeNameSchema = z
 	.string()
@@ -148,7 +148,7 @@ export function buildRuntimeRunConfig(input: {
 
 export function writeRuntimeRunConfig(config: RuntimeRunConfig, paths: RuntimePaths): string {
 	const path = runtimeRunConfigPath(config.runtime, paths, config.service);
-	writePrivateFileAtomic(path, `${JSON.stringify(config, null, 2)}\n`, {
+	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(config, null, 2)}\n`, {
 		mode: 0o644,
 		dirMode: 0o755,
 	});

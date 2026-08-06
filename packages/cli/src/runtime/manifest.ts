@@ -105,6 +105,10 @@ import {
 	requiresManagedGatewayModelProbe,
 	resolveManagedGatewayModelOverrides,
 } from "./hosted-provider-resolution";
+import {
+	assertHostedRuntimeContract,
+	type HostedRuntimeContractOptions,
+} from "./hosted-runtime-contract";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	emptyRuntimeInstallReceipts,
@@ -217,6 +221,11 @@ import {
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
+import {
+	ensureRuntimePlatformDirectory,
+	runtimePlatformRootForPath,
+	writeRuntimePlatformFileAtomic,
+} from "./state";
 
 import {
 	TRANSPARENT_EGRESS_TABLE,
@@ -388,8 +397,21 @@ const openClawPluginInspectSchema = z
 	})
 	.passthrough();
 
-function writeJsonFile(path: string, payload: unknown): void {
-	writePrivateFileAtomic(path, `${JSON.stringify(payload, null, 2)}\n`);
+function writeRuntimePrivateFileAtomic(
+	paths: RuntimePaths,
+	path: string,
+	content: string | Uint8Array,
+	options: { mode?: number; dirMode?: number } = {},
+): void {
+	const trustedRoot = runtimePlatformRootForPath(paths, path);
+	if (trustedRoot) writeRuntimePlatformFileAtomic(paths, path, content, options);
+	else writePrivateFileAtomic(path, content, options);
+}
+
+function writeJsonFile(path: string, payload: unknown, paths?: RuntimePaths): void {
+	const content = `${JSON.stringify(payload, null, 2)}\n`;
+	if (paths) writeRuntimePrivateFileAtomic(paths, path, content);
+	else writePrivateFileAtomic(path, content);
 }
 
 function writeLastGoodManifest(
@@ -404,7 +426,7 @@ function writeLastGoodManifest(
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return null;
 	}
-	writeJsonFile(paths.manifestLastGood, manifest);
+	writeJsonFile(paths.manifestLastGood, manifest, paths);
 	writeLastGoodSecretValues(secretScopeManifest, secretValues, paths, excludedSecretRefs);
 	return paths.manifestLastGood;
 }
@@ -433,7 +455,8 @@ function writeLastGoodSecretValues(
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return;
 	}
-	writePrivateFileAtomic(
+	writeRuntimePrivateFileAtomic(
+		paths,
 		paths.managedSecretCacheFile,
 		`${JSON.stringify(recoverable, null, 2)}\n`,
 		{
@@ -832,7 +855,8 @@ function writeProviderHealthStatus(
 		rmSync(paths.providerHealthStatus, { force: true });
 		return null;
 	}
-	writePrivateFileAtomic(
+	writeRuntimePrivateFileAtomic(
+		paths,
 		paths.providerHealthStatus,
 		`${JSON.stringify(
 			{
@@ -1615,7 +1639,10 @@ function writeEgressSecretMaterial(
 		rmSync(path, { force: true });
 		return null;
 	}
-	writePrivateFileAtomic(path, material.content, { mode: 0o600, dirMode: 0o700 });
+	writeRuntimePrivateFileAtomic(paths, path, material.content, {
+		mode: 0o600,
+		dirMode: 0o700,
+	});
 	makeEgressIdentityOwned(path);
 	makeManagedSecretRoot(paths.managedSecretRoot);
 	try {
@@ -3520,15 +3547,19 @@ function readHostedMcpManagedLedger(paths: RuntimePaths): HostedMcpManagedLedger
 }
 
 function writeHostedMcpManagedLedger(paths: RuntimePaths, ledger: HostedMcpManagedLedger): void {
-	writeJsonFile(hostedMcpLedgerPath(paths), {
-		schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION,
-		runtimes: Object.fromEntries(
-			HOSTED_RUNTIME_TARGETS.flatMap((runtime) => {
-				const names = ledger.runtimes[runtime];
-				return names && names.length > 0 ? [[runtime, [...names].sort()]] : [];
-			}),
-		),
-	});
+	writeJsonFile(
+		hostedMcpLedgerPath(paths),
+		{
+			schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION,
+			runtimes: Object.fromEntries(
+				HOSTED_RUNTIME_TARGETS.flatMap((runtime) => {
+					const names = ledger.runtimes[runtime];
+					return names && names.length > 0 ? [[runtime, [...names].sort()]] : [];
+				}),
+			),
+		},
+		paths,
+	);
 }
 
 function hostedBundledSkillsEnabled(): boolean {
@@ -4365,7 +4396,7 @@ function writeEgressEngineStatus(
 		rmSync(paths.egressEngineStatus, { force: true });
 		return null;
 	}
-	writeJsonFile(paths.egressEngineStatus, result);
+	writeJsonFile(paths.egressEngineStatus, result, paths);
 	return result;
 }
 
@@ -4388,7 +4419,10 @@ function requireV2EgressEngineReady(
 function writeEgressAddon(paths: RuntimePaths): { path: string; sha256: string } {
 	const source = resolvePackagedEgressAddon();
 	const content = readFileSync(source, "utf-8");
-	writePrivateFileAtomic(paths.egressAddon, content, { mode: 0o640, dirMode: 0o711 });
+	writeRuntimePrivateFileAtomic(paths, paths.egressAddon, content, {
+		mode: 0o640,
+		dirMode: 0o711,
+	});
 	if (runningAsRoot()) chownSync(paths.egressAddon, 0, runtimeEgressGid());
 	return { path: paths.egressAddon, sha256: sha256String(content) };
 }
@@ -4446,10 +4480,15 @@ function writeTransparentEgressEnvFile(input: {
 	const lines = Object.entries(env)
 		.sort(([a], [b]) => a.localeCompare(b))
 		.map(([key, value]) => `${key}=${runtimeEnvironmentFileQuote(value)}`);
-	writePrivateFileAtomic(input.paths.egressTransparentEnv, `${lines.join("\n")}\n`, {
-		mode: 0o600,
-		dirMode: 0o711,
-	});
+	writeRuntimePrivateFileAtomic(
+		input.paths,
+		input.paths.egressTransparentEnv,
+		`${lines.join("\n")}\n`,
+		{
+			mode: 0o600,
+			dirMode: 0o711,
+		},
+	);
 	return input.paths.egressTransparentEnv;
 }
 
@@ -4559,7 +4598,8 @@ function readLiveSyncEnvironmentIndex(paths: RuntimePaths): RuntimeName[] {
 }
 
 function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: RuntimePaths): void {
-	writePrivateFileAtomic(
+	writeRuntimePrivateFileAtomic(
+		paths,
 		liveSyncEnvironmentIndexPath(paths),
 		`${JSON.stringify(
 			{
@@ -5388,6 +5428,7 @@ export function convergeRuntimeManifest(
 		preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
 		hostedHermesSkillExactSourceDriver?: HostedHermesSkillExactSourceDriver;
 		hostedOpenClawSkillDriver?: HostedOpenClawSkillDriver;
+		hostedRuntimeContract?: HostedRuntimeContractOptions;
 	} = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
@@ -5396,15 +5437,14 @@ export function convergeRuntimeManifest(
 	if (!applyContext) {
 		throw new Error("runtime manifest convergence requires an explicit apply context");
 	}
+	const hostedRuntimeContract = assertHostedRuntimeContract(
+		paths,
+		applyContext,
+		opts.hostedRuntimeContract,
+	);
 	if (manifest.companions?.filebrowser) {
-		if (
-			paths.mode !== "hosted" ||
-			manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2" ||
-			applyContext.backend !== "incus"
-		) {
-			throw new Error(
-				"Files companion requires a hosted v2 bundle and trusted Incus runtime context",
-			);
+		if (manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2") {
+			throw new Error("Files companion requires a hosted v2 bundle");
 		}
 		if (!opts.systemdApply) {
 			throw new Error("Files companion requires systemd apply and readiness hooks");
@@ -5561,6 +5601,7 @@ export function convergeRuntimeManifest(
 		userUnits: [],
 	};
 	try {
+		hostedRuntimeContract.assertPlatformRoots();
 		// Runtime-user targets and their ancestor metadata are already in the
 		// exact pre-image snapshot. Establish their positive ownership boundary
 		// before any official installer or CLI command drops privilege. Modes are
@@ -5607,10 +5648,7 @@ export function convergeRuntimeManifest(
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 
-		// Installers and probes may need a private scratch/log root. This is not
-		// generation-owned live configuration and is created only after Plan and
-		// exact pre-image capture succeed.
-		mkdirSync(paths.runRoot, { recursive: true });
+		hostedRuntimeContract.assertPlatformRoots();
 		let codexCli: Record<string, string> | null = null;
 		if (
 			hostedCodexManagedProvider(manifest) ||
@@ -5675,6 +5713,7 @@ export function convergeRuntimeManifest(
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 
+		hostedRuntimeContract.assertPlatformRoots();
 		ensureRuntimeUserHome(paths.userHome);
 		withRuntimeUserFileAccess(() => {
 			mkdirSync(workspaceRoot, { recursive: true });
@@ -5688,72 +5727,88 @@ export function convergeRuntimeManifest(
 			semRoot,
 			paths.egressProfileRoot,
 		]) {
-			mkdirSync(directory, { recursive: true, mode: 0o755 });
+			ensureRuntimePlatformDirectory(paths, directory, { mode: 0o755 });
 		}
-		mkdirSync(paths.managedSecretRoot, { recursive: true });
+		ensureRuntimePlatformDirectory(paths, paths.managedSecretRoot);
 		makeManagedSecretRoot(paths.managedSecretRoot);
-		mkdirSync(paths.egressRoot, { recursive: true, mode: 0o711 });
+		ensureRuntimePlatformDirectory(paths, paths.egressRoot, { mode: 0o711 });
 		chmodSync(paths.egressRoot, 0o711);
 		makeEgressIdentityPrivateDir(paths.egressCaDir);
-		mkdirSync(dirname(paths.egressSystemCaFile), { recursive: true, mode: 0o711 });
+		ensureRuntimePlatformDirectory(paths, dirname(paths.egressSystemCaFile), { mode: 0o711 });
 		chmodSync(dirname(paths.egressSystemCaFile), 0o711);
 		makeRuntimeUserPrivateDir(paths.egressScratchRoot, paths.userHome);
 
 		let manifestLastGood: string | null = null;
-		writeJsonFile(paths.managedConfig, {
-			schemaVersion: "clawdi.hostedManagedConfig.v1",
-			generatedAt,
-			deploymentId: manifest.deploymentId,
-			environmentId: manifest.environmentId,
-			instanceId: manifest.instanceId,
-			generation: manifest.generation,
-			locale: manifest.locale ?? null,
-			controlPlane: manifest.controlPlane,
-			egressEngine: manifest.egressEngine ?? null,
-			auth: {
-				source: "runtime-instance-data",
+		writeJsonFile(
+			paths.managedConfig,
+			{
+				schemaVersion: "clawdi.hostedManagedConfig.v1",
+				generatedAt,
+				deploymentId: manifest.deploymentId,
+				environmentId: manifest.environmentId,
+				instanceId: manifest.instanceId,
+				generation: manifest.generation,
+				locale: manifest.locale ?? null,
+				controlPlane: manifest.controlPlane,
+				egressEngine: manifest.egressEngine ?? null,
+				auth: {
+					source: "runtime-instance-data",
+					token: "<redacted>",
+				},
+				workspaceRoot,
+			},
+			paths,
+		);
+		writeJsonFile(
+			paths.syncState,
+			{
+				schemaVersion: "clawdi.runtimeSyncState.v1",
+				generatedAt,
+				deploymentId: manifest.deploymentId,
+				environmentId: manifest.environmentId,
+				instanceId: manifest.instanceId,
+				generation: manifest.generation,
+				locale: manifest.locale ?? null,
+				runtimes: Object.fromEntries(
+					Object.entries(manifest.runtimes).map(([name, runtime]) => [
+						name,
+						{
+							enabled: runtime.enabled,
+							updateChannel: runtime.updateChannel ?? null,
+							workspaceRoot,
+						},
+					]),
+				),
+			},
+			paths,
+		);
+		writeJsonFile(
+			paths.instanceData,
+			{
+				schemaVersion: "clawdi.runtimeInstanceData.v1",
+				generatedAt,
+				deploymentId: manifest.deploymentId,
+				environmentId: manifest.environmentId,
+				instanceId: manifest.instanceId,
+				generation: manifest.generation,
+				locale: manifest.locale ?? null,
+				controlPlane: manifest.controlPlane,
+				workspaceRoot,
+			},
+			paths,
+		);
+		writeJsonFile(
+			paths.sensitiveInstanceData,
+			{
+				schemaVersion: "clawdi.runtimeSensitiveInstanceData.v1",
+				generatedAt,
+				tokenSource: runtimeSecretValue(secretValues ?? {}, RUNTIME_AUTH_TOKEN_SECRET_REF)
+					? "CLAWDI_AUTH_TOKEN"
+					: load.source,
 				token: "<redacted>",
 			},
-			workspaceRoot,
-		});
-		writeJsonFile(paths.syncState, {
-			schemaVersion: "clawdi.runtimeSyncState.v1",
-			generatedAt,
-			deploymentId: manifest.deploymentId,
-			environmentId: manifest.environmentId,
-			instanceId: manifest.instanceId,
-			generation: manifest.generation,
-			locale: manifest.locale ?? null,
-			runtimes: Object.fromEntries(
-				Object.entries(manifest.runtimes).map(([name, runtime]) => [
-					name,
-					{
-						enabled: runtime.enabled,
-						updateChannel: runtime.updateChannel ?? null,
-						workspaceRoot,
-					},
-				]),
-			),
-		});
-		writeJsonFile(paths.instanceData, {
-			schemaVersion: "clawdi.runtimeInstanceData.v1",
-			generatedAt,
-			deploymentId: manifest.deploymentId,
-			environmentId: manifest.environmentId,
-			instanceId: manifest.instanceId,
-			generation: manifest.generation,
-			locale: manifest.locale ?? null,
-			controlPlane: manifest.controlPlane,
-			workspaceRoot,
-		});
-		writeJsonFile(paths.sensitiveInstanceData, {
-			schemaVersion: "clawdi.runtimeSensitiveInstanceData.v1",
-			generatedAt,
-			tokenSource: runtimeSecretValue(secretValues ?? {}, RUNTIME_AUTH_TOKEN_SECRET_REF)
-				? "CLAWDI_AUTH_TOKEN"
-				: load.source,
-			token: "<redacted>",
-		});
+			paths,
+		);
 
 		const egressProfileBundlePath = hasEnabledEgressProfiles(egressProfileBundle)
 			? writeEgressProfileBundle(egressProfileBundle, paths)
@@ -6025,33 +6080,37 @@ export function convergeRuntimeManifest(
 			if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 
 			const inventoryPath = join(paths.installInventory, `${name}.json`);
-			writeJsonFile(inventoryPath, {
-				schemaVersion: "clawdi.runtimeInstallInventory.v1",
-				generatedAt,
-				runtime: name,
-				enabled: runtime.enabled,
-				updateChannel: runtime.updateChannel ?? null,
-				simulation: false,
-				status: observation.status,
-				executionUser: observation.executionUser,
-				install: observation.install,
-				command: runtimeInstallerCommand(name, runtime.install),
-				commandPath: observation.commandPath,
-				appRoot: observation.appRoot,
-				installerUrl: observation.installerUrl,
-				executedInstallerUrl: observation.executedInstallerUrl,
-				installStartedAt: observation.installStartedAt ?? null,
-				installFinishedAt: observation.installFinishedAt ?? null,
-				installDurationMs: observation.installDurationMs ?? null,
-				resultExitCode: observation.exitCode,
-				stdoutTail: observation.stdoutTail,
-				stderrTail: observation.stderrTail,
-				error: observation.error,
-			});
+			writeJsonFile(
+				inventoryPath,
+				{
+					schemaVersion: "clawdi.runtimeInstallInventory.v1",
+					generatedAt,
+					runtime: name,
+					enabled: runtime.enabled,
+					updateChannel: runtime.updateChannel ?? null,
+					simulation: false,
+					status: observation.status,
+					executionUser: observation.executionUser,
+					install: observation.install,
+					command: runtimeInstallerCommand(name, runtime.install),
+					commandPath: observation.commandPath,
+					appRoot: observation.appRoot,
+					installerUrl: observation.installerUrl,
+					executedInstallerUrl: observation.executedInstallerUrl,
+					installStartedAt: observation.installStartedAt ?? null,
+					installFinishedAt: observation.installFinishedAt ?? null,
+					installDurationMs: observation.installDurationMs ?? null,
+					resultExitCode: observation.exitCode,
+					stdoutTail: observation.stdoutTail,
+					stderrTail: observation.stderrTail,
+					error: observation.error,
+				},
+				paths,
+			);
 			installInventory.push(inventoryPath);
 
 			const projectionPath = join(paths.projectionRoot, `${name}.json`);
-			writeJsonFile(projectionPath, projectionPayload(name, manifest));
+			writeJsonFile(projectionPath, projectionPayload(name, manifest), paths);
 			projections.push(projectionPath);
 			if (name === "hermes" || name === "openclaw") {
 				try {
@@ -6139,18 +6198,19 @@ export function convergeRuntimeManifest(
 
 			const semaphorePath = join(semRoot, `${name}.enabled`);
 			if (runtime.enabled) {
-				writePrivateFileAtomic(semaphorePath, `${generatedAt}\n`);
+				writeRuntimePrivateFileAtomic(paths, semaphorePath, `${generatedAt}\n`);
 				instanceSemaphores.push(semaphorePath);
 			}
 		}
 
 		const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
 		if (hostedMcpProjectionDeclared(manifest) || manifest.projection?.skills !== undefined) {
-			writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
+			writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest), paths);
 			projections.push(mcpProjection);
 		} else {
 			rmSync(mcpProjection, { force: true });
 		}
+		hostedRuntimeContract.assertPlatformRoots();
 		const systemdUnits = writeRuntimeSystemdState({
 			runtimePrograms: runtimeSystemdUserPrograms,
 			egressProgram: egressSystemdProgram,
@@ -6206,6 +6266,7 @@ export function convergeRuntimeManifest(
 		}
 
 		for (const item of officialServicePlan.pending) {
+			hostedRuntimeContract.assertPlatformRoots();
 			const error = installOfficialRuntimeService(item, paths);
 			if (error) throw new Error(error);
 		}
@@ -6216,8 +6277,9 @@ export function convergeRuntimeManifest(
 		);
 		if (artifactError) throw new Error(artifactError);
 
+		hostedRuntimeContract.assertPlatformRoots();
 		const bootFinished = join(instanceRoot, "boot-finished");
-		writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
+		writeRuntimePrivateFileAtomic(paths, bootFinished, `${generatedAt}\n`);
 		if (opts.systemdApply) {
 			const activation = opts.systemdApply.activate({
 				restartDaemon,
@@ -6280,6 +6342,7 @@ export function convergeRuntimeManifest(
 			},
 		};
 		if (installErrors.length === 0) {
+			hostedRuntimeContract.assertPlatformRoots();
 			const daemonRevisionPreviouslyCommitted =
 				desiredDaemonAuthTokenRevision !== undefined &&
 				desiredDaemonAuthTokenRevision === appliedState?.daemonAuthTokenRevision;
@@ -6331,6 +6394,7 @@ export function convergeRuntimeManifest(
 		const applyError = error instanceof Error ? error.message : String(error);
 		let filesystemRollbackSucceeded = false;
 		try {
+			hostedRuntimeContract.assertPlatformRoots();
 			restoreRuntimeLiveSnapshot(liveSnapshot);
 			if (rollbackEgressSecretOverride) {
 				writeEgressSecretMaterial(rollbackEgressSecretOverride, paths);

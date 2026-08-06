@@ -5,6 +5,25 @@ import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { parsePositiveLinuxId } from "./transparent-egress";
 
+const RUNTIME_IDENTITY_PROBE_TIMEOUT_MS = 5_000;
+
+export interface RuntimeUserIdentity {
+	uid: number;
+	gid: number;
+}
+
+export type RuntimeUserIdentityResolver = (runtimeUser: string) => RuntimeUserIdentity;
+
+export class RuntimeUserCommandTimeoutError extends Error {
+	constructor(
+		readonly operation: string,
+		readonly timeoutMs: number,
+	) {
+		super(`${operation} timed out after ${timeoutMs}ms`);
+		this.name = "RuntimeUserCommandTimeoutError";
+	}
+}
+
 export function executableExists(path: string): boolean {
 	try {
 		accessSync(path, constants.X_OK);
@@ -219,6 +238,35 @@ function linuxUid(value: string): number | null {
 	return Number.isInteger(uid) && uid <= 4_294_967_295 ? uid : null;
 }
 
+function strictRuntimeUserId(runtimeUser: string, kind: "uid" | "gid"): number {
+	const flag = kind === "uid" ? "-u" : "-g";
+	const resolved = spawnSync("id", [flag, runtimeUser], {
+		encoding: "utf8",
+		timeout: RUNTIME_IDENTITY_PROBE_TIMEOUT_MS,
+	});
+	if (resolved.error && "code" in resolved.error && resolved.error.code === "ETIMEDOUT") {
+		throw new RuntimeUserCommandTimeoutError(
+			`runtime user ${kind} probe for ${runtimeUser}`,
+			RUNTIME_IDENTITY_PROBE_TIMEOUT_MS,
+		);
+	}
+	if (resolved.status !== 0) {
+		throw new Error(`could not resolve ${kind} for runtime user ${runtimeUser}`);
+	}
+	const parsed = linuxUid(resolved.stdout.trim());
+	if (parsed === null) {
+		throw new Error(`runtime user ${runtimeUser} resolved an invalid ${kind}`);
+	}
+	return parsed;
+}
+
+export function resolveRuntimeUserIdentity(runtimeUser: string): RuntimeUserIdentity {
+	return {
+		uid: strictRuntimeUserId(runtimeUser, "uid"),
+		gid: strictRuntimeUserId(runtimeUser, "gid"),
+	};
+}
+
 function runtimeUserCommandEnv(
 	home: string,
 	runtimeUid: number | null,
@@ -387,11 +435,26 @@ export function runRuntimeUserCommand(
 				resolver: options.resolver,
 			})
 		: { command, args, env: {} };
-	execFileSync(child.command, child.args, {
-		input: stdin,
-		env: { ...runtimeUserCommandEnv(home, runtimeUid, options), ...child.env },
-		cwd,
-		stdio: "pipe",
-		timeout: options.timeoutMs,
-	});
+	try {
+		execFileSync(child.command, child.args, {
+			input: stdin,
+			env: { ...runtimeUserCommandEnv(home, runtimeUid, options), ...child.env },
+			cwd,
+			stdio: "pipe",
+			timeout: options.timeoutMs,
+		});
+	} catch (error) {
+		if (
+			options.timeoutMs !== undefined &&
+			error instanceof Error &&
+			"code" in error &&
+			error.code === "ETIMEDOUT"
+		) {
+			throw new RuntimeUserCommandTimeoutError(
+				`runtime command ${command} ${args.join(" ")}`.trim(),
+				options.timeoutMs,
+			);
+		}
+		throw error;
+	}
 }

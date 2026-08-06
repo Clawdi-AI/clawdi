@@ -27,7 +27,10 @@ import {
 	hostedManifestEgressProfiles,
 	managedMcpHeaderPlaceholder,
 } from "./hosted-egress-profiles";
-import { cacheRuntimeLastGoodManifest, convergeRuntimeManifest } from "./manifest";
+import {
+	cacheRuntimeLastGoodManifest,
+	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
+} from "./manifest";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 	loadRemoteRuntimeManifest,
@@ -35,7 +38,8 @@ import {
 	normalizeHostedRuntimeBundleV2,
 	type RuntimeManifestLoad,
 } from "./manifest-source";
-import { getRuntimePaths } from "./paths";
+import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { ensureRuntimeStateDirs } from "./state";
 
 const goldenPath = resolve(
 	import.meta.dir,
@@ -46,6 +50,31 @@ const EXPECTED_GOLDEN_SOURCE_REVISION =
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
+const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
+const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
+const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
+
+function convergeRuntimeManifest(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	opts: Parameters<typeof convergeRuntimeManifestWithContract>[2] = {},
+) {
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_RUNTIME_USER = TEST_RUNTIME_USER;
+	ensureRuntimeStateDirs(paths);
+	return convergeRuntimeManifestWithContract(load, paths, {
+		...opts,
+		hostedRuntimeContract: opts.hostedRuntimeContract ?? {
+			expectedIdentity: {
+				home: paths.userHome,
+				user: TEST_RUNTIME_USER,
+				uid: TEST_PROCESS_UID,
+				gid: TEST_PROCESS_GID,
+			},
+			resolveUserIdentity: () => ({ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID }),
+		},
+	});
+}
 
 function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): RuntimeManifestLoad {
 	const authToken = process.env.CLAWDI_BOOTSTRAP_AUTH_TOKEN ?? "test-token";
@@ -53,6 +82,7 @@ function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): Ru
 		...load,
 		applyContext: {
 			kind: "context-file",
+			backend: "incus",
 			identity: {
 				generation: load.manifest.applyGeneration ?? load.manifest.generation,
 				manifestETag: `"test-${load.manifest.generation}"`,
@@ -91,6 +121,7 @@ function setRuntimeApplyIdentityFile(
 		path,
 		JSON.stringify({
 			schemaVersion: "clawdi.runtimeContext.v2",
+			backend: "incus",
 			apply: identity,
 			cliPackageSpec,
 			manifestSource: {
@@ -527,12 +558,14 @@ describe("hosted runtime bundle v2", () => {
 		if (!projection) throw new Error("runtime bundle projection is unavailable");
 		delete projection.providers;
 		delete projection.terminalTooling;
+		projection.skills = { entries: {} };
 		const load = {
 			...projected,
 			manifest: {
 				...projected.manifest,
 				runtimes: { openclaw },
 				projection,
+				skills: { entries: {} },
 			},
 		};
 		const result = convergeRuntimeManifest(load, paths, {
@@ -1112,6 +1145,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
+		mkdirSync(paths.cacheRoot, { recursive: true });
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
 		const projected = applyRuntimeBundleChannelsToManifestLoad(normalizeHostedRuntimeBundleV2(raw));
 
@@ -1207,6 +1241,9 @@ describe("hosted runtime bundle v2", () => {
 		const remote = await loadRemoteRuntimeManifest(paths, { applyContext });
 		if (!("manifest" in remote)) throw new Error(JSON.stringify(remote));
 		const onlineLoad = applyRuntimeBundleChannelsToManifestLoad(remote);
+		if (onlineLoad.manifest.projection) {
+			onlineLoad.manifest.projection.skills = { entries: {} };
+		}
 		const onlineConvergence = converge(onlineLoad);
 		expect(onlineConvergence.installErrors).toEqual([]);
 		const sourceRevision = onlineLoad.sourceRevision;

@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, chownSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+	chmodSync,
+	chownSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -164,6 +172,7 @@ describe("runtime applied state", () => {
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
+		mkdirSync(paths.serviceStateRoot);
 		const state = {
 			...appliedStateFixture(),
 			egressSidecarSecretRevision: "e".repeat(64),

@@ -28,6 +28,7 @@ import {
 import {
 	type RuntimeApplyContext,
 	type RuntimeApplyIdentity,
+	readRuntimeApplyContext,
 	resolveRuntimeApplyGeneration,
 	runtimeApplyIdentitiesEqual,
 } from "../runtime/apply-identity";
@@ -45,6 +46,11 @@ import {
 import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
+import {
+	assertHostedRuntimeContract,
+	type HostedRuntimeContractOptions,
+	inspectHostedRuntimeIdentity,
+} from "../runtime/hosted-runtime-contract";
 import {
 	type PreparedHostedSourcedSkill,
 	prepareHostedSourcedSkillArchives,
@@ -69,6 +75,7 @@ import {
 	runtimeUserUid,
 } from "../runtime/runtime-user-command";
 import {
+	assertRuntimePlatformRoots,
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
 	hostPolicySummary,
@@ -1024,6 +1031,7 @@ interface RuntimeInitOptions {
 	nonInteractive?: boolean;
 	json?: boolean;
 	applyContext?: RuntimeApplyContext;
+	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
 interface RuntimeWatchOptions {
@@ -1035,6 +1043,7 @@ interface RuntimeWatchOptions {
 	notifications?: boolean;
 	notificationConsumer?: typeof consumeSse;
 	applyContext?: RuntimeApplyContext;
+	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
 interface RuntimeVerifyOptions {
@@ -1087,6 +1096,7 @@ interface RuntimeApplyOptions {
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
 	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
 interface RuntimeManifestIdentity {
@@ -1944,7 +1954,7 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 				stage: "detect",
 				exitCode: 2,
 				errors: [
-					"runtime init requires hosted runtime mode (host policy or CLAWDI_RUNTIME_MODE=hosted)",
+					"runtime init requires CLAWDI_RUNTIME_MODE=hosted explicitly; host policy files do not select runtime mode",
 				],
 			},
 			paths,
@@ -1955,6 +1965,30 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			console.log(chalk.red("runtime init is only available in hosted runtime mode."));
 		}
 		process.exitCode = 2;
+		return;
+	}
+	let applyContext: RuntimeApplyContext;
+	try {
+		applyContext = opts.applyContext ?? readRuntimeApplyContext();
+		assertHostedRuntimeContract(paths, applyContext, {
+			...opts.hostedRuntimeContract,
+			platformRoots: "deferred",
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const status = repairStatus(
+			{
+				bootId,
+				runtimeMode: mode,
+				stage: "detect",
+				exitCode: 20,
+				errors: [message],
+			},
+			paths,
+		);
+		if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
+		else console.log(chalk.red(message));
+		process.exitCode = 20;
 		return;
 	}
 	try {
@@ -1979,7 +2013,9 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		process.exitCode = 20;
 		return;
 	}
-	return withRuntimeConvergeLockAsync(paths, () => runtimeInitLocked(opts, paths, mode, bootId));
+	return withRuntimeConvergeLockAsync(paths, () =>
+		runtimeInitLocked({ ...opts, applyContext }, paths, mode, bootId),
+	);
 }
 
 async function runtimeInitLocked(
@@ -2027,13 +2063,6 @@ async function runtimeInitLocked(
 	let exitCode = 20;
 	if (!nonInteractiveOk) {
 		errors.push("runtime init requires --non-interactive in hosted mode");
-	}
-	if (!hostPolicy.exists) {
-		errors.push(`missing hosted runtime policy at ${hostPolicy.path}`);
-	} else if (!hostPolicy.valid) {
-		errors.push(
-			`invalid hosted runtime policy at ${hostPolicy.path}: ${hostPolicy.error ?? "parse failed"}`,
-		);
 	}
 	if (errors.length === 0) {
 		stage = "local";
@@ -2096,6 +2125,7 @@ async function runtimeInitLocked(
 					etag: loaded.etag ?? null,
 				},
 				requireSystemdApplied: applyIdentity !== null,
+				hostedRuntimeContract: opts.hostedRuntimeContract,
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -2256,6 +2286,7 @@ async function runtimeWatchTick(
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
 		applyContext?: RuntimeApplyContext;
+		hostedRuntimeContract?: HostedRuntimeContractOptions;
 	},
 ): Promise<Record<string, unknown>> {
 	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
@@ -2269,6 +2300,7 @@ async function runtimeWatchTickLocked(
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
 		applyContext?: RuntimeApplyContext;
+		hostedRuntimeContract?: HostedRuntimeContractOptions;
 	},
 ): Promise<Record<string, unknown>> {
 	let reconciliation: RuntimeCliReconciliationResult;
@@ -2310,6 +2342,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
 		applyContext?: RuntimeApplyContext;
+		hostedRuntimeContract?: HostedRuntimeContractOptions;
 	},
 ): Promise<Record<string, unknown>> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
@@ -2400,6 +2433,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			manifestIdentity,
 			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
 			requireSystemdApplied: applyIdentity !== null,
+			hostedRuntimeContract: opts.hostedRuntimeContract,
 		});
 		if (applyResult.kind === "cli_handoff") {
 			const activeAppliedState = readRuntimeAppliedState(paths);
@@ -2538,6 +2572,7 @@ async function applyRuntimeDesiredState(
 	let egressPrerequisiteActivated = false;
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
+		hostedRuntimeContract: opts.hostedRuntimeContract,
 		preparedHostedSourcedSkills,
 		commitAuthority: (committedConvergence, authority) => {
 			if (opts.requireSystemdApplied && !systemdApply.applied) {
@@ -2720,6 +2755,26 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		process.exitCode = 2;
 		return;
 	}
+	let applyContext: RuntimeApplyContext;
+	try {
+		applyContext = opts.applyContext ?? readRuntimeApplyContext();
+		assertHostedRuntimeContract(paths, applyContext, {
+			...opts.hostedRuntimeContract,
+			platformRoots: "deferred",
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const event = {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			stage: "detect",
+			error: message,
+			errors: [message],
+		};
+		emitRuntimeWatchEvent(event, opts.json);
+		process.exitCode = 20;
+		return;
+	}
 
 	try {
 		ensureRuntimeStateDirs(paths);
@@ -2759,7 +2814,8 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
 			const event = await runtimeWatchTick(paths, {
 				forceRefresh,
-				applyContext: opts.applyContext,
+				applyContext,
+				hostedRuntimeContract: opts.hostedRuntimeContract,
 				deferCliInstall,
 				// Conditional retries run every 15 seconds. Recover failed units
 				// only on the five-minute full refresh, or once in one-shot mode.
@@ -3164,18 +3220,54 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 	const paths = getRuntimePaths();
 	const policy = readHostPolicy(paths.hostPolicy);
 	const lastStatus = readRuntimeBootStatus(paths);
+	const identity = inspectHostedRuntimeIdentity(paths);
+	let runtimeContextDetail: string;
+	let runtimeContextOk = false;
+	try {
+		const context = readRuntimeApplyContext();
+		runtimeContextOk = context.backend === "incus";
+		runtimeContextDetail = context.backend;
+	} catch (error) {
+		runtimeContextDetail = error instanceof Error ? error.message : String(error);
+	}
+	let platformRootsOk = true;
+	let platformRootsDetail = "trusted";
+	try {
+		assertRuntimePlatformRoots(paths);
+	} catch (error) {
+		platformRootsOk = false;
+		platformRootsDetail = error instanceof Error ? error.message : String(error);
+	}
 	const checks: RuntimeDoctorCheck[] = [
 		{
 			name: "Runtime mode",
-			ok: paths.mode === "hosted",
-			detail: paths.mode,
-			hint: "Hosted mode requires a host policy or CLAWDI_RUNTIME_MODE=hosted.",
+			ok: identity.mode.ok,
+			detail: identity.mode.error ?? identity.mode.detail,
+			hint: "Set CLAWDI_RUNTIME_MODE=hosted explicitly; host policy files do not select runtime mode.",
 		},
 		{
-			name: "Host policy",
+			name: "Hosted policy",
 			ok: policy.exists && policy.valid,
-			detail: policy.exists ? (policy.valid ? policy.path : policy.error) : "missing",
-			hint: "Expected a readable JSON policy at the configured host policy path.",
+			detail: policy.valid ? policy.source : (policy.error ?? "missing"),
+			hint: "Hosted mode uses the built-in policy; policy files are ignored.",
+		},
+		{
+			name: "Runtime identity",
+			ok: identity.user.ok,
+			detail: identity.user.error ?? identity.user.detail,
+			hint: "The hosted tenant must run as clawdi with the expected non-root UID and GID.",
+		},
+		{
+			name: "Runtime context backend",
+			ok: runtimeContextOk,
+			detail: runtimeContextDetail,
+			hint: "Hosted v2 requires a valid runtime context attested with backend=incus.",
+		},
+		{
+			name: "Platform roots",
+			ok: platformRootsOk,
+			detail: platformRootsDetail,
+			hint: "Platform roots must remain real directories owned by the system boundary.",
 		},
 		{
 			name: "Service state",
@@ -3185,9 +3277,9 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 		},
 		{
 			name: "Runtime HOME",
-			ok: existsSync(paths.userHome) && writable(paths.userHome),
-			detail: paths.userHome,
-			hint: "HOME should be the persistent runtime/user volume.",
+			ok: identity.home.ok && existsSync(paths.userHome) && writable(paths.userHome),
+			detail: identity.home.error ?? paths.userHome,
+			hint: "Hosted HOME must resolve to /home/clawdi and be a writable persistent volume.",
 		},
 		{
 			name: "Ephemeral runtime state",

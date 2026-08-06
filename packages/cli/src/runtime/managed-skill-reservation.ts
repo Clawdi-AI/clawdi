@@ -15,6 +15,7 @@ import { withPrivateDirectoryLockSync } from "../lib/private-directory-lock";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { withRuntimeConvergeLock } from "./converge-lock";
 import { getRuntimePaths } from "./paths";
+import { runtimePlatformRootForPath, writeRuntimePlatformFileAtomic } from "./state";
 
 const LEDGER_FILE = "managed-skills.json";
 const LEDGER_SCHEMA = "clawdi.managedSkillReservations.v1";
@@ -139,10 +140,14 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 }
 
 function writeLedger(path: string, ledger: ManagedSkillReservationLedger): void {
-	writePrivateFileAtomic(path, `${JSON.stringify(ledger, null, 2)}\n`, {
-		mode: 0o644,
-		dirMode: 0o755,
-	});
+	const content = `${JSON.stringify(ledger, null, 2)}\n`;
+	const runtimePaths = getRuntimePaths({ mode: "hosted" });
+	const options = { mode: 0o644, dirMode: 0o755 };
+	if (runtimePlatformRootForPath(runtimePaths, path)) {
+		writeRuntimePlatformFileAtomic(runtimePaths, path, content, options);
+	} else {
+		writePrivateFileAtomic(path, content, options);
+	}
 }
 
 function withLedgerWriteLock<T>(manager: ManagedSkillReservationManager, write: () => T): T {

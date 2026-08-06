@@ -33,17 +33,22 @@ import { ensureRuntimeStateDirs } from "./state";
 const originalEnv = { ...process.env };
 const originalConsoleWarn = console.warn;
 const tempRoots: string[] = [];
+const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
+const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
+const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
 
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
 	opts?: Parameters<typeof convergeRuntimeManifestWithContext>[2],
 ) {
+	ensureRuntimeStateDirs(paths);
 	return convergeRuntimeManifestWithContext(
 		{
 			...load,
 			applyContext: load.applyContext ?? {
 				kind: "context-file",
+				backend: "incus",
 				identity: {
 					generation: load.manifest.applyGeneration ?? load.manifest.generation,
 					manifestETag: `"test-${load.manifest.generation}"`,
@@ -59,7 +64,18 @@ function convergeRuntimeManifest(
 			},
 		},
 		paths,
-		opts,
+		{
+			...opts,
+			hostedRuntimeContract: opts?.hostedRuntimeContract ?? {
+				expectedIdentity: {
+					home: paths.userHome,
+					user: TEST_RUNTIME_USER,
+					uid: TEST_PROCESS_UID,
+					gid: TEST_PROCESS_GID,
+				},
+				resolveUserIdentity: () => ({ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID }),
+			},
+		},
 	);
 }
 
@@ -71,6 +87,8 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "run", "systemd", "system");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_RUNTIME_USER = TEST_RUNTIME_USER;
 	process.env.CLAWDI_HOME = join(root, "clawdi-home");
 	process.env.CLAWDI_AUTH_TOKEN = "test-token";
 	return getRuntimePaths({ mode: "hosted" });
@@ -95,6 +113,7 @@ function writeFakeGatewayCli(input: {
 	runtime: "openclaw" | "hermes";
 	unitPath: string;
 	version?: string;
+	hangVersion?: boolean;
 	failInstall?: boolean;
 	failUninstall?: boolean;
 	requiredSystemdState?: {
@@ -120,7 +139,7 @@ function writeFakeGatewayCli(input: {
 	set -euo pipefail
 	case "$*" in
 	  "--version")
-		printf '%s\\n' '${version}'
+		${input.hangVersion ? "exec sleep 60" : `printf '%s\\n' '${version}'`}
 		;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
 	${stateCheck}
@@ -254,6 +273,7 @@ interface InstallGateHarness {
 
 interface OfficialServiceInstallHarness extends InstallGateHarness {
 	addForeignDropIn: () => string;
+	hangVersionProbe: () => void;
 }
 
 function officialServiceHarness(
@@ -313,6 +333,8 @@ function officialServiceHarness(
 			writeFileSync(path, "[Service]\nExecStart=\nExecStart=/usr/bin/false\n");
 			return path;
 		},
+		hangVersionProbe: () =>
+			writeFakeGatewayCli({ path: command, logPath, runtime, unitPath, hangVersion: true }),
 	};
 }
 
@@ -672,6 +694,7 @@ describe("runtime manifest services", () => {
 		};
 		const applyContext = {
 			kind: "context-file" as const,
+			backend: "incus" as const,
 			identity: {
 				generation: 1,
 				manifestETag: '"manifest-1"',
@@ -1356,6 +1379,7 @@ describe("runtime manifest services", () => {
 
 	test("reuses a persisted Hermes dashboard receipt after process planning restarts", () => {
 		const paths = tempRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		const logPath = join(paths.runRoot, "hermes-dashboard-cold-receipt.log");
 		const npmCommand = join(paths.runRoot, "bin", "npm");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
@@ -1920,6 +1944,19 @@ describe("runtime manifest services", () => {
 		expect(harness.receipt()).toEqual(receipt);
 		expect(readFileSync(foreignDropIn, "utf8")).toBe(foreignContents);
 	});
+
+	test("turns a hanging runtime version probe into a bounded convergence error", () => {
+		const harness = officialServiceHarness("openclaw");
+		expect(harness.converge().installErrors).toEqual([]);
+		harness.hangVersionProbe();
+		const startedAt = Date.now();
+
+		const result = harness.converge();
+
+		expect(Date.now() - startedAt).toBeLessThan(15_000);
+		expect(result.installErrors.join("\n")).toContain("runtime --version probe for");
+		expect(result.installErrors.join("\n")).toContain("timed out after 10000ms");
+	}, 15_000);
 
 	test("uninstalls stale official gateway services when manifest disables them", () => {
 		const paths = tempRuntimePaths();

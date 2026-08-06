@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -22,7 +22,9 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-	return getRuntimePaths({ mode: "hosted" });
+	const paths = getRuntimePaths({ mode: "hosted" });
+	mkdirSync(paths.configurationRoot);
+	return paths;
 }
 
 function runSettings(command: string, args: string[]): RuntimeRunSettings {

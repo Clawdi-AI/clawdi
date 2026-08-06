@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
-import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE } from "../lib/private-file";
 import {
 	type RuntimeAppliedState,
 	readRuntimeAppliedState,
@@ -12,6 +12,7 @@ import {
 import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 const positiveSafeIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const isoTimestampSchema = z.string().datetime({ offset: true });
@@ -219,7 +220,7 @@ export class HostedRuntimeHeartbeatSession {
 					? pending
 					: null,
 		};
-		writeState(this.statePath, candidate);
+		writeState(this.paths, this.statePath, candidate);
 		this.state = candidate;
 		this.capturedAppliedState = appliedState;
 		this.currentBootIdentity = nextBootIdentity;
@@ -266,7 +267,7 @@ export class HostedRuntimeHeartbeatSession {
 			lastCapturedAt: capturedAt,
 			pending,
 		};
-		writeState(this.statePath, candidate);
+		writeState(this.paths, this.statePath, candidate);
 		this.state = candidate;
 		return decodePendingEvent(pending);
 	}
@@ -284,7 +285,7 @@ export class HostedRuntimeHeartbeatSession {
 		const pending = decodePendingEvent(this.state.pending);
 		if (pending.event.eventId !== eventId) return false;
 		const candidate = { ...this.state, pending: null };
-		writeState(this.statePath, candidate);
+		writeState(this.paths, this.statePath, candidate);
 		this.state = candidate;
 		return true;
 	}
@@ -316,9 +317,9 @@ function readState(path: string): PersistedHeartbeatState | null {
 	}
 }
 
-function writeState(path: string, state: PersistedHeartbeatState): void {
+function writeState(paths: RuntimePaths, path: string, state: PersistedHeartbeatState): void {
 	const parsed = heartbeatStateSchema.parse(state);
-	writePrivateFileAtomic(path, `${JSON.stringify(parsed, null, 2)}\n`, {
+	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(parsed, null, 2)}\n`, {
 		mode: PRIVATE_FILE_MODE,
 		dirMode: PRIVATE_DIR_MODE,
 	});

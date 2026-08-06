@@ -23,6 +23,7 @@ describe("hosted runtime observed v2", () => {
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
+		mkdirSync(paths.serviceStateRoot);
 		writeRuntimeAppliedState(
 			{
 				schemaVersion: "clawdi.runtimeAppliedState.v2",

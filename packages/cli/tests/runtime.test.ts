@@ -90,6 +90,7 @@ import { buildRuntimeRunConfig } from "../src/runtime/run-config";
 import { normalizeSecretValues } from "../src/runtime/secret-values";
 import {
 	buildRuntimeBootStatus,
+	ensureRuntimeStateDirs,
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../src/runtime/state";
@@ -98,12 +99,31 @@ import { getDaemonControlTokenPath } from "../src/serve/paths";
 import { mockFetch } from "./commands/helpers";
 
 const TEST_PROCESS_USER = String(process.getuid?.() ?? 0);
+const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
+const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
+
+function testHostedRuntimeContract(paths: RuntimePaths) {
+	if (!process.env.CLAWDI_RUNTIME_USER) process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+	const user = process.env.CLAWDI_RUNTIME_USER;
+	const uid = Number(process.env.CLAWDI_RUNTIME_UID ?? TEST_PROCESS_UID);
+	const gid = Number(process.env.CLAWDI_RUNTIME_GID ?? TEST_PROCESS_GID);
+	return {
+		expectedIdentity: {
+			home: paths.userHome,
+			user,
+			uid,
+			gid,
+		},
+		resolveUserIdentity: () => ({ uid, gid }),
+	};
+}
 
 function explicitTestApplyContext(
 	manifest: Pick<RuntimeManifest, "generation" | "applyGeneration">,
 ) {
 	return {
 		kind: "context-file" as const,
+		backend: "incus" as const,
 		identity: {
 			generation: manifest.applyGeneration ?? manifest.generation,
 			manifestETag: `"test-${manifest.generation}"`,
@@ -133,9 +153,11 @@ function normalizeHostedManifestFixture(value: unknown): {
 let currentTestApplyContext = explicitTestApplyContext({ generation: 1 });
 
 function runtimeInit(opts: Parameters<typeof runtimeInitWithContext>[0] = {}) {
+	const paths = getRuntimePaths();
 	return runtimeInitWithContext({
 		...opts,
 		applyContext: opts.applyContext ?? currentTestApplyContext,
+		hostedRuntimeContract: opts.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 	});
 }
 
@@ -143,6 +165,9 @@ function liveTestApplyContext(): RuntimeApplyContext {
 	return {
 		get kind() {
 			return currentTestApplyContext.kind;
+		},
+		get backend() {
+			return currentTestApplyContext.backend;
 		},
 		get identity() {
 			return currentTestApplyContext.identity;
@@ -157,9 +182,11 @@ function liveTestApplyContext(): RuntimeApplyContext {
 }
 
 function runtimeWatch(opts: Parameters<typeof runtimeWatchWithContext>[0] = {}) {
+	const paths = getRuntimePaths();
 	return runtimeWatchWithContext({
 		...opts,
 		applyContext: opts.applyContext ?? liveTestApplyContext(),
+		hostedRuntimeContract: opts.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 	});
 }
 
@@ -187,6 +214,9 @@ function convergeRuntimeManifest(
 	paths: RuntimePaths,
 	opts?: Parameters<typeof convergeRuntimeManifestWithContext>[2],
 ) {
+	if (!process.env.CLAWDI_RUNTIME_MODE) process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	if (!process.env.CLAWDI_RUNTIME_USER) process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+	ensureRuntimeStateDirs(paths);
 	const requiredSecretRefs = new Set(manifestSecretRefs(load.manifest));
 	const defaultSecretValues = Object.fromEntries(
 		Object.entries(TEST_RUNTIME_SERVICE_SECRET_VALUES).filter(([ref]) =>
@@ -200,7 +230,10 @@ function convergeRuntimeManifest(
 			applyContext: load.applyContext ?? explicitTestApplyContext(load.manifest),
 		},
 		paths,
-		opts,
+		{
+			...opts,
+			hostedRuntimeContract: opts?.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
+		},
 	);
 }
 
@@ -443,6 +476,7 @@ function setRuntimeApplyContextFixture(
 	};
 	currentTestApplyContext = {
 		kind: "context-file",
+		backend: "incus",
 		identity,
 		cliPackageSpec: contextValues.cliPackageSpec,
 		manifestSource: {
@@ -2077,6 +2111,7 @@ function writeCanonicalApplyContext(
 ): void {
 	currentTestApplyContext = {
 		kind: "context-file",
+		backend: "incus",
 		identity,
 		cliPackageSpec: context.cliPackageSpec,
 		manifestSource: {
@@ -2107,6 +2142,7 @@ function writeOfflineStrictAppliedState(
 	manifest: RuntimeManifest,
 	contentSha256: string,
 ): void {
+	mkdirSync(paths.serviceStateRoot, { recursive: true });
 	writeRuntimeAppliedState(
 		{
 			schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -7979,6 +8015,7 @@ exit 42
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		const paths = getRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
@@ -8484,6 +8521,7 @@ esac
 		mkdirSync(getRuntimePaths().cacheRoot, { recursive: true });
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		const paths = getRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.systemdSystemRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		writeFileSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"), "[Service]\n");
@@ -8583,6 +8621,7 @@ printf 'ActiveState=inactive\\nSubState=dead\\n'
 		mkdirSync(getRuntimePaths().cacheRoot, { recursive: true });
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
 		const paths = getRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.systemdSystemRoot, { recursive: true });
 		writeFileSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"), "[Service]\n");
 		writeRuntimeBootStatus(
@@ -8653,6 +8692,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		mkdirSync(getRuntimePaths().cacheRoot, { recursive: true });
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
 		const paths = getRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.systemdSystemRoot, { recursive: true });
 		writeFileSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"), "[Service]\n");
 		writeRuntimeWatchStatus(
@@ -8706,6 +8746,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.cacheRoot, { recursive: true });
 		writeFileSync(
 			paths.manifestLastGood,
@@ -8806,6 +8847,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.cacheRoot, { recursive: true });
 		writeFileSync(
 			paths.manifestLastGood,
@@ -14267,12 +14309,10 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
 		expect(existsSync(join(hermesSkill, ".clawdi-managed.json"))).toBe(true);
 		process.env.CLAWDI_RUNTIME_MODE = "local";
-		const localMode = convergeRuntimeManifest(
-			load(4, "hermes", updatedServers, true),
-			getRuntimePaths(),
-		);
-		expect(localMode.installErrors).toEqual([]);
-		expect(existsSync(hermesSkill)).toBe(false);
+		expect(() =>
+			convergeRuntimeManifest(load(4, "hermes", updatedServers, true), getRuntimePaths()),
+		).toThrow("hosted convergence requires CLAWDI_RUNTIME_MODE=hosted explicitly");
+		expect(existsSync(hermesSkill)).toBe(true);
 		expect(readFileSync(openclawUserSkill, "utf-8")).toBe("user-owned skill\n");
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 
@@ -15513,6 +15553,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.cacheRoot, { recursive: true });
 		const desiredPayload = hostedRuntimeWatchLocalePayload(home, 1);
 		writeRuntimeAppliedState(

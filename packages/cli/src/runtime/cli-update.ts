@@ -17,7 +17,6 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import {
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	hostedCliPackageSpecSchema,
@@ -25,6 +24,7 @@ import {
 	type RuntimeManifest,
 } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 export interface RuntimeCliUpdateResult {
 	status: "not_requested" | "current" | "installed" | "deferred" | "error";
@@ -833,7 +833,8 @@ function writeCliBootstrapStatus(
 	) {
 		throw new Error(`clawdi CLI target changed after verification: ${input.activeTarget}`);
 	}
-	writePrivateFileAtomic(
+	writeRuntimePlatformFileAtomic(
+		paths,
 		paths.cliBootstrapStatus,
 		`${JSON.stringify(
 			{
@@ -1353,7 +1354,8 @@ function readCliUpgradeState(paths: RuntimePaths): RuntimeCliUpgradeState {
 }
 
 function writeCliUpgradeState(paths: RuntimePaths, state: RuntimeCliUpgradeState): void {
-	writePrivateFileAtomic(
+	writeRuntimePlatformFileAtomic(
+		paths,
 		paths.cliUpgradeState,
 		`${JSON.stringify(normalizeCliUpgradeState(state), null, 2)}\n`,
 		{ mode: 0o600, dirMode: 0o755 },

@@ -121,7 +121,7 @@ test("keeps real Hosted converge mutations inside its exact root and runtime-use
 	const home = join(root, "home", "clawdi");
 	const state = join(root, "state");
 	const run = join(root, "run");
-	const systemdSystemRoot = join(root, "systemd", "system");
+	const systemdSystemRoot = join(run, "systemd", "system");
 	const openclaw = join(home, ".openclaw", "bin", "openclaw");
 	fsOriginals.mkdirSync(dirname(openclaw), { recursive: true });
 	fsOriginals.writeFileSync(
@@ -136,7 +136,9 @@ exit 0
 	const originalEnv = { ...process.env };
 	process.env.HOME = home;
 	process.env.CLAWDI_RUNTIME_MODE = "hosted";
-	process.env.CLAWDI_RUNTIME_USER = process.env.USER ?? "root";
+	const runtimeUid = process.getuid?.() ?? 1_000;
+	const runtimeGid = process.getgid?.() ?? 1_000;
+	process.env.CLAWDI_RUNTIME_USER = String(runtimeUid);
 	process.env.CLAWDI_SERVICE_STATE_DIR = state;
 	process.env.CLAWDI_RUN_DIR = run;
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = systemdSystemRoot;
@@ -167,9 +169,11 @@ exit 0
 		const { normalizeHostedRuntimeBundleV2 } = await import("./manifest-source");
 		const { convergeRuntimeManifest } = await import("./manifest");
 		const { getRuntimePaths } = await import("./paths");
+		const { ensureRuntimeStateDirs } = await import("./state");
 		const load = normalizeHostedRuntimeBundleV2(fixture);
 		load.applyContext = {
 			kind: "context-file",
+			backend: "incus",
 			identity: {
 				generation: 2,
 				manifestETag: '"manifest-parity"',
@@ -184,8 +188,21 @@ exit 0
 			},
 		};
 
+		const paths = getRuntimePaths();
+		ensureRuntimeStateDirs(paths);
 		recording = true;
-		const result = convergeRuntimeManifest(load, getRuntimePaths(), { cacheLastGood: false });
+		const result = convergeRuntimeManifest(load, paths, {
+			cacheLastGood: false,
+			hostedRuntimeContract: {
+				expectedIdentity: {
+					home,
+					user: String(runtimeUid),
+					uid: runtimeUid,
+					gid: runtimeGid,
+				},
+				resolveUserIdentity: () => ({ uid: runtimeUid, gid: runtimeGid }),
+			},
+		});
 		recording = false;
 		expect(result.installErrors).toEqual([]);
 		expect(capturedPlan).not.toBeNull();

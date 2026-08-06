@@ -1,7 +1,8 @@
 import { readFileSync, rmSync } from "node:fs";
-import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
 import { runtimeSecretValue } from "./secret-values";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 export const RUNTIME_AUTH_TOKEN_SECRET_REF = "secret://clawdi/auth-token";
 
@@ -18,7 +19,7 @@ export function writeRuntimeAuthToken(paths: RuntimePaths, token: string): strin
 	if (!normalized) {
 		throw new Error("runtime auth token must be non-empty and contain no control characters");
 	}
-	writePrivateFileAtomic(paths.daemonAuthToken, `${normalized}\n`, {
+	writeRuntimePlatformFileAtomic(paths, paths.daemonAuthToken, `${normalized}\n`, {
 		mode: PRIVATE_FILE_MODE,
 		dirMode: PRIVATE_DIR_MODE,
 	});

@@ -144,6 +144,17 @@ describe("runtime apply identity", () => {
 		expect(() => readRuntimeApplyContext(legacy)).toThrow(/invalid runtime context file/);
 	});
 
+	test("requires the attested Incus backend in every v2 runtime context", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-missing-runtime-backend-"));
+		roots.push(root);
+		const path = contextFile(root);
+		const parsed: Record<string, unknown> = JSON.parse(readFileSync(path, "utf-8"));
+		delete parsed.backend;
+		writeFileSync(path, JSON.stringify(parsed));
+
+		expect(() => readRuntimeApplyContext(path)).toThrow(/backend: Invalid input/);
+	});
+
 	test("rejects the removed runtimeEnv parallel secret authority", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-removed-runtime-env-"));
 		roots.push(root);

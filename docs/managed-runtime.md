@@ -225,6 +225,22 @@ systemd-owned roots instead of recursively hardening their ownership. The run
 root is searchable only for the two explicit platform-to-tenant handoff
 classes: the egress CA and per-unit tenant environment files. All other
 platform files remain private or are exposed only to dedicated system services.
+Before directory preparation, lock acquisition, or any external runtime command,
+Hosted convergence requires the explicit process contract
+`CLAWDI_RUNTIME_MODE=hosted`, a resolved HOME of exactly `/home/clawdi`, and
+`CLAWDI_RUNTIME_USER=clawdi` resolving through the host account database to the
+non-root identity `10001:10001`. Optional `CLAWDI_RUNTIME_UID` and
+`CLAWDI_RUNTIME_GID` values must match that resolved identity. The resolved HOME
+is validated regardless of whether it came from `CLAWDI_RUNTIME_HOME` or
+`HOME`; a host-policy file cannot select Hosted mode.
+
+The same precondition gate proves that all four platform roots are real
+directories before convergence starts. Convergence repeats the root proof at
+mutation-group boundaries, and platform child writers are anchored to their
+already-existing root. If a root disappears after preflight, no child writer
+recursively recreates it; convergence fails and leaves root restoration to the
+systemd/image boundary that owns it.
+
 That entrypoint reads the exact managed CLI pin from the canonical runtime
 context, installs it under a root-only versioned npm prefix, atomically activates
 `/var/lib/clawdi/maintained/clawdi/bin/clawdi`, and runs
@@ -270,6 +286,12 @@ allowlists only `error`, `message`, `hints`, and `warnings`; it never projects
 the rest of the installer response, a runtime manifest, or process environment.
 The failure still aborts Apply before authority commits and uses the existing
 filesystem/systemd rollback transaction.
+
+Runtime `--version` probes use a 10-second deadline, official service installs
+use 10 minutes, official service uninstalls use 2 minutes, and their preparatory
+user-manager maintenance uses 15 seconds. A deadline expiry is reported as a
+named convergence error rather than leaving first boot or a watch pass blocked
+indefinitely.
 
 Official service installers/uninstallers run only in the hosted systemd apply
 path. Unit tests select installer execution through an explicit in-process test
@@ -972,11 +994,14 @@ Strict-v2 workloads provide their bootstrap and apply authority through the
 single fixed file `/etc/clawdi/runtime-context.json`. The file
 is a strict `clawdi.runtimeContext.v2` object containing an `apply` tuple
 (`generation`, `manifestETag`, `applyReceiptId`, and `bootNonce`), an exact
-`cliPackageSpec`, and a typed HTTP `manifestSource` with bearer auth. Business
-secrets are not bootstrap context: the fetched bundle's `secretValues` map is
-the sole authority for exact manifest `secret://` references. API URLs that are
-already in the manifest, auth selectors, paths, mode, runtime user, and process
-environment are not duplicated in the context. A missing or malformed context
+`backend: "incus"` attestation, an exact `cliPackageSpec`, and a typed HTTP
+`manifestSource` with bearer auth. `backend` is required for every Hosted v2
+context and is validated by the common precondition gate before convergence.
+Business secrets are not bootstrap context: the fetched bundle's `secretValues`
+map is the sole authority for exact manifest `secret://` references. API URLs
+that are already in the manifest, auth selectors, paths, mode, runtime user, and
+process environment are not duplicated in the context. A missing or malformed
+context
 fails closed, and no field falls back to ambient process environment. The
 applied generation and exact CLI package must match the fetched manifest and
 are validated before CLI installation, systemd mutation, or applied-authority
