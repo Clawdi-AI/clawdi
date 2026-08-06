@@ -4918,7 +4918,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Workspace", "Skills"]);
+	).toHaveText(["Hosted agent · Hermes", "Skills"]);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-desktop.png") });
 	await page.screenshot({
@@ -4941,7 +4941,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Workspace", "Vaults"]);
+	).toHaveText(["Hosted agent · Hermes", "Vaults"]);
 	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await expect(
@@ -4971,7 +4971,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Workspace", "Vaults", "Hosted Scoped Vault"]);
+	).toHaveText(["Hosted agent · Hermes", "Vaults", "Hosted Scoped Vault"]);
 	await expect(main.getByRole("button", { name: "Vaults" })).toHaveCount(0);
 	await expect(
 		main
@@ -5405,7 +5405,7 @@ test("hosted Agent Skill details retain deployment context and stay inside bound
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Workspace", "Skills", "Hosted detail Skill"]);
+	).toHaveText(["Hosted agent · Hermes", "Skills", "Hosted detail Skill"]);
 	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
 	await expect(

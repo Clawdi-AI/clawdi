@@ -31,17 +31,21 @@ function labels(
 }
 
 describe("AppBreadcrumb semantic trail", () => {
-	test("presents the Agent Workspace outside the Projects hierarchy", () => {
+	test("omits the implicit Workspace layer from Agent breadcrumbs", () => {
+		const segmentTitles = {
+			[`/agents/${agentId}/project-access/${workspaceId}`]: {
+				title: "Workspace",
+				context: "workspace" as const,
+			},
+		};
+		expect(labels(`/agents/${agentId}/project-access/${workspaceId}`, { segmentTitles })).toEqual([
+			"Hermes",
+		]);
 		expect(
 			labels(`/agents/${agentId}/project-access/${workspaceId}/skills`, {
-				segmentTitles: {
-					[`/agents/${agentId}/project-access/${workspaceId}`]: {
-						title: "Workspace",
-						context: "workspace",
-					},
-				},
+				segmentTitles,
 			}),
-		).toEqual(["Hermes", "Workspace", "Skills"]);
+		).toEqual(["Hermes", "Skills"]);
 	});
 
 	test("keeps linked Projects in the Projects hierarchy", () => {
@@ -77,14 +81,14 @@ describe("AppBreadcrumb semantic trail", () => {
 				title: "GitHub Issues",
 				segmentTitles,
 			}),
-		).toEqual(["Hermes", "Workspace", "Skills", "GitHub Issues"]);
+		).toEqual(["Hermes", "Skills", "GitHub Issues"]);
 		expect(
 			labels(`/agents/${agentId}/vaults/production`, {
 				search: { ...deploymentSearch, project: workspaceId },
 				title: "Production Keys",
 				segmentTitles,
 			}),
-		).toEqual(["Hermes", "Workspace", "Vaults", "Production Keys"]);
+		).toEqual(["Hermes", "Vaults", "Production Keys"]);
 	});
 
 	test("shows real names for Agent-level resources", () => {
@@ -118,7 +122,6 @@ describe("AppBreadcrumb semantic trail", () => {
 		});
 		expect(trail.filter((item) => item.href).map((item) => item.href)).toEqual([
 			`/agents/${agentId}?source=on-clawdi&d=deployment-1`,
-			`/agents/${agentId}/project-access/${workspaceId}?source=on-clawdi&d=deployment-1`,
 			`/agents/${agentId}/project-access/${workspaceId}/skills?source=on-clawdi&d=deployment-1`,
 		]);
 	});
@@ -127,6 +130,6 @@ describe("AppBreadcrumb semantic trail", () => {
 		expect(labels("/projects/550e8400-e29b-41d4-a716-446655440000")).toEqual(["Projects", null]);
 		expect(
 			labels(`/agents/${agentId}/vaults/internal-slug`, { search: { project: projectId } }),
-		).toEqual(["Hermes", null, "Vaults", null]);
+		).toEqual(["Hermes", "Vaults", null]);
 	});
 });

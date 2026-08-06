@@ -84,6 +84,9 @@ function buildAgentBreadcrumbTrail(
 		if (route.projectResource) {
 			return finishTrail(trail, overrideTitle ?? agentSectionLabel(route.projectResource));
 		}
+		if (context.kind !== "project") {
+			return finishTrail(trail, agentTitle);
+		}
 		return finishTrail(trail, overrideTitle ?? context.label);
 	}
 
@@ -151,13 +154,12 @@ function appendProjectContext(
 	context: ReturnType<typeof projectContext>,
 	query: ReturnType<typeof agentDeploymentRouteQuery>,
 ) {
-	if (context.kind === "project") {
-		trail.push({
-			key: "projects",
-			label: "Projects",
-			href: agentSectionHref(agentId, "projects", query),
-		});
-	}
+	if (context.kind !== "project") return;
+	trail.push({
+		key: "projects",
+		label: "Projects",
+		href: agentSectionHref(agentId, "projects", query),
+	});
 	trail.push({
 		key: `project:${context.projectId}`,
 		label: context.label,
