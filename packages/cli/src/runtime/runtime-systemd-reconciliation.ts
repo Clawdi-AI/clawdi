@@ -808,11 +808,9 @@ function writeSystemdUnit(input: {
 					"StateDirectoryMode=0700",
 					`CacheDirectory=${SYSTEMD_PLATFORM_DIRECTORY}`,
 					"CacheDirectoryMode=0700",
-					`RuntimeDirectory=${SYSTEMD_PLATFORM_DIRECTORY}`,
-					// The runtime root is searchable only because the tenant must read the
-					// explicitly published CA and its own 0600 environment files.
-					"RuntimeDirectoryMode=0711",
-					"RuntimeDirectoryPreserve=restart",
+					// Runtime state is prepared before convergence: the boot prep unit owns
+					// the production root for the entire boot, while ensureRuntimeStateDirs()
+					// creates non-default roots. Do not bind the shared root to this service.
 				]
 			: input.directoryKind === "file-browser"
 				? [

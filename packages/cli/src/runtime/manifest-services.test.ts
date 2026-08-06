@@ -28,6 +28,7 @@ import {
 	planHermesDashboardArtifact,
 	prepareHermesDashboardArtifact,
 } from "./runtime-systemd-reconciliation";
+import { ensureRuntimeStateDirs } from "./state";
 
 const originalEnv = { ...process.env };
 const originalConsoleWarn = console.warn;
@@ -492,11 +493,13 @@ describe("runtime manifest services", () => {
 		const previousUmask = process.umask(0o077);
 		let result: ReturnType<typeof convergeRuntimeManifest>;
 		try {
+			ensureRuntimeStateDirs(paths);
 			result = convergeRuntimeManifest(load, paths);
 		} finally {
 			process.umask(previousUmask);
 		}
 		expect(result.installErrors).toEqual([]);
+		expect(statSync(paths.runRoot).mode & 0o777).toBe(0o711);
 		expect(statSync(paths.systemdRuntimeRoot).mode & 0o777).toBe(0o711);
 		expect(statSync(paths.systemdEnvRoot).mode & 0o777).toBe(0o711);
 		expect(result.outputs.runConfigs.map((path) => path.split("/").at(-1)).sort()).toEqual([
@@ -554,9 +557,10 @@ describe("runtime manifest services", () => {
 		expect(runtimeWatchUnit).toContain("StateDirectoryMode=0700");
 		expect(runtimeWatchUnit).toContain("CacheDirectory=clawdi");
 		expect(runtimeWatchUnit).toContain("CacheDirectoryMode=0700");
-		expect(runtimeWatchUnit).toContain("RuntimeDirectory=clawdi");
-		expect(runtimeWatchUnit).toContain("RuntimeDirectoryMode=0711");
-		expect(runtimeWatchUnit).toContain("RuntimeDirectoryPreserve=restart");
+		// The boot-level runtime root must outlive this generated watcher unit.
+		expect(runtimeWatchUnit).not.toContain("\nRuntimeDirectory=");
+		expect(runtimeWatchUnit).not.toContain("\nRuntimeDirectoryMode=");
+		expect(runtimeWatchUnit).not.toContain("\nRuntimeDirectoryPreserve=");
 		expect(runtimeWatchUnit).toContain("TasksMax=infinity");
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
 		expect(runtimeWatchEnv).not.toContain("runtime-byok-value");
