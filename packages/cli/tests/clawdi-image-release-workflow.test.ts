@@ -74,6 +74,7 @@ describe("backend image release workflow contract", () => {
 				"packages/shared/src/api/api.generated.ts",
 				"package.json",
 				"bun.lock",
+				"scripts/whatsapp-sidecar-deployment-revision.ts",
 				".github/workflows/backend-ci.yml",
 				".github/workflows/clawdi-image-release.yml",
 			]),
@@ -108,8 +109,21 @@ describe("backend image release workflow contract", () => {
 			"git rev-parse HEAD",
 		);
 		expect(imageReleaseSource).not.toContain("git diff-tree");
+		expect(imageReleaseSource).not.toContain("git ls-tree -r --full-tree");
 		expect(imageReleaseSource).not.toContain("runtime-changes");
 		expect(imageReleaseSource).not.toContain("build_required");
+		const sidecarRevision = imageRelease.jobs.build?.steps?.find(
+			(step) => step.name === "Resolve WhatsApp sidecar deployment revision",
+		);
+		expect(sidecarRevision?.run).toContain(
+			"bun run scripts/whatsapp-sidecar-deployment-revision.ts",
+		);
+		const revisionStepIndex = imageRelease.jobs.build?.steps?.indexOf(sidecarRevision ?? {});
+		const setupBunIndex = imageRelease.jobs.build?.steps?.findIndex(
+			(step) => step.uses === "oven-sh/setup-bun@v2",
+		);
+		expect(setupBunIndex).toBeGreaterThanOrEqual(0);
+		expect(revisionStepIndex).toBeGreaterThan(setupBunIndex ?? -1);
 
 		const backendBuild = imageRelease.jobs.build?.steps?.find(
 			(step) => step.name === "Build and push backend image",

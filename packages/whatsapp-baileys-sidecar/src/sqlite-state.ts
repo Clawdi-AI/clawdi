@@ -58,6 +58,7 @@ type ProviderStateFailureHandler = (operation: ProviderStateFailureOperation, er
 const STATE_SCHEMA_VERSION = "1";
 const STATE_DATABASE_FILE = "provider-state.sqlite";
 const MAX_CREDS_BYTES = 4 * 1024 * 1024;
+const MAX_SIGNED_DEVICE_IDENTITY_FIELD_BYTES = 1024 * 1024;
 const MAX_SIGNAL_KEY_ID_BYTES = 512;
 const MAX_SIGNAL_KEY_VALUE_BYTES = 1024 * 1024;
 const MAX_SIGNAL_KEY_MUTATIONS = 2048;
@@ -448,7 +449,7 @@ export class SQLiteProviderState {
 			if (Buffer.byteLength(row.value) > MAX_CREDS_BYTES) {
 				throw new Error("corrupt auth credentials: value exceeds the durable size limit");
 			}
-			return validateAuthenticationCreds(parseBufferJson(row.value, "auth credentials"));
+			return parseAuthenticationCreds(row.value);
 		}
 		const creds = initAuthCreds();
 		const serialized = serializeBufferJson(creds, "auth credentials");
@@ -797,8 +798,15 @@ function validateAuthenticationCreds(value: unknown): AuthenticationCreds {
 }
 
 function credentialsForPersistence(creds: AuthenticationCreds): AuthenticationCreds {
+	const account = signedDeviceIdentityForPersistence(creds.account);
 	return {
 		...creds,
+		// rc14's generated ADVSignedDeviceIdentity.toJSON serializes protobuf
+		// bytes as strings before BufferJSON.replacer runs. Store a plain byte
+		// object so BufferJSON.reviver can restore every field instead. Audited at
+		// WhiskeySockets/Baileys commit 7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a,
+		// WAProto/index.{js,d.ts} and src/Utils/generics.ts.
+		...(account === undefined ? {} : { account }),
 		// The link code is useful only to the live pairing socket and must never
 		// survive in the physical auth database.
 		pairingCode: undefined,
@@ -824,14 +832,88 @@ function validContactIdentity(value: unknown): boolean {
 	return isRecord(value) && validIdentityJid(value.id);
 }
 
-function validSignedDeviceIdentity(value: unknown): boolean {
+type SignedDeviceIdentityBytes = {
+	details: Uint8Array;
+	accountSignatureKey: Uint8Array;
+	accountSignature: Uint8Array;
+	deviceSignature: Uint8Array;
+};
+
+function validSignedDeviceIdentity(value: unknown): value is SignedDeviceIdentityBytes {
 	return (
 		isRecord(value) &&
-		validNonemptyBytes(value.details) &&
-		validNonemptyBytes(value.accountSignatureKey) &&
-		validNonemptyBytes(value.accountSignature) &&
-		validNonemptyBytes(value.deviceSignature)
+		validSignedDeviceIdentityBytes(value.details) &&
+		validSignedDeviceIdentityBytes(value.accountSignatureKey) &&
+		validSignedDeviceIdentityBytes(value.accountSignature) &&
+		validSignedDeviceIdentityBytes(value.deviceSignature)
 	);
+}
+
+function validSignedDeviceIdentityBytes(value: unknown): value is Uint8Array {
+	return (
+		isByteArray(value) &&
+		value.byteLength > 0 &&
+		value.byteLength <= MAX_SIGNED_DEVICE_IDENTITY_FIELD_BYTES
+	);
+}
+
+function signedDeviceIdentityForPersistence(
+	value: unknown,
+): proto.IADVSignedDeviceIdentity | undefined {
+	if (!validSignedDeviceIdentity(value)) return undefined;
+	return {
+		details: Buffer.from(value.details),
+		accountSignatureKey: Buffer.from(value.accountSignatureKey),
+		accountSignature: Buffer.from(value.accountSignature),
+		deviceSignature: Buffer.from(value.deviceSignature),
+	};
+}
+
+function normalizePersistedSignedDeviceIdentity(
+	value: unknown,
+): proto.IADVSignedDeviceIdentity | undefined {
+	if (!isRecord(value)) return undefined;
+	const details = canonicalPersistedBytes(value.details);
+	const accountSignatureKey = canonicalPersistedBytes(value.accountSignatureKey);
+	const accountSignature = canonicalPersistedBytes(value.accountSignature);
+	const deviceSignature = canonicalPersistedBytes(value.deviceSignature);
+	if (!details || !accountSignatureKey || !accountSignature || !deviceSignature) {
+		return undefined;
+	}
+	return { details, accountSignatureKey, accountSignature, deviceSignature };
+}
+
+function canonicalPersistedBytes(value: unknown): Uint8Array | undefined {
+	if (typeof value === "string") return decodeCanonicalBase64(value);
+	if (
+		!isRecord(value) ||
+		Object.keys(value).length !== 2 ||
+		value.type !== "Buffer" ||
+		typeof value.data !== "string"
+	) {
+		return undefined;
+	}
+	return decodeCanonicalBase64(value.data);
+}
+
+function decodeCanonicalBase64(value: string): Uint8Array | undefined {
+	const maximumEncodedLength = Math.ceil(MAX_SIGNED_DEVICE_IDENTITY_FIELD_BYTES / 3) * 4;
+	if (value.length === 0 || value.length > maximumEncodedLength) {
+		return undefined;
+	}
+	try {
+		const decoded = Buffer.from(value, "base64");
+		if (
+			decoded.byteLength === 0 ||
+			decoded.byteLength > MAX_SIGNED_DEVICE_IDENTITY_FIELD_BYTES ||
+			decoded.toString("base64") !== value
+		) {
+			return undefined;
+		}
+		return decoded;
+	} catch {
+		return undefined;
+	}
 }
 
 function validSignalIdentity(value: unknown): boolean {
@@ -1000,6 +1082,29 @@ function serializeBufferJson(value: unknown, label: string): string {
 	const serialized = JSON.stringify(value, BufferJSON.replacer);
 	if (typeof serialized !== "string") throw new Error(`${label} is not serializable`);
 	return serialized;
+}
+
+function parseAuthenticationCreds(value: string): AuthenticationCreds {
+	const raw = parseJson(value, "auth credentials");
+	const revived = parseBufferJson(value, "auth credentials");
+	if (!isRecord(raw) || !isRecord(revived) || raw.account === undefined) {
+		return validateAuthenticationCreds(revived);
+	}
+	const account = normalizePersistedSignedDeviceIdentity(raw.account);
+	return validateAuthenticationCreds({
+		...revived,
+		// Preserve an invalid raw representation instead of BufferJSON's
+		// permissive base64 decoding so the linked-identity check fails closed.
+		account: account ?? raw.account,
+	});
+}
+
+function parseJson(value: string, label: string): unknown {
+	try {
+		return JSON.parse(value) as unknown;
+	} catch (error: unknown) {
+		throw new Error(`corrupt ${label}: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 function parseBufferJson<T = unknown>(value: string, label: string): T {

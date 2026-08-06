@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AuthenticationCreds, proto } from "baileys";
+import { type AuthenticationCreds, BufferJSON, proto } from "baileys";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
@@ -100,6 +100,134 @@ describe("SQLite provider state", () => {
 		second.retryCounterCache.del("retry");
 		expect(second.retryCounterCache.get("retry")).toBeUndefined();
 		second.close();
+	});
+
+	it("recovers the existing rc14 protobuf JSON identity and rewrites it as durable bytes", async () => {
+		const directory = makeDirectory();
+		const first = makeState(directory);
+		const signalSessions = Object.fromEntries(
+			Array.from({ length: 822 }, (_, index) => [
+				`session-${index}`,
+				Buffer.from([(index % 251) + 1]),
+			]),
+		);
+		await first.state.keys.set({ session: signalSessions });
+		const existingValue = storedLinkedCreds(first, protobufSignedDeviceIdentity());
+		expect(JSON.parse(existingValue)).toMatchObject({
+			registered: false,
+			account: {
+				details: "AQ==",
+				accountSignatureKey: "Ag==",
+				accountSignature: "Aw==",
+				deviceSignature: "BA==",
+			},
+		});
+		first.close();
+		mutateDatabase(directory, (database) => {
+			database.query("UPDATE auth_creds SET value = ? WHERE singleton = 1").run(existingValue);
+		});
+
+		const second = makeState(directory);
+		expect(second.state.creds.registered).toBe(false);
+		expect(second.state.creds.me).toEqual({
+			...REGISTERED_ME,
+			lid: "15550001111@lid",
+		});
+		expect(second.state.creds.account).toEqual({
+			details: Buffer.from([1]),
+			accountSignatureKey: Buffer.from([2]),
+			accountSignature: Buffer.from([3]),
+			deviceSignature: Buffer.from([4]),
+		});
+		expect(second.state.creds.signalIdentities?.[0]?.identifierKey).toEqual(Buffer.from([5]));
+		expect(isLinkedAuthenticationCreds(second.state.creds)).toBe(true);
+		expect(
+			internalDatabase(second)
+				.query<{ key_count: number }, []>("SELECT COUNT(*) AS key_count FROM signal_keys")
+				.get(),
+		).toEqual({ key_count: 822 });
+		expect(second.physicalAuthQuarantineReason()).toBeUndefined();
+
+		second.saveCreds();
+		const rewritten = internalDatabase(second)
+			.query<{ value: string }, []>("SELECT value FROM auth_creds WHERE singleton = 1")
+			.get();
+		expect(rewritten).toBeDefined();
+		expect(JSON.parse(rewritten?.value ?? "null")).toMatchObject({
+			registered: false,
+			account: {
+				details: { type: "Buffer", data: "AQ==" },
+				accountSignatureKey: { type: "Buffer", data: "Ag==" },
+				accountSignature: { type: "Buffer", data: "Aw==" },
+				deviceSignature: { type: "Buffer", data: "BA==" },
+			},
+		});
+		second.close();
+
+		const third = makeState(directory);
+		expect(third.state.creds.registered).toBe(false);
+		expect(isLinkedAuthenticationCreds(third.state.creds)).toBe(true);
+		expect(third.state.creds.account?.details).toEqual(Buffer.from([1]));
+		third.close();
+	});
+
+	it.each([
+		[
+			"empty",
+			{
+				details: "",
+				accountSignatureKey: "Ag==",
+				accountSignature: "Aw==",
+				deviceSignature: "BA==",
+			},
+		],
+		[
+			"noncanonical",
+			{
+				details: "AQ",
+				accountSignatureKey: "Ag==",
+				accountSignature: "Aw==",
+				deviceSignature: "BA==",
+			},
+		],
+		[
+			"malformed",
+			{
+				details: "%%%%",
+				accountSignatureKey: "Ag==",
+				accountSignature: "Aw==",
+				deviceSignature: "BA==",
+			},
+		],
+		[
+			"oversized",
+			{
+				details: Buffer.alloc(1024 * 1024 + 1, 1).toString("base64"),
+				accountSignatureKey: "Ag==",
+				accountSignature: "Aw==",
+				deviceSignature: "BA==",
+			},
+		],
+		["partial", { details: "AQ==", accountSignatureKey: "Ag==", accountSignature: "Aw==" }],
+	])("rejects a %s persisted signed-device identity", (_label, account) => {
+		const directory = makeDirectory();
+		const first = makeState(directory);
+		const stored = storedLinkedCreds(first, account);
+		first.close();
+		mutateDatabase(directory, (database) => {
+			database.query("UPDATE auth_creds SET value = ? WHERE singleton = 1").run(stored);
+		});
+
+		const second = makeState(directory);
+		expect(second.state.creds.registered).toBe(false);
+		expect(isLinkedAuthenticationCreds(second.state.creds)).toBe(false);
+		second.saveCreds();
+		second.close();
+
+		const third = makeState(directory);
+		expect(third.state.creds.me).toBeUndefined();
+		expect(isLinkedAuthenticationCreds(third.state.creds)).toBe(false);
+		third.close();
 	});
 
 	it("keeps temporary pairing-code and malformed identity input unlinked and out of snapshots", () => {
@@ -494,6 +622,29 @@ function verifiedQrUpdate(): Partial<AuthenticationCreds> {
 			},
 		],
 	};
+}
+
+function protobufSignedDeviceIdentity(): proto.ADVSignedDeviceIdentity {
+	return proto.ADVSignedDeviceIdentity.create({
+		details: Buffer.from([1]),
+		accountSignatureKey: Buffer.from([2]),
+		accountSignature: Buffer.from([3]),
+		deviceSignature: Buffer.from([4]),
+	});
+}
+
+function storedLinkedCreds(state: SQLiteProviderState, account: unknown): string {
+	const serialized = JSON.stringify(
+		{
+			...state.state.creds,
+			...verifiedQrUpdate(),
+			account,
+			registered: false,
+		},
+		BufferJSON.replacer,
+	);
+	if (typeof serialized !== "string") throw new Error("test credentials are not serializable");
+	return serialized;
 }
 
 function internalDatabase(state: SQLiteProviderState): Database {

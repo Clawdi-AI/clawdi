@@ -183,8 +183,13 @@ run directories.
 Backend- or web-only releases must not restart the WhatsApp singleton. Every
 release publishes a full-SHA sidecar image, but the workflow derives a stable
 deployment revision from the sidecar's effective Docker inputs and Kamal
-accessory configuration. It reboots the singleton only when that revision
-differs from the running container, so a failed or skipped earlier release
+accessory configuration. The revision hashes emitted source and compiler
+configuration, the exact sidecar runtime/build dependency closure selected from
+`bun.lock`, and only the `whatsapp-baileys` accessory block. Workspace manifests
+copied solely so Bun can validate the monorepo lock are not deployment inputs;
+for example, a CLI-only package version bump leaves the revision unchanged. The
+workflow reboots the singleton only when that revision differs from the running
+container, so a failed or skipped earlier release
 cannot make a later commit miss a pending sidecar change. A real sidecar release
 verifies the full-SHA image, authenticated UDS healthcheck, and every active
 Shared session whose verified phone identity is already durable in PostgreSQL.
