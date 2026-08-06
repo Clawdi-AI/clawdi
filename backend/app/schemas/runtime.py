@@ -33,12 +33,14 @@ FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6"
 FILE_BROWSER_AMD64_SHA256 = "8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e"
 FILE_BROWSER_ARM64_SHA256 = "3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f"
 
+
 class ProjectSkillCapabilityReport(BaseModel):
     """Current Connected Agent observation, separate from deployment generations."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
     project_skill_reconcile_version: Literal[1]
+
 
 _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _EGRESS_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
