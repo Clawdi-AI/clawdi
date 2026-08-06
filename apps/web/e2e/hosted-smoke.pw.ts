@@ -277,11 +277,11 @@ function hostedOverviewSessionsPage(itemCount: number) {
 			id: `hosted-overview-session-${index + 1}`,
 			local_session_id: `hosted-local-${index + 1}`,
 			project_path: "/hosted",
-			agent_name: "rail-cloud",
-			agent_display_name: "Rail Cloud",
-			agent_default_name: "Rail Cloud",
+			agent_name: "e2e-2",
+			agent_display_name: null,
+			agent_default_name: "e2e-2",
 			agent_type: "hermes",
-			machine_name: "rail-cloud",
+			machine_name: "hermes-3",
 			started_at: `2026-07-15T0${index}:00:00Z`,
 			ended_at: null,
 			updated_at: `2026-07-15T0${index}:30:00Z`,
@@ -856,7 +856,7 @@ const railConnectedEnvironmentId = "99999999-9999-4999-8999-999999999999";
 const railHostedDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_rail_cloud",
-	name: "Rail Cloud",
+	name: "e2e-2",
 	config_info: {
 		...includedBasicDeployment.config_info,
 		clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
@@ -874,10 +874,10 @@ const railConnectedCloudAgent = {
 const railHostedCloudAgent = {
 	...sharedLegacyCloudAgent,
 	id: railHostedEnvironmentId,
-	name: "rail-cloud",
-	default_name: "Rail Cloud",
-	machine_name: "rail-cloud.local",
-	display_name: "Rail Cloud projection",
+	name: "Hermes 3",
+	default_name: "Hermes 3",
+	machine_name: "hermes-3.local",
+	display_name: "Hermes 3",
 	sort_order: 0,
 };
 
@@ -3557,7 +3557,7 @@ test("post-ready runtime health degradation stays navigable and surfaces consist
 	await page.goto("/agents");
 	const main = page.locator("main");
 	const agentCard = main
-		.getByRole("link", { name: "Open Rail Cloud. Status: Temporarily unavailable", exact: true })
+		.getByRole("link", { name: "Open e2e-2. Status: Temporarily unavailable", exact: true })
 		.locator("..");
 	await expect(agentCard).toContainText("Temporarily unavailable");
 	await expect(agentCard.getByTitle(/Status: Temporarily unavailable/)).toBeVisible();
@@ -4286,7 +4286,7 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	await page.goto("/agents");
 	const rail = page.getByTestId("app-sidebar-agent-rail");
 	const consoleLink = rail.getByRole("link", { name: "Console", exact: true });
-	const cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
+	const cloudButton = rail.getByRole("button", { name: "e2e-2", exact: true });
 	const connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
 
 	await expect(consoleLink).toHaveAttribute("href", "/");
@@ -4589,6 +4589,8 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
+	await expect(page.getByTestId("app-sidebar").getByText("e2e-2", { exact: true })).toBeVisible();
+	await expect(page.getByText("Hermes 3", { exact: true })).toHaveCount(0);
 	const groups = page
 		.getByTestId("app-sidebar")
 		.locator('[data-slot="sidebar-content"] > [data-slot="sidebar-group"]');
@@ -4666,11 +4668,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText([
-		"Hosted agent · Hermes",
-		"Memories",
-		"Hosted and connected agents share this memory",
-	]);
+	).toHaveText(["e2e-2", "Memories", "Hosted and connected agents share this memory"]);
 	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveCount(0);
@@ -4724,7 +4722,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Connectors", "GitHub"]);
+	).toHaveText(["e2e-2", "Connectors", "GitHub"]);
 	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveCount(0);
 	const hostedConnectorsLink = page
@@ -4918,7 +4916,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Skills"]);
+	).toHaveText(["e2e-2", "Skills"]);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-desktop.png") });
 	await page.screenshot({
@@ -4941,7 +4939,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Vaults"]);
+	).toHaveText(["e2e-2", "Vaults"]);
 	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await expect(
@@ -4971,7 +4969,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Vaults", "Hosted Scoped Vault"]);
+	).toHaveText(["e2e-2", "Vaults", "Hosted Scoped Vault"]);
 	await expect(main.getByRole("button", { name: "Vaults" })).toHaveCount(0);
 	await expect(
 		main
@@ -5018,7 +5016,7 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 		),
 	).toEqual(["LI", "LI", "LI"]);
 	await expect(breadcrumb.locator('[data-slot="breadcrumb-item"]:visible')).toHaveText([
-		"Hosted agent · Hermes",
+		"e2e-2",
 		"Memories",
 	]);
 	await expect(breadcrumb.locator('[data-slot="breadcrumb-separator"]:visible')).toHaveCount(1);
@@ -5405,7 +5403,7 @@ test("hosted Agent Skill details retain deployment context and stay inside bound
 		page
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Hosted agent · Hermes", "Skills", "Hosted detail Skill"]);
+	).toHaveText(["e2e-2", "Skills", "Hosted detail Skill"]);
 	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
 	await expect(
@@ -5509,7 +5507,7 @@ test("transient inventory withholds connected tiles until membership resolves", 
 	await page.goto("/");
 	const rail = page.getByTestId("app-sidebar-agent-rail");
 	await expect(rail.getByRole("button", { name: /Rail Connected/ })).toHaveCount(0);
-	await expect(rail.getByRole("button", { name: "Rail Cloud", exact: true })).toBeVisible();
+	await expect(rail.getByRole("button", { name: "e2e-2", exact: true })).toBeVisible();
 	await expect(rail.getByRole("button", { name: /Rail Connected/ })).toBeVisible();
 });
 
@@ -5524,7 +5522,7 @@ test("whole agent tile drag does not navigate and the next click does", async ({
 
 	const rail = page.getByTestId("app-sidebar-agent-rail");
 	const connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
-	const cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
+	const cloudButton = rail.getByRole("button", { name: "e2e-2", exact: true });
 	const sourceBox = await connectedButton.boundingBox();
 	const targetBox = await cloudButton.boundingBox();
 	if (!sourceBox || !targetBox) throw new Error("Agent tile buttons should render.");

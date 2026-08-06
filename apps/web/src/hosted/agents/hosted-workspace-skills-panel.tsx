@@ -28,7 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { agentRouteTargetsHostedDeployment } from "@/hosted/agent-identity";
+import { agentRouteTargetsHostedDeployment } from "@/hosted/agent-route";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { normalizeBillingError } from "@/hosted/billing/errors";

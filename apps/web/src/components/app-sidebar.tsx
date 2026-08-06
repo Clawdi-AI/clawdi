@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useSetBreadcrumbSegmentTitle } from "@/components/breadcrumb-title";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -44,7 +45,6 @@ import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
 	agentSourceKindLabel,
-	agentTextLabel,
 	agentTypeLabel,
 	displayMachineName,
 	LegacyAgentBadge,
@@ -649,6 +649,7 @@ type FocusNavigationPaneProps = {
 	activeAgent: SidebarEnvironment | null;
 	activeAgentTile: AgentTile | null;
 	activeAgentKind: AgentChromeKind;
+	activeAgentName: string | null;
 	agentsLoaded: boolean;
 	activeSection: AgentSectionId;
 	primaryProject?: AgentPrimaryProjectNavigation | null;
@@ -663,6 +664,7 @@ function FocusNavigationPane({
 	activeAgent,
 	activeAgentTile,
 	activeAgentKind,
+	activeAgentName,
 	agentsLoaded,
 	activeSection,
 	primaryProject,
@@ -676,6 +678,7 @@ function FocusNavigationPane({
 					activeAgentTile={activeAgentTile}
 					activeAgentKind={activeAgentKind}
 					activeAgentId={activeAgentId}
+					activeAgentName={activeAgentName}
 				/>
 			</SidebarHeader>
 			<SidebarContent className="pb-[calc(var(--header-height)+0.75rem)]">
@@ -798,17 +801,7 @@ function SortableAgentRailItem({
 		disabled: !agent.env,
 	});
 	const kind = agentTileChromeKind(agent);
-	const identity = agent.env ?? {
-		id: agent.id,
-		name: agent.name,
-		machine_name: agent.name,
-		agent_type: agent.agentType,
-	};
-	const baseIdentityLabel =
-		kind === "legacy"
-			? `Legacy · ${agentTextLabel(identity, { includeSource: false, ownershipKind: kind })}`
-			: agentTextLabel(identity, { includeSource: kind === "cloud", ownershipKind: kind });
-	const label = kind === "cloud" ? agent.name : baseIdentityLabel;
+	const label = agent.name;
 	const caption = displayMachineName(agent.name);
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(transform),
@@ -1125,11 +1118,13 @@ function FocusHeader({
 	activeAgentTile,
 	activeAgentKind,
 	activeAgentId,
+	activeAgentName,
 }: {
 	activeAgent: SidebarEnvironment | null;
 	activeAgentTile: AgentTile | null;
 	activeAgentKind: AgentChromeKind;
 	activeAgentId: string | null;
+	activeAgentName: string | null;
 }) {
 	if (!activeAgent && !activeAgentId) {
 		return (
@@ -1163,22 +1158,20 @@ function FocusHeader({
 		);
 	}
 
-	const name =
-		activeAgentTile?.name ?? (activeAgent ? agentDisplayName(activeAgent) : "Clawdi Cloud agent");
+	const name = activeAgentName ?? "Agent";
 	const displayName = displayMachineName(name);
 	const meta = activeAgent ? agentHeaderMeta(activeAgent, activeAgentKind) : null;
 	const activityLabel =
 		activeAgentKind === "cloud" ? null : (meta?.activityLabel ?? "Agent details unavailable");
 	const visibleLabel = meta?.visibleLabel;
 	const detailLabel = meta?.detailLabel;
-	const title = [name, detailLabel, activityLabel].filter(Boolean).join(" · ");
 	const manageHref =
 		activeAgentKind === "legacy" ? (legacyHostedDashboardUrl() ?? undefined) : undefined;
 	const syncSource = focusHeaderSyncSource(activeAgentKind, Boolean(activeAgent));
 	const computeStatus = focusHeaderComputeStatus(activeAgentKind, activeAgentTile);
 	return (
 		<div className="min-w-0 text-left">
-			<div className="flex min-w-0 items-center gap-2" title={title}>
+			<div className="flex min-w-0 items-center gap-2" title={name}>
 				<span className="truncate text-sm font-semibold leading-5">{displayName}</span>
 				{activeAgentKind === "cloud" ? (
 					activeAgent ? (
@@ -1633,6 +1626,13 @@ export function AppSidebar({
 		activeAgentTile || !activeAgentId || (agentsLoaded && !hostedInventoryFetching)
 			? classifiedActiveAgentKind
 			: "unresolved";
+	const activeAgentName =
+		activeAgentTile?.name ??
+		(activeAgentKind === "connected" && activeAgent ? agentDisplayName(activeAgent) : null);
+	useSetBreadcrumbSegmentTitle(
+		activeAgentId ? agentSectionHref(activeAgentId) : null,
+		activeAgentName,
+	);
 	const activeSection = agentRoute?.section ?? "overview";
 	const settingsSection = routeSearch.settings ?? null;
 	const settingsOpen = settingsSection !== null;
@@ -1711,6 +1711,7 @@ export function AppSidebar({
 						activeAgent={activeAgent ?? null}
 						activeAgentTile={activeAgentTile}
 						activeAgentKind={activeAgentKind}
+						activeAgentName={activeAgentName}
 						agentsLoaded={agentsLoaded}
 						activeSection={activeSection}
 						primaryProject={primaryProject}
@@ -1747,6 +1748,7 @@ export function AppSidebar({
 							activeAgent={activeAgent ?? null}
 							activeAgentTile={activeAgentTile}
 							activeAgentKind={activeAgentKind}
+							activeAgentName={activeAgentName}
 							agentsLoaded={agentsLoaded}
 							activeSection={activeSection}
 							primaryProject={primaryProject}

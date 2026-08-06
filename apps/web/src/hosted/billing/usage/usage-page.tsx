@@ -18,7 +18,6 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import type { HostedUsageSummary, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -53,6 +52,7 @@ type ModelBreakdown = HostedUsageSummary["by_model"][number];
 type DayBreakdown = HostedUsageSummary["by_day"][number];
 
 type UsageAgentIdentity = {
+	deploymentName: string | null;
 	name: string | null;
 	displayName: string | null;
 	defaultName: string | null;
@@ -100,11 +100,9 @@ function sortModelBreakdown(left: ModelBreakdown, right: ModelBreakdown): number
 }
 
 function usageAgentIdentity(agent: AgentBreakdown): UsageAgentIdentity {
-	const fallbackName = agent.agent_name
-		? deploymentDisplayName(agent.agent_name, agent.agent_type ?? undefined)
-		: null;
 	return {
-		name: fallbackName,
+		deploymentName: agent.agent_name ?? null,
+		name: agent.agent_name ?? null,
 		displayName: null,
 		defaultName: null,
 		machineName: null,
@@ -114,6 +112,7 @@ function usageAgentIdentity(agent: AgentBreakdown): UsageAgentIdentity {
 
 function usageAgentTileIdentity(tile: AgentTile): UsageAgentIdentity {
 	return {
+		deploymentName: tile.source === "on-clawdi" ? tile.name : null,
 		name: tile.env?.name ?? tile.name,
 		displayName: tile.env?.display_name ?? null,
 		defaultName: tile.env?.default_name ?? null,
@@ -124,15 +123,14 @@ function usageAgentTileIdentity(tile: AgentTile): UsageAgentIdentity {
 
 function usageAgentText(identity: UsageAgentIdentity): string {
 	const label = agentIdentity({
+		deployment_name: identity.deploymentName,
 		name: identity.name,
 		display_name: identity.displayName,
 		default_name: identity.defaultName,
 		machine_name: identity.machineName,
 		agent_type: identity.type,
 	});
-	return label.secondaryLabel
-		? `${label.primaryLabel} · ${label.secondaryLabel}`
-		: label.primaryLabel;
+	return label.primaryLabel;
 }
 
 function usageAgentOptions(
@@ -267,6 +265,7 @@ function UsageFilters({
 							<SelectItem key={agent.id} value={agent.id}>
 								<div className="flex min-w-0 flex-1 items-center justify-between gap-3">
 									<AgentInline
+										deploymentName={agent.identity.deploymentName}
 										name={agent.identity.name}
 										displayName={agent.identity.displayName}
 										defaultName={agent.identity.defaultName}

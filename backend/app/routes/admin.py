@@ -1609,6 +1609,8 @@ async def admin_delete_channel(
 async def _admin_register_environment(
     body: AdminEnvironmentCreate,
     db: AsyncSession,
+    *,
+    default_name: str | None = None,
 ) -> EnvironmentCreatedResponse:
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     try:
@@ -1625,6 +1627,7 @@ async def _admin_register_environment(
             registration_key=None
             if body.environment_id is not None
             else local_machine_registration_key(body.machine_id, body.agent_type),
+            default_name=default_name,
             commit=False,
         )
         env = registered.env
@@ -1669,6 +1672,7 @@ async def admin_register_agent(
             os_name=body.os_name,
         ),
         db,
+        default_name=body.default_name,
     )
 
 

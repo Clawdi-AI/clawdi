@@ -6,6 +6,7 @@ import { AlertCircle, ChevronRight, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
+import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	ConnectedAgentDetail,
 	ConnectedAgentDetailSkeleton,
@@ -21,11 +22,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import {
-	agentRouteTargetsHostedDeployment,
-	deploymentDisplayName,
-	isCloudEnvId,
-} from "@/hosted/agent-identity";
+import { agentRouteTargetsHostedDeployment, isCloudEnvId } from "@/hosted/agent-route";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -373,10 +370,10 @@ function DeploymentChooser({
 			<div className="grid max-w-2xl gap-2">
 				{matches.map((match) => {
 					const { deployment } = match;
-					const name = deploymentDisplayName(
-						deployment.resource.spec.name,
-						deployment.resource.spec.runtime,
-					);
+					const name = agentDisplayName({
+						deployment_name: deployment.resource.spec.name,
+						agent_type: deployment.resource.spec.runtime,
+					});
 					return (
 						<Link
 							key={deployment.resource.id}

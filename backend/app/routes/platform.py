@@ -630,6 +630,7 @@ async def platform_create_agent(
             sort_order=await _next_agent_sort_order(db, owner.id),
             environment_id=body.agent_id,
             registration_key=None,
+            default_name=body.default_name,
             commit=False,
         )
     except AgentEnvironmentIdConflict:

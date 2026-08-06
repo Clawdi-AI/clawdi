@@ -66,6 +66,7 @@ async def register_agent_environment(
     sort_order: int,
     environment_id: UUID | None = None,
     registration_key: str | None = None,
+    default_name: str | None = None,
     commit: bool = True,
 ) -> AgentEnvironmentRegistration:
     """Create or refresh an agent row.
@@ -107,6 +108,7 @@ async def register_agent_environment(
                 agent_version=agent_version,
                 os_name=os_name,
                 registration_key=registration_key,
+                default_name=default_name,
             )
             if commit:
                 await db.commit()
@@ -144,6 +146,7 @@ async def register_agent_environment(
                 agent_version=agent_version,
                 os_name=os_name,
                 registration_key=registration_key,
+                default_name=default_name,
             )
             if commit:
                 await db.commit()
@@ -151,8 +154,8 @@ async def register_agent_environment(
                 await db.flush()
             return AgentEnvironmentRegistration(env=existing, created=False)
 
-    assigned_default_name = None
-    if registration_key is None:
+    assigned_default_name = default_name.strip() if default_name else None
+    if registration_key is None and assigned_default_name is None:
         assigned_default_name = await _next_explicit_default_name(db, user_id, agent_type)
 
     project_name = assigned_default_name or _agent_project_label(machine_name, agent_type)
@@ -225,6 +228,7 @@ async def register_agent_environment(
                 agent_version=agent_version,
                 os_name=os_name,
                 registration_key=registration_key,
+                default_name=default_name,
             )
             if winner.archived_at is not None:
                 await reactivate_agent_and_project(db, agent=winner)
@@ -257,6 +261,7 @@ async def register_agent_environment(
                 agent_version=agent_version,
                 os_name=os_name,
                 registration_key=registration_key,
+                default_name=default_name,
             )
             if commit:
                 await db.commit()
@@ -276,6 +281,7 @@ async def _refresh_agent_environment(
     agent_version: str | None,
     os_name: str,
     registration_key: str | None,
+    default_name: str | None,
 ) -> None:
     env.machine_id = machine_id
     env.machine_name = machine_name
@@ -288,6 +294,12 @@ async def _refresh_agent_environment(
         # Explicit identities are hosted control-plane identities. A conversion
         # from a Connected row must not retain its Connected capability lease.
         clear_connected_agent_registration(env)
+        if default_name and default_name.strip():
+            env.default_name = default_name.strip()
+            # Hosted V2 owns its Agent name in the deployment spec. Clear any
+            # older dashboard override so every Cloud API projection resolves
+            # to that same control-plane name.
+            env.display_name = None
     if not env.default_project_id:
         project_name = env.default_name or _agent_project_label(machine_name, agent_type)
         healing_project = Project(

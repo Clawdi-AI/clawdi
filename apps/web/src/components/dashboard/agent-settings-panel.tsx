@@ -51,11 +51,11 @@ function updateEnvironmentCaches(queryClient: QueryClient, environment: Environm
 export function AgentSettingsPanel({
 	environmentId,
 	className,
-	formatName,
+	deploymentName,
 }: {
 	environmentId: string;
 	className?: string;
-	formatName?: (name: string) => string;
+	deploymentName?: string;
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -74,11 +74,7 @@ export function AgentSettingsPanel({
 		params: { path: { agent_id: environmentId } },
 	});
 
-	const serverDraftName = agent
-		? agent.display_name
-			? (formatName?.(agent.display_name) ?? agent.display_name)
-			: ""
-		: undefined;
+	const serverDraftName = agent ? (agent.display_name ? agent.display_name : "") : undefined;
 
 	useEffect(() => {
 		if (serverDraftName === undefined) return;
@@ -173,10 +169,9 @@ export function AgentSettingsPanel({
 		uploadMutation.mutate(file);
 	};
 	const normalizedDraftName = draftName.trim() || null;
-	const currentCustomName = agent?.display_name
-		? (formatName?.(agent.display_name) ?? agent.display_name)
-		: null;
-	const nameChanged = Boolean(agent) && normalizedDraftName !== currentCustomName;
+	const currentCustomName = agent?.display_name ? agent.display_name : null;
+	const nameChanged =
+		!deploymentName && Boolean(agent) && normalizedDraftName !== currentCustomName;
 	const guardedBySurface = useUnsavedNavigationState({
 		dirty: nameChanged,
 		busy: updateIdentity.isPending,
@@ -215,10 +210,12 @@ export function AgentSettingsPanel({
 		uploadMutation.isPending ||
 		clearAvatar.isPending ||
 		disconnect.isPending;
-	const rawDisplayName = agentDisplayName(agent);
-	const rawDefaultDisplayName = agentDisplayName({ ...agent, display_name: null });
-	const displayName = formatName?.(rawDisplayName) ?? rawDisplayName;
-	const defaultDisplayName = formatName?.(rawDefaultDisplayName) ?? rawDefaultDisplayName;
+	const displayName = agentDisplayName({ ...agent, deployment_name: deploymentName });
+	const defaultDisplayName = agentDisplayName({
+		...agent,
+		display_name: null,
+		deployment_name: deploymentName,
+	});
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
@@ -256,56 +253,58 @@ export function AgentSettingsPanel({
 				</div>
 			</div>
 
-			<SettingsSection
-				title="Display name"
-				description="Use a short name that distinguishes this agent from others."
-			>
-				<div className="flex max-w-2xl flex-col gap-3">
-					<div className="flex flex-col gap-2 lg:flex-row">
-						<Label htmlFor="agent-display-name" className="sr-only">
-							Display name
-						</Label>
-						<Input
-							id="agent-display-name"
-							name="display_name"
-							value={draftName}
-							maxLength={120}
-							placeholder={defaultDisplayName}
-							autoComplete="off"
-							onChange={(event) => setDraftName(event.target.value)}
-						/>
-						<Button
-							type="button"
-							size="sm"
-							variant={nameChanged ? "default" : "outline"}
-							className="lg:h-9 lg:min-w-20"
-							disabled={!nameChanged || updateIdentity.isPending}
-							onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
-						>
-							{updateIdentity.isPending ? (
-								<Spinner data-icon="inline-start" />
-							) : (
-								<Save data-icon="inline-start" />
-							)}
-							Save
-						</Button>
+			{deploymentName ? null : (
+				<SettingsSection
+					title="Display name"
+					description="Use a short name that distinguishes this agent from others."
+				>
+					<div className="flex max-w-2xl flex-col gap-3">
+						<div className="flex flex-col gap-2 lg:flex-row">
+							<Label htmlFor="agent-display-name" className="sr-only">
+								Display name
+							</Label>
+							<Input
+								id="agent-display-name"
+								name="display_name"
+								value={draftName}
+								maxLength={120}
+								placeholder={defaultDisplayName}
+								autoComplete="off"
+								onChange={(event) => setDraftName(event.target.value)}
+							/>
+							<Button
+								type="button"
+								size="sm"
+								variant={nameChanged ? "default" : "outline"}
+								className="lg:h-9 lg:min-w-20"
+								disabled={!nameChanged || updateIdentity.isPending}
+								onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
+							>
+								{updateIdentity.isPending ? (
+									<Spinner data-icon="inline-start" />
+								) : (
+									<Save data-icon="inline-start" />
+								)}
+								Save
+							</Button>
+						</div>
+						<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+							<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
+							<Button
+								type="button"
+								size="sm"
+								variant="ghost"
+								className="h-7 w-fit px-2 text-xs text-muted-foreground"
+								disabled={!agent.display_name || updateIdentity.isPending}
+								onClick={() => updateIdentity.mutate({ display_name: null })}
+							>
+								<RotateCcw data-icon="inline-start" />
+								Use default name
+							</Button>
+						</div>
 					</div>
-					<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-						<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
-						<Button
-							type="button"
-							size="sm"
-							variant="ghost"
-							className="h-7 w-fit px-2 text-xs text-muted-foreground"
-							disabled={!agent.display_name || updateIdentity.isPending}
-							onClick={() => updateIdentity.mutate({ display_name: null })}
-						>
-							<RotateCcw data-icon="inline-start" />
-							Use default name
-						</Button>
-					</div>
-				</div>
-			</SettingsSection>
+				</SettingsSection>
+			)}
 
 			<SettingsSection title="Avatar" description="Shown in the sidebar, pickers, and agent lists.">
 				<div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">

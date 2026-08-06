@@ -30,8 +30,6 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { deploymentDisplayName } from "@/hosted/agent-identity";
-import { isHostedRuntime } from "@/hosted/runtimes";
 import { nativeTransportSummary } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -75,22 +73,7 @@ function findEnv(envs: EnvironmentList, agentId: string): Environment | null {
 	return envs?.find((e) => e.id === agentId) ?? null;
 }
 
-function runtimeNameFormatter(env: { agent_type?: string | null }) {
-	const runtime = env.agent_type;
-	return runtime && isHostedRuntime(runtime)
-		? (name: string) => deploymentDisplayName(name, runtime)
-		: undefined;
-}
-
-function AgentName({
-	env,
-	fallback,
-	meta,
-}: {
-	env: Environment | null;
-	fallback: string;
-	meta?: ReactNode[];
-}) {
+function AgentName({ env, meta }: { env: Environment | null; meta?: ReactNode[] }) {
 	if (!env) {
 		return (
 			<EntityHeader
@@ -100,7 +83,7 @@ function AgentName({
 						<Bot />
 					</IconChip>
 				}
-				title={deploymentDisplayName(fallback)}
+				title="Agent unavailable"
 				meta={meta}
 			/>
 		);
@@ -113,7 +96,6 @@ function AgentName({
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
 			size="sm"
-			formatName={runtimeNameFormatter(env)}
 			className="min-w-0 flex-1"
 			meta={meta}
 		/>
@@ -346,7 +328,9 @@ function AgentsTab({ accountId }: { accountId: string }) {
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
 
-	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
+	if (links.isLoading || envs.isLoading) {
+		return <Skeleton className="h-24 w-full rounded-lg" />;
+	}
 	if (shouldBlockQueryError(links.error, links.data)) {
 		return (
 			<ApiErrorPanel
@@ -356,17 +340,19 @@ function AgentsTab({ accountId }: { accountId: string }) {
 			/>
 		);
 	}
+	if (shouldBlockQueryError(envs.error, envs.data)) {
+		return (
+			<ApiErrorPanel
+				error={envs.error}
+				onRetry={() => envs.refetch()}
+				title="Couldn't load Agent names"
+			/>
+		);
+	}
 	const items = links.data ?? [];
 
 	return (
 		<div className="flex flex-col gap-3">
-			{shouldBlockQueryError(envs.error, envs.data) ? (
-				<ApiErrorPanel
-					error={envs.error}
-					onRetry={() => envs.refetch()}
-					title="Couldn't load Agent names"
-				/>
-			) : null}
 			<SectionHeader label="Linked Agents" count={items.length} />
 
 			{items.length === 0 ? (
@@ -389,7 +375,6 @@ function AgentsTab({ accountId }: { accountId: string }) {
 						>
 							<AgentName
 								env={findEnv(envs.data, link.agent_id)}
-								fallback={link.agent_id}
 								meta={[
 									...(isNormalChannelStatus(link.status)
 										? []

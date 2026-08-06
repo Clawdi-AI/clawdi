@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, ExternalLink, Laptop } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import {
 	AgentSourceBadgeForEnvironment,
@@ -144,7 +144,7 @@ export function ConnectedAgentDetail({
 	const ActiveTabIcon = activeTabMeta.icon;
 	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
 	const agentTitle = agent ? agentDisplayName(agent) : null;
-	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
+	useSetBreadcrumbTitle(activeTab === "overview" ? agentTitle : agentSectionLabel(activeTab));
 	const headerStatus =
 		activeTab === "overview" && agent && showSourceBadge ? (
 			<AgentSourceBadgeForEnvironment env={agent} ownershipKind={ownershipKind} compact />

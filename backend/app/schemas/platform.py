@@ -57,6 +57,12 @@ class PlatformAgentCreate(PlatformMutationBody):
     agent_id: UUID
     machine_id: str = Field(min_length=1, max_length=200)
     machine_name: str = Field(min_length=1, max_length=200)
+    default_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Canonical Agent name supplied by the owning control plane.",
+    )
     agent_type: str = Field(min_length=1, max_length=50)
     agent_version: str | None = Field(default=None, max_length=50)
     os_name: str = Field(default="linux", min_length=1, max_length=50)

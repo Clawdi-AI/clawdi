@@ -606,8 +606,7 @@ export function projectAgentLabel(agent: ProjectAgentMetadata) {
 			agent.agent_type,
 	);
 	if (!hasIdentity) return "Agent";
-	const identity = agentIdentity(agent);
-	return [identity.primaryLabel, identity.secondaryLabel].filter(Boolean).join(" · ");
+	return agentIdentity(agent).primaryLabel;
 }
 
 export function projectAgentFor(
