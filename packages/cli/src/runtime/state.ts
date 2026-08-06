@@ -192,7 +192,8 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		// are readable; private subtrees retain their narrower modes.
 		[paths.runRoot, DEFAULT_RUN_ROOT, 0o711],
 	] as const) {
-		if (!existsSync(path)) {
+		const created = !existsSync(path);
+		if (created) {
 			if (path === systemdPath) {
 				throw new Error(`platform directory must be created by systemd: ${path}`);
 			}
@@ -201,6 +202,11 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		const node = lstatSync(path);
 		if (!node.isDirectory() || node.isSymbolicLink()) {
 			throw new Error(`platform directory is not a trusted directory: ${path}`);
+		}
+		if (created) {
+			// mkdir modes are filtered by umask, but these platform roots have an
+			// exact access contract (including search access on the runtime root).
+			chmodSync(path, mode);
 		}
 	}
 	for (const dir of [
