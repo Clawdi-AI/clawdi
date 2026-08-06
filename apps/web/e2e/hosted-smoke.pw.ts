@@ -1287,6 +1287,7 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 						browser_mode: "embedded_and_top_level",
 					}
 			: null,
+		public_endpoints: [],
 		accepted_operation: null,
 		commercial_display: {
 			compute_subscription: deployment.compute_subscription ?? null,

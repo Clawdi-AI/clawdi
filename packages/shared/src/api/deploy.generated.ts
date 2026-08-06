@@ -1772,6 +1772,12 @@ export interface components {
             /** Runtime Ui Endpoint */
             runtime_ui_endpoint?: (components["schemas"]["V2HermesRuntimeUiEndpointInfo"] | components["schemas"]["V2OpenClawRuntimeUiEndpointInfo"]) | null;
             files_endpoint?: components["schemas"]["V2HostedFilesEndpointInfo"] | null;
+            /**
+             * Public Endpoints
+             * @description Observed exact tenant URLs for configured public ports. Dashboard and managed Files endpoints are excluded; the collection is empty until the current desired generation is observed.
+             * @default []
+             */
+            public_endpoints: components["schemas"]["V2HostedPublicEndpointInfo"][];
             accepted_operation?: components["schemas"]["LongRunningOperation"] | null;
             commercial_display?: components["schemas"]["V2HostedDeploymentCommercialDisplay"];
             /**
@@ -1789,6 +1795,13 @@ export interface components {
         };
         /** V2HostedFilesEndpointInfo */
         V2HostedFilesEndpointInfo: {
+            /** Url */
+            url: string;
+        };
+        /** V2HostedPublicEndpointInfo */
+        V2HostedPublicEndpointInfo: {
+            /** Port */
+            port: number;
             /** Url */
             url: string;
         };
@@ -2063,6 +2076,11 @@ export interface components {
             provider_ids?: string[] | null;
             /** Ai Provider Auth Kind */
             ai_provider_auth_kind?: ("unmanaged" | "managed" | "api_key" | "codex_oauth") | null;
+            /**
+             * Public Ports
+             * @description Replace the deployment's public HTTP ports when present. Omit this field to leave ports unchanged; send an empty array to clear them. Null is not accepted.
+             */
+            public_ports?: number[];
             /** Ai Provider Bootstrap */
             ai_provider_bootstrap?: {
                 [key: string]: unknown;

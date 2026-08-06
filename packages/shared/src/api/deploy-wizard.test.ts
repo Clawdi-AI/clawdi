@@ -101,6 +101,7 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 		},
 		clawdi_cloud_environments: {},
 		ai_provider_auth_kinds: { hermes: "managed" },
+		public_endpoints: [],
 		accepted_operation: null,
 		commercial_display: {
 			compute_subscription: {

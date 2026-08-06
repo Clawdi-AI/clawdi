@@ -122,6 +122,7 @@ import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
+import { PublicPortsSettingsSection } from "@/hosted/agents/public-ports-settings";
 import {
 	openSecureRuntimeWindow,
 	resolveRuntimeUiCredentials,
@@ -3741,7 +3742,11 @@ function ComputeSettingsSections({
 				/>
 			) : null}
 
-			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
+			<SettingsSection
+				title="Compute"
+				description="Compute resources and public HTTP access for this hosted agent."
+			>
+				<h3 className="sr-only">Compute plan</h3>
 				<div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
 					<div className="min-w-0 flex-1">
 						<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
@@ -3919,6 +3924,8 @@ function ComputeSettingsSections({
 						) : null}
 					</div>
 				</div>
+				<Separator className="my-5" />
+				<PublicPortsSettingsSection deployment={deployment} />
 			</SettingsSection>
 
 			<SettingsSection title="Lifecycle" description="Restart, stop, or start this agent.">

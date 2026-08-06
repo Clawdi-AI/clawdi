@@ -643,7 +643,7 @@ describe("declarative deployment mutations", () => {
 		await client.setDeploymentDesiredState("hdep_stop", "stopped", "intent-stop");
 		await client.restartDeployment("hdep_restart", "intent-restart");
 		await client.resetRuntimeUiAccess("hdep_access", "intent-access-reset");
-		await client.updateDeployment("hdep_update", { language: "zh-CN" }, "intent-update");
+		await client.updateDeployment("hdep_update", { public_ports: [3000, 9120] }, "intent-update");
 		await client.deleteDeployment(
 			"hdep_delete",
 			{ subscription_choice: "keep_subscription" },
@@ -655,6 +655,10 @@ describe("declarative deployment mutations", () => {
 			expect(request.headers.get("Idempotency-Key")).toMatch(/^intent-/);
 			expect(request.headers.get("If-Match")).toMatch(/^"rv-hdep_[a-z]+"$/);
 		}
+		const updateRequest = mutations.find(
+			(request) => new URL(request.url).pathname === "/v2/deployments/hdep_update",
+		);
+		expect(await updateRequest?.json()).toEqual({ public_ports: [3000, 9120] });
 		const deleteRequests = mutations.filter((request) => request.method === "DELETE");
 		expect(deleteRequests).toHaveLength(1);
 		expect(await deleteRequests[0]?.json()).toEqual({
