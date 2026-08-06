@@ -26,15 +26,15 @@ import {
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-export function HostedDeploymentDeleteAction({
-	children,
-	deployment,
-	onAccepted,
-}: {
-	children: ReactElement;
-	deployment: HostedDeployment;
-	onAccepted?: () => Promise<void> | void;
-}) {
+export function HostedDeploymentDeleteAction(
+	props: {
+		children: ReactElement;
+		onAccepted?: () => Promise<void> | void;
+	} & ({ deployment: HostedDeployment } | { deploymentId: string }),
+) {
+	const { children, onAccepted } = props;
+	const deployment = "deployment" in props ? props.deployment : undefined;
+	const deploymentId = "deployment" in props ? props.deployment.resource.id : props.deploymentId;
 	const router = useRouter();
 	const deleteDeployment = useDeleteDeployment();
 	const [open, setOpen] = useState(false);
@@ -42,12 +42,12 @@ export function HostedDeploymentDeleteAction({
 		useState<DeploymentDeleteRequest["subscription_choice"]>("cancel_subscription");
 	const [pending, setPending] = useState(false);
 	const locked = useRef(false);
-	const subscription = deployment.commercial_display?.compute_subscription;
+	const subscription = deployment?.commercial_display?.compute_subscription;
 	const offerChoice =
-		computeFundingMode(deployment.current_plan_slug, subscription) === "subscription" &&
+		computeFundingMode(deployment?.current_plan_slug ?? null, subscription) === "subscription" &&
 		isComputeSubscriptionRenewing(subscription);
 	const periodEnd = formatShortDate(subscription?.current_period_end);
-	const name = deploymentDisplayName(deployment.resource.spec.name);
+	const name = deployment ? deploymentDisplayName(deployment.resource.spec.name) : null;
 
 	async function runDelete() {
 		if (locked.current) return;
@@ -56,8 +56,8 @@ export function HostedDeploymentDeleteAction({
 		try {
 			try {
 				await deleteDeployment.mutateAsync({
-					id: deployment.resource.id,
-					resourceVersion: deployment.resource.metadata.resourceVersion,
+					id: deploymentId,
+					resourceVersion: deployment?.resource.metadata.resourceVersion,
 					request: {
 						subscription_choice: offerChoice ? choice : "keep_subscription",
 					},
@@ -101,7 +101,7 @@ export function HostedDeploymentDeleteAction({
 			<AlertDialogTrigger render={children} />
 			<AlertDialogContent data-hosted="true">
 				<AlertDialogHeader>
-					<AlertDialogTitle>{`Delete ${name}?`}</AlertDialogTitle>
+					<AlertDialogTitle>{name ? `Delete ${name}?` : "Delete this agent?"}</AlertDialogTitle>
 					<AlertDialogDescription>
 						This permanently deletes the agent and releases its resources. This can’t be undone.
 					</AlertDialogDescription>

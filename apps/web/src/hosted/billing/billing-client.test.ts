@@ -685,6 +685,45 @@ describe("declarative deployment mutations", () => {
 		expect(requests[1]?.headers.get("If-Match")).toBe('"rv-last-known"');
 	});
 
+	it("deletes a definitively absent deployment without a cached resource version", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			if (request.method === "GET") {
+				return jsonResponse({ detail: "Deployment not found" }, 404);
+			}
+			return jsonResponse({ deployment_id: "hdep_orphan", status: "absent" });
+		});
+
+		await expect(
+			client.deleteDeployment(
+				"hdep_orphan",
+				{ subscription_choice: "keep_subscription" },
+				"intent-orphan",
+			),
+		).resolves.toEqual({ deploymentId: "hdep_orphan", operation: null });
+		expect(requests.map((request) => request.method)).toEqual(["GET", "DELETE"]);
+		expect(requests[1]?.headers.get("Idempotency-Key")).toBe("intent-orphan");
+		expect(requests[1]?.headers.get("If-Match")).toBe('"absent"');
+	});
+
+	it("does not delete when the deployment pre-read fails transiently", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			return jsonResponse({ detail: "Inventory temporarily unavailable" }, 503);
+		});
+
+		await expect(
+			client.deleteDeployment(
+				"hdep_pre_read_transient",
+				{ subscription_choice: "keep_subscription" },
+				"intent-pre-read-transient",
+			),
+		).rejects.toMatchObject({ status: 503 });
+		expect(requests.map((request) => request.method)).toEqual(["GET"]);
+	});
+
 	it("keeps transient absent-deletion failures rejected", async () => {
 		const client = testClient(async (request) => {
 			if (request.method === "GET") {

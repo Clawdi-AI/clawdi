@@ -2,7 +2,7 @@
 
 import { focusManager } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
-import { AlertCircle, ChevronRight, RefreshCw } from "lucide-react";
+import { AlertCircle, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -26,6 +26,7 @@ import {
 	deploymentDisplayName,
 	isCloudEnvId,
 } from "@/hosted/agent-identity";
+import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -105,6 +106,9 @@ export function AgentHome({
 	);
 	const unresolvedHostedAgent =
 		requestedHostedAgent && !deployment && ambiguousMatches.length === 0 && !error && !isLoading;
+	const unresolvedHostedDeploymentId = unresolvedHostedAgent
+		? (deploymentSelector ?? (!isCloudEnvironmentId ? environmentId : null))
+		: null;
 	const shouldAutoRefetchUnresolvedHostedAgent =
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
 	const isFetchingRef = useRef(isFetching);
@@ -300,15 +304,27 @@ export function AgentHome({
 					title="Clawdi Cloud agent not found"
 					description="This Clawdi Cloud agent may still be starting or may have been removed."
 					action={
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							disabled={manualChecking}
-							onClick={() => void handleCheckAgain()}
-						>
-							{manualChecking ? <Spinner className="size-3.5" /> : <RefreshCw />} Check again
-						</Button>
+						<div className="flex flex-wrap justify-center gap-2">
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={manualChecking}
+								onClick={() => void handleCheckAgain()}
+							>
+								{manualChecking ? <Spinner className="size-3.5" /> : <RefreshCw />} Check again
+							</Button>
+							{unresolvedHostedDeploymentId ? (
+								<HostedDeploymentDeleteAction
+									deploymentId={unresolvedHostedDeploymentId}
+									onAccepted={() => router.navigate({ href: "/agents", replace: true })}
+								>
+									<Button type="button" variant="destructive" size="sm">
+										<Trash2 /> Delete
+									</Button>
+								</HostedDeploymentDeleteAction>
+							) : null}
+						</div>
 					}
 				/>
 			</div>

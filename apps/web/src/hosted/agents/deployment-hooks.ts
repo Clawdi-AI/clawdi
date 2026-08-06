@@ -232,7 +232,11 @@ export function useDeleteDeployment() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (vars: { id: string; request: DeploymentDeleteRequest; resourceVersion: string }) =>
+		mutationFn: (vars: {
+			id: string;
+			request: DeploymentDeleteRequest;
+			resourceVersion?: string;
+		}) =>
 			runStableDeploymentIntent(
 				"deployment-delete",
 				{ action: "delete", id: vars.id, request: vars.request },

@@ -172,6 +172,10 @@ function isNotFound(error: unknown): error is BillingApiError {
 	return error instanceof BillingApiError && error.status === 404;
 }
 
+// The absent-row branch in the hosted repo's backend/app/v2/routes.py requires
+// If-Match to be present but has no local resource version to compare against.
+const ABSENT_DEPLOYMENT_RESOURCE_VERSION = "absent";
+
 function acceptDeploymentDelete(
 	response: DeploymentOperation | DeploymentDeleteConvergedResponse,
 ): DeploymentDeleteResult {
@@ -435,8 +439,8 @@ export function createBillingClient(
 		try {
 			resourceVersion = (await getDeployment(id)).resource.metadata.resourceVersion;
 		} catch (error) {
-			if (!isNotFound(error) || !lastKnownResourceVersion) throw error;
-			resourceVersion = lastKnownResourceVersion;
+			if (!isNotFound(error)) throw error;
+			resourceVersion = lastKnownResourceVersion ?? ABSENT_DEPLOYMENT_RESOURCE_VERSION;
 		}
 
 		for (let attempt = 0; attempt < 2; attempt += 1) {
