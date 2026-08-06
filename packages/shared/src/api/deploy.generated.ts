@@ -967,8 +967,6 @@ export interface components {
         };
         /** RuntimeConfiguration */
         RuntimeConfiguration: {
-            /** Assistant Name */
-            assistant_name?: string | null;
             /** Language */
             language?: string | null;
             /** Timezone */
@@ -1655,8 +1653,6 @@ export interface components {
             slack_bot_token?: string | null;
             /** Slack App Token */
             slack_app_token?: string | null;
-            /** Assistant Name */
-            assistant_name?: string | null;
             /** Language */
             language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
@@ -1693,8 +1689,6 @@ export interface components {
             model?: string | null;
             /** Name */
             name?: string | null;
-            /** Assistant Name */
-            assistant_name?: string | null;
             /** Language */
             language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
@@ -2056,8 +2050,6 @@ export interface components {
         };
         /** V2UpdateDeploymentRequest */
         V2UpdateDeploymentRequest: {
-            /** Assistant Name */
-            assistant_name?: string | null;
             /** Runtime */
             runtime?: ("openclaw" | "hermes") | null;
             /** Language */

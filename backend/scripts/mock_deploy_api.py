@@ -230,12 +230,22 @@ def _read_provider_auth_kind(value: Any) -> str:
 
 
 def _runtime_configuration(config: dict[str, Any], runtime: str) -> dict[str, Any]:
+    preferences = {
+        field: config[field]
+        for field in ("language", "timezone")
+        if isinstance(config.get(field), str) and config[field]
+    }
     binding = (config.get("ai_provider_bindings") or {}).get(runtime) or {}
     auth_kind = _read_provider_auth_kind(
         binding.get("auth_kind") or config.get("ai_provider_auth_kind")
     )
     if auth_kind == "unmanaged":
-        return {"primary_model": None, "providers": [], "features": []}
+        return {
+            **preferences,
+            "primary_model": None,
+            "providers": [],
+            "features": [],
+        }
 
     provider_id = binding.get("provider_id") or config.get("ai_provider_id")
     primary_model = binding.get("primary_model")
@@ -249,6 +259,7 @@ def _runtime_configuration(config: dict[str, Any], runtime: str) -> dict[str, An
             }
         )
     return {
+        **preferences,
         "primary_model": primary_model if isinstance(primary_model, dict) else None,
         "providers": providers,
         "features": [],
@@ -313,6 +324,7 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "resource": {
             "id": record["id"],
+            "name": record["name"],
             "owner_user_id": record["user_id"],
             "commercial_revision": 1,
             "deployment_target": "saas",
@@ -334,7 +346,6 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "runtime": runtime,
                 "runtime_version": "dev",
-                "name": record["name"],
                 "resources": {
                     "vcpu": config.get("vcpu", 1),
                     "memory_mib": config.get("ram_gb", 2) * 1024,
@@ -430,14 +441,25 @@ async def list_deployments() -> list[dict[str, Any]]:
 
 
 def _create_deployment_record(body: dict[str, Any]) -> dict[str, Any]:
+    nested_config = body.get("config")
+    if "assistant_name" in body or (
+        isinstance(nested_config, dict) and "assistant_name" in nested_config
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="assistant_name is not part of the V2 deployment contract",
+        )
     deployment_id = f"hdep_dev_{uuid.uuid4().hex[:8]}"
-    enabled_optional = []
-    if body.get("enable_openclaw", True):
-        enabled_optional.append("openclaw")
-    if body.get("enable_hermes", False):
-        enabled_optional.append("hermes")
+    requested_runtime = body.get("runtime", "openclaw")
+    if not isinstance(requested_runtime, str) or requested_runtime not in {
+        "openclaw",
+        "hermes",
+    }:
+        raise HTTPException(status_code=422, detail="unsupported V2 runtime")
+    enabled_optional = [requested_runtime]
     agents = ["codex", *enabled_optional]
     config = _base_config()
+    config["runtime"] = requested_runtime
     config["compute_plan_slug"] = body.get("compute_plan_slug", "compute_basic")
     config["enable_openclaw"] = "openclaw" in enabled_optional
     config["enable_hermes"] = "hermes" in enabled_optional
@@ -464,9 +486,15 @@ def _create_deployment_record(body: dict[str, Any]) -> dict[str, Any]:
         }
         for runtime in agents
     }
+    requested_name = body.get("name")
+    deployment_name = (
+        requested_name.strip()
+        if isinstance(requested_name, str) and requested_name.strip()
+        else f"dev-agent-{deployment_id[-4:]}"
+    )
     created = _deployment(
         deployment_id=deployment_id,
-        name=body.get("assistant_name") or f"dev-agent-{deployment_id[-4:]}",
+        name=deployment_name,
         status="provisioning",
         config_info=config,
     )
@@ -528,9 +556,16 @@ async def update_deployment(deployment_id: str, request: Request) -> dict[str, A
     deployment = _get_deployment_record(deployment_id)
     idempotency_key = _require_mutation_headers(request, deployment)
     body = await request.json()
-    next_name = body.get("name") or body.get("assistant_name")
-    if isinstance(next_name, str) and next_name.strip():
-        deployment["name"] = next_name.strip()
+    if "name" in body or "assistant_name" in body:
+        raise HTTPException(
+            status_code=422,
+            detail="deployment names are not mutable runtime configuration",
+        )
+    config = deployment.get("config_info")
+    if isinstance(config, dict):
+        for field in ("language", "timezone"):
+            if field in body:
+                config[field] = body[field]
     return _accept_operation(
         deployment,
         verb="update",
