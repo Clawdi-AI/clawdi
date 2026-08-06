@@ -64,8 +64,8 @@ import {
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
+	buildNumericUserCommand,
 	buildRuntimeUserCommand,
-	commandExists,
 	runtimeUserUid,
 } from "../runtime/runtime-user-command";
 import {
@@ -80,7 +80,7 @@ import {
 import {
 	isGeneratedRuntimeSystemdFile,
 	runtimeUserName,
-	runtimeUserSystemdEnvArgs,
+	runtimeUserSystemdEnvironment,
 } from "../runtime/systemd-user";
 import {
 	applyTransparentEgressNftRulesFromEnv,
@@ -1724,55 +1724,41 @@ function runtimeUserSystemctlResult(
 	args: string[],
 ): CommandResult {
 	const runtimeUser = runtimeUserName();
-	if (process.getuid?.() === 0 && runtimeUser !== "root") {
-		const uid = commandOutput("id", ["-u", runtimeUser]).trim();
-		const child = buildRuntimeUserCommand(process.getuid?.(), Number(uid), runtimeUser, "env", [
-			...runtimeUserSystemdEnvArgs(paths, runtimeUser, uid),
-			"systemctl",
-			"--user",
-			...args,
-		]);
-		return runCommandResult(child.command, child.args);
+	if (runtimeUser !== "root") {
+		const uid = String(runtimeUserUid(runtimeUser));
+		const child = buildRuntimeUserCommand(
+			runtimeUser,
+			paths.userHome,
+			systemctlPath(),
+			["--user", ...args],
+			{ environment: runtimeUserSystemdEnvironment(uid) },
+		);
+		return runCommandResult(child.command, child.args, child.env);
 	}
 	return runCommandResult(systemctlPath(), ["--user", ...args]);
 }
 
-function assertRuntimeUserCanRead(path: string): void {
+function assertRuntimeUserCanRead(path: string, home: string): void {
 	const runtimeUser = runtimeUserName();
-	const runtimeUid = runtimeUserUid(runtimeUser);
-	const proof = buildRuntimeUserReadCommand(process.getuid?.(), runtimeUid, runtimeUser, path);
-	runCommand(proof.command, proof.args);
+	const proof = buildRuntimeUserCommand(runtimeUser, home, "test", ["-r", path]);
+	runCommand(proof.command, proof.args, proof.env);
 }
 
-export function buildRuntimeUserReadCommand(
-	currentUid: number | undefined,
-	runtimeUid: number,
-	runtimeUser: string,
-	path: string,
-	isCommandAvailable: (name: string) => boolean = commandExists,
-): { command: string; args: string[] } {
-	return buildRuntimeUserCommand(
-		currentUid,
-		runtimeUid,
-		runtimeUser,
-		"test",
-		["-r", path],
-		isCommandAvailable,
-	);
-}
-
-function commandOutput(command: string, args: string[]): string {
-	return runCommand(command, args);
-}
-
-function runCommand(command: string, args: string[]): string {
-	const result = runCommandResult(command, args);
+function runCommand(command: string, args: string[], env?: Record<string, string>): string {
+	const result = runCommandResult(command, args, env);
 	assertCommandSucceeded(command, args, result);
 	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
 }
 
-function runCommandResult(command: string, args: string[]): CommandResult {
-	const result = spawnSync(command, args, { encoding: "utf8" });
+function runCommandResult(
+	command: string,
+	args: string[],
+	env?: Record<string, string>,
+): CommandResult {
+	const result = spawnSync(command, args, {
+		encoding: "utf8",
+		...(env ? { env: { ...process.env, ...env } } : {}),
+	});
 	return {
 		status: result.status,
 		stdout: result.stdout ?? "",
@@ -2577,7 +2563,7 @@ async function applyRuntimeDesiredState(
 						},
 					);
 					if (prerequisite.applied) {
-						assertRuntimeUserCanRead(paths.egressSystemCaFile);
+						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
 						egressPrerequisiteActivated = true;
 					}
 					return prerequisite;
@@ -2967,26 +2953,6 @@ function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
 	return child;
 }
 
-export function buildEgressEngineSpawnCommand(
-	commandExists: (command: string) => boolean,
-	uid: number,
-	gid: number,
-	command: string,
-	args: string[],
-): { command: string; args: string[] } {
-	if (uid === 0 || gid === 0) throw new Error("egress engine identity must be non-root");
-	if (commandExists("setpriv")) {
-		return {
-			command: "setpriv",
-			args: [`--reuid=${uid}`, `--regid=${gid}`, "--clear-groups", "--", command, ...args],
-		};
-	}
-	if (commandExists("gosu")) {
-		return { command: "gosu", args: [`${uid}:${gid}`, command, ...args] };
-	}
-	throw new Error(`cannot drop egress engine to ${uid}:${gid}; install setpriv or gosu`);
-}
-
 export function assertCurrentEgressIdentity(
 	currentUid: number | undefined,
 	currentGid: number | undefined,
@@ -3024,7 +2990,7 @@ function spawnWithNumericIdentity(
 	args: string[],
 	env: NodeJS.ProcessEnv,
 ): ChildProcess {
-	const child = buildEgressEngineSpawnCommand(commandExists, uid, gid, command, args);
+	const child = buildNumericUserCommand(uid, gid, command, args);
 	return spawn(child.command, child.args, {
 		env,
 		stdio: ["ignore", "pipe", "pipe"],

@@ -13,8 +13,6 @@ import { join } from "node:path";
 
 import {
 	assertCurrentEgressIdentity,
-	buildEgressEngineSpawnCommand,
-	buildRuntimeUserReadCommand,
 	publishEgressSystemCaBundle,
 	runtimeApplyCommand,
 	runtimePlanCommand,
@@ -37,88 +35,6 @@ describe("runtime sidecar egress privilege drop", () => {
 			if (previousRuntimeUid === undefined) delete process.env.CLAWDI_RUNTIME_UID;
 			else process.env.CLAWDI_RUNTIME_UID = previousRuntimeUid;
 		}
-	});
-
-	it("checks the CA as the runtime user when convergence runs as root", () => {
-		expect(
-			buildRuntimeUserReadCommand(
-				0,
-				10001,
-				"clawdi",
-				"/run/clawdi/egress/ca.pem",
-				(command) => command === "gosu",
-			),
-		).toEqual({
-			command: "gosu",
-			args: ["clawdi", "test", "-r", "/run/clawdi/egress/ca.pem"],
-		});
-	});
-
-	it("uses standard runuser when the runtime image intentionally omits gosu", () => {
-		expect(
-			buildRuntimeUserReadCommand(
-				0,
-				10001,
-				"clawdi",
-				"/run/clawdi/egress/ca.pem",
-				(command) => command === "runuser",
-			),
-		).toEqual({
-			command: "runuser",
-			args: ["-u", "clawdi", "--", "test", "-r", "/run/clawdi/egress/ca.pem"],
-		});
-	});
-
-	it("prefers setpriv with an explicit non-root numeric identity", () => {
-		expect(
-			buildEgressEngineSpawnCommand(
-				(command) => command === "setpriv" || command === "gosu",
-				10002,
-				10003,
-				"/opt/mitmdump",
-				["--mode", "transparent"],
-			),
-		).toEqual({
-			command: "setpriv",
-			args: [
-				"--reuid=10002",
-				"--regid=10003",
-				"--clear-groups",
-				"--",
-				"/opt/mitmdump",
-				"--mode",
-				"transparent",
-			],
-		});
-	});
-
-	it("uses a numeric gosu identity and never runuser", () => {
-		const checked: string[] = [];
-		const child = buildEgressEngineSpawnCommand(
-			(command) => {
-				checked.push(command);
-				return command === "gosu";
-			},
-			10002,
-			10003,
-			"/opt/mitmdump",
-			[],
-		);
-
-		expect(child).toEqual({
-			command: "gosu",
-			args: ["10002:10003", "/opt/mitmdump"],
-		});
-		expect(checked).toEqual(["setpriv", "gosu"]);
-	});
-
-	it("fails closed for root or unavailable privilege-drop tools", () => {
-		expect(() => buildEgressEngineSpawnCommand(() => true, 0, 10002, "mitmdump", [])).toThrow(
-			"egress engine identity must be non-root",
-		);
-		expect(() => buildEgressEngineSpawnCommand(() => false, 10002, 10002, "mitmdump", [])).toThrow(
-			"install setpriv or gosu",
-		);
 	});
 
 	it("allows a matching non-root current identity", () => {
