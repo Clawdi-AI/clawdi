@@ -268,7 +268,7 @@ function createFixture(): Fixture {
 	const serviceStateDir = join(root, "service-state");
 	const runDir = join(root, "run");
 	const codexHome = join(home, ".codex");
-	const contextPath = join(root, "runtime-context", "runtime-context.json");
+	const contextPath = join(root, "runtime-context.json");
 	mkdirSync(join(clawdiHome, "environments"), { recursive: true });
 	mkdirSync(join(codexHome, "skills"), { recursive: true });
 	mkdirSync(join(codexHome, "sessions"), { recursive: true });

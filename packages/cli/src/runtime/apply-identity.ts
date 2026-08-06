@@ -39,7 +39,7 @@ export function runtimeApplyIdentitiesEqual(
 	);
 }
 
-export const HOSTED_RUNTIME_CONTEXT_FILE = "/etc/clawdi/runtime-context/runtime-context.json";
+export const HOSTED_RUNTIME_CONTEXT_FILE = "/etc/clawdi/runtime-context.json";
 const TEST_RUNTIME_CONTEXT_FILE_ENV = "CLAWDI_RUNTIME_TEST_CONTEXT_FILE";
 
 const runtimeBootstrapSecretSchema = z

@@ -218,7 +218,7 @@ describe("CLI smoke — src entry", () => {
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
 		const runRoot = join(root, "run", "clawdi");
-		const contextPath = join(root, "runtime-context", "runtime-context.json");
+		const contextPath = join(root, "runtime-context.json");
 		mkdirSync(dirname(policyPath), { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(
@@ -283,7 +283,7 @@ describe("CLI smoke — src entry", () => {
 		const policyPath = join(root, "etc", "clawdi", "missing-host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
 		const runRoot = join(root, "run", "clawdi");
-		const contextPath = join(root, "runtime-context", "runtime-context.json");
+		const contextPath = join(root, "runtime-context.json");
 		mkdirSync(home, { recursive: true });
 
 		try {
