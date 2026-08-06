@@ -48,6 +48,7 @@ import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../li
 import { getCliVersion } from "../lib/version";
 import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
 import { runRuntimeObservationProducer } from "../runtime/observation-producer";
+import { detectRuntimeMode } from "../runtime/paths";
 import {
 	createRestartCoordination,
 	type RestartCoordination,
@@ -57,6 +58,7 @@ import {
 	type ControlRpcClientConfig,
 	type ControlRpcHandlers,
 	type ControlRpcListenConfig,
+	type ControlRpcServer,
 	callControlRpc,
 	DEFAULT_CONTROL_RPC_HOST,
 	DEFAULT_CONTROL_RPC_PORT,
@@ -214,7 +216,7 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		process.exit(1);
 	}
 
-	const hostedRuntime = process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted";
+	const hostedRuntime = detectRuntimeMode() === "hosted";
 	const targets = legacyRun
 		? [pickLegacyDaemonRunTarget(legacyRun)]
 		: pickDaemonRunTargets({ allowEmpty: hostedRuntime });
@@ -263,16 +265,21 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		}
 	}
 
-	const rpc = await startControlRpcServer(
+	const rpc = await startDaemonControlRpc(
 		createControlRpcHandlers({ abortController: abort, restartCoordination }),
 		abort.signal,
 		rpcListen,
 	);
-	activeControlRpcHttp = { ...rpc.http, allow_remote: rpcListen.allowRemote === true };
-	log.info("serve.rpc_listening", {
-		token_path: rpc.tokenPath,
-		http: rpc.http,
-	});
+	if (rpc) {
+		activeControlRpcHttp = { ...rpc.http, allow_remote: rpcListen.allowRemote === true };
+		log.info("serve.rpc_listening", {
+			token_path: rpc.tokenPath,
+			http: rpc.http,
+		});
+	} else {
+		activeControlRpcHttp = null;
+		log.info("serve.rpc_disabled", { runtime_mode: "hosted" });
+	}
 
 	try {
 		await runDaemonWorkers({
@@ -285,7 +292,9 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		process.exitCode = 1;
 	} finally {
 		abort.abort();
-		const cleanup = await Promise.allSettled([operationManager.shutdownAll(), rpc.close()]);
+		const cleanupTasks: Promise<unknown>[] = [operationManager.shutdownAll()];
+		if (rpc) cleanupTasks.push(rpc.close());
+		const cleanup = await Promise.allSettled(cleanupTasks);
 		activeControlRpcHttp = null;
 		for (const result of cleanup) {
 			if (result.status === "fulfilled") continue;
@@ -300,6 +309,15 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 	const code = process.exitCode ?? 0;
 	log.info("serve.exit", { code });
 	process.exit(code);
+}
+
+export async function startDaemonControlRpc(
+	handlers: ControlRpcHandlers,
+	abort: AbortSignal,
+	config: ControlRpcListenConfig,
+): Promise<ControlRpcServer | null> {
+	if (detectRuntimeMode() === "hosted") return null;
+	return startControlRpcServer(handlers, abort, config);
 }
 
 type ServeInstallOpts = Record<string, unknown>;

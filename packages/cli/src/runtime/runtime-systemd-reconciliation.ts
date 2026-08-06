@@ -1556,6 +1556,7 @@ export function writeRuntimeSystemdState(input: {
 					...commonEnvironment,
 					CLAWDI_ENVIRONMENT_ID: manifest.environmentId,
 					CLAWDI_SERVE_MODE: "container",
+					CLAWDI_STATE_DIR: join(paths.serviceStateRoot, "daemon"),
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 					CLAWDI_NO_AUTO_UPDATE: "1",
 					CLAWDI_NO_UPDATE_CHECK: "1",
