@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export interface PageHeaderProps {
@@ -31,6 +32,7 @@ export function PageHeader({
 }: PageHeaderProps) {
 	return (
 		<div
+			data-slot="page-header"
 			className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}
 		>
 			<div className="flex min-w-0 items-center gap-3">
@@ -51,6 +53,39 @@ export function PageHeader({
 					{actions}
 				</div>
 			) : null}
+		</div>
+	);
+}
+
+/** Loading counterpart to PageHeader. It keeps the same responsive geometry so
+ * route-level Suspense boundaries and data loading do not shift the page. */
+export function PageHeaderSkeleton({
+	icon = false,
+	actions = false,
+	description = true,
+	iconClassName,
+	className,
+}: {
+	icon?: boolean;
+	actions?: boolean;
+	description?: boolean;
+	iconClassName?: string;
+	className?: string;
+}) {
+	return (
+		<div
+			data-slot="page-header-skeleton"
+			aria-hidden="true"
+			className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}
+		>
+			<div className="flex min-w-0 items-center gap-3">
+				{icon ? <Skeleton className={cn("size-11 shrink-0 rounded-xl", iconClassName)} /> : null}
+				<div className="min-w-0 flex-1 space-y-2">
+					<Skeleton className="h-6 w-52 max-w-full" />
+					{description ? <Skeleton className="h-4 w-80 max-w-full" /> : null}
+				</div>
+			</div>
+			{actions ? <Skeleton className="h-11 w-36 sm:h-8" /> : null}
 		</div>
 	);
 }

@@ -12,6 +12,7 @@ import {
 	agentProjectSkillsQueryKey,
 	agentSkillForegroundRefetchInterval,
 } from "@/components/dashboard/agent-skills-query";
+import { displayProjectName } from "@/components/projects/project-metadata";
 import { SkillCardGrid } from "@/components/skills/skill-card";
 import { type AgentRouteSearch, agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -165,7 +166,7 @@ export function AgentSkillsTab({
 				}
 				sourceLabelFor={(skill) => {
 					const project = skill.project_id ? projectsById.get(skill.project_id) : undefined;
-					const name = project?.name ?? skill.project_name?.trim();
+					const name = project ? displayProjectName(project) : skill.project_name?.trim();
 					return name ? { name, emoji: identityFor(name).emoji } : null;
 				}}
 				skillLink={(skill) =>

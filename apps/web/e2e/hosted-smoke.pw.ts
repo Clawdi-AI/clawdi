@@ -3142,7 +3142,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
-	const overviewHeading = page.getByRole("heading", { name: "Overview", exact: true });
+	const overviewHeading = page.getByRole("heading", { name: "Hosted agent", exact: true });
 	const overviewTitleRow = overviewHeading.locator("..");
 	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
@@ -4372,7 +4372,7 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
-test("legacy Overview owns its title chip and dashboard action", async ({ page }) => {
+test("legacy Agent owns its entity title chip and dashboard action", async ({ page }) => {
 	await stubHostedApi(page, {
 		canUseLegacyHostedDashboard: true,
 		cloudAgents: [sharedLegacyCloudAgent],
@@ -4381,7 +4381,7 @@ test("legacy Overview owns its title chip and dashboard action", async ({ page }
 	await page.goto(`/agents/${sharedLegacyEnvironmentId}`);
 
 	const main = page.locator("main");
-	const heading = main.getByRole("heading", { name: "Overview", exact: true });
+	const heading = main.getByRole("heading", { name: "Hosted agent", exact: true });
 	await expect(heading).toBeVisible();
 	const titleRow = heading.locator("..");
 	await expect(titleRow.getByText("Legacy", { exact: true })).toBeVisible();
@@ -4826,7 +4826,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		);
 	});
 	await expect(main.getByRole("heading", { name: "Workspace", level: 1 })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Projects", exact: true })).toHaveAttribute(
+	await expect(main.getByRole("button", { name: "Back to Projects", exact: true })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access${query}`,
 	);
@@ -8319,7 +8319,7 @@ test("shared legacy environment direct route asks the user to choose an agent", 
 	await expect(page).toHaveURL(
 		new RegExp(`/agents/${sharedLegacyEnvironmentId}\\?.*d=hdep_shared_older`),
 	);
-	await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Older twin" })).toBeVisible();
 });
 
 test("identity-less interrupted deployment stays non-navigable and action-free", async ({

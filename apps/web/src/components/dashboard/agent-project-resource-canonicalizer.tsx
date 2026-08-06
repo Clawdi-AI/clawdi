@@ -1,15 +1,14 @@
 "use client";
 
-import { Link, useRouter } from "@tanstack/react-router";
-import { ArrowLeft } from "lucide-react";
+import { useRouter } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { resolveAgentProjectResourceContext } from "@/components/dashboard/agent-project-resource-context";
 import { orderedAgentProjectBindings } from "@/components/dashboard/agent-project-scope";
 import { AgentResourceRouteGate } from "@/components/dashboard/agent-resource-route-gate";
+import { DetailBackLink } from "@/components/detail/back-link";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	type AgentRouteSearch,
@@ -90,16 +89,7 @@ function CanonicalizeProjectResource({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
-			<Button
-				render={<Link to={projectsHref} />}
-				nativeButton={false}
-				variant="ghost"
-				size="sm"
-				className="w-fit"
-			>
-				<ArrowLeft className="size-4" />
-				Back to Projects
-			</Button>
+			<DetailBackLink href={projectsHref} label="Projects" mobileOnly={false} />
 			{blockingError ? (
 				<ApiErrorPanel
 					error={blockingError}

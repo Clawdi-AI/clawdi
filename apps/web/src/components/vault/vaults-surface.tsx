@@ -14,12 +14,14 @@ import { IconChip } from "@/components/icon-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { displayProjectName } from "@/components/projects/project-metadata";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
@@ -38,7 +40,7 @@ import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
-import { getProjectResourceDefinition } from "@/lib/project-resource-model";
+import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	LIBRARY_RESOURCE_SCOPE,
@@ -104,7 +106,8 @@ export function VaultsSurface({
 		},
 	);
 	const projectNameById = useMemo(
-		() => new Map((projects.data ?? []).map((p) => [p.id, p.name])),
+		() =>
+			new Map((projects.data ?? []).map((project) => [project.id, displayProjectName(project)])),
 		[projects.data],
 	);
 	const projectNamesUnavailable = shouldBlockQueryError(projects.error, projects.data);
@@ -166,7 +169,12 @@ export function VaultsSurface({
 					description={VAULTS_RESOURCE.managementDescription}
 					actions={
 						<>
-							<AddKeysDialog />
+							<AddKeysDialog>
+								<Button size="sm" variant="outline">
+									<Plus className="size-3.5" />
+									Add keys
+								</Button>
+							</AddKeysDialog>
 							<NewVaultDialog />
 						</>
 					}
@@ -333,7 +341,7 @@ export function VaultCard({
 	) : keyCount === null ? (
 		<Skeleton key="key-count" className="h-3 w-12" aria-label="Loading key count" />
 	) : (
-		`${keyCount} ${keyCount === 1 ? "key" : "keys"}`
+		formatResourceCount(keyCount, "key")
 	);
 
 	return (
@@ -470,12 +478,15 @@ function NewVaultDialog() {
 							</p>
 						) : null}
 					</div>
-					<div className="flex justify-end">
+					<DialogFooter>
+						<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+							Cancel
+						</Button>
 						<Button type="submit" disabled={!canCreate || create.isPending}>
 							{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}
 							Create vault
 						</Button>
-					</div>
+					</DialogFooter>
 				</form>
 			</DialogContent>
 		</Dialog>

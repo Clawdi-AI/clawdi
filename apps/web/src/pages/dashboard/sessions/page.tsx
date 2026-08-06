@@ -69,7 +69,8 @@ export default function SessionsPage() {
 		<Suspense
 			fallback={
 				<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-					<PageHeader title="Sessions" />
+					<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
+					<SessionFeed sessions={[]} isLoading emptyMessage="" />
 				</div>
 			}
 		>

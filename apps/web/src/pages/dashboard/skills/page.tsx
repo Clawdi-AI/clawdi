@@ -42,6 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
+import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { cn } from "@/lib/utils";
@@ -49,12 +50,26 @@ import { cn } from "@/lib/utils";
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
 const PAGE_SIZE = 30;
+const SKILLS_RESOURCE = getProjectResourceDefinition("skills");
 
 export default function SkillsPage() {
 	return (
-		<Suspense fallback={null}>
+		<Suspense fallback={<SkillsPageSkeleton />}>
 			<SkillsPageInner />
 		</Suspense>
+	);
+}
+
+function SkillsPageSkeleton() {
+	return (
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
+			<div className={HERO_GRID_CLASS}>
+				{Array.from({ length: 3 }).map((_, index) => (
+					<ProjectResourceCardSkeleton key={index} />
+				))}
+			</div>
+		</div>
 	);
 }
 
@@ -180,7 +195,7 @@ function SkillsPageInner() {
 				}
 				actions={
 					selectedProject ? (
-						<div className="flex flex-wrap items-center gap-2">
+						<>
 							{isProjectOwner(selectedProject) ? (
 								<ShareProjectDialog
 									projectId={selectedProject.id}
@@ -200,7 +215,7 @@ function SkillsPageInner() {
 									</Button>
 								</>
 							) : null}
-						</div>
+						</>
 					) : undefined
 				}
 			/>
@@ -373,8 +388,8 @@ function ProjectSelection({ projects, loading }: { projects: ProjectRow[]; loadi
 						key={project.id}
 						project={project}
 						footer={[
-							`${project.skill_count} ${project.skill_count === 1 ? "Skill" : "Skills"}`,
-							`${project.vault_count} ${project.vault_count === 1 ? "Vault" : "Vaults"}`,
+							formatResourceCount(project.skill_count, "Skill"),
+							formatResourceCount(project.vault_count, "Vault"),
 						]}
 						link={{ to: "/skills", search: { project: project.id } }}
 					/>

@@ -36,11 +36,11 @@ describe("Agent Project resource routes", () => {
 		}
 	});
 
-	test("return focused pages to their Project and use canonical resource identities", () => {
+	test("return focused pages through the canonical detail link and use resource identities", () => {
 		expect(projectPage).toContain("projectDetailHrefForScope(scope, projectId)");
-		expect(projectPage).toContain(
-			`label: projectName ? \`Back to \${projectName}\` : "Back to Project"`,
-		);
+		expect(projectPage).toContain('import { DetailBackLink } from "@/components/detail/back-link"');
+		expect(projectPage).toContain('label: projectName ?? "Project"');
+		expect(projectPage).toContain("<DetailBackLink");
 		expect(projectPage).toContain("AGENT_SECTION_NAVIGATION_ITEMS[focus]");
 		expect(projectPage).toContain("focusedResourceIdentity.tint");
 		expect(projectPage).toContain("<FocusedResourceIcon />");

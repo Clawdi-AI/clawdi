@@ -1,4 +1,7 @@
+import { PageHeaderSkeleton } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 /**
  * Loading fallback for hosted-build-gated lazy route imports (billing,
@@ -8,12 +11,9 @@ import { Skeleton } from "@/components/ui/skeleton";
  */
 export function HostedRouteSkeleton() {
 	return (
-		<div className="flex flex-col gap-8 px-5 sm:px-6 lg:px-8">
-			<div className="space-y-2">
-				<Skeleton className="h-6 w-36" />
-				<Skeleton className="h-4 w-64 max-w-full" />
-			</div>
-			<div className="space-y-4 border-t pt-4">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
+			<PageHeaderSkeleton actions />
+			<div className="space-y-4">
 				<Skeleton className="h-4 w-28" />
 				<Skeleton className="h-4 w-56 max-w-full" />
 				<Skeleton className="h-24 w-full rounded-lg" />

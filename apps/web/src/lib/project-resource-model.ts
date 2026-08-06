@@ -270,3 +270,13 @@ export function projectResourceCount(
 	if (resource.id === "projects") return projectCount;
 	return resource.statsKey ? (stats[resource.statsKey] ?? 0) : 0;
 }
+
+/** Consistent compact count copy for entity-card metadata. */
+export function formatResourceCount(
+	value: number | null | undefined,
+	singular: string,
+	plural = `${singular}s`,
+): string | null {
+	if (typeof value !== "number") return null;
+	return `${value} ${value === 1 ? singular : plural}`;
+}

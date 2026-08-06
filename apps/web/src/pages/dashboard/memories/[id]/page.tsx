@@ -7,7 +7,9 @@ import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailBackLink } from "@/components/detail/back-link";
-import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailPanel } from "@/components/detail/layout";
+import { IconChip } from "@/components/icon-chip";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -19,6 +21,7 @@ import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import {
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
@@ -90,21 +93,20 @@ export default function MemoryDetailPage({
 				/>
 			) : isLoading ? (
 				<div className="space-y-4 py-2">
-					<Skeleton className="h-5 w-24" />
+					<PageHeaderSkeleton icon actions description={false} />
 					<Skeleton className="h-24 w-full" />
 					<Skeleton className="h-4 w-48" />
 				</div>
 			) : memory ? (
 				<>
-					<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-						<div className="min-w-0 flex-1 space-y-2">
-							<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-								<Brain className="size-3.5" />
-								<span>Memory</span>
-							</div>
-							<DetailTitle className="whitespace-pre-wrap leading-snug">
-								{memory.content}
-							</DetailTitle>
+					<PageHeader
+						title={memory.content}
+						icon={
+							<IconChip tint={RESOURCE_TINT_CLASSES.memories}>
+								<Brain />
+							</IconChip>
+						}
+						status={
 							<DetailMeta>
 								<Badge
 									variant="secondary"
@@ -130,30 +132,32 @@ export default function MemoryDetailPage({
 										: "Never recalled yet"}
 								</span>
 							</DetailMeta>
-						</div>
-						<ConfirmAction
-							title="Delete this memory?"
-							description={
-								<>
-									<p>All agents will stop recalling it within seconds.</p>
-									<p>You can tell it the same thing again later.</p>
-								</>
-							}
-							confirmLabel="Delete memory"
-							destructive
-							onConfirm={onDelete}
-						>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={deleteMemory.isPending}
-								className="w-fit shrink-0 text-destructive hover:text-destructive"
+						}
+						actions={
+							<ConfirmAction
+								title="Delete this memory?"
+								description={
+									<>
+										<p>All agents will stop recalling it within seconds.</p>
+										<p>You can tell it the same thing again later.</p>
+									</>
+								}
+								confirmLabel="Delete memory"
+								destructive
+								onConfirm={onDelete}
 							>
-								<Trash2 />
-								Delete
-							</Button>
-						</ConfirmAction>
-					</div>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={deleteMemory.isPending}
+									className="w-fit shrink-0 text-destructive hover:text-destructive"
+								>
+									<Trash2 />
+									Delete
+								</Button>
+							</ConfirmAction>
+						}
+					/>
 
 					<DetailPanel className="space-y-4">
 						<div className="space-y-1">

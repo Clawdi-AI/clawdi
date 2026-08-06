@@ -542,11 +542,11 @@ export function HostedAgentDetail({
 			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-6"}>
 				{isLiveToolTab || (activeTab === "projects" && projection.status === "resolved") ? null : (
 					<PageHeader
-						title={activeTabLabel}
+						title={activeTab === "overview" ? availableAgentTitle : activeTabLabel}
 						titleAdornment={
 							activeTab === "overview" ? <AgentSourceBadge source="hosted" compact /> : null
 						}
-						description={activeTab === "overview" ? undefined : activeNavItem.description}
+						description={activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
 							activeTab === "memories" ? (

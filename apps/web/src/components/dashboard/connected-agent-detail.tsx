@@ -34,7 +34,7 @@ import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel"
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { DetailNotFound } from "@/components/detail/layout";
 import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	OverviewSessionList,
@@ -194,9 +194,9 @@ export function ConnectedAgentDetail({
 				<section className="flex flex-col gap-6">
 					{activeTab === "projects" ? null : (
 						<PageHeader
-							title={activeTabLabel}
+							title={activeTab === "overview" ? (agentTitle ?? activeTabLabel) : activeTabLabel}
 							titleAdornment={headerStatus}
-							description={activeTab === "overview" ? undefined : activeTabMeta.description}
+							description={activeTabMeta.description}
 							icon={
 								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
 							}
@@ -371,14 +371,7 @@ export function ConnectedAgentDetailSkeleton({ hosted = false }: { hosted?: bool
 function AgentDetailContentSkeleton({ variant }: { variant: "connected" | "hosted" }) {
 	return (
 		<section className="flex flex-col gap-8" data-agent-detail-skeleton>
-			<div className="flex flex-wrap items-start justify-between gap-4">
-				<div className="flex items-center gap-3">
-					<Skeleton className="size-4 rounded-sm" />
-					<Skeleton className="h-7 w-28" />
-					{variant === "hosted" ? <Skeleton className="h-5 w-14 rounded-full" /> : null}
-				</div>
-				{variant === "hosted" ? <Skeleton className="h-9 w-48 rounded-md" /> : null}
-			</div>
+			<PageHeaderSkeleton icon actions={variant === "hosted"} description={false} />
 			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
 				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
 					<div className="flex items-center justify-between">
