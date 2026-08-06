@@ -18,11 +18,12 @@ import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentLabel } from "@/components/dashboard/agent-label";
+import { DetailBackLink } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
@@ -178,14 +179,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (channel.isLoading) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-				<div className="flex items-center gap-3">
-					<Skeleton className="size-12 shrink-0 rounded-xl" />
-					<div className="min-w-0 flex-1">
-						<Skeleton className="h-6 w-52 max-w-full" />
-						<Skeleton className="mt-2 h-4 w-40 max-w-full" />
-						<Skeleton className="mt-2 h-5 w-32 max-w-full rounded-full" />
-					</div>
-				</div>
+				<DetailBackLink href="/channels" label="Channels" />
+				<PageHeaderSkeleton icon iconClassName="size-12 rounded-xl" actions />
 				<div className="flex flex-col gap-4">
 					<Skeleton className="h-9 w-full max-w-xl rounded-lg" />
 					<Skeleton className="h-64 w-full rounded-lg" />
@@ -197,6 +192,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (isApiNotFoundError(channel.error) || shouldBlockQueryError(channel.error, channel.data)) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
+				<DetailBackLink href="/channels" label="Channels" />
 				<ApiErrorPanel
 					error={channel.error}
 					onRetry={() => channel.refetch()}
@@ -209,15 +205,11 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (!channel.data) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
+				<DetailBackLink href="/channels" label="Channels" />
 				<EmptyState
 					icon={MessageSquareDashed}
 					title="Channel not found"
 					description="This channel may have been removed."
-					action={
-						<Button variant="outline" onClick={() => void router.navigate({ href: "/channels" })}>
-							Back to Channels
-						</Button>
-					}
 				/>
 			</div>
 		);
@@ -230,6 +222,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
+			<DetailBackLink href="/channels" label="Channels" />
 			<PageHeader
 				title={ch.name}
 				description={meta.label}

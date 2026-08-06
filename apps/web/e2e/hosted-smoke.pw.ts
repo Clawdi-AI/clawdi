@@ -1423,6 +1423,7 @@ function isStubResponse(value: unknown): value is StubResponse {
 
 type HostedApiStubOptions = {
 	sessionsPage?: unknown;
+	sessionsResponse?: StubResponse;
 	sessionRequests?: string[];
 	legacySkillDetailRequests?: string[];
 	skillDetailRequests?: string[];
@@ -2623,6 +2624,12 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v1/sessions") {
 			options.sessionRequests?.push(r.request().url());
+			if (options.sessionsResponse) {
+				if (options.sessionsResponse.delayMs) {
+					await new Promise((resolve) => setTimeout(resolve, options.sessionsResponse?.delayMs));
+				}
+				return fulfillJson(r, options.sessionsResponse.body, options.sessionsResponse.status);
+			}
 			return fulfillJson(r, options.sessionsPage ?? emptyPage);
 		}
 		const memoryDetailMatch = p.match(/^\/v1\/memories\/([^/]+)$/);
@@ -3142,7 +3149,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
-	const overviewHeading = page.getByRole("heading", { name: "Overview", exact: true });
+	const overviewHeading = page.getByRole("heading", { name: "Hosted agent", exact: true });
 	const overviewTitleRow = overviewHeading.locator("..");
 	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
@@ -3652,12 +3659,21 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 		cloudAgentResponses: {
 			[railHostedEnvironmentId]: [{ body: railHostedCloudAgent, status: 200, delayMs: 5_000 }],
 		},
+		sessionsResponse: { body: emptyPage, status: 200, delayMs: 5_000 },
+	});
+	const projectionResponse = page.waitForResponse((response) => {
+		const url = new URL(response.url());
+		return url.pathname === `/v1/agents/${railHostedEnvironmentId}` && response.status() === 200;
 	});
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
+	const stableHeading = page.getByRole("heading", { name: railHostedDeployment.name, level: 1 });
+	const breadcrumbItems = page
+		.getByRole("navigation", { name: "breadcrumb" })
+		.locator('[data-slot="breadcrumb-item"]:visible');
 	await expect(
 		overview.locator('[data-overview-primary-value] [role="status"]').first(),
 	).toBeVisible();
@@ -3678,11 +3694,20 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 	await expect(overview.locator('[data-overview-module="vaults"]')).toHaveCount(1);
 	await expect(overview.getByText("Details pending", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Loading…", { exact: true })).toHaveCount(0);
+	await expect(stableHeading).toBeVisible();
+	await expect(breadcrumbItems).toHaveText([railHostedDeployment.name]);
+	await expect(page.getByRole("heading", { name: "Agent", exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({
 		path: testInfo.outputPath("hosted-agent-overview-loading.png"),
 		fullPage: true,
 	});
+	await projectionResponse;
+	await expect(
+		overview.locator('[data-overview-primary-value] [role="status"]').first(),
+	).toHaveCount(0);
+	await expect(stableHeading).toBeVisible();
+	await expect(breadcrumbItems).toHaveText([railHostedDeployment.name]);
 });
 
 test("hosted inventory loading skeleton matches the compact overview geometry", async ({
@@ -4372,7 +4397,7 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
-test("legacy Overview owns its title chip and dashboard action", async ({ page }) => {
+test("legacy Agent owns its entity title chip and dashboard action", async ({ page }) => {
 	await stubHostedApi(page, {
 		canUseLegacyHostedDashboard: true,
 		cloudAgents: [sharedLegacyCloudAgent],
@@ -4381,7 +4406,7 @@ test("legacy Overview owns its title chip and dashboard action", async ({ page }
 	await page.goto(`/agents/${sharedLegacyEnvironmentId}`);
 
 	const main = page.locator("main");
-	const heading = main.getByRole("heading", { name: "Overview", exact: true });
+	const heading = main.getByRole("heading", { name: "Hosted agent", exact: true });
 	await expect(heading).toBeVisible();
 	const titleRow = heading.locator("..");
 	await expect(titleRow.getByText("Legacy", { exact: true })).toBeVisible();
@@ -4826,7 +4851,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		);
 	});
 	await expect(main.getByRole("heading", { name: "Workspace", level: 1 })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Projects", exact: true })).toHaveAttribute(
+	await expect(main.getByRole("button", { name: "Back to Projects", exact: true })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access${query}`,
 	);
@@ -5566,7 +5591,7 @@ test("existing Cloud customers keep billing settings when new deploys are disabl
 	await expect(dialog.getByRole("button", { name: /^Usage/ })).toBeVisible();
 });
 
-test("usage settings show peer agent and model breakdowns on desktop and mobile", async ({
+test("usage settings keep agent and model controls readable on desktop and mobile", async ({
 	page,
 }, testInfo) => {
 	await stubHostedApi(page, {
@@ -5602,18 +5627,24 @@ test("usage settings show peer agent and model breakdowns on desktop and mobile"
 	await page.goto("/channels?settings=billing-usage");
 	const dialog = page.getByTestId("settings-dialog");
 	await expect(dialog.getByRole("heading", { name: "Usage", exact: true })).toBeVisible();
-	await expect(dialog.getByRole("heading", { name: "By agent", exact: true })).toBeVisible();
-	await expect(dialog.getByRole("heading", { name: "By model", exact: true })).toBeVisible();
-	await expect(dialog.getByText("research", { exact: true })).toBeVisible();
-	await expect(dialog.getByText("hdep_research", { exact: true })).toBeVisible();
-	await expect(dialog.getByText("Unattributed", { exact: true })).toBeVisible();
-	await expect(dialog.getByText("Usage not linked to an agent", { exact: true })).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "Models", exact: true })).toBeVisible();
+	const agentFilter = dialog.getByRole("combobox", { name: "Agent" });
+	const timeRangeFilter = dialog.getByRole("combobox", { name: "Time range" });
+	await expect(agentFilter).toContainText("All agents");
+	await expect(timeRangeFilter).toContainText("Last 7 days");
+	await agentFilter.click();
+	await expect(page.getByRole("option", { name: "openclaw-research", exact: true })).toBeVisible();
+	await page.keyboard.press("Escape");
 	await expect(dialog.getByText("Daily usage", { exact: true })).toHaveCount(0);
-	await expect(dialog.getByRole("table")).toHaveCount(2);
+	await expect(dialog.getByRole("table", { name: "Usage by model" })).toBeVisible();
 	await dialog.screenshot({ path: testInfo.outputPath("usage-desktop.png") });
 
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expect(dialog.getByRole("table")).toHaveCount(2);
+	for (const control of [agentFilter, timeRangeFilter]) {
+		const box = await control.boundingBox();
+		expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+	}
+	await expect(dialog.getByRole("table", { name: "Usage by model" })).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 	await dialog.screenshot({ path: testInfo.outputPath("usage-mobile.png") });
 });
@@ -8319,7 +8350,7 @@ test("shared legacy environment direct route asks the user to choose an agent", 
 	await expect(page).toHaveURL(
 		new RegExp(`/agents/${sharedLegacyEnvironmentId}\\?.*d=hdep_shared_older`),
 	);
-	await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Older twin" })).toBeVisible();
 });
 
 test("identity-less interrupted deployment stays non-navigable and action-free", async ({

@@ -3,7 +3,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
-	ArrowLeft,
 	Check,
 	Copy as CopyIcon,
 	ExternalLink,
@@ -22,8 +21,11 @@ import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/component
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
-import { DetailNotFound, DetailTitle } from "@/components/detail/layout";
+import { DetailBackLink } from "@/components/detail/back-link";
+import { DetailNotFound } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { IconChip } from "@/components/icon-chip";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
@@ -398,15 +400,8 @@ export default function VaultDetailPage({
 	) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Skeleton className="h-8 w-20" />
-				<div className="flex items-start gap-3">
-					<Skeleton className="size-11 rounded-xl" />
-					<div className="min-w-0 flex-1 space-y-2">
-						<Skeleton className="h-6 w-48 max-w-full" />
-						<Skeleton className="h-4 w-96 max-w-full" />
-						<Skeleton className="h-3 w-40" />
-					</div>
-				</div>
+				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
+				<PageHeaderSkeleton icon actions />
 				<Skeleton className="h-36 w-full rounded-lg" />
 				<Skeleton className="h-24 w-full rounded-lg" />
 			</div>
@@ -417,16 +412,7 @@ export default function VaultDetailPage({
 		const blockingError = blockingVaultDetailError ?? blockingScopeError;
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to={backTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
-				</Button>
+				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				{isApiNotFoundError(blockingError) ? (
 					<DetailNotFound
 						title="Vault not found"
@@ -449,16 +435,7 @@ export default function VaultDetailPage({
 	if (requestedProjectUnavailable) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to={backTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
-				</Button>
+				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
 					title="Project not available to this Agent"
 					message={
@@ -474,16 +451,7 @@ export default function VaultDetailPage({
 	if (!vault) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to={backTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
-				</Button>
+				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
 					title="Vault not found"
 					message="This vault may have been removed, or your account no longer has access."
@@ -497,16 +465,7 @@ export default function VaultDetailPage({
 	if (!isAvailableToAgent) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to={backTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
-				</Button>
+				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
 					title="Vault not available to this Agent"
 					message="This Vault is no longer available through the Agent's Projects. It remains in the resource library if your account still has access."
@@ -532,83 +491,69 @@ export default function VaultDetailPage({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<Button
-				render={<Link to={backTarget.href} />}
-				nativeButton={false}
-				variant="ghost"
-				size="sm"
-				className="w-fit sm:hidden"
-			>
-				<ArrowLeft className="mr-1.5 size-4" />
-				{backTarget.label}
-			</Button>
+			<DetailBackLink href={backTarget.href} label={backTarget.label} />
 
-			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-				<div className="flex min-w-0 items-start gap-3">
-					<span
-						className={cn(
-							"flex size-11 shrink-0 select-none items-center justify-center rounded-xl text-2xl leading-none",
-							identityFor(vault.name).colorClasses,
-						)}
-					>
+			<PageHeader
+				title={vault.name}
+				icon={
+					<IconChip tint={identityFor(vault.name).colorClasses} className="text-xl">
 						{identityFor(vault.name).emoji}
-					</span>
-					<div className="min-w-0">
-						<DetailTitle className="truncate">{vault.name}</DetailTitle>
-						<p className="mt-1 text-sm text-muted-foreground">
-							{isAgentScope
-								? isOwner
-									? "This account-owned Vault is read-only here. Manage its keys or delete it in the resource library."
-									: "This shared Vault is read-only here. Only its owner can edit its keys."
-								: isOwner
-									? "Keys live here once and work in every Project this Vault is attached to."
-									: "Shared with you — your agents can use these keys; only the owner edits them."}
-						</p>
-					</div>
-				</div>
-				{canManageVault ? (
-					<div className="flex shrink-0 items-center gap-2">
-						<ShareKeysDialog
-							vault={vault}
-							projects={projects.data ?? []}
-							onAttach={(projectId) => attachProject.mutateAsync(projectId)}
-						/>
-						<ConfirmAction
-							title={`Delete ${vault.name}?`}
-							description={
-								<p>
-									Every key in this vault is removed for every Project using it. Agents lose access
-									immediately.
-								</p>
-							}
-							confirmLabel="Delete vault"
-							destructive
-							onConfirm={() => deleteVault.mutateAsync()}
-						>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={deleteVault.isPending}
-								className="text-destructive"
+					</IconChip>
+				}
+				description={
+					isAgentScope
+						? isOwner
+							? "This account-owned Vault is read-only here. Manage its keys or delete it in the resource library."
+							: "This shared Vault is read-only here. Only its owner can edit its keys."
+						: isOwner
+							? "Keys live here once and work in every Project this Vault is attached to."
+							: "Shared with you — your agents can use these keys; only the owner edits them."
+				}
+				actions={
+					canManageVault ? (
+						<>
+							<ShareKeysDialog
+								vault={vault}
+								projects={projects.data ?? []}
+								onAttach={(projectId) => attachProject.mutateAsync(projectId)}
+							/>
+							<ConfirmAction
+								title={`Delete ${vault.name}?`}
+								description={
+									<p>
+										Every key in this vault is removed for every Project using it. Agents lose
+										access immediately.
+									</p>
+								}
+								confirmLabel="Delete vault"
+								destructive
+								onConfirm={() => deleteVault.mutateAsync()}
 							>
-								<Trash2 className="mr-1.5 size-3.5" />
-								Delete
-							</Button>
-						</ConfirmAction>
-					</div>
-				) : isAgentScope ? (
-					<Button
-						render={<Link to={managementTarget.href} />}
-						nativeButton={false}
-						variant="outline"
-						size="sm"
-						className="w-full shrink-0 sm:w-auto"
-					>
-						<ExternalLink className="size-3.5" />
-						Open in resource library
-					</Button>
-				) : null}
-			</div>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={deleteVault.isPending}
+									className="text-destructive"
+								>
+									<Trash2 className="mr-1.5 size-3.5" />
+									Delete
+								</Button>
+							</ConfirmAction>
+						</>
+					) : isAgentScope ? (
+						<Button
+							render={<Link to={managementTarget.href} />}
+							nativeButton={false}
+							variant="outline"
+							size="sm"
+							className="w-full shrink-0 sm:w-auto"
+						>
+							<ExternalLink className="size-3.5" />
+							Open in resource library
+						</Button>
+					) : null
+				}
+			/>
 
 			{/* Keys */}
 			<section className="space-y-3">

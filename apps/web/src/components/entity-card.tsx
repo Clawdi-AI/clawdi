@@ -621,7 +621,7 @@ export function EntityChoiceCard({
 					<div
 						className={cn(
 							"min-w-0",
-							detailsPlacement === "trailing" ? "max-w-[50%] shrink-0" : "mt-2",
+							detailsPlacement === "trailing" ? "max-w-[45%] shrink-0" : "mt-2",
 						)}
 					>
 						{details}

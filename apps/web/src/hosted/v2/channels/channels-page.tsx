@@ -77,7 +77,16 @@ export function ChannelsPage() {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-			<PageHeader title="Channels" description={DESCRIPTION} />
+			<PageHeader
+				title="Channels"
+				description={DESCRIPTION}
+				actions={
+					<Button size="sm" onClick={() => setConnectOpen(true)}>
+						<Plus />
+						Add channel
+					</Button>
+				}
+			/>
 
 			<ListToolbar
 				filters={
@@ -97,12 +106,6 @@ export function ChannelsPage() {
 							</FilterChip>
 						))}
 					</>
-				}
-				actions={
-					<Button size="sm" variant="outline" onClick={() => setConnectOpen(true)}>
-						<Plus />
-						Add channel
-					</Button>
 				}
 			/>
 

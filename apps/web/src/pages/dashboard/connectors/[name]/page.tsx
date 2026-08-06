@@ -11,8 +11,8 @@ import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
 import { DetailBackLink } from "@/components/detail/back-link";
-import { DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -308,24 +308,19 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					</AlertDescription>
 				</Alert>
 			) : null}
-			{/* Header — matches clawdi ConnectorHeader */}
-			<div className="flex items-start gap-5">
-				<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<DetailTitle>{displayName}</DetailTitle>
-						{isReady && (
-							<Badge variant="secondary">
-								<Check />
-								{usesNoAuth ? "Ready" : "Connected"}
-							</Badge>
-						)}
-					</div>
-					<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-						{app?.description || name}
-					</p>
-				</div>
-			</div>
+			<PageHeader
+				title={displayName}
+				icon={<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />}
+				titleAdornment={
+					isReady ? (
+						<Badge variant="secondary">
+							<Check />
+							{usesNoAuth ? "Ready" : "Connected"}
+						</Badge>
+					) : undefined
+				}
+				description={app?.description || name}
+			/>
 
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
@@ -489,14 +484,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 function DetailSkeleton() {
 	return (
 		<div className="flex flex-col gap-4">
-			{/* Header */}
-			<div className="flex items-start gap-5">
-				<Skeleton className="size-14 rounded-2xl" />
-				<div className="flex-1 space-y-2">
-					<Skeleton className="h-5 w-36" />
-					<Skeleton className="h-4 w-64" />
-				</div>
-			</div>
+			<PageHeaderSkeleton icon iconClassName="size-14 rounded-xl" />
 			{/* Connection section */}
 			<div className="space-y-3">
 				<Skeleton className="h-3.5 w-32" />

@@ -3,7 +3,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
-	ArrowLeft,
 	ArrowRight,
 	Bot,
 	CheckCircle2,
@@ -41,11 +40,13 @@ import {
 } from "@/components/dashboard/agent-project-bindings-query";
 import { orderedAgentProjectBindings } from "@/components/dashboard/agent-project-scope";
 import { ConnectedWorkspaceSkillsPanel } from "@/components/dashboard/workspace-skills-panel";
+import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
+import { HeaderActionGroup } from "@/components/header-action-group";
 import { IconChip } from "@/components/icon-chip";
-import { PageHeader, type PageHeaderProps } from "@/components/page-header";
+import { PageHeader, type PageHeaderProps, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
@@ -261,14 +262,14 @@ export default function ProjectDetailPage({
 			? isWorkspace
 				? {
 						href: agentSectionHref(scope.agentId, "overview", scope.agentQuery),
-						label: "Back to Agent Overview",
+						label: "Agent Overview",
 					}
 				: {
 						href: projectDetailHrefForScope(scope, projectId),
-						label: projectName ? `Back to ${projectName}` : "Back to Project",
+						label: projectName ?? "Project",
 					}
 			: safeAgentReturnHref
-				? { href: safeAgentReturnHref, label: "Back to Agent Projects" }
+				? { href: safeAgentReturnHref, label: "Agent Projects" }
 				: projectsTarget;
 	const workspaceAgent = $api.useQuery(
 		"get",
@@ -474,15 +475,12 @@ export default function ProjectDetailPage({
 	if (projectQuery.isLoading || (isAgentScope && scopedBindings.isLoading)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Skeleton className="h-8 w-24" />
-				<div className="flex items-start gap-3">
-					<Skeleton className="size-11 rounded-xl" />
-					<div className="min-w-0 flex-1 space-y-2">
-						<Skeleton className="h-6 w-56 max-w-full" />
-						<Skeleton className="h-4 w-96 max-w-full" />
-						<Skeleton className="h-3 w-40" />
-					</div>
-				</div>
+				<DetailBackLink
+					href={projectsTarget.href}
+					label={projectsTarget.label}
+					mobileOnly={false}
+				/>
+				<PageHeaderSkeleton icon actions />
 				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
 					{Array.from({ length: 4 }).map((_, i) => (
 						<Skeleton key={i} className="h-24 w-full rounded-xl" />
@@ -506,7 +504,11 @@ export default function ProjectDetailPage({
 		const blockingError = blockingProjectError ?? blockingScopeError;
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<ProjectReturnLink target={projectsTarget} />
+				<DetailBackLink
+					href={projectsTarget.href}
+					label={projectsTarget.label}
+					mobileOnly={false}
+				/>
 				{isApiNotFoundError(blockingError) ? (
 					<DetailNotFound
 						title="Project not found"
@@ -533,7 +535,11 @@ export default function ProjectDetailPage({
 	if (!project) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<ProjectReturnLink target={projectsTarget} />
+				<DetailBackLink
+					href={projectsTarget.href}
+					label={projectsTarget.label}
+					mobileOnly={false}
+				/>
 				<DetailNotFound
 					title="Project not found"
 					message="This Project may have been removed, or your account no longer has access."
@@ -545,7 +551,11 @@ export default function ProjectDetailPage({
 	if (!isAgentScope && project.kind !== "workspace") {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<ProjectReturnLink target={projectsTarget} />
+				<DetailBackLink
+					href={projectsTarget.href}
+					label={projectsTarget.label}
+					mobileOnly={false}
+				/>
 				<DetailNotFound
 					title="Project not found"
 					message="This page is for user-created Projects. Open an Agent to manage its private Workspace."
@@ -557,7 +567,11 @@ export default function ProjectDetailPage({
 	if (isAgentScope && !scopedBinding) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<ProjectReturnLink target={projectsTarget} />
+				<DetailBackLink
+					href={projectsTarget.href}
+					label={projectsTarget.label}
+					mobileOnly={false}
+				/>
 				<DetailNotFound
 					title="Project not available to this Agent"
 					message="The Project may have been removed from this Agent. It remains available in the resource library if your account still has access."
@@ -661,7 +675,7 @@ export default function ProjectDetailPage({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<ProjectReturnLink target={pageReturnTarget} mobileOnly />
+			<DetailBackLink href={pageReturnTarget.href} label={pageReturnTarget.label} />
 
 			{isWorkspace && focus === "skills" ? null : (
 				<PageHeader
@@ -1291,36 +1305,11 @@ function HubSection({
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
 					</div>
-					{action ? (
-						<div className="flex w-full min-w-0 flex-wrap items-center gap-2 max-sm:[&_button]:min-h-11 max-sm:[&_[data-slot=button]]:min-h-11 sm:w-auto sm:shrink-0 sm:justify-end">
-							{action}
-						</div>
-					) : null}
+					{action ? <HeaderActionGroup>{action}</HeaderActionGroup> : null}
 				</div>
 			) : null}
 			{children}
 		</section>
-	);
-}
-
-function ProjectReturnLink({
-	target,
-	mobileOnly = false,
-}: {
-	target: ResourceNavigationTarget;
-	mobileOnly?: boolean;
-}) {
-	return (
-		<Button
-			render={<Link to={target.href} />}
-			nativeButton={false}
-			variant="ghost"
-			size="sm"
-			className={cn("w-fit", mobileOnly && "sm:hidden")}
-		>
-			<ArrowLeft className="mr-1.5 size-4" />
-			{target.label}
-		</Button>
 	);
 }
 
@@ -1915,16 +1904,14 @@ function ProjectVaultActions({
 
 	return (
 		<>
-			<div className="flex flex-wrap justify-end gap-2">
-				<Button size="sm" onClick={() => setCreateOpen(true)}>
-					<Plus className="size-3.5" />
-					Create vault
-				</Button>
-				<Button size="sm" variant="outline" onClick={() => setAttachOpen(true)}>
-					<Link2 className="size-3.5" />
-					Attach vault
-				</Button>
-			</div>
+			<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
+				<Plus className="size-3.5" />
+				Create vault
+			</Button>
+			<Button size="sm" onClick={() => setAttachOpen(true)}>
+				<Link2 className="size-3.5" />
+				Attach vault
+			</Button>
 
 			<Dialog
 				open={attachOpen}

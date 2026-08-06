@@ -990,6 +990,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await page.goto("/agents/agent-smoke-1");
 
 	const overview = page.locator('[data-agent-overview="connected"]');
+	await expect(page.getByRole("heading", { name: "Smoke Codex", level: 1 })).toBeVisible();
 	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
@@ -1918,7 +1919,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await page.goto("/agents/agent-smoke-1/project-access/project-smoke");
 	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/project-access\/project-smoke$/);
 	await expect(main.getByRole("heading", { name: "Workspace", level: 1 })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Projects", exact: true })).toHaveAttribute(
+	await expect(main.getByRole("button", { name: "Back to Projects", exact: true })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/project-access",
 	);
