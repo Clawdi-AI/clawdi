@@ -44,6 +44,7 @@ import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
+import { HeaderActionGroup } from "@/components/header-action-group";
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader, type PageHeaderProps, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -1304,11 +1305,7 @@ function HubSection({
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
 					</div>
-					{action ? (
-						<div className="flex w-full min-w-0 flex-wrap items-center gap-2 max-sm:[&_button]:min-h-11 max-sm:[&_[data-slot=button]]:min-h-11 sm:w-auto sm:shrink-0 sm:justify-end">
-							{action}
-						</div>
-					) : null}
+					{action ? <HeaderActionGroup>{action}</HeaderActionGroup> : null}
 				</div>
 			) : null}
 			{children}

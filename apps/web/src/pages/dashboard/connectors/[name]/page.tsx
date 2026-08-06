@@ -484,7 +484,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 function DetailSkeleton() {
 	return (
 		<div className="flex flex-col gap-4">
-			<PageHeaderSkeleton icon iconClassName="size-14" />
+			<PageHeaderSkeleton icon iconClassName="size-14 rounded-xl" />
 			{/* Connection section */}
 			<div className="space-y-3">
 				<Skeleton className="h-3.5 w-32" />

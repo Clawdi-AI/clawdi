@@ -371,7 +371,12 @@ export function ConnectedAgentDetailSkeleton({ hosted = false }: { hosted?: bool
 function AgentDetailContentSkeleton({ variant }: { variant: "connected" | "hosted" }) {
 	return (
 		<section className="flex flex-col gap-8" data-agent-detail-skeleton>
-			<PageHeaderSkeleton icon actions={variant === "hosted"} description={false} />
+			<PageHeaderSkeleton
+				icon
+				iconClassName="size-4 rounded-sm"
+				actions={variant === "hosted"}
+				description={false}
+			/>
 			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
 				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
 					<div className="flex items-center justify-between">

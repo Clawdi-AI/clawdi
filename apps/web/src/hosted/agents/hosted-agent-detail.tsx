@@ -493,16 +493,15 @@ export function HostedAgentDetail({
 		}
 	};
 	const agent = projection.status === "resolved" ? projection.data : null;
-	const agentTitle = agent
+	const availableAgentTitle = agent
 		? agentDisplayName(agent)
-		: deploymentProjectionQueryable
-			? null
-			: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
-	const availableAgentTitle = agentTitle ?? "Agent";
+		: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
 	const requestedTab = parseHostedAgentTab(section) ?? "overview";
 	const filesUrl = deploymentFilesUrl(deployment);
 	const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;
-	useSetBreadcrumbTitle(activeTab === "overview" ? agentTitle : agentSectionLabel(activeTab));
+	useSetBreadcrumbTitle(
+		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab),
+	);
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);

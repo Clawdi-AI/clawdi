@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { HeaderActionGroup } from "@/components/header-action-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -48,11 +49,7 @@ export function PageHeader({
 					{status ? <div className="mt-1">{status}</div> : null}
 				</div>
 			</div>
-			{actions ? (
-				<div className="flex w-full min-w-0 flex-wrap items-center gap-2 max-sm:[&_button]:min-h-11 max-sm:[&_[data-slot=button]]:min-h-11 sm:w-auto sm:shrink-0 sm:justify-end">
-					{actions}
-				</div>
-			) : null}
+			{actions ? <HeaderActionGroup>{actions}</HeaderActionGroup> : null}
 		</div>
 	);
 }
@@ -79,7 +76,7 @@ export function PageHeaderSkeleton({
 			className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}
 		>
 			<div className="flex min-w-0 items-center gap-3">
-				{icon ? <Skeleton className={cn("size-11 shrink-0 rounded-xl", iconClassName)} /> : null}
+				{icon ? <Skeleton className={cn("size-10 shrink-0 rounded-lg", iconClassName)} /> : null}
 				<div className="min-w-0 flex-1 space-y-2">
 					<Skeleton className="h-6 w-52 max-w-full" />
 					{description ? <Skeleton className="h-4 w-80 max-w-full" /> : null}

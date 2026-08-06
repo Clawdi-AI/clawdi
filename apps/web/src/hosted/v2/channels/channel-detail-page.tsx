@@ -180,7 +180,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 				<DetailBackLink href="/channels" label="Channels" />
-				<PageHeaderSkeleton icon actions />
+				<PageHeaderSkeleton icon iconClassName="size-12 rounded-xl" actions />
 				<div className="flex flex-col gap-4">
 					<Skeleton className="h-9 w-full max-w-xl rounded-lg" />
 					<Skeleton className="h-64 w-full rounded-lg" />
@@ -210,11 +210,6 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 					icon={MessageSquareDashed}
 					title="Channel not found"
 					description="This channel may have been removed."
-					action={
-						<Button variant="outline" onClick={() => void router.navigate({ href: "/channels" })}>
-							Back to Channels
-						</Button>
-					}
 				/>
 			</div>
 		);

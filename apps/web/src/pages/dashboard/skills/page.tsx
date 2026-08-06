@@ -388,8 +388,8 @@ function ProjectSelection({ projects, loading }: { projects: ProjectRow[]; loadi
 						key={project.id}
 						project={project}
 						footer={[
-							formatResourceCount(project.skill_count, "Skill"),
-							formatResourceCount(project.vault_count, "Vault"),
+							formatResourceCount(project.skill_count, "skill"),
+							formatResourceCount(project.vault_count, "vault"),
 						]}
 						link={{ to: "/skills", search: { project: project.id } }}
 					/>
