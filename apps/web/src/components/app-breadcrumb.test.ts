@@ -41,7 +41,7 @@ describe("AppBreadcrumb semantic trail", () => {
 					},
 				},
 			}),
-		).toEqual(["Agents", "Hermes", "Workspace", "Skills"]);
+		).toEqual(["Hermes", "Workspace", "Skills"]);
 	});
 
 	test("keeps linked Projects in the Projects hierarchy", () => {
@@ -51,7 +51,7 @@ describe("AppBreadcrumb semantic trail", () => {
 					[`/agents/${agentId}/project-access/${projectId}`]: { title: "Team Knowledge" },
 				},
 			}),
-		).toEqual(["Agents", "Hermes", "Projects", "Team Knowledge", "Vaults"]);
+		).toEqual(["Hermes", "Projects", "Team Knowledge", "Vaults"]);
 	});
 
 	test("does not mistake a linked Project named Workspace for the Agent Workspace", () => {
@@ -61,7 +61,7 @@ describe("AppBreadcrumb semantic trail", () => {
 					[`/agents/${agentId}/project-access/${projectId}`]: { title: "Workspace" },
 				},
 			}),
-		).toEqual(["Agents", "Hermes", "Projects", "Workspace"]);
+		).toEqual(["Hermes", "Projects", "Workspace"]);
 	});
 
 	test("shows real Skill and Vault names in their selected Project context", () => {
@@ -77,28 +77,26 @@ describe("AppBreadcrumb semantic trail", () => {
 				title: "GitHub Issues",
 				segmentTitles,
 			}),
-		).toEqual(["Agents", "Hermes", "Workspace", "Skills", "GitHub Issues"]);
+		).toEqual(["Hermes", "Workspace", "Skills", "GitHub Issues"]);
 		expect(
 			labels(`/agents/${agentId}/vaults/production`, {
 				search: { ...deploymentSearch, project: workspaceId },
 				title: "Production Keys",
 				segmentTitles,
 			}),
-		).toEqual(["Agents", "Hermes", "Workspace", "Vaults", "Production Keys"]);
+		).toEqual(["Hermes", "Workspace", "Vaults", "Production Keys"]);
 	});
 
 	test("shows real names for Agent-level resources", () => {
 		expect(labels(`/agents/${agentId}/sessions/session-1`, { title: "Deploy the API" })).toEqual([
-			"Agents",
 			"Hermes",
 			"Sessions",
 			"Deploy the API",
 		]);
 		expect(
 			labels(`/agents/${agentId}/memories/memory-1`, { title: "Prefers concise replies" }),
-		).toEqual(["Agents", "Hermes", "Memories", "Prefers concise replies"]);
+		).toEqual(["Hermes", "Memories", "Prefers concise replies"]);
 		expect(labels(`/agents/${agentId}/connectors/github`, { title: "GitHub" })).toEqual([
-			"Agents",
 			"Hermes",
 			"Connectors",
 			"GitHub",
@@ -119,7 +117,6 @@ describe("AppBreadcrumb semantic trail", () => {
 			},
 		});
 		expect(trail.filter((item) => item.href).map((item) => item.href)).toEqual([
-			"/agents",
 			`/agents/${agentId}?source=on-clawdi&d=deployment-1`,
 			`/agents/${agentId}/project-access/${workspaceId}?source=on-clawdi&d=deployment-1`,
 			`/agents/${agentId}/project-access/${workspaceId}/skills?source=on-clawdi&d=deployment-1`,
@@ -130,6 +127,6 @@ describe("AppBreadcrumb semantic trail", () => {
 		expect(labels("/projects/550e8400-e29b-41d4-a716-446655440000")).toEqual(["Projects", null]);
 		expect(
 			labels(`/agents/${agentId}/vaults/internal-slug`, { search: { project: projectId } }),
-		).toEqual(["Agents", "Hermes", null, "Vaults", null]);
+		).toEqual(["Hermes", null, "Vaults", null]);
 	});
 });
