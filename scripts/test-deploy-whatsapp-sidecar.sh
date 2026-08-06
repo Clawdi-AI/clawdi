@@ -66,6 +66,12 @@ chmod +x "${tmp}/bin/kamal"
 printf '#!/usr/bin/env bash\nexit 0\n' > "${tmp}/bin/sleep"
 chmod +x "${tmp}/bin/sleep"
 
+revision="$(
+	WHATSAPP_TAILSCALE_EXIT_NODE=exit.test \
+		"$root/scripts/deploy-whatsapp-sidecar.sh" --print-tailscale-config-revision
+)"
+[[ "${revision}" =~ ^[0-9a-f]{64}$ ]]
+
 run() {
 	local scenario="$1" enabled="$2" log="${tmp}/$1.log"
 	SCENARIO="$scenario" FAKE_LOG="$log" PATH="${tmp}/bin:$PATH" \
