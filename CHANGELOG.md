@@ -16,9 +16,9 @@ Package: `clawdi@0.13.37`
 
 ### Fixed
 
-- Hosted runtime convergence now uses the standard `runuser` fallback for
-  runtime-user CA checks and systemd operations when an image intentionally
-  omits `gosu`.
+- Hosted runtime convergence now uses one probed privilege-drop strategy for
+  runtime-user CA checks, systemd operations, installers, and launched services,
+  without depending on `gosu`.
 
 ## Clawdi CLI v0.13.36
 

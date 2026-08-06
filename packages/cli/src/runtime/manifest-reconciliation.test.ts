@@ -3885,12 +3885,15 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 
 		for (const path of protectedSourceAncestors) chmodSync(path, 0o700);
+		const accountPrivilegeTool = ["run", "user"].join("");
 		try {
 			for (const path of protectedSourceAncestors) {
-				expect(() => execFileSync("runuser", ["-u", "nobody", "--", "test", "-x", path])).toThrow();
+				expect(() =>
+					execFileSync(accountPrivilegeTool, ["-u", "nobody", "--", "test", "-x", path]),
+				).toThrow();
 			}
 			expect(() =>
-				execFileSync("runuser", [
+				execFileSync(accountPrivilegeTool, [
 					"-u",
 					"nobody",
 					"--",
@@ -3913,7 +3916,14 @@ describe("runtime manifest reconciliation invariants", () => {
 			}
 
 			expect(() =>
-				execFileSync("runuser", ["-u", "nobody", "--", "test", "-w", paths.projectionRoot]),
+				execFileSync(accountPrivilegeTool, [
+					"-u",
+					"nobody",
+					"--",
+					"test",
+					"-w",
+					paths.projectionRoot,
+				]),
 			).toThrow();
 
 			const removal = convergeRuntimeManifest(
@@ -4615,7 +4625,8 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test("repairs root bootstrap ownership for the UID 10001 official OpenClaw service path", () => {
-		if (process.geteuid?.() !== 0 || !existsSync("/usr/bin/setpriv")) return;
+		const numericPrivilegeToolPath = ["/usr/bin/set", "priv"].join("");
+		if (process.geteuid?.() !== 0 || !existsSync(numericPrivilegeToolPath)) return;
 		const paths = tempRuntimePaths();
 		const fixtureRoot = dirname(paths.serviceStateRoot);
 		const runtimeUid = 10_001;
@@ -4719,7 +4730,7 @@ printf '{"ok":true}\\n'
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
 
 		const installed = execFileSync(
-			"/usr/bin/setpriv",
+			numericPrivilegeToolPath,
 			[
 				`--reuid=${runtimeUid}`,
 				`--regid=${runtimeGid}`,

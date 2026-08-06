@@ -56,9 +56,9 @@ For transparent egress:
 - Private egress CA and secret material is owned directly by that numeric
   UID/GID. Root-readable egress configuration and the projected system CA
   remain root-owned.
-- When the sidecar starts as root, it drops privileges with `setpriv --reuid`
-  and `--regid` plus `--clear-groups`, or with numeric `gosu UID:GID` when
-  `setpriv` is unavailable. Startup fails closed if neither mechanism exists.
+- When the sidecar starts as root, it probes for and drops privileges with
+  `setpriv --reuid` and `--regid` plus `--clear-groups`. Startup fails closed if
+  that numeric-identity mechanism is unavailable.
 - When the sidecar starts as non-root, its current UID and GID must exactly
   match the configured egress identity before `mitmdump` can start.
 - No named egress account, passwd lookup, account creation, compatibility
@@ -105,7 +105,7 @@ It conflicts with the stable capability-envelope boundary.
 
 This keeps the image generic, makes ownership explicit, avoids account lookup,
 and permits deterministic fail-closed privilege dropping. It requires the host
-envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
+envelope to provide `setpriv` and reserve the configured IDs.
 
 ## Consequences
 

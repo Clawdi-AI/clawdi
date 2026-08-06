@@ -6221,6 +6221,7 @@ exit 64
 		seedOpenClawBinary(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "stale-process-token";
@@ -6337,6 +6338,7 @@ exit 64
 					throw new Error("invalid generated watcher environment value");
 				process.env[name] = value;
 			}
+			process.env.CLAWDI_RUNTIME_UID = String(process.geteuid?.() ?? process.getuid?.() ?? 0);
 			setRuntimeApplyGeneration(2, {
 				...CANONICAL_TEST_CONTEXT,
 				bootstrapBearer: bootstrapToken,
@@ -8458,6 +8460,7 @@ esac
 		process.env.PATH = `${bin}:${previousPath ?? ""}`;
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
@@ -8873,6 +8876,7 @@ fi
 		chmodSync(systemctlPath, 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;

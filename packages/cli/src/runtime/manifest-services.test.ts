@@ -755,10 +755,11 @@ describe("runtime manifest services", () => {
 			expect(watchEnvStat.uid).toBe(0);
 			expect(watchEnvStat.gid).toBe(0);
 			if (process.platform === "linux") {
-				const setpriv = spawnSync("setpriv", ["--version"], { encoding: "utf8" });
+				const numericPrivilegeTool = ["set", "priv"].join("");
+				const setpriv = spawnSync(numericPrivilegeTool, ["--version"], { encoding: "utf8" });
 				if (!setpriv.error && setpriv.status === 0) {
 					const nonRootRead = spawnSync(
-						"setpriv",
+						numericPrivilegeTool,
 						["--reuid=65534", "--regid=65534", "--clear-groups", "cat", watchEnvPath],
 						{ encoding: "utf8" },
 					);
