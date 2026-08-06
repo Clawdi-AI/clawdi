@@ -3181,7 +3181,7 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 			name: "Service state",
 			ok: existsSync(paths.serviceStateRoot) && writable(paths.serviceStateRoot),
 			detail: paths.serviceStateRoot,
-			hint: "The hosted service-state volume must be writable by the runtime user.",
+			hint: "The hosted service-state directory must be writable by the platform service.",
 		},
 		{
 			name: "Runtime HOME",
