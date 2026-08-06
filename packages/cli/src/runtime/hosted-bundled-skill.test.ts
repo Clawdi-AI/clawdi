@@ -117,6 +117,7 @@ describe("hosted bundled skill reconciliation", () => {
 	it("treats activation as committed before best-effort previous-target cleanup", () => {
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		mkdirSync(join(root, "config"));
 		const install = (
 			activation?: Parameters<typeof reconcileHostedBundledSkill>[0]["activation"],
 		) =>

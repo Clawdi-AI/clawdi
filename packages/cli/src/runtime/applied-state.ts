@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { chmodSync, chownSync, existsSync, readFileSync, statSync } from "node:fs";
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import {
 	type RuntimeApplyIdentity,
 	resolveRuntimeApplyGeneration,
 	runtimeApplyIdentitySchema,
 } from "./apply-identity";
 import type { RuntimePaths } from "./paths";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 const appliedContentSourceSchema = z
 	.object({
@@ -120,10 +120,15 @@ export function writeRuntimeAppliedState(
 	paths: RuntimePaths,
 ): string {
 	const parsed = runtimeAppliedStateSchema.parse(state);
-	writePrivateFileAtomic(paths.appliedState, `${JSON.stringify(parsed, null, 2)}\n`, {
-		mode: 0o600,
-		dirMode: 0o755,
-	});
+	writeRuntimePlatformFileAtomic(
+		paths,
+		paths.appliedState,
+		`${JSON.stringify(parsed, null, 2)}\n`,
+		{
+			mode: 0o600,
+			dirMode: 0o755,
+		},
+	);
 	secureRuntimeAppliedStateFile(paths.appliedState);
 	return paths.appliedState;
 }

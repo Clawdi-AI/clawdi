@@ -145,6 +145,7 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 		offline: false,
 		applyContext: {
 			kind: "context-file",
+			backend: "incus",
 			identity: {
 				generation: manifest.generation,
 				manifestETag: '"real-systemd-test"',

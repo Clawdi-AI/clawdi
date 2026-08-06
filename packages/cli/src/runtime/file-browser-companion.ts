@@ -14,7 +14,6 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import { runtimeContentSha256 } from "./applied-state";
 import {
 	ensureFileBrowserServiceIsolation,
@@ -26,6 +25,7 @@ import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import type { RuntimeSystemdUserProgram } from "./runtime-systemd-reconciliation";
 import { runningAsRoot } from "./runtime-user-command";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 const FILE_BROWSER_BINARY = "filebrowser";
 const FILE_BROWSER_CANDIDATES = "candidates";
@@ -351,7 +351,10 @@ export function ensureFileBrowserCompanion(
 	cleanStaleStaging(paths);
 	if (!verifiedReceipt || before === null) {
 		installCandidate(companion, paths, asset, options);
-		writePrivateFileAtomic(paths.fileBrowserConfig, config, { mode: 0o600, dirMode: 0o700 });
+		writeRuntimePlatformFileAtomic(paths, paths.fileBrowserConfig, config, {
+			mode: 0o600,
+			dirMode: 0o700,
+		});
 	}
 	const current = () => currentRevision(companion, paths, asset.sha256, config);
 	const expected = current();

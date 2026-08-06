@@ -26,7 +26,9 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 	process.env.CLAWDI_ENVIRONMENT_ID = "env_producer";
-	return getRuntimePaths({ mode: "hosted" });
+	const paths = getRuntimePaths({ mode: "hosted" });
+	mkdirSync(paths.serviceStateRoot);
+	return paths;
 }
 
 function appliedState(generation: number): RuntimeAppliedStateV2 {
@@ -60,6 +62,7 @@ function writeApplyIdentityFile(paths: RuntimePaths, generation: number): void {
 		path,
 		JSON.stringify({
 			schemaVersion: "clawdi.runtimeContext.v2",
+			backend: "incus",
 			apply: {
 				generation,
 				manifestETag: `"manifest-${generation}"`,

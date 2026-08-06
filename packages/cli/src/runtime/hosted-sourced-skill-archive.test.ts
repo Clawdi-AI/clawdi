@@ -69,6 +69,12 @@ function manifest(commit: string): RuntimeManifest {
 	};
 }
 
+function hostedRuntimePaths() {
+	const paths = getRuntimePaths({ mode: "hosted" });
+	mkdirSync(paths.cacheRoot, { recursive: true });
+	return paths;
+}
+
 function projectManifest(
 	contentHash: string,
 	origin = "https://cloud-api.example.test",
@@ -136,7 +142,7 @@ describe("hosted sourced Skill archives", () => {
 				headers: { "content-length": String(canonical.archive.byteLength) },
 			});
 		};
-		const paths = getRuntimePaths({ mode: "hosted" });
+		const paths = hostedRuntimePaths();
 		const first = await prepareHostedSourcedSkillArchives(desired, paths, {
 			authToken: "runtime-token",
 			fetcher,
@@ -176,7 +182,7 @@ describe("hosted sourced Skill archives", () => {
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(join(skillDir, "SKILL.md"), "# Review PR\n");
 		const canonical = await snapshotSkillArchive(skillDir, root, "review-pr");
-		const paths = getRuntimePaths({ mode: "hosted" });
+		const paths = hostedRuntimePaths();
 
 		await expect(
 			prepareHostedSourcedSkillArchives(projectManifest("0".repeat(64)), paths, {
@@ -211,7 +217,7 @@ describe("hosted sourced Skill archives", () => {
 
 		const prepared = await prepareHostedSourcedSkillArchives(
 			projectManifest(legacyHash),
-			getRuntimePaths({ mode: "hosted" }),
+			hostedRuntimePaths(),
 			{
 				fetcher: async () =>
 					new Response(Uint8Array.from(canonical.archive), {
@@ -244,7 +250,7 @@ describe("hosted sourced Skill archives", () => {
 				headers: { "content-length": String(archive.byteLength) },
 			});
 		};
-		const paths = getRuntimePaths({ mode: "hosted" });
+		const paths = hostedRuntimePaths();
 		const first = await prepareHostedSourcedSkillArchives(manifest(commit), paths, { fetcher });
 		const prepared = first.get("review-pr");
 		expect(prepared).toMatchObject({

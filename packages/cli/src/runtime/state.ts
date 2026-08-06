@@ -1,5 +1,7 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { writePrivateFileAtomic } from "../lib/private-file";
+import { assertTrustedDirectory, ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import type { HostPolicyReadResult } from "./host-policy";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import {
@@ -173,14 +175,59 @@ export function hostPolicySummary(policy: HostPolicyReadResult): RuntimeBootStat
 	};
 }
 
-function writeJson(path: string, data: unknown, mode = 0o600): void {
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode });
-	try {
-		chmodSync(path, mode);
-	} catch {
-		// Best effort on filesystems without POSIX mode support.
+function writeJson(paths: RuntimePaths, path: string, data: unknown, mode = 0o600): void {
+	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(data, null, 2)}\n`, {
+		mode,
+		dirMode: 0o755,
+	});
+}
+
+export function runtimePlatformRoots(paths: RuntimePaths): string[] {
+	return [paths.configurationRoot, paths.serviceStateRoot, paths.cacheRoot, paths.runRoot];
+}
+
+export function runtimePlatformRootForPath(paths: RuntimePaths, path: string): string | null {
+	const resolvedPath = resolve(path);
+	return (
+		runtimePlatformRoots(paths)
+			.map((root) => resolve(root))
+			.filter((root) => {
+				const candidate = relative(root, resolvedPath);
+				return candidate === "" || (!candidate.startsWith("..") && !isAbsolute(candidate));
+			})
+			.sort((left, right) => right.length - left.length)[0] ?? null
+	);
+}
+
+export function assertRuntimePlatformRoots(paths: RuntimePaths): void {
+	for (const path of runtimePlatformRoots(paths)) {
+		assertTrustedDirectory(path, "platform directory");
 	}
+}
+
+export function ensureRuntimePlatformDirectory(
+	paths: RuntimePaths,
+	path: string,
+	options: { mode?: number } = {},
+): void {
+	const root = runtimePlatformRootForPath(paths, path);
+	if (!root) {
+		throw new Error(`runtime platform directory is outside platform roots: ${path}`);
+	}
+	ensureDirectoryWithinTrustedRoot(root, path, options);
+}
+
+export function writeRuntimePlatformFileAtomic(
+	paths: RuntimePaths,
+	path: string,
+	content: string | Uint8Array,
+	options: { mode?: number; dirMode?: number } = {},
+): void {
+	const trustedRoot = runtimePlatformRootForPath(paths, path);
+	if (!trustedRoot) {
+		throw new Error(`runtime platform file is outside platform roots: ${path}`);
+	}
+	writePrivateFileAtomic(path, content, { ...options, trustedRoot });
 }
 
 export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
@@ -199,36 +246,37 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 			}
 			mkdirSync(path, { recursive: true, mode });
 		}
-		const node = lstatSync(path);
-		if (!node.isDirectory() || node.isSymbolicLink()) {
-			throw new Error(`platform directory is not a trusted directory: ${path}`);
-		}
+		assertTrustedDirectory(path, "platform directory");
 		if (created) {
 			// mkdir modes are filtered by umask, but these platform roots have an
 			// exact access contract (including search access on the runtime root).
 			chmodSync(path, mode);
 		}
 	}
-	for (const dir of [
-		paths.statusRoot,
-		paths.instanceRoot,
-		paths.installInventory,
-		paths.projectionRoot,
-		paths.runConfigRoot,
-		paths.egressProfileRoot,
-		paths.systemdSystemRoot,
-		paths.systemdUserRoot,
-		paths.systemdEnvRoot,
-		dirname(paths.syncState),
-		paths.managedSecretRoot,
-	]) {
-		mkdirSync(dir, { recursive: true });
+	for (const [dir, mode] of [
+		[paths.statusRoot, 0o755],
+		[paths.instanceRoot, 0o755],
+		[paths.installInventory, 0o755],
+		[paths.projectionRoot, 0o755],
+		[paths.runConfigRoot, 0o755],
+		[paths.egressProfileRoot, 0o755],
+		[paths.systemdSystemRoot, 0o755],
+		[paths.systemdEnvRoot, 0o711],
+		[dirname(paths.syncState), 0o755],
+		[paths.managedSecretRoot, 0o711],
+	] as const) {
+		const platformRoot = runtimePlatformRootForPath(paths, dir);
+		if (platformRoot) ensureDirectoryWithinTrustedRoot(platformRoot, dir, { mode });
+		else assertTrustedDirectory(dir, "systemd platform directory");
 	}
+	mkdirSync(paths.systemdUserRoot, { recursive: true });
+	assertRuntimePlatformRoots(paths);
 }
 
 export function writeRuntimeBootStatus(status: RuntimeBootStatus, paths = getRuntimePaths()): void {
-	writeJson(paths.bootStatus, status, 0o644);
+	writeJson(paths, paths.bootStatus, status, 0o644);
 	writeJson(
+		paths,
 		paths.cloudStatus,
 		{
 			v1: {
@@ -244,6 +292,7 @@ export function writeRuntimeBootStatus(status: RuntimeBootStatus, paths = getRun
 		0o644,
 	);
 	writeJson(
+		paths,
 		paths.cloudResult,
 		{
 			v1: {
@@ -268,6 +317,7 @@ export function writeRuntimeWatchStatus(
 	paths = getRuntimePaths(),
 ): void {
 	writeJson(
+		paths,
 		paths.runtimeWatchStatus,
 		{
 			schemaVersion: "clawdi.runtimeWatchStatus.v1",

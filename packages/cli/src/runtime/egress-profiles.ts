@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
 import { canonicalSecretRefSchema } from "./secret-values";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 export const secretRefSchema = canonicalSecretRefSchema;
 const profileIdSchema = z
@@ -253,9 +253,14 @@ export function hasEnabledEgressProfiles(bundle: EgressProfileBundle): boolean {
 }
 
 export function writeEgressProfileBundle(bundle: EgressProfileBundle, paths: RuntimePaths): string {
-	writePrivateFileAtomic(paths.egressProfileBundle, `${JSON.stringify(bundle, null, 2)}\n`, {
-		mode: 0o644,
-		dirMode: 0o755,
-	});
+	writeRuntimePlatformFileAtomic(
+		paths,
+		paths.egressProfileBundle,
+		`${JSON.stringify(bundle, null, 2)}\n`,
+		{
+			mode: 0o644,
+			dirMode: 0o755,
+		},
+	);
 	return paths.egressProfileBundle;
 }

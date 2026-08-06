@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { ensureDirectoryWithinTrustedRoot } from "./trusted-directory";
 
 export const PRIVATE_FILE_MODE = 0o600;
 export const PRIVATE_DIR_MODE = 0o700;
@@ -7,6 +8,7 @@ export const PRIVATE_DIR_MODE = 0o700;
 interface PrivateFileWriteOptions {
 	mode?: number;
 	dirMode?: number;
+	trustedRoot?: string;
 }
 
 export function writePrivateFileAtomic(
@@ -16,10 +18,16 @@ export function writePrivateFileAtomic(
 ): void {
 	const mode = options.mode ?? PRIVATE_FILE_MODE;
 	const dir = dirname(path);
-	mkdirSync(dir, {
-		recursive: true,
-		...(options.dirMode !== undefined ? { mode: options.dirMode } : {}),
-	});
+	if (options.trustedRoot) {
+		ensureDirectoryWithinTrustedRoot(options.trustedRoot, dir, {
+			...(options.dirMode === undefined ? {} : { mode: options.dirMode }),
+		});
+	} else {
+		mkdirSync(dir, {
+			recursive: true,
+			...(options.dirMode === undefined ? {} : { mode: options.dirMode }),
+		});
+	}
 	if (options.dirMode !== undefined) chmodBestEffort(dir, options.dirMode);
 	const tmp = join(
 		dir,

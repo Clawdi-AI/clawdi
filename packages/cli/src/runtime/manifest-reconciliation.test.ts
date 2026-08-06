@@ -43,7 +43,7 @@ import {
 import { shouldIgnoreUserSkill } from "./managed-skill-reservation";
 import {
 	cacheRuntimeLastGoodManifest,
-	convergeRuntimeManifest,
+	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
 	type RuntimeManifest,
 	runtimeInstallerMutationTargets,
 	runtimeRecoverableSecretValues,
@@ -71,6 +71,7 @@ import {
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
+import { ensureRuntimeStateDirs } from "./state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const successfulPrerequisiteActivation = () => ({
@@ -83,6 +84,9 @@ const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
 const TEST_HOSTED_HOME = "/home/clawdi";
+const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
+const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
+const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
 const TEST_HOSTED_SECRET_VALUES = {
 	"secret://clawdi/auth-token": "test-auth-token",
 	"secret://runtime/openclaw/gateway-token": "gateway-token",
@@ -136,9 +140,31 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "run", "systemd", "system");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_RUNTIME_USER = TEST_RUNTIME_USER;
 	process.env.CLAWDI_HOME = join(root, "clawdi-home");
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	return getRuntimePaths({ mode: "hosted" });
+}
+
+function convergeRuntimeManifest(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	opts: Parameters<typeof convergeRuntimeManifestWithContract>[2] = {},
+) {
+	ensureRuntimeStateDirs(paths);
+	return convergeRuntimeManifestWithContract(load, paths, {
+		...opts,
+		hostedRuntimeContract: opts.hostedRuntimeContract ?? {
+			expectedIdentity: {
+				home: paths.userHome,
+				user: TEST_RUNTIME_USER,
+				uid: TEST_PROCESS_UID,
+				gid: TEST_PROCESS_GID,
+			},
+			resolveUserIdentity: () => ({ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID }),
+		},
+	});
 }
 
 function runSettings(command: string, args: string[]): RuntimeRunSettings {
@@ -158,6 +184,7 @@ function manifestLoad(
 		secretValues,
 		applyContext: {
 			kind: "context-file",
+			backend: "incus",
 			identity: {
 				generation: manifest.applyGeneration ?? manifest.generation,
 				manifestETag: `"test-${manifest.generation}"`,
@@ -4589,7 +4616,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				manifestLoad(baseManifest(symlinkPaths, {}), "inline-symlink-run-config"),
 				symlinkPaths,
 			),
-		).toThrow(`runtime managed directory is not a real directory: ${symlinkPaths.runConfigRoot}`);
+		).toThrow(`trusted directory path contains a non-directory: ${symlinkPaths.runConfigRoot}`);
 	});
 
 	test("snapshots exact installer targets only when the planned executable is missing", () => {
@@ -5500,16 +5527,10 @@ exit 42
 		);
 	});
 
-	test("requires trusted Incus context and rejects user-overridden Files contracts", () => {
+	test("rejects user-overridden Files contracts", () => {
 		const paths = tempRuntimePaths();
 		const binary = "Files gate fixture\n";
 		const manifest = fileBrowserManifest(paths, { generation: 1, binary });
-		const untrusted = manifestLoad(manifest, "files-without-incus-context");
-		expect(() => convergeRuntimeManifest(untrusted, paths)).toThrow(
-			"Files companion requires a hosted v2 bundle and trusted Incus runtime context",
-		);
-		expect(existsSync(paths.fileBrowserInstallRoot)).toBe(false);
-		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-files.service"))).toBe(false);
 		expect(() => convergeRuntimeManifest(fileBrowserManifestLoad(manifest), paths)).toThrow(
 			"Files companion requires systemd apply and readiness hooks",
 		);
@@ -5556,5 +5577,29 @@ exit 42
 		expect(() => convergeRuntimeManifest({ ...load, applyContext: undefined }, paths)).toThrow(
 			"runtime manifest convergence requires an explicit apply context",
 		);
+	});
+
+	test("fails closed when a platform root disappears before a later mutation group", () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(paths, {
+			openclaw: { enabled: false, services: {} },
+			hermes: { enabled: false, services: {} },
+		});
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "missing-late-run-root"), paths, {
+			cacheLastGood: false,
+			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
+				activate: () => {
+					rmSync(paths.runRoot, { recursive: true });
+					return successfulPrerequisiteActivation();
+				},
+				rollback: () => {},
+			},
+		});
+
+		expect(result.installErrors.join("\n")).toContain(
+			`platform directory is missing: ${paths.runRoot}`,
+		);
+		expect(existsSync(paths.runRoot)).toBe(false);
 	});
 });

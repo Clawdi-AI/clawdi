@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
@@ -76,7 +76,8 @@ export function writeRuntimeInstallReceipts(
 ): void {
 	const parsed = runtimeInstallReceiptsSchema.parse(receipts);
 	try {
-		writePrivateFileAtomic(
+		writeRuntimePlatformFileAtomic(
+			paths,
 			runtimeInstallReceiptsPath(paths),
 			`${JSON.stringify(parsed, null, 2)}\n`,
 			{

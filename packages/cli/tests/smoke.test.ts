@@ -17,6 +17,7 @@ function writeRuntimeContext(
 		path,
 		`${JSON.stringify({
 			schemaVersion: "clawdi.runtimeContext.v2",
+			backend: "incus",
 			apply: {
 				generation: 1,
 				manifestETag: '"smoke-manifest-1"',
@@ -212,7 +213,7 @@ describe("CLI smoke — src entry", () => {
 
 	it("runtime init fails closed when the canonical context is invalid", async () => {
 		const { tmpdir } = await import("node:os");
-		const { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+		const { existsSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-init-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
@@ -233,8 +234,11 @@ describe("CLI smoke — src entry", () => {
 
 		writeRuntimeContext(contextPath, { authToken: null });
 		const env = {
-			HOME: home,
+			HOME: "/home/clawdi",
 			CLAWDI_RUNTIME_MODE: "hosted",
+			CLAWDI_RUNTIME_USER: "clawdi",
+			CLAWDI_RUNTIME_UID: "10001",
+			CLAWDI_RUNTIME_GID: "10001",
 			CLAWDI_HOST_POLICY_PATH: policyPath,
 			CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
 			CLAWDI_RUN_DIR: runRoot,
@@ -248,34 +252,28 @@ describe("CLI smoke — src entry", () => {
 				["runtime", "init", "--non-interactive", "--json"],
 				env,
 			);
-			expect(code).toBe(21);
+			expect(code).toBe(20);
 			const parsed = JSON.parse(stdout);
 			expect(parsed.mode).toBe("repair");
 			expect(parsed.status).toBe("error");
-			expect(parsed.stage).toBe("local");
+			expect(parsed.stage).toBe("detect");
 			expect(parsed.errors[0]).toContain(`invalid runtime context file ${contextPath}`);
 			expect(parsed.errors[0]).toContain("manifestSource.auth: Invalid input");
 			expect(parsed.datasource).toBe("RuntimeSource");
-			expect(parsed.hostPolicy.valid).toBe(true);
+			expect(parsed.hostPolicy).toMatchObject({
+				source: "builtin",
+				exists: true,
+				valid: true,
+				mode: "hosted",
+			});
 			expect(parsed.paths.serviceStateRoot).toBe(serviceStateRoot);
-			expect(existsSync(join(serviceStateRoot, "status", "boot-status.json"))).toBe(true);
-			const cloudResult = JSON.parse(
-				readFileSync(join(serviceStateRoot, "status", "cloud-result.json"), "utf-8"),
-			);
-			expect(cloudResult.v1.stage).toBe("local");
-			expect(cloudResult.v1.errors).toEqual(parsed.errors);
-
-			const status = await runCli(["runtime", "status", "--json"], env);
-			expect(status.code).toBe(1);
-			const statusParsed = JSON.parse(status.stdout);
-			expect(statusParsed.exists).toBe(true);
-			expect(statusParsed.status.mode).toBe("repair");
+			expect(existsSync(serviceStateRoot)).toBe(false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
-	it("runtime init uses built-in policy when image policy is missing", async () => {
+	it("runtime init rejects a wrong hosted HOME before creating state", async () => {
 		const { tmpdir } = await import("node:os");
 		const { existsSync, mkdirSync, rmSync } = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-no-policy-${Date.now()}`);
@@ -297,16 +295,12 @@ describe("CLI smoke — src entry", () => {
 				CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
 				CLAWDI_RUNTIME_TEST_CONTEXT_FILE: contextPath,
 			});
-			expect(code).toBe(21);
+			expect(code).toBe(20);
 			const parsed = JSON.parse(stdout);
 			expect(parsed.mode).toBe("repair");
-			expect(parsed.stage).toBe("network");
-			expect(parsed.hostPolicy.exists).toBe(true);
-			expect(parsed.hostPolicy.valid).toBe(true);
-			expect(parsed.hostPolicy.source).toBe("builtin");
-			expect(parsed.hostPolicy.path).toBeUndefined();
-			expect(parsed.errors[0]).toContain("could not fetch runtime manifest");
-			expect(existsSync(join(serviceStateRoot, "status", "boot-status.json"))).toBe(true);
+			expect(parsed.stage).toBe("detect");
+			expect(parsed.errors[0]).toContain("hosted runtime HOME must resolve to /home/clawdi");
+			expect(existsSync(serviceStateRoot)).toBe(false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

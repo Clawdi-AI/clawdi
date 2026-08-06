@@ -4,7 +4,6 @@ import {
 	chmodSync,
 	existsSync,
 	lstatSync,
-	mkdirSync,
 	readdirSync,
 	readFileSync,
 	readlinkSync,
@@ -15,6 +14,7 @@ import {
 import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
+import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { runtimeContentSha256 } from "./applied-state";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-browser-isolation";
@@ -44,6 +44,7 @@ import {
 	commandResolvable,
 	executableExists,
 	makeRuntimeUserOwned,
+	RuntimeUserCommandTimeoutError,
 	runRuntimeUserCommand,
 	runtimeEgressGid,
 	runtimeEgressUid,
@@ -459,13 +460,22 @@ function runtimeCommandCurrentRevision(command: string, home: string, cwd: strin
 	const executableRevision = runtimeFileCurrentRevision(command);
 	if (!executableRevision) return null;
 	try {
-		const result = spawnRuntimeUserCommand(command, ["--version"], home, cwd);
+		const result = spawnRuntimeUserCommand(command, ["--version"], home, cwd, {
+			timeoutMs: RUNTIME_VERSION_PROBE_TIMEOUT_MS,
+		});
+		if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
+			throw new RuntimeUserCommandTimeoutError(
+				`runtime --version probe for ${command}`,
+				RUNTIME_VERSION_PROBE_TIMEOUT_MS,
+			);
+		}
 		if (result.status !== 0) return null;
 		const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : result.stdout;
 		const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : result.stderr;
 		const version = [stdout, stderr].filter(Boolean).join("\n").trim();
 		return version ? runtimeContentSha256({ executableRevision, version }) : null;
-	} catch {
+	} catch (error) {
+		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;
 	}
 }
@@ -498,7 +508,8 @@ function officialServiceCurrentRevision(
 			unitUid: unitStat.uid,
 			unitGid: unitStat.gid,
 		});
-	} catch {
+	} catch (error) {
+		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;
 	}
 }
@@ -557,6 +568,10 @@ export function planOfficialRuntimeServices(
 const HERMES_NPM_VERSION_TIMEOUT_MS = 30_000;
 const HERMES_NPM_INSTALL_TIMEOUT_MS = 600_000;
 const HERMES_DASHBOARD_BUILD_TIMEOUT_MS = 900_000;
+const RUNTIME_VERSION_PROBE_TIMEOUT_MS = 10_000;
+const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
+const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
+const RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS = 15_000;
 // This key deliberately reuses the existing officialServices receipt group:
 // the artifact is a prerequisite of Clawdi's compatibility dashboard service,
 // not a new install authority or receipt schema.
@@ -717,9 +732,13 @@ function writeSystemdEnvironmentFile(input: {
 	owner: "root" | "runtime-user";
 	env: Record<string, string>;
 }): string {
-	mkdirSync(input.paths.systemdRuntimeRoot, { recursive: true, mode: 0o711 });
+	ensureDirectoryWithinTrustedRoot(input.paths.runRoot, input.paths.systemdRuntimeRoot, {
+		mode: 0o711,
+	});
 	chmodSync(input.paths.systemdRuntimeRoot, 0o711);
-	mkdirSync(input.paths.systemdEnvRoot, { recursive: true, mode: 0o711 });
+	ensureDirectoryWithinTrustedRoot(input.paths.runRoot, input.paths.systemdEnvRoot, {
+		mode: 0o711,
+	});
 	// This is a deliberate handoff directory: tenant-owned 0600 environment
 	// files must be traversable without making sibling platform files readable.
 	chmodSync(input.paths.systemdEnvRoot, 0o711);
@@ -735,6 +754,7 @@ function writeSystemdEnvironmentFile(input: {
 	writePrivateFileAtomic(path, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n${lines.join("\n")}\n`, {
 		mode: 0o600,
 		dirMode: 0o711,
+		trustedRoot: input.paths.runRoot,
 	});
 	if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
 	return path;
@@ -833,9 +853,13 @@ function writeSystemdUnit(input: {
 		"",
 	];
 	const writeUnitFile = (): string => {
-		mkdirSync(input.root, { recursive: true });
+		ensureDirectoryWithinTrustedRoot(input.root, input.root);
 		if (input.owner === "runtime-user") makeRuntimeUserOwned(input.root);
-		writePrivateFileAtomic(path, `${lines.join("\n")}`, { mode: 0o644, dirMode: 0o755 });
+		writePrivateFileAtomic(path, `${lines.join("\n")}`, {
+			mode: 0o644,
+			dirMode: 0o755,
+			trustedRoot: input.root,
+		});
 		if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
 		return path;
 	};
@@ -907,9 +931,13 @@ function writeSystemdUserDropIn(input: {
 	];
 	return withRuntimeUserFileAccess(() => {
 		removeGeneratedRuntimeBaseUnit(input.paths, unitName);
-		mkdirSync(dirname(path), { recursive: true });
+		ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
 		makeRuntimeUserOwned(dirname(path));
-		writePrivateFileAtomic(path, `${lines.join("\n")}`, { mode: 0o644, dirMode: 0o755 });
+		writePrivateFileAtomic(path, `${lines.join("\n")}`, {
+			mode: 0o644,
+			dirMode: 0o755,
+			trustedRoot: input.paths.systemdUserRoot,
+		});
 		makeRuntimeUserOwned(path);
 		return join(input.paths.systemdUserRoot, unitName);
 	});
@@ -1033,7 +1061,11 @@ function installOfficialRuntimeUserService(
 		resetFailedRuntimeUserService(runtimeSystemdProgramName(program), paths, program.cwd);
 		const result = spawnRuntimeUserCommand(program.command, args, paths.userHome, program.cwd, {
 			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
 		});
+		if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
+			return `official ${runtimeSystemdProgramName(program)} service install timed out after ${OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS}ms`;
+		}
 		return result.status === 0 && !result.error
 			? null
 			: `official ${runtimeSystemdProgramName(program)} service install failed: ${officialInstallerFailureDetail(program, result)}`;
@@ -1072,6 +1104,7 @@ function resetFailedRuntimeUserService(name: string, paths: RuntimePaths, cwd: s
 			"",
 			paths.userHome,
 			cwd,
+			{ timeoutMs: RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS },
 		);
 	} catch {
 		// The unit may not exist yet; reset-failed must never block convergence.
@@ -1086,6 +1119,7 @@ function reloadRuntimeUserManager(paths: RuntimePaths, cwd: string): void {
 			"",
 			paths.userHome,
 			cwd,
+			{ timeoutMs: RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS },
 		);
 	} catch {
 		// Best-effort: environments without a reachable user manager (unit tests,
@@ -1112,6 +1146,7 @@ function uninstallOfficialRuntimeUserService(input: {
 			"",
 			input.paths.userHome,
 			input.workspaceRoot,
+			{ timeoutMs: OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS },
 		);
 		return null;
 	} catch (error) {

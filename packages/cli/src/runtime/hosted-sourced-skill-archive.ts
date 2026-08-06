@@ -8,11 +8,11 @@ import {
 	parseCanonicalGithubRepositoryUrl,
 	readBoundedResponseBytes,
 } from "../lib/github-skill-archive";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import { extractTarGz, snapshotSkillArchive } from "../lib/tar";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { HostedSkillSource } from "./manifest-resources";
 import type { RuntimePaths } from "./paths";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 // Legacy compatibility: persisted receipts keep their original schema identifier.
 const CACHE_SCHEMA = "clawdi.hostedCatalogSkillArchive.v1";
@@ -197,8 +197,12 @@ function writeCachedArchive(
 ): string {
 	const digest = sha256(tarBytes);
 	const cache = cachePaths(paths, skillId, source);
-	writePrivateFileAtomic(cache.archive, tarBytes, { mode: 0o600, dirMode: 0o700 });
-	writePrivateFileAtomic(
+	writeRuntimePlatformFileAtomic(paths, cache.archive, tarBytes, {
+		mode: 0o600,
+		dirMode: 0o700,
+	});
+	writeRuntimePlatformFileAtomic(
+		paths,
 		cache.receipt,
 		`${JSON.stringify(
 			{
