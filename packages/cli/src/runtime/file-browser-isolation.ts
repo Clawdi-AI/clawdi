@@ -202,13 +202,16 @@ function ensureWorkspaceAcl(
 	}
 	for (const access of ["-r", "-w", "-x"]) {
 		const command = buildRuntimeUserCommand(
-			0,
-			identity.uid,
 			FILE_BROWSER_SERVICE_USER,
+			"/nonexistent",
 			"/usr/bin/test",
 			[access, sourceRoot],
+			{ currentUid: 0, runtimeUid: identity.uid, runtimeGid: identity.gid },
 		);
-		if (spawnSync(command.command, command.args).status !== 0) {
+		if (
+			spawnSync(command.command, command.args, { env: { ...process.env, ...command.env } })
+				.status !== 0
+		) {
 			throw new Error("Files service identity cannot access the tenant workspace ACL");
 		}
 	}

@@ -289,16 +289,20 @@ function defaultVersionProbe(
 	identity: FileBrowserServiceIdentity,
 ): string {
 	const command = buildRuntimeUserCommand(
-		typeof process.geteuid === "function" ? process.geteuid() : undefined,
-		identity.uid,
 		FILE_BROWSER_SERVICE_USER,
+		"/nonexistent",
 		binary,
 		["version"],
+		{
+			currentUid: typeof process.geteuid === "function" ? process.geteuid() : undefined,
+			runtimeUid: identity.uid,
+			runtimeGid: identity.gid,
+		},
 	);
 	const result = spawnSync(command.command, command.args, {
 		cwd: paths.userHome,
 		encoding: "utf8",
-		env: { ...process.env, HOME: "/nonexistent", USER: FILE_BROWSER_SERVICE_USER },
+		env: { ...process.env, ...command.env },
 		maxBuffer: 64 * 1024,
 		timeout: 10_000,
 	});
