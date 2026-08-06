@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import {
 	chmodSync,
+	chownSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { request } from "node:http";
@@ -13,6 +15,7 @@ import { createServer as createTcpServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+	assertControlPathOwnershipAndMode,
 	type ControlRpcHandlers,
 	type ControlRpcListenConfig,
 	callControlRpc,
@@ -144,16 +147,74 @@ if (process.platform !== "win32") {
 			});
 		});
 
-		it("repairs existing token file permissions on startup", async () => {
+		for (const mode of [0o666, 0o640]) {
+			it(`rejects an existing token with mode 0${mode.toString(8)}`, async () => {
+				await withRpcFixture(async ({ controlDir, start }) => {
+					const tokenPath = join(controlDir, "control-token");
+					mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+					writeFileSync(tokenPath, "insecure-token\n", { mode });
+					chmodSync(tokenPath, mode);
+
+					await expect(start({})).rejects.toThrow(
+						`daemon control token ${tokenPath} must have mode 0600`,
+					);
+					expect(statSync(tokenPath).mode & 0o777).toBe(mode);
+				});
+			});
+		}
+
+		it("rejects a token owned by another uid", async () => {
+			const effectiveUid = process.geteuid?.() ?? 0;
+			expect(() =>
+				assertControlPathOwnershipAndMode(
+					"daemon control token",
+					"/secure/control-token",
+					effectiveUid + 1,
+					0o600,
+					effectiveUid,
+					0o600,
+				),
+			).toThrow(
+				`daemon control token /secure/control-token must be owned by effective uid ${effectiveUid}; found uid ${effectiveUid + 1}`,
+			);
+
+			if (effectiveUid !== 0) return;
 			await withRpcFixture(async ({ controlDir, start }) => {
 				const tokenPath = join(controlDir, "control-token");
-				mkdirSync(dirname(tokenPath), { recursive: true });
-				writeFileSync(tokenPath, "fixed-token\n", { mode: 0o644 });
-				chmodSync(tokenPath, 0o644);
+				mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+				writeFileSync(tokenPath, "foreign-token\n", { mode: 0o600 });
+				chownSync(tokenPath, 10001, 10001);
 
-				await start({});
+				await expect(start({})).rejects.toThrow(
+					`daemon control token ${tokenPath} must be owned by effective uid 0; found uid 10001`,
+				);
+			});
+		});
 
-				expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
+		it("rejects a control directory writable by another uid", async () => {
+			await withRpcFixture(async ({ controlDir, start }) => {
+				const tokenPath = join(controlDir, "control-token");
+				mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+				writeFileSync(tokenPath, "insecure-parent-token\n", { mode: 0o600 });
+				chmodSync(controlDir, 0o770);
+
+				await expect(start({})).rejects.toThrow(
+					`daemon control directory ${controlDir} must have mode 0700`,
+				);
+			});
+		});
+
+		it("rejects a token symlink pointing outside the control directory", async () => {
+			await withRpcFixture(async ({ controlDir, start }) => {
+				const outsideToken = join(dirname(controlDir), "outside-token");
+				const tokenPath = join(controlDir, "control-token");
+				mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+				writeFileSync(outsideToken, "outside-token\n", { mode: 0o600 });
+				symlinkSync(outsideToken, tokenPath);
+
+				await expect(start({})).rejects.toThrow(
+					`daemon control token at ${tokenPath} must not be a symbolic link`,
+				);
 			});
 		});
 

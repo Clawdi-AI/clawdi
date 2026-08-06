@@ -111,7 +111,7 @@ if (process.platform !== "win32") {
 	describe("daemon RPC process e2e", () => {
 		it("serves daemon RPC over the configured HTTP port", async () => {
 			const fixture = createFixture();
-			const daemon = startDaemon(fixture);
+			const daemon = startDaemon(fixture, "local");
 			const daemonStdout = new Response(daemon.stdout).text();
 			const [stderrReady, stderrText] = daemon.stderr.tee();
 			const daemonStderr = new Response(stderrText).text();
@@ -127,21 +127,22 @@ if (process.platform !== "win32") {
 				const noToken = await postRpcWithoutToken(rpcPort);
 				expect(noToken.status).toBe(401);
 
-				const defaultPing = await runCli(fixture, ["daemon", "ping", "--port", String(rpcPort)]);
+				const defaultPing = await runCli(
+					fixture,
+					["daemon", "ping", "--port", String(rpcPort)],
+					"local",
+				);
 				expect(defaultPing.code).toBe(0);
 				expect(defaultPing.stderr).toBe("");
 				const defaultResult = JSON.parse(defaultPing.stdout) as { pid?: number; version?: string };
 				expect(defaultResult.pid).toBe(daemon.pid);
 				expect(defaultResult.version).toBeString();
 
-				const httpPing = await runCli(fixture, [
-					"daemon",
-					"ping",
-					"--host",
-					"127.0.0.1",
-					"--port",
-					String(rpcPort),
-				]);
+				const httpPing = await runCli(
+					fixture,
+					["daemon", "ping", "--host", "127.0.0.1", "--port", String(rpcPort)],
+					"local",
+				);
 				expect(httpPing.code).toBe(0);
 				expect(httpPing.stderr).toBe("");
 				const httpResult = JSON.parse(httpPing.stdout) as { pid?: number; version?: string };
@@ -150,7 +151,11 @@ if (process.platform !== "win32") {
 
 				const tokenPath = join(fixture.stateDir, "control", "control-token");
 				const oldToken = readFileSync(tokenPath, "utf-8").trim();
-				const rotate = await runCli(fixture, ["daemon", "rotate-token", "--port", String(rpcPort)]);
+				const rotate = await runCli(
+					fixture,
+					["daemon", "rotate-token", "--port", String(rpcPort)],
+					"local",
+				);
 				expect(rotate.code).toBe(0);
 				expect(rotate.stderr).toBe("");
 				const rotateResult = JSON.parse(rotate.stdout) as { token?: string; rotated?: boolean };
@@ -166,28 +171,13 @@ if (process.platform !== "win32") {
 				expect(apiCalls.some((call) => call.path === `/v1/agents/${ENV_ID}/sync-heartbeat`)).toBe(
 					true,
 				);
-				expect(
-					apiCalls.some((call) => call.path === `/v2/runtime/environments/${ENV_ID}/observations`),
-				).toBe(true);
 				const heartbeat = apiCalls.find(
 					(call) => call.path === `/v1/agents/${ENV_ID}/sync-heartbeat`,
 				);
-				const observation = apiCalls.find(
-					(call) => call.path === `/v2/runtime/environments/${ENV_ID}/observations`,
-				);
-				if (!isRecord(heartbeat?.body) || !isRecord(observation?.body)) {
-					throw new Error("expected separate v1 heartbeat and v2 observation bodies");
-				}
-				const heartbeatBody = heartbeat.body;
-				if (!isRecord(heartbeatBody.runtime_observed)) {
-					throw new Error("expected legacy runtime observation in v1 heartbeat");
-				}
-				const legacyObserved = heartbeatBody.runtime_observed;
-				expect(legacyObserved.bootSessionId).toBeUndefined();
-				expect(legacyObserved.eventId).toBeUndefined();
-				const observationBody = observation.body;
-				expect(observationBody.bootSessionId).toBeString();
-				expect(observationBody.eventId).toBeString();
+				expect(isRecord(heartbeat?.body)).toBe(true);
+				expect(
+					apiCalls.some((call) => call.path === `/v2/runtime/environments/${ENV_ID}/observations`),
+				).toBe(false);
 				expect(existsSync(join(fixture.stateDir, "codex", "health"))).toBe(true);
 				expect(apiCalls.every((call) => call.auth === `Bearer ${API_KEY}`)).toBe(true);
 			} catch (error) {
@@ -218,7 +208,7 @@ if (process.platform !== "win32") {
 			const environmentKey = createHash("sha256").update(ENV_ID).digest("hex");
 			mkdirSync(heartbeatRoot, { recursive: true });
 			writeFileSync(join(heartbeatRoot, `${environmentKey}.json`), "{corrupt-v2-state\n");
-			const daemon = startDaemon(fixture);
+			const daemon = startDaemon(fixture, "hosted");
 			const daemonStdout = new Response(daemon.stdout).text();
 			const daemonStderr = new Response(daemon.stderr).text();
 			let failure: unknown;
@@ -310,14 +300,17 @@ function createFixture(): Fixture {
 	return { root, home, clawdiHome, stateDir, serviceStateDir, runDir, codexHome, contextPath };
 }
 
-function startDaemon(fixture: Fixture): ReturnType<typeof Bun.spawn> {
+function startDaemon(
+	fixture: Fixture,
+	runtimeMode: "local" | "hosted",
+): ReturnType<typeof Bun.spawn> {
 	return Bun.spawn(
 		[process.execPath, srcEntry, "daemon", "run", "--host", "127.0.0.1", "--port", "0"],
 		{
 			cwd: fixture.root,
 			stdout: "pipe",
 			stderr: "pipe",
-			env: cliEnv(fixture),
+			env: cliEnv(fixture, runtimeMode),
 		},
 	);
 }
@@ -325,12 +318,13 @@ function startDaemon(fixture: Fixture): ReturnType<typeof Bun.spawn> {
 async function runCli(
 	fixture: Fixture,
 	args: string[],
+	runtimeMode: "local" | "hosted",
 ): Promise<{ stdout: string; stderr: string; code: number }> {
 	const proc = Bun.spawn([process.execPath, srcEntry, ...args], {
 		cwd: fixture.root,
 		stdout: "pipe",
 		stderr: "pipe",
-		env: cliEnv(fixture),
+		env: cliEnv(fixture, runtimeMode),
 	});
 	const [stdout, stderr, code] = await Promise.all([
 		new Response(proc.stdout).text(),
@@ -340,7 +334,7 @@ async function runCli(
 	return { stdout, stderr, code };
 }
 
-function cliEnv(fixture: Fixture): Record<string, string> {
+function cliEnv(fixture: Fixture, runtimeMode: "local" | "hosted"): Record<string, string> {
 	mkdirSync(dirname(fixture.contextPath), { recursive: true });
 	writeFileSync(
 		fixture.contextPath,
@@ -369,7 +363,7 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 		CLAWDI_NO_AUTO_UPDATE: "1",
 		CLAWDI_NO_UPDATE_CHECK: "1",
 		CLAWDI_SERVE_MODE: "container",
-		CLAWDI_RUNTIME_MODE: "hosted",
+		CLAWDI_RUNTIME_MODE: runtimeMode,
 		CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
 		CLAWDI_RUNTIME_TEST_CONTEXT_FILE: fixture.contextPath,
 		CLAWDI_RUNTIME_HOME: fixture.home,

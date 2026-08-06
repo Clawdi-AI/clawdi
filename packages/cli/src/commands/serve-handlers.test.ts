@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { PendingAuth } from "../lib/config";
 import { adapterForType } from "../lib/select-adapter";
-import { rejectUnsupportedOpts, runDaemonWorkers } from "./serve";
+import { rejectUnsupportedOpts, runDaemonWorkers, startDaemonControlRpc } from "./serve";
 
 /**
  * Behavior tests for daemon singleton handler behavior:
@@ -578,6 +578,44 @@ describe("full control RPC handler surface", () => {
 });
 
 describe("daemon HTTP RPC listener safety", () => {
+	it("does not create or open the control RPC listener in hosted mode", async () => {
+		const originalRuntimeMode = process.env.CLAWDI_RUNTIME_MODE;
+		const root = mkdtempSync(join(tmpdir(), "clawdi-hosted-rpc-disabled-"));
+		const controlDir = join(root, "control");
+		const abort = new AbortController();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		try {
+			const rpc = await startDaemonControlRpc({}, abort.signal, { controlDir, port: 0 });
+			expect(rpc).toBeNull();
+			expect(existsSync(join(controlDir, "control-token"))).toBe(false);
+		} finally {
+			abort.abort();
+			if (originalRuntimeMode === undefined) delete process.env.CLAWDI_RUNTIME_MODE;
+			else process.env.CLAWDI_RUNTIME_MODE = originalRuntimeMode;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("still opens the control RPC listener outside hosted mode", async () => {
+		const originalRuntimeMode = process.env.CLAWDI_RUNTIME_MODE;
+		const root = mkdtempSync(join(tmpdir(), "clawdi-local-rpc-enabled-"));
+		const controlDir = join(root, "control");
+		const abort = new AbortController();
+		process.env.CLAWDI_RUNTIME_MODE = "local";
+		try {
+			const rpc = await startDaemonControlRpc({}, abort.signal, { controlDir, port: 0 });
+			if (!rpc) throw new Error("expected local control RPC listener");
+			expect(rpc.http.port).toBeGreaterThan(0);
+			expect(existsSync(rpc.tokenPath)).toBe(true);
+			await rpc.close();
+		} finally {
+			abort.abort();
+			if (originalRuntimeMode === undefined) delete process.env.CLAWDI_RUNTIME_MODE;
+			else process.env.CLAWDI_RUNTIME_MODE = originalRuntimeMode;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects non-loopback listen hosts unless explicitly allowed", async () => {
 		const { serve } = await import("./serve");
 

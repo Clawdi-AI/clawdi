@@ -280,6 +280,15 @@ describe("deploymentToTiles", () => {
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 
+	test("does not flash pending sync while the environment join is unresolved", () => {
+		const [tile] = hostedDeploymentToTiles(
+			deployment({ status: "running", environmentId: "env-lagging-join" }),
+		);
+
+		expect(tile?.env).toBeNull();
+		expect(tile?.cardStatus?.labels).toEqual(["Running"]);
+	});
+
 	test("keeps a failed plan change on a summary-only tile", () => {
 		const environmentId = "env-failed-plan-change";
 		const reason = "Top up your Wallet and retry the plan change.";

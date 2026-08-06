@@ -126,6 +126,7 @@ export interface RuntimeSystemdUserMutationPlan {
 	metadataTargets: string[];
 	unitNames: string[];
 	staleOfficialUnits: string[];
+	driftErrors: string[];
 }
 
 export interface RuntimeSystemdStaleFilePlan {
@@ -313,8 +314,14 @@ function systemdUnitFileName(name: string): string {
 	return `${systemdUnitNameSegment(name)}.service`;
 }
 
+const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
+
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
-	return join(paths.systemdUserRoot, `${systemdUnitFileName(unitName)}.d`, "10-clawdi-hosted.conf");
+	return join(
+		paths.systemdUserRoot,
+		`${systemdUnitFileName(unitName)}.d`,
+		RUNTIME_SYSTEMD_DROP_IN_FILE,
+	);
 }
 
 function systemdQuote(value: string): string {
@@ -1101,6 +1108,42 @@ function systemdUnitNameFromPath(unitPath: string): string {
 	return unitPath.split("/").at(-1) ?? "";
 }
 
+function foreignRuntimeSystemdUserDropIns(paths: RuntimePaths, unitName: string): string[] {
+	const dropInRoot = join(paths.systemdUserRoot, `${unitName}.d`);
+	let rootStat: ReturnType<typeof lstatSync>;
+	try {
+		rootStat = lstatSync(dropInRoot);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
+	if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return [dropInRoot];
+	// systemd merges only *.conf files from unit drop-in directories:
+	// https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html
+	return readdirSync(dropInRoot)
+		.filter((entry) => entry.endsWith(".conf") && entry !== RUNTIME_SYSTEMD_DROP_IN_FILE)
+		.map((entry) => join(dropInRoot, entry))
+		.sort();
+}
+
+function officialRuntimeSystemdUserDropInDriftErrors(
+	programs: RuntimeSystemdUserProgram[],
+	paths: RuntimePaths,
+): string[] {
+	const errors: string[] = [];
+	for (const program of officialRuntimeSystemdPrograms(programs)) {
+		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
+		const foreignDropIns = foreignRuntimeSystemdUserDropIns(paths, unitName);
+		if (foreignDropIns.length === 0) continue;
+		errors.push(
+			`foreign systemd drop-in drift detected for ${unitName}; refusing to reconcile the platform override while these drop-ins exist: ${foreignDropIns
+				.map((path) => JSON.stringify(path))
+				.join(", ")}`,
+		);
+	}
+	return errors;
+}
+
 function staleOfficialRuntimeUserServices(paths: RuntimePaths, writtenUnits: string[]): string[] {
 	if (!existsSync(paths.systemdUserRoot)) return [];
 	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
@@ -1110,7 +1153,7 @@ function staleOfficialRuntimeUserServices(paths: RuntimePaths, writtenUnits: str
 		const unitName = entry.slice(0, -".d".length);
 		if (writtenNames.has(unitName)) continue;
 		if (!officialRuntimeServiceDescriptorForUnit(unitName)) continue;
-		const dropInPath = join(paths.systemdUserRoot, entry, "10-clawdi-hosted.conf");
+		const dropInPath = join(paths.systemdUserRoot, entry, RUNTIME_SYSTEMD_DROP_IN_FILE);
 		if (!isGeneratedSystemdFile(dropInPath)) continue;
 		const baseUnitPath = join(paths.systemdUserRoot, unitName);
 		if (!existsSync(baseUnitPath) || isGeneratedSystemdFile(baseUnitPath)) continue;
@@ -1200,7 +1243,7 @@ export function planRuntimeSystemdUserMutations(
 			}
 			if (!entry.endsWith(".service.d")) continue;
 			const unitName = entry.slice(0, -".d".length);
-			const dropInPath = join(paths.systemdUserRoot, entry, "10-clawdi-hosted.conf");
+			const dropInPath = join(paths.systemdUserRoot, entry, RUNTIME_SYSTEMD_DROP_IN_FILE);
 			if (!isGeneratedSystemdFile(dropInPath) || writtenNames.has(unitName)) continue;
 			targets.add(dropInPath);
 			const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
@@ -1228,6 +1271,7 @@ export function planRuntimeSystemdUserMutations(
 		metadataTargets: [...metadataTargets].sort(),
 		unitNames: [...unitNames].sort(),
 		staleOfficialUnits,
+		driftErrors: officialRuntimeSystemdUserDropInDriftErrors(programs, paths),
 	};
 }
 
@@ -1275,7 +1319,7 @@ function planStaleRuntimeSystemdFiles(
 			}
 			if (!entry.endsWith(".service.d")) continue;
 			const unitName = entry.slice(0, -".d".length);
-			const dropIn = join(paths.systemdUserRoot, entry, "10-clawdi-hosted.conf");
+			const dropIn = join(paths.systemdUserRoot, entry, RUNTIME_SYSTEMD_DROP_IN_FILE);
 			if (desiredUser.has(unitName) || !isGeneratedSystemdFile(dropIn)) continue;
 			files.add(dropIn);
 			files.add(join(paths.systemdUserRoot, "default.target.wants", unitName));
@@ -1308,7 +1352,7 @@ export function removeStaleRuntimeSystemdFiles(
 	for (const path of plan.files) {
 		try {
 			rmSync(path, { force: true });
-			if (path.endsWith("/10-clawdi-hosted.conf") && existsSync(dirname(path))) {
+			if (path.endsWith(`/${RUNTIME_SYSTEMD_DROP_IN_FILE}`) && existsSync(dirname(path))) {
 				if (readdirSync(dirname(path)).length === 0) rmdirSync(dirname(path));
 			}
 		} catch (error) {
@@ -1350,29 +1394,6 @@ export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<str
 		PATH: runtimeSystemdPath(paths),
 	};
 	return environment;
-}
-
-function runtimeWatchSecretEnvironment(
-	programs: RuntimeSystemdUserProgram[],
-): Record<string, string> {
-	const retained = new Map<string, { value: string; program: string }>();
-	for (const program of [...programs].sort((a, b) =>
-		runtimeSystemdProgramName(a).localeCompare(runtimeSystemdProgramName(b)),
-	)) {
-		const programName = runtimeSystemdProgramName(program);
-		for (const [envName, value] of Object.entries(program.resolvedSecretEnv).sort(([a], [b]) =>
-			a.localeCompare(b),
-		)) {
-			const existing = retained.get(envName);
-			if (existing && existing.value !== value) {
-				throw new Error(
-					`Runtime watch secret environment ${envName} conflicts between ${existing.program} and ${programName}.`,
-				);
-			}
-			retained.set(envName, { value, program: existing?.program ?? programName });
-		}
-	}
-	return Object.fromEntries([...retained].map(([envName, entry]) => [envName, entry.value]));
 }
 
 function writeRuntimeSystemdUserProgram(input: {
@@ -1577,7 +1598,6 @@ export function writeRuntimeSystemdState(input: {
 		desiredUserUnitNames,
 	);
 	if (daemonAuthTokenFile) {
-		const watchSecretEnvironment = runtimeWatchSecretEnvironment(runtimePrograms);
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
@@ -1588,16 +1608,6 @@ export function writeRuntimeSystemdState(input: {
 				cwd: workspaceRoot,
 				env: {
 					...commonEnvironment,
-					...watchSecretEnvironment,
-					CLAWDI_AUTH_TOKEN: "",
-				},
-				// Unit files are 0644. Hash only secret destination names into their
-				// revision so the unit cannot become an offline verifier for values.
-				// The watcher resolves values from the atomic apply-context file on
-				// each tick; keep secret bytes out of its public revision material.
-				revisionEnv: {
-					...commonEnvironment,
-					...Object.fromEntries(Object.keys(watchSecretEnvironment).map((name) => [name, ""])),
 					CLAWDI_AUTH_TOKEN: "",
 				},
 				extraServiceLines: ["TasksMax=infinity"],
@@ -1618,6 +1628,7 @@ export function writeRuntimeSystemdState(input: {
 					...commonEnvironment,
 					CLAWDI_ENVIRONMENT_ID: manifest.environmentId,
 					CLAWDI_SERVE_MODE: "container",
+					CLAWDI_STATE_DIR: join(paths.serviceStateRoot, "daemon"),
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 					CLAWDI_NO_AUTO_UPDATE: "1",
 					CLAWDI_NO_UPDATE_CHECK: "1",

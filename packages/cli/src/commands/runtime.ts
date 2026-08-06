@@ -3024,7 +3024,7 @@ function spawnWithNumericIdentity(
 	args: string[],
 	env: NodeJS.ProcessEnv,
 ): ChildProcess {
-	const child = buildEgressEngineSpawnCommand(commandExistsOnPath, uid, gid, command, args);
+	const child = buildEgressEngineSpawnCommand(commandExists, uid, gid, command, args);
 	return spawn(child.command, child.args, {
 		env,
 		stdio: ["ignore", "pipe", "pipe"],
@@ -3128,14 +3128,6 @@ export function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig):
 
 function runningAsRootCommand(): boolean {
 	return typeof process.getuid === "function" && process.getuid() === 0;
-}
-
-function commandExistsOnPath(command: string): boolean {
-	const result = spawnSync("command", ["-v", command], {
-		shell: true,
-		stdio: "ignore",
-	});
-	return result.status === 0;
 }
 
 function waitForShutdownSignal(): Promise<void> {

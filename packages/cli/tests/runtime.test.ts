@@ -94,6 +94,7 @@ import {
 	writeRuntimeWatchStatus,
 } from "../src/runtime/state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
+import { getDaemonControlTokenPath } from "../src/serve/paths";
 import { mockFetch } from "./commands/helpers";
 
 const TEST_PROCESS_USER = String(process.getuid?.() ?? 0);
@@ -216,6 +217,7 @@ function applyRuntimeBundleChannelsToManifestLoad(
 const ENV_KEYS = [
 	"HOME",
 	"CLAWDI_HOME",
+	"CLAWDI_STATE_DIR",
 	"CLAWDI_RUNTIME_MODE",
 	"CLAWDI_HOST_POLICY_PATH",
 	"CLAWDI_SERVICE_STATE_DIR",
@@ -7516,7 +7518,8 @@ fi
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
 			const gatewayEnv = readSystemdEnvFile(paths, "openclaw-gateway");
-			expect(watchEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token-watch"');
+			expect(watchEnv).not.toContain("gateway-token-watch");
+			expect(watchEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 			expect(gatewayEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token-watch"');
 			expect(watchEnv).not.toContain("file-runtime-token");
 			const patchText = readFileSync(openclawPatch, "utf-8");
@@ -15811,6 +15814,13 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			);
 			expect(daemonUnit).not.toContain("ExecStart=/bin/sh -lc");
 			expect(daemonEnv).toContain('CLAWDI_SERVE_MODE="container"');
+			const daemonStateDir = join(state, "daemon");
+			expect(daemonEnv).toContain(`CLAWDI_STATE_DIR="${daemonStateDir}"`);
+			process.env.CLAWDI_STATE_DIR = daemonStateDir;
+			const controlTokenPath = getDaemonControlTokenPath();
+			expect(controlTokenPath).toBe(join(state, "daemon", "control", "control-token"));
+			expect(controlTokenPath.startsWith(home)).toBe(false);
+			delete process.env.CLAWDI_STATE_DIR;
 			expect(daemonEnv).toContain('CLAWDI_RUNTIME_REV="');
 			expect(daemonEnv).toContain("https://cloud-api.test");
 			expect(watchEnv).not.toContain("CLAWDI_RUNTIME_AUTH_ENV");

@@ -24,7 +24,23 @@ function envIdSet(ids: readonly string[] | undefined): ReadonlySet<string> {
 	return set;
 }
 
-export function useLegacyEnvIds(): ReadonlySet<string> | null {
+export function resolveLegacyEnvIds(
+	enabled: boolean,
+	environmentIds: readonly string[] | undefined,
+	error: Error | null,
+): {
+	envIds: ReadonlySet<string> | null;
+	error: Error | null;
+	isLoading: boolean;
+} {
+	if (!enabled) return { envIds: EMPTY_ENV_IDS, error: null, isLoading: false };
+	if (environmentIds !== undefined) {
+		return { envIds: envIdSet(environmentIds), error: null, isLoading: false };
+	}
+	return { envIds: null, error, isLoading: error === null };
+}
+
+export function useLegacyEnvIds() {
 	const access = useHostedProductAccess();
 	const client = useBillingClient();
 	const enabled = access.canUseLegacyHostedDashboard && isDeployApiConfigured();
@@ -39,17 +55,16 @@ export function useLegacyEnvIds(): ReadonlySet<string> | null {
 		staleTime: 30_000,
 	});
 
-	return useMemo(() => {
-		if (!enabled) return EMPTY_ENV_IDS;
+	const resolution = useMemo(() => {
 		// Only data (fresh or stale cache) resolves the set. The endpoint has
 		// no 404 in its success contract — users without live v1 deployments
 		// get an empty list — so a 404 can only mean "route not deployed
 		// yet" (rollout skew) and, like every other error, stays UNRESOLVED:
 		// destructive consumers fail closed instead of treating live legacy
 		// agents as connected.
-		if (query.data) return envIdSet(query.data.environment_ids);
-		return null;
-	}, [enabled, query.data, query.error, query.isPending]);
+		return resolveLegacyEnvIds(enabled, query.data?.environment_ids, query.error);
+	}, [enabled, query.data, query.error]);
+	return { ...resolution, refetch: query.refetch };
 }
 
 /**
@@ -67,7 +82,7 @@ export function HostedAgentOwnershipSensor({
 	onChange: (ownership: AgentOwnership | null) => void;
 }) {
 	const cloudInventory = useHostedDeploymentInventory();
-	const legacyEnvIds = useLegacyEnvIds();
+	const legacy = useLegacyEnvIds();
 
 	const cloudEnvIds = useMemo(
 		() => claimedEnvIdsFromDeployments(cloudInventory.deployments ?? []),
@@ -77,10 +92,10 @@ export function HostedAgentOwnershipSensor({
 	const ownership = useMemo<AgentOwnership>(
 		() => ({
 			cloudEnvIds,
-			legacyEnvIds: legacyEnvIds ?? EMPTY_ENV_IDS,
-			isResolved: cloudInventory.status === "resolved" && legacyEnvIds !== null,
+			legacyEnvIds: legacy.envIds ?? EMPTY_ENV_IDS,
+			isResolved: cloudInventory.status === "resolved" && legacy.envIds !== null,
 		}),
-		[cloudEnvIds, cloudInventory.status, legacyEnvIds],
+		[cloudEnvIds, cloudInventory.status, legacy.envIds],
 	);
 
 	useEffect(() => {

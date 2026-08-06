@@ -251,7 +251,13 @@ interface InstallGateHarness {
 	receipt: () => unknown;
 }
 
-function officialServiceHarness(runtime: "openclaw" | "hermes" = "hermes"): InstallGateHarness {
+interface OfficialServiceInstallHarness extends InstallGateHarness {
+	addForeignDropIn: () => string;
+}
+
+function officialServiceHarness(
+	runtime: "openclaw" | "hermes" = "hermes",
+): OfficialServiceInstallHarness {
 	const paths = tempRuntimePaths();
 	const logPath = join(paths.runRoot, "official-service-receipt.log");
 	const command =
@@ -296,6 +302,16 @@ function officialServiceHarness(runtime: "openclaw" | "hermes" = "hermes"): Inst
 			0,
 		receipt: () =>
 			readRuntimeInstallReceipts(paths)?.officialServices[`${runtime}-gateway.service`],
+		addForeignDropIn: () => {
+			const path = join(
+				paths.systemdUserRoot,
+				`${runtime}-gateway.service.d`,
+				"20-user-override.conf",
+			);
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, "[Service]\nExecStart=\nExecStart=/usr/bin/false\n");
+			return path;
+		},
 	};
 }
 
@@ -534,9 +550,11 @@ describe("runtime manifest services", () => {
 		expect(runtimeWatchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
 		expect(runtimeWatchUnit).toContain("TasksMax=infinity");
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
-		expect(runtimeWatchEnv).toContain('BYOK_RUNTIME_SECRET="runtime-byok-value"');
-		expect(runtimeWatchEnv).toContain('BYOK_SERVICE_SECRET="service-byok-value"');
+		expect(runtimeWatchEnv).not.toContain("runtime-byok-value");
+		expect(runtimeWatchEnv).not.toContain("service-byok-value");
 		expect(runtimeWatchEnv).not.toContain("stale-watcher-value");
+		expect(runtimeWatchEnv).not.toContain("BYOK_RUNTIME_SECRET");
+		expect(runtimeWatchEnv).not.toContain("BYOK_SERVICE_SECRET");
 		expect(runtimeWatchEnv).not.toContain("NON_SECRET_RUNTIME_SETTING");
 		for (const unit of [hermesUnit, dashboardUnit, openclawUnit]) {
 			expect(unit).not.toContain("clawdi run --");
@@ -733,10 +751,14 @@ describe("runtime manifest services", () => {
 		});
 		expect(gatewayEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
 		expect(gatewayEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
-		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="opaque-password-value"');
-		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="opaque-session-value"');
-		expect(watchEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
-		expect(watchEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
+		expect(watchEnv).not.toContain("opaque-password-value");
+		expect(watchEnv).not.toContain("opaque-session-value");
+		expect(watchEnv).not.toContain("runtime-source-token");
+		expect(watchEnv).not.toContain("bundle-runtime-token");
+		expect(watchEnv).not.toContain("HERMES_DASHBOARD_BASIC_AUTH_PASSWORD");
+		expect(watchEnv).not.toContain("HERMES_DASHBOARD_BASIC_AUTH_SECRET");
+		expect(watchEnv).not.toContain("RUNTIME_TARGET_TOKEN");
+		expect(watchEnv).not.toContain("RUNTIME_BUNDLE_TOKEN");
 		expect(watchEnv).not.toContain("RUNTIME_SOURCE_TOKEN");
 		expect(watchEnv).not.toContain("must-not-be-exposed");
 		expect(watchEnv).not.toContain("UNRELATED_RUNTIME_SECRET");
@@ -802,24 +824,11 @@ describe("runtime manifest services", () => {
 		const rotatedGatewayUnit = readUserServiceConfig(paths, "hermes-gateway");
 		const rotatedWatchEnv = readFileSync(watchEnvPath, "utf8");
 		const rotatedWatchUnit = readFileSync(watchUnitPath, "utf8");
-		expect(rotatedWatchEnv).toContain(
-			'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="rotated-dashboard-password"',
-		);
-		expect(rotatedWatchEnv).toContain(
-			'HERMES_DASHBOARD_BASIC_AUTH_SECRET="rotated-dashboard-session-secret"',
-		);
-		expect(rotatedWatchEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
-		expect(rotatedWatchEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
-		expect(rotatedWatchEnv).not.toContain(
-			'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"',
-		);
-		expect(rotatedWatchEnv).not.toContain(
-			'HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"',
-		);
+		expect(rotatedWatchEnv).toBe(watchEnv);
 		expect(rotatedDashboardUnit).not.toBe(dashboardUnit);
 		expect(rotatedGatewayUnit).toBe(gatewayUnit);
-		// The root watcher consumes projected files on each tick, so its public
-		// unit need not restart solely to acquire rotated secret bytes.
+		// The root watcher reloads the apply-context file on each tick, so neither
+		// its environment nor its unit needs secret bytes.
 		expect(rotatedWatchUnit).toBe(watchUnit);
 		expect(rotatedWatchUnit).not.toContain("runtime-source-token");
 		expect(rotatedWatchUnit).not.toContain("rotated-runtime-source-token");
@@ -848,10 +857,9 @@ describe("runtime manifest services", () => {
 		expect(sourceChanged.installErrors).toEqual([]);
 		const sourceChangedWatchEnv = readFileSync(watchEnvPath, "utf8");
 		const sourceChangedWatchUnit = readFileSync(watchUnitPath, "utf8");
-		expect(sourceChangedWatchEnv).toContain('RUNTIME_TARGET_TOKEN="next-runtime-source-value"');
-		expect(sourceChangedWatchEnv).not.toContain("NEXT_RUNTIME_SOURCE_TOKEN");
-		// The public unit binds only destination names. Source and value changes
-		// stay in the root-only EnvironmentFile instead of creating a verifier.
+		expect(sourceChangedWatchEnv).toBe(rotatedWatchEnv);
+		// Secret source and value changes are resolved through the apply context
+		// and do not alter the long-lived watcher's process environment.
 		expect(sourceChangedWatchUnit).toBe(rotatedWatchUnit);
 		expect(sourceChangedWatchUnit).not.toContain("next-runtime-source-value");
 		expect(warnings.join("\n")).not.toContain("next-runtime-source-value");
@@ -1014,7 +1022,7 @@ describe("runtime manifest services", () => {
 		expect(existsSync(join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"))).toBe(false);
 	});
 
-	test("merges watcher secret environments deterministically and fails closed on conflicts", () => {
+	test("does not project colliding runtime secret destinations into the watcher environment", () => {
 		const converge = (
 			runtimeOrder: Array<"hermes" | "openclaw">,
 			secretValues: Record<string, string>,
@@ -1073,29 +1081,20 @@ describe("runtime manifest services", () => {
 			"secret://runtime/hermes": "hermes-secret",
 			"secret://runtime/openclaw": "openclaw-secret",
 		};
-		const forward = converge(["hermes", "openclaw"], conflictingValues).result;
-		const reverse = converge(["openclaw", "hermes"], conflictingValues).result;
-		const expectedError =
-			"runtime apply failed: Runtime watch secret environment SHARED_RUNTIME_SECRET conflicts between hermes-gateway and openclaw-gateway.";
-
-		expect(forward.installErrors).toEqual([expectedError]);
-		expect(reverse.installErrors).toEqual([expectedError]);
-		expect(forward.outputs.systemdSystemUnits).toEqual([]);
-		expect(reverse.outputs.systemdSystemUnits).toEqual([]);
-		expect(expectedError).not.toContain("hermes-secret");
-		expect(expectedError).not.toContain("openclaw-secret");
-
-		const deduplicated = converge(["openclaw", "hermes"], {
-			"secret://clawdi/auth-token": "test-token",
-			"secret://runtime/hermes": "shared-secret",
-			"secret://runtime/openclaw": "shared-secret",
-		});
-		expect(deduplicated.result.installErrors).toEqual([]);
-		const watchEnv = readFileSync(
-			join(deduplicated.paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
-			"utf8",
-		);
-		expect(watchEnv.match(/^SHARED_RUNTIME_SECRET="shared-secret"$/gm)).toHaveLength(1);
+		for (const runtimeOrder of [
+			["hermes", "openclaw"],
+			["openclaw", "hermes"],
+		] as const) {
+			const converged = converge([...runtimeOrder], conflictingValues);
+			expect(converged.result.installErrors).toEqual([]);
+			const watchEnv = readFileSync(
+				join(converged.paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
+				"utf8",
+			);
+			expect(watchEnv).not.toContain("SHARED_RUNTIME_SECRET");
+			expect(watchEnv).not.toContain("hermes-secret");
+			expect(watchEnv).not.toContain("openclaw-secret");
+		}
 	});
 
 	test("converges official service state before installers restart units", () => {
@@ -1882,6 +1881,30 @@ describe("runtime manifest services", () => {
 		expect(harness.converge().installErrors).toEqual([]);
 		expect(harness.installCount()).toBe(2);
 		expect(harness.receipt()).toBeDefined();
+	});
+
+	test.each([
+		["Hermes", "hermes"],
+		["OpenClaw", "openclaw"],
+	] as const)("reports foreign %s gateway drop-ins without deleting them", (_name, runtime) => {
+		const harness = officialServiceHarness(runtime);
+		expect(harness.converge().installErrors).toEqual([]);
+		const receipt = harness.receipt();
+		const foreignDropIn = harness.addForeignDropIn();
+		const foreignContents = readFileSync(foreignDropIn, "utf8");
+
+		const drifted = harness.converge();
+
+		expect(drifted.installErrors).toEqual([
+			expect.stringContaining(
+				`foreign systemd drop-in drift detected for ${runtime}-gateway.service`,
+			),
+		]);
+		expect(drifted.installErrors.join("\n")).toContain(foreignDropIn);
+		expect(drifted.outputs.systemdUserUnits).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+		expect(harness.receipt()).toEqual(receipt);
+		expect(readFileSync(foreignDropIn, "utf8")).toBe(foreignContents);
 	});
 
 	test("uninstalls stale official gateway services when manifest disables them", () => {

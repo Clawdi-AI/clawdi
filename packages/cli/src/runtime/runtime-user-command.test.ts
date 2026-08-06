@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
-import { runRuntimeUserCommand, spawnRuntimeUserCommand } from "./runtime-user-command";
+import {
+	commandExists,
+	runRuntimeUserCommand,
+	spawnRuntimeUserCommand,
+} from "./runtime-user-command";
+
+test("command existence follows shell resolution", () => {
+	expect(commandExists("command")).toBe(true);
+	expect(commandExists("clawdi-command-that-does-not-exist")).toBe(false);
+});
 
 describe("runtime user command timeout", () => {
 	test("bounds synchronous runtime-user commands", () => {
