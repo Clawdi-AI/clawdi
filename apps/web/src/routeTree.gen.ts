@@ -24,6 +24,7 @@ import { Route as ProtectedDashboardIndexRouteImport } from './routes/_protected
 import { Route as ProtectedDashboardAiProvidersRouteImport } from './routes/_protected/_dashboard/ai-providers'
 import { Route as ProtectedDashboardDeployRouteImport } from './routes/_protected/_dashboard/deploy'
 import { Route as ApiFilesAuthorizeRouteImport } from './routes/api/files/authorize'
+import { Route as ApiFilesForwardAuthRouteImport } from './routes/api/files/forward-auth'
 import { Route as ProtectedDashboardAgentsIndexRouteImport } from './routes/_protected/_dashboard/agents/index'
 import { Route as ProtectedDashboardAgentsIdRouteImport } from './routes/_protected/_dashboard/agents/$id'
 import { Route as ProtectedDashboardChannelsIndexRouteImport } from './routes/_protected/_dashboard/channels/index'
@@ -130,6 +131,11 @@ const ProtectedDashboardDeployRoute =
 const ApiFilesAuthorizeRoute = ApiFilesAuthorizeRouteImport.update({
   id: '/api/files/authorize',
   path: '/api/files/authorize',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFilesForwardAuthRoute = ApiFilesForwardAuthRouteImport.update({
+  id: '/api/files/forward-auth',
+  path: '/api/files/forward-auth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProtectedDashboardAgentsIndexRoute =
@@ -333,6 +339,7 @@ export interface FileRoutesByFullPath {
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
   '/api/files/authorize': typeof ApiFilesAuthorizeRoute
+  '/api/files/forward-auth': typeof ApiFilesForwardAuthRoute
   '/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
@@ -379,6 +386,7 @@ export interface FileRoutesByTo {
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
   '/api/files/authorize': typeof ApiFilesAuthorizeRoute
+  '/api/files/forward-auth': typeof ApiFilesForwardAuthRoute
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
   '/memories/$id': typeof ProtectedDashboardMemoriesIdRoute
@@ -425,6 +433,7 @@ export interface FileRoutesById {
   '/_protected/_dashboard/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/_protected/_dashboard/deploy': typeof ProtectedDashboardDeployRoute
   '/api/files/authorize': typeof ApiFilesAuthorizeRoute
+  '/api/files/forward-auth': typeof ApiFilesForwardAuthRoute
   '/_protected/_dashboard/': typeof ProtectedDashboardIndexRoute
   '/_protected/_dashboard/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/_protected/_dashboard/channels/$id': typeof ProtectedDashboardChannelsIdRoute
@@ -474,6 +483,7 @@ export interface FileRouteTypes {
     | '/ai-providers'
     | '/deploy'
     | '/api/files/authorize'
+    | '/api/files/forward-auth'
     | '/agents/$id'
     | '/channels/$id'
     | '/connectors/$name'
@@ -520,6 +530,7 @@ export interface FileRouteTypes {
     | '/ai-providers'
     | '/deploy'
     | '/api/files/authorize'
+    | '/api/files/forward-auth'
     | '/channels/$id'
     | '/connectors/$name'
     | '/memories/$id'
@@ -565,6 +576,7 @@ export interface FileRouteTypes {
     | '/_protected/_dashboard/ai-providers'
     | '/_protected/_dashboard/deploy'
     | '/api/files/authorize'
+    | '/api/files/forward-auth'
     | '/_protected/_dashboard/'
     | '/_protected/_dashboard/agents/$id'
     | '/_protected/_dashboard/channels/$id'
@@ -608,6 +620,7 @@ export interface RootRouteChildren {
   SChar123idChar125DotmdRoute: typeof SChar123idChar125DotmdRoute
   ShareTokenRoute: typeof ShareTokenRoute
   ApiFilesAuthorizeRoute: typeof ApiFilesAuthorizeRoute
+  ApiFilesForwardAuthRoute: typeof ApiFilesForwardAuthRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -715,6 +728,13 @@ declare module '@tanstack/react-router' {
       path: '/api/files/authorize'
       fullPath: '/api/files/authorize'
       preLoaderRoute: typeof ApiFilesAuthorizeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/files/forward-auth': {
+      id: '/api/files/forward-auth'
+      path: '/api/files/forward-auth'
+      fullPath: '/api/files/forward-auth'
+      preLoaderRoute: typeof ApiFilesForwardAuthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_protected/_dashboard/agents/': {
@@ -1095,6 +1115,7 @@ const rootRouteChildren: RootRouteChildren = {
   SChar123idChar125DotmdRoute: SChar123idChar125DotmdRoute,
   ShareTokenRoute: ShareTokenRoute,
   ApiFilesAuthorizeRoute: ApiFilesAuthorizeRoute,
+  ApiFilesForwardAuthRoute: ApiFilesForwardAuthRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

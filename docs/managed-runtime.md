@@ -306,6 +306,19 @@ contract. When a later manifest omits the companion, normal stale-unit
 reconciliation stops and withdraws only `clawdi-files.service` while preserving
 the selected Hermes or OpenClaw unit.
 
+The authenticated request path is `Files browser -> Incus Traefik -> cloud
+TanStack ForwardAuth -> Hosted assertion broker -> guest File Browser`. The
+ForwardAuth server route lives beside the cloud dashboard's existing
+`/api/files/authorize` callback, uses the same TanStack Clerk request context,
+and calls the Hosted deploy API with the current owner token, route proof,
+expected Files host, and original URI. Signed-out top-level navigation returns
+to the cloud `/sign-in` route before that callback; iframe requests fail
+closed. This v2 Incus path has no dependency on the Hosted Next.js application
+or the `www` origin. Traefik removes the entire browser `Cookie` header before
+the guest hop; File Browser authenticates every request from its official
+external-JWT header and therefore does not require a child-service session
+cookie or a selective cookie-rewriting proxy.
+
 The pinned upstream contracts are File Browser's
 [JWT verifier](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/auth/jwt.go),
 [JWT middleware](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/middleware.go),
@@ -318,8 +331,8 @@ rollback, sandbox, signed-out callback, and UI eligibility contracts without
 claiming to emulate a real browser/Traefik deployment.
 
 Done: `bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts`
-and `bash scripts/test.sh web src/pages/files/files-authorize-route.test.ts`
-exit 0 and report `0 fail`.
+and `bash scripts/test.sh web src/pages/files/files-authorize-route.test.ts
+src/pages/files/files-forward-auth-route.test.ts` exit 0 and report `0 fail`.
 
 ### Runtime Host Contents
 
