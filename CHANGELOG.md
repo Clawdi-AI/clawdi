@@ -10,6 +10,20 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.41
+
+Package: `clawdi@0.13.41`
+
+### Fixed
+
+- Hosted convergence now refuses to run unless the resolved runtime identity
+  matches the tenant contract, so a stray `HOME` can no longer redirect a tenant
+  into the wrong home or let installers run as root.
+- The shared `/run/clawdi` root is owned solely by the boot preparation unit,
+  and convergence can no longer recreate a missing platform root.
+- External runtime probes, installs, and uninstalls are bounded, so a wedged
+  third-party CLI fails convergence instead of hanging it.
+
 ## Clawdi CLI v0.13.40
 
 Package: `clawdi@0.13.40`
