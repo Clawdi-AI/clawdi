@@ -2,13 +2,18 @@
 
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import { EntityMeta, HERO_CARD_BASE } from "@/components/entity-card";
+import {
+	ENTITY_CARD_MASONRY_CLASS,
+	EntityCardActions,
+	EntityCardChassis,
+	EntityCardLink,
+	EntityMeta,
+} from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { memorySettingsForCache } from "@/components/memories/memory-settings-cache";
 import { TimeTooltip } from "@/components/time-tooltip";
@@ -42,8 +47,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { normalizeApiError } from "@/lib/api-errors";
 import type { Memory } from "@/lib/api-schemas";
-import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
+import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	LIBRARY_RESOURCE_SCOPE,
@@ -52,7 +58,7 @@ import {
 } from "@/lib/resource-navigation";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 const CATEGORIES = [
 	{ value: "all", label: "All" },
@@ -92,19 +98,6 @@ export function MemoriesSurface({
 		typeof settings?.memory_provider === "string" ? settings.memory_provider : "builtin";
 	const hasMem0Key = settings?.mem0_api_key_configured === true;
 
-	const updateSettings = useMutation({
-		mutationFn: async (memoryProvider: "builtin" | "mem0") =>
-			unwrap(
-				await api.PATCH("/v1/settings", {
-					body: { settings: { memory_provider: memoryProvider } },
-				}),
-			),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["settings"] });
-			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
-		},
-		onError: (e) => toast.error("Couldn't update settings", { description: errorMessage(e) }),
-	});
 	const saveMem0Key = useSensitiveAction(async (key: string) => {
 		try {
 			const result = unwrap(
@@ -114,7 +107,7 @@ export function MemoriesSurface({
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 			return result;
 		} catch (error) {
-			toast.error("Couldn't update settings", { description: errorMessage(error) });
+			toast.error("Couldn't update settings", { description: normalizeApiError(error) });
 			throw error;
 		}
 	});
@@ -140,11 +133,12 @@ export function MemoriesSurface({
 
 	const deleteMemory = $api.useMutation("delete", "/v1/memories/{memory_id}", {
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] }),
-		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
+		onError: (error) =>
+			toast.error("Couldn't delete memory", { description: normalizeApiError(error) }),
 	});
 
 	const requestDeleteMemory = useCallback(
-		(id: string) => deleteMemory.mutate({ params: { path: { memory_id: id } } }),
+		(id: string) => deleteMemory.mutateAsync({ params: { path: { memory_id: id } } }),
 		[deleteMemory],
 	);
 
@@ -208,32 +202,6 @@ export function MemoriesSurface({
 						))}
 					</ToggleGroup>
 				}
-				actions={
-					<>
-						<ToggleGroup
-							value={[provider]}
-							onValueChange={(v) => {
-								const selected = v[0];
-								if (selected === "builtin" || selected === "mem0") {
-									updateSettings.mutate(selected);
-								}
-							}}
-							disabled={updateSettings.isPending}
-							variant="outline"
-							size="sm"
-						>
-							<ToggleGroupItem value="builtin">
-								<Database />
-								Built-in
-							</ToggleGroupItem>
-							<ToggleGroupItem value="mem0">
-								<Brain />
-								Mem0
-							</ToggleGroupItem>
-						</ToggleGroup>
-						<AddMemoryForm />
-					</>
-				}
 			/>
 
 			{shouldBlockQueryError(error, data) ? (
@@ -260,6 +228,67 @@ export function MemoriesSurface({
 	);
 }
 
+export function MemoriesPageActions() {
+	const api = useApi();
+	const queryClient = useQueryClient();
+	const settings = useQuery({
+		queryKey: ["settings"],
+		queryFn: async () => memorySettingsForCache(unwrap(await api.GET("/v1/settings"))),
+	});
+	const provider =
+		typeof settings.data?.memory_provider === "string" ? settings.data.memory_provider : "builtin";
+	const updateSettings = useMutation({
+		mutationFn: async (memoryProvider: "builtin" | "mem0") =>
+			unwrap(
+				await api.PATCH("/v1/settings", {
+					body: { settings: { memory_provider: memoryProvider } },
+				}),
+			),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
+		},
+		onError: (error) =>
+			toast.error("Couldn't update settings", { description: normalizeApiError(error) }),
+	});
+
+	if (settings.isLoading && !settings.data) {
+		return (
+			<>
+				<Skeleton className="h-11 w-36 sm:h-8" />
+				<Skeleton className="h-11 w-32 sm:h-8" />
+			</>
+		);
+	}
+
+	return (
+		<>
+			<ToggleGroup
+				value={[provider]}
+				onValueChange={(value) => {
+					const selected = value[0];
+					if (selected === "builtin" || selected === "mem0") {
+						updateSettings.mutate(selected);
+					}
+				}}
+				disabled={updateSettings.isPending}
+				variant="outline"
+				size="sm"
+			>
+				<ToggleGroupItem value="builtin">
+					<Database />
+					Built-in
+				</ToggleGroupItem>
+				<ToggleGroupItem value="mem0">
+					<Brain />
+					Mem0
+				</ToggleGroupItem>
+			</ToggleGroup>
+			<AddMemoryForm />
+		</>
+	);
+}
+
 function MemoryNotesGrid({
 	memories,
 	isLoading,
@@ -270,29 +299,15 @@ function MemoryNotesGrid({
 	memories: Memory[];
 	isLoading: boolean;
 	emptyMessage: ReactNode;
-	onDelete: (id: string) => void;
+	onDelete: (id: string) => Promise<unknown>;
 	scope: ResourceNavigationScope;
 }) {
 	if (isLoading) {
 		const cardLineCounts = [4, 7, 3, 5, 6, 4, 8, 3, 5];
 		return (
-			<div className="columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
+			<div className={ENTITY_CARD_MASONRY_CLASS}>
 				{cardLineCounts.map((lineCount, index) => (
-					<div key={index} className={HERO_CARD_BASE}>
-						<div className="space-y-2">
-							{Array.from({ length: lineCount }).map((_, lineIndex) => (
-								<Skeleton
-									key={lineIndex}
-									className={cn("h-4", lineIndex === lineCount - 1 ? "w-2/3" : "w-full")}
-								/>
-							))}
-						</div>
-						<div className="mt-4 flex items-center gap-2">
-							<Skeleton className="h-5 w-24 rounded-full" />
-							<Skeleton className="h-3 w-14" />
-							<Skeleton className="ml-auto h-3 w-20" />
-						</div>
-					</div>
+					<MemoryCardSkeleton key={index} lineCount={lineCount} />
 				))}
 			</div>
 		);
@@ -303,71 +318,97 @@ function MemoryNotesGrid({
 	}
 
 	return (
-		<div className="columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
+		<div className={ENTITY_CARD_MASONRY_CLASS}>
 			{memories.map((memory) => (
-				<article
-					key={memory.id}
-					className={cn(
-						HERO_CARD_BASE,
-						"group relative z-0 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
-					)}
-				>
-					<Link
-						{...memoryDetailLink(scope, memory.id)}
-						aria-label={`Open memory ${memory.id.slice(0, 8)}`}
-						className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					/>
-					<p className="line-clamp-[8] break-words text-sm leading-relaxed">{memory.content}</p>
-					<EntityMeta
-						className="mt-3 text-xs"
-						items={[
-							<Badge
-								key="category"
-								variant="secondary"
-								className={cn(MEMORY_CATEGORY_COLORS[memory.category])}
-							>
-								{memory.category}
-							</Badge>,
-							...(memory.tags?.slice(0, 3).map((tag) => `#${tag}`) ?? []),
-							memory.created_at ? (
-								<TimeTooltip key="created" value={memory.created_at}>
-									<span>{relativeTime(memory.created_at)}</span>
-								</TimeTooltip>
-							) : null,
-							memory.source_machine_name ? (
-								<Tooltip key="machine">
-									<TooltipTrigger
-										render={<span className="inline-flex min-w-0 items-center gap-1" />}
-									>
-										<Laptop className="size-3 shrink-0" />
-										<span className="max-w-28 truncate">{memory.source_machine_name}</span>
-									</TooltipTrigger>
-									<TooltipContent>Learned on {memory.source_machine_name}</TooltipContent>
-								</Tooltip>
-							) : null,
-						]}
-					/>
-					<span className="absolute right-2 top-2 z-10 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
-						<ConfirmAction
-							title="Delete this memory?"
-							description={<p>Deleting removes this memory from all agents.</p>}
-							confirmLabel="Delete memory"
-							destructive
-							onConfirm={() => onDelete(memory.id)}
-						>
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								className="bg-card/80 text-muted-foreground backdrop-blur-sm hover:text-destructive"
-								aria-label="Delete memory"
-							>
-								<Trash2 className="size-3.5" />
-							</Button>
-						</ConfirmAction>
-					</span>
-				</article>
+				<MemoryCard key={memory.id} memory={memory} onDelete={onDelete} scope={scope} />
 			))}
 		</div>
+	);
+}
+
+export function MemoryCard({
+	memory,
+	onDelete,
+	scope,
+}: {
+	memory: Memory;
+	onDelete: (id: string) => Promise<unknown>;
+	scope: ResourceNavigationScope;
+}) {
+	return (
+		<EntityCardChassis as="article" variant="resource" interactive>
+			<EntityCardLink
+				variant="resource"
+				{...memoryDetailLink(scope, memory.id)}
+				ariaLabel={`Open memory: ${memoryDisplayName(memory.content)}`}
+			/>
+			<p className="line-clamp-[8] break-words pr-10 text-sm leading-relaxed">{memory.content}</p>
+			<EntityMeta
+				className="mt-3 text-xs"
+				items={[
+					<Badge
+						key="category"
+						variant="secondary"
+						className={cn(MEMORY_CATEGORY_COLORS[memory.category])}
+					>
+						{memory.category}
+					</Badge>,
+					...(memory.tags?.slice(0, 3).map((tag) => `#${tag}`) ?? []),
+					memory.created_at ? (
+						<TimeTooltip key="created" value={memory.created_at}>
+							<span>{relativeTime(memory.created_at)}</span>
+						</TimeTooltip>
+					) : null,
+					memory.source_machine_name ? (
+						<Tooltip key="machine">
+							<TooltipTrigger render={<span className="inline-flex min-w-0 items-center gap-1" />}>
+								<Laptop className="size-3 shrink-0" />
+								<span className="max-w-28 truncate">{memory.source_machine_name}</span>
+							</TooltipTrigger>
+							<TooltipContent>Learned on {memory.source_machine_name}</TooltipContent>
+						</Tooltip>
+					) : null,
+				]}
+			/>
+			<EntityCardActions className="absolute right-2 top-2">
+				<ConfirmAction
+					title="Delete this memory?"
+					description={<p>Deleting removes this memory from all agents.</p>}
+					confirmLabel="Delete memory"
+					destructive
+					onConfirm={() => onDelete(memory.id)}
+				>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						className="bg-card/80 text-muted-foreground backdrop-blur-sm hover:text-destructive"
+						aria-label={`Delete memory: ${memoryDisplayName(memory.content)}`}
+					>
+						<Trash2 className="size-3.5" />
+					</Button>
+				</ConfirmAction>
+			</EntityCardActions>
+		</EntityCardChassis>
+	);
+}
+
+function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
+	return (
+		<EntityCardChassis variant="resource">
+			<div className="space-y-2">
+				{Array.from({ length: lineCount }).map((_, lineIndex) => (
+					<Skeleton
+						key={lineIndex}
+						className={cn("h-4", lineIndex === lineCount - 1 ? "w-2/3" : "w-full")}
+					/>
+				))}
+			</div>
+			<div className="mt-4 flex items-center gap-2">
+				<Skeleton className="h-5 w-24 rounded-full" />
+				<Skeleton className="h-3 w-14" />
+				<Skeleton className="ml-auto h-3 w-20" />
+			</div>
+		</EntityCardChassis>
 	);
 }
 
@@ -441,7 +482,8 @@ function AddMemoryForm() {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 		},
-		onError: (e) => toast.error("Couldn't create memory", { description: errorMessage(e) }),
+		onError: (error) =>
+			toast.error("Couldn't create memory", { description: normalizeApiError(error) }),
 	});
 
 	return (

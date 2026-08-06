@@ -3,8 +3,8 @@
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
-import { Skeleton } from "@/components/ui/skeleton";
-import { VaultsSurface } from "@/components/vault/vaults-surface";
+import { HERO_GRID_CLASS } from "@/components/entity-card";
+import { VaultCardSkeleton, VaultsSurface } from "@/components/vault/vaults-surface";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
@@ -20,14 +20,10 @@ export function AgentVaultsTab({
 
 	if (bindings.isLoading) {
 		return (
-			<div className="space-y-4" data-testid="agent-vaults-loading">
-				<Skeleton className="h-4 w-96 max-w-full" />
-				<Skeleton className="h-10 w-full" />
-				<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-					{Array.from({ length: 3 }).map((_, index) => (
-						<Skeleton key={index} className="h-36 rounded-lg" />
-					))}
-				</div>
+			<div className={HERO_GRID_CLASS} data-testid="agent-vaults-loading">
+				{Array.from({ length: 3 }).map((_, index) => (
+					<VaultCardSkeleton key={index} />
+				))}
 			</div>
 		);
 	}

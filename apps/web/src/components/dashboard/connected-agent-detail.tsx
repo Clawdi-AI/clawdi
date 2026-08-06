@@ -33,7 +33,7 @@ import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { DetailNotFound } from "@/components/detail/layout";
-import { MemoriesSurface } from "@/components/memories/memories-surface";
+import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
@@ -191,32 +191,38 @@ export function ConnectedAgentDetail({
 			) : isLoading ? (
 				<AgentDetailContentSkeleton variant="connected" />
 			) : agent ? (
-				<section className="flex flex-col gap-4">
-					<PageHeader
-						title={activeTabLabel}
-						titleAdornment={headerStatus}
-						description={activeTab === "overview" ? undefined : activeTabMeta.description}
-						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
-						actions={
-							activeTab === "overview" && legacyDashboardUrl ? (
-								<Button
-									variant="outline"
-									render={
-										<a
-											href={legacyDashboardUrl}
-											target="_blank"
-											rel="noopener noreferrer"
-											aria-label="Open legacy dashboard"
-										/>
-									}
-									nativeButton={false}
-								>
-									<ExternalLink />
-									Legacy dashboard
-								</Button>
-							) : null
-						}
-					/>
+				<section className="flex flex-col gap-6">
+					{activeTab === "projects" ? null : (
+						<PageHeader
+							title={activeTabLabel}
+							titleAdornment={headerStatus}
+							description={activeTab === "overview" ? undefined : activeTabMeta.description}
+							icon={
+								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
+							}
+							actions={
+								activeTab === "memories" ? (
+									<MemoriesPageActions />
+								) : activeTab === "overview" && legacyDashboardUrl ? (
+									<Button
+										variant="outline"
+										render={
+											<a
+												href={legacyDashboardUrl}
+												target="_blank"
+												rel="noopener noreferrer"
+												aria-label="Open legacy dashboard"
+											/>
+										}
+										nativeButton={false}
+									>
+										<ExternalLink />
+										Legacy dashboard
+									</Button>
+								) : null
+							}
+						/>
+					)}
 
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
@@ -334,7 +340,14 @@ export function ConnectedAgentDetail({
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
 
 					{activeTab === "projects" ? (
-						<AgentProjectsTab agentId={id} routeSearch={routeSearch} />
+						<AgentProjectsTab
+							agentId={id}
+							routeSearch={routeSearch}
+							headerAdornment={headerStatus}
+							headerIcon={
+								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
+							}
+						/>
 					) : null}
 
 					{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}

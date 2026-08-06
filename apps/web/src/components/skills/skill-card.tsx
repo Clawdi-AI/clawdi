@@ -1,16 +1,19 @@
 "use client";
 
-import type { LinkProps } from "@tanstack/react-router";
 import { Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
-import { HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
+import {
+	type EntityCardLinkOptions,
+	HERO_GRID_CLASS,
+	HeroCard,
+	HeroCardSkeleton,
+} from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import type { SkillCapabilities } from "@/lib/skill-authority";
@@ -19,8 +22,7 @@ import { relativeTime } from "@/lib/utils";
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 export type SkillCardEntity = Pick<SkillSummary, "skill_key" | "name" | "description"> &
 	Partial<Pick<SkillSummary, "source" | "source_repo" | "version" | "updated_at">>;
-type SkillLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
-type SkillLinkBuilder = (skill: SkillSummary) => SkillLinkOptions | null;
+type SkillLinkBuilder = (skill: SkillSummary) => EntityCardLinkOptions | null;
 
 /* Skills are objects, not spreadsheet rows — they get the same card
  * treatment as projects and vaults: emoji identity tile, name, version,
@@ -46,7 +48,7 @@ export function SkillCard({
 	readOnlyLabel?: string | null;
 	showVersion?: boolean;
 	actions?: ReactNode;
-	onUninstall?: (skillKey: string, projectId: string) => void;
+	onUninstall?: (skillKey: string, projectId: string) => unknown;
 	uninstallPending?: boolean;
 	/** Provenance chip for cross-project views: where this copy lives. */
 	sourceLabel?: { name: string; emoji: string } | null;
@@ -65,10 +67,38 @@ export function SkillCard({
 					search: cloudSkill.project_id ? { project: cloudSkill.project_id } : undefined,
 				}
 			: (skillLink(cloudSkill) ?? undefined);
+	const cardActions =
+		actions || canSend || canUninstall ? (
+			<>
+				{actions}
+				{canSend && cloudSkill ? <SendSkillDialog skill={cloudSkill} /> : null}
+				{canUninstall ? (
+					<ConfirmAction
+						title={`Remove ${skill.name} from Project?`}
+						description={<p>Other Projects keep their copies.</p>}
+						confirmLabel="Remove from project"
+						destructive
+						onConfirm={() => {
+							if (!cloudSkill?.project_id) return;
+							return onUninstall?.(cloudSkill.skill_key, cloudSkill.project_id);
+						}}
+					>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							disabled={uninstallPending}
+							className="text-muted-foreground hover:text-destructive"
+							aria-label={`Remove ${skill.name} from Project`}
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					</ConfirmAction>
+				) : null}
+			</>
+		) : undefined;
 	return (
 		<HeroCard
 			className="min-h-28 gap-2"
-			interactive={Boolean(detailLink)}
 			icon={
 				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
 					{id.emoji}
@@ -109,39 +139,15 @@ export function SkillCard({
 				) : null,
 				skill.updated_at ? relativeTime(skill.updated_at) : null,
 			]}
-			actions={
-				<div className="flex items-center gap-0.5 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
-					{actions}
-					{canSend && cloudSkill ? <SendSkillDialog skill={cloudSkill} /> : null}
-					{canUninstall ? (
-						<ConfirmAction
-							title={`Remove ${skill.name} from Project?`}
-							description={<p>Other Projects keep their copies.</p>}
-							confirmLabel="Remove from project"
-							destructive
-							onConfirm={() => {
-								if (cloudSkill?.project_id) {
-									onUninstall?.(cloudSkill.skill_key, cloudSkill.project_id);
-								}
-							}}
-						>
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								disabled={uninstallPending}
-								className="text-muted-foreground hover:text-destructive"
-								aria-label={`Remove ${skill.name} from Project`}
-							>
-								<Trash2 className="size-3.5" />
-							</Button>
-						</ConfirmAction>
-					) : null}
-				</div>
-			}
+			actions={cardActions}
 			link={detailLink}
 			ariaLabel={`Open ${skill.name}`}
 		/>
 	);
+}
+
+export function SkillCardSkeleton() {
+	return <HeroCardSkeleton compact />;
 }
 
 export function SkillCardGrid({
@@ -166,7 +172,7 @@ export function SkillCardGrid({
 	readOnlySkillCheck?: (skill: SkillSummary) => boolean;
 	/** Trusted capability projection shared by cards and bulk actions. */
 	capabilitiesFor?: (skill: SkillSummary) => SkillCapabilities;
-	onUninstall?: (skillKey: string, projectId: string) => void;
+	onUninstall?: (skillKey: string, projectId: string) => unknown;
 	uninstallPending?: boolean;
 	sourceLabelFor?: (skill: SkillSummary) => { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
@@ -178,7 +184,7 @@ export function SkillCardGrid({
 		return (
 			<div className={HERO_GRID_CLASS}>
 				{Array.from({ length: 6 }).map((_, i) => (
-					<Skeleton key={i} className="h-28 w-full rounded-xl" />
+					<SkillCardSkeleton key={i} />
 				))}
 			</div>
 		);

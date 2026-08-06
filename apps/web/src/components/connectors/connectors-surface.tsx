@@ -69,8 +69,8 @@ export function ConnectorsSurface({
 
 function connectorsSurfaceClassName(embedded: boolean) {
 	return cn(
-		embedded ? "space-y-5" : CENTERED_PAGE_WIDTH_CLASS.page,
-		!embedded && "space-y-5 px-4 lg:px-6",
+		embedded ? "space-y-6" : CENTERED_PAGE_WIDTH_CLASS.page,
+		!embedded && "space-y-6 px-4 lg:px-6",
 	);
 }
 
@@ -343,7 +343,7 @@ function CatalogSection({
 				description={
 					query
 						? `Nothing matches "${query}".`
-						: "The connector catalog is not available yet. Ask an admin to configure COMPOSIO_API_KEY on the backend."
+						: "Connectors aren't available for this account yet."
 				}
 			/>
 		);

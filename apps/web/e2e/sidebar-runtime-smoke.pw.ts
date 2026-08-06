@@ -1429,12 +1429,14 @@ test("connected Overview queries all-agent Memories and Connectors summaries", a
 
 test("connected Agent Memories keeps established UI through nested list and detail navigation", async ({
 	page,
-}) => {
+}, testInfo) => {
 	await stubDashboardApi(page);
 	await page.goto("/agents/agent-smoke-1/memories");
 
 	const main = page.locator("main");
-	await expect(main.getByRole("heading", { name: "Memories", level: 1 })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Memories", level: 1 })).toBeVisible({
+		timeout: 15_000,
+	});
 	await expect(page).toHaveTitle("Memories · Clawdi");
 	await expect(page.locator('[data-slot="breadcrumb-page"]')).toHaveText("Memories");
 	await expect(
@@ -1450,6 +1452,18 @@ test("connected Agent Memories keeps established UI through nested list and deta
 		"href",
 		"/agents/agent-smoke-1/memories/memory-smoke-1",
 	);
+	await page.setViewportSize({ width: 390, height: 844 });
+	const deleteMemoryButton = memoryCard.getByRole("button", { name: /Delete memory:/ });
+	const deleteMemoryBox = await deleteMemoryButton.boundingBox();
+	expect(deleteMemoryBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+	expect(deleteMemoryBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+	expect(
+		await page
+			.locator("html")
+			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+	).toBe(true);
+	await main.screenshot({ path: testInfo.outputPath("connected-memories-mobile.png") });
+	await page.setViewportSize({ width: 1280, height: 900 });
 	await memoryCard.getByRole("link").click();
 	await expect(page).toHaveURL("/agents/agent-smoke-1/memories/memory-smoke-1");
 	await expect(
@@ -1472,7 +1486,7 @@ test("connected Agent Memories keeps established UI through nested list and deta
 
 test("connected Agent Connectors keeps established UI through nested list and detail navigation", async ({
 	page,
-}) => {
+}, testInfo) => {
 	await stubDashboardApi(page);
 	await page.goto("/agents/agent-smoke-1/connectors");
 
@@ -1486,6 +1500,17 @@ test("connected Agent Connectors keeps established UI through nested list and de
 	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	const gmailLink = main.getByRole("link", { name: "Gmail" });
 	await expect(gmailLink).toHaveAttribute("href", "/agents/agent-smoke-1/connectors/gmail");
+	await page.setViewportSize({ width: 390, height: 844 });
+	const gmailCard = gmailLink.locator("xpath=..");
+	const gmailCardBox = await gmailCard.boundingBox();
+	expect((gmailCardBox?.x ?? 0) + (gmailCardBox?.width ?? 0)).toBeLessThanOrEqual(390);
+	expect(
+		await page
+			.locator("html")
+			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+	).toBe(true);
+	await main.screenshot({ path: testInfo.outputPath("connected-connectors-mobile.png") });
+	await page.setViewportSize({ width: 1280, height: 900 });
 	await gmailLink.click();
 
 	await expect(page).toHaveURL("/agents/agent-smoke-1/connectors/gmail");
@@ -1861,9 +1886,21 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	expect(await longTitle.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
 		true,
 	);
-	expect(
-		await longDescription.evaluate((element) => element.scrollWidth > element.clientWidth),
-	).toBe(true);
+	const descriptionTruncation = await longDescription.evaluate((element) => {
+		const style = getComputedStyle(element);
+		return {
+			lineClamp: style.webkitLineClamp,
+			overflow: style.overflow,
+			isVerticallyTruncated: element.scrollHeight > element.clientHeight,
+			hasHorizontalOverflow: element.scrollWidth > element.clientWidth + 1,
+		};
+	});
+	expect(descriptionTruncation).toEqual({
+		lineClamp: "2",
+		overflow: "hidden",
+		isVerticallyTruncated: true,
+		hasHorizontalOverflow: false,
+	});
 	await expect(projectCards.nth(1).getByText(longContextProjectSlug, { exact: true })).toHaveCount(
 		0,
 	);
@@ -2065,6 +2102,8 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(consoleSharedProject.locator("xpath=..")).toContainText("Viewer");
 	await expect(consoleProjectGrid.getByText("Custom Project", { exact: true })).toHaveCount(0);
 	await expect(consoleProjectGrid.getByText("Owner", { exact: true })).toHaveCount(0);
+	await expect(consoleProjectGrid).not.toContainText("undefined skills");
+	await expect(consoleProjectGrid).not.toContainText("undefined vaults");
 	await expect(main.getByRole("link", { name: "Open Smoke Project" })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("console-projects-desktop.png") });
 	await page.locator("html").evaluate((element) => element.classList.add("dark"));

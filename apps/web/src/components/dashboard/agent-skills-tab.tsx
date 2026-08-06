@@ -165,7 +165,7 @@ export function AgentSkillsTab({
 				}
 				sourceLabelFor={(skill) => {
 					const project = skill.project_id ? projectsById.get(skill.project_id) : undefined;
-					const name = project?.name ?? skill.project_name ?? skill.project_id;
+					const name = project?.name ?? skill.project_name?.trim();
 					return name ? { name, emoji: identityFor(name).emoji } : null;
 				}}
 				skillLink={(skill) =>

@@ -26,11 +26,11 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ensureBlob, unwrap, useApi, useOpenApi, useSkillArchiveUploader } from "@/lib/api";
+import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { skillCapabilities } from "@/lib/skill-authority";
-import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
@@ -142,7 +142,8 @@ export function SendSkillDialog({
 			);
 			setOpen(false);
 		},
-		onError: (e) => toast.error("Couldn't copy or move skill", { description: errorMessage(e) }),
+		onError: (error) =>
+			toast.error("Couldn't copy or move skill", { description: normalizeApiError(error) }),
 		onSettled: () => {
 			sendLockedRef.current = false;
 		},

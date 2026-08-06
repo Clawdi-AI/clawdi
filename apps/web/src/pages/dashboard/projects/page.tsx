@@ -6,6 +6,7 @@ import { Plus, Share2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
@@ -29,12 +30,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
 import { Textarea } from "@/components/ui/textarea";
-import { ApiError, useOpenApi } from "@/lib/api";
-import { formatApiError } from "@/lib/api-errors";
+import { useOpenApi } from "@/lib/api";
+import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type ProjectCreate = components["schemas"]["ProjectCreate"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -88,6 +89,7 @@ export default function ProjectsPage() {
 				.includes(q),
 		);
 	}, [customProjects, sharedProjects, search]);
+	const blockingProjectsError = shouldBlockQueryError(projects.error, projects.data);
 
 	const createProject = $api.useMutation("post", "/v1/projects", {
 		onSuccess: (project) => {
@@ -96,9 +98,9 @@ export default function ProjectsPage() {
 			toast.success("Project created");
 			void router.navigate({ href: projectDetailHref(project.id) });
 		},
-		onError: (e) => {
+		onError: (error) => {
 			toast.error("Couldn't create project", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(error),
 			});
 		},
 	});
@@ -112,7 +114,16 @@ export default function ProjectsPage() {
 	if (projects.isLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-				<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
+				<PageHeader
+					title="Projects"
+					description={PROJECTS_RESOURCE.managementDescription}
+					actions={
+						<Button size="sm" onClick={openCreateDialog} disabled>
+							<Plus className="size-3.5" />
+							Create project
+						</Button>
+					}
+				/>
 				<div className={HERO_GRID_CLASS}>
 					{Array.from({ length: 6 }).map((_, i) => (
 						<ProjectResourceCardSkeleton key={i} />
@@ -124,10 +135,9 @@ export default function ProjectsPage() {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
-
-			<ListToolbar
-				search={<SearchInput value={search} onChange={setSearch} placeholder="Search projects…" />}
+			<PageHeader
+				title="Projects"
+				description={PROJECTS_RESOURCE.managementDescription}
 				actions={
 					<Button size="sm" onClick={openCreateDialog}>
 						<Plus className="size-3.5" />
@@ -136,7 +146,11 @@ export default function ProjectsPage() {
 				}
 			/>
 
-			{shouldBlockQueryError(projects.error, projects.data) ? (
+			<ListToolbar
+				search={<SearchInput value={search} onChange={setSearch} placeholder="Search projects…" />}
+			/>
+
+			{blockingProjectsError ? (
 				<ApiErrorPanel
 					error={projects.error}
 					onRetry={() => {
@@ -214,10 +228,15 @@ export default function ProjectsPage() {
 				</DialogContent>
 			</Dialog>
 
-			{gridProjects.length === 0 && search.trim() ? (
-				<p className="py-12 text-center text-sm text-muted-foreground">
-					No projects match “{search.trim()}”.
-				</p>
+			{blockingProjectsError ? null : gridProjects.length === 0 ? (
+				<EmptyState
+					title={search.trim() ? "No matching Projects" : "No Projects yet"}
+					description={
+						search.trim()
+							? `Nothing matches “${search.trim()}”. Try a different search.`
+							: "Create a Project to bundle Skills and Vaults for your Agents."
+					}
+				/>
 			) : (
 				<div className={HERO_GRID_CLASS} data-testid="project-grid">
 					{gridProjects.map(({ project, shared }) => (
@@ -245,21 +264,16 @@ export default function ProjectsPage() {
 function ProjectShareAction({ project }: { project: ProjectRow }) {
 	const projectName = displayProjectName(project);
 	return (
-		<div className="opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
-			<ShareProjectDialog
-				projectId={project.id}
-				projectName={projectName}
-				projectKind={project.kind}
-			>
-				<Button variant="ghost" size="icon-sm" aria-label={`Share ${projectName}`}>
-					<Share2 className="size-3.5" />
-				</Button>
-			</ShareProjectDialog>
-		</div>
+		<ShareProjectDialog projectId={project.id} projectName={projectName} projectKind={project.kind}>
+			<Button variant="ghost" size="icon-sm" aria-label={`Share ${projectName}`}>
+				<Share2 className="size-3.5" />
+			</Button>
+		</ShareProjectDialog>
 	);
 }
 
-function formatCountLabel(value: number, noun: string) {
+function formatCountLabel(value: number | null | undefined, noun: string) {
+	if (typeof value !== "number") return null;
 	return `${value} ${value === 1 ? noun : `${noun}s`}`;
 }
 

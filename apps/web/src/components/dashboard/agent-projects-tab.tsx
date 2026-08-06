@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, Link2, Plus, Trash2 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
@@ -16,7 +16,7 @@ import {
 } from "@/components/dashboard/agent-project-scope";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
-import { ListToolbar } from "@/components/list-toolbar";
+import { PageHeader } from "@/components/page-header";
 import {
 	displayProjectName,
 	isCustomProject,
@@ -39,11 +39,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -52,7 +52,6 @@ import {
 	type ResourceNavigationScope,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
-import { errorMessage } from "@/lib/utils";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type ProjectCreate = components["schemas"]["ProjectCreate"];
@@ -61,10 +60,14 @@ export function AgentProjectsTab({
 	agentId,
 	routeSearch,
 	enabled = true,
+	headerIcon,
+	headerAdornment,
 }: {
 	agentId: string;
 	routeSearch: AgentRouteSearch;
 	enabled?: boolean;
+	headerIcon?: ReactNode;
+	headerAdornment?: ReactNode;
 }) {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -94,6 +97,8 @@ export function AgentProjectsTab({
 				void projects.refetch();
 			}}
 			navigationScope={navigationScope}
+			headerIcon={headerIcon}
+			headerAdornment={headerAdornment}
 			onChanged={() => {
 				void queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) });
 				void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
@@ -112,6 +117,8 @@ function AgentProjectsPanel({
 	projectsError,
 	onRetryProjects,
 	navigationScope,
+	headerIcon,
+	headerAdornment,
 	onChanged,
 }: {
 	agentId: string;
@@ -123,6 +130,8 @@ function AgentProjectsPanel({
 	projectsError?: unknown;
 	onRetryProjects?: () => void;
 	navigationScope: ResourceNavigationScope;
+	headerIcon?: ReactNode;
+	headerAdornment?: ReactNode;
 	onChanged: () => void;
 }) {
 	const api = useApi();
@@ -163,7 +172,8 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project linked");
 		},
-		onError: (error) => toast.error("Couldn't link project", { description: errorMessage(error) }),
+		onError: (error) =>
+			toast.error("Couldn't link project", { description: normalizeApiError(error) }),
 		onSettled: () => {
 			linkExistingLockedRef.current = false;
 		},
@@ -187,7 +197,7 @@ function AgentProjectsPanel({
 			});
 		},
 		onError: (error) =>
-			toast.error("Couldn't create project", { description: errorMessage(error) }),
+			toast.error("Couldn't create project", { description: normalizeApiError(error) }),
 		onSettled: () => {
 			createProjectLockedRef.current = false;
 		},
@@ -222,7 +232,7 @@ function AgentProjectsPanel({
 			toast.success("Project unlinked");
 		},
 		onError: (error) =>
-			toast.error("Couldn't unlink project", { description: errorMessage(error) }),
+			toast.error("Couldn't unlink project", { description: normalizeApiError(error) }),
 	});
 
 	const reorder = useMutation({
@@ -240,7 +250,7 @@ function AgentProjectsPanel({
 		},
 		onError: (error) =>
 			toast.error("Couldn't update Project order", {
-				description: errorMessage(error),
+				description: normalizeApiError(error),
 			}),
 	});
 
@@ -254,13 +264,40 @@ function AgentProjectsPanel({
 		next.splice(targetIndex, 0, item);
 		reorder.mutate(next.map((binding, idx) => ({ binding_id: binding.id, priority: idx + 1 })));
 	};
+	const actionsDisabled = !primary || isLoading || Boolean(bindingsError || projectsError);
+	const header = (
+		<PageHeader
+			title="Projects"
+			titleAdornment={headerAdornment}
+			icon={headerIcon}
+			description="Projects linked to this Agent."
+			actions={
+				<>
+					<Button size="sm" disabled={actionsDisabled} onClick={() => setCreateOpen(true)}>
+						<Plus className="size-3.5" />
+						Create project
+					</Button>
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={actionsDisabled}
+						onClick={() => {
+							setContextProjectId("");
+							setLinkOpen(true);
+						}}
+					>
+						<Link2 className="size-3.5" />
+						Link project
+					</Button>
+				</>
+			}
+		/>
+	);
 
 	if (isLoading) {
 		return (
-			<div className="space-y-4" data-testid="agent-projects-loading">
-				<div className="flex justify-end">
-					<Skeleton className="h-8 w-28 rounded-md" />
-				</div>
+			<div className="space-y-6" data-testid="agent-projects-loading">
+				{header}
 				<div className={HERO_GRID_CLASS}>
 					{Array.from({ length: 3 }).map((_, index) => (
 						<ProjectResourceCardSkeleton key={index} />
@@ -272,48 +309,33 @@ function AgentProjectsPanel({
 
 	if (bindingsError) {
 		return (
-			<ApiErrorPanel
-				error={bindingsError}
-				onRetry={onRetryBindings}
-				title="Couldn't load Projects"
-			/>
+			<div className="space-y-6">
+				{header}
+				<ApiErrorPanel
+					error={bindingsError}
+					onRetry={onRetryBindings}
+					title="Couldn't load Projects"
+				/>
+			</div>
 		);
 	}
 
 	if (projectsError) {
 		return (
-			<ApiErrorPanel
-				error={projectsError}
-				onRetry={onRetryProjects}
-				title="Couldn't load Projects"
-			/>
+			<div className="space-y-6">
+				{header}
+				<ApiErrorPanel
+					error={projectsError}
+					onRetry={onRetryProjects}
+					title="Couldn't load Projects"
+				/>
+			</div>
 		);
 	}
 
 	return (
-		<div className="space-y-4" data-testid="agent-project-stack">
-			<ListToolbar
-				actions={
-					<div className="flex flex-wrap justify-end gap-2">
-						<Button size="sm" disabled={!primary} onClick={() => setCreateOpen(true)}>
-							<Plus className="size-3.5" />
-							Create project
-						</Button>
-						<Button
-							size="sm"
-							variant="outline"
-							disabled={!primary}
-							onClick={() => {
-								setContextProjectId("");
-								setLinkOpen(true);
-							}}
-						>
-							<Link2 className="size-3.5" />
-							Link project
-						</Button>
-					</div>
-				}
-			/>
+		<div className="space-y-6" data-testid="agent-project-stack">
+			{header}
 
 			{!primary ? (
 				<EmptyState variant="inset" description="This Agent's Workspace is not available yet." />
@@ -344,7 +366,7 @@ function AgentProjectsPanel({
 									position={position}
 									navigationScope={navigationScope}
 									actions={
-										<div className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
+										<div className="flex items-center gap-0.5">
 											<Button
 												variant="ghost"
 												size="icon-sm"
@@ -378,7 +400,7 @@ function AgentProjectsPanel({
 												}
 												confirmLabel="Unlink project"
 												destructive
-												onConfirm={() => removeBinding.mutate(binding.id)}
+												onConfirm={() => removeBinding.mutateAsync(binding.id)}
 											>
 												<Button
 													variant="ghost"
@@ -528,7 +550,7 @@ function AgentProjectCard({
 	project: ProjectRow | undefined;
 	position: number;
 	navigationScope: ResourceNavigationScope;
-	actions?: React.ReactNode;
+	actions?: ReactNode;
 }) {
 	const footer = [`Project order ${position + 1}`];
 	if (!project) {

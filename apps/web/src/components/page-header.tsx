@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-interface PageHeaderProps {
+export interface PageHeaderProps {
 	title: string;
 	titleAdornment?: ReactNode;
 	description?: string;
@@ -47,7 +47,7 @@ export function PageHeader({
 				</div>
 			</div>
 			{actions ? (
-				<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
+				<div className="flex w-full min-w-0 flex-wrap items-center gap-2 max-sm:[&_button]:min-h-11 max-sm:[&_[data-slot=button]]:min-h-11 sm:w-auto sm:shrink-0 sm:justify-end">
 					{actions}
 				</div>
 			) : null}

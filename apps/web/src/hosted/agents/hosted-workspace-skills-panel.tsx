@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
@@ -13,7 +13,8 @@ import {
 import { ConnectedWorkspaceSkillsPanel } from "@/components/dashboard/workspace-skills-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
-import { SkillCard } from "@/components/skills/skill-card";
+import { PageHeader, type PageHeaderProps } from "@/components/page-header";
+import { SkillCard, SkillCardSkeleton } from "@/components/skills/skill-card";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -26,7 +27,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { agentRouteTargetsHostedDeployment } from "@/hosted/agent-route";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
@@ -47,6 +47,7 @@ type HostedWorkspaceSkillsPanelProps = {
 	projectId: string;
 	routeSearch?: AgentRouteQuery;
 	deploymentSelector?: string | null;
+	pageHeader?: Omit<PageHeaderProps, "actions">;
 };
 
 export function HostedWorkspaceSkillsPanel(props: HostedWorkspaceSkillsPanelProps) {
@@ -62,6 +63,7 @@ function HostedWorkspaceSkillsPanelContent({
 	projectId,
 	routeSearch,
 	deploymentSelector,
+	pageHeader,
 }: HostedWorkspaceSkillsPanelProps) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -168,40 +170,51 @@ function HostedWorkspaceSkillsPanelContent({
 	});
 
 	const runMutation = (variables: WorkspaceSkillMutation) => {
-		if (actionLockedRef.current) return;
+		if (actionLockedRef.current) return Promise.resolve();
 		actionLockedRef.current = true;
-		mutateSkill.mutate(variables);
+		return mutateSkill.mutateAsync(variables);
 	};
 	const submitInstall = () => {
 		setInstallError(null);
 		try {
 			const request = parseWorkspaceSkillGitHubInput(repoInput);
-			runMutation({ action: "install", ...request, path: request.path ?? undefined });
+			void runMutation({ action: "install", ...request, path: request.path ?? undefined }).catch(
+				() => {},
+			);
 		} catch (error) {
 			setInstallError(error instanceof Error ? error.message : "Enter a valid GitHub repository.");
 		}
 	};
+	const renderPageState = (content: ReactNode, actions?: ReactNode) =>
+		pageHeader ? (
+			<div className="space-y-6">
+				<PageHeader {...pageHeader} actions={actions} />
+				{content}
+			</div>
+		) : (
+			content
+		);
 
 	if (
 		deploymentResolution.isLoading ||
 		(!deploymentResolution.membershipResolved && !deployment && !deploymentResolution.error)
 	) {
-		return <WorkspaceSkillSkeleton />;
+		return renderPageState(<WorkspaceSkillSkeleton />);
 	}
 	if (isConnectedAgent) {
 		const blockingAgentError = shouldBlockQueryError(connectedAgent.error, connectedAgent.data);
 		if (blockingAgentError) {
-			return (
+			return renderPageState(
 				<ApiErrorPanel
 					error={blockingAgentError}
 					onRetry={() => {
 						void connectedAgent.refetch();
 					}}
 					title="Couldn't load the Agent identity"
-				/>
+				/>,
 			);
 		}
-		if (!connectedAgent.data) return <WorkspaceSkillSkeleton />;
+		if (!connectedAgent.data) return renderPageState(<WorkspaceSkillSkeleton />);
 		return (
 			<ConnectedWorkspaceSkillsPanel
 				agentId={agentId}
@@ -220,18 +233,19 @@ function HostedWorkspaceSkillsPanelContent({
 				onRetryProjections={() => {
 					void connectedSkills.refetch();
 				}}
+				pageHeader={pageHeader}
 			/>
 		);
 	}
 	if (deploymentResolution.error || !deployment) {
-		return (
+		return renderPageState(
 			<ApiErrorPanel
 				error={deploymentResolution.error ?? new Error("Hosted deployment not found")}
 				onRetry={() => {
 					void deploymentResolution.refetch();
 				}}
 				title="Couldn't load the Agent runtime"
-			/>
+			/>,
 		);
 	}
 
@@ -239,14 +253,17 @@ function HostedWorkspaceSkillsPanelContent({
 		? status.error
 		: null;
 	const inventory = mergeWorkspaceRuntimeSkills([], status.data?.items ?? []);
-	return (
+	const installAction = canMutate ? (
+		<Button size="sm" onClick={() => setInstallOpen(true)} disabled={mutateSkill.isPending}>
+			<Plus className="size-3.5" />
+			Install skill
+		</Button>
+	) : undefined;
+	return renderPageState(
 		<div className="space-y-4">
-			{canMutate ? (
-				<div className="flex justify-end">
-					<Button onClick={() => setInstallOpen(true)} disabled={mutateSkill.isPending}>
-						<Plus className="size-3.5" />
-						Install skill
-					</Button>
+			{canMutate && !pageHeader ? (
+				<div className="flex justify-end max-sm:[&_[data-slot=button]]:min-h-11">
+					{installAction}
 				</div>
 			) : null}
 			{blockingStatusError ? (
@@ -258,9 +275,8 @@ function HostedWorkspaceSkillsPanelContent({
 					title="Couldn't load skills"
 				/>
 			) : status.isLoading ? (
-				<p className="text-xs text-muted-foreground">Loading skills…</p>
-			) : null}
-			{inventory.length === 0 ? (
+				<WorkspaceSkillSkeleton />
+			) : inventory.length === 0 ? (
 				<EmptyState
 					variant="inset"
 					description="No Skills are available in this Agent's Workspace."
@@ -380,7 +396,8 @@ function HostedWorkspaceSkillsPanelContent({
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
-		</div>
+		</div>,
+		installAction,
 	);
 }
 
@@ -388,7 +405,7 @@ function WorkspaceSkillSkeleton() {
 	return (
 		<div className={HERO_GRID_CLASS}>
 			{Array.from({ length: 3 }).map((_, index) => (
-				<Skeleton key={index} className="h-28 w-full rounded-xl" />
+				<SkillCardSkeleton key={index} />
 			))}
 		</div>
 	);

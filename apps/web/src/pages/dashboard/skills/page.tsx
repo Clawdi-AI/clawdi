@@ -40,10 +40,11 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
@@ -164,7 +165,8 @@ function SkillsPageInner() {
 			void queryClient.invalidateQueries({ queryKey: ["skills", "project"] });
 			toast.success("Skill removed");
 		},
-		onError: (error) => toast.error("Couldn't remove skill", { description: errorMessage(error) }),
+		onError: (error) =>
+			toast.error("Couldn't remove skill", { description: normalizeApiError(error) }),
 	});
 
 	return (
@@ -288,7 +290,7 @@ function SkillsPageInner() {
 									: "No Skills are in this Project yet."
 						}
 						capabilitiesFor={(skill) => skillCapabilities(skill, selectedProject)}
-						onUninstall={writable ? (skillKey) => removeSkill.mutate(skillKey) : undefined}
+						onUninstall={writable ? (skillKey) => removeSkill.mutateAsync(skillKey) : undefined}
 						uninstallPending={removeSkill.isPending}
 					/>
 
@@ -414,7 +416,8 @@ function CreateSkillDialog({
 			onOpenChange(false);
 			toast.success("Skill added");
 		},
-		onError: (error) => toast.error("Couldn't add skill", { description: errorMessage(error) }),
+		onError: (error) =>
+			toast.error("Couldn't add skill", { description: normalizeApiError(error) }),
 	});
 	const reset = () => {
 		setName("");
@@ -533,7 +536,8 @@ function ImportSkillDialog({
 			onOpenChange(false);
 			toast.success("Skill imported");
 		},
-		onError: (error) => toast.error("Couldn't import skill", { description: errorMessage(error) }),
+		onError: (error) =>
+			toast.error("Couldn't import skill", { description: normalizeApiError(error) }),
 	});
 	return (
 		<Dialog

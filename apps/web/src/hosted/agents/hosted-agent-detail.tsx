@@ -62,7 +62,7 @@ import {
 	EntityChoiceCard,
 } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
-import { MemoriesSurface } from "@/components/memories/memories-surface";
+import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
@@ -539,8 +539,8 @@ export function HostedAgentDetail({
 			)}
 		>
 			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
-			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4"}>
-				{isLiveToolTab ? null : (
+			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-6"}>
+				{isLiveToolTab || (activeTab === "projects" && projection.status === "resolved") ? null : (
 					<PageHeader
 						title={activeTabLabel}
 						titleAdornment={
@@ -549,7 +549,9 @@ export function HostedAgentDetail({
 						description={activeTab === "overview" ? undefined : activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
-							interfaceAvailable ? (
+							activeTab === "memories" ? (
+								<MemoriesPageActions />
+							) : interfaceAvailable ? (
 								<Button
 									render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
 									nativeButton={false}
@@ -631,7 +633,14 @@ export function HostedAgentDetail({
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
 					{activeTab === "projects" ? (
 						projection.status === "resolved" ? (
-							<AgentProjectsTab agentId={environmentId} routeSearch={routeSearch} />
+							<AgentProjectsTab
+								agentId={environmentId}
+								routeSearch={routeSearch}
+								headerAdornment={<AgentSourceBadge source="hosted" compact />}
+								headerIcon={
+									ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
+								}
+							/>
 						) : (
 							<ProjectionDependentUnavailable label="Projects" />
 						)

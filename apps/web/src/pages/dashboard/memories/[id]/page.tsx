@@ -16,15 +16,15 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
-import { isApiNotFoundError } from "@/lib/api-errors";
-import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
+import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
+import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 export default function MemoryDetailPage({
 	memoryId,
@@ -47,10 +47,7 @@ export default function MemoryDetailPage({
 		params: { path: { memory_id: memoryId } },
 	});
 
-	// First sentence (or 80 chars) — keeps the breadcrumb readable.
-	const memoryTitle = memory?.content
-		? memory.content.split(/[.\n]/)[0]?.slice(0, 80)?.trim() || null
-		: null;
+	const memoryTitle = memory?.content ? memoryDisplayName(memory.content) : null;
 	useSetBreadcrumbTitle(memoryTitle);
 	const blockingError =
 		isApiNotFoundError(error) || shouldBlockQueryError(error, memory) ? error : null;
@@ -63,10 +60,11 @@ export default function MemoryDetailPage({
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 			void router.navigate({ href: collectionTarget.href });
 		},
-		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
+		onError: (error) =>
+			toast.error("Couldn't delete memory", { description: normalizeApiError(error) }),
 	});
 
-	const onDelete = () => deleteMemory.mutate({ params: { path: { memory_id: memoryId } } });
+	const onDelete = () => deleteMemory.mutateAsync({ params: { path: { memory_id: memoryId } } });
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
@@ -81,7 +79,7 @@ export default function MemoryDetailPage({
 				</Alert>
 			) : null}
 			{blockingError && isApiNotFoundError(blockingError) ? (
-				<DetailNotFound title="Memory not found" message={errorMessage(blockingError)} />
+				<DetailNotFound title="Memory not found" message="This memory is no longer available." />
 			) : blockingError ? (
 				<ApiErrorPanel
 					error={blockingError}
