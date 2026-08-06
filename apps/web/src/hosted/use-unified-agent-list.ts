@@ -97,8 +97,8 @@ export function useUnifiedAgentList({
 		cloudEnvs,
 		includeDeployments: showCloudDeployments,
 	});
-	const resolvedLegacyEnvIds = useLegacyEnvIds();
-	const legacyEnvIds = showLegacyAgents ? resolvedLegacyEnvIds : EMPTY_ENV_IDS;
+	const legacy = useLegacyEnvIds();
+	const legacyEnvIds = showLegacyAgents ? legacy.envIds : EMPTY_ENV_IDS;
 	const selection = useMemo(
 		() =>
 			selectUnifiedAgentList({
@@ -125,11 +125,13 @@ export function useUnifiedAgentList({
 		deletionFailures: hosted.deletionFailures,
 		inventoryStatus: hosted.inventoryStatus,
 		isFetching: hosted.isFetching,
-		isLoading:
-			(showCloudDeployments && hosted.isLoading) ||
-			(showLegacyAgents && resolvedLegacyEnvIds === null),
-		error: hosted.error,
-		refetch: hosted.refetch,
+		isLoading: (showCloudDeployments && hosted.isLoading) || (showLegacyAgents && legacy.isLoading),
+		error: hosted.error ?? (showLegacyAgents ? legacy.error : null),
+		refetch: () =>
+			Promise.all([
+				...(showCloudDeployments ? [hosted.refetch()] : []),
+				...(showLegacyAgents ? [legacy.refetch()] : []),
+			]),
 	};
 }
 

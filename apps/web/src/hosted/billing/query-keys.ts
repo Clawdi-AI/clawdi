@@ -16,6 +16,8 @@ export const billingKeys = {
 	billingHistory: (limit: number) => [...billingHistoryRoot, limit] as const,
 	plans: ["billing", "plans"] as const,
 	deployments: ["billing", "deployments"] as const,
+	workspaceSkills: (deploymentId: string) =>
+		["hosted", "deployments", deploymentId, "skills"] as const,
 	legacyAgentEnvironments: ["billing", "legacy-agent-environments"] as const,
 	me: ["billing", "me"] as const,
 	usage: (days: number | null, agentId: string | null = null) =>

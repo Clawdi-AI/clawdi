@@ -14,7 +14,8 @@ export type HostedInventoryStatus = "resolved" | "loading" | "error" | "unavaila
 export type HostedInventoryResolution = {
 	status: HostedInventoryStatus;
 	/**
-	 * The last successful membership snapshot, with deleted deployments removed.
+	 * The last successful membership snapshot. Deleted deployments retain any
+	 * projected agent claim until the projection is cleaned up.
 	 * `null` means membership has never resolved; an empty array is authoritative.
 	 */
 	deployments: HostedDeployment[] | null;
@@ -37,9 +38,12 @@ export class HostedInventoryUnavailableError extends Error {
 	}
 }
 
-/** Deleted deployments stop owning an agent as soon as the deploy API says so. */
+/** Deleted deployments retain a projected agent claim during asynchronous cleanup. */
 export function isHostedDeploymentMember(deployment: HostedDeployment): boolean {
-	return deploymentStatusFromResource(deployment.resource.status).kind !== "deleted";
+	return (
+		deploymentStatusFromResource(deployment.resource.status).kind !== "deleted" ||
+		runtimeEnvironmentId(deployment) !== undefined
+	);
 }
 
 /** Pending or authoritatively accepted deletion dismisses the agent during cleanup. */

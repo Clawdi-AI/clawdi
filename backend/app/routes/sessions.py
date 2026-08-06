@@ -369,7 +369,7 @@ async def _list_agent_identities(
     envs = result.scalars().all()
     states_by_env: dict[UUID, HostedRuntimeState] = {}
     env_ids = [env.id for env in envs]
-    if env_ids:
+    if not agent_response and env_ids:
         states = (
             (
                 await db.execute(
