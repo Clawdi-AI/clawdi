@@ -12,6 +12,7 @@ import {
 	ExternalLink,
 	Eye,
 	EyeOff,
+	FolderOpen,
 	Info,
 	Link2,
 	Link2Off,
@@ -221,6 +222,7 @@ import {
 	resolveHostedAgentProjection,
 } from "@/hosted/hosted-agent-resolution";
 import {
+	deploymentFilesUrl,
 	type HostedRuntime,
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
@@ -316,6 +318,7 @@ type Runtime = HostedRuntime;
 type HostedAgentTab =
 	| "overview"
 	| "console"
+	| "files"
 	| "terminal"
 	| "sessions"
 	| "memories"
@@ -496,7 +499,9 @@ export function HostedAgentDetail({
 			? null
 			: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
 	const availableAgentTitle = agentTitle ?? "Agent";
-	const activeTab = parseHostedAgentTab(section) ?? "overview";
+	const requestedTab = parseHostedAgentTab(section) ?? "overview";
+	const filesUrl = deploymentFilesUrl(deployment);
+	const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;
 	useSetBreadcrumbTitle(activeTab === "overview" ? agentTitle : agentSectionLabel(activeTab));
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
@@ -521,7 +526,8 @@ export function HostedAgentDetail({
 		!cloudEnvironmentId;
 	const interfaceAvailable =
 		activeTab === "overview" && !showInitialStartingPage && isRunningStatus(deploymentStatus);
-	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
+	const isLiveToolTab =
+		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
 	return (
 		<div
 			data-hosted="true"
@@ -614,6 +620,9 @@ export function HostedAgentDetail({
 					) : null}
 					{deploymentStatus.known && activeTab === "terminal" ? (
 						<TerminalTab deployment={deployment} agentName={availableAgentTitle} />
+					) : null}
+					{deploymentStatus.known && activeTab === "files" && filesUrl ? (
+						<FilesTab deployment={deployment} url={filesUrl} />
 					) : null}
 					{activeTab === "sessions" ? (
 						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
@@ -1434,6 +1443,56 @@ function ConsoleTab({
 				key={`${runtime}:${iframeUrl}`}
 				src={iframeUrl}
 				title={browserUiLabel}
+				className="min-h-[420px] flex-1 border-0 bg-background"
+				allow="clipboard-read; clipboard-write"
+			/>
+		</LiveToolFrame>
+	);
+}
+
+function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: string }) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	const isRunning = isRunningStatus(status);
+	const isStarting = isStartingStatus(status);
+
+	if (status.kind === "stopped") {
+		return <StoppedAgentState deployment={deployment} />;
+	}
+
+	if (!isRunning) {
+		return (
+			<EmptyState
+				icon={FolderOpen}
+				title={isStarting ? startingTitle() : "Agent is not running"}
+				description={
+					isStarting
+						? "Files opens once your agent and its private Workspace service are ready. This page updates automatically."
+						: `Start the agent to browse its Workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				}
+				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
+			/>
+		);
+	}
+
+	return (
+		<LiveToolFrame
+			icon={FolderOpen}
+			title="Files"
+			action={
+				<Button
+					render={<a href={url} target="_blank" rel="noopener noreferrer" />}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+				>
+					Open in new tab
+					<ExternalLink className="size-3.5" />
+				</Button>
+			}
+		>
+			<iframe
+				src={url}
+				title="Files"
 				className="min-h-[420px] flex-1 border-0 bg-background"
 				allow="clipboard-read; clipboard-write"
 			/>

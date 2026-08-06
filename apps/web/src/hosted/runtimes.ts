@@ -51,6 +51,27 @@ export function runtimeConsoleUrl(
 	return endpoint?.runtime === runtime && endpoint.role === "control_ui" ? endpoint.url : null;
 }
 
+export function deploymentFilesUrl(deployment: HostedDeployment): string | null {
+	const value = deployment.files_endpoint?.url;
+	if (!value) return null;
+	try {
+		const url = new URL(value);
+		if (
+			url.protocol !== "https:" ||
+			url.username ||
+			url.password ||
+			url.pathname !== "/" ||
+			url.search ||
+			url.hash
+		) {
+			return null;
+		}
+		return url.toString();
+	} catch {
+		return null;
+	}
+}
+
 export function runtimeAiProviderAuthKind(
 	deployment: HostedDeployment,
 	runtime: HostedRuntime = deploymentRuntime(deployment),

@@ -117,6 +117,7 @@ import {
 	agentNavigationGroups,
 	CANONICAL_NAVIGATION_IDENTITIES,
 	consoleNavigationGroups,
+	hostedAgentVisibleSectionIds,
 } from "@/lib/navigation-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { DEFAULT_SETTINGS_SECTION, type SettingsSectionId } from "@/lib/settings-routes";
@@ -465,12 +466,14 @@ function AgentSectionList({
 function AgentFocusSections({
 	agentId,
 	kind,
+	filesAvailable,
 	activeSection,
 	primaryProject,
 	onNavigate,
 }: {
 	agentId: string;
 	kind: Exclude<AgentChromeKind, "unresolved">;
+	filesAvailable?: boolean;
 	activeSection: AgentSectionId;
 	primaryProject?: AgentPrimaryProjectNavigation | null;
 	onNavigate?: () => void;
@@ -494,6 +497,9 @@ function AgentFocusSections({
 		<AgentSectionList
 			agentId={agentId}
 			variant={kind === "cloud" ? "hosted" : "connected"}
+			visibleSectionIds={
+				kind === "cloud" ? hostedAgentVisibleSectionIds(filesAvailable === true) : undefined
+			}
 			activeSection={activeSection}
 			primaryProject={primaryProject}
 			extraPrimaryItems={extraPrimaryItems}
@@ -596,6 +602,7 @@ function SidebarMainNavigation({
 			<AgentFocusSections
 				agentId={activeAgentId}
 				kind={activeAgentKind}
+				filesAvailable={activeAgentTile.filesAvailable}
 				activeSection={activeSection}
 				primaryProject={primaryProject}
 				onNavigate={onNavigate}

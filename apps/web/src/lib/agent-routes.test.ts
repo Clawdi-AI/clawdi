@@ -41,6 +41,7 @@ describe("agent routes", () => {
 		expect(agentSectionHref("agent 1", "connectors")).toBe("/agents/agent%201/connectors");
 		expect(agentSectionHref("agent 1", "ai")).toBe("/agents/agent%201/model-provider");
 		expect(agentSectionHref("agent 1", "channels")).toBe("/agents/agent%201/channel-links");
+		expect(agentSectionHref("agent 1", "files")).toBe("/agents/agent%201/files");
 		expect(agentSectionHref("agent 1", "settings")).toBe("/agents/agent%201/settings");
 		expect(agentSessionDetailHref("agent 1", "session 1")).toBe(
 			"/agents/agent%201/sessions/session%201",
@@ -220,6 +221,7 @@ describe("agent routes", () => {
 		expect(parseAgentSectionSegment("connectors")).toBe("connectors");
 		expect(parseAgentSectionSegment("model-provider")).toBe("ai");
 		expect(parseAgentSectionSegment("channel-links")).toBe("channels");
+		expect(parseAgentSectionSegment("files")).toBe("files");
 		expect(parseAgentSectionSegment("settings")).toBe("settings");
 		expect(parseAgentSectionSegment("projects")).toBeNull();
 		expect(parseAgentSectionSegment("ai")).toBeNull();
@@ -237,6 +239,7 @@ describe("agent routes", () => {
 			"projects",
 			"vaults",
 			"console",
+			"files",
 			"terminal",
 			"connectors",
 			"ai",
@@ -253,6 +256,7 @@ describe("agent routes", () => {
 			projects: "project-access",
 			vaults: "vaults",
 			console: "console",
+			files: "files",
 			terminal: "terminal",
 			connectors: "connectors",
 			ai: "model-provider",
@@ -265,12 +269,14 @@ describe("agent routes", () => {
 		expect(agentSectionLabel("projects")).toBe("Projects");
 		expect(agentSectionLabel("memories")).toBe("Memories");
 		expect(agentSectionLabel("console")).toBe("Agent Interface");
+		expect(agentSectionLabel("files")).toBe("Files");
 		expect(agentSectionLabel("channels")).toBe("Channels");
 		expect(agentSectionLabel("connectors")).toBe("Connectors");
 		expect(agentSectionLabel("vaults")).toBe("Vaults");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Projects");
 		expect(agentSectionLabelFromSegment("memories")).toBe("Memories");
 		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
+		expect(agentSectionLabelFromSegment("files")).toBe("Files");
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI Providers");
 		expect(agentSectionLabelFromSegment("connectors")).toBe("Connectors");
 		expect(agentSectionLabelFromSegment("vaults")).toBe("Vaults");

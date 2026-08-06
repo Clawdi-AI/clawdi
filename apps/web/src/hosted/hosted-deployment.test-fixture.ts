@@ -31,6 +31,7 @@ type HostedDeploymentFixtureOptions = {
 	cloudEnvironments?: HostedDeployment["clawdi_cloud_environments"];
 	aiProviderAuthKinds?: HostedDeployment["ai_provider_auth_kinds"];
 	runtimeUiEndpoint?: HostedDeployment["runtime_ui_endpoint"];
+	filesEndpoint?: HostedDeployment["files_endpoint"];
 	currentPlanSlug?: HostedDeployment["current_plan_slug"];
 };
 
@@ -93,6 +94,7 @@ export function hostedDeploymentFixture(
 		clawdi_cloud_environments: options.cloudEnvironments,
 		ai_provider_auth_kinds: options.aiProviderAuthKinds ?? { [runtime]: "managed" },
 		runtime_ui_endpoint: options.runtimeUiEndpoint,
+		files_endpoint: options.filesEndpoint,
 		accepted_operation: options.acceptedOperation,
 		commercial_display: {
 			compute_subscription: options.computeSubscription ?? null,

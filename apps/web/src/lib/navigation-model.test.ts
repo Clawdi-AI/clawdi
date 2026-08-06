@@ -9,6 +9,7 @@ import {
 	consoleCommandPaletteItems,
 	consoleNavigationGroups,
 	HOSTED_AGENT_SECTION_IDS,
+	hostedAgentVisibleSectionIds,
 } from "@/lib/navigation-model";
 
 function groupShape(
@@ -169,6 +170,7 @@ describe("sidebar navigation model", () => {
 				separated: false,
 				items: [
 					{ id: "console", label: "Agent Interface" },
+					{ id: "files", label: "Files" },
 					{ id: "terminal", label: "Terminal" },
 					{ id: "channels", label: "Channels" },
 					{ id: "ai", label: "AI Providers" },
@@ -198,11 +200,14 @@ describe("sidebar navigation model", () => {
 			"memories",
 			"connectors",
 			"console",
+			"files",
 			"terminal",
 			"channels",
 			"ai",
 			"settings",
 		]);
+		expect(hostedAgentVisibleSectionIds(false)).not.toContain("files");
+		expect(hostedAgentVisibleSectionIds(true)).toContain("files");
 
 		expect(groupShape(agentNavigationGroups("hosted", ["overview"]))).toEqual([
 			{
