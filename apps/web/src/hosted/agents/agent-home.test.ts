@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { agentRouteTargetsHostedDeployment } from "@/hosted/agent-identity";
 
 const source = readFileSync(new URL("./agent-home.tsx", import.meta.url), "utf8");
 
 describe("hosted agent home composition", () => {
 	test("mounts the existing delete action only in the settled unresolved-hosted branch", () => {
-		const loadingBranch = source.indexOf("if (isLoading)");
+		const loadingBranch = source.indexOf("if (isLoading ||");
 		const errorBranch = source.indexOf("if (error && requestedHostedAgent && !deployment)");
 		const ambiguousBranch = source.indexOf("if (ambiguousMatches.length > 0)");
 		const resolvedBranch = source.indexOf("if (deployment)");
@@ -23,13 +24,15 @@ describe("hosted agent home composition", () => {
 		expect(source.slice(resolvedBranch, unresolvedBranch)).toContain("<HostedAgentDetail");
 	});
 
-	test("derives the orphan delete target from existing route identity only after lookup settles", () => {
-		expect(source).toContain(
-			"requestedHostedAgent && !deployment && ambiguousMatches.length === 0 && !error && !isLoading",
-		);
-		expect(source).toContain(
-			"deploymentSelector ?? (!isCloudEnvironmentId ? environmentId : null)",
-		);
+	test("recovers a bare UUID route from the Cloud environment mapping after lookup settles", () => {
+		const productionEnvironmentId = "54a92911-97ca-5ba8-a25c-f413d99176d3";
+		expect(agentRouteTargetsHostedDeployment(productionEnvironmentId, null, null)).toBe(false);
+		expect(source).toContain('"/v1/environments/{environment_id}"');
+		expect(source).toContain("cloudEnvironment.data?.hosted_deployment_id?.trim()");
+		expect(source).toContain("Boolean(cloudHostedDeploymentId)");
+		expect(source).toContain("!cloudEnvironment.isLoading");
+		expect(source).toContain("!cloudEnvironment.error");
+		expect(source).toContain("deploymentSelector ??\n\t\t\tcloudHostedDeploymentId ??");
 		expect(source).toContain("const unresolvedHostedDeploymentId = unresolvedHostedAgent");
 	});
 });

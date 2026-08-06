@@ -47,6 +47,7 @@ import {
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
+import { useOpenApi } from "@/lib/api";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -84,6 +85,14 @@ export function AgentHome({
 	const router = useRouter();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const deploymentSelector = agentDeploymentSelector(routeSearch);
+	const isCloudEnvironmentId = isCloudEnvId(environmentId);
+	const needsCloudEnvironmentMapping = isCloudEnvironmentId && !deploymentSelector;
+	const cloudEnvironment = useOpenApi().useQuery(
+		"get",
+		"/v1/environments/{environment_id}",
+		{ params: { path: { environment_id: environmentId } } },
+		{ enabled: needsCloudEnvironmentMapping },
+	);
 	const {
 		deployment,
 		environmentId: resolvedEnvId,
@@ -96,18 +105,25 @@ export function AgentHome({
 		error,
 		refetch,
 	} = useAgentDeployment(environmentId, deploymentSelector);
-	const isCloudEnvironmentId = isCloudEnvId(environmentId);
 	const routeSource = agentRouteSource(routeSearch);
 	const requestedFromCloudRedirect = routeSource === "on-clawdi";
-	const requestedHostedAgent = agentRouteTargetsHostedDeployment(
-		environmentId,
-		routeSource,
-		deploymentSelector,
-	);
+	const cloudHostedDeploymentId = needsCloudEnvironmentMapping
+		? cloudEnvironment.data?.hosted_deployment_id?.trim() || null
+		: null;
+	const requestedHostedAgent =
+		agentRouteTargetsHostedDeployment(environmentId, routeSource, deploymentSelector) ||
+		Boolean(cloudHostedDeploymentId);
 	const unresolvedHostedAgent =
-		requestedHostedAgent && !deployment && ambiguousMatches.length === 0 && !error && !isLoading;
+		requestedHostedAgent &&
+		!deployment &&
+		ambiguousMatches.length === 0 &&
+		!error &&
+		!isLoading &&
+		(!needsCloudEnvironmentMapping || (!cloudEnvironment.isLoading && !cloudEnvironment.error));
 	const unresolvedHostedDeploymentId = unresolvedHostedAgent
-		? (deploymentSelector ?? (!isCloudEnvironmentId ? environmentId : null))
+		? (deploymentSelector ??
+			cloudHostedDeploymentId ??
+			(!isCloudEnvironmentId ? environmentId : null))
 		: null;
 	const shouldAutoRefetchUnresolvedHostedAgent =
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
@@ -236,7 +252,7 @@ export function AgentHome({
 
 	// Hold a skeleton until the deployment lookup settles, so a hosted agent
 	// doesn't flash the connected detail (and fire its queries) first.
-	if (isLoading) {
+	if (isLoading || (needsCloudEnvironmentMapping && cloudEnvironment.isLoading && !deployment)) {
 		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 
