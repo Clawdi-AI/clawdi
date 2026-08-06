@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
-	chownSync,
 	copyFileSync,
 	mkdirSync,
 	mkdtempSync,
@@ -12,7 +11,7 @@ import {
 	statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import type { EgressEnginePin } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 
@@ -63,10 +62,7 @@ export function ensureRuntimeMitmproxy(
 		validateMitmproxyPin(pin, options);
 		const cacheDir = join(paths.egressEngineMaintainedRoot, pin.version, normalizedSha);
 		const binaryPath = join(cacheDir, "mitmdump");
-		if (isExecutableFile(binaryPath)) {
-			rootOwnedBestEffort(dirname(paths.egressEngineMaintainedRoot));
-			return ready(pin, cacheDir, binaryPath);
-		}
+		if (isExecutableFile(binaryPath)) return ready(pin, cacheDir, binaryPath);
 
 		const tempRoot = mkdtempSync(join(tmpdir(), "clawdi-egress-engine-"));
 		try {
@@ -86,12 +82,6 @@ export function ensureRuntimeMitmproxy(
 			mkdirSync(cacheDir, { recursive: true, mode: 0o755 });
 			copyFileSync(extractedMitmdump, binaryPath);
 			chmodSync(binaryPath, 0o755);
-			rootOwnedBestEffort(paths.maintainedRoot);
-			rootOwnedBestEffort(dirname(paths.egressEngineMaintainedRoot));
-			rootOwnedBestEffort(paths.egressEngineMaintainedRoot);
-			rootOwnedBestEffort(join(paths.egressEngineMaintainedRoot, pin.version));
-			rootOwnedBestEffort(cacheDir);
-			rootOwnedBestEffort(binaryPath);
 			return ready(pin, cacheDir, binaryPath);
 		} finally {
 			rmSync(tempRoot, { recursive: true, force: true });
@@ -195,19 +185,6 @@ function isExecutableFile(path: string): boolean {
 		return stat.isFile() && (stat.mode & 0o111) !== 0;
 	} catch {
 		return false;
-	}
-}
-
-function rootOwnedBestEffort(path: string): void {
-	try {
-		chownSync(path, 0, 0);
-	} catch {
-		// Non-root local verification cannot chown; hosted converge runs as root.
-	}
-	try {
-		chmodSync(path, 0o755);
-	} catch {
-		// Best effort on non-POSIX filesystems.
 	}
 }
 

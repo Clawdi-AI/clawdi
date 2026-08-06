@@ -1,5 +1,4 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
@@ -38,7 +37,7 @@ export function emptyRuntimeInstallReceipts(): RuntimeInstallReceipts {
 }
 
 export function runtimeInstallReceiptsPath(paths: RuntimePaths): string {
-	return join(paths.serviceStateRoot, "status", "runtime-install-receipts.json");
+	return paths.installReceipts;
 }
 
 export function readRuntimeInstallReceipts(paths: RuntimePaths): RuntimeInstallReceipts | null {

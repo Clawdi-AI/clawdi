@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { detectRuntimeMode, getRuntimePaths, type RuntimeMode } from "./paths";
 
 export interface DeniedCommand {
@@ -36,21 +37,29 @@ export interface HostPolicyCommandDecision {
 	reason?: string;
 }
 
-const HOSTED_POLICY: HostPolicy = {
-	schemaVersion: "clawdi.hostPolicy.v1",
-	mode: "hosted",
-	cliUpdateMode: "system-managed-npm",
-	immutableShim: true,
-	deniedCommands: [
-		{ command: "setup", reason: "runtime setup is managed by clawdi runtime init" },
-		{ command: "teardown", reason: "runtime teardown is managed by the host lifecycle" },
-		{ command: "update", reason: "CLI updates are managed by the hosted runtime installation" },
-	],
-	managedState: ["/var/lib/clawdi/config", "/var/lib/clawdi/sync", "/run/clawdi"],
-	systemWritableState: ["/var/lib/clawdi", "/run/clawdi"],
-	userWritableState: ["/home/clawdi", "/tmp"],
-	ordinaryUserDeniedState: ["/var/lib/clawdi"],
-};
+function hostedPolicy(): HostPolicy {
+	const paths = getRuntimePaths({ mode: "hosted" });
+	return {
+		schemaVersion: "clawdi.hostPolicy.v1",
+		mode: "hosted",
+		cliUpdateMode: "system-managed-npm",
+		immutableShim: true,
+		deniedCommands: [
+			{ command: "setup", reason: "runtime setup is managed by clawdi runtime init" },
+			{ command: "teardown", reason: "runtime teardown is managed by the host lifecycle" },
+			{ command: "update", reason: "CLI updates are managed by the hosted runtime installation" },
+		],
+		managedState: [paths.configurationRoot, dirname(paths.syncState), paths.runRoot],
+		systemWritableState: [
+			paths.configurationRoot,
+			paths.serviceStateRoot,
+			paths.cacheRoot,
+			paths.runRoot,
+		],
+		userWritableState: [paths.userHome, "/tmp"],
+		ordinaryUserDeniedState: [paths.configurationRoot, paths.serviceStateRoot, paths.cacheRoot],
+	};
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -75,7 +84,7 @@ function parseDeniedCommands(value: unknown): Array<string | DeniedCommand> | un
 
 export function readHostPolicy(path = getRuntimePaths().hostPolicy): HostPolicyReadResult {
 	if (detectRuntimeMode() === "hosted") {
-		return { source: "builtin", exists: true, valid: true, policy: HOSTED_POLICY };
+		return { source: "builtin", exists: true, valid: true, policy: hostedPolicy() };
 	}
 	if (!existsSync(path)) return { source: "file", path, exists: false, valid: false };
 
@@ -153,7 +162,7 @@ export function evaluateHostPolicyForCommand(command: string): HostPolicyCommand
 	const runtimeMode = detectRuntimeMode();
 	if (runtimeMode !== "hosted") return { allowed: true, command: normalized, runtimeMode };
 
-	const reason = deniedCommandReason(HOSTED_POLICY, normalized);
+	const reason = deniedCommandReason(hostedPolicy(), normalized);
 	if (reason) {
 		return {
 			allowed: false,

@@ -1,13 +1,5 @@
 import { spawnSync } from "node:child_process";
-import {
-	chmodSync,
-	existsSync,
-	lstatSync,
-	mkdirSync,
-	mkdtempSync,
-	readdirSync,
-	rmSync,
-} from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
@@ -168,12 +160,11 @@ function ensureWorkspaceAcl(
 	if (!/(?:^|\s)\+ACL(?:\s|$)/.test(commandOutput("systemd-tmpfiles", ["--version"]))) {
 		throw new Error("Files service isolation requires systemd-tmpfiles POSIX ACL support");
 	}
-	mkdirSync(paths.runRoot, { recursive: true, mode: 0o755 });
 	const runRoot = lstatSync(paths.runRoot);
 	if (!runRoot.isDirectory() || runRoot.isSymbolicLink() || runRoot.uid !== 0) {
 		throw new Error("Files service isolation requires a trusted root-owned runtime directory");
 	}
-	const temporaryRoot = mkdtempSync(join(paths.runRoot, ".filebrowser-acl-"));
+	const temporaryRoot = mkdtempSync(paths.fileBrowserAclTempPrefix);
 	chmodSync(temporaryRoot, 0o700);
 	try {
 		const config = join(temporaryRoot, "filebrowser.conf");

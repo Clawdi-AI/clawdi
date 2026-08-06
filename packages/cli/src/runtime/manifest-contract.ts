@@ -213,7 +213,6 @@ export const fileBrowserCompanionSchema = z
 		baseURL: z.literal("/"),
 		healthPath: z.literal("/health"),
 		sourceRoot: z.literal("/home/clawdi"),
-		stateRoot: z.literal("/var/lib/clawdi/filebrowser"),
 		assets: z
 			.object({
 				amd64: fileBrowserAssetSchema.extend({

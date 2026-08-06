@@ -5,6 +5,7 @@ import {
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	hostedCliPackageSpecSchema,
 } from "./manifest-contract";
+import { getRuntimePaths } from "./paths";
 
 export const runtimeApplyIdentitySchema = z
 	.object({
@@ -39,7 +40,7 @@ export function runtimeApplyIdentitiesEqual(
 	);
 }
 
-export const HOSTED_RUNTIME_CONTEXT_FILE = "/etc/clawdi/runtime-context.json";
+export const HOSTED_RUNTIME_CONTEXT_FILE = getRuntimePaths({ mode: "hosted" }).runtimeContextFile;
 const TEST_RUNTIME_CONTEXT_FILE_ENV = "CLAWDI_RUNTIME_TEST_CONTEXT_FILE";
 
 const runtimeBootstrapSecretSchema = z

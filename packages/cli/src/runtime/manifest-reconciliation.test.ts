@@ -577,7 +577,6 @@ function fileBrowserCompanion(accessRevision = "a".repeat(64)): FileBrowserCompa
 		baseURL: "/",
 		healthPath: "/health",
 		sourceRoot: "/home/clawdi",
-		stateRoot: "/var/lib/clawdi/filebrowser",
 		assets: {
 			amd64: {
 				url: `https://github.com/gtsteffaniak/filebrowser/releases/download/${FILE_BROWSER_VERSION}/linux-amd64-filebrowser`,
@@ -4494,7 +4493,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.managedSecretCacheFile,
 				paths.appliedState,
 				paths.oauthCredentialRoot,
-				join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"),
+				paths.installReceipts,
 				paths.runConfigRoot,
 				paths.egressProfileRoot,
 				paths.installInventory,
@@ -4510,7 +4509,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.egressAddon,
 				paths.egressTransparentEnv,
 				paths.egressSystemCaFile,
-				join(paths.serviceStateRoot, "config", "runtime-live-sync-agents.json"),
+				paths.liveSyncEnvironmentIndex,
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
 				join(paths.systemdSystemRoot, "clawdi-daemon.service"),
 				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
@@ -4560,12 +4559,16 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		mkdirSync(paths.projectionRoot, { recursive: true });
 		chmodSync(paths.projectionRoot, 0o777);
-		expect(() =>
-			convergeRuntimeManifest(manifestLoad(baseManifest(paths, {}), "inline-writable-root"), paths),
-		).toThrow(`runtime managed directory is group/world writable: ${paths.projectionRoot}`);
+		expect(
+			convergeRuntimeManifest(
+				manifestLoad(baseManifest(paths, {}), "inline-writable-private-root"),
+				paths,
+			).installErrors,
+		).toEqual([]);
 
 		for (const key of ["runConfigRoot", "systemdEnvRoot"] as const) {
 			const unsafePaths = tempRuntimePaths();
+			chmodSync(dirname(unsafePaths.serviceStateRoot), 0o755);
 			mkdirSync(unsafePaths[key], { recursive: true });
 			chmodSync(unsafePaths[key], 0o777);
 			expect(() =>
@@ -5241,8 +5244,20 @@ exit 42
 		expect(unit).toContain(`Group=${FILE_BROWSER_SERVICE_GROUP}`);
 		expect(unit).toContain("ProtectHome=tmpfs");
 		expect(unit).toContain(`BindPaths=${paths.userHome}`);
-		expect(unit).toContain(`ReadWritePaths=${paths.userHome} ${paths.fileBrowserStateRoot}`);
-		expect(unit).toContain(`ReadOnlyPaths=${paths.fileBrowserConfig} ${active}`);
+		expect(unit).toContain("StateDirectory=clawdi-files");
+		expect(unit).toContain("StateDirectoryMode=0700");
+		expect(unit).toContain("RuntimeDirectory=clawdi-files");
+		expect(unit).toContain("RuntimeDirectoryMode=0700");
+		expect(unit).toContain(`LoadCredential=filebrowser.yaml:${paths.fileBrowserConfig}`);
+		expect(unit).toContain(`ReadWritePaths=${paths.userHome}`);
+		expect(unit).toContain(`BindReadOnlyPaths=${active}:${paths.fileBrowserServiceBinary}:norbind`);
+		expect(unit).toContain('ExecStartPre="/bin/sh" "-c"');
+		expect(unit).toContain(paths.fileBrowserServiceBinary);
+		expect(unit).toContain(FILE_BROWSER_VERSION);
+		expect(unit).toContain(FILE_BROWSER_COMMIT.slice(0, 7));
+		expect(unit).not.toContain(`ReadOnlyPaths=${paths.fileBrowserConfig}`);
+		expect(unit).toContain(`ExecStart="${paths.fileBrowserServiceBinary}"`);
+		expect(unit).toContain(`"-c" "\${CREDENTIALS_DIRECTORY}/filebrowser.yaml"`);
 		expect(unit).toContain(`NoExecPaths=${paths.userHome} ${paths.fileBrowserStateRoot}`);
 		expect(unit).toContain("ProtectSystem=strict");
 		expect(unit).toContain("CapabilityBoundingSet=");
@@ -5291,10 +5306,7 @@ exit 42
 			join(paths.systemdSystemRoot, "clawdi-files.service"),
 			"utf8",
 		);
-		const originalReceipts = readFileSync(
-			join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"),
-			"utf8",
-		);
+		const originalReceipts = readFileSync(paths.installReceipts, "utf8");
 
 		const desiredBinary = "desired Files binary\n";
 		const hashFailureManifest = fileBrowserManifest(paths, {
@@ -5323,9 +5335,7 @@ exit 42
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
 			originalUnit,
 		);
-		expect(
-			readFileSync(join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"), "utf8"),
-		).toBe(originalReceipts);
+		expect(readFileSync(paths.installReceipts, "utf8")).toBe(originalReceipts);
 
 		const readinessManifest = fileBrowserManifest(paths, {
 			generation: 3,
@@ -5354,9 +5364,7 @@ exit 42
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
 			originalUnit,
 		);
-		expect(
-			readFileSync(join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"), "utf8"),
-		).toBe(originalReceipts);
+		expect(readFileSync(paths.installReceipts, "utf8")).toBe(originalReceipts);
 	});
 
 	test("retains only the desired Files candidate after authority commit", () => {

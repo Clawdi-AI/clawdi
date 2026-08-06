@@ -133,7 +133,6 @@ class HostedFileBrowserCompanion(BaseModel):
     baseURL: Literal["/"]
     healthPath: Literal["/health"]
     sourceRoot: Literal["/home/clawdi"]
-    stateRoot: Literal["/var/lib/clawdi/filebrowser"]
     assets: HostedFileBrowserAssets
     auth: HostedFileBrowserAuth
 

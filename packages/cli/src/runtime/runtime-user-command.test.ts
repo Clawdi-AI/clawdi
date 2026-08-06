@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import {
 	buildNumericUserCommand,
 	buildRuntimeUserCommand,
+	clearTenantToolLocationOverrides,
 	commandExists,
 	createPrivilegeDropResolver,
 	runRuntimeUserCommand,
@@ -12,6 +13,33 @@ import {
 test("command existence follows shell resolution", () => {
 	expect(commandExists("command")).toBe(true);
 	expect(commandExists("clawdi-command-that-does-not-exist")).toBe(false);
+});
+
+test("tenant tools inherit HOME but not platform location overrides", () => {
+	const env: NodeJS.ProcessEnv = {
+		HOME: "/home/clawdi",
+		NPM_CONFIG_PREFIX: "/platform/npm",
+		npm_config_cache: "/platform/cache",
+		XDG_CONFIG_HOME: "/platform/config",
+		XDG_CACHE_HOME: "/platform/xdg-cache",
+		XDG_DATA_HOME: "/platform/data",
+		XDG_STATE_HOME: "/platform/state",
+		HERMES_HOME: "/platform/hermes",
+		UV_CACHE_DIR: "/platform/uv-cache",
+		UV_PYTHON_INSTALL_DIR: "/platform/python",
+		UV_PYTHON_BIN_DIR: "/platform/python-bin",
+		UV_TOOL_DIR: "/platform/uv-tools",
+		UV_TOOL_BIN_DIR: "/platform/uv-tool-bin",
+		UV_MANAGED_PYTHON: "1",
+		CLAWDI_API_URL: "https://api.example.test",
+	};
+
+	clearTenantToolLocationOverrides(env);
+
+	expect(env).toEqual({
+		HOME: "/home/clawdi",
+		CLAWDI_API_URL: "https://api.example.test",
+	});
 });
 
 const NUMERIC_PRIVILEGE_TOOL = ["set", "priv"].join("");
