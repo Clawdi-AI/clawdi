@@ -67,6 +67,53 @@ else:
 }
 
 describe("Hermes exact-source Workspace Skill driver", () => {
+	test("passes the signed Project Skill URL to Hermes native install", () => {
+		root = mkdtempSync(join(tmpdir(), "hosted-hermes-project-skill-"));
+		delete process.env.CLAWDI_RUNTIME_USER;
+		const home = join(root, "home");
+		const appRoot = fakeHermesApp(home);
+		const sourceDir = join(root, "source", "review-pr");
+		mkdirSync(sourceDir, { recursive: true });
+		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
+		process.env.FAKE_HERMES_SOURCE = sourceDir;
+		const commandLog = join(root, "hermes.log");
+		process.env.FAKE_HERMES_LOG = commandLog;
+		const archive = join(root, "review-pr.tar.gz");
+		const packed = spawnSync("tar", ["-czf", archive, "-C", dirname(sourceDir), "review-pr"]);
+		if (packed.status !== 0) throw new Error("test tar creation failed");
+		const installUrl =
+			"https://cloud-api.example.test/v1/runtime/project-skill-files/11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333/" +
+			`${"a".repeat(64)}/${"f".repeat(64)}/SKILL.md`;
+		const skill: PreparedHostedSourcedSkill = {
+			skillId: "review-pr",
+			source: {
+				type: "project",
+				projectId: "22222222-2222-4222-8222-222222222222",
+				contentHash: "a".repeat(64),
+				archiveUrl: `https://cloud-api.example.test/v1/runtime/project-skill-archives/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333/${"a".repeat(64)}/${"f".repeat(64)}/review-pr.tar.gz`,
+				installUrl,
+			},
+			sourceIdentity: [
+				"project",
+				"review-pr",
+				"22222222-2222-4222-8222-222222222222",
+				"a".repeat(64),
+			].join("\0"),
+			archiveSha256: "b".repeat(64),
+			tarBytes: readFileSync(archive),
+		};
+
+		expect(
+			hostedHermesSkillExactSourceDriver.install({
+				home,
+				appRoot,
+				skill,
+				previouslyReserved: false,
+			}),
+		).toBe("installed");
+		expect(readFileSync(commandLog, "utf8")).toContain(`skills install ${installUrl}`);
+	});
+
 	test("requires paired ownership and uses Hermes install and uninstall semantics", async () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-skill-"));
 		delete process.env.CLAWDI_RUNTIME_USER;

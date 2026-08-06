@@ -6,6 +6,7 @@ import { Brain, Laptop, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { TimeTooltip } from "@/components/time-tooltip";
@@ -69,6 +70,7 @@ export default function MemoryDetailPage({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
 			{scope.kind === "agent" ? (
 				<Alert>
 					<Brain />

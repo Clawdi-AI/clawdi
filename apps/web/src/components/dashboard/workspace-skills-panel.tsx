@@ -55,11 +55,11 @@ export function ConnectedWorkspaceSkillsPanel({
 	return (
 		<div className="space-y-4">
 			<Alert>
-				<AlertTitle>Agent filesystem is the install authority</AlertTitle>
+				<AlertTitle>Install on the Agent</AlertTitle>
 				<AlertDescription className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						This browser cannot write the connected Agent's local files. Run the CLI command on the
-						Agent machine; synced Cloud cards below remain read-only projections.
+						This connected Agent manages its own files. Run the command on the Agent machine; Skills
+						appear here after the next sync.
 					</span>
 					<Button
 						size="sm"
@@ -76,7 +76,7 @@ export function ConnectedWorkspaceSkillsPanel({
 				<ApiErrorPanel
 					error={projectionError}
 					onRetry={onRetryProjections}
-					title="Cloud Skill projections unavailable"
+					title="Couldn't load synced Skills"
 				/>
 			) : isLoading ? (
 				<div className={HERO_GRID_CLASS}>
@@ -88,7 +88,7 @@ export function ConnectedWorkspaceSkillsPanel({
 				<EmptyState
 					variant="inset"
 					icon={TerminalSquare}
-					description="No Agent-synced Skill projections yet. Install with the CLI, then sync the Agent."
+					description="No Skills have synced from this Agent yet. Install one with the CLI, then sync the Agent."
 				/>
 			) : (
 				<div className={HERO_GRID_CLASS}>
@@ -98,7 +98,7 @@ export function ConnectedWorkspaceSkillsPanel({
 							skill={skill}
 							cloudSkill={skill}
 							readOnly
-							readOnlyLabel="Agent projection · Read-only"
+							readOnlyLabel="Synced from Agent · Read-only"
 							actions={<ConnectedSkillRemoveAction skill={skill} agentType={agentType} />}
 							skillLink={(cloudSkill) =>
 								agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId, routeSearch)
@@ -119,8 +119,7 @@ export function ConnectedWorkspaceSkillsPanel({
 					<DialogHeader>
 						<DialogTitle>Install skill</DialogTitle>
 						<DialogDescription>
-							Enter a GitHub Skill path, then run the generated command on the connected Agent
-							machine.
+							Enter a GitHub Skill path, then run the generated command on the Agent machine.
 						</DialogDescription>
 					</DialogHeader>
 					<div className="space-y-3">
@@ -174,7 +173,7 @@ function ConnectedSkillRemoveAction({
 					<DialogHeader>
 						<DialogTitle>Uninstall skill</DialogTitle>
 						<DialogDescription>
-							Run this command on the connected Agent machine. This Skill is managed on the Agent.
+							Run this command on the Agent machine. The Skill belongs to that Workspace.
 						</DialogDescription>
 					</DialogHeader>
 					<CliCommand command={workspaceSkillRemoveCommand(skill.skill_key, agentType)} />

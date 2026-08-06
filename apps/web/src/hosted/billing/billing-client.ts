@@ -20,6 +20,7 @@ import type {
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
 	DeploymentCreateRequest,
+	DeploymentDeleteConvergedResponse,
 	DeploymentDeleteRequest,
 	DeploymentDesiredLifecycle,
 	DeploymentOperation,
@@ -60,6 +61,7 @@ type BillingFetch = (request: Request) => Promise<Response>;
 type BillingAuthTokenGetter = () => Promise<string | null | undefined>;
 
 export type AcceptedOperation = { deploymentId: string; operation: DeploymentOperation };
+export type DeploymentDeleteResult = AcceptedOperation | { deploymentId: string; operation: null };
 
 export type BillingClientOptions = {
 	fetch?: BillingFetch;
@@ -164,6 +166,18 @@ function strongResourceEtag(resourceVersion: string): string {
 
 function isPreconditionConflict(error: unknown): error is BillingApiError {
 	return error instanceof BillingApiError && (error.status === 409 || error.status === 412);
+}
+
+function isNotFound(error: unknown): error is BillingApiError {
+	return error instanceof BillingApiError && error.status === 404;
+}
+
+function acceptDeploymentDelete(
+	response: DeploymentOperation | DeploymentDeleteConvergedResponse,
+): DeploymentDeleteResult {
+	return "status" in response
+		? acceptDeclarativeOperation({ deploymentId: response.deployment_id, operation: null })
+		: acceptDeclarativeOperation({ operation: response });
 }
 
 function isWorkspaceSkillResourceVersionConflict(error: unknown): error is BillingApiError {
@@ -411,6 +425,49 @@ export function createBillingClient(
 		}
 		throw new DeploymentConflictError();
 	};
+	const deleteDeployment = async (
+		id: string,
+		body: DeploymentDeleteRequest,
+		idempotencyKey: string,
+		lastKnownResourceVersion?: string,
+	): Promise<DeploymentDeleteResult> => {
+		let resourceVersion: string;
+		try {
+			resourceVersion = (await getDeployment(id)).resource.metadata.resourceVersion;
+		} catch (error) {
+			if (!isNotFound(error) || !lastKnownResourceVersion) throw error;
+			resourceVersion = lastKnownResourceVersion;
+		}
+
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			const headers: MutationHeaders = {
+				"Idempotency-Key": idempotencyKey,
+				"If-Match": strongResourceEtag(resourceVersion),
+			};
+			try {
+				return acceptDeploymentDelete(
+					unwrapDeploy(
+						await api.DELETE("/v2/deployments/{deployment_id}", {
+							params: { path: { deployment_id: id }, header: headers },
+							body,
+						}),
+					),
+				);
+			} catch (error) {
+				if (!isPreconditionConflict(error)) throw error;
+				if (attempt === 0) {
+					try {
+						resourceVersion = (await getDeployment(id)).resource.metadata.resourceVersion;
+					} catch (readError) {
+						if (!isNotFound(readError)) throw readError;
+					}
+					continue;
+				}
+				throw new DeploymentConflictError({ cause: error });
+			}
+		}
+		throw new DeploymentConflictError();
+	};
 	const listWorkspaceSkills = async (
 		deploymentId: string,
 	): Promise<HostedWorkspaceSkillListResponse> =>
@@ -642,13 +699,7 @@ export function createBillingClient(
 					body,
 				}),
 			),
-		deleteDeployment: async (id: string, body: DeploymentDeleteRequest, idempotencyKey: string) =>
-			acceptDeploymentMutation(id, idempotencyKey, (headers) =>
-				api.DELETE("/v2/deployments/{deployment_id}", {
-					params: { path: { deployment_id: id }, header: headers },
-					body,
-				}),
-			),
+		deleteDeployment,
 	};
 }
 

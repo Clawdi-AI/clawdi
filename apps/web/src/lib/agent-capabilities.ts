@@ -1,5 +1,6 @@
 import {
-	AGENT_OVERVIEW_RESOURCE_SECTION_IDS,
+	AGENT_OVERVIEW_WORKSPACE_SECTION_IDS,
+	AGENT_SHARED_SECTION_IDS,
 	type AgentNavigationVariant,
 	type AgentSectionId,
 } from "@/lib/navigation-model";
@@ -13,7 +14,7 @@ export type AgentOverviewModuleId =
 	| "model-provider"
 	| "channels";
 
-export type AgentOverviewGroupId = "resources" | "operate";
+export type AgentOverviewGroupId = "workspace" | "shared" | "operate";
 
 export type AgentOverviewModule = {
 	id: AgentOverviewModuleId;
@@ -27,7 +28,12 @@ export type AgentOverviewGroup = {
 	modules: readonly AgentOverviewModule[];
 };
 
-const SHARED_RESOURCES = AGENT_OVERVIEW_RESOURCE_SECTION_IDS.map((section) => ({
+const WORKSPACE_RESOURCES = AGENT_OVERVIEW_WORKSPACE_SECTION_IDS.map((section) => ({
+	id: section,
+	section,
+}));
+
+const SHARED_RESOURCES = AGENT_SHARED_SECTION_IDS.map((section) => ({
 	id: section,
 	section,
 }));
@@ -35,16 +41,28 @@ const SHARED_RESOURCES = AGENT_OVERVIEW_RESOURCE_SECTION_IDS.map((section) => ({
 const AGENT_OVERVIEW_GROUPS = {
 	connected: [
 		{
-			id: "resources",
-			label: "Resources",
+			id: "workspace",
+			label: "Workspace",
+			layout: "three-column",
+			modules: WORKSPACE_RESOURCES,
+		},
+		{
+			id: "shared",
+			label: "Shared",
 			layout: "three-column",
 			modules: SHARED_RESOURCES,
 		},
 	],
 	hosted: [
 		{
-			id: "resources",
-			label: "Resources",
+			id: "workspace",
+			label: "Workspace",
+			layout: "three-column",
+			modules: WORKSPACE_RESOURCES,
+		},
+		{
+			id: "shared",
+			label: "Shared",
 			layout: "three-column",
 			modules: SHARED_RESOURCES,
 		},

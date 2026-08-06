@@ -29,11 +29,14 @@ from app.core.auth import (
     AuthContext,
     get_auth,
     invalidate_api_key_auth_cache,
+    is_connected_agent_principal,
     require_scope,
     require_web_auth,
 )
 from app.core.config import settings
 from app.core.database import get_session, runtime_snapshot_session
+from app.models.agent_project_binding import AgentProjectBinding
+from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
@@ -89,6 +92,7 @@ from app.schemas.session import (
 )
 from app.services import memory_extraction
 from app.services.agent_environments import (
+    clear_connected_agent_registration,
     local_machine_registration_key,
     register_agent_environment,
 )
@@ -253,12 +257,32 @@ async def _register_agent_identity(
             os_name=body.os,
             sort_order=await _next_environment_sort_order(db, auth.user_id),
             registration_key=registration_key,
+            commit=False,
         )
     except IntegrityError:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "concurrent registration race; retry the request",
         ) from None
+    connected_registration = False
+    if is_connected_agent_principal(auth):
+        hosted_state = await db.get(HostedRuntimeState, registered.env.id)
+        environment_bound_key_id = await db.scalar(
+            select(ApiKey.id).where(ApiKey.environment_id == registered.env.id).limit(1)
+        )
+        connected_registration = hosted_state is None and environment_bound_key_id is None
+    if connected_registration:
+        # This is origin evidence, not capability evidence. A current Connected
+        # Agent must still renew its separate short-lived Project Skill lease.
+        # Existing Hosted V2 state or a Legacy V1 environment-bound key is
+        # positive deployment evidence and prevents an account-level CLI token
+        # from reclassifying that durable Agent identity.
+        registered.env.connected_agent_registered_at = datetime.now(UTC)
+    else:
+        # A managed or environment-bound registration is positive evidence
+        # against the Connected runtime shape; do not retain an earlier lease.
+        clear_connected_agent_registration(registered.env)
+    await db.commit()
     return EnvironmentCreatedResponse(id=str(registered.env.id))
 
 
@@ -293,6 +317,7 @@ async def _list_agent_identities(
     db: AsyncSession,
     *,
     agent_response: Literal[True],
+    project_id: UUID | None = None,
 ) -> list[AgentResponse] | Response: ...
 
 
@@ -304,6 +329,7 @@ async def _list_agent_identities(
     db: AsyncSession,
     *,
     agent_response: Literal[False],
+    project_id: UUID | None = None,
 ) -> list[EnvironmentResponse] | Response: ...
 
 
@@ -314,6 +340,7 @@ async def _list_agent_identities(
     db: AsyncSession,
     *,
     agent_response: bool,
+    project_id: UUID | None = None,
 ) -> list[AgentResponse] | list[EnvironmentResponse] | Response:
     # Bound api_keys (deploy keys) only see their own env.
     # Returning every env of the user would let a leaked deploy
@@ -333,6 +360,11 @@ async def _list_agent_identities(
     )
     if bound_env is not None:
         stmt = stmt.where(AgentEnvironment.id == bound_env)
+    if project_id is not None:
+        stmt = stmt.join(
+            AgentProjectBinding,
+            AgentProjectBinding.agent_id == AgentEnvironment.id,
+        ).where(AgentProjectBinding.project_id == project_id)
     result = await db.execute(stmt)
     envs = result.scalars().all()
     states_by_env: dict[UUID, HostedRuntimeState] = {}
@@ -367,10 +399,21 @@ async def _list_agent_identities(
 async def list_agents(
     request: Request,
     response: Response,
+    project_id: UUID | None = Query(
+        default=None,
+        description="Return only the caller's Agents linked to this exact Project.",
+    ),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentResponse] | Response:
-    return await _list_agent_identities(request, response, auth, db, agent_response=True)
+    return await _list_agent_identities(
+        request,
+        response,
+        auth,
+        db,
+        agent_response=True,
+        project_id=project_id,
+    )
 
 
 @router.get(

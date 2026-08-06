@@ -90,7 +90,7 @@ export function ShareProjectDialog({
 	const trigger = children ?? (
 		<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
 			<Share2 className="mr-2 size-4" />
-			Share Project
+			Share project
 		</Button>
 	);
 
@@ -108,7 +108,7 @@ export function ShareProjectDialog({
 					<DialogDescription>
 						{isShareableProject
 							? "Share this Project without sharing ownership. People join as Viewers with read access; agent use is a separate choice they make later."
-							: "Only Projects you create can be shared with people. Global Projects and Workspaces are created automatically and cannot be shared."}
+							: "Sharing is available for Projects you create. An Agent's private Workspace cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
@@ -138,14 +138,14 @@ export function ShareProjectDialog({
 						</section>
 						<p className="border-t pt-3 text-xs text-muted-foreground">
 							Everyone joins as a viewer: they read skills and key names here, and their agents can
-							use key values through the CLI. The dashboard never reveals values, and only you can
+							use key values when the Project is linked. Key values stay protected, and only you can
 							edit anything.
 						</p>
 					</div>
 				) : (
 					<Alert>
 						<AlertCircle />
-						<AlertTitle>Managed Projects are not shareable</AlertTitle>
+						<AlertTitle>This resource cannot be shared</AlertTitle>
 						<AlertDescription>
 							Only Projects you create can have members, invitations, and share links.
 						</AlertDescription>
@@ -629,8 +629,9 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 				</Button>
 			</form>
 			<p className="text-xs text-muted-foreground">
-				Invitees join as Viewers with read access to skills and Vault values through CLI runtime
-				reads. After signing in, they accept from the top-right Notification Center bell.
+				Invitees join as Viewers with read access to Skills and key names. Key values stay protected
+				and can be used by their linked Agents. After signing in, they accept from the top-right
+				Notification Center bell.
 			</p>
 			<Separator />
 			{invites.isLoading ? (

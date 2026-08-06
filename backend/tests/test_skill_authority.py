@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -440,7 +441,10 @@ async def test_agent_project_cloud_content_and_install_mutations_fail_closed(
     environment_project,
 ):
     content_payload = {
-        "content": "---\nname: denied\ndescription: denied\n---\n# Denied\n",
+        "name": "Denied",
+        "description": "denied",
+        "instructions": "# Denied",
+        "content_hash": "0" * 64,
     }
     browser_content = await client.put(
         f"/v1/projects/{environment_project.id}/skills/denied/content",
@@ -1037,7 +1041,7 @@ async def test_dashboard_agent_disconnect_preserves_agent_project_rows_and_files
 
 
 @pytest.mark.asyncio
-async def test_concurrent_agent_upload_and_delete_cannot_resurrect_row_or_archive(
+async def test_agent_upload_storage_io_holds_no_db_lock_and_cannot_resurrect_deleted_agent(
     engine: AsyncEngine,
     db_session: AsyncSession,
     seed_user: User,
@@ -1046,9 +1050,15 @@ async def test_concurrent_agent_upload_and_delete_cannot_resurrect_row_or_archiv
 ):
     agent_id = environment_project.origin_environment_id
     archive = _skill_archive("delete-race")
+    content_hash = _compute_file_tree_hash(archive, "delete-race")
     auth = _api_key_auth(seed_user)
     file_store = get_file_store()
-    file_key = skill_routes._file_key(seed_user.id, environment_project.id, "delete-race")
+    file_key = skill_routes._file_key(
+        seed_user.id,
+        environment_project.id,
+        "delete-race",
+        content_hash,
+    )
     put_started = asyncio.Event()
     release_put = asyncio.Event()
     monkeypatch.setattr(
@@ -1087,10 +1097,11 @@ async def test_concurrent_agent_upload_and_delete_cannot_resurrect_row_or_archiv
     upload_task = asyncio.create_task(upload())
     await asyncio.wait_for(put_started.wait(), timeout=2)
     delete_task = asyncio.create_task(delete_agent())
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(asyncio.shield(delete_task), timeout=0.05)
+    await asyncio.wait_for(delete_task, timeout=1)
     release_put.set()
-    await asyncio.gather(upload_task, delete_task)
+    with pytest.raises(HTTPException) as upload_error:
+        await upload_task
+    assert upload_error.value.status_code == 404
 
     async with session_factory() as session:
         assert await session.get(AgentEnvironment, agent_id) is None
@@ -1107,7 +1118,10 @@ async def test_concurrent_agent_upload_and_delete_cannot_resurrect_row_or_archiv
             .all()
         )
         assert surviving_rows == []
-    assert await file_store.exists(file_key) is False
+    # A race loser may leave only its immutable, unreachable object. It cannot
+    # overwrite a committed identity or resurrect the deleted projection.
+    assert await file_store.exists(file_key) is True
+    await file_store.delete(file_key)
 
 
 @pytest.mark.asyncio

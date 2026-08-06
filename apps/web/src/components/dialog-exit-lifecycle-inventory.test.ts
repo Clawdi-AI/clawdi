@@ -33,6 +33,7 @@ const COMPLETION_ONLY = [
 	"hosted/v2/ai-providers/provider-connection-test.tsx",
 	"hosted/v2/channels/connect-bot-dialog.tsx",
 	"pages/dashboard/projects/page.tsx",
+	"pages/dashboard/skills/page.tsx",
 	"pages/dashboard/vault/[slug]/page.tsx",
 ] as const;
 

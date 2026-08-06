@@ -101,9 +101,9 @@ Skills root is authoritative, and Cloud stores a read-only projection. Boot,
 watcher, and periodic scans compare local inventory with an identity-fenced
 claim ledger and durably queue the latest push or delete for each Skill key.
 Cloud list failures and truncated results never authorize deletion. SSE only
-wakes a local rescan; Cloud changes and deletes never write or remove local
-Agent Skill files. `clawdi pull` remains for explicitly Cloud-owned
-workspace/personal Project workflows, not Agent Projects.
+wakes a local rescan; Cloud changes and deletes never write or remove Agent
+Workspace Skill files. `clawdi pull` remains for explicitly Cloud-owned user
+Project workflows, not Agent Workspace projections.
 
 Target selection:
 
@@ -143,13 +143,42 @@ history.
 
 ## Projects And Agent Use
 
-Projects are resource and collaboration boundaries. Kinds are `personal`,
-`environment`, and `workspace`.
+The product domain has two deliberately distinct subjects:
 
-Every Agent has one fixed Agent Project through `default_project_id` and a
-`primary` `agent_project_bindings` row. Extra Projects are ordered `context`
-bindings. Sharing grants Project membership only; using a shared Project at
-runtime requires an explicit Agent attachment.
+- **Workspace** is the private system Project permanently owned and used by one
+  Agent. It contains that Agent's filesystem-authored Skill projections and
+  attached Vault access. It cannot be renamed, shared, archived, or unlinked.
+- **Project** is a user-created, optionally shareable resource bundle. It owns
+  Cloud-authored Skills and attaches account-owned Vaults. Memories,
+  Connectors, Channels, and AI Providers are outside Projects.
+
+The database retains compatibility kinds whose names predate this product
+language: `environment` backs an Agent Workspace, `workspace` backs a user
+Project, and `personal` is a hidden compatibility container. Routes and domain
+adapters translate this inversion; browser surfaces must not display those
+kind names or offer the compatibility container as a Project.
+
+Every Agent has one fixed Workspace through `default_project_id` and a
+`primary` `agent_project_bindings` row. User Projects are ordered `context`
+bindings. Sharing grants existing read access only; Link Project is an explicit
+whole-bundle action. A linked Agent uses every Skill in the Project and resolves
+its attached Vaults. Link, unlink, Project Skill changes, and Project archival
+invalidate the affected managed Agent desired state.
+
+Skill keys have no precedence across the Agent Workspace and linked Projects.
+The link or write transaction rejects a duplicate key before changing the
+binding, Skill row, or object-store content and tells the user to remove or
+rename one copy. A connected Agent must advertise the exact Project Skill
+reconcile capability in every heartbeat. Hosted requires an allowlisted exact
+CLI package specification plus a fresh, successful observation of that CLI
+applying the current generation. Missing, stale, or downgraded evidence fails
+closed with an update action before Link or a later Project Skill write. An
+empty Project can still be linked for Vault access.
+
+Project owners may rename, edit the description, and archive their Projects.
+Archival removes all Agent links immediately while retaining historical
+resource rows. Agent Workspaces and hidden compatibility containers are
+protected from these lifecycle mutations.
 
 Local folder links are CLI selection hints for `clawdi run`. They do not grant
 membership, attach Projects, or mutate cloud Project relationships.
@@ -162,8 +191,8 @@ carry durable `authority` provenance:
 
 | Inventory authority | Source of truth | Allowed mutation |
 | --- | --- | --- |
-| `cloud` | Cloud-owned workspace/personal Project | Normal authenticated Cloud UI/API and `--project` CLI operations |
-| `agent_sync` | One Agent's guarded filesystem target | Agent-authenticated claim/upload and absence/delete only; dashboard is read-only |
+| `cloud` | Cloud-owned user Project | Normal authenticated Cloud UI/API and explicit `--project` CLI operations |
+| `agent_sync` | One Agent Workspace's guarded filesystem target | Agent-authenticated claim/upload and absence/delete only; dashboard is read-only |
 
 Historical rows are backfilled as `cloud`; Project kind, source strings, and
 old environment metadata are not ownership evidence. A live authenticated
@@ -206,8 +235,8 @@ sectioned fields encrypted with AES-256-GCM using `VAULT_ENCRYPTION_KEY`.
 
 The dashboard can list and mutate metadata but never receives plaintext values.
 Plaintext resolution is restricted to API-key auth through `/v1/vault/resolve`
-and `/v1/vault/resolve/bulk`. Agent-scoped resolution reads the Agent Project
-first, then attached Projects in order; conflicts block unless explicitly
+and `/v1/vault/resolve/bulk`. Agent-scoped resolution reads the Agent Workspace
+first, then linked Projects in order; conflicts block unless explicitly
 allowed.
 
 Credential profile payloads live in `vault_credential_profiles` and are used by
@@ -303,6 +332,51 @@ environments. The CLI validates desired state, writes non-secret local
 projections, creates short-lived secret files under the runtime run directory,
 renders support/runtime service plans, and exposes `runtime init`, `watch`,
 `sidecar`, `status`, `doctor`, and explicit `clawdi run -- <command>`.
+
+Cloud API is the single desired-state composer for Skills. It merges Hosted V2
+Agent Workspace Skill intent with Cloud-owned Skills from linked Projects. The
+Project rows remain the only content writer; runtime observations never become
+another catalog. Each Project Skill entry uses the runtime-neutral `project`
+source discriminator and carries immutable content identity plus authenticated
+archive and signed file endpoints. The CLI verifies
+the canonical archive tree hash before cache or install. Historical Skills that
+were stored as one `.md` file retain their file-content SHA compatibility only
+when the delivered archive contains exactly one `SKILL.md`. It then preserves
+native runtime contracts: Hermes receives the signed `SKILL.md` URL through
+`hermes skills install`, while OpenClaw receives a verified staged directory through
+`openclaw skills install`. Unlink, archive, access loss, deletion, or hash change
+invalidates the signed file lookup.
+
+Hermes URL delivery follows the upstream native adapter verified at
+[`NousResearch/hermes-agent@aec331899e4748739927fddf02a54327e64419a0`](https://github.com/NousResearch/hermes-agent/blob/aec331899e4748739927fddf02a54327e64419a0/tools/skills_hub.py#L1425-L1558):
+it installs `SKILL.md` plus explicitly referenced files from the supported
+Skill directories and runs Hermes' normal quarantine and security scan. The
+CLI compares the native result with that exact projection; an older Hermes
+that only installs one file fails closed and rolls back instead of silently
+accepting incomplete Skill bytes.
+
+OpenClaw directory delivery follows the upstream native CLI verified at
+[`openclaw/openclaw@74014c286d36a4fd8ec16d451333a17e8776fcfe`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/cli/skills-cli.ts#L615-L695).
+The command resolves an explicit `--agent` Workspace and sends local-directory
+sources through
+[`installSkillFromSource`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/skills/lifecycle/source-install.ts#L360-L415),
+whose native archive path validates `SKILL.md`, runs the normal install policy
+and security scan, and copies the full directory into the resolved Workspace
+[`skills/<slug>` target](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/skills/lifecycle/archive-install.ts#L137-L238).
+Clawdi also checks the configured Workspace against the exact `workspace`
+field built into OpenClaw's
+[`AgentSummary`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/commands/agents.config.ts#L22-L113)
+and returned by
+[`openclaw agents list --json`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/commands/agents.commands.list.ts#L137-L140)
+before and after installation. Any target or byte mismatch rolls back instead
+of creating a second writer.
+
+Rollout is deliberately capability-first: ship the compatible CLI, wait for
+fresh same-generation readiness observations, configure the exact Hosted CLI
+package-spec allowlist (which defaults empty), and only then permit
+Skill-bearing Project links. Connected daemons advertise the capability only
+after the reconcile implementation is present; older daemons remain
+unavailable. No runtime name or unobserved desired row is capability evidence.
 
 The detailed contract is [`managed-runtime.md`](managed-runtime.md). This
 architecture page should not duplicate that runtime specification.

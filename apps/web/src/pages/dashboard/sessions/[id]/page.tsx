@@ -1,6 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useLocation } from "@tanstack/react-router";
 import {
 	ArrowDown,
 	ArrowDownNarrowWide,
@@ -14,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline, agentDisplayName } from "@/components/dashboard/agent-label";
+import { DetailBackLink } from "@/components/detail/back-link";
 import {
 	DetailMeta,
 	DetailNotFound,
@@ -33,6 +35,7 @@ import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { agentDeploymentRouteQuery, agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
@@ -61,6 +64,10 @@ export function SessionDetailContent({
 	const api = useApi();
 	const $api = useOpenApi();
 	const { user } = useCurrentUser();
+	const routeSearch = useLocation({ select: (location) => location.search });
+	const sessionsHref = agentId
+		? agentSectionHref(agentId, "sessions", agentDeploymentRouteQuery(routeSearch))
+		: "/sessions";
 
 	const {
 		data: session,
@@ -257,6 +264,7 @@ export function SessionDetailContent({
 	if (isSessionLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<DetailBackLink href={sessionsHref} label="Sessions" />
 				<DetailSkeleton />
 			</div>
 		);
@@ -265,6 +273,7 @@ export function SessionDetailContent({
 	if (isApiNotFoundError(sessionError) || shouldBlockQueryError(sessionError, session)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<DetailBackLink href={sessionsHref} label="Sessions" />
 				{isApiNotFoundError(sessionError) ? (
 					<DetailNotFound title="Session not found" message="This session doesn't exist." />
 				) : (
@@ -283,6 +292,7 @@ export function SessionDetailContent({
 	if (!session || !summaryText) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<DetailBackLink href={sessionsHref} label="Sessions" />
 				<DetailNotFound title="Session not found" message="This session doesn't exist." />
 			</div>
 		);
@@ -292,6 +302,7 @@ export function SessionDetailContent({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<DetailBackLink href={sessionsHref} label="Sessions" />
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0 flex-1 space-y-2">
 					<DetailTitle>{summaryText}</DetailTitle>

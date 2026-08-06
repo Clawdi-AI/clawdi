@@ -257,7 +257,7 @@ export function consoleCommandPaletteItems(
 		);
 }
 
-type AgentNavigationGroupId = "primary" | "resources" | "operate" | "settings";
+type AgentNavigationGroupId = "primary" | "workspace" | "shared" | "operate" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
 	variants: readonly AgentNavigationVariant[];
@@ -335,8 +335,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "projects",
 		...CANONICAL_NAVIGATION_IDENTITIES.projects,
 		tint: RESOURCE_TINT_CLASSES.projects,
-		description: "Custom and shared Projects linked to this Agent.",
-		tooltip: "Custom and shared Projects linked to this Agent",
+		description: "Projects linked to this Agent.",
+		tooltip: "Projects linked to this Agent",
 		variants: ["connected", "hosted"],
 	},
 	vaults: {
@@ -381,8 +381,11 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 };
 
-export const AGENT_RESOURCE_SECTION_IDS = [
+export const AGENT_WORKSPACE_SECTION_IDS = [
 	"projects",
+] as const satisfies readonly AgentSectionId[];
+
+export const AGENT_SHARED_SECTION_IDS = [
 	"memories",
 	"connectors",
 ] as const satisfies readonly AgentSectionId[];
@@ -393,13 +396,11 @@ export const AGENT_PROJECT_RESOURCE_SECTION_IDS = [
 	"vaults",
 ] as const satisfies readonly AgentSectionId[];
 
-/** Agent overview resources, including the two entries scoped to its Workspace. */
-export const AGENT_OVERVIEW_RESOURCE_SECTION_IDS = [
+/** Resources available inside one Agent's workspace. */
+export const AGENT_OVERVIEW_WORKSPACE_SECTION_IDS = [
 	"projects",
 	"skills",
-	"memories",
 	"vaults",
-	"connectors",
 ] as const satisfies readonly AgentSectionId[];
 
 const AGENT_NAVIGATION_GROUPS = [
@@ -410,9 +411,15 @@ const AGENT_NAVIGATION_GROUPS = [
 		separated: false,
 	},
 	{
-		id: "resources",
-		label: "Resources",
-		itemIds: AGENT_RESOURCE_SECTION_IDS,
+		id: "workspace",
+		label: "Workspace",
+		itemIds: AGENT_WORKSPACE_SECTION_IDS,
+		separated: false,
+	},
+	{
+		id: "shared",
+		label: "Shared",
+		itemIds: AGENT_SHARED_SECTION_IDS,
 		separated: false,
 	},
 	{

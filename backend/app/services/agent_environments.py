@@ -46,6 +46,14 @@ def local_machine_registration_key(machine_id: str, agent_type: str) -> str:
     return f"machine:{machine_id}:agent:{agent_type}"
 
 
+def clear_connected_agent_registration(agent: AgentEnvironment) -> None:
+    """Clear Connected-only origin and lease evidence during hosted registration."""
+
+    agent.connected_agent_registered_at = None
+    agent.project_skill_reconcile_version = None
+    agent.project_skill_reconcile_observed_at = None
+
+
 async def register_agent_environment(
     db: AsyncSession,
     *,
@@ -276,6 +284,10 @@ async def _refresh_agent_environment(
     env.os = os_name
     env.last_seen_at = datetime.now(UTC)
     env.registration_key = registration_key
+    if registration_key is None:
+        # Explicit identities are hosted control-plane identities. A conversion
+        # from a Connected row must not retain its Connected capability lease.
+        clear_connected_agent_registration(env)
     if not env.default_project_id:
         project_name = env.default_name or _agent_project_label(machine_name, agent_type)
         healing_project = Project(

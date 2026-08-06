@@ -4,7 +4,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Scissors } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -18,10 +17,9 @@ import {
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
-import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
-import { shouldBlockQueryError } from "@/lib/query-state";
 import { errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -73,7 +71,6 @@ export function SplitVaultDialog({
 	onDone?: () => void;
 }) {
 	const api = useApi();
-	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -82,26 +79,11 @@ export function SplitVaultDialog({
 	const exit = useDialogExitLifecycle({ open, value: progress, emptyValue: null });
 	const renderedProgress = exit.renderedValue;
 
-	const anyProjectId = vault.project_ids?.[0];
 	const selected = useMemo(() => groups.filter((g) => !excluded.has(g.slug)), [groups, excluded]);
 	const selectedKeyCount = selected.reduce((n, g) => n + g.keys.length, 0);
 
-	const projectsQuery = $api.useQuery(
-		"get",
-		"/v1/projects",
-		{},
-		{
-			enabled: open,
-		},
-	);
-	const projects = projectsQuery.data;
-
 	const run = useMutation({
 		mutationFn: async () => {
-			const personal =
-				(projects ?? []).find((p) => p.kind === "personal") ??
-				(projects ?? []).find((p) => p.is_owner !== false);
-			if (!personal) throw new Error("No writable Project available yet");
 			let done = 0;
 			let affectedKeys = 0;
 			const failed: string[] = [];
@@ -110,7 +92,7 @@ export function SplitVaultDialog({
 				try {
 					const target = unwrap(
 						await api.POST("/v1/vault", {
-							params: { query: { project_id: personal.id, create_only: true } },
+							params: { query: { create_only: true } },
 							body: { slug: group.slug, name: group.prefix.slice(0, -1) },
 						}),
 					);
@@ -131,7 +113,6 @@ export function SplitVaultDialog({
 									params: {
 										path: { slug: vault.slug },
 										query: {
-											project_id: anyProjectId ?? undefined,
 											vault_id: vault.id,
 											target_vault_id: target.id,
 										},
@@ -152,7 +133,6 @@ export function SplitVaultDialog({
 											params: {
 												path: { slug: vault.slug },
 												query: {
-													project_id: anyProjectId ?? undefined,
 													vault_id: vault.id,
 													global_delete: true,
 												},
@@ -274,23 +254,9 @@ export function SplitVaultDialog({
 							them. Attach the new Vaults to those Projects afterwards.
 						</p>
 					) : null}
-					{shouldBlockQueryError(projectsQuery.error, projectsQuery.data) ? (
-						<ApiErrorPanel
-							error={projectsQuery.error}
-							onRetry={() => {
-								void projectsQuery.refetch();
-							}}
-							title="Couldn't load destinations"
-						/>
-					) : null}
 					<Button
 						className="w-full"
-						disabled={
-							selected.length === 0 ||
-							run.isPending ||
-							projectsQuery.isLoading ||
-							shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
-						}
+						disabled={selected.length === 0 || run.isPending}
 						onClick={() => run.mutate()}
 					>
 						{run.isPending ? <Spinner /> : <Scissors className="size-3.5" />}

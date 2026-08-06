@@ -79,7 +79,7 @@ export async function projectFolderStatusCommand(folderPath: string | undefined)
 			console.log(chalk.gray(`  Project name: ${fallback.name}`));
 		}
 	} else {
-		console.log("  Project: default Project");
+		console.log("  Project: automatically selected for this legacy folder link");
 	}
 	console.log("  Source: default");
 	console.log(chalk.gray("  Add a link: clawdi project folder link --project <project>"));

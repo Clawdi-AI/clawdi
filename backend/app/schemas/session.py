@@ -317,6 +317,19 @@ class RuntimeManagedSkillSummary(BaseModel):
     version: int = Field(ge=1)
 
 
+class AgentProjectSkillDesiredItem(BaseModel):
+    project_id: str
+    skill_id: str
+    skill_key: str
+    content_hash: str
+    archive_url: str
+
+
+class AgentProjectSkillDesiredResponse(BaseModel):
+    agent_id: str
+    skills: list[AgentProjectSkillDesiredItem] = Field(default_factory=list)
+
+
 class AgentMcpServerInventoryItem(BaseModel):
     """A safe row whose user-declaration provenance was proven upstream."""
 

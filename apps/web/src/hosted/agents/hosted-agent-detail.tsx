@@ -41,10 +41,10 @@ import {
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
 	overviewProjectsModule,
+	overviewWorkspaceSkillsModule,
 	useOverviewConnectorsModule,
 	useOverviewMemoriesModule,
 	useOverviewVaultsModule,
-	useOverviewWorkspaceSkillsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import {
@@ -1143,16 +1143,13 @@ function OverviewTab({
 		queryKey: ["hosted", "deployments", deployment.resource.id, "skills"],
 		queryFn: () => billingClient.listWorkspaceSkills(deployment.resource.id),
 	});
-	const visibleSkillsModule = useOverviewWorkspaceSkillsModule({
-		projectId: workspaceProjectId,
-		resolution: workspaceResolution,
-		skillKeys: (runtimeSkills.data?.items ?? []).map((skill) => skill.skill_key),
-	});
 	const skillsModule = runtimeSkills.isLoading
 		? { description: <OverviewDescriptionSkeleton label="skills" /> }
 		: runtimeSkills.error
 			? { description: "Unavailable right now" }
-			: visibleSkillsModule;
+			: overviewWorkspaceSkillsModule(
+					(runtimeSkills.data?.items ?? []).map((skill) => skill.skill_key),
+				);
 	const vaultsModule = useOverviewVaultsModule({
 		projectIds: workspaceProjectId ? [workspaceProjectId] : [],
 		resolution: workspaceResolution,

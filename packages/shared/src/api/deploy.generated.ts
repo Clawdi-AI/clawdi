@@ -1450,6 +1450,16 @@ export interface components {
              */
             deployment_id: string;
         };
+        /** V2DeleteDeploymentConvergedResponse */
+        V2DeleteDeploymentConvergedResponse: {
+            /** Deployment Id */
+            deployment_id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "absent";
+        };
         /** V2DeleteDeploymentRequest */
         V2DeleteDeploymentRequest: {
             /**
@@ -2510,6 +2520,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description The deployment is definitively absent for the caller in both Hosted and Cloud. Repeating the delete returns the same response. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2DeleteDeploymentConvergedResponse"];
+                };
+            };
             /** @description The declarative spec change was accepted. */
             202: {
                 headers: {
@@ -2562,6 +2581,17 @@ export interface operations {
             /** @description A strong If-Match header is required. */
             428: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description Cloud ownership or cleanup could not be confirmed; no converged absence is claimed. */
+            503: {
+                headers: {
+                    /** @description Seconds before retrying Cloud convergence. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {

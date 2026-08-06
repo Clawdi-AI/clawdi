@@ -129,7 +129,7 @@ function isSafeRepositoryPath(value: string): boolean {
 	);
 }
 
-export const hostedSkillSourceSchema = z
+const hostedGithubSkillSourceSchema = z
 	.object({
 		type: z.literal("github"),
 		url: z
@@ -143,6 +143,36 @@ export const hostedSkillSourceSchema = z
 		commit: exactGitCommitSchema,
 	})
 	.strict();
+
+const cleanHttpUrlSchema = z
+	.string()
+	.url()
+	.max(2_000)
+	.refine((value) => {
+		const url = new URL(value);
+		return (
+			(url.protocol === "https:" || url.protocol === "http:") &&
+			!url.username &&
+			!url.password &&
+			!url.search &&
+			!url.hash
+		);
+	}, "must be a clean HTTP(S) URL");
+
+const hostedProjectSkillSourceSchema = z
+	.object({
+		type: z.literal("project"),
+		projectId: z.uuid(),
+		contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+		archiveUrl: cleanHttpUrlSchema,
+		installUrl: cleanHttpUrlSchema,
+	})
+	.strict();
+
+export const hostedSkillSourceSchema = z.discriminatedUnion("type", [
+	hostedGithubSkillSourceSchema,
+	hostedProjectSkillSourceSchema,
+]);
 export type HostedSkillSource = z.infer<typeof hostedSkillSourceSchema>;
 
 const hostedBundledSkillEntryDesiredStateSchema = z

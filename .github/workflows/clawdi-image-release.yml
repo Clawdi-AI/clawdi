@@ -297,5 +297,10 @@ jobs:
         run: |
           gem install kamal -v '2.12.0' --no-document
           test "$(kamal version)" = "2.12.0"
+          if [ "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" = true ]; then
+            export WHATSAPP_TAILSCALE_CONFIG_REVISION="$(
+              scripts/deploy-whatsapp-sidecar.sh --print-tailscale-config-revision
+            )"
+          fi
           scripts/deploy-whatsapp-sidecar.sh
           kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"

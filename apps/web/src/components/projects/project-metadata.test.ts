@@ -14,7 +14,7 @@ describe("projectAgentLabel", () => {
 		).toBe("Research Agent · Codex");
 	});
 
-	test("prefers display name across managed project chrome", () => {
+	test("prefers the display name across Project surfaces", () => {
 		expect(
 			projectAgentLabel({
 				id: "agent-1",

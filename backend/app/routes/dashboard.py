@@ -63,6 +63,20 @@ async def get_stats(
                 FROM project_memberships
                 WHERE member_user_id = :user_id
             ),
+            visible_user_projects AS (
+                SELECT projects.id
+                FROM projects
+                WHERE projects.kind = 'workspace'
+                  AND projects.archived_at IS NULL
+                  AND (
+                      projects.user_id = :user_id
+                      OR projects.id IN (
+                          SELECT project_id
+                          FROM project_memberships
+                          WHERE member_user_id = :user_id
+                      )
+                  )
+            ),
             visible_vaults AS (
                 SELECT vaults.id
                 FROM vaults
@@ -146,9 +160,12 @@ async def get_stats(
             resource_counts AS (
                 SELECT
                     (SELECT count(*)::integer
+                     FROM visible_user_projects) AS projects_count,
+                    (SELECT count(*)::integer
                      FROM skills
                      WHERE is_active
-                       AND project_id IN (SELECT id FROM visible_projects)) AS skills_count,
+                       AND authority = 'cloud'
+                       AND project_id IN (SELECT id FROM visible_user_projects)) AS skills_count,
                     (SELECT count(*)::integer
                      FROM memories
                      WHERE user_id = :user_id) AS memories_count,
@@ -193,6 +210,7 @@ async def get_stats(
                 COALESCE((SELECT peak_hour FROM peak_hour), 0)::integer AS peak_hour,
                 streaks.current_streak,
                 streaks.longest_streak,
+                resource_counts.projects_count,
                 resource_counts.skills_count,
                 resource_counts.memories_count,
                 resource_counts.vault_count,
@@ -239,6 +257,7 @@ async def get_stats(
         longest_streak=int(row["longest_streak"] or 0),
         peak_hour=int(row["peak_hour"] or 0),
         favorite_model=row["favorite_model"],
+        projects_count=int(row["projects_count"] or 0),
         skills_count=int(row["skills_count"] or 0),
         memories_count=int(row["memories_count"] or 0),
         vault_count=int(row["vault_count"] or 0),

@@ -1053,6 +1053,19 @@ def is_runtime_deployment_principal(auth: AuthContext) -> bool:
     )
 
 
+def is_connected_agent_principal(auth: AuthContext) -> bool:
+    """Identify a current self-managed CLI, never a deployment-bound workload."""
+    if auth.oauth_cli:
+        return auth.api_key is None
+    key = auth.api_key
+    return bool(
+        key is not None
+        and not key.managed
+        and key.environment_id is None
+        and key.runtime_deployment_id is None
+    )
+
+
 def is_env_bound_api_key(auth: AuthContext) -> bool:
     """An api_key pinned to a specific `environment_id` —
     independent of whether its `scopes` list is narrow or full.

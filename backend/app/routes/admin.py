@@ -93,6 +93,7 @@ from app.schemas.platform import PlatformOwner
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
+    clear_connected_agent_registration,
     local_machine_registration_key,
     register_agent_environment,
 )
@@ -170,6 +171,9 @@ from app.services.principal_lifecycle import (
     assert_user_authority_active,
     load_clerk_user_for_issuer,
     resolve_clerk_owner_issuer,
+)
+from app.services.project_runtime_skills import (
+    assert_agent_workspace_skill_write_compatible,
 )
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
@@ -1621,8 +1625,13 @@ async def _admin_register_environment(
             registration_key=None
             if body.environment_id is not None
             else local_machine_registration_key(body.machine_id, body.agent_type),
+            commit=False,
         )
         env = registered.env
+        # Admin registration is a hosted/managed origin, including the
+        # historical implicit Legacy V1 shape that had registration_key.
+        clear_connected_agent_registration(env)
+        await db.commit()
     except AgentEnvironmentIdConflict as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
@@ -1825,6 +1834,15 @@ async def _admin_upsert_runtime_state(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+
+    new_workspace_skill_keys: set[str] = (
+        set(body.skills.entries) if body.skills is not None else set()
+    )
+    await assert_agent_workspace_skill_write_compatible(
+        db,
+        agent_id=environment_id,
+        skill_keys=new_workspace_skill_keys,
+    )
 
     # Lock the parent before the optional child row so concurrent first creates
     # serialize even when there is no HostedRuntimeState row to lock yet.

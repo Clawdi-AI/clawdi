@@ -21,6 +21,7 @@ import socket
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
+from datetime import UTC, datetime
 from hashlib import sha256
 
 import httpx
@@ -98,12 +99,14 @@ def _test_runtime_settings():
     prev_channel_long_poll_max = settings.channel_long_poll_max_seconds
     prev_channel_long_poll_interval = settings.channel_long_poll_interval_seconds
     prev_discord_gateway_poll_interval = settings.discord_gateway_poll_interval_seconds
+    prev_project_skill_specs = settings.project_skill_hosted_cli_package_specs
     settings.vault_encryption_key = secrets.token_hex(32)
     settings.encryption_key = secrets.token_hex(32)
     settings.memory_embedding_mode = "disabled"
     settings.channel_long_poll_max_seconds = 0.05
     settings.channel_long_poll_interval_seconds = 0.005
     settings.discord_gateway_poll_interval_seconds = 0.01
+    settings.project_skill_hosted_cli_package_specs = ["clawdi@1.2.3-test"]
     try:
         yield
     finally:
@@ -113,6 +116,7 @@ def _test_runtime_settings():
         settings.channel_long_poll_max_seconds = prev_channel_long_poll_max
         settings.channel_long_poll_interval_seconds = prev_channel_long_poll_interval
         settings.discord_gateway_poll_interval_seconds = prev_discord_gateway_poll_interval
+        settings.project_skill_hosted_cli_package_specs = prev_project_skill_specs
 
 
 @pytest.fixture(autouse=True)
@@ -245,7 +249,7 @@ async def create_env_with_project(
 
 async def create_test_hosted_runtime_state(db_session, env, *, runtime_name: str):
     """Give a test Agent the same strict-v2 authority used by Channel links."""
-    from app.models.hosted_runtime import HostedRuntimeState
+    from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
     from app.models.runtime_observation import V2RuntimeEnvironmentFence
 
     deployment_id = f"dep-{uuid.uuid4().hex}"
@@ -277,7 +281,38 @@ async def create_test_hosted_runtime_state(db_session, env, *, runtime_name: str
         owner_id=env.user_id,
         deployment_id=deployment_id,
     )
+    now = datetime.now(UTC)
+    source_revision = "a" * 64
+    etag = '"test-ready"'
+    env.last_sync_at = now
     db_session.add_all([state, fence])
+    await db_session.flush()
+    db_session.add(
+        HostedRuntimeConfigObservation(
+            environment_id=env.id,
+            observed_at=now,
+            observed_config_generation=state.generation,
+            observed_manifest_etag=etag,
+            observed_source_revision=source_revision,
+            diagnostics={
+                "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+                "reportedAt": now.isoformat(),
+                "runtimeMode": "hosted",
+                "status": "ok",
+                "activeCliVersion": state.cli_package_spec.removeprefix("clawdi@"),
+                "applied": {
+                    "etag": etag,
+                    "sourceRevision": source_revision,
+                    "generation": state.generation,
+                    "instanceId": state.instance_id,
+                    "appliedProviderIds": [],
+                },
+                "boot": None,
+                "cli": None,
+                "convergeError": None,
+            },
+        )
+    )
     await db_session.commit()
     await db_session.refresh(state)
     return state

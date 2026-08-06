@@ -19,10 +19,8 @@ describe("skillCapabilities", () => {
 			canUpdate: false,
 			canDelete: false,
 			canSend: false,
-			canSelect: false,
-			canSync: false,
 			readOnlyReason: "agent-sync",
-			badgeLabel: "Agent projection · Read-only",
+			badgeLabel: "Synced from Agent · Read-only",
 		});
 	});
 
@@ -55,8 +53,6 @@ describe("skillCapabilities", () => {
 				canUpdate: true,
 				canDelete: true,
 				canSend: true,
-				canSelect: true,
-				canSync: true,
 			});
 		}
 	});

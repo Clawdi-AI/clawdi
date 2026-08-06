@@ -17,6 +17,15 @@ type SummaryState = {
 	error: unknown;
 };
 
+export function overviewWorkspaceSkillsModule(
+	skillKeys: readonly string[],
+): AgentOverviewModuleContent {
+	const total = new Set(skillKeys).size;
+	return {
+		description: total ? `${total} ${total === 1 ? "skill" : "skills"}` : "No skills installed",
+	};
+}
+
 export function overviewProjectsModule({
 	bindings,
 }: {
@@ -66,12 +75,10 @@ export function useOverviewWorkspaceSkillsModule({
 	if (resolution === "loading" || query.isLoading)
 		return { description: <OverviewDescriptionSkeleton label="skills" /> };
 	if (resolution === "unavailable" || query.error) return { description: "Unavailable right now" };
-	const visibleSkillKeys = new Set(skillKeys);
-	for (const skill of query.data ?? []) visibleSkillKeys.add(skill.skill_key);
-	const total = visibleSkillKeys.size;
-	return {
-		description: total ? `${total} ${total === 1 ? "skill" : "skills"}` : "No skills installed",
-	};
+	return overviewWorkspaceSkillsModule([
+		...skillKeys,
+		...(query.data ?? []).map((skill) => skill.skill_key),
+	]);
 }
 
 export function useOverviewMemoriesModule({

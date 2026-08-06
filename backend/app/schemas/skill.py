@@ -103,21 +103,68 @@ class SkillUploadResponse(BaseModel):
 
 
 class SkillContentUpdateRequest(BaseModel):
-    # Raw SKILL.md text (frontmatter + body) for Cloud-owned Personal and
-    # Workspace Projects. The server tars it into a single-file archive and
-    # runs the shared integrity pipeline. Agent Project rows never enter this
-    # editor because their filesystem is authoritative.
-    content: str = Field(min_length=1, max_length=200 * 1024)
-    # Optional last-known hash. Phase-1 dashboard editor leaves this
-    # blank (last-write-wins). Phase-2 can pass the hash captured
-    # when the editor opened to detect "someone else edited" and
-    # surface a soft-merge prompt.
-    content_hash: str | None = Field(
-        default=None,
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    instructions: str = Field(min_length=1, max_length=200 * 1024)
+    content_hash: str = Field(
         min_length=64,
         max_length=64,
         pattern=r"^[a-f0-9]{64}$",
     )
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("name is required")
+        return normalized
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("instructions")
+    @classmethod
+    def normalize_instructions(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("instructions are required")
+        return normalized
+
+
+class SkillCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    instructions: str = Field(min_length=1, max_length=200 * 1024)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("name is required")
+        return normalized
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("instructions")
+    @classmethod
+    def normalize_instructions(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("instructions are required")
+        return normalized
 
 
 class SkillDeleteResponse(BaseModel):

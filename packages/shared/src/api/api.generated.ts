@@ -1546,10 +1546,12 @@ export interface paths {
         get: operations["get_project_v1_projects__project_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Archive Project */
+        delete: operations["archive_project_v1_projects__project_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Project */
+        patch: operations["update_project_v1_projects__project_id__patch"];
         trace?: never;
     };
     "/v1/runtime/manifest": {
@@ -1561,6 +1563,46 @@ export interface paths {
         };
         /** Get Runtime Manifest */
         get: operations["get_runtime_manifest_v1_runtime_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runtime/project-skill-capability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Report Project Skill Capability
+         * @description Renew the short-lived Connected Project Skill reconciliation lease.
+         */
+        put: operations["report_project_skill_capability_v1_runtime_project_skill_capability_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runtime/project-skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Project Skills
+         * @description Return one Agent's complete linked-Project Skill inventory.
+         */
+        get: operations["get_agent_project_skills_v1_runtime_project_skills_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1724,6 +1766,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Skill */
+        post: operations["create_skill_v1_projects__project_id__skills_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/skills/{skill_key}/content": {
         parameters: {
             query?: never;
@@ -1734,12 +1793,11 @@ export interface paths {
         get?: never;
         /**
          * Update Skill Content
-         * @description Edit a skill's SKILL.md from the dashboard.
+         * @description Edit a Skill's user-facing fields while preserving its support files.
          *
-         *     Body is JSON `{content, content_hash?}`. The server wraps the
-         *     text into a one-file tar.gz and dispatches through the shared
-         *     `_do_upload_skill` integrity path. This endpoint is limited to Cloud-owned
-         *     Personal and Workspace Projects; Agent Project rows are read-only here.
+         *     The server renders SKILL.md and dispatches the resulting archive through
+         *     the shared `_do_upload_skill` integrity path. Agent Workspace projections
+         *     remain read-only here.
          *
          *     `content_hash` is interpreted as an If-Match precondition (the
          *     hash the editor saw when it loaded the skill, NOT the hash of
@@ -3056,6 +3114,26 @@ export interface components {
              */
             created_at: string;
         };
+        /** AgentProjectSkillDesiredItem */
+        AgentProjectSkillDesiredItem: {
+            /** Project Id */
+            project_id: string;
+            /** Skill Id */
+            skill_id: string;
+            /** Skill Key */
+            skill_key: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Archive Url */
+            archive_url: string;
+        };
+        /** AgentProjectSkillDesiredResponse */
+        AgentProjectSkillDesiredResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Skills */
+            skills?: components["schemas"]["AgentProjectSkillDesiredItem"][];
+        };
         /** AgentReorderRequest */
         AgentReorderRequest: {
             /** Agent Ids */
@@ -3913,6 +3991,12 @@ export interface components {
             skill_key: string;
             /** File */
             file: string;
+            /**
+             * Create Only
+             * @description Reject the upload if this Project already has an active Skill with this key.
+             * @default false
+             */
+            create_only: boolean;
             /** Content Hash */
             content_hash?: string | null;
         };
@@ -4884,6 +4968,8 @@ export interface components {
             peak_hour: number;
             /** Favorite Model */
             favorite_model: string | null;
+            /** Projects Count */
+            projects_count: number;
             /** Skills Count */
             skills_count: number;
             /** Memories Count */
@@ -6076,12 +6162,24 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** ProjectArchiveResponse */
+        ProjectArchiveResponse: {
+            /**
+             * Status
+             * @default archived
+             */
+            status: string;
+            /** Unlinked Agent Count */
+            unlinked_agent_count: number;
+        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Name */
             name: string;
             /** Slug */
             slug?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /**
          * ProjectLeaveResponse
@@ -6119,6 +6217,8 @@ export interface components {
             slug: string;
             /** Kind */
             kind: string;
+            /** Description */
+            description: string | null;
             /** Origin Environment Id */
             origin_environment_id: string | null;
             /** Archived At */
@@ -6137,6 +6237,44 @@ export interface components {
             owner_display?: string | null;
             /** Owner Handle */
             owner_handle?: string | null;
+            /**
+             * Skill Count
+             * @default 0
+             */
+            skill_count: number;
+            /**
+             * Vault Count
+             * @default 0
+             */
+            vault_count: number;
+            /**
+             * Agent Count
+             * @default 0
+             */
+            agent_count: number;
+            /**
+             * Member Count
+             * @default 0
+             */
+            member_count: number;
+        };
+        /**
+         * ProjectSkillCapabilityReport
+         * @description Current Connected Agent observation, separate from deployment generations.
+         */
+        ProjectSkillCapabilityReport: {
+            /**
+             * Project Skill Reconcile Version
+             * @constant
+             */
+            project_skill_reconcile_version: 1;
+        };
+        /** ProjectUpdate */
+        ProjectUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /**
          * PublicSessionExportResponse
@@ -7190,10 +7328,23 @@ export interface components {
         };
         /** SkillContentUpdateRequest */
         SkillContentUpdateRequest: {
-            /** Content */
-            content: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Instructions */
+            instructions: string;
             /** Content Hash */
-            content_hash?: string | null;
+            content_hash: string;
+        };
+        /** SkillCreateRequest */
+        SkillCreateRequest: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Instructions */
+            instructions: string;
         };
         /** SkillDeleteResponse */
         SkillDeleteResponse: {
@@ -9345,7 +9496,10 @@ export interface operations {
     };
     list_agents_v1_agents_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Return only the caller's Agents linked to this exact Project. */
+                project_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9367,6 +9521,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
@@ -10696,6 +10859,72 @@ export interface operations {
             };
         };
     };
+    archive_project_v1_projects__project_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectArchiveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_project_v1_projects__project_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_runtime_manifest_v1_runtime_manifest_get: {
         parameters: {
             query?: {
@@ -10714,6 +10943,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_project_skill_capability_v1_runtime_project_skill_capability_put: {
+        parameters: {
+            query?: {
+                environment_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectSkillCapabilityReport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_project_skills_v1_runtime_project_skills_get: {
+        parameters: {
+            query?: {
+                environment_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectSkillDesiredResponse"];
                 };
             };
             /** @description Validation Error */
@@ -10969,6 +11262,41 @@ export interface operations {
             };
         };
     };
+    create_skill_v1_projects__project_id__skills_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_skill_content_v1_projects__project_id__skills__skill_key__content_put: {
         parameters: {
             query?: never;
@@ -11073,7 +11401,10 @@ export interface operations {
     };
     delete_skill_project_v1_projects__project_id__skills__skill_key__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Delete only if the active Skill still has this content hash. */
+                expected_content_hash?: string | null;
+            };
             header?: {
                 "X-Clawdi-Skill-Sync-Protocol"?: string | null;
             };

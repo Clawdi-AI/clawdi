@@ -1,18 +1,27 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { useSetBreadcrumbSegmentTitle } from "@/components/breadcrumb-title";
+import {
+	type AgentIdentityInput,
+	agentDisplayName,
+	agentIdentity,
+} from "@/components/dashboard/agent-label";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { DetailNotFound } from "@/components/detail/layout";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { agentDeploymentSelector, agentRouteSource, agentSectionHref } from "@/lib/agent-routes";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
+
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
 /** Fail closed before a nested Agent route can read or mutate an account resource. */
 export function AgentResourceRouteGate({
@@ -28,6 +37,7 @@ export function AgentResourceRouteGate({
 	projectAccess?: { projectId: string | null | undefined };
 	children: ReactNode;
 }) {
+	const routeSearch = useLocation({ select: (location) => location.search });
 	const agent = useOpenApi().useQuery("get", "/v1/agents/{agent_id}", {
 		params: { path: { agent_id: agentId } },
 	});
@@ -35,6 +45,16 @@ export function AgentResourceRouteGate({
 		isApiNotFoundError(agent.error) || shouldBlockQueryError(agent.error, agent.data)
 			? agent.error
 			: null;
+	const hostedDeploymentRoute =
+		IS_HOSTED_BUILD &&
+		(agentRouteSource(routeSearch) === "on-clawdi" ||
+			Boolean(agentDeploymentSelector(routeSearch)));
+	const agentBreadcrumbTitle = agent.data
+		? hostedDeploymentRoute
+			? hostedAgentBreadcrumbTitle(agent.data)
+			: agentDisplayName(agent.data)
+		: null;
+	useSetBreadcrumbSegmentTitle(agentSectionHref(agentId), agentBreadcrumbTitle);
 
 	if (agent.isLoading) {
 		return (
@@ -99,6 +119,13 @@ export function AgentResourceRouteGate({
 	) : (
 		children
 	);
+}
+
+function hostedAgentBreadcrumbTitle(agent: AgentIdentityInput) {
+	const identity = agentIdentity(agent);
+	return identity.secondaryLabel
+		? `${identity.primaryLabel} · ${identity.secondaryLabel}`
+		: identity.primaryLabel;
 }
 
 /** Resolve explicit Project access only after the Agent identity gate succeeds. */

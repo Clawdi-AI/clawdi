@@ -16,6 +16,7 @@ from app.main import app
 
 _CANONICAL_ONLY_V1_PREFIXES = (
     "/v1/platform/",
+    "/v1/runtime/",
     "/v1/admin/channels/whatsapp/pairing-sessions",
     "/v1/webhooks/clerk",
 )
@@ -35,9 +36,7 @@ def test_every_legacy_v1_route_has_api_alias():
     v1_paths = [
         path
         for path in routes
-        if path.startswith("/v1/")
-        and path != "/v1/runtime/manifest"
-        and not path.startswith(_CANONICAL_ONLY_V1_PREFIXES)
+        if path.startswith("/v1/") and not path.startswith(_CANONICAL_ONLY_V1_PREFIXES)
     ]
     assert v1_paths, "expected /v1 routes to be mounted"
     missing = [
@@ -79,11 +78,26 @@ async def test_api_alias_dispatches_to_the_same_handler(path):
     assert canonical.status_code != 404
 
 
-async def test_runtime_manifest_has_no_api_alias():
+async def test_runtime_routes_have_no_api_alias():
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/runtime/manifest")
-    assert response.status_code == 404
+        responses = [
+            await client.get("/api/runtime/manifest"),
+            await client.get(
+                "/api/runtime/project-skill-archives/"
+                "00000000-0000-0000-0000-000000000000/"
+                "00000000-0000-0000-0000-000000000000/"
+                "00000000-0000-0000-0000-000000000000/"
+                f"{'0' * 64}/{'0' * 64}/example.tar.gz"
+            ),
+            await client.get(
+                "/api/runtime/project-skill-files/"
+                "00000000-0000-0000-0000-000000000000/"
+                "00000000-0000-0000-0000-000000000000/"
+                f"{'0' * 64}/{'0' * 64}/SKILL.md"
+            ),
+        ]
+    assert [response.status_code for response in responses] == [404, 404, 404]
 
 
 def test_openapi_schema_advertises_only_v1_and_direct_runtime_v2():

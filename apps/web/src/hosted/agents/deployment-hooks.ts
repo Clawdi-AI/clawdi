@@ -232,12 +232,14 @@ export function useDeleteDeployment() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (vars: { id: string; request: DeploymentDeleteRequest }) =>
-			runStableDeploymentIntent("deployment-delete", { action: "delete", ...vars }, (key) =>
-				client.deleteDeployment(vars.id, vars.request, key),
+		mutationFn: (vars: { id: string; request: DeploymentDeleteRequest; resourceVersion: string }) =>
+			runStableDeploymentIntent(
+				"deployment-delete",
+				{ action: "delete", id: vars.id, request: vars.request },
+				(key) => client.deleteDeployment(vars.id, vars.request, key, vars.resourceVersion),
 			),
 		onSuccess: (accepted) => {
-			projectAcceptedDeploymentTransition(qc, accepted);
+			if (accepted.operation) projectAcceptedDeploymentTransition(qc, accepted);
 			retireRuntimeWindows(accepted.deploymentId);
 			toast.message("Agent removed", {
 				description: "Cleanup continues in the background.",

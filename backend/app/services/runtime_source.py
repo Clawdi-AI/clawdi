@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
+from urllib.parse import quote
 from uuid import UUID
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -13,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.models.agent_project_binding import AgentProjectBinding
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.channel import (
     BOT_AGENT_LINK_STATUS_ACTIVE,
@@ -22,8 +24,15 @@ from app.models.channel import (
     ChannelAccount,
     ChannelBotAgentLink,
 )
-from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
+from app.models.hosted_runtime import (
+    HostedRuntimeConfigObservation,
+    HostedRuntimeSecret,
+    HostedRuntimeState,
+)
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
+from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
     HostedCodexProviderProjection,
@@ -59,6 +68,11 @@ from app.services.managed_ai_provider import (
     runtime_managed_provider_id,
     v2_deployment_managed_provider_id,
 )
+from app.services.project_runtime_skills import (
+    RUNTIME_PROJECT_SKILL_KEY_PATTERN,
+    agent_supports_project_skills,
+    project_skill_file_signature,
+)
 from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 from app.services.vault_crypto import decrypt
 
@@ -91,6 +105,15 @@ def expected_runtime_bundle_v2_etag(source_revision: str) -> str:
 class RuntimeSourceRow:
     environment: AgentEnvironment
     state: HostedRuntimeState | None
+    observation: HostedRuntimeConfigObservation | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeProjectSkill:
+    id: UUID
+    project_id: UUID
+    skill_key: str
+    content_hash: str
 
 
 @dataclass(frozen=True)
@@ -100,6 +123,7 @@ class RuntimeSourceBatch:
     auth_payloads: dict[tuple[UUID, str, str], AiProviderAuthPayload]
     channels: dict[UUID, tuple[tuple[ChannelAccount, ChannelBotAgentLink], ...]]
     runtime_secrets: dict[UUID, tuple[HostedRuntimeSecret, ...]] = field(default_factory=dict)
+    project_skills: dict[UUID, tuple[RuntimeProjectSkill, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -126,7 +150,7 @@ async def load_runtime_source_batch(
     owner_user_id: UUID | None = None,
 ) -> RuntimeSourceBatch:
     if not environment_ids:
-        return RuntimeSourceBatch({}, {}, {}, {}, {})
+        return RuntimeSourceBatch({}, {}, {}, {}, {}, {})
     env_filters: list[ColumnElement[bool]] = [
         AgentEnvironment.id.in_(environment_ids),
         AgentEnvironment.archived_at.is_(None),
@@ -135,15 +159,26 @@ async def load_runtime_source_batch(
         env_filters.append(AgentEnvironment.user_id == owner_user_id)
     env_rows = (
         await db.execute(
-            select(AgentEnvironment, HostedRuntimeState)
+            select(
+                AgentEnvironment,
+                HostedRuntimeState,
+                HostedRuntimeConfigObservation,
+            )
             .outerjoin(HostedRuntimeState, HostedRuntimeState.environment_id == AgentEnvironment.id)
+            .outerjoin(
+                HostedRuntimeConfigObservation,
+                HostedRuntimeConfigObservation.environment_id == AgentEnvironment.id,
+            )
             .where(*env_filters)
         )
     ).all()
-    rows = {env.id: RuntimeSourceRow(environment=env, state=state) for env, state in env_rows}
+    rows = {
+        env.id: RuntimeSourceRow(environment=env, state=state, observation=observation)
+        for env, state, observation in env_rows
+    }
     user_ids = sorted({row.environment.user_id for row in rows.values()}, key=str)
     if not user_ids:
-        return RuntimeSourceBatch(rows, {}, {}, {}, {})
+        return RuntimeSourceBatch(rows, {}, {}, {}, {}, {})
     providers = list(
         (
             await db.execute(
@@ -200,13 +235,131 @@ async def load_runtime_source_batch(
     runtime_secrets: dict[UUID, list[HostedRuntimeSecret]] = {}
     for secret in runtime_secret_rows:
         runtime_secrets.setdefault(secret.environment_id, []).append(secret)
+    membership = ProjectMembership.__table__.alias("runtime_project_membership")
+    project_skill_rows = (
+        await db.execute(
+            select(AgentProjectBinding.agent_id, Skill)
+            .join(
+                AgentEnvironment,
+                AgentEnvironment.id == AgentProjectBinding.agent_id,
+            )
+            .join(Project, Project.id == AgentProjectBinding.project_id)
+            .join(Skill, Skill.project_id == Project.id)
+            .outerjoin(
+                membership,
+                (membership.c.project_id == Project.id)
+                & (membership.c.member_user_id == AgentEnvironment.user_id),
+            )
+            .where(
+                AgentProjectBinding.agent_id.in_(list(rows)),
+                AgentProjectBinding.binding_type == "context",
+                Project.kind == PROJECT_KIND_WORKSPACE,
+                Project.archived_at.is_(None),
+                Skill.authority == SKILL_AUTHORITY_CLOUD,
+                Skill.is_active,
+                (Project.user_id == AgentEnvironment.user_id) | membership.c.id.is_not(None),
+            )
+            .order_by(
+                AgentProjectBinding.agent_id,
+                AgentProjectBinding.priority,
+                Project.id,
+                Skill.skill_key,
+            )
+        )
+    ).all()
+    project_skills: dict[UUID, list[RuntimeProjectSkill]] = {}
+    for environment_id, skill in project_skill_rows:
+        runtime_row = rows.get(environment_id)
+        if (
+            runtime_row is None
+            or runtime_row.state is None
+            or not agent_supports_project_skills(
+                runtime_row.environment,
+                runtime_row.state,
+                runtime_row.observation,
+                has_environment_bound_key=False,
+            )
+        ):
+            # Existing Vault-only bindings predate Project Skill delivery. Keep
+            # those links usable, but never render the new source shape until
+            # this exact Hosted V2 deployment has proven a compatible, Ready CLI.
+            continue
+        project_skills.setdefault(environment_id, []).append(
+            RuntimeProjectSkill(
+                id=skill.id,
+                project_id=skill.project_id,
+                skill_key=skill.skill_key,
+                content_hash=skill.content_hash,
+            )
+        )
     return RuntimeSourceBatch(
         rows,
         {(item.owner_user_id, item.provider_id): item for item in providers},
         {(item.owner_user_id, item.provider_id, item.auth_profile): item for item in auth_payloads},
         {key: tuple(value) for key, value in channels.items()},
         {key: tuple(value) for key, value in runtime_secrets.items()},
+        {key: tuple(value) for key, value in project_skills.items()},
     )
+
+
+def _project_runtime_skills(
+    workspace_skills: dict[str, Any] | None,
+    project_skills: tuple[RuntimeProjectSkill, ...],
+    *,
+    environment_id: UUID,
+    public_api_url: str,
+    signing_key: str,
+) -> dict[str, Any] | None:
+    """Compose Workspace and linked-Project intent without key precedence."""
+    entries: dict[str, Any] = {}
+    if workspace_skills is not None:
+        raw_entries = workspace_skills.get("entries")
+        if not _is_string_object_dict(raw_entries):
+            raise RuntimeSourceError("Hosted runtime skills state is invalid")
+        entries.update(raw_entries)
+
+    base_url = public_api_url.rstrip("/")
+    owners: dict[str, UUID] = {}
+    for skill in project_skills:
+        if RUNTIME_PROJECT_SKILL_KEY_PATTERN.fullmatch(skill.skill_key) is None:
+            raise RuntimeSourceError(
+                f'Project Skill "{skill.skill_key}" is not compatible with managed Agent delivery'
+            )
+        if skill.skill_key in entries:
+            raise RuntimeSourceError(
+                f'Project Skill "{skill.skill_key}" conflicts with this Agent\'s Workspace'
+            )
+        existing_project = owners.get(skill.skill_key)
+        if existing_project is not None:
+            raise RuntimeSourceError(
+                f'Project Skill "{skill.skill_key}" is provided by more than one linked Project'
+            )
+        owners[skill.skill_key] = skill.project_id
+        signature = project_skill_file_signature(
+            signing_key=signing_key,
+            agent_id=environment_id,
+            skill_id=skill.id,
+            content_hash=skill.content_hash,
+        )
+        encoded_key = quote(skill.skill_key, safe="")
+        entries[skill.skill_key] = {
+            "enabled": True,
+            "source": {
+                "type": "project",
+                "projectId": str(skill.project_id),
+                "contentHash": skill.content_hash,
+                "archiveUrl": (
+                    f"{base_url}/v1/runtime/project-skill-archives/{environment_id}/"
+                    f"{skill.project_id}/{skill.id}/{skill.content_hash}/{signature}/"
+                    f"{encoded_key}.tar.gz"
+                ),
+                "installUrl": (
+                    f"{base_url}/v1/runtime/project-skill-files/{environment_id}/"
+                    f"{skill.id}/{skill.content_hash}/{signature}/SKILL.md"
+                ),
+            },
+        }
+    return {"entries": entries} if entries else None
 
 
 def render_runtime_source(
@@ -258,7 +411,7 @@ def render_runtime_source(
         raise RuntimeSourceError("Hosted runtime tools state is invalid") from exc
     try:
         mcp = validate_hosted_runtime_mcp_desired_state(state.mcp)
-        skills = (
+        workspace_skills = (
             PersistedHostedRuntimeSkills.model_validate(state.skills).model_dump(
                 exclude_none=True,
                 exclude_unset=True,
@@ -269,6 +422,13 @@ def render_runtime_source(
         )
     except (ValidationError, ValueError) as exc:
         raise RuntimeSourceError("Hosted runtime MCP or skills state is invalid") from exc
+    skills = _project_runtime_skills(
+        workspace_skills,
+        batch.project_skills.get(environment_id, ()),
+        environment_id=environment_id,
+        public_api_url=public_api_url,
+        signing_key=vault_key_identity,
+    )
     try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:

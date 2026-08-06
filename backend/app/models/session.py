@@ -5,6 +5,7 @@ from pydantic import JsonValue
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -22,14 +23,33 @@ from app.models.project import Project
 
 class AgentEnvironment(Base, TimestampMixin):
     __tablename__ = "agent_environments"
-    # `id` is the stable agent identity. `registration_key` is only
-    # an idempotency key for self-managed setup flows that do not
-    # provide an explicit agent id; hosted agents leave it NULL.
+    # `id` is the stable agent identity. `registration_key` is an
+    # idempotency key for implicit registration flows. Current Hosted V2
+    # identities are explicit and leave it NULL, but historical Legacy V1
+    # Admin registration could populate the same key shape as self-managed
+    # setup, so registration_key alone is never Connected origin evidence.
     __table_args__ = (
         UniqueConstraint(
             "user_id",
             "registration_key",
             name="uq_agent_envs_user_registration_key",
+        ),
+        CheckConstraint(
+            "connected_agent_registered_at IS NULL OR registration_key IS NOT NULL",
+            name="ck_agent_envs_connected_registration_origin",
+        ),
+        CheckConstraint(
+            "project_skill_reconcile_version IS NULL OR project_skill_reconcile_version = 1",
+            name="ck_agent_environments_project_skill_reconcile_version",
+        ),
+        CheckConstraint(
+            "project_skill_reconcile_version IS NULL OR connected_agent_registered_at IS NOT NULL",
+            name="ck_agent_environments_project_skill_reconcile_eligibility",
+        ),
+        CheckConstraint(
+            "(project_skill_reconcile_version IS NULL) = "
+            "(project_skill_reconcile_observed_at IS NULL)",
+            name="ck_agent_environments_project_skill_reconcile_observation",
         ),
     )
 
@@ -85,6 +105,19 @@ class AgentEnvironment(Base, TimestampMixin):
     # auto-pick-up the new sync until operator opts them in); new
     # envs created post-v1 default to true.
     sync_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    # Positive, durable Connected Agent origin evidence. Only the current
+    # self-managed registration route may write this marker, and only for an
+    # OAuth CLI or unbound unmanaged API key. Historical ambiguous rows remain
+    # NULL; Admin, managed, and environment-bound registration never qualify.
+    connected_agent_registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Connected Agent-only leased capability observation. Legacy V1 deployments
+    # never use it; Hosted V2 deployments prove readiness through their desired
+    # manifest and same-generation observation. Old Connected daemons cannot
+    # renew observed_at, so a downgrade expires instead of retaining evidence.
+    project_skill_reconcile_version: Mapped[int | None] = mapped_column(Integer)
+    project_skill_reconcile_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     # Default project this env's daemon writes into. Phase-1 migration
     # creates one env-local project per env and points this column at

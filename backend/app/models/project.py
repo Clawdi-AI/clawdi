@@ -1,4 +1,7 @@
-"""Project — first-class container for skills, vaults, and memories."""
+"""Project owns Skills and grants access to attached account Vaults.
+
+Memories and Connectors remain account-wide and outside Projects.
+"""
 
 import uuid
 from datetime import datetime

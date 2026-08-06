@@ -18,14 +18,18 @@ import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { DetailNotFound, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
+import {
+	displayProjectName,
+	isCustomProject,
+	projectSupportingText,
+} from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +59,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
 import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
+import { agentDeploymentRouteQuery, agentProjectDetailHref } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
@@ -156,7 +161,7 @@ export default function VaultDetailPage({
 			vault?.project_ids?.includes(requestedProjectId)
 			? requestedProjectId
 			: undefined
-		: vault?.project_ids?.[0];
+		: undefined;
 
 	const projects = $api.useQuery(
 		"get",
@@ -167,6 +172,24 @@ export default function VaultDetailPage({
 	const projectById = useMemo(
 		() => new Map((projects.data ?? []).map((p) => [p.id, p])),
 		[projects.data],
+	);
+	const breadcrumbProject = requestedProjectId ? projectById.get(requestedProjectId) : null;
+	const breadcrumbProjectTitle =
+		requestedBinding?.binding_type === "primary"
+			? "Workspace"
+			: breadcrumbProject
+				? displayProjectName(breadcrumbProject)
+				: null;
+	useSetBreadcrumbSegmentTitle(
+		scope.kind === "agent" && requestedProjectId
+			? agentProjectDetailHref(
+					scope.agentId,
+					requestedProjectId,
+					agentDeploymentRouteQuery(scope.agentQuery),
+				)
+			: null,
+		breadcrumbProjectTitle,
+		requestedBinding?.binding_type === "primary" ? "workspace" : undefined,
 	);
 
 	const keys = useQuery({
@@ -240,13 +263,16 @@ export default function VaultDetailPage({
 
 	const deleteKey = useMutation({
 		mutationFn: async ({ section, name }: { section: string; name: string }) => {
-			if (!anyProjectId) throw new Error("No Project attachment");
 			if (!resolvedVaultId) throw new Error("Vault not loaded");
 			return unwrap(
 				await api.DELETE("/v1/vault/{slug}/items", {
 					params: {
 						path: { slug },
-						query: { project_id: anyProjectId, vault_id: resolvedVaultId, global_delete: true },
+						query: {
+							project_id: anyProjectId,
+							vault_id: resolvedVaultId,
+							global_delete: true,
+						},
 					},
 					body: { section: apiSection(section), fields: [name] },
 				}),
@@ -258,7 +284,6 @@ export default function VaultDetailPage({
 
 	const bulkDeleteKeys = useMutation({
 		mutationFn: async (list: { section: string; name: string }[]) => {
-			if (!anyProjectId) throw new Error("No Project attachment");
 			if (!resolvedVaultId) throw new Error("Vault not loaded");
 			const bySection = new Map<string, string[]>();
 			for (const k of list) {
@@ -307,7 +332,9 @@ export default function VaultDetailPage({
 		},
 		onSuccess: () => {
 			refresh();
-			toast.success("Vault attached to Project");
+			toast.success("Vault attached to Project", {
+				description: "Key values stay protected, and attached Projects and Agents can use them.",
+			});
 		},
 		onError: (e) =>
 			toast.error("Couldn't attach vault to Project", { description: errorMessage(e) }),
@@ -510,7 +537,7 @@ export default function VaultDetailPage({
 				nativeButton={false}
 				variant="ghost"
 				size="sm"
-				className="w-fit"
+				className="w-fit sm:hidden"
 			>
 				<ArrowLeft className="mr-1.5 size-4" />
 				{backTarget.label}
@@ -537,7 +564,6 @@ export default function VaultDetailPage({
 									? "Keys live here once and work in every Project this Vault is attached to."
 									: "Shared with you — your agents can use these keys; only the owner edits them."}
 						</p>
-						<p className="mt-0.5 font-mono text-xs text-muted-foreground">vault://{vault.slug}</p>
 					</div>
 				</div>
 				{canManageVault ? (
@@ -602,8 +628,8 @@ export default function VaultDetailPage({
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">
 							{isAgentScope
-								? "Key names are read-only here. The Agent resolves their values at runtime through this attachment."
-								: "Values are write-only here — agents read them at runtime through the CLI."}
+								? "Key names are read-only here. Key values stay protected, and this Agent can use them through the attachment."
+								: "Values are write-only here. Key values stay protected, and attached Projects and Agents can use them."}
 						</p>
 					</div>
 					<div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center">
@@ -650,7 +676,7 @@ export default function VaultDetailPage({
 								<Button
 									variant="outline"
 									size="sm"
-									disabled={!anyProjectId}
+									disabled={!vault.id}
 									className="w-full sm:w-auto"
 								>
 									<Plus className="size-3.5" />
@@ -841,8 +867,8 @@ export default function VaultDetailPage({
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">
 							{isAgentScope
-								? `This Vault is attached to the ${requestedAttachmentLabel}. The Agent resolves its keys at runtime.`
-								: "Same Vault everywhere — key changes apply to every attached Project. Agents resolve the keys at runtime through those attachments."}
+								? `This Vault is attached to the ${requestedAttachmentLabel}. Its key values stay protected, and this Agent can use them.`
+								: "Same Vault everywhere — key changes apply to every attached Project. Key values stay protected, and attached Projects and Agents can use them."}
 						</p>
 					</div>
 					{canManageVault && !blockingProjectsError ? (
@@ -872,7 +898,7 @@ export default function VaultDetailPage({
 					<EmptyState
 						variant="inset"
 						title="Not attached to any Project yet"
-						description="Attach this Vault to a Project before its Agents can resolve these keys."
+						description="Attach this Vault to a Project before that Project and its Agents can use the key values."
 					/>
 				) : (
 					<div className="divide-y overflow-hidden rounded-lg border bg-card">
@@ -886,21 +912,23 @@ export default function VaultDetailPage({
 							const attachmentLabel = isWorkspaceAttachment ? "Workspace" : "Project";
 							return (
 								<div key={project.id} className="flex items-center gap-3 px-4 py-2.5">
-									<Link
-										{...projectDetailLink(scope, project.id)}
-										className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
-									>
-										{isWorkspaceAttachment ? "Workspace" : displayProjectName(project)}
-									</Link>
-									{isWorkspaceAttachment ? null : (
-										<span className="font-mono text-xs text-muted-foreground">{project.slug}</span>
-									)}
+									<div className="min-w-0 flex-1">
+										<Link
+											{...projectDetailLink(scope, project.id)}
+											className="block truncate text-sm font-medium hover:underline"
+										>
+											{isWorkspaceAttachment ? "Workspace" : displayProjectName(project)}
+										</Link>
+										<p className="truncate text-xs text-muted-foreground">
+											{projectSupportingText(project)}
+										</p>
+									</div>
 									{isOwner ? (
 										<ConfirmAction
 											title={`Detach from ${attachmentLabel}?`}
 											description={
 												<p>
-													The Agent will stop resolving these keys through this {attachmentLabel}.
+													This {attachmentLabel} and its Agents will stop using these key values.
 												</p>
 											}
 											confirmLabel="Detach vault"
@@ -1030,7 +1058,7 @@ function ShareKeysDialog({
 					<AlertTitle>Vault attached to {displayProjectName(attached)}</AlertTitle>
 					<AlertDescription>
 						Now invite your colleague to that Project. They&apos;ll see key names here, and their
-						agents can use the values through the CLI — they can never read or edit the values.
+						Agents can use the values. Key values stay protected, and only you can edit them.
 					</AlertDescription>
 				</Alert>
 				<ShareProjectDialog
