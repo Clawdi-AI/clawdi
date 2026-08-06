@@ -39,7 +39,7 @@ function HostedDeletionFailureNotices({ deployments }: { deployments: HostedDepl
 				const failure = deploymentFailurePresentation(deployment);
 				if (failure?.failedVerb !== "delete") return null;
 				const name = agentDisplayName({
-					name: deployment.resource.spec.name,
+					name: deployment.resource.name,
 					agent_type: deployment.resource.spec.runtime,
 				});
 				const retrySafe = failure.retryable !== false;
@@ -134,6 +134,14 @@ export function HostedAgentsSection({
 	});
 	const connectedTiles = unified.connectedTiles;
 	const agentTiles = unified.tiles;
+	if (envsLoading) {
+		return (
+			<div data-hosted="true" className="space-y-4">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
+				<AgentsCard agents={[]} isLoading />
+			</div>
+		);
+	}
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!unified.error` so a transient hosted-fetch failure surfaces in
 	// AgentsCard's error banner instead of dropping silently into the
@@ -241,6 +249,14 @@ export function HostedAgentsByCompute({
 	});
 	const hostedTiles = unified.hostedTiles;
 	const connectedTiles = unified.connectedTiles;
+	if (envsLoading) {
+		return (
+			<div data-hosted="true" className="space-y-6">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
+				<AgentsCard agents={[]} isLoading />
+			</div>
+		);
+	}
 
 	const isEmptyState =
 		!envsLoading &&

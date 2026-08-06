@@ -46,7 +46,7 @@ const HOSTED_DEPLOY_LANGUAGE_CODES: ReadonlySet<string> = new Set(
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS.map((option) => option.code),
 );
 
-export const HOSTED_DEPLOY_ASSISTANT_NAME_MAX_LENGTH = 64;
+export const HOSTED_DEPLOY_AGENT_NAME_MAX_LENGTH = 64;
 export const DEFAULT_HOSTED_DEPLOY_RUNTIME: HostedDeployRuntime = "hermes";
 export const DEFAULT_HOSTED_DEPLOY_AI_ACCESS_MODE = "configured" as const;
 export const DEFAULT_HOSTED_DEPLOY_PRIMARY_MODEL = "";
@@ -94,7 +94,7 @@ export function isValidHostedDeployTimezone(value: string): boolean {
 	}
 }
 
-export function hostedDeployAssistantNameAfterRuntimeChange({
+export function hostedDeployAgentNameAfterRuntimeChange({
 	currentName,
 	hasBeenEdited,
 	runtime,
@@ -107,16 +107,14 @@ export function hostedDeployAssistantNameAfterRuntimeChange({
 }
 
 export type HostedDeployPersona = {
-	assistantName: string;
+	agentName: string;
 	language: string;
 	timezone: string;
 };
 
 /**
  * Canonical hosted deploy serialization shared by browser and CLI adapters.
- * It deliberately mirrors persona fields at the legacy top level and in
- * `config` until the generated deploy contract removes that compatibility
- * requirement.
+ * Runtime persona fields remain separate from the Agent's display name.
  */
 export function buildHostedDeployRequest({
 	computePlanSlug,
@@ -129,23 +127,21 @@ export function buildHostedDeployRequest({
 	persona: HostedDeployPersona;
 	aiFields: HostedDeployAiFields;
 }): HostedDeployRequest {
-	const assistantName = persona.assistantName.trim();
+	const agentName = persona.agentName.trim();
 	const language = normalizeHostedDeployLanguage(persona.language);
 	const timezone = persona.timezone.trim() || null;
 	const { ai_provider_auth_kind, ...restAiFields } = aiFields;
-	const personaFields = {
-		assistant_name: assistantName,
-		language,
-		timezone,
-	};
 	return {
 		compute_plan_slug: computePlanSlug,
 		runtime,
+		name: agentName,
 		config: {
 			runtime,
-			...personaFields,
+			language,
+			timezone,
 		},
-		...personaFields,
+		language,
+		timezone,
 		ai_provider_auth_kind,
 		...restAiFields,
 	};
@@ -158,14 +154,14 @@ export type HostedDeployWizardAiSelection =
 export type HostedDeployWizardDraft = {
 	runtime: HostedDeployRuntime;
 	computePlanSlug: HostedDeployComputePlanSlug;
-	assistantName: string;
+	agentName: string;
 	language: string;
 	timezone: string;
 	ai: HostedDeployWizardAiSelection;
 };
 
 export type HostedDeployValidationIssue = {
-	field: "runtime" | "compute" | "assistantName" | "language" | "timezone" | "ai.model";
+	field: "runtime" | "compute" | "agentName" | "language" | "timezone" | "ai.model";
 	message: string;
 };
 
@@ -178,13 +174,13 @@ export function validateHostedDeployPersona(
 	persona: HostedDeployPersona,
 ): HostedDeployValidationIssue[] {
 	const issues: HostedDeployValidationIssue[] = [];
-	const assistantName = persona.assistantName.trim();
-	if (!assistantName) {
-		issues.push({ field: "assistantName", message: "Enter a name for this agent." });
-	} else if (assistantName.length > HOSTED_DEPLOY_ASSISTANT_NAME_MAX_LENGTH) {
+	const agentName = persona.agentName.trim();
+	if (!agentName) {
+		issues.push({ field: "agentName", message: "Enter a name for this agent." });
+	} else if (agentName.length > HOSTED_DEPLOY_AGENT_NAME_MAX_LENGTH) {
 		issues.push({
-			field: "assistantName",
-			message: `Use ${HOSTED_DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters or fewer.`,
+			field: "agentName",
+			message: `Use ${HOSTED_DEPLOY_AGENT_NAME_MAX_LENGTH} characters or fewer.`,
 		});
 	}
 	if (persona.language && !normalizeHostedDeployLanguage(persona.language)) {
@@ -201,9 +197,9 @@ export function validateAndBuildHostedDeployRequest(
 	draft: HostedDeployWizardDraft,
 	managedModels: readonly HostedDeployManagedModel[] = [],
 ): HostedDeployValidationResult {
-	const assistantName = draft.assistantName.trim();
+	const agentName = draft.agentName.trim();
 	const issues = validateHostedDeployPersona({
-		assistantName,
+		agentName,
 		language: draft.language,
 		timezone: draft.timezone,
 	});
@@ -236,7 +232,7 @@ export function validateAndBuildHostedDeployRequest(
 			computePlanSlug: draft.computePlanSlug,
 			runtime: draft.runtime,
 			persona: {
-				assistantName,
+				agentName,
 				language: draft.language,
 				timezone: draft.timezone,
 			},

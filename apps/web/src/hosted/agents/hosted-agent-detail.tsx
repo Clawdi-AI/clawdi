@@ -490,10 +490,12 @@ export function HostedAgentDetail({
 		}
 	};
 	const agent = projection.status === "resolved" ? projection.data : null;
-	const agentTitle = agentDisplayName({
-		name: deployment.resource.spec.name,
-		agent_type: runtime,
-	});
+	const agentTitle = agent
+		? agentDisplayName(agent)
+		: deploymentProjectionQueryable
+			? null
+			: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
+	const availableAgentTitle = agentTitle ?? "Agent";
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
 	useSetBreadcrumbTitle(activeTab === "overview" ? agentTitle : agentSectionLabel(activeTab));
 
@@ -530,7 +532,7 @@ export function HostedAgentDetail({
 					: cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6"),
 			)}
 		>
-			{isLiveToolTab ? <h1 className="sr-only">{agentTitle}</h1> : null}
+			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
 			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4"}>
 				{isLiveToolTab ? null : (
 					<PageHeader
@@ -611,7 +613,7 @@ export function HostedAgentDetail({
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "terminal" ? (
-						<TerminalTab deployment={deployment} />
+						<TerminalTab deployment={deployment} agentName={availableAgentTitle} />
 					) : null}
 					{activeTab === "sessions" ? (
 						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
@@ -639,7 +641,7 @@ export function HostedAgentDetail({
 							<ChannelsTab
 								environmentId={environmentId}
 								agentType={runtime}
-								agentName={agentTitle}
+								agentName={availableAgentTitle}
 								routeSearch={routeSearch}
 							/>
 						) : (
@@ -1853,14 +1855,17 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 	);
 }
 
-function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
+function TerminalTab({
+	deployment,
+	agentName,
+}: {
+	deployment: HostedDeployment;
+	agentName: string;
+}) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
 	const isStarting = isStartingStatus(status);
-	const label = agentDisplayName({
-		name: deployment.resource.spec.name,
-		agent_type: deployment.resource.spec.runtime,
-	});
+	const label = agentName;
 	const client = useBillingClient();
 	const terminal = useSensitiveAction(({ id }: { id: string }) => client.createTerminalSession(id));
 	const { isPending: isOpeningTerminal, execute: createTerminalSession } = terminal;
@@ -3228,26 +3233,11 @@ function HostedAgentSettingsTab({
 	projectionAvailable: boolean;
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
-	const updateDeployment = useUpdateDeployment();
-	const updateInProgress =
-		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
-
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
 			<div className="flex flex-col gap-8">
 				{projectionAvailable ? (
-					<AgentSettingsPanel
-						environmentId={environmentId}
-						nameControl={{
-							value: deployment.resource.spec.name,
-							pending: updateDeployment.isPending || updateInProgress,
-							onSave: (name) =>
-								updateDeployment.mutate({
-									id: deployment.resource.id,
-									update: { name },
-								}),
-						}}
-					/>
+					<AgentSettingsPanel environmentId={environmentId} />
 				) : (
 					<ProjectionDependentUnavailable label="Profile settings" />
 				)}

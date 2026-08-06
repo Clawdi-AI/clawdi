@@ -1221,6 +1221,7 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 	return {
 		resource: {
 			id: deployment.id,
+			name: deployment.name,
 			owner_user_id: deployment.user_id,
 			commercial_revision: 1,
 			deployment_target: "saas",
@@ -1241,7 +1242,6 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 							: "running",
 				runtime,
 				runtime_version: "latest",
-				name: deployment.name,
 				resources: {
 					vcpu: config.compute_plan_slug === "compute_performance" ? 4 : 2,
 					memory_mib: config.compute_plan_slug === "compute_performance" ? 8192 : 4096,

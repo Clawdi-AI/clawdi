@@ -1668,7 +1668,9 @@ export function AppSidebar({
 
 	return (
 		<>
-			{unifiedAgentListEnabled && HostedUnifiedAgentListSensor ? (
+			{unifiedAgentListEnabled &&
+			hydratedEnvironments !== undefined &&
+			HostedUnifiedAgentListSensor ? (
 				<Suspense fallback={null}>
 					<HostedUnifiedAgentListSensor
 						cloudEnvs={hydratedEnvironments ?? EMPTY_SIDEBAR_ENVIRONMENTS}

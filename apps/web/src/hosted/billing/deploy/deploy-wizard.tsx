@@ -73,7 +73,7 @@ import {
 	DEFAULT_DEPLOY_PRIMARY_MODEL,
 	DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 	DEFAULT_DEPLOY_RUNTIME,
-	deployAssistantNameAfterRuntimeChange,
+	deployAgentNameAfterRuntimeChange,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
 	resolveBasicDeploySelection,
@@ -87,7 +87,7 @@ import {
 } from "@/hosted/billing/deploy/deploy-price-presentation";
 import {
 	buildHostedDeployRequest,
-	DEPLOY_ASSISTANT_NAME_MAX_LENGTH,
+	DEPLOY_AGENT_NAME_MAX_LENGTH,
 	type DeployAiFields,
 } from "@/hosted/billing/deploy/deploy-request";
 import {
@@ -374,11 +374,9 @@ export function DeployWizard() {
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
-	const assistantNameEditedRef = useRef(false);
+	const agentNameEditedRef = useRef(false);
 	const [runtime, setRuntime] = useState(DEFAULT_DEPLOY_RUNTIME);
-	const [assistantName, setAssistantName] = useState(() =>
-		runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME),
-	);
+	const [agentName, setAgentName] = useState(() => runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME));
 	const [compute, setCompute] = useState<Compute>("basic");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
@@ -546,15 +544,15 @@ export function DeployWizard() {
 		managedProviderSelected && managedModels.length === 0 && !managedModelsNeedRetry;
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
-	const trimmedAssistantName = assistantName.trim();
-	const nameLimitReached = assistantName.length >= DEPLOY_ASSISTANT_NAME_MAX_LENGTH;
-	const showNameCount = assistantName.length >= DEPLOY_ASSISTANT_NAME_MAX_LENGTH - 10;
+	const trimmedAgentName = agentName.trim();
+	const nameLimitReached = agentName.length >= DEPLOY_AGENT_NAME_MAX_LENGTH;
+	const showNameCount = agentName.length >= DEPLOY_AGENT_NAME_MAX_LENGTH - 10;
 	const personaIssues = validateHostedDeployPersona({
-		assistantName: trimmedAssistantName,
+		agentName: trimmedAgentName,
 		language,
 		timezone,
 	});
-	const nameError = personaIssues.find((issue) => issue.field === "assistantName")?.message ?? null;
+	const nameError = personaIssues.find((issue) => issue.field === "agentName")?.message ?? null;
 	const personaError = personaIssues[0]?.message ?? null;
 	const nameDescriptionIds = nameError
 		? showNameCount
@@ -600,10 +598,10 @@ export function DeployWizard() {
 
 	function selectRuntime(nextRuntime: HostedRuntime) {
 		setRuntime(nextRuntime);
-		setAssistantName((currentName) =>
-			deployAssistantNameAfterRuntimeChange({
+		setAgentName((currentName) =>
+			deployAgentNameAfterRuntimeChange({
 				currentName,
-				hasBeenEdited: assistantNameEditedRef.current,
+				hasBeenEdited: agentNameEditedRef.current,
 				runtime: nextRuntime,
 			}),
 		);
@@ -688,7 +686,7 @@ export function DeployWizard() {
 			computePlanSlug,
 			runtime,
 			persona: {
-				assistantName,
+				agentName,
 				language,
 				timezone,
 			},
@@ -1328,16 +1326,16 @@ export function DeployWizard() {
 								<Label htmlFor="agent-name">Name in Clawdi</Label>
 								<Input
 									id="agent-name"
-									value={assistantName}
-									maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
+									value={agentName}
+									maxLength={DEPLOY_AGENT_NAME_MAX_LENGTH}
 									required
 									aria-invalid={nameError ? true : undefined}
 									aria-describedby={nameDescriptionIds}
 									onChange={(event) => {
-										assistantNameEditedRef.current = true;
-										setAssistantName(event.target.value);
+										agentNameEditedRef.current = true;
+										setAgentName(event.target.value);
 									}}
-									onBlur={() => setAssistantName((name) => name.trim())}
+									onBlur={() => setAgentName((name) => name.trim())}
 								/>
 								{nameError ? (
 									<p id="agent-name-error" className="text-xs text-destructive" role="alert">
@@ -1354,14 +1352,14 @@ export function DeployWizard() {
 												: "text-muted-foreground",
 										)}
 									>
-										{`${assistantName.length} / ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters${
+										{`${agentName.length} / ${DEPLOY_AGENT_NAME_MAX_LENGTH} characters${
 											nameLimitReached ? " — limit reached." : ""
 										}`}
 									</p>
 								) : null}
 								{nameLimitReached ? (
 									<span className="sr-only" role="status" aria-live="polite">
-										{`Name limit reached. You can enter up to ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters.`}
+										{`Name limit reached. You can enter up to ${DEPLOY_AGENT_NAME_MAX_LENGTH} characters.`}
 									</span>
 								) : null}
 							</div>

@@ -194,6 +194,7 @@ describe("deploymentToTiles", () => {
 		const openclawEnv = env({
 			id: environmentId,
 			name: "hosted-openclaw",
+			display_name: "Research Agent",
 			default_name: "hosted-openclaw",
 			machine_name: "hosted-openclaw",
 			agent_type: "openclaw",
@@ -203,7 +204,7 @@ describe("deploymentToTiles", () => {
 
 		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
 		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
-		expect(tiles.map((tile) => tile.name)).toEqual(["hosted-test"]);
+		expect(tiles.map((tile) => tile.name)).toEqual(["Research Agent"]);
 		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
 		expect(tiles[0]?.env).toBe(openclawEnv);
 		expectHostedTileStatus(tiles[0], "Running");

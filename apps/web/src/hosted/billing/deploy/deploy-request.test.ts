@@ -7,7 +7,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_basic",
 			runtime: "hermes",
 			persona: {
-				assistantName: "Hermes",
+				agentName: "Hermes",
 				language: "",
 				timezone: "",
 			},
@@ -33,7 +33,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_performance",
 			runtime: "openclaw",
 			persona: {
-				assistantName: "  OpenClaw Studio  ",
+				agentName: "  OpenClaw Studio  ",
 				language: "en",
 				timezone: "America/Los_Angeles",
 			},
@@ -45,13 +45,12 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toMatchObject({
 			compute_plan_slug: "compute_performance",
 			runtime: "openclaw",
-			assistant_name: "OpenClaw Studio",
+			name: "OpenClaw Studio",
 			language: "en",
 			timezone: "America/Los_Angeles",
 			ai_provider_auth_kind: "managed",
 			config: {
 				runtime: "openclaw",
-				assistant_name: "OpenClaw Studio",
 				language: "en",
 				timezone: "America/Los_Angeles",
 			},
@@ -70,7 +69,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_basic",
 			runtime: "hermes",
 			persona: {
-				assistantName: "Hermes",
+				agentName: "Hermes",
 				language: "en",
 				timezone: "Etc/UTC",
 			},
@@ -80,12 +79,11 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toMatchObject({
 			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
-			assistant_name: "Hermes",
+			name: "Hermes",
 			language: "en",
 			timezone: "Etc/UTC",
 			config: {
 				runtime: "hermes",
-				assistant_name: "Hermes",
 				language: "en",
 				timezone: "Etc/UTC",
 			},
@@ -97,7 +95,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_performance",
 			runtime: "hermes",
 			persona: {
-				assistantName: "Hermes",
+				agentName: "Hermes",
 				language: "",
 				timezone: "",
 			},
@@ -131,7 +129,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_basic",
 			runtime: "hermes",
 			persona: {
-				assistantName: "Hermes",
+				agentName: "Hermes",
 				language: "",
 				timezone: "",
 			},
@@ -141,13 +139,12 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toEqual({
 			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
-			assistant_name: "Hermes",
+			name: "Hermes",
 			language: null,
 			timezone: null,
 			ai_provider_auth_kind: "unmanaged",
 			config: {
 				runtime: "hermes",
-				assistant_name: "Hermes",
 				language: null,
 				timezone: null,
 			},

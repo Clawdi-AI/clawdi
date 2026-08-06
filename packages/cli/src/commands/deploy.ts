@@ -80,7 +80,7 @@ export type ParsedDeployOptions = {
 	computePlanSlug?: HostedDeployComputePlanSlug;
 	billingTermMonths?: 1 | 12;
 	payment?: DeployPaymentMethod;
-	assistantName?: string;
+	agentName?: string;
 	language?: string;
 	timezone?: string;
 	requestId?: string;
@@ -202,7 +202,7 @@ export function parseDeployCommandOptions(options: DeployCommandOptions): Parsed
 		computePlanSlug,
 		billingTermMonths,
 		payment,
-		assistantName: options.name,
+		agentName: options.name,
 		language: language === "default" ? "" : language,
 		timezone,
 		requestId,
@@ -962,9 +962,9 @@ export async function runDeployFlow(
 			);
 		}
 	}
-	let assistantName = parsed.assistantName ?? hostedDeployRuntimeLabel(runtime);
-	if (interactive && parsed.assistantName === undefined) {
-		assistantName = await prompts.text(
+	let agentName = parsed.agentName ?? hostedDeployRuntimeLabel(runtime);
+	if (interactive && parsed.agentName === undefined) {
+		agentName = await prompts.text(
 			"Agent name",
 			hostedDeployRuntimeLabel(runtime),
 			"Research Assistant",
@@ -996,7 +996,7 @@ export async function runDeployFlow(
 		{
 			runtime,
 			computePlanSlug,
-			assistantName,
+			agentName,
 			language,
 			timezone,
 			ai: aiMode === "managed" ? { mode: "managed", model } : { mode: "unmanaged" },
@@ -1079,7 +1079,7 @@ export async function runDeployFlow(
 					: "Configure inside agent"
 		}`,
 		`Compute: ${planLabel(computePlanSlug)}${includedBasic ? " · included" : ` · ${paidSelection?.billingTermMonths} month term`}`,
-		`Persona: ${assistantName.trim()} · ${language || "default language"} · ${timezone.trim() || "default timezone"}`,
+		`Agent: ${agentName.trim()} · ${language || "default language"} · ${timezone.trim() || "default timezone"}`,
 		...(walletQuote && walletDebitUsd && walletBalanceAfterUsd
 			? [
 					`Wallet: debit ${formatUsd(walletDebitUsd)} · balance after ${formatUsd(walletBalanceAfterUsd)}`,

@@ -738,6 +738,8 @@ export interface components {
              * @example hdep_K8fJ3pQm
              */
             id: string;
+            /** Name */
+            name: string;
             /**
              * Owner User Id
              * Format: sqid
@@ -781,8 +783,6 @@ export interface components {
             runtime: "openclaw" | "hermes";
             /** Runtime Version */
             runtime_version: string;
-            /** Name */
-            name: string;
             resources: components["schemas"]["DeploymentResources"];
             /**
              * Agents
@@ -1691,6 +1691,8 @@ export interface components {
             slack_app_token?: string | null;
             /** Model */
             model?: string | null;
+            /** Name */
+            name?: string | null;
             /** Assistant Name */
             assistant_name?: string | null;
             /** Language */
@@ -2050,8 +2052,6 @@ export interface components {
         V2UpdateDeploymentRequest: {
             /** Assistant Name */
             assistant_name?: string | null;
-            /** Name */
-            name?: string | null;
             /** Runtime */
             runtime?: ("openclaw" | "hermes") | null;
             /** Language */

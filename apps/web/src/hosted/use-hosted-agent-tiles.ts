@@ -188,11 +188,13 @@ export function useHostedAgentTiles({
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	if (!isHostedDeploymentVisible(d)) return [];
 	const runtime = deploymentRuntime(d);
-	const name = agentDisplayName({ name: d.resource.spec.name, agent_type: runtime });
 	// The deploy API projects the stable agent identity. The Cloud API env join
 	// only decorates the tile and may legitimately lag or be missing.
 	const envId = runtimeEnvironmentId(d, runtime);
 	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
+	const name = agentDisplayName(
+		matchedEnv ?? { default_name: d.resource.name, agent_type: runtime },
+	);
 	const routeQuery = {
 		source: "on-clawdi",
 		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.resource.id,

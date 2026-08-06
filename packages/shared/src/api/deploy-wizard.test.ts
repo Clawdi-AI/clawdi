@@ -65,6 +65,7 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 	return {
 		resource: {
 			id: "hdep_test",
+			name: "Hermes",
 			owner_user_id: "usr_test",
 			commercial_revision: 0,
 			deployment_target: "test",
@@ -80,7 +81,6 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 				desired_lifecycle: "running",
 				runtime: "hermes",
 				runtime_version: "test",
-				name: "Hermes",
 				resources: { vcpu: 2, memory_mib: 4096, disk_gib: 20 },
 				agents: [],
 				ports: [],
@@ -146,12 +146,12 @@ function acceptedDeleteOperation(): NonNullable<HostedDeployDeployment["accepted
 }
 
 describe("hosted deploy request contract", () => {
-	test("keeps the browser-compatible persona mirror and managed provider reference", () => {
+	test("keeps the Agent name outside runtime configuration", () => {
 		const result = validateAndBuildHostedDeployRequest(
 			{
 				runtime: "hermes",
 				computePlanSlug: "compute_basic",
-				assistantName: "  Researcher  ",
+				agentName: "  Researcher  ",
 				language: "en",
 				timezone: "Etc/UTC",
 				ai: { mode: "managed", model: "gpt-test" },
@@ -172,7 +172,7 @@ describe("hosted deploy request contract", () => {
 			request: {
 				compute_plan_slug: "compute_basic",
 				runtime: "hermes",
-				assistant_name: "Researcher",
+				name: "Researcher",
 				language: "en",
 				timezone: "Etc/UTC",
 				ai_provider_auth_kind: "managed",
@@ -181,7 +181,6 @@ describe("hosted deploy request contract", () => {
 				primary_model: { provider_id: "clawdi", model: "gpt-test" },
 				config: {
 					runtime: "hermes",
-					assistant_name: "Researcher",
 					language: "en",
 					timezone: "Etc/UTC",
 				},
@@ -194,7 +193,7 @@ describe("hosted deploy request contract", () => {
 			{
 				runtime: "openclaw",
 				computePlanSlug: "compute_performance",
-				assistantName: " ",
+				agentName: " ",
 				language: "xx",
 				timezone: "Etc/UTC",
 				ai: { mode: "managed", model: "missing" },
@@ -213,7 +212,7 @@ describe("hosted deploy request contract", () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.issues.map((issue) => issue.field)).toEqual([
-			"assistantName",
+			"agentName",
 			"language",
 			"ai.model",
 		]);
@@ -233,19 +232,18 @@ describe("hosted deploy request contract", () => {
 			buildHostedDeployRequest({
 				computePlanSlug: "compute_basic",
 				runtime: "openclaw",
-				persona: { assistantName: "OpenClaw", language: "", timezone: "" },
+				persona: { agentName: "OpenClaw", language: "", timezone: "" },
 				aiFields: { ai_provider_auth_kind: "unmanaged" },
 			}),
 		).toEqual({
 			compute_plan_slug: "compute_basic",
 			runtime: "openclaw",
-			assistant_name: "OpenClaw",
+			name: "OpenClaw",
 			language: null,
 			timezone: null,
 			ai_provider_auth_kind: "unmanaged",
 			config: {
 				runtime: "openclaw",
-				assistant_name: "OpenClaw",
 				language: null,
 				timezone: null,
 			},
@@ -335,7 +333,7 @@ describe("hosted deploy compute and payment contract", () => {
 		const deployRequest = buildHostedDeployRequest({
 			computePlanSlug: "compute_performance",
 			runtime: "hermes",
-			persona: { assistantName: "Hermes", language: "en", timezone: "Etc/UTC" },
+			persona: { agentName: "Hermes", language: "en", timezone: "Etc/UTC" },
 			aiFields: { ai_provider_auth_kind: "unmanaged" },
 		});
 

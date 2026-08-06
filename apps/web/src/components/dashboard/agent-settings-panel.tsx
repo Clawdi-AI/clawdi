@@ -51,15 +51,9 @@ function updateEnvironmentCaches(queryClient: QueryClient, environment: Environm
 export function AgentSettingsPanel({
 	environmentId,
 	className,
-	nameControl,
 }: {
 	environmentId: string;
 	className?: string;
-	nameControl?: {
-		value: string;
-		pending: boolean;
-		onSave: (name: string) => void;
-	};
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -78,8 +72,7 @@ export function AgentSettingsPanel({
 		params: { path: { agent_id: environmentId } },
 	});
 
-	const serverDraftName =
-		nameControl?.value ?? (agent ? (agent.display_name ? agent.display_name : "") : undefined);
+	const serverDraftName = agent ? (agent.display_name ? agent.display_name : "") : undefined;
 
 	useEffect(() => {
 		if (serverDraftName === undefined) return;
@@ -174,12 +167,11 @@ export function AgentSettingsPanel({
 		uploadMutation.mutate(file);
 	};
 	const normalizedDraftName = draftName.trim() || null;
-	const currentName = nameControl?.value ?? (agent?.display_name ? agent.display_name : null);
+	const currentName = agent?.display_name ? agent.display_name : null;
 	const nameChanged = Boolean(agent) && normalizedDraftName !== currentName;
-	const nameMutationPending = nameControl?.pending ?? updateIdentity.isPending;
 	const guardedBySurface = useUnsavedNavigationState({
 		dirty: nameChanged,
-		busy: nameMutationPending,
+		busy: updateIdentity.isPending,
 	});
 
 	if (isLoading) {
@@ -211,13 +203,12 @@ export function AgentSettingsPanel({
 		ownership,
 	});
 	const isBusy =
-		nameMutationPending ||
+		updateIdentity.isPending ||
 		uploadMutation.isPending ||
 		clearAvatar.isPending ||
 		disconnect.isPending;
-	const displayName = nameControl?.value ?? agentDisplayName(agent);
-	const defaultDisplayName =
-		nameControl?.value ?? agentDisplayName({ ...agent, display_name: null });
+	const displayName = agentDisplayName(agent);
+	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
@@ -227,7 +218,7 @@ export function AgentSettingsPanel({
 			{guardedBySurface ? null : (
 				<UnsavedNavigationGuard
 					dirty={nameChanged}
-					busy={nameMutationPending}
+					busy={updateIdentity.isPending}
 					description="Your agent name will return to the last value saved on the server."
 				/>
 			)}
@@ -266,9 +257,9 @@ export function AgentSettingsPanel({
 						</Label>
 						<Input
 							id="agent-display-name"
-							name={nameControl ? "name" : "display_name"}
+							name="display_name"
 							value={draftName}
-							maxLength={nameControl ? 64 : 120}
+							maxLength={120}
 							placeholder={defaultDisplayName}
 							autoComplete="off"
 							onChange={(event) => setDraftName(event.target.value)}
@@ -278,20 +269,10 @@ export function AgentSettingsPanel({
 							size="sm"
 							variant={nameChanged ? "default" : "outline"}
 							className="lg:h-9 lg:min-w-20"
-							disabled={
-								!nameChanged ||
-								nameMutationPending ||
-								(Boolean(nameControl) && normalizedDraftName === null)
-							}
-							onClick={() => {
-								if (nameControl) {
-									if (normalizedDraftName) nameControl.onSave(normalizedDraftName);
-									return;
-								}
-								updateIdentity.mutate({ display_name: normalizedDraftName });
-							}}
+							disabled={!nameChanged || updateIdentity.isPending}
+							onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
 						>
-							{nameMutationPending ? (
+							{updateIdentity.isPending ? (
 								<Spinner data-icon="inline-start" />
 							) : (
 								<Save data-icon="inline-start" />
@@ -299,22 +280,20 @@ export function AgentSettingsPanel({
 							Save
 						</Button>
 					</div>
-					{nameControl ? null : (
-						<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-							<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
-							<Button
-								type="button"
-								size="sm"
-								variant="ghost"
-								className="h-7 w-fit px-2 text-xs text-muted-foreground"
-								disabled={!agent.display_name || updateIdentity.isPending}
-								onClick={() => updateIdentity.mutate({ display_name: null })}
-							>
-								<RotateCcw data-icon="inline-start" />
-								Use default name
-							</Button>
-						</div>
-					)}
+					<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+						<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
+						<Button
+							type="button"
+							size="sm"
+							variant="ghost"
+							className="h-7 w-fit px-2 text-xs text-muted-foreground"
+							disabled={!agent.display_name || updateIdentity.isPending}
+							onClick={() => updateIdentity.mutate({ display_name: null })}
+						>
+							<RotateCcw data-icon="inline-start" />
+							Use default name
+						</Button>
+					</div>
 				</div>
 			</SettingsSection>
 

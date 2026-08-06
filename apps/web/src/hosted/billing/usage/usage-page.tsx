@@ -109,15 +109,6 @@ function usageAgentIdentity(agent: AgentBreakdown): UsageAgentIdentity {
 }
 
 function usageAgentTileIdentity(tile: AgentTile): UsageAgentIdentity {
-	if (tile.source === "on-clawdi") {
-		return {
-			name: tile.name,
-			displayName: null,
-			defaultName: null,
-			machineName: null,
-			type: tile.agentType,
-		};
-	}
 	return {
 		name: tile.env?.name ?? tile.name,
 		displayName: tile.env?.display_name ?? null,
