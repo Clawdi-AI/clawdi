@@ -5,7 +5,6 @@ readonly sidecar_service="clawdi-whatsapp-baileys"
 readonly infra_service="clawdi-whatsapp-netns"
 readonly tailscale_service="clawdi-whatsapp-tailscale"
 readonly guard_service="clawdi-whatsapp-egress-guard"
-readonly sidecar_image="ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:${DEPLOY_IMAGE_VERSION}"
 readonly tailscale_image="tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0"
 readonly whatsapp_host_root="/home/phala/clawdi-whatsapp"
 readonly sidecar_state_dir="${whatsapp_host_root}/state"
@@ -13,6 +12,32 @@ readonly sidecar_run_dir="${whatsapp_host_root}/run"
 readonly tailscale_state_dir="${whatsapp_host_root}/tailscale-state"
 readonly guard_state_dir="${whatsapp_host_root}/egress-guard"
 readonly tailscale_resolver_file="${whatsapp_host_root}/tailscale-resolv.conf"
+
+validate_exit_node() {
+	case "$1" in
+		""|*[!A-Za-z0-9._:-]*) echo "invalid WhatsApp Tailscale exit node" >&2; exit 1 ;;
+	esac
+}
+
+tailscale_config_revision() {
+	printf '%s\n' \
+		'registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
+		"${tailscale_image}" \
+		'kernel-netns-ipv4-underlay-uid-killswitch-container-shell-readiness-writable-dns' \
+		"$1" | sha256sum | cut -d ' ' -f 1
+}
+
+if [[ "${1:-}" == --print-tailscale-config-revision ]]; then
+	[[ "$#" == 1 ]] || { echo "unexpected deployment helper arguments" >&2; exit 1; }
+	validate_exit_node "${WHATSAPP_TAILSCALE_EXIT_NODE:-}"
+	tailscale_config_revision "${WHATSAPP_TAILSCALE_EXIT_NODE}"
+	exit 0
+elif [[ "$#" != 0 ]]; then
+	echo "unexpected deployment helper arguments" >&2
+	exit 1
+fi
+
+readonly sidecar_image="ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:${DEPLOY_IMAGE_VERSION}"
 
 remote_value() {
 	kamal server exec "printf 'CLAWDI_VALUE=%s\\n' \"\$($1)\"" 2>/dev/null |
@@ -65,14 +90,13 @@ ensure_container_stopped() {
 egress_enabled=false
 if [[ "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" == true ]]; then
 	egress_enabled=true
-	case "${WHATSAPP_TAILSCALE_EXIT_NODE:-}" in
-		""|*[!A-Za-z0-9._:-]*) echo "invalid WhatsApp Tailscale exit node" >&2; exit 1 ;;
-	esac
-	WHATSAPP_TAILSCALE_CONFIG_REVISION="$(printf '%s\n' \
-		'registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
-		"${tailscale_image}" \
-		'kernel-netns-ipv4-underlay-uid-killswitch-container-shell-readiness-writable-dns' \
-		"${WHATSAPP_TAILSCALE_EXIT_NODE}" | sha256sum | cut -d ' ' -f 1)"
+	validate_exit_node "${WHATSAPP_TAILSCALE_EXIT_NODE:-}"
+	computed_tailscale_revision="$(tailscale_config_revision "${WHATSAPP_TAILSCALE_EXIT_NODE}")"
+	if [[ -n "${WHATSAPP_TAILSCALE_CONFIG_REVISION:-}" && "${WHATSAPP_TAILSCALE_CONFIG_REVISION}" != "${computed_tailscale_revision}" ]]; then
+		echo "WhatsApp Tailscale config revision does not match the deployment contract" >&2
+		exit 1
+	fi
+	WHATSAPP_TAILSCALE_CONFIG_REVISION="${computed_tailscale_revision}"
 	export WHATSAPP_TAILSCALE_CONFIG_REVISION
 elif [[ -n "${WHATSAPP_TAILSCALE_EGRESS_ENABLED:-}" && "${WHATSAPP_TAILSCALE_EGRESS_ENABLED}" != false ]]; then
 	echo "WHATSAPP_TAILSCALE_EGRESS_ENABLED must be exactly true or false/unset" >&2

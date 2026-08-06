@@ -59,7 +59,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 	});
 
 	test("prepares transparent egress before recreating the sidecar", () => {
-		const helperCall = workflow.indexOf("scripts/deploy-whatsapp-sidecar.sh");
+		const helperCall = workflow.lastIndexOf("scripts/deploy-whatsapp-sidecar.sh");
 		const appDeploy = workflow.indexOf(
 			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
 		);
@@ -69,6 +69,11 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(workflow).toContain("Build and push WhatsApp sidecar image");
 		expect(deployHelper).toContain("kamal accessory directories whatsapp-baileys");
 		expect(workflow).toContain("scripts/deploy-whatsapp-sidecar.sh");
+		expect(workflow).toContain(
+			"scripts/deploy-whatsapp-sidecar.sh --print-tailscale-config-revision",
+		);
+		expect(workflow.indexOf("--print-tailscale-config-revision")).toBeLessThan(helperCall);
+		expect(deployHelper).toContain("WhatsApp Tailscale config revision does not match");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-tailscale");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-egress-guard");
 		expect(deployHelper).toContain("kamal accessory reboot whatsapp-baileys");
