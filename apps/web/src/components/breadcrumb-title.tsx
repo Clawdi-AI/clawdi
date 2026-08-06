@@ -1,6 +1,17 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { useLocation } from "@tanstack/react-router";
+import {
+	createContext,
+	type Dispatch,
+	type SetStateAction,
+	useCallback,
+	useContext,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useState,
+} from "react";
 import { type AgentSectionId, agentSectionHref, agentSectionLabel } from "@/lib/agent-routes";
 import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
 
@@ -13,10 +24,10 @@ import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
  * route in `<BreadcrumbTitleProvider>`; detail pages call
  * `useSetBreadcrumbTitle(session.summary)` once they have data.
  *
- * Setting `null` (or unmounting the consumer) clears the override and
- * the breadcrumb goes back to its URL-derived label — which is correct
- * on top-level pages (`/sessions` → "Sessions") and during loading
- * states.
+ * Registrations are tied to the full route, including search params, so
+ * navigation can never reuse a name from the previous resource context.
+ * Dynamic names render a stable placeholder until their authoritative data
+ * is available; top-level pages still use their static collection label.
  *
  * Implementation note: read and write live in *separate* contexts. If
  * we put `{title, setTitle}` in one object, every render of the provider
@@ -26,30 +37,55 @@ import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
  * always are), so the effect only re-runs when the *title input* changes.
  */
 
-type SegmentTitles = Record<string, string>;
+export type BreadcrumbSegmentContext = "workspace";
+export type BreadcrumbSegmentTitle = {
+	title: string;
+	context?: BreadcrumbSegmentContext;
+};
+export type BreadcrumbSegmentTitles = Record<string, BreadcrumbSegmentTitle>;
+type BreadcrumbTitleRegistration = { routeKey: string; title: string } | null;
+type RegisteredBreadcrumbSegmentTitle = BreadcrumbSegmentTitle & { routeKey: string };
+type RegisteredBreadcrumbSegmentTitles = Record<string, RegisteredBreadcrumbSegmentTitle>;
 
-const TitleContext = createContext<string | null>(null);
-const SegmentTitlesContext = createContext<SegmentTitles>({});
-type Setter = (t: string | null) => void;
-const SetTitleContext = createContext<Setter>(() => {});
-type SegmentTitleSetter = (href: string | null | undefined, title: string | null) => void;
+const TitleContext = createContext<BreadcrumbTitleRegistration>(null);
+const SegmentTitlesContext = createContext<RegisteredBreadcrumbSegmentTitles>({});
+const SetTitleContext = createContext<Dispatch<SetStateAction<BreadcrumbTitleRegistration>>>(
+	() => {},
+);
+type SegmentTitleSetter = (
+	href: string | null | undefined,
+	title: string | null,
+	context?: BreadcrumbSegmentContext,
+	routeKey?: string,
+) => void;
 const SetSegmentTitleContext = createContext<SegmentTitleSetter>(() => {});
 
 export function BreadcrumbTitleProvider({ children }: { children: React.ReactNode }) {
-	const [title, setTitle] = useState<string | null>(null);
-	const [segmentTitles, setSegmentTitles] = useState<SegmentTitles>({});
-	const setSegmentTitle = useCallback<SegmentTitleSetter>((href, nextTitle) => {
+	const [title, setTitle] = useState<BreadcrumbTitleRegistration>(null);
+	const [segmentTitles, setSegmentTitles] = useState<RegisteredBreadcrumbSegmentTitles>({});
+	const setSegmentTitle = useCallback<SegmentTitleSetter>((href, nextTitle, context, routeKey) => {
 		const normalizedHref = normalizeBreadcrumbHref(href);
-		if (!normalizedHref) return;
+		if (!normalizedHref || !routeKey) return;
 		setSegmentTitles((current) => {
 			const trimmed = nextTitle?.trim() || null;
 			if (!trimmed) {
-				if (!(normalizedHref in current)) return current;
+				if (current[normalizedHref]?.routeKey !== routeKey) return current;
 				const { [normalizedHref]: _removed, ...rest } = current;
 				return rest;
 			}
-			if (current[normalizedHref] === trimmed) return current;
-			return { ...current, [normalizedHref]: trimmed };
+			const next: RegisteredBreadcrumbSegmentTitle = {
+				title: trimmed,
+				...(context ? { context } : {}),
+				routeKey,
+			};
+			if (
+				current[normalizedHref]?.title === next.title &&
+				current[normalizedHref]?.context === next.context &&
+				current[normalizedHref]?.routeKey === next.routeKey
+			) {
+				return current;
+			}
+			return { ...current, [normalizedHref]: next };
 		});
 	}, []);
 	return (
@@ -67,16 +103,28 @@ export function BreadcrumbTitleProvider({ children }: { children: React.ReactNod
 
 /** Read-only accessor for the breadcrumb component itself. */
 export function useBreadcrumbTitle(): string | null {
-	return useContext(TitleContext);
+	const routeKey = useBreadcrumbRouteKey();
+	const registration = useContext(TitleContext);
+	return registration?.routeKey === routeKey ? registration.title : null;
 }
 
-export function useBreadcrumbSegmentTitles(): SegmentTitles {
-	return useContext(SegmentTitlesContext);
+export function useBreadcrumbSegmentTitles(): BreadcrumbSegmentTitles {
+	const routeKey = useBreadcrumbRouteKey();
+	const registrations = useContext(SegmentTitlesContext);
+	return useMemo(
+		() =>
+			Object.fromEntries(
+				Object.entries(registrations)
+					.filter(([, registration]) => registration.routeKey === routeKey)
+					.map(([href, { title, context }]) => [href, { title, ...(context ? { context } : {}) }]),
+			),
+		[registrations, routeKey],
+	);
 }
 
 /**
  * Detail pages call this with their human-readable title. Pass `null`
- * (or wait until data is ready) to fall back to the URL segment.
+ * (or wait until data is ready) to keep the stable loading placeholder.
  *
  * Safe to call unconditionally — if `title` is null/undefined the effect
  * still runs but with no-op semantics. **Call this BEFORE any conditional
@@ -84,34 +132,43 @@ export function useBreadcrumbSegmentTitles(): SegmentTitles {
  */
 export function useSetBreadcrumbTitle(title: string | null | undefined) {
 	const setTitle = useContext(SetTitleContext);
-	useEffect(() => {
+	const routeKey = useBreadcrumbRouteKey();
+	useIsomorphicLayoutEffect(() => {
 		const trimmed = title?.trim() || null;
-		setTitle(trimmed);
+		setTitle((current) =>
+			trimmed ? { routeKey, title: trimmed } : current?.routeKey === routeKey ? null : current,
+		);
 		if (!trimmed || typeof document === "undefined") {
-			return () => setTitle(null);
+			return () => {
+				setTitle((current) => (current?.routeKey === routeKey ? null : current));
+			};
 		}
 
 		const previousTitle = document.title || APP_TITLE;
 		const nextTitle = formatDocumentTitle(trimmed);
 		document.title = nextTitle;
 		return () => {
-			setTitle(null);
+			setTitle((current) =>
+				current?.routeKey === routeKey && current.title === trimmed ? null : current,
+			);
 			if (document.title === nextTitle) {
 				document.title = previousTitle || APP_TITLE;
 			}
 		};
-	}, [setTitle, title]);
+	}, [routeKey, setTitle, title]);
 }
 
 export function useSetBreadcrumbSegmentTitle(
 	href: string | null | undefined,
 	title: string | null | undefined,
+	context?: BreadcrumbSegmentContext,
 ) {
 	const setSegmentTitle = useContext(SetSegmentTitleContext);
-	useEffect(() => {
-		setSegmentTitle(href, title?.trim() || null);
-		return () => setSegmentTitle(href, null);
-	}, [href, setSegmentTitle, title]);
+	const routeKey = useBreadcrumbRouteKey();
+	useIsomorphicLayoutEffect(() => {
+		setSegmentTitle(href, title?.trim() || null, context, routeKey);
+		return () => setSegmentTitle(href, null, undefined, routeKey);
+	}, [context, href, routeKey, setSegmentTitle, title]);
 }
 
 export function useSetAgentBreadcrumbTitle({
@@ -149,3 +206,11 @@ function normalizeBreadcrumbHref(href: string | null | undefined): string | null
 	if (!normalized || normalized === "/") return "/";
 	return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
+
+function useBreadcrumbRouteKey() {
+	return useLocation({
+		select: (location) => `${location.pathname}${location.searchStr}`,
+	});
+}
+
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;

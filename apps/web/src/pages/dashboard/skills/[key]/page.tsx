@@ -1,9 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import {
-	ArrowLeft,
 	BookOpen,
 	ExternalLink,
 	FileText,
@@ -32,6 +31,7 @@ import {
 	AGENT_PROJECT_SKILLS_REFRESH_POLICY,
 	agentSkillForegroundRefetchInterval,
 } from "@/components/dashboard/agent-skills-query";
+import { DetailBackLink } from "@/components/detail/back-link";
 import {
 	DetailMeta,
 	DetailNotFound,
@@ -55,6 +55,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
 	type AgentRouteSearch,
 	agentDeploymentRouteQuery,
+	agentProjectDetailHref,
 	agentProjectResourceHref,
 	agentSectionHref,
 } from "@/lib/agent-routes";
@@ -223,7 +224,6 @@ export function SkillDetailContent({
 			? cleanMachineName(skill.machine_name)
 			: null;
 	const breadcrumbTitle = skill?.name || (skill ? skillKey : null);
-	useSetBreadcrumbSegmentTitle(agentId ? agentSectionHref(agentId) : null, skillAgentLabel);
 	useSetBreadcrumbTitle(breadcrumbTitle);
 
 	// Browser writes require the exact Project selected by the URL. A released
@@ -243,6 +243,20 @@ export function SkillDetailContent({
 				? (projects?.find((project) => project.id === skill.project_id) ?? null)
 				: null,
 		[projects, skill?.project_id],
+	);
+	const selectedBinding = scopedBindings.data?.find(
+		(binding) => binding.project_id === selectedProjectId,
+	);
+	const breadcrumbProjectTitle =
+		selectedBinding?.binding_type === "primary"
+			? "Workspace"
+			: skillProject?.name || skill?.project_name || null;
+	useSetBreadcrumbSegmentTitle(
+		agentId && selectedProjectId
+			? agentProjectDetailHref(agentId, selectedProjectId, agentDeploymentRouteQuery(routeSearch))
+			: null,
+		breadcrumbProjectTitle,
+		selectedBinding?.binding_type === "primary" ? "workspace" : undefined,
 	);
 	const capabilities = skill
 		? skillCapabilities(skill, projects === undefined ? undefined : skillProject)
@@ -418,16 +432,11 @@ export function SkillDetailContent({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<Button
-				render={<Link to={skillListHref} />}
-				nativeButton={false}
-				variant="ghost"
-				size="sm"
-				className="w-fit"
-			>
-				<ArrowLeft className="size-4" />
-				Back to {skillListLabel}
-			</Button>
+			<DetailBackLink
+				href={skillListHref}
+				label={skillListLabel}
+				mobileOnly={viewState === "detail"}
+			/>
 			{agentAccessError ? (
 				<ApiErrorPanel
 					error={agentAccessError}
