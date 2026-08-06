@@ -77,6 +77,8 @@ export interface AgentTile {
 	/** Hosted integrations can project compute-first status without making the
 	 * generic card import hosted lifecycle types. */
 	cardStatus?: AgentCardStatusProjection;
+	/** Whether this hosted deployment has an authoritative Files endpoint. */
+	filesAvailable?: boolean;
 	/** Self-managed envs carry the full EnvironmentResponse so the
 	 * tile can render a sync indicator. Hosted tiles join their
 	 * cloud-api env via `clawdi_cloud_environments` and end up with

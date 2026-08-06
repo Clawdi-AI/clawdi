@@ -1,11 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 import {
+	deploymentFilesUrl,
 	deploymentRuntime,
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
 	runtimeEnvironmentId,
 } from "@/hosted/runtimes";
+
+describe("deploymentFilesUrl", () => {
+	test("accepts only the generated owner-scoped HTTPS endpoint shape", () => {
+		expect(
+			deploymentFilesUrl(
+				hostedDeploymentFixture({
+					filesEndpoint: { url: "https://abc-9120.prod12.clawdi.ai/" },
+				}),
+			),
+		).toBe("https://abc-9120.prod12.clawdi.ai/");
+		expect(
+			deploymentFilesUrl(
+				hostedDeploymentFixture({
+					filesEndpoint: { url: "https://abc-9120.prod12.clawdi.ai/deep" },
+				}),
+			),
+		).toBeNull();
+		expect(deploymentFilesUrl(hostedDeploymentFixture())).toBeNull();
+	});
+});
 
 describe("deploymentRuntime", () => {
 	test("returns the selected execution runtime", () => {
