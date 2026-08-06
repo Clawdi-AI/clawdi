@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouterState } from "@tanstack/react-router";
 import {
 	createContext,
 	type Dispatch,
@@ -14,6 +13,7 @@ import {
 } from "react";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 
 /**
  * Context for "what the breadcrumb's last segment should say".
@@ -204,12 +204,7 @@ type CommittedBreadcrumbRoute = {
  * registrations to this identity; `pathname`/`search` feed trail building.
  */
 export function useCommittedBreadcrumbRoute(): CommittedBreadcrumbRoute {
-	const pathname = useRouterState({
-		select: (state) => state.matches.at(-1)?.pathname ?? state.location.pathname,
-	});
-	const search = useRouterState({
-		select: (state) => state.matches.at(-1)?.search ?? state.location.search,
-	});
+	const { pathname, search } = useCommittedLocation();
 	return useMemo(
 		() => ({ pathname, search, routeKey: `${pathname}${JSON.stringify(search)}` }),
 		[pathname, search],

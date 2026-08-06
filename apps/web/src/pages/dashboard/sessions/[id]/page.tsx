@@ -1,7 +1,6 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useLocation } from "@tanstack/react-router";
 import {
 	ArrowDown,
 	ArrowDownNarrowWide,
@@ -43,6 +42,7 @@ import {
 	SESSION_MESSAGES_GC_MS,
 	SESSION_MESSAGES_STALE_MS,
 } from "@/lib/session-queries";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function SessionDetailPage({ sessionId }: { sessionId: string }) {
@@ -59,7 +59,10 @@ export function SessionDetailContent({
 	const api = useApi();
 	const $api = useOpenApi();
 	const { user } = useCurrentUser();
-	const routeSearch = useLocation({ select: (location) => location.search });
+	// Committed-match search, not the pending target: this page stays mounted
+	// while an outgoing navigation loads, and its links must keep pointing at
+	// the context the user is still looking at.
+	const { search: routeSearch } = useCommittedLocation();
 	const sessionsHref = agentId
 		? agentSectionHref(agentId, "sessions", agentDeploymentRouteQuery(routeSearch))
 		: "/sessions";

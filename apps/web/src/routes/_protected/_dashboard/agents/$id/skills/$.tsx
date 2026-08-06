@@ -16,6 +16,7 @@ import {
 import { routeHeadTitle } from "@/lib/document-title";
 import { decodeResourceRouteParam } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { useCommittedRouteIsLatestTarget } from "@/lib/use-committed-location";
 import { cn } from "@/lib/utils";
 import { SkillDetailContent } from "@/pages/dashboard/skills/[key]/page";
 
@@ -75,11 +76,12 @@ function LegacyAgentSkillProjectCanonicalizer({
 	const targetHref = projectId
 		? agentSkillDetailHref(agentId, skillKey, projectId, agentDeploymentRouteQuery(search))
 		: projectsHref;
+	const isLatestTarget = useCommittedRouteIsLatestTarget();
 
 	useEffect(() => {
-		if (bindings.data === undefined || blockingError) return;
+		if (bindings.data === undefined || blockingError || !isLatestTarget) return;
 		void router.navigate({ href: targetHref, replace: true, resetScroll: false });
-	}, [bindings.data, blockingError, router, targetHref]);
+	}, [bindings.data, blockingError, isLatestTarget, router, targetHref]);
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
 	ArrowRight,
 	Bot,
@@ -123,6 +123,7 @@ import {
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 import { cn } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -161,6 +162,18 @@ function projectLocalTabHref(
 	return `${pathname}${query ? `?${query}` : ""}`;
 }
 
+function searchRecordToSearchParams(search: Record<string, unknown>): URLSearchParams {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(search)) {
+		if (typeof value === "string") params.set(key, value);
+		else if (Array.isArray(value))
+			for (const item of value)
+				if (typeof item === "string") params.append(key, item);
+				else if (value != null) params.set(key, String(value));
+	}
+	return params;
+}
+
 const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 const HostedWorkspaceSkillsPanel = IS_HOSTED_BUILD
@@ -184,9 +197,11 @@ export default function ProjectDetailPage({
 	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const pathname = useLocation({ select: (location) => location.pathname });
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+	// Committed-match location, not the pending target: this page stays
+	// mounted while an outgoing navigation loads, and the rendered tab must
+	// keep matching the URL the user is still looking at.
+	const { pathname, search } = useCommittedLocation();
+	const searchParams = useMemo(() => searchRecordToSearchParams(search), [search]);
 	const requestedTab = searchParams.get("tab");
 	const localTab: ProjectLocalTab = PROJECT_LOCAL_TABS.some((tab) => tab.id === requestedTab)
 		? (requestedTab as ProjectLocalTab)

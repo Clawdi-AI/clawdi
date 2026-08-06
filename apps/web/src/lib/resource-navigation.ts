@@ -235,6 +235,7 @@ export function legacyAgentResourceScope(
 export type ResourceDetailSearch = Record<string, unknown> & {
 	vault?: string;
 	project?: string;
+	tab?: string;
 	useWithAgent?: string;
 	joined?: string;
 	from?: string;
@@ -251,6 +252,7 @@ export function validateResourceDetailSearch(
 	for (const key of [
 		"vault",
 		"project",
+		"tab",
 		"useWithAgent",
 		"joined",
 		"from",
