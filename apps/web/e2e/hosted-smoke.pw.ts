@@ -4635,7 +4635,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	const memoriesSurface = main.getByTestId("memories-surface");
 	await expect(
-		memoriesSurface.getByText("Hosted and connected agents share this memory"),
+		memoriesSurface.getByText("Hosted and connected agents share this memory", { exact: true }),
 	).toBeVisible();
 	await expect(
 		memoriesSurface

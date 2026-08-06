@@ -9,7 +9,8 @@ import {
 } from "@/components/dashboard/workspace-skills.logic";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
-import { SkillCard } from "@/components/skills/skill-card";
+import { PageHeader, type PageHeaderProps } from "@/components/page-header";
+import { SkillCard, SkillCardSkeleton } from "@/components/skills/skill-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,7 +23,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import type { AgentRouteQuery } from "@/lib/agent-routes";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
@@ -39,6 +39,7 @@ export function ConnectedWorkspaceSkillsPanel({
 	isLoading,
 	projectionError,
 	onRetryProjections,
+	pageHeader,
 }: {
 	agentId: string;
 	projectId: string;
@@ -48,27 +49,47 @@ export function ConnectedWorkspaceSkillsPanel({
 	isLoading: boolean;
 	projectionError?: unknown;
 	onRetryProjections?: () => void;
+	pageHeader?: Omit<PageHeaderProps, "actions">;
 }) {
 	const [installOpen, setInstallOpen] = useState(false);
 	const [repo, setRepo] = useState("");
 
 	return (
-		<div className="space-y-4">
+		<div className={pageHeader ? "space-y-6" : "space-y-4"}>
+			{pageHeader ? (
+				<PageHeader
+					{...pageHeader}
+					actions={
+						<Button size="sm" onClick={() => setInstallOpen(true)}>
+							<Plus className="size-3.5" />
+							Install skill
+						</Button>
+					}
+				/>
+			) : null}
 			<Alert>
 				<AlertTitle>Install on the Agent</AlertTitle>
-				<AlertDescription className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+				<AlertDescription
+					className={
+						pageHeader
+							? undefined
+							: "flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"
+					}
+				>
 					<span>
 						This connected Agent manages its own files. Run the command on the Agent machine; Skills
 						appear here after the next sync.
 					</span>
-					<Button
-						size="sm"
-						className="w-full shrink-0 sm:w-auto"
-						onClick={() => setInstallOpen(true)}
-					>
-						<Plus className="size-3.5" />
-						Install skill
-					</Button>
+					{pageHeader ? null : (
+						<Button
+							size="sm"
+							className="min-h-11 w-full shrink-0 sm:min-h-8 sm:w-auto"
+							onClick={() => setInstallOpen(true)}
+						>
+							<Plus className="size-3.5" />
+							Install skill
+						</Button>
+					)}
 				</AlertDescription>
 			</Alert>
 
@@ -81,7 +102,7 @@ export function ConnectedWorkspaceSkillsPanel({
 			) : isLoading ? (
 				<div className={HERO_GRID_CLASS}>
 					{Array.from({ length: 3 }).map((_, index) => (
-						<Skeleton key={index} className="h-28 w-full rounded-xl" />
+						<SkillCardSkeleton key={index} />
 					))}
 				</div>
 			) : projections.length === 0 ? (

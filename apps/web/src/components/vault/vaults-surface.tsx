@@ -4,11 +4,11 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
-import { type ReactElement, type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import { HERO_CARD_BASE, HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
+import { HERO_GRID_CLASS, HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { FilterChip } from "@/components/filter-chip";
 import { IconChip } from "@/components/icon-chip";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -35,6 +35,7 @@ import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { vaultsForSelectedProject } from "@/components/vault/vault-scope";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
@@ -44,7 +45,7 @@ import {
 	type ResourceNavigationScope,
 	vaultDetailLink,
 } from "@/lib/resource-navigation";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
 
@@ -160,7 +161,16 @@ export function VaultsSurface({
 			data-testid="vaults-surface"
 		>
 			{embedded ? null : (
-				<PageHeader title="Vaults" description={VAULTS_RESOURCE.managementDescription} />
+				<PageHeader
+					title="Vaults"
+					description={VAULTS_RESOURCE.managementDescription}
+					actions={
+						<>
+							<AddKeysDialog />
+							<NewVaultDialog />
+						</>
+					}
+				/>
 			)}
 
 			<ListToolbar
@@ -190,14 +200,6 @@ export function VaultsSurface({
 						</>
 					) : null
 				}
-				actions={
-					embedded ? null : (
-						<>
-							<AddKeysDialog />
-							<NewVaultDialog />
-						</>
-					)
-				}
 			/>
 
 			{shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data) ? (
@@ -223,18 +225,6 @@ export function VaultsSurface({
 							: embedded
 								? "This agent does not have any Vaults through its Projects yet."
 								: "Create a vault to group API keys for your agents."
-					}
-					action={
-						hasActiveFilter || embedded ? null : (
-							<NewVaultDialog
-								trigger={
-									<Button size="sm">
-										<Plus className="size-3.5" />
-										Create vault
-									</Button>
-								}
-							/>
-						)
 					}
 				/>
 			) : (
@@ -337,12 +327,20 @@ export function VaultCard({
 		.filter((id) => !visibleProjectIds || visibleProjectIds.has(id))
 		.map((id) => projectNameById.get(id))
 		.filter((n): n is string => !!n);
+	const identity = identityFor(vault.name);
+	const keyCountLabel = keys.isError ? (
+		"Key count unavailable"
+	) : keyCount === null ? (
+		<Skeleton key="key-count" className="h-3 w-12" aria-label="Loading key count" />
+	) : (
+		`${keyCount} ${keyCount === 1 ? "key" : "keys"}`
+	);
 
 	return (
 		<HeroCard
 			icon={
-				<IconChip tint={identityFor(vault.name).colorClasses} className="relative text-xl">
-					{identityFor(vault.name).emoji}
+				<IconChip tint={identity.colorClasses} className="relative text-xl">
+					{identity.emoji}
 					{shared ? (
 						<span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border bg-card">
 							<Lock className="size-2.5 text-muted-foreground" />
@@ -351,9 +349,8 @@ export function VaultCard({
 				</IconChip>
 			}
 			title={vault.name}
-			description={<span className="font-mono">{vault.slug}</span>}
 			footer={[
-				keyCount === null ? "…" : `${keyCount} ${keyCount === 1 ? "key" : "keys"}`,
+				keyCountLabel,
 				usedBy.length > 0 ? (
 					<Tooltip>
 						<TooltipTrigger render={<span className="truncate" />}>
@@ -376,22 +373,10 @@ export function VaultCard({
 }
 
 export function VaultCardSkeleton() {
-	return (
-		<div className={cn(HERO_CARD_BASE, "flex min-h-36 flex-col gap-3")}>
-			<Skeleton className="size-10 rounded-lg" />
-			<div className="min-w-0 space-y-2">
-				<Skeleton className="h-5 w-40 max-w-full" />
-				<Skeleton className="h-3 w-28" />
-			</div>
-			<div className="mt-auto flex items-center gap-3">
-				<Skeleton className="h-3 w-12" />
-				<Skeleton className="h-3 w-32" />
-			</div>
-		</div>
-	);
+	return <HeroCardSkeleton />;
 }
 
-function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
+function NewVaultDialog() {
 	const api = useApi();
 	const $api = useOpenApi();
 	const qc = useQueryClient();
@@ -439,15 +424,9 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 				search: { vault: created.id },
 			});
 		},
-		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
+		onError: (error) =>
+			toast.error("Couldn't create vault", { description: normalizeApiError(error) }),
 	});
-	const triggerElement = trigger ?? (
-		<Button size="sm">
-			<Plus className="size-3.5" />
-			Create vault
-		</Button>
-	);
-
 	return (
 		<Dialog
 			open={open}
@@ -456,7 +435,10 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 				if (!next) setName("");
 			}}
 		>
-			<DialogTrigger render={triggerElement} />
+			<DialogTrigger render={<Button size="sm" />}>
+				<Plus className="size-3.5" />
+				Create vault
+			</DialogTrigger>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Create vault</DialogTitle>
@@ -482,9 +464,6 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 							autoComplete="off"
 							autoFocus
 						/>
-						{slug ? (
-							<p className="font-mono text-xs text-muted-foreground">vault://{slug}</p>
-						) : null}
 						{slugTaken ? (
 							<p className="text-xs text-destructive">
 								That vault already exists. Open it from the vault list or use a different name.

@@ -49,7 +49,7 @@ async function expectNoHorizontalOverflow(page: Page) {
 
 test("Project detail uses explicit local pages and whole-bundle Link at mobile and desktop", async ({
 	page,
-}) => {
+}, testInfo) => {
 	let project = {
 		id: projectId,
 		name: "Client Review",
@@ -172,6 +172,7 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 	expect(projectResourceRequests).toEqual([]);
 	await expect(page.locator("html")).toHaveClass(/dark/);
 	await expectNoHorizontalOverflow(page);
+	await page.locator("main").screenshot({ path: testInfo.outputPath("project-detail-mobile.png") });
 
 	await overviewTab.focus();
 	await page.keyboard.press("ArrowRight");
@@ -270,6 +271,9 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		.toEqual([{ name: "Client Review Updated", description: "Updated Project purpose." }]);
 	await expect(page.getByRole("heading", { name: "Client Review Updated" })).toBeVisible();
 	await expectNoHorizontalOverflow(page);
+	await page
+		.locator("main")
+		.screenshot({ path: testInfo.outputPath("project-detail-desktop.png") });
 });
 
 test("legacy Skill detail stays view-only until the URL names a Project", async ({ page }) => {

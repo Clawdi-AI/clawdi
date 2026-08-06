@@ -45,7 +45,7 @@ import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader, type PageHeaderProps } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
@@ -55,7 +55,7 @@ import {
 	projectAgentFor,
 } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
-import { SkillCardGrid } from "@/components/skills/skill-card";
+import { SkillCardGrid, SkillCardSkeleton } from "@/components/skills/skill-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
 	AlertDialog,
@@ -105,8 +105,8 @@ import {
 	agentSectionLink,
 	agentSkillDetailLink,
 } from "@/lib/agent-routes";
-import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
-import { formatApiError, isApiNotFoundError } from "@/lib/api-errors";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
@@ -122,7 +122,7 @@ import {
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
 type Env = components["schemas"]["AgentResponse"];
@@ -408,7 +408,9 @@ export default function ProjectDetailPage({
 			toast.success("Skill removed from Project");
 		},
 		onError: (error) =>
-			toast.error("Couldn't remove Skill from Project", { description: errorMessage(error) }),
+			toast.error("Couldn't remove Skill from Project", {
+				description: normalizeApiError(error),
+			}),
 	});
 
 	const detachProjectVault = useMutation({
@@ -428,7 +430,7 @@ export default function ProjectDetailPage({
 		onError: (error) =>
 			toast.error(
 				isWorkspace ? "Couldn't detach vault from Workspace" : "Couldn't detach vault from Project",
-				{ description: errorMessage(error) },
+				{ description: normalizeApiError(error) },
 			),
 	});
 
@@ -447,9 +449,9 @@ export default function ProjectDetailPage({
 			toast.success("Left Shared Project", { description: "Membership removed." });
 			void router.navigate({ href: projectsTarget.href });
 		},
-		onError: (e) => {
+		onError: (error) => {
 			toast.error("Couldn't leave shared project", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(error),
 			});
 		},
 	});
@@ -622,79 +624,130 @@ export default function ProjectDetailPage({
 	const workspaceIdentity = identityFor("Workspace");
 	const focusedResourceIdentity = focus ? AGENT_SECTION_NAVIGATION_ITEMS[focus] : null;
 	const FocusedResourceIcon = focusedResourceIdentity?.icon ?? null;
+	const focusedWorkspaceSkillsPageHeaderProps: Omit<PageHeaderProps, "actions"> | undefined =
+		isWorkspace && focus === "skills"
+			? {
+					title: "Skills",
+					description:
+						"Skills available in this Agent's Workspace. Skills synced from the Agent are read-only.",
+					icon:
+						focusedResourceIdentity && FocusedResourceIcon ? (
+							<IconChip tint={focusedResourceIdentity.tint}>
+								<FocusedResourceIcon />
+							</IconChip>
+						) : undefined,
+				}
+			: undefined;
+	const focusedWorkspaceSkillsPageHeader = focusedWorkspaceSkillsPageHeaderProps ? (
+		<PageHeader {...focusedWorkspaceSkillsPageHeaderProps} />
+	) : null;
+	const focusedWorkspaceSkillsLoading = focusedWorkspaceSkillsPageHeader ? (
+		<div className="space-y-6">
+			{focusedWorkspaceSkillsPageHeader}
+			<ProjectSkillsLoadingGrid />
+		</div>
+	) : (
+		<ProjectSkillsLoadingGrid />
+	);
+	const workspaceAgentErrorPanel = blockingWorkspaceAgentError ? (
+		<ApiErrorPanel
+			error={blockingWorkspaceAgentError}
+			onRetry={() => {
+				void workspaceAgent.refetch();
+			}}
+			title="Couldn't load the Agent identity"
+		/>
+	) : null;
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<ProjectReturnLink target={pageReturnTarget} mobileOnly />
 
-			<PageHeader
-				title={
-					focusedResourceIdentity?.label ??
-					(isWorkspace ? "Workspace" : displayProjectName(project))
-				}
-				icon={
-					focusedResourceIdentity && FocusedResourceIcon ? (
-						<IconChip tint={focusedResourceIdentity.tint}>
-							<FocusedResourceIcon />
-						</IconChip>
-					) : (
-						<IconChip
-							tint={isWorkspace ? workspaceIdentity.colorClasses : projectIdentity.colorClasses}
-							className="text-xl"
-						>
-							{isWorkspace ? workspaceIdentity.emoji : projectIdentity.emoji}
-						</IconChip>
-					)
-				}
-				description={
-					isAgentScope
-						? isWorkspace
-							? focus === "skills"
-								? "Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
-								: focus === "vaults"
-									? "Vaults attached to this Agent's Workspace."
-									: "This Agent's fixed Workspace for installed Skills and attached Vaults."
-							: focus === "skills"
-								? "Skills this Agent uses through this linked Project."
-								: focus === "vaults"
-									? "Vaults this Agent can use through this Project. Key values stay protected."
-									: "This Agent uses the Project's Skills and attached Vaults as one bundle."
-						: projectDetailDescription(project, isOwner)
-				}
-				status={
-					focus && !isWorkspace ? (
-						<span className="text-xs text-muted-foreground">
-							Project: {displayProjectName(project)}
-						</span>
-					) : undefined
-				}
-				actions={
-					!isAgentScope && isShareableProject ? (
-						<>
-							{!joinedFromShare
-								? addToAgentDialog(
-										<Button size="sm">
-											<Bot className="mr-1.5 size-3.5" />
-											Link project
-										</Button>,
-									)
-								: null}
-							{isOwner && isShareableProject ? (
-								<ShareProjectDialog
-									projectId={project.id}
-									projectName={displayProjectName(project)}
-									projectKind={project.kind}
-								>
-									<Button variant="outline" size="sm">
-										<Share2 className="mr-1.5 size-3.5" />
-										Share
-									</Button>
-								</ShareProjectDialog>
-							) : null}
-						</>
-					) : undefined
-				}
-			/>
+			{isWorkspace && focus === "skills" ? null : (
+				<PageHeader
+					title={
+						focusedResourceIdentity?.label ??
+						(isWorkspace ? "Workspace" : displayProjectName(project))
+					}
+					icon={
+						focusedResourceIdentity && FocusedResourceIcon ? (
+							<IconChip tint={focusedResourceIdentity.tint}>
+								<FocusedResourceIcon />
+							</IconChip>
+						) : (
+							<IconChip
+								tint={isWorkspace ? workspaceIdentity.colorClasses : projectIdentity.colorClasses}
+								className="text-xl"
+							>
+								{isWorkspace ? workspaceIdentity.emoji : projectIdentity.emoji}
+							</IconChip>
+						)
+					}
+					description={
+						isAgentScope
+							? isWorkspace
+								? focus === "skills"
+									? "Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
+									: focus === "vaults"
+										? "Vaults attached to this Agent's Workspace."
+										: "This Agent's fixed Workspace for installed Skills and attached Vaults."
+								: focus === "skills"
+									? "Skills this Agent uses through this linked Project."
+									: focus === "vaults"
+										? "Vaults this Agent can use through this Project. Key values stay protected."
+										: "This Agent uses the Project's Skills and attached Vaults as one bundle."
+							: projectDetailDescription(project, isOwner)
+					}
+					status={
+						focus && !isWorkspace ? (
+							<span className="text-xs text-muted-foreground">
+								Project: {displayProjectName(project)}
+							</span>
+						) : undefined
+					}
+					actions={
+						focus === "skills" && canManageProjectSkills ? (
+							<Button
+								render={<Link to="/skills" search={{ project: project.id, add: 1 }} />}
+								nativeButton={false}
+								size="sm"
+							>
+								<Plus className="size-3.5" />
+								Add skill
+							</Button>
+						) : focus === "vaults" && isOwner ? (
+							<ProjectVaultActions
+								projectId={project.id}
+								contextLabel={isWorkspace ? "Workspace" : "Project"}
+								onChanged={refresh}
+							/>
+						) : !focus && !isAgentScope && isShareableProject ? (
+							<>
+								{!joinedFromShare
+									? addToAgentDialog(
+											<Button size="sm">
+												<Bot className="mr-1.5 size-3.5" />
+												Link project
+											</Button>,
+										)
+									: null}
+								{isOwner && isShareableProject ? (
+									<ShareProjectDialog
+										projectId={project.id}
+										projectName={displayProjectName(project)}
+										projectKind={project.kind}
+									>
+										<Button variant="outline" size="sm">
+											<Share2 className="mr-1.5 size-3.5" />
+											Share
+										</Button>
+									</ShareProjectDialog>
+								) : null}
+							</>
+						) : undefined
+					}
+				/>
+			)}
 
 			{joinedFromShare && isShareableProject ? (
 				<Alert>
@@ -773,7 +826,7 @@ export default function ProjectDetailPage({
 								: "Readable instructions shared by the owner."
 				}
 				action={
-					(!focus && projectResourceTargets) || canManageProjectSkills ? (
+					!focus && (projectResourceTargets || canManageProjectSkills) ? (
 						<>
 							{!focus && projectResourceTargets ? (
 								<ProjectResourceViewAllLink
@@ -796,22 +849,24 @@ export default function ProjectDetailPage({
 					) : undefined
 				}
 			>
-				{blockingWorkspaceAgentError ? (
-					<ApiErrorPanel
-						error={blockingWorkspaceAgentError}
-						onRetry={() => {
-							void workspaceAgent.refetch();
-						}}
-						title="Couldn't load the Agent identity"
-					/>
+				{workspaceAgentErrorPanel ? (
+					focusedWorkspaceSkillsPageHeader ? (
+						<div className="space-y-6">
+							{focusedWorkspaceSkillsPageHeader}
+							{workspaceAgentErrorPanel}
+						</div>
+					) : (
+						workspaceAgentErrorPanel
+					)
 				) : isWorkspace && scope.kind === "agent" ? (
 					IS_HOSTED_BUILD && HostedWorkspaceSkillsPanel ? (
-						<Suspense fallback={<Skeleton className="h-40 w-full rounded-lg" />}>
+						<Suspense fallback={focusedWorkspaceSkillsLoading}>
 							<HostedWorkspaceSkillsPanel
 								agentId={scope.agentId}
 								projectId={project.id}
 								routeSearch={scope.agentQuery}
 								deploymentSelector={deploymentSelector}
+								pageHeader={focusedWorkspaceSkillsPageHeaderProps}
 							/>
 						</Suspense>
 					) : workspaceAgent.data ? (
@@ -823,12 +878,13 @@ export default function ProjectDetailPage({
 							projections={workspaceSkillProjections}
 							isLoading={skills.isLoading}
 							projectionError={blockingSkillsError}
+							pageHeader={focusedWorkspaceSkillsPageHeaderProps}
 							onRetryProjections={() => {
 								void skills.refetch();
 							}}
 						/>
 					) : (
-						<Skeleton className="h-40 w-full rounded-lg" />
+						focusedWorkspaceSkillsLoading
 					)
 				) : blockingSkillsError ? (
 					<ApiErrorPanel
@@ -848,7 +904,7 @@ export default function ProjectDetailPage({
 						onUninstall={
 							canManageProjectSkills
 								? (skillKey, skillProjectId) =>
-										removeProjectSkill.mutate({ skillKey, skillProjectId })
+										removeProjectSkill.mutateAsync({ skillKey, skillProjectId })
 								: undefined
 						}
 						uninstallPending={removeProjectSkill.isPending}
@@ -890,7 +946,7 @@ export default function ProjectDetailPage({
 							: "Read-only vaults shared through this Project."
 				}
 				action={
-					(!focus && projectResourceTargets) || isOwner ? (
+					!focus && (projectResourceTargets || isOwner) ? (
 						<>
 							{!focus && projectResourceTargets ? (
 								<ProjectResourceViewAllLink
@@ -1223,7 +1279,7 @@ function HubSection({
 	return (
 		<section id={id} className="scroll-mt-20 space-y-3">
 			{showHeading ? (
-				<div className="flex items-end justify-between gap-2">
+				<div className="flex flex-col items-start gap-3 sm:flex-row sm:items-end sm:justify-between">
 					<div className="min-w-0">
 						<div className="flex items-center gap-2">
 							<h2 className="text-sm font-semibold">{title}</h2>
@@ -1236,11 +1292,11 @@ function HubSection({
 						<p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
 					</div>
 					{action ? (
-						<div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{action}</div>
+						<div className="flex w-full min-w-0 flex-wrap items-center gap-2 max-sm:[&_button]:min-h-11 max-sm:[&_[data-slot=button]]:min-h-11 sm:w-auto sm:shrink-0 sm:justify-end">
+							{action}
+						</div>
 					) : null}
 				</div>
-			) : action ? (
-				<div className="flex flex-wrap items-center justify-end gap-2">{action}</div>
 			) : null}
 			{children}
 		</section>
@@ -1332,7 +1388,7 @@ function ProjectOwnerPanel({
 			toast.success("Project updated");
 		},
 		onError: (error) =>
-			toast.error("Couldn't update Project", { description: errorMessage(error) }),
+			toast.error("Couldn't update Project", { description: normalizeApiError(error) }),
 	});
 	const archive = useMutation({
 		mutationFn: async () =>
@@ -1346,7 +1402,7 @@ function ProjectOwnerPanel({
 			onArchived();
 		},
 		onError: (error) =>
-			toast.error("Couldn't archive Project", { description: errorMessage(error) }),
+			toast.error("Couldn't archive Project", { description: normalizeApiError(error) }),
 	});
 
 	return (
@@ -1588,9 +1644,9 @@ function UseProjectWithAgentDialog({
 			});
 			onOpenChange(false);
 		},
-		onError: (e) => {
+		onError: (error) => {
 			toast.error("Couldn't link project", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(error),
 			});
 		},
 	});
@@ -1830,7 +1886,7 @@ function ProjectVaultActions({
 		},
 		onError: (error) =>
 			toast.error(`Couldn't attach vault to ${contextLabel}`, {
-				description: errorMessage(error),
+				description: normalizeApiError(error),
 			}),
 	});
 	const create = useMutation({
@@ -1853,7 +1909,8 @@ function ProjectVaultActions({
 				description: "Its key values stay protected, and this Project or Workspace can use them.",
 			});
 		},
-		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
+		onError: (error) =>
+			toast.error("Couldn't create vault", { description: normalizeApiError(error) }),
 	});
 
 	return (
@@ -2047,6 +2104,16 @@ function displayAgentName(env: Env) {
 
 function EmptyLine({ message }: { message: string }) {
 	return <EmptyState variant="inset" description={message} />;
+}
+
+function ProjectSkillsLoadingGrid() {
+	return (
+		<div className={HERO_GRID_CLASS}>
+			{Array.from({ length: 3 }).map((_, index) => (
+				<SkillCardSkeleton key={index} />
+			))}
+		</div>
+	);
 }
 
 function formatCountValue(value: CountValue) {

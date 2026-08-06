@@ -2,7 +2,7 @@
 
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { Check, ChevronRight, Plus } from "lucide-react";
-import type { ReactNode } from "react";
+import type { FocusEventHandler, MouseEventHandler, ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -14,41 +14,166 @@ import { cn } from "@/lib/utils";
  *   - `EntityIcon` (separate module)  — the real brand/app-icon tile
  *   - `IconChip` (separate module)    — the tinted symbolic glyph tile
  *   - `EntityHeader` / `EntityMeta`   — the `[icon] [title + meta]` lockup
- *   - `StatusBadge`, the p-4/gap-3/rounded-lg/border + hover/focus tokens
+ *   - `EntityCardChassis`             — container, interaction, and density tokens
  *
  * Card TYPES compose those primitives but differ by the entity's role:
+ *   - `EntityCardChassis` — resource / compact container and interaction tokens
  *   - `EntityRow`        — compact list rows (channels, connectors)
  *   - `EntityChoiceCard` — selectable options (deploy wizard)
  *   - agent tiles, resource cards, pool items compose `EntityHeader` directly
  *     where they need a richer, bespoke body.
  */
 
-export const ENTITY_CARD_BASE = "min-w-0 rounded-lg border bg-card p-4";
+export type EntityCardVariant = "resource" | "compact";
 
-/** Top-level resource card tier: projects, vaults, skills, memories. */
-export const HERO_CARD_BASE = "min-w-0 rounded-xl border bg-card p-5";
+/** Stable chassis tokens. Resource cards preserve richer content; compact
+ * cards favor dense catalogs without leaving the entity-card family. */
+export const ENTITY_CARD_CHASSIS_CLASS: Record<EntityCardVariant, string> = {
+	resource: "min-w-0 rounded-xl border bg-card p-5",
+	compact: "min-w-0 rounded-lg border bg-card p-4",
+};
 
-/** Responsive grid every top-level hero-card collection shares. */
-export const HERO_GRID_CLASS = "grid gap-4 sm:grid-cols-2 xl:grid-cols-3";
+export const ENTITY_CARD_GRID_CLASS: Record<EntityCardVariant, string> = {
+	resource: "grid gap-4 sm:grid-cols-2 xl:grid-cols-3",
+	compact: "grid gap-2 sm:grid-cols-2 xl:grid-cols-3",
+};
 
-/** Responsive card grid every entity-card collection shares (providers,
- * channels, shared bots). */
-export const ENTITY_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
+/** Variable-height resource notes keep the same responsive columns and gap
+ * while avoiding the empty vertical space of equal-height grid rows. */
+export const ENTITY_CARD_MASONRY_CLASS =
+	"columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid";
+
+/** Compatibility names for established non-resource callers. New resource
+ * components should use the semantic chassis/grid contract above. */
+export const ENTITY_CARD_BASE = ENTITY_CARD_CHASSIS_CLASS.compact;
+export const HERO_CARD_BASE = ENTITY_CARD_CHASSIS_CLASS.resource;
+export const HERO_GRID_CLASS = ENTITY_CARD_GRID_CLASS.resource;
+export const ENTITY_GRID_CLASS = ENTITY_CARD_GRID_CLASS.compact;
 
 /** Form-local choice cards follow their named main container instead of the viewport. */
 export const ENTITY_CHOICE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";
 
 /** Stretched link that makes a whole card navigate while keeping inner
  * controls independently clickable — pairs with a `relative z-0` wrapper. */
-export const ENTITY_STRETCHED_LINK_CLASS =
-	"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+export const ENTITY_CARD_STRETCHED_LINK_CLASS: Record<EntityCardVariant, string> = {
+	compact:
+		"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+	resource:
+		"absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+};
 
-export const HERO_STRETCHED_LINK_CLASS =
-	"absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+export const ENTITY_STRETCHED_LINK_CLASS = ENTITY_CARD_STRETCHED_LINK_CLASS.compact;
+export const HERO_STRETCHED_LINK_CLASS = ENTITY_CARD_STRETCHED_LINK_CLASS.resource;
 
 /** Focus ring for whole-card buttons matching the stretched-link treatment. */
 export const ENTITY_CARD_BUTTON_FOCUS_CLASS =
 	"focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+/**
+ * Card actions stay visible and comfortably tappable on touch screens, then
+ * recede until hover or keyboard focus on larger screens. Keep this in the
+ * shared slot so Project, Skill, Vault, and note-style Memory cards do not
+ * each invent a different action rhythm.
+ */
+export const ENTITY_CARD_ACTIONS_CLASS =
+	"relative z-10 flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity duration-150 max-sm:[&_button]:min-h-11 max-sm:[&_button[aria-label]]:min-w-11 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100";
+const ENTITY_CARD_ACTIONS_ALWAYS_CLASS =
+	"relative z-10 flex shrink-0 items-center gap-2 max-sm:[&_button]:min-h-11 max-sm:[&_button[aria-label]]:min-w-11";
+
+export function entityCardChassisClass({
+	variant,
+	interactive = false,
+	className,
+}: {
+	variant: EntityCardVariant;
+	interactive?: boolean;
+	className?: string;
+}) {
+	return cn(
+		ENTITY_CARD_CHASSIS_CLASS[variant],
+		"group relative z-0 transition-all duration-150",
+		interactive &&
+			(variant === "resource"
+				? "hover:-translate-y-px hover:border-foreground/20 focus-within:-translate-y-px focus-within:border-foreground/20"
+				: "hover:bg-muted/50 focus-within:bg-muted/50"),
+		className,
+	);
+}
+
+export function EntityCardChassis({
+	variant,
+	interactive = false,
+	as: Component = "div",
+	className,
+	children,
+}: {
+	variant: EntityCardVariant;
+	interactive?: boolean;
+	as?: "div" | "article";
+	className?: string;
+	children: ReactNode;
+}) {
+	return (
+		<Component
+			className={entityCardChassisClass({ variant, interactive, className })}
+			data-slot="entity-card"
+			data-variant={variant}
+			data-interactive={interactive || undefined}
+		>
+			{children}
+		</Component>
+	);
+}
+
+export function EntityCardActions({
+	children,
+	className,
+	visibility = "responsive",
+}: {
+	children: ReactNode;
+	className?: string;
+	visibility?: "responsive" | "always";
+}) {
+	return (
+		<div
+			className={cn(
+				visibility === "responsive" ? ENTITY_CARD_ACTIONS_CLASS : ENTITY_CARD_ACTIONS_ALWAYS_CLASS,
+				className,
+			)}
+		>
+			{children}
+		</div>
+	);
+}
+
+export type EntityCardLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash"> & {
+	onMouseEnter?: MouseEventHandler<HTMLAnchorElement>;
+	onFocus?: FocusEventHandler<HTMLAnchorElement>;
+};
+
+export function EntityCardLink({
+	variant,
+	ariaLabel,
+	className,
+	onMouseEnter,
+	onFocus,
+	...link
+}: EntityCardLinkOptions & {
+	variant: EntityCardVariant;
+	ariaLabel: string;
+	className?: string;
+}) {
+	return (
+		<Link
+			{...link}
+			className={cn(ENTITY_CARD_STRETCHED_LINK_CLASS[variant], className)}
+			onMouseEnter={onMouseEnter}
+			onFocus={onFocus}
+		>
+			<span className="sr-only">{ariaLabel}</span>
+		</Link>
+	);
+}
 
 type EntityChoiceCardVariant = "card" | "compact";
 
@@ -99,7 +224,7 @@ export function EntityCardSkeleton({
 	className?: string;
 }) {
 	return (
-		<div className={cn(ENTITY_CARD_BASE, className)}>
+		<div className={entityCardChassisClass({ variant: "compact", className })}>
 			<div className="flex items-start gap-3">
 				<Skeleton
 					className={cn("shrink-0", iconSize === "sm" ? "size-8 rounded-md" : "size-10 rounded-lg")}
@@ -120,6 +245,40 @@ export function EntityCardSkeleton({
 					<Skeleton className="h-8 w-20 rounded-md" />
 					<Skeleton className="h-8 w-14 rounded-md" />
 					<Skeleton className="ml-auto size-8 rounded-md" />
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+/** Loading shape for top-level resource cards. */
+export function HeroCardSkeleton({
+	compact = false,
+	footerItems = 2,
+	className,
+}: {
+	compact?: boolean;
+	footerItems?: 0 | 1 | 2;
+	className?: string;
+}) {
+	return (
+		<div
+			className={entityCardChassisClass({
+				variant: "resource",
+				className: cn("flex flex-col", compact ? "min-h-28 gap-2" : "min-h-36 gap-3", className),
+			})}
+			aria-hidden="true"
+			data-slot="hero-card-skeleton"
+		>
+			<Skeleton className={compact ? "size-8 rounded-lg" : "size-10 rounded-lg"} />
+			<div className="min-w-0 space-y-2">
+				<Skeleton className="h-4 w-40 max-w-full" />
+				<Skeleton className="h-3 w-56 max-w-[85%]" />
+			</div>
+			{footerItems > 0 ? (
+				<div className="mt-auto flex items-center gap-3">
+					<Skeleton className="h-3 w-16" />
+					{footerItems > 1 ? <Skeleton className="h-3 w-28 max-w-[45%]" /> : null}
 				</div>
 			) : null}
 		</div>
@@ -150,7 +309,11 @@ export function EntityMeta({
 			)}
 		>
 			{arr.map((item, i) => (
-				<span key={keyFor(item, i)} className="inline-flex min-w-0 items-center">
+				<span
+					key={keyFor(item, i)}
+					className="inline-flex min-w-0 items-center"
+					title={typeof item === "string" || typeof item === "number" ? String(item) : undefined}
+				>
 					{i > 0 ? <span className="mx-1.5 shrink-0 text-muted-foreground/40">·</span> : null}
 					<span className="min-w-0 truncate">{item}</span>
 				</span>
@@ -197,7 +360,10 @@ export function EntityHeader({
 				<div className="flex min-w-0 items-center gap-2">
 					<span
 						className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}
-						title={titleAttribute}
+						title={
+							titleAttribute ??
+							(typeof title === "string" || typeof title === "number" ? String(title) : undefined)
+						}
 					>
 						{title}
 					</span>
@@ -208,8 +374,6 @@ export function EntityHeader({
 		</div>
 	);
 }
-
-type HeroCardLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
 /**
  * Top-level resource card — `[icon tile] / [title + badges] / [description] /
@@ -225,7 +389,6 @@ export function HeroCard({
 	actions,
 	link,
 	ariaLabel,
-	selected,
 	interactive = true,
 	className,
 	titleClassName,
@@ -239,9 +402,8 @@ export function HeroCard({
 	description?: ReactNode;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
-	link?: HeroCardLinkOptions;
+	link?: EntityCardLinkOptions;
 	ariaLabel?: string;
-	selected?: boolean;
 	interactive?: boolean;
 	className?: string;
 	titleClassName?: string;
@@ -250,25 +412,25 @@ export function HeroCard({
 	children?: ReactNode;
 }) {
 	return (
-		<div
-			className={cn(
-				HERO_CARD_BASE,
-				"group relative z-0 flex min-h-36 flex-col gap-3 transition-all duration-150",
-				selected
-					? "border-foreground/40 bg-accent/50"
-					: interactive && "hover:-translate-y-px hover:border-foreground/20",
-				className,
-			)}
+		<EntityCardChassis
+			variant="resource"
+			interactive={interactive}
+			className={cn("flex min-h-36 flex-col gap-3", className)}
 		>
 			{icon || actions ? (
 				<div className="flex items-start justify-between gap-2">
 					{icon ? <div className="shrink-0">{icon}</div> : <span aria-hidden />}
-					{actions ? <div className="relative z-10 shrink-0">{actions}</div> : null}
+					{actions ? <EntityCardActions>{actions}</EntityCardActions> : null}
 				</div>
 			) : null}
 			<div className="min-w-0">
 				<div className="flex min-w-0 items-center gap-1.5">
-					<h3 className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}>
+					<h3
+						className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}
+						title={
+							typeof title === "string" || typeof title === "number" ? String(title) : undefined
+						}
+					>
 						{title}
 					</h3>
 					{badges ? <div className="flex shrink-0 items-center gap-1.5">{badges}</div> : null}
@@ -292,11 +454,9 @@ export function HeroCard({
 				/>
 			) : null}
 			{link ? (
-				<Link {...link} className={HERO_STRETCHED_LINK_CLASS}>
-					<span className="sr-only">{ariaLabel ?? "Open"}</span>
-				</Link>
+				<EntityCardLink variant="resource" {...link} ariaLabel={ariaLabel ?? "Open"} />
 			) : null}
-		</div>
+		</EntityCardChassis>
 	);
 }
 
@@ -312,10 +472,9 @@ interface EntityRowProps {
 	/** Extra right-aligned interactive content (e.g. a manage link). */
 	trailing?: ReactNode;
 	/** Whole-row navigation (stretched link). */
-	href?: string;
-	external?: boolean;
+	link?: EntityCardLinkOptions;
 	ariaLabel?: string;
-	/** Whole-row button. Ignored when `href` is set. */
+	/** Whole-row button. Ignored when `link` is set. */
 	onClick?: () => void;
 	disabled?: boolean;
 	className?: string;
@@ -323,7 +482,7 @@ interface EntityRowProps {
 
 /**
  * Compact list row — `[icon][title + meta][status][chevron | actions]`. The
- * dense, single-line member of the family (channels, connectors). When `href`
+ * dense, single-line member of the family (channels, connectors). When `link`
  * is set the whole row navigates via a stretched link while `actions`/`trailing`
  * stay independently clickable.
  */
@@ -335,8 +494,7 @@ export function EntityRow({
 	status,
 	actions,
 	trailing,
-	href,
-	external,
+	link,
 	ariaLabel,
 	onClick,
 	disabled,
@@ -348,21 +506,19 @@ export function EntityRow({
 			<EntityHeader icon={icon} title={title} titleAdornment={titleAdornment} meta={meta} />
 			{status ? <div className="shrink-0">{status}</div> : null}
 			{trailing ? <div className="relative z-10 shrink-0">{trailing}</div> : null}
-			{actions ? (
-				<div className="relative z-10 flex shrink-0 items-center gap-2">{actions}</div>
-			) : null}
+			{actions ? <EntityCardActions visibility="always">{actions}</EntityCardActions> : null}
 		</>
 	);
 
-	if (onClick && !href) {
+	if (onClick && !link) {
 		return (
 			<button
 				type="button"
 				onClick={onClick}
 				disabled={disabled}
 				className={cn(
-					ENTITY_CARD_BASE,
-					"flex w-full items-center gap-3 text-left transition-colors hover:bg-muted/50",
+					entityCardChassisClass({ variant: "compact", interactive: true }),
+					"flex w-full items-center gap-3 text-left",
 					ENTITY_CARD_BUTTON_FOCUS_CLASS,
 					disabled && "pointer-events-none opacity-60",
 					className,
@@ -373,14 +529,13 @@ export function EntityRow({
 		);
 	}
 
-	if (href) {
-		const linkClass = ENTITY_STRETCHED_LINK_CLASS;
+	if (link) {
 		return (
 			<div className="group relative z-0 min-w-0">
-				<div
+				<EntityCardChassis
+					variant="compact"
 					className={cn(
-						ENTITY_CARD_BASE,
-						"flex items-center gap-3 transition-colors group-hover:bg-muted/50",
+						"flex items-center gap-3 group-hover:bg-muted/50 group-focus-within:bg-muted/50",
 						className,
 					)}
 				>
@@ -388,21 +543,17 @@ export function EntityRow({
 					{!actions && !trailing ? (
 						<ChevronRight className="size-4 shrink-0 text-muted-foreground/60" aria-hidden />
 					) : null}
-				</div>
-				{external ? (
-					<a href={href} target="_blank" rel="noopener noreferrer" className={linkClass}>
-						<span className="sr-only">{label}</span>
-					</a>
-				) : (
-					<Link to={href} className={linkClass}>
-						<span className="sr-only">{label}</span>
-					</Link>
-				)}
+				</EntityCardChassis>
+				<EntityCardLink variant="compact" {...link} ariaLabel={label} />
 			</div>
 		);
 	}
 
-	return <div className={cn(ENTITY_CARD_BASE, "flex items-center gap-3", className)}>{body}</div>;
+	return (
+		<EntityCardChassis variant="compact" className={cn("flex items-center gap-3", className)}>
+			{body}
+		</EntityCardChassis>
+	);
 }
 
 /**
