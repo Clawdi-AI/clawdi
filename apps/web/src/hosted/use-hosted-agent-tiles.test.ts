@@ -305,7 +305,7 @@ describe("deploymentToTiles", () => {
 		expect(tile?.href).toBe(`/agents/${environmentId}?source=on-clawdi&d=dep_123`);
 	});
 
-	test("keeps stopped status and navigation on a summary-only tile", () => {
+	test("keeps the exact name, stopped status, and navigation on a summary-only tile", () => {
 		const environmentId = "env-stopped-openclaw";
 		const [tile] = hostedDeploymentToTiles(
 			deployment({
@@ -316,7 +316,7 @@ describe("deploymentToTiles", () => {
 		);
 
 		expect(tile).toMatchObject({
-			name: "OpenClaw",
+			name: "deployment-create-generated-id",
 			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 		});
 		expectHostedTileStatus(tile, "Stopped");
