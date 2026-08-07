@@ -222,3 +222,32 @@ async def test_agents_project_filter_is_explicit_and_bounded(
     response = await client.get("/v1/agents", params={"project_id": str(workspace_project.id)})
     assert response.status_code == 200, response.text
     assert [agent["id"] for agent in response.json()] == [str(channel_agent.id)]
+
+
+async def test_global_search_finds_projects_by_name_and_slug(client):
+    created = await client.post("/v1/projects", json={"name": "Redpill Launch"})
+    assert created.status_code == 201, created.text
+    project_id = created.json()["id"]
+
+    by_name = await client.get("/v1/search", params={"q": "redpill"})
+    assert by_name.status_code == 200, by_name.text
+    project_hits = [h for h in by_name.json()["results"] if h["type"] == "project"]
+    assert [(h["id"], h["href"]) for h in project_hits] == [
+        (project_id, f"/projects/{project_id}")
+    ]
+
+    by_slug = await client.get("/v1/search", params={"q": "redpill-launch"})
+    slug_hits = [h for h in by_slug.json()["results"] if h["type"] == "project"]
+    assert [h["id"] for h in slug_hits] == [project_id]
+
+
+async def test_global_search_projects_excludes_archived(client):
+    created = await client.post("/v1/projects", json={"name": "Archived Search Target"})
+    assert created.status_code == 201, created.text
+    project_id = created.json()["id"]
+    archived = await client.delete(f"/v1/projects/{project_id}")
+    assert archived.status_code == 200, archived.text
+
+    response = await client.get("/v1/search", params={"q": "Archived Search Target"})
+    assert response.status_code == 200, response.text
+    assert [h for h in response.json()["results"] if h["type"] == "project"] == []
