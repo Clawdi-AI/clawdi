@@ -66,7 +66,12 @@ export function VaultsSurface({
 	navigationScope?: ResourceNavigationScope;
 }) {
 	const $api = useOpenApi();
-	const [search, setSearch] = useState("");
+	// URL-backed like the other lists: open a vault and come back with the
+	// filter text intact.
+	const [search, setSearch] = useQueryState(
+		"q",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
 	const [projectParam, setProjectParam] = useQueryState(
 		"project",
 		parseAsString.withDefault("all").withOptions({ clearOnDefault: true, history: "replace" }),

@@ -3,6 +3,7 @@
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Plus, Share2 } from "lucide-react";
+import { parseAsString, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -53,7 +54,12 @@ export default function ProjectsPage() {
 	const [newProjectName, setNewProjectName] = useState("");
 	const [newProjectDescription, setNewProjectDescription] = useState("");
 	const [createOpen, setCreateOpen] = useState(false);
-	const [search, setSearch] = useState("");
+	// URL-backed like the other lists: open a project and come back with the
+	// filter text intact.
+	const [search, setSearch] = useQueryState(
+		"q",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
 
 	const projects = $api.useQuery(
 		"get",
