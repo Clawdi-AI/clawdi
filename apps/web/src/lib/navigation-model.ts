@@ -61,7 +61,7 @@ type ConsoleNavigationItemId =
 	| "channels"
 	| "ai-providers";
 
-type ConsoleNavigationGroupId = "primary" | "resources";
+type ConsoleNavigationGroupId = "primary" | "library" | "integrations";
 
 type ConsoleCommandPaletteMetadata = {
 	subtitle: string;
@@ -220,10 +220,16 @@ const CONSOLE_NAVIGATION_GROUPS = [
 		separated: false,
 	},
 	{
-		id: "resources",
+		id: "library",
 		label: "Library",
-		itemIds: ["channels", "ai-providers", "connectors", "projects", "skills", "vaults"],
+		itemIds: ["projects", "skills", "vaults"],
 		separated: false,
+	},
+	{
+		id: "integrations",
+		label: "Integrations",
+		itemIds: ["channels", "ai-providers", "connectors"],
+		separated: true,
 	},
 ] as const satisfies readonly {
 	id: ConsoleNavigationGroupId;

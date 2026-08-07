@@ -12,6 +12,7 @@ import {
 	Sparkles,
 } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { TruncatedText } from "@/components/truncated-text";
 import {
 	Command,
 	CommandDialog,
@@ -270,8 +271,10 @@ function CommandPalette({
 								>
 									<s.icon className="mt-0.5 size-4 shrink-0" />
 									<div className={COMMAND_RESULT_TEXT_CLASS}>
-										<span className="truncate">{s.label}</span>
-										<span className="truncate text-xs text-muted-foreground">{s.subtitle}</span>
+										<TruncatedText>{s.label}</TruncatedText>
+										<TruncatedText className="text-xs text-muted-foreground">
+											{s.subtitle}
+										</TruncatedText>
 									</div>
 								</CommandItem>
 							))}
@@ -296,11 +299,11 @@ function CommandPalette({
 												>
 													<Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 													<div className={COMMAND_RESULT_TEXT_CLASS}>
-														<span className="truncate">{hit.title}</span>
+														<TruncatedText>{hit.title}</TruncatedText>
 														{hit.subtitle ? (
-															<span className="truncate text-xs text-muted-foreground">
+															<TruncatedText className="text-xs text-muted-foreground">
 																{hit.subtitle}
-															</span>
+															</TruncatedText>
 														) : null}
 													</div>
 												</CommandItem>

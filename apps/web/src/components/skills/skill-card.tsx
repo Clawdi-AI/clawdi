@@ -11,6 +11,7 @@ import {
 } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
+import { TruncatedText } from "@/components/truncated-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -129,7 +130,7 @@ export function SkillCard({
 						<span aria-hidden className="select-none">
 							{sourceLabel.emoji}
 						</span>
-						<span className="truncate">{sourceLabel.name}</span>
+						<TruncatedText>{sourceLabel.name}</TruncatedText>
 					</span>
 				) : null,
 				skill.source_repo ? (

@@ -187,6 +187,25 @@ jobs:
           DEPLOY_CONTRACT_FETCH_MODE: warn
         run: scripts/check-deploy-generated-api.sh
 
+  web-e2e:
+    needs: changes
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.changes.outputs.client == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 25
+    env:
+      VITE_CLERK_PUBLISHABLE_KEY: pk_test_dummy
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install Chromium for Playwright
+        run: bunx playwright install --with-deps chromium
+      - name: OSS web e2e
+        run: bun run --cwd apps/web e2e
+
   whatsapp-native-e2e:
     needs: changes
     # Keep the required check name stable. A backend-only PR gets a successful
