@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
+import { expect, type Page, type Route, test } from "@playwright/test";
 
 const now = new Date("2026-07-04T12:00:00.000Z");
 
@@ -162,7 +162,7 @@ const sessions = {
 	page: 1,
 	page_size: 25,
 };
-const overviewSessions = {
+const _overviewSessions = {
 	...sessions,
 	items: Array.from({ length: 5 }, (_, index) => ({
 		...sessions.items[0],

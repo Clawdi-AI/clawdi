@@ -26,7 +26,7 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { cn, recencyBucketFor } from "@/lib/utils";
+import { cn, formatNumber, recencyBucketFor } from "@/lib/utils";
 
 // `relevance` (trgm similarity) joins the legacy date/count sorts.
 // Relevance is special-cased server-side: it's only meaningful when q
@@ -267,6 +267,11 @@ function SessionsListInner() {
 			}
 			actions={
 				<>
+					{isFiltered && data ? (
+						<span className="text-xs text-muted-foreground tabular-nums">
+							{formatNumber(total)} {total === 1 ? "result" : "results"}
+						</span>
+					) : null}
 					{isFiltered ? (
 						<Button
 							variant="ghost"

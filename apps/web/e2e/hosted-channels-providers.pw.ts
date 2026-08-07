@@ -4,9 +4,7 @@ import { collectBrowserErrors, stubCloudApi } from "./hosted-fixtures";
 test.beforeEach(async ({ page }) => {
 	await stubCloudApi(page);
 });
-// The save flow's stub endpoints predate the current validate-then-accept
-// contract — re-enable after re-stubbing to the live API shape.
-test.skip("AI providers BYOK flow saves and renders a custom provider", async ({ page }) => {
+test("AI providers BYOK flow saves and renders a custom provider", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 
 	await page.goto("/ai-providers");
@@ -20,7 +18,11 @@ test.skip("AI providers BYOK flow saves and renders a custom provider", async ({
 	await page.getByRole("button", { name: "Add provider", exact: true }).click();
 
 	await expect(page.getByRole("dialog", { name: /Set up OpenAI/ })).toBeHidden();
-	await expect(page.getByText("OpenAI", { exact: true }).first()).toBeVisible();
+	// The provider icon carries an SVG <title>OpenAI</title> (always hidden) —
+	// assert on a visible text node instead.
+	await expect(
+		page.getByText("OpenAI", { exact: true }).locator("visible=true").first(),
+	).toBeVisible();
 	expect(errors, `providers flow: ${errors.join(" | ")}`).toEqual([]);
 });
 

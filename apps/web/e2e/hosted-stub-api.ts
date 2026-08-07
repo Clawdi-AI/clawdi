@@ -1,4 +1,243 @@
+import type { DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route } from "@playwright/test";
+
+export type DeploymentComputeSubscription = NonNullable<
+	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
+>;
+
+export type DeploymentMutationFixture = {
+	id: string;
+	user_id: string;
+	name: string;
+	app_id: string;
+	status: string;
+	created_at: string;
+	upgrade_available: boolean;
+	upgrade_eligibility?: DeploymentRead["upgrade_eligibility"];
+	compute_subscription: DeploymentComputeSubscription | null;
+	config_info: {
+		compute_plan_slug: string;
+		runtime: "openclaw" | "hermes";
+		ai_provider_auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
+		ai_provider_bindings?: Record<string, { auth_kind?: string | null }>;
+		clawdi_cloud_environments?: Record<string, string>;
+		mux_enabled?: boolean;
+		telegram_mux_enabled?: boolean;
+		discord_mux_enabled?: boolean;
+		whatsapp_mux_enabled?: boolean;
+		imessage_mux_enabled?: boolean;
+		kobb_available?: boolean;
+		public_ports?: number[];
+		runtime_configuration?: DeploymentRead["resource"]["spec"]["runtime_configuration"];
+	};
+	endpoints?: string[];
+	failure_reason?: string | null;
+	hermes_control_ui_url?: string | null;
+	openclaw_control_ui_url?: string | null;
+	last_funding_event?: {
+		funding_source: "stripe" | "wallet";
+		reason: "payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced";
+		prior_plan_slug: string;
+		occurred_at: string;
+		subscription_id: number;
+	} | null;
+};
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isDeploymentMutationFixture(value: unknown): value is DeploymentMutationFixture {
+	return (
+		isRecord(value) &&
+		typeof value.id === "string" &&
+		typeof value.user_id === "string" &&
+		typeof value.name === "string" &&
+		typeof value.app_id === "string" &&
+		typeof value.status === "string" &&
+		typeof value.created_at === "string" &&
+		isRecord(value.config_info) &&
+		typeof value.config_info.compute_plan_slug === "string" &&
+		(value.config_info.runtime === "openclaw" || value.config_info.runtime === "hermes")
+	);
+}
+
+export function readSummaryState(
+	status: string,
+): NonNullable<DeploymentRead["resource"]["status"]>["summary_state"] {
+	switch (status) {
+		case "creating":
+		case "starting":
+		case "running":
+		case "stopping":
+		case "stopped":
+		case "restarting":
+		case "updating":
+		case "deleting":
+		case "deleted":
+		case "failed":
+			return status;
+		case "provisioning":
+			return "creating";
+		case "ready":
+			return "running";
+		default:
+			throw new Error(`Unsupported deployment fixture status: ${status}`);
+	}
+}
+
+export function readProviderAuthKind(
+	value: string | null | undefined,
+): DeploymentRead["ai_provider_auth_kinds"][string] {
+	switch (value) {
+		case "unmanaged":
+		case "managed":
+		case "api_key":
+		case "codex_oauth":
+			return value;
+		default:
+			throw new Error(`Unsupported deployment fixture provider mode: ${value ?? "missing"}`);
+	}
+}
+
+export function mutationDeploymentReadFixture(
+	deployment: DeploymentMutationFixture,
+): DeploymentRead {
+	const config = deployment.config_info;
+	const runtime = config.runtime;
+	if (runtime !== "openclaw" && runtime !== "hermes") {
+		throw new Error(`Unsupported deployment fixture runtime: ${runtime}`);
+	}
+	const summaryState = readSummaryState(deployment.status);
+	const backingInfrastructure =
+		summaryState === "stopped" || summaryState === "deleted" ? "absent" : "present";
+	const runtimeBinding = config.ai_provider_bindings?.[runtime];
+	const providerAuthKind = readProviderAuthKind(
+		runtimeBinding?.auth_kind ?? config.ai_provider_auth_kind,
+	);
+	const runtimeUiUrl =
+		runtime === "openclaw" ? deployment.openclaw_control_ui_url : deployment.hermes_control_ui_url;
+	const failure = deployment.failure_reason
+		? {
+				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+				title: deployment.failure_reason,
+				status: 504,
+				detail: "The runtime did not become ready before the startup deadline.",
+				instance: deployment.id,
+				code: "runtime_readiness_timeout",
+				phase: "readiness",
+				retryable: true,
+				conditionReason: "RuntimeReadinessTimeout",
+				conditionMessage: deployment.failure_reason,
+				observedGeneration: 1,
+			}
+		: null;
+	const fundingFact = deployment.last_funding_event
+		? {
+				fact_kind: "funding_revoked" as const,
+				commercial_revision: 1,
+				compute_subscription_id: deployment.last_funding_event.subscription_id,
+				compute_plan_slug: null,
+				funding_source: deployment.last_funding_event.funding_source,
+				reason: deployment.last_funding_event.reason,
+				prior_plan_slug: deployment.last_funding_event.prior_plan_slug,
+				occurred_at: deployment.last_funding_event.occurred_at,
+				emitted_at: deployment.last_funding_event.occurred_at,
+			}
+		: null;
+
+	return {
+		resource: {
+			id: deployment.id,
+			name: deployment.name,
+			owner_user_id: deployment.user_id,
+			commercial_revision: 1,
+			deployment_target: "saas",
+			metadata: {
+				generation: 1,
+				manifestETag: `etag_${deployment.id}`,
+				resourceVersion: `rv_${deployment.id}`,
+				createdAt: deployment.created_at,
+				updatedAt: deployment.created_at,
+			},
+			spec: {
+				schema_version: 1,
+				desired_lifecycle:
+					summaryState === "stopped"
+						? "stopped"
+						: summaryState === "deleted"
+							? "deleted"
+							: "running",
+				runtime,
+				runtime_version: "latest",
+				resources: {
+					vcpu: config.compute_plan_slug === "compute_performance" ? 4 : 2,
+					memory_mib: config.compute_plan_slug === "compute_performance" ? 8192 : 4096,
+					disk_gib: config.compute_plan_slug === "compute_performance" ? 40 : 20,
+				},
+				agents: [],
+				ports: [],
+				runtime_configuration: config.runtime_configuration ?? { providers: [], features: [] },
+				rollout_nonce: 0,
+				secret_references: [],
+			},
+			status: {
+				summary_state: summaryState,
+				observedGeneration: 1,
+				conditions: [],
+				failure,
+				backing_infrastructure: backingInfrastructure,
+				driver_acknowledged_generation: 1,
+				driver_applied_generation: 1,
+				driver_observation_sequence: 1,
+				endpoints: (deployment.endpoints ?? []).map((url, index) => ({
+					name: `endpoint-${index + 1}`,
+					url,
+				})),
+			},
+		},
+		clawdi_cloud_environments: config.clawdi_cloud_environments ?? {},
+		ai_provider_auth_kinds: { [runtime]: providerAuthKind },
+		runtime_ui_endpoint: runtimeUiUrl
+			? runtime === "hermes"
+				? {
+						runtime,
+						role: "control_ui",
+						url: runtimeUiUrl,
+						auth_mode: "password",
+						browser_mode: "embedded_and_top_level",
+					}
+				: {
+						runtime,
+						role: "control_ui",
+						url: runtimeUiUrl,
+						auth_mode: "openclaw_token",
+						browser_mode: "embedded_and_top_level",
+					}
+			: null,
+		accepted_operation: null,
+		commercial_display: {
+			compute_subscription: deployment.compute_subscription ?? null,
+			latest_funding_fact: fundingFact,
+		},
+		current_plan_slug: config.compute_plan_slug,
+		upgrade_available: deployment.upgrade_available,
+		upgrade_eligibility: deployment.upgrade_eligibility ?? {
+			eligible: deployment.upgrade_available,
+			reason: null,
+		},
+		compute_slot_occupancy: {
+			occupies_slot: backingInfrastructure === "present",
+			backing_infra: backingInfrastructure,
+			reason:
+				backingInfrastructure === "present" ? "backing_infra_present" : "authoritative_absence",
+		},
+	};
+}
+
+export function readDeploymentFixture(value: unknown): unknown {
+	return isDeploymentMutationFixture(value) ? mutationDeploymentReadFixture(value) : value;
+}
 
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
 // (NO Clerk key needed) + deploy-api enabled so /deploy renders. Exercises the
@@ -554,7 +793,11 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			if (options.deploymentsResponse) {
 				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}
-			return fulfillJson(r, deployments);
+			// Flat mutation fixtures must go out as DeploymentRead rows.
+			return fulfillJson(
+				r,
+				deployments.map((d) => readDeploymentFixture(d)),
+			);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "POST") {
 			options.createRequests?.push(r.request().postData() ?? "");
@@ -738,6 +981,16 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "DELETE") {
 			options.deleteRequests?.push(p);
 			return fulfillJson(r, { status: "deleted", cvm_deleted: true });
+		}
+		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
+			const id = decodeURIComponent(p.slice("/v2/deployments/".length));
+			const deployment = deployments.find(
+				(d): d is typeof d & { id: string } =>
+					typeof d === "object" && d !== null && (d as { id?: unknown }).id === id,
+			);
+			return deployment
+				? fulfillJson(r, readDeploymentFixture(deployment))
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		return fulfillJson(r, {});
 	});
