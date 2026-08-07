@@ -1,6 +1,7 @@
 import { Bot, FolderKanban, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { agentIdentity } from "@/components/dashboard/agent-label";
+import { TruncatedText } from "@/components/truncated-text";
 import { Badge } from "@/components/ui/badge";
 import {
 	Select,
@@ -119,11 +120,11 @@ export function ProjectIdentity({
 				</div>
 				{supportingText || projectAgent ? (
 					<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-						<span className="min-w-0 truncate">{supportingText}</span>
+						<TruncatedText className="min-w-0">{supportingText}</TruncatedText>
 						{agentLine ? (
-							<span className="min-w-0 truncate" translate="no">
+							<TruncatedText className="min-w-0" translate="no" title={`Agent: ${agentLine}`}>
 								Agent: {agentLine}
-							</span>
+							</TruncatedText>
 						) : null}
 					</div>
 				) : null}
@@ -367,9 +368,9 @@ export function ProjectCompactPicker({
 				{selectedProject ? (
 					<span className="flex min-w-0 items-center gap-2 text-left">
 						<ProjectIcon project={selectedProject} className="mt-0 size-5 rounded-md" />
-						<span className="min-w-0 truncate font-medium">
+						<TruncatedText className="min-w-0 font-medium">
 							{displayProjectName(selectedProject)}
-						</span>
+						</TruncatedText>
 						<span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
 							{projectCompactKindText(selectedProject)}
 						</span>
@@ -379,7 +380,7 @@ export function ProjectCompactPicker({
 						<span className="flex size-5 shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
 							<FolderKanban className="size-3" />
 						</span>
-						<span className="truncate font-medium">{allLabel}</span>
+						<TruncatedText className="font-medium">{allLabel}</TruncatedText>
 					</span>
 				) : (
 					<SelectValue placeholder={placeholder} />
@@ -397,7 +398,9 @@ export function ProjectCompactPicker({
 								<FolderKanban className="size-3.5" />
 							</span>
 							<div className="min-w-0">
-								<div className="truncate font-medium">{allLabel}</div>
+								<div className="truncate font-medium" title={allLabel}>
+									{allLabel}
+								</div>
 								<div className="truncate text-xs text-muted-foreground">{allDescription}</div>
 							</div>
 						</div>
@@ -432,12 +435,12 @@ function ProjectPickerValue({
 		<span className="flex min-w-0 flex-1 items-center gap-3 pr-1 text-left">
 			<ProjectIcon project={project} agent={agent} className="mt-0 size-7 rounded-md" />
 			<span className="grid min-w-0 flex-1 gap-0.5">
-				<span className="truncate text-sm leading-5 font-semibold">
+				<TruncatedText className="text-sm leading-5 font-semibold">
 					{displayProjectName(project)}
-				</span>
-				<span className="min-w-0 truncate text-xs leading-4 text-muted-foreground">
+				</TruncatedText>
+				<TruncatedText className="min-w-0 text-xs leading-4 text-muted-foreground">
 					{projectSupportingText(project)}
-				</span>
+				</TruncatedText>
 			</span>
 		</span>
 	);
@@ -455,19 +458,19 @@ function ProjectPickerOption({
 			<ProjectIcon project={project} agent={agent} className="mt-0 size-6 rounded-md" />
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
-					<span className="truncate font-medium">{displayProjectName(project)}</span>
+					<TruncatedText className="font-medium">{displayProjectName(project)}</TruncatedText>
 					<ProjectTypeBadge project={project} />
 				</div>
 				<div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-					<span className="min-w-0 truncate">{projectSupportingText(project)}</span>
+					<TruncatedText className="min-w-0">{projectSupportingText(project)}</TruncatedText>
 					<span className="shrink-0">·</span>
 					<span className="shrink-0">{projectPickerAccessText(project)}</span>
 					{project.kind === "environment" && agent ? (
 						<>
 							<span className="shrink-0">·</span>
-							<span className="min-w-0 truncate" translate="no">
+							<TruncatedText className="min-w-0" translate="no">
 								{projectAgentLabel(agent)}
-							</span>
+							</TruncatedText>
 						</>
 					) : null}
 				</div>
@@ -496,10 +499,10 @@ function ProjectPickerAllItem({
 				<FolderKanban className={compact ? "size-3.5" : "size-3.5"} />
 			</span>
 			<span className={cn("min-w-0", compact && "grid gap-0.5")}>
-				<span className={cn("block truncate font-medium", compact && "text-sm leading-5")}>
+				<TruncatedText className={cn("block font-medium", compact && "text-sm leading-5")}>
 					{label}
-				</span>
-				<span className="block truncate text-xs text-muted-foreground">{description}</span>
+				</TruncatedText>
+				<TruncatedText className="block text-xs text-muted-foreground">{description}</TruncatedText>
 			</span>
 		</span>
 	);

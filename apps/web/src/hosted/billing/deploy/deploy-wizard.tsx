@@ -42,6 +42,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import {
 	type CheckoutReturnNavigationTarget,
@@ -996,8 +997,18 @@ export function DeployWizard() {
 		);
 	}
 
+	const deployDirty =
+		runtime !== DEFAULT_DEPLOY_RUNTIME ||
+		agentName !== runtimeDisplayName(runtime) ||
+		compute !== "basic" ||
+		language !== "" ||
+		timezone !== "" ||
+		term !== 1 ||
+		checkoutSession !== null;
+
 	return (
 		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
+			<UnsavedNavigationGuard dirty={deployDirty} busy={submitting} />
 			<form
 				className="flex flex-col gap-6"
 				onSubmit={(event) => {

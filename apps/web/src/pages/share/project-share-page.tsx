@@ -344,12 +344,12 @@ function CopyableCommand({ command }: { command: string }) {
 							.writeText(command)
 							.then(() => toast.success("Command Copied"))
 							.catch(() =>
-								toast.error("Couldn't Copy", {
+								toast.error("Couldn't copy", {
 									description: "Select the command and copy it manually.",
 								}),
 							);
 					} else {
-						toast.error("Couldn't Copy", {
+						toast.error("Couldn't copy", {
 							description: "Select the command and copy it manually.",
 						});
 					}
@@ -399,7 +399,7 @@ function titleForError(code: ShareErrorCode): string {
 		case "already_owner":
 			return "That's Your Project";
 		default:
-			return "Couldn't Load This Share";
+			return "Couldn't load this share";
 	}
 }
 

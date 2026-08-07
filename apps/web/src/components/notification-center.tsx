@@ -105,7 +105,7 @@ export function NotificationCenter() {
 			toast.success("Invitation Declined");
 		},
 		onError: (e) => {
-			toast.error("Couldn't Decline Invitation", {
+			toast.error("Couldn't decline invitation", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
