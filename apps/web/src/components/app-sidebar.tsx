@@ -1191,9 +1191,7 @@ function FocusHeader({
 		return (
 			<div className="min-w-0">
 				<div className="truncate text-sm font-semibold leading-5">Console</div>
-				<div className="truncate text-xs leading-4 text-muted-foreground">
-					Account resources and agents
-				</div>
+				<div className="truncate text-xs leading-4 text-muted-foreground">Library and agents</div>
 			</div>
 		);
 	}

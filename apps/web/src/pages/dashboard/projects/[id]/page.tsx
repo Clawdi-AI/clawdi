@@ -1152,7 +1152,7 @@ export default function ProjectDetailPage({
 						project.kind === "environment"
 							? "Agent that owns this Workspace."
 							: project.kind === "personal"
-								? "Private account resources are not linked to individual Agents."
+								? "Private library items are not linked to individual Agents."
 								: "Agents you own that use this Project's Skills and attached Vaults."
 					}
 				>
@@ -1172,7 +1172,7 @@ export default function ProjectDetailPage({
 								project.kind === "environment"
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
-										? "Private account resources have no Agent links."
+										? "Private library items have no Agent links."
 										: "None of your Agents are linked yet. Link this Project to let one use its Skills and attached Vaults."
 							}
 						/>

@@ -54,13 +54,14 @@ describe("project resource model", () => {
 			"projects",
 			"skills",
 			"vaults",
+			"connectors",
 			"sessions",
 			"memories",
-			"connectors",
 		]);
-		expect(projectResourceDefinitionsForGroup("project-resources").map((r) => r.id)).toEqual([
+		expect(projectResourceDefinitionsForGroup("library").map((r) => r.id)).toEqual([
 			"skills",
 			"vaults",
+			"connectors",
 		]);
 		expect(projectManagedResourceDefinitions().map((r) => r.id)).toEqual(["skills", "vaults"]);
 	});
@@ -68,7 +69,7 @@ describe("project resource model", () => {
 	it("renders stable user-facing scope labels", () => {
 		expect(projectResourceScopeLabel("container")).toBe("Project home");
 		expect(projectResourceScopeLabel("project-managed")).toBe("Saved in a Project");
-		expect(projectResourceScopeLabel("activity")).toBe("Account resources");
+		expect(projectResourceScopeLabel("activity")).toBe("Account activity");
 		expect(projectResourceScopeLabel("all-agents")).toBe("All agents");
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("memories"))).toContain(
 			"all agents",
@@ -87,13 +88,13 @@ describe("project resource model", () => {
 			"Projects / Selected Project / Vaults",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("sessions"))).toBe(
-			"Account resources / Sessions",
+			"Activity / Sessions",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("memories"))).toBe(
-			"Account resources / Memory",
+			"Activity / Memory",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("connectors"))).toBe(
-			"Account resources / Connectors",
+			"Library / Connectors",
 		);
 		expect(getProjectResourceDefinition("vaults").navLabel).toBe("Vaults");
 		expect(getProjectResourceDefinition("vaults").href).toBe("/vaults");

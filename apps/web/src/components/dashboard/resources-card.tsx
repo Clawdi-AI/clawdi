@@ -9,11 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { DashboardStats } from "@/lib/api-schemas";
 import {
 	getProjectResourceDefinition,
-	PROJECT_RESOURCE_GROUPS,
-	PROJECT_RESOURCE_NAV_IDS,
 	type ProjectResourceDefinition,
 	projectResourceCount,
-	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
@@ -25,8 +22,10 @@ type Resource = {
 	count: number | null;
 };
 
+const LIBRARY_ROW_IDS = ["projects", "skills", "vaults", "connectors"] as const;
+
 function buildResources(stats: DashboardStats): Resource[] {
-	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
+	return LIBRARY_ROW_IDS.map((id) => {
 		const definition = getProjectResourceDefinition(id);
 		return {
 			icon: PROJECT_RESOURCE_ICONS[id],
@@ -62,18 +61,11 @@ export function ResourcesCard({
 					</div>
 				) : (
 					<div className="divide-y">
-						{ready ? (
-							<ProjectResourceGroups resources={buildResources(stats)} />
-						) : (
-							PROJECT_RESOURCE_GROUPS.map((group) => (
-								<div key={group.id}>
-									{group.resourceIds.length > 1 ? <ResourceGroupLabel label={group.label} /> : null}
-									{group.resourceIds.map((id) => (
-										<ResourceRowSkeleton key={id} />
-									))}
-								</div>
-							))
-						)}
+						{ready
+							? buildResources(stats).map((resource) => (
+									<ResourceRow key={resource.definition.id} resource={resource} />
+								))
+							: LIBRARY_ROW_IDS.map((id) => <ResourceRowSkeleton key={id} />)}
 					</div>
 				)}
 				{ready && stats.projects_count === 0 ? (
@@ -90,29 +82,6 @@ export function ResourcesCard({
 				) : null}
 			</CardContent>
 		</Card>
-	);
-}
-
-function ProjectResourceGroups({ resources }: { resources: Resource[] }) {
-	const byId = new Map(resources.map((resource) => [resource.definition.id, resource]));
-	return (
-		<>
-			{PROJECT_RESOURCE_GROUPS.map((group) => (
-				<div key={group.id}>
-					{group.resourceIds.length > 1 ? <ResourceGroupLabel label={group.label} /> : null}
-					{projectResourceDefinitionsForGroup(group.id).map((definition) => {
-						const resource = byId.get(definition.id);
-						return resource ? <ResourceRow key={definition.id} resource={resource} /> : null;
-					})}
-				</div>
-			))}
-		</>
-	);
-}
-
-function ResourceGroupLabel({ label }: { label: string }) {
-	return (
-		<div className="bg-muted/20 px-6 py-2 text-xs font-medium text-muted-foreground">{label}</div>
 	);
 }
 

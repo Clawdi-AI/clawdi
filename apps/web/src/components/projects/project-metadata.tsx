@@ -584,7 +584,7 @@ export function projectKindMeta(kind: string): {
 		return {
 			label: "Private resources",
 			groupLabel: "Private resources",
-			description: "Private account resources.",
+			description: "Private library item.",
 			icon: FolderKanban,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
 			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
