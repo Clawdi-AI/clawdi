@@ -21,7 +21,7 @@ const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 
 // Must match the API hosts configured in playwright.hosted.config.ts.
 const CLOUD_API = "http://127.0.0.1:8000";
-const DEPLOY_API = process.env.E2E_HOSTED_DEPLOY_API_URL ?? "http://127.0.0.1:50001";
+const DEPLOY_API = process.env.E2E_HOSTED_DEPLOY_API_URL ?? "http://127.0.0.1:8001";
 
 export const basicPlan = {
 	slug: "compute_basic",

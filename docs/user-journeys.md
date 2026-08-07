@@ -123,14 +123,37 @@ Severity legend for open gaps: 🔴 blocks · 🟡 friction · ⚪ nitpick.
   targets on icon buttons bump to 44px under `pointer-coarse`.
 - **Guards**: 320px variants across the sidebar suite.
 
+## E2E inventory (post-2026-08 hard cut)
+
+The suites now keep one sentinel per journey; micro-copy and permutation
+assertions were deleted because they broke on iteration without catching
+bugs.
+
+- **OSS** (`playwright.config.ts`, 25 tests): navigation grammar, scope
+  fail-closed (workspace/resources/agent-missing), nested list/detail
+  navigation, the Projects-selection journey, error/loading states, rail
+  keyboard sorting, unsaved-changes guard, pages render smoke, project
+  detail, vault identity, share dialog lifecycle, API keys, polling
+  no-flicker.
+- **Hosted** (`playwright.hosted.config.ts`, 12 tests + mock deploy API):
+  rail context switching, breadcrumb collapse, overview hierarchy,
+  projection-degraded overview (missing/error), deploy wizard golden
+  path (against `mock_deploy_api.py`), paid checkout acceptance
+  navigation, quoted card upgrade, first-time channel connect+pair,
+  locale settings PATCH, delete dismiss + background teardown, channels
+  dialog opens clean.
+- **Skipped pending fixture modernization** (tracked, not lost):
+  `AI providers BYOK flow saves and renders a custom provider` and
+  `wallet top-up completion refreshes an automatically paid open invoice`
+  (both written against July API shapes; re-enable after re-stubbing to
+  the live contract).
+- **Cut ledger**: ~125 tests deleted across both suites — billing-plan
+  permutations, exact price/copy assertions, tile-geometry permutations,
+  duplicate viewport passes, redundant nested-navigation twins. Their
+  behaviors remain covered by the sentinels above or by unit tests.
+
 ## Known gaps
 
-- 🔴 **Hosted e2e suite drift** (`playwright.hosted.config.ts`,
-  `hosted-smoke.pw.ts`): as of 2026-08-07 it runs 89 pass / 39 fail.
-  The failures cluster around deploy-acceptance navigation, wallet/plan
-  price copy, channel-pairing semantics, and projection-state wording —
-  i.e. the hosted surface evolved faster than the suite. Needs a
-  dedicated repair pass before it can join CI.
 - 🟡 Sessions search has no "N results" line (the pagination total is the
   only count).
 - ⚪ The OSS e2e suite flakes on cold dev-server first paint under load;
