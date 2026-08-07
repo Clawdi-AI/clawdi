@@ -30,7 +30,7 @@ function groupShape(
 
 function expectNavigationHeadings(
 	groups: ReadonlyArray<{ label: string | null; items: readonly unknown[] }>,
-	expected = ["Resources"],
+	expected = ["Library"],
 ) {
 	expect(groups.filter((group) => group.label !== null).map((group) => group.label)).toEqual(
 		expected,
@@ -55,7 +55,7 @@ describe("sidebar navigation model", () => {
 			},
 			{
 				id: "resources",
-				label: "Resources",
+				label: "Library",
 				separated: false,
 				items: [
 					{ id: "channels", label: "Channels" },

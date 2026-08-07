@@ -221,7 +221,7 @@ const CONSOLE_NAVIGATION_GROUPS = [
 	},
 	{
 		id: "resources",
-		label: "Resources",
+		label: "Library",
 		itemIds: ["channels", "ai-providers", "connectors", "projects", "skills", "vaults"],
 		separated: false,
 	},
