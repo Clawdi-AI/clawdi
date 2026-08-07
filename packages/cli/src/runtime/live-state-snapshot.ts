@@ -61,7 +61,7 @@ export function runtimeRootLiveMutationTargets(
 		paths.oauthCredentialRoot,
 		runtimeInstallReceiptsPath(paths),
 		paths.runConfigRoot,
-		paths.egressProfileRoot,
+		paths.egressProfileBundle,
 		paths.installInventory,
 		paths.projectionRoot,
 		join(paths.instanceRoot, manifest.instanceId),
@@ -178,7 +178,6 @@ export function runtimeRootLiveMutationDirectories(
 	return [
 		paths.runConfigRoot,
 		paths.systemdEnvRoot,
-		paths.egressProfileRoot,
 		paths.installInventory,
 		paths.oauthCredentialRoot,
 		paths.projectionRoot,

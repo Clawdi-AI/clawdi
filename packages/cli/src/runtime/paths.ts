@@ -210,8 +210,8 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		appliedState: join(statusRoot, "runtime-applied.json"),
 		managedSecretCacheFile: join(cacheRoot, "runtime-secrets.last-good.json"),
 		runConfigRoot: join(configurationRoot, "run"),
-		egressProfileRoot: join(configurationRoot, "egress"),
-		egressProfileBundle: join(configurationRoot, "egress", "profiles.json"),
+		egressProfileRoot: join(runRoot, "egress"),
+		egressProfileBundle: join(runRoot, "egress", "profiles.json"),
 		liveSyncEnvironmentIndex: join(configurationRoot, "runtime-live-sync-agents.json"),
 		systemdSystemRoot:
 			envPath("CLAWDI_SYSTEMD_SYSTEM_ROOT") ?? defaultSystemdSystemRoot(mode, runRoot),

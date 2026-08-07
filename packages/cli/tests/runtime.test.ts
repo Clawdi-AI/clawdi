@@ -2222,8 +2222,8 @@ describe("runtime paths", () => {
 		expect(paths.cliManagedBin).toBe(join(state, "maintained", "clawdi", "bin", "clawdi"));
 		expect(paths.cliNpmPrefix).toBe(join(state, "maintained", "clawdi", "npm"));
 		expect(paths.cliNpmCache).toBe(join(root, "var", "cache", "clawdi", "npm"));
-		expect(paths.egressProfileRoot).toBe(join(root, "etc", "clawdi", "egress"));
-		expect(paths.egressProfileBundle).toBe(join(root, "etc", "clawdi", "egress", "profiles.json"));
+		expect(paths.egressProfileRoot).toBe(join(run, "egress"));
+		expect(paths.egressProfileBundle).toBe(join(run, "egress", "profiles.json"));
 		expect(paths.instanceData).toBe(join(run, "instance-data.json"));
 	});
 
@@ -15197,13 +15197,15 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		expect(sidecarUnit).toContain(
 			`BindReadOnlyPaths=${cachedMitmproxyBinary(paths, mitmproxy)}:${paths.egressServiceBinary}:norbind`,
 		);
-		expect(statSync(getRuntimePaths().egressProfileRoot).mode & 0o777).toBe(0o755);
-		expect(statSync(getRuntimePaths().egressProfileBundle).mode & 0o777).toBe(0o644);
+		expect(statSync(paths.egressProfileRoot).mode & 0o777).toBe(0o711);
+		expect(statSync(paths.egressProfileBundle).mode & 0o777).toBe(0o640);
 		expect(statSync(paths.egressRoot).mode & 0o777).toBe(0o711);
 		expect(statSync(paths.egressAddon).mode & 0o777).toBe(0o640);
 		expect(statSync(paths.egressTransparentEnv).mode & 0o777).toBe(0o640);
 		expect(statSync(paths.egressCaDir).mode & 0o777).toBe(0o700);
 		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(statSync(paths.egressProfileBundle).uid).toBe(0);
+			expect(statSync(paths.egressProfileBundle).gid).toBe(10002);
 			expect(statSync(paths.egressCaDir).uid).toBe(10002);
 			expect(statSync(paths.egressCaDir).gid).toBe(10002);
 			expect(statSync(paths.egressAddon).uid).toBe(0);

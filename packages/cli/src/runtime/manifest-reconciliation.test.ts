@@ -4581,7 +4581,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.oauthCredentialRoot,
 				paths.installReceipts,
 				paths.runConfigRoot,
-				paths.egressProfileRoot,
+				paths.egressProfileBundle,
 				paths.installInventory,
 				paths.projectionRoot,
 				join(paths.instanceRoot, manifest.instanceId),
