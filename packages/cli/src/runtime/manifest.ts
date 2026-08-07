@@ -157,9 +157,9 @@ export {
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE, SYSTEM_CA_BUNDLE } from "./egress-env";
 import {
 	buildEgressProfileBundle,
+	type EgressProfileBundle,
 	egressProfileSecretRefs,
 	hasEnabledEgressProfiles,
-	writeEgressProfileBundle,
 } from "./egress-profiles";
 import {
 	loadCommittedRuntimeManifest,
@@ -4415,6 +4415,24 @@ function requireV2EgressEngineReady(
 			`required egress engine is not ready: ${engine?.error ?? "status unavailable"}`,
 		);
 	}
+}
+
+function writeEgressProfileBundle(bundle: EgressProfileBundle, paths: RuntimePaths): string {
+	// Published handoff: the egress sidecar (clawdi-egress uid) reads this
+	// bundle, so it lives under the traversable run root next to the other
+	// sidecar inputs (addon, transparent env, CA) — never under a private
+	// platform root the sidecar cannot traverse.
+	writeRuntimePrivateFileAtomic(
+		paths,
+		paths.egressProfileBundle,
+		`${JSON.stringify(bundle, null, 2)}\n`,
+		{
+			mode: 0o640,
+			dirMode: 0o711,
+		},
+	);
+	if (runningAsRoot()) chownSync(paths.egressProfileBundle, 0, runtimeEgressGid());
+	return paths.egressProfileBundle;
 }
 
 function writeEgressAddon(paths: RuntimePaths): { path: string; sha256: string } {

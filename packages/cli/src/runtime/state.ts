@@ -259,7 +259,10 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		[paths.installInventory, 0o755],
 		[paths.projectionRoot, 0o755],
 		[paths.runConfigRoot, 0o755],
-		[paths.egressProfileRoot, 0o755],
+		// Egress profile bundle handoff dir under the traversable run root:
+		// 0711 lets the sidecar identity reach the named bundle without letting
+		// any identity list the directory. Matches writeEgressAddon's dirMode.
+		[paths.egressProfileRoot, 0o711],
 		[paths.systemdSystemRoot, 0o755],
 		[paths.systemdEnvRoot, 0o711],
 		[dirname(paths.syncState), 0o755],
