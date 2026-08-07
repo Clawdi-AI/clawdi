@@ -168,6 +168,8 @@ export function AgentSourceBadge({
 	const label = agentSourceLabel(source);
 	const title = agentSourceDescription(source);
 	const iconClass = source === "hosted" ? "text-info-muted-foreground" : "text-muted-foreground";
+	// Solid silhouette at badge sizes: the outline cloud dissolves under ~16px.
+	const iconFill = source === "hosted" ? "currentColor" : "none";
 	return (
 		<StatusBadge
 			status="neutral"
@@ -185,7 +187,7 @@ export function AgentSourceBadge({
 				className,
 			)}
 		>
-			<Icon className={cn("size-3.5", iconClass)} />
+			<Icon className={cn(iconOnly ? "!size-3.5" : "size-3.5", iconClass)} fill={iconFill} />
 			{iconOnly ? <span className="sr-only">{label}</span> : label}
 		</StatusBadge>
 	);
@@ -214,7 +216,9 @@ export function LegacyAgentBadge({
 				className,
 			)}
 		>
-			<History className={cn("size-3.5", "text-warning-muted-foreground")} />
+			<History
+				className={cn(iconOnly ? "!size-3.5" : "size-3.5", "text-warning-muted-foreground")}
+			/>
 			{iconOnly ? <span className="sr-only">Legacy</span> : "Legacy"}
 		</StatusBadge>
 	);
