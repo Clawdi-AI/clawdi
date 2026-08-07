@@ -55,6 +55,13 @@ export type DeploymentOperationVerb =
 
 export const DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS = 10_000;
 export const DEPLOYMENT_TRANSITION_TIMEOUT_MS = 5 * 60_000;
+// The backend controller keeps recovering stalled generations on its own
+// (60s scan, `clawdi_v2_a3_stalled_generation_seconds` in clawdi-hosted
+// backend/app/v2/hosted/controller_scheduling.py). Escalation waits well
+// past that recovery cadence and past the "taking longer than expected"
+// window before offering cancellation, anchored on the same backend-reported
+// operation create time.
+export const DEPLOYMENT_TRANSITION_ESCALATION_MS = 15 * 60_000;
 export const DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS = 60_000;
 
 export type SettlingTracker = {
@@ -65,11 +72,12 @@ export type SettlingTracker = {
 export type SettlingPollState = {
 	refetchInterval: number | false;
 	timedOut: boolean;
+	escalated: boolean;
 	tracker: SettlingTracker;
 };
 
 export type DeploymentTransitionState = {
-	kind: "converging" | "timed_out";
+	kind: "converging" | "timed_out" | "escalated";
 	verb: DeploymentOperationVerb | null;
 	startedAtMs: number;
 };
@@ -358,6 +366,19 @@ export function canDelete(status: DeploymentStatus): boolean {
 	}
 }
 
+/**
+ * Whether the in-flight accepted operation can accept a cancel request. Mirrors
+ * the cancel acceptance side in clawdi-hosted operation_cancellation.py: only
+ * operations that are still running and are not backend-managed image cohort
+ * operations are cancellable.
+ */
+export function canCancelOperation(operation: DeploymentOperation | null | undefined): boolean {
+	if (!operation || operation.done) return false;
+	return (
+		operation.metadata.verb !== "migrate_image" && operation.metadata.verb !== "rollback_image"
+	);
+}
+
 /** Shared started-at/timeout primitive for lifecycle and runtime-UI convergence. */
 export function boundedSettlingPollState({
 	key,
@@ -366,6 +387,7 @@ export function boundedSettlingPollState({
 	nowMs,
 	pollIntervalMs,
 	timeoutMs,
+	escalationMs = Infinity,
 }: {
 	key: string;
 	startedAtMs: number;
@@ -373,14 +395,18 @@ export function boundedSettlingPollState({
 	nowMs: number;
 	pollIntervalMs: number;
 	timeoutMs: number;
+	escalationMs?: number;
 }): SettlingPollState {
 	const safeStartedAtMs =
 		Number.isFinite(startedAtMs) && startedAtMs <= nowMs ? startedAtMs : nowMs;
 	const nextTracker = tracker?.key === key ? tracker : { key, startedAtMs: safeStartedAtMs };
-	const timedOut = nowMs - nextTracker.startedAtMs >= timeoutMs;
+	const ageMs = nowMs - nextTracker.startedAtMs;
+	const timedOut = ageMs >= timeoutMs;
+	const escalated = timedOut && ageMs >= escalationMs;
 	return {
 		refetchInterval: timedOut ? false : pollIntervalMs,
 		timedOut,
+		escalated,
 		tracker: nextTracker,
 	};
 }
@@ -404,9 +430,9 @@ export function shouldPollDeployments(
 
 /**
  * Fast-poll each accepted lifecycle operation only during its bounded
- * convergence window. Until the existing deployment SSE stream is wired into
- * the client, delayed transitions and stable snapshots use a modest
- * foreground-only reconciliation interval.
+ * convergence window, then fall back to the foreground reconciliation
+ * interval so delayed transitions still surface without a background
+ * polling loop.
  */
 export function deploymentPollingState(
 	deployments: readonly HostedDeployment[] | null | undefined,
@@ -432,10 +458,11 @@ export function deploymentPollingState(
 			nowMs,
 			pollIntervalMs: DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 			timeoutMs: DEPLOYMENT_TRANSITION_TIMEOUT_MS,
+			escalationMs: DEPLOYMENT_TRANSITION_ESCALATION_MS,
 		});
 		nextTrackers.set(deploymentId, pollState.tracker);
 		transitions.set(deploymentId, {
-			kind: pollState.timedOut ? "timed_out" : "converging",
+			kind: pollState.escalated ? "escalated" : pollState.timedOut ? "timed_out" : "converging",
 			verb: operation?.metadata.verb ?? null,
 			startedAtMs: pollState.tracker.startedAtMs,
 		});

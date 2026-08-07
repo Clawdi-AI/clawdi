@@ -2,6 +2,7 @@ import type { HostedDeployment } from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
 	BillingNetworkError,
+	billingErrorDetail,
 	DeploymentConflictError,
 } from "@/hosted/billing/errors";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
@@ -30,9 +31,9 @@ export type DeploymentFailurePresentation = DeploymentFailureProjection & {
 	title: string;
 	description: string;
 	status: {
-		kind: "failed" | "runtime_unavailable";
-		label: "Failed" | "Temporarily unavailable";
-		tone: "destructive" | "warning";
+		kind: "failed" | "runtime_unavailable" | "cancelled";
+		label: "Failed" | "Temporarily unavailable" | "Cancelled";
+		tone: "destructive" | "warning" | "neutral";
 	};
 	remediation: DeploymentFailureRemediation;
 };
@@ -44,6 +45,7 @@ const RUNTIME_UNAVAILABLE_STATUS = {
 	label: "Temporarily unavailable",
 	tone: "warning",
 } as const;
+const CANCELLED_STATUS = { kind: "cancelled", label: "Cancelled", tone: "neutral" } as const;
 
 function isRuntimeStatusFailure(failure: { code?: string }): boolean {
 	return RUNTIME_FAILURE_CODES.has(failure.code ?? "");
@@ -72,6 +74,24 @@ export function deploymentMutationErrorMessage(error: unknown): string {
 		}
 	}
 	return "Clawdi couldn’t apply this agent change. Check the latest status and settings, then try again.";
+}
+
+/**
+ * Copy for a cancellation request rejected by the deploy API. Cancellation is
+ * accepted while an operation is still in flight; the backend races the
+ * operation itself, so a completed change or a reused key get their own honest
+ * messages instead of the generic mutation copy.
+ */
+export function operationCancelErrorMessage(error: unknown): string {
+	if (error instanceof DeploymentConflictError) return error.message;
+	const detail = error instanceof BillingApiError ? billingErrorDetail(error) : null;
+	if (detail?.code === "operation_cancelled") {
+		return "This change already finished before cancellation could be applied.";
+	}
+	if (detail?.code === "idempotency_key_reused") {
+		return "This cancellation was already requested. Check the latest status, then try again.";
+	}
+	return deploymentMutationErrorMessage(error);
 }
 
 /** Stable product name for every operation verb; never render the wire value. */
@@ -138,6 +158,18 @@ export function deploymentFailurePresentation(
 			title: "Temporarily unavailable",
 			description: RUNTIME_UNAVAILABLE_REASON,
 			status: RUNTIME_UNAVAILABLE_STATUS,
+			remediation: { kind: "none", label: null },
+		};
+	}
+	// A user-initiated cancellation is not a failure: the operation was stopped
+	// deliberately and the backend committed a compensating desired state. Say
+	// so instead of offering the failure's retry actions.
+	if (failure.code === "operation_cancelled") {
+		return {
+			...failure,
+			title: `${operationLabel} cancelled`,
+			description: `The in-progress ${operationName} was stopped before it completed. Check the latest status and try again when you’re ready.`,
+			status: CANCELLED_STATUS,
 			remediation: { kind: "none", label: null },
 		};
 	}

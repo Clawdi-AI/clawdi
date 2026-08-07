@@ -97,6 +97,7 @@ describe("deployment failure status rendering", () => {
 				deployment,
 				failure,
 				deploymentTransitionTimedOut: false,
+				deploymentTransitionEscalated: false,
 			}),
 		);
 
@@ -117,6 +118,7 @@ describe("deployment failure status rendering", () => {
 				deployment: hostedDeploymentFixture({ status: "failed" }),
 				failure: null,
 				deploymentTransitionTimedOut: false,
+				deploymentTransitionEscalated: false,
 			}),
 		);
 
@@ -155,6 +157,7 @@ describe("deployment failure status rendering", () => {
 				deployment,
 				failure,
 				deploymentTransitionTimedOut: false,
+				deploymentTransitionEscalated: false,
 			}),
 		);
 
@@ -181,6 +184,7 @@ describe("deployment failure status rendering", () => {
 				deployment,
 				failure,
 				deploymentTransitionTimedOut: false,
+				deploymentTransitionEscalated: false,
 			}),
 		);
 
@@ -212,6 +216,7 @@ describe("deployment failure status rendering", () => {
 					deployment: hostedDeploymentFixture({ status: fixture.status }),
 					failure: null,
 					deploymentTransitionTimedOut: false,
+					deploymentTransitionEscalated: false,
 				}),
 			);
 			expect(markup).toContain(fixture.copy);
@@ -290,6 +295,7 @@ describe("deployment transition timeout rendering", () => {
 						runtime: fixture.runtime,
 					}),
 					deploymentTransitionTimedOut: false,
+					deploymentTransitionEscalated: false,
 					isCheckingDeployment: false,
 					onCheckDeploymentAgain: () => undefined,
 				}),
@@ -331,6 +337,7 @@ describe("deployment transition timeout rendering", () => {
 			createElement(initialDeploymentPage, {
 				deployment: hostedDeploymentFixture({ status: "starting" }),
 				deploymentTransitionTimedOut: true,
+				deploymentTransitionEscalated: false,
 				isCheckingDeployment: false,
 				onCheckDeploymentAgain: () => undefined,
 			}),
@@ -454,6 +461,60 @@ describe("deployment transition timeout rendering", () => {
 		expect(observer.getCurrentResult().data).toBe("fresh deployment");
 		unsubscribe();
 		client.clear();
+	});
+
+	test("escalates a stuck transition on every timed-out surface with a cancel action", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+		const overviewStatusSource = detailSource.slice(
+			detailSource.indexOf("export function OverviewComputeStatus"),
+			detailSource.indexOf("export function OverviewComputeSummary"),
+		);
+		const initialPageSource = detailSource.slice(
+			detailSource.indexOf("export function InitialDeploymentPage"),
+			detailSource.indexOf("function OverviewTab"),
+		);
+		const consoleTabSource = detailSource.slice(
+			detailSource.indexOf("function ConsoleTab"),
+			detailSource.indexOf("function FilesTab"),
+		);
+
+		for (const source of [overviewStatusSource, initialPageSource, consoleTabSource]) {
+			expect(source).toContain("appears to be stuck");
+			expect(source).toContain("<DeploymentCancelAction");
+			expect(source).toContain("taking longer than expected");
+		}
+		expect(initialPageSource).toContain("Setup appears to be stuck");
+	});
+
+	test("gates the cancel action behind the backend cancel acceptance contract", () => {
+		const actionSource = readFileSync(
+			new URL("./deployment-cancel-action.tsx", import.meta.url),
+			"utf8",
+		);
+		expect(actionSource).toContain("canCancelOperation(operation)");
+		expect(actionSource).toContain("Cancel this change");
+		expect(actionSource).toContain('data-hosted="true"');
+		const statusSource = readFileSync(new URL("../deployment-status.ts", import.meta.url), "utf8");
+		expect(statusSource).toContain('verb !== "migrate_image"');
+		expect(statusSource).toContain('verb !== "rollback_image"');
+	});
+
+	test("keeps the escalation honest as a stuck state, not a warning badge for running compute", () => {
+		if (!overviewComputeStatus) throw new Error("agent detail was not loaded");
+		const markup = renderToStaticMarkup(
+			createElement(overviewComputeStatus, {
+				deployment: hostedDeploymentFixture({ status: "running" }),
+				failure: null,
+				deploymentTransitionTimedOut: false,
+				deploymentTransitionEscalated: false,
+			}),
+		);
+
+		expect(markup).not.toContain("appears to be stuck");
+		expect(markup).not.toContain("<button");
 	});
 });
 
@@ -622,9 +683,10 @@ describe("deployment mutation settlement", () => {
 			/onSettled: \(\) => invalidateDeploymentSnapshots\(qc\)/g,
 		);
 
-		// Declarative lifecycle, access reset, delete, and settings updates all reconcile even
-		// when the request rejects or times out.
-		expect(settlementInvalidations).toHaveLength(4);
+		// Declarative lifecycle, access reset, delete, settings updates, and
+		// operation cancellation all reconcile even when the request rejects
+		// or times out.
+		expect(settlementInvalidations).toHaveLength(5);
 	});
 
 	test("describes accepted deletion as background cleanup and replace-navigates detail", () => {

@@ -4,7 +4,6 @@ import {
 	type DeployPaths,
 	extractApiDetail,
 	projectHostedDeployRequest,
-	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
@@ -27,7 +26,6 @@ import type {
 	DeploymentUpdateRequest,
 	HostedDeployment,
 	HostedDeployRequestStatus,
-	HostedEventStreamSnapshotHandoff,
 	HostedWorkspaceSkillInstallRequest,
 	HostedWorkspaceSkillListResponse,
 	HostedWorkspaceSkillMutationResponse,
@@ -78,6 +76,36 @@ type MutationHeaders = {
 type WorkspaceSkillMutation =
 	| { action: "install"; request: HostedWorkspaceSkillInstallRequest }
 	| { action: "uninstall"; skillKey: string };
+
+/**
+ * The generated deploy-api client predates the operation-cancel endpoint
+ * (`/v2/operations/{operation_id}:cancel` in the hosted backend OpenAPI). The
+ * path is hand-typed here in the generated `post` style until the client is
+ * regenerated against that contract; the empty response body matches
+ * `CancelOperationResponse` in the backend.
+ */
+type OperationCancelPost = {
+	POST: (
+		path: "/v2/operations/{operation_id}:cancel",
+		init: {
+			params: { path: { operation_id: string }; header: { "Idempotency-Key": string } };
+			body?: never;
+		},
+	) => Promise<DeployResult<Record<string, never>>>;
+};
+
+function postOperationCancel(
+	api: ReturnType<typeof createClient<DeployPaths>>,
+	operationId: string,
+	idempotencyKey: string,
+): Promise<DeployResult<Record<string, never>>> {
+	return (api as unknown as OperationCancelPost).POST("/v2/operations/{operation_id}:cancel", {
+		params: {
+			path: { operation_id: operationId },
+			header: { "Idempotency-Key": idempotencyKey },
+		},
+	});
+}
 
 function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Response> {
 	const caller = init?.signal ?? request.signal;
@@ -633,14 +661,6 @@ export function createBillingClient(
 
 		listDeployments: async (): Promise<HostedDeployment[]> =>
 			unwrapDeploymentList(unwrapDeploy(await api.GET("/v2/deployments"))),
-		listEventStreamHandoff: async (): Promise<HostedEventStreamSnapshotHandoff> =>
-			unwrapDeploymentEventStreamSnapshotHandoff(
-				unwrapDeploy(
-					await api.GET("/v2/deployments", {
-						params: { query: { eventStreamHandoff: true } },
-					}),
-				),
-			),
 		getDeployment,
 		waitForDeploymentRequest,
 		createDeployment: async (
@@ -703,6 +723,11 @@ export function createBillingClient(
 					body,
 				}),
 			),
+		cancelDeploymentOperation: async (operationName: string, idempotencyKey: string) => {
+			unwrapDeploy(
+				await postOperationCancel(api, operationIdFromName(operationName), idempotencyKey),
+			);
+		},
 		deleteDeployment,
 	};
 }
