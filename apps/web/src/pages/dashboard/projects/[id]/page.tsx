@@ -464,7 +464,7 @@ export default function ProjectDetailPage({
 			qc.invalidateQueries({
 				queryKey: ["get", "/v1/agents/{agent_id}/project-bindings"],
 			});
-			toast.success("Left Shared Project", { description: "Membership removed." });
+			toast.success("Left shared project", { description: "Membership removed." });
 			void router.navigate({ href: projectsTarget.href });
 		},
 		onError: (error) => {

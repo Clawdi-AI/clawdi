@@ -3,7 +3,8 @@
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
-import { type ReactNode, useCallback, useState } from "react";
+import { parseAsString, useQueryStates } from "nuqs";
+import { type ReactNode, Suspense, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -57,6 +58,7 @@ import {
 	memoryDetailLink,
 	type ResourceNavigationScope,
 } from "@/lib/resource-navigation";
+import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, relativeTime } from "@/lib/utils";
@@ -81,12 +83,34 @@ export function MemoriesSurface({
 }: {
 	scope?: ResourceNavigationScope;
 }) {
+	// nuqs reads URL state under the hood, so the URL-driven body mounts
+	// inside its own Suspense boundary (mirrors connectors-surface).
+	return (
+		<Suspense fallback={<MemoriesGridSkeleton />}>
+			<MemoriesSurfaceBody scope={scope} />
+		</Suspense>
+	);
+}
+
+function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	const api = useApi();
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
-	const [search, setSearch] = useState("");
-	const [category, setCategory] = useState<string>(ALL);
-	const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+	// URL-backed list state (like sessions/connectors): back from a detail
+	// page restores the exact search/category/page instead of resetting.
+	const [params, setParams] = useQueryStates(
+		{
+			q: parseAsString.withDefault(""),
+			category: parseAsString.withDefault(""),
+			page: parseAsPositiveInt.withDefault(1),
+			pageSize: parseAsPositiveInt.withDefault(25),
+		},
+		{ clearOnDefault: true, history: "replace" },
+	);
+	const search = params.q;
+	const category = params.category || ALL;
+	const page = params.page;
+	const pageSize = params.pageSize;
 	const debouncedSearch = useDebouncedValue(search, 250);
 	const apiCategory = category === ALL ? "" : category;
 
@@ -119,8 +143,8 @@ export function MemoriesSurface({
 		{
 			params: {
 				query: {
-					page: pagination.pageIndex + 1,
-					page_size: pagination.pageSize,
+					page,
+					page_size: pageSize,
 					q: debouncedSearch || undefined,
 					category: apiCategory || undefined,
 				},
@@ -149,11 +173,11 @@ export function MemoriesSurface({
 			: "No memories yet. Create one above, or your Agents will create them automatically as they work.";
 	const paginationFooter = (
 		<DataTablePagination
-			page={pagination.pageIndex + 1}
-			pageSize={pagination.pageSize}
+			page={page}
+			pageSize={pageSize}
 			total={total}
-			onPageChange={(p) => setPagination((s) => ({ ...s, pageIndex: p - 1 }))}
-			onPageSizeChange={(size) => setPagination(() => ({ pageIndex: 0, pageSize: size }))}
+			onPageChange={(p) => void setParams({ page: p })}
+			onPageSizeChange={(size) => void setParams({ pageSize: size, page: 1 })}
 		/>
 	);
 	return (
@@ -175,10 +199,7 @@ export function MemoriesSurface({
 				search={
 					<SearchInput
 						value={search}
-						onChange={(v) => {
-							setSearch(v);
-							setPagination((p) => ({ ...p, pageIndex: 0 }));
-						}}
+						onChange={(v) => void setParams({ q: v, page: 1 })}
 						placeholder="Search memories…"
 					/>
 				}
@@ -188,8 +209,7 @@ export function MemoriesSurface({
 						onValueChange={(v) => {
 							const selected = v[0];
 							if (!selected) return;
-							setCategory(selected);
-							setPagination((p) => ({ ...p, pageIndex: 0 }));
+							void setParams({ category: selected === ALL ? "" : selected, page: 1 });
 						}}
 						variant="outline"
 						size="sm"
@@ -410,6 +430,22 @@ function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
 				<Skeleton className="ml-auto h-3 w-20" />
 			</div>
 		</EntityCardChassis>
+	);
+}
+
+function MemoriesGridSkeleton() {
+	return (
+		<div className="space-y-6" data-testid="memories-surface">
+			<div className="flex flex-wrap gap-2">
+				<Skeleton className="h-11 w-56 sm:h-9" />
+				<Skeleton className="h-11 w-72 sm:h-9" />
+			</div>
+			<div className={ENTITY_CARD_MASONRY_CLASS}>
+				{[4, 7, 3, 5, 6, 4].map((lineCount, index) => (
+					<MemoryCardSkeleton key={index} lineCount={lineCount} />
+				))}
+			</div>
+		</div>
 	);
 }
 

@@ -342,7 +342,7 @@ function CopyableCommand({ command }: { command: string }) {
 					if (typeof navigator !== "undefined" && navigator.clipboard) {
 						navigator.clipboard
 							.writeText(command)
-							.then(() => toast.success("Command Copied"))
+							.then(() => toast.success("Command copied"))
 							.catch(() =>
 								toast.error("Couldn't copy", {
 									description: "Select the command and copy it manually.",

@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight, Plug } from "lucide-react";
-import { createParser, parseAsString, useQueryState } from "nuqs";
+import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, Suspense, useEffect, useMemo } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
@@ -27,6 +27,7 @@ import {
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { LIBRARY_RESOURCE_SCOPE, type ResourceNavigationScope } from "@/lib/resource-navigation";
+import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn } from "@/lib/utils";
 
@@ -34,19 +35,6 @@ import { cn } from "@/lib/utils";
 // always full at every viewport — no orphan cards on the bottom.
 const PAGE_SIZE = CONNECTOR_CATALOG_PAGE_SIZE;
 const CONNECTORS_RESOURCE = getProjectResourceDefinition("connectors");
-
-// 1-indexed page parser. Rejects non-integer / 0 / negative URL values
-// so `?page=-5` or `?page=2junk` doesn't reach the slicer. `Number()`
-// (not `parseInt`) is strict — `parseInt("2junk")` would return 2,
-// silently accepting garbage. Returning `null` from `parse` makes nuqs
-// fall back to the parser's default.
-const parseAsPositivePage = createParser({
-	parse: (raw: string) => {
-		const n = Number(raw);
-		return Number.isInteger(n) && n >= 1 ? n : null;
-	},
-	serialize: (n: number) => String(n),
-});
 
 /**
  * Wrap the nuqs-using body in a Suspense boundary so the static shell stays
@@ -118,7 +106,7 @@ function ConnectorsList({
 	);
 	const [page, setPage] = useQueryState(
 		"page",
-		parseAsPositivePage.withDefault(1).withOptions({ clearOnDefault: true }),
+		parseAsPositiveInt.withDefault(1).withOptions({ clearOnDefault: true }),
 	);
 	const debouncedQuery = useDebouncedValue(query, 250);
 

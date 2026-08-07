@@ -232,7 +232,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			revokeSucceededRef.current = true;
 			revokeExit.beginClose();
 			setRevokeOpen(false);
-			toast.success("Share Link Turned Off");
+			toast.success("Share link turned off");
 		},
 		onError: (e) => {
 			toast.error("Couldn't turn off link", {
@@ -558,7 +558,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			setEmail("");
-			toast.success("Invitation Sent", {
+			toast.success("Invitation sent", {
 				description:
 					"They will see it under the top-right Notification Center bell after signing in with that email.",
 			});
@@ -582,7 +582,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			cancelSucceededRef.current = true;
 			cancelExit.beginClose();
 			setCancelOpen(false);
-			toast.success("Invitation Cancelled");
+			toast.success("Invitation cancelled");
 		},
 		onError: (e) => {
 			toast.error("Couldn't cancel invitation", {
@@ -779,7 +779,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			removeSucceededRef.current = true;
 			removeExit.beginClose();
 			setRemoveOpen(false);
-			toast.success("Member Removed");
+			toast.success("Member removed");
 		},
 		onError: (e) =>
 			toast.error("Couldn't remove member", {
@@ -797,7 +797,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		onSuccess: (body) => {
 			setStopAllOpen(false);
 			refreshSharingState();
-			toast.success("Sharing Stopped", {
+			toast.success("Sharing stopped", {
 				description: `Turned off ${body.links_revoked} link(s) and removed ${body.members_removed} member(s).`,
 			});
 		},
