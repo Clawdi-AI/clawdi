@@ -15,9 +15,15 @@ beforeEach(() => {
 	origApiUrl = process.env.CLAWDI_API_URL;
 	tmpHome = join(tmpdir(), `clawdi-project-list-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
-	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
+	writeFileSync(
+		join(tmpHome, ".clawdi", "auth.json"),
+		JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		}),
+	);
 	process.env.HOME = tmpHome;
-	process.env.CLAWDI_API_URL = "http://api.test";
+	process.env.CLAWDI_API_URL = "https://api.test";
 });
 
 afterEach(() => {
@@ -70,7 +76,7 @@ describe("projectListCommand", () => {
 		expect(out).toContain("viewer");
 		expect(out).toContain("Open:  clawdi project show @alice-a3b4/shared-toolkit");
 		expect(out).toContain(
-			"Attach to Agent: clawdi agent projects attach <agent-id> --project @alice-a3b4/shared-toolkit",
+			"Link to Agent: clawdi agent projects link <agent-id> --project @alice-a3b4/shared-toolkit",
 		);
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 		expect(out).not.toContain("context boundary");
@@ -123,7 +129,7 @@ describe("projectListCommand", () => {
 		expect(parsed.hidden_environment_project_count).toBe(0);
 	});
 
-	it("hides machine environment projects by default and can include them", async () => {
+	it("hides Agent Workspace projects by default and can include them", async () => {
 		const projects = [
 			{ id: "project-a", slug: "personal", name: "Personal", kind: "personal", is_owner: true },
 			{
@@ -148,12 +154,12 @@ describe("projectListCommand", () => {
 			const hiddenOut = lines.join("\n");
 			expect(hiddenOut).toContain("My projects (1)");
 			expect(hiddenOut).not.toContain("env-abc123");
-			expect(hiddenOut).toContain("Hidden machine projects: 1");
+			expect(hiddenOut).toContain("Hidden Agent Workspaces: 1");
 
 			lines.length = 0;
 			await projectListCommand({ includeEnvs: true });
 			const includedOut = lines.join("\n");
-			expect(includedOut).toContain("Machines (1)");
+			expect(includedOut).toContain("Agent Workspaces (1)");
 			expect(includedOut).toContain("env-abc123");
 		} finally {
 			console.log = orig;
@@ -161,7 +167,7 @@ describe("projectListCommand", () => {
 		}
 	});
 
-	it("omits machine environment projects from JSON unless requested", async () => {
+	it("omits Agent Workspace projects from JSON unless requested", async () => {
 		const projects = [
 			{ id: "project-a", slug: "personal", name: "Personal", kind: "personal", is_owner: true },
 			{

@@ -1,8 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient, { type Client } from "openapi-fetch";
+import { canonicalApiOrigin, normalizeCloudApiBaseUrl } from "./api-origin";
+import { assertCloudCredentialEndpoint, getClawdiAccessToken } from "./clerk-oauth";
 import { getAuth, getConfig } from "./config";
+import { MAX_SAFE_RETRY_AFTER_MS, parseRetryAfter } from "./retry-after";
 import { assertValidSkillKey } from "./skill-key";
+import {
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "./skill-sync-protocol";
 import { getCliVersion } from "./version";
 
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
@@ -12,6 +19,10 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [100, 400, 1600] as const;
 const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
+// Node-compatible timers cannot safely schedule a single delay above this
+// value. Longer Retry-After waits are split into chunks without changing the
+// server-requested REST delay.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /** Error thrown by ApiClient. Carries HTTP status and a human-facing hint. */
 export class ApiError extends Error {
@@ -38,6 +49,20 @@ export class ApiError extends Error {
 	}
 }
 
+/** A dedicated Agent Skill sync request returned 404.
+ *
+ * The response is deliberately ambiguous: a pre-authority backend may not
+ * expose the route, while a current backend uses the same status to hide an
+ * Agent identity the caller cannot prove. Callers must fail closed in both
+ * cases. Durable projection queues keep this unresolved rather than issuing a
+ * generic Project mutation or treating absence as success. */
+export class AgentSkillSyncNotFoundError extends ApiError {
+	constructor(body: string) {
+		super({ status: 404, body, hint: hintFor(404) });
+		this.name = "AgentSkillSyncNotFoundError";
+	}
+}
+
 function hintFor(status: number): string {
 	if (status === 401) return "Run `clawdi auth login` to authenticate.";
 	if (status === 403) return "Your API key does not have permission for this action.";
@@ -48,15 +73,40 @@ function hintFor(status: number): string {
 	return "";
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((r) => setTimeout(r, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(new DOMException("Aborted", "AbortError"));
+			return;
+		}
+		let remainingMs = ms;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const onAbort = () => {
+			if (timer !== undefined) clearTimeout(timer);
+			reject(new DOMException("Aborted", "AbortError"));
+		};
+		const scheduleNextChunk = () => {
+			if (remainingMs <= 0) {
+				signal?.removeEventListener("abort", onAbort);
+				resolve();
+				return;
+			}
+			const chunkMs = Math.min(remainingMs, MAX_TIMER_DELAY_MS);
+			timer = setTimeout(() => {
+				remainingMs -= chunkMs;
+				scheduleNextChunk();
+			}, chunkMs);
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+		scheduleNextChunk();
+	});
 }
 
 // GET/HEAD/PUT/DELETE are safe to retry on 5xx + network errors; POST/PATCH
 // skip retry because they may have side effects.
 const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE"]);
 
-async function retryingFetch(
+export async function retryingFetch(
 	req: Request,
 	timeoutMs: number,
 	externalSignal: AbortSignal | undefined,
@@ -87,7 +137,19 @@ async function retryingFetch(
 
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
 		if (attempt > 0) {
-			await sleep(RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)]);
+			try {
+				await sleep(
+					RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)],
+					externalSignal,
+				);
+			} catch {
+				throw new ApiError({
+					status: 0,
+					body: "aborted",
+					hint: "Request aborted between retries.",
+					isNetwork: true,
+				});
+			}
 			if (externalSignal?.aborted) {
 				throw new ApiError({
 					status: 0,
@@ -106,14 +168,29 @@ async function retryingFetch(
 			if (externalSignal.aborted) controller.abort();
 			else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
 		}
-		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		let timedOut = false;
+		const timer = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, timeoutMs);
 
-		let res: Response;
+		let buffered: Response;
 		try {
-			res = await fetch(base.clone(), { signal: controller.signal });
+			const res = await fetch(base.clone(), { signal: controller.signal });
+			// Own the complete REST response lifecycle here. Returning the
+			// network-backed Response would detach the timeout and caller abort
+			// before openapi-fetch (or a hand-written caller) consumes the body.
+			// Buffering keeps cancellation effective through JSON, text, and
+			// binary bodies, including error responses that are retried below.
+			const body = await res.arrayBuffer();
+			const hasNullBody =
+				base.method === "HEAD" || res.status === 204 || res.status === 205 || res.status === 304;
+			buffered = new Response(hasNullBody ? null : body, {
+				status: res.status,
+				statusText: res.statusText,
+				headers: res.headers,
+			});
 		} catch (e: unknown) {
-			clearTimeout(timer);
-			if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 			if (externalSignal?.aborted) {
 				throw new ApiError({
 					status: 0,
@@ -123,7 +200,7 @@ async function retryingFetch(
 				});
 			}
 			const err = e as { name?: string; message?: string };
-			const isTimeout = err?.name === "AbortError";
+			const isTimeout = timedOut;
 			lastErr = new ApiError({
 				status: 0,
 				body: err?.message ?? String(e),
@@ -133,21 +210,35 @@ async function retryingFetch(
 			});
 			if (retry) continue;
 			throw lastErr;
+		} finally {
+			clearTimeout(timer);
+			if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 		}
-		clearTimeout(timer);
-		if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 
-		if (res.ok) return res;
+		if (buffered.ok) return buffered;
 
-		if (res.status === 429 && retry && attempt < maxAttempts - 1) {
-			const retryAfter = Number(res.headers.get("retry-after"));
-			if (Number.isFinite(retryAfter) && retryAfter > 0) await sleep(retryAfter * 1000);
+		if (buffered.status === 429 && retry && attempt < maxAttempts - 1) {
+			const retryAfterMs = parseRetryAfter(buffered.headers.get("retry-after"), {
+				maxMs: MAX_SAFE_RETRY_AFTER_MS,
+			});
+			if (retryAfterMs !== null) {
+				try {
+					await sleep(retryAfterMs, externalSignal);
+				} catch {
+					throw new ApiError({
+						status: 0,
+						body: "aborted",
+						hint: "Request aborted by caller.",
+						isNetwork: true,
+					});
+				}
+			}
 			continue;
 		}
 
-		if (res.status >= 500 && retry && attempt < maxAttempts - 1) continue;
+		if (buffered.status >= 500 && retry && attempt < maxAttempts - 1) continue;
 
-		return res;
+		return buffered;
 	}
 
 	throw (
@@ -165,15 +256,14 @@ async function retryingFetch(
  */
 export class ApiClient {
 	readonly baseUrl: string;
-	readonly apiKey: string;
 	private readonly client: Client<paths>;
 	private readonly abortSignal: AbortSignal | undefined;
+	private readonly requireAuth: boolean;
 
 	/**
-	 * @param opts.requireAuth — Default true. Set false for the device-flow
-	 *   login bootstrap, which has to call `/v1/cli/auth/device` and
-	 *   `/v1/cli/auth/poll` before any credentials exist. Unauthenticated
-	 *   instances skip the Authorization header entirely.
+	 * @param opts.requireAuth — Default true. Set false for public bootstrap
+	 *   calls that run before credentials exist. Unauthenticated instances
+	 *   skip the Authorization header entirely.
 	 * @param opts.abortSignal — Optional engine-wide abort. When the
 	 *   daemon's main `AbortController` fires (SSE auth failure,
 	 *   shutdown), every in-flight ApiClient request unwinds
@@ -191,19 +281,28 @@ export class ApiClient {
 				hint: "Not logged in. Run `clawdi auth login` first.",
 			});
 		}
-		this.baseUrl = config.apiUrl;
-		this.apiKey = auth?.apiKey ?? "";
+		const baseUrl = normalizeCloudApiBaseUrl(config.apiUrl);
+		this.baseUrl = baseUrl;
+		this.requireAuth = requireAuth;
 		this.abortSignal = opts.abortSignal;
 		this.client = createClient<paths>({
 			baseUrl: this.baseUrl,
 			fetch: (req) => retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal),
 		});
 		this.client.use({
-			onRequest: ({ request }) => {
-				if (this.apiKey) {
-					request.headers.set("Authorization", `Bearer ${this.apiKey}`);
+			async onRequest({ request }) {
+				if (requireAuth) {
+					if (new URL(request.url).origin !== canonicalApiOrigin(baseUrl)) {
+						throw new ApiError({
+							status: 0,
+							body: "",
+							hint: "Cloud request origin changed before authorization. No credential was sent.",
+						});
+					}
+					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken(baseUrl)}`);
 				}
 				request.headers.set("User-Agent", USER_AGENT);
+				request.headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
 				// Generate a per-request correlation ID. Backend's
 				// RequestIDMiddleware accepts the header and echoes
 				// it on the response + every log line, so an oncall
@@ -217,6 +316,18 @@ export class ApiClient {
 				return request;
 			},
 		});
+	}
+
+	/** Current bearer snapshot for compatibility helpers; requests refresh it asynchronously. */
+	get apiKey(): string {
+		const auth = getAuth();
+		if (!auth) return "";
+		assertCloudCredentialEndpoint(auth, this.baseUrl);
+		return auth.apiKey;
+	}
+
+	async getAccessToken(): Promise<string> {
+		return this.requireAuth ? getClawdiAccessToken(this.baseUrl) : "";
 	}
 
 	get GET(): Client<paths>["GET"] {
@@ -251,7 +362,7 @@ export class ApiClient {
 		contentHash?: string,
 	): Promise<SkillUploadResponse> {
 		assertValidSkillKey(skillKey);
-		// `content_hash` is optional server-side (added 0.3.4). Omit the
+		// `content_hash` is optional server-side for legacy clients. Omit the
 		// field entirely when the caller doesn't have one — server falls
 		// back to computing it from the uploaded tar.
 		const fields: Record<string, string> = { skill_key: skillKey };
@@ -262,6 +373,65 @@ export class ApiClient {
 			file,
 			filename,
 		);
+	}
+
+	/**
+	 * Project a Skill authored in an Agent filesystem. The Agent id is the
+	 * authority boundary; the server derives and fences the owning Project.
+	 * Keep this separate from uploadSkill(): the project route remains the
+	 * compatibility/cloud boundary and must never be used by new daemon code.
+	 * The Project id remains in the call contract as the caller's durable queue
+	 * fence, but is intentionally not sent as upload authority.
+	 */
+	async uploadAgentSkill(
+		agentId: string,
+		_projectId: string,
+		skillKey: string,
+		file: Buffer,
+		filename: string,
+		contentHash?: string,
+	): Promise<SkillUploadResponse> {
+		assertValidSkillKey(skillKey);
+		const fields: Record<string, string> = { skill_key: skillKey };
+		if (contentHash) fields.content_hash = contentHash;
+		try {
+			return await this.multipartPost<SkillUploadResponse>(
+				`/v1/agents/${encodeURIComponent(agentId)}/skills/sync/upload`,
+				fields,
+				file,
+				filename,
+			);
+		} catch (error) {
+			if (error instanceof ApiError && error.status === 404) {
+				throw new AgentSkillSyncNotFoundError(error.body);
+			}
+			throw error;
+		}
+	}
+
+	/** Report that an Agent-authoritative local Skill is absent. Idempotent. */
+	async deleteAgentSkill(agentId: string, skillKey: string, projectId: string): Promise<void> {
+		assertValidSkillKey(skillKey);
+		const url = new URL(
+			`${this.baseUrl}/v1/agents/${encodeURIComponent(agentId)}/skills/sync/${encodeURIComponent(skillKey)}`,
+		);
+		url.searchParams.set("project_id", projectId);
+		const accessToken = await this.getAccessToken();
+		const req = new Request(url, {
+			method: "DELETE",
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				"User-Agent": USER_AGENT,
+				"X-Request-ID": randomUUID(),
+				[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+			},
+		});
+		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
+		if (!res.ok) {
+			const body = await res.text();
+			if (res.status === 404) throw new AgentSkillSyncNotFoundError(body);
+			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
+		}
 	}
 
 	/** Upload per-session content JSON to `/v1/sessions/{id}/upload`. */
@@ -291,6 +461,7 @@ export class ApiClient {
 		filename: string,
 		extraHeaders?: Record<string, string>,
 	): Promise<T> {
+		const accessToken = await this.getAccessToken();
 		const formData = new FormData();
 		for (const [k, v] of Object.entries(fields)) formData.append(k, v);
 		// Buffer → Uint8Array: Buffer's `ArrayBufferLike` doesn't satisfy
@@ -310,8 +481,9 @@ export class ApiClient {
 		this.abortSignal?.addEventListener("abort", onEngineAbort, { once: true });
 		try {
 			const headers: Record<string, string> = {
-				Authorization: `Bearer ${this.apiKey}`,
+				Authorization: `Bearer ${accessToken}`,
 				"User-Agent": USER_AGENT,
+				[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 				...(extraHeaders ?? {}),
 			};
 			const res = await fetch(`${this.baseUrl}${path}`, {
@@ -332,6 +504,7 @@ export class ApiClient {
 	}
 
 	async postJson<T>(path: string, query?: Record<string, string | undefined>): Promise<T> {
+		const accessToken = await this.getAccessToken();
 		const url = new URL(`${this.baseUrl}${path}`);
 		for (const [key, value] of Object.entries(query ?? {})) {
 			if (value !== undefined) url.searchParams.set(key, value);
@@ -339,7 +512,7 @@ export class ApiClient {
 		const req = new Request(url, {
 			method: "POST",
 			headers: {
-				Authorization: `Bearer ${this.apiKey}`,
+				Authorization: `Bearer ${accessToken}`,
 				"X-Request-ID": randomUUID(),
 			},
 		});
@@ -356,6 +529,7 @@ export class ApiClient {
 		body: unknown,
 		query?: Record<string, string | undefined>,
 	): Promise<T> {
+		const accessToken = await this.getAccessToken();
 		const url = new URL(`${this.baseUrl}${path}`);
 		for (const [key, value] of Object.entries(query ?? {})) {
 			if (value !== undefined) url.searchParams.set(key, value);
@@ -363,7 +537,7 @@ export class ApiClient {
 		const req = new Request(url, {
 			method: "POST",
 			headers: {
-				Authorization: `Bearer ${this.apiKey}`,
+				Authorization: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 				"X-Request-ID": randomUUID(),
 			},
@@ -377,9 +551,13 @@ export class ApiClient {
 		return await readJson<T>(res, path);
 	}
 
-	async getBytes(path: string): Promise<Buffer> {
+	async getBytes(path: string, extraHeaders?: Record<string, string>): Promise<Buffer> {
+		const accessToken = await this.getAccessToken();
 		const req = new Request(`${this.baseUrl}${path}`, {
-			headers: { Authorization: `Bearer ${this.apiKey}` },
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				...(extraHeaders ?? {}),
+			},
 		});
 		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
 		if (!res.ok) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -25,9 +25,10 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -54,26 +55,25 @@ export function CopyKeysDialog({
 	children: ReactElement;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [targetChoice, setTargetChoice] = useState("");
 	const [newVaultName, setNewVaultName] = useState("");
 
-	const anyProjectId = vault.project_ids?.[0];
 	const attachedCount = vault.project_ids?.length ?? 0;
 	const verb = mode === "move" ? "Move" : "Copy";
 
-	const vaultsQuery = useQuery({
-		queryKey: ["vaults", "all"],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
-		enabled: open,
-	});
-	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		enabled: open,
-	});
+	const vaultsQuery = $api.useQuery(
+		"get",
+		"/v1/vault",
+		{
+			params: { query: { page_size: 200 } },
+		},
+		{
+			enabled: open,
+		},
+	);
 	const ownVaults = useMemo(
 		() => (vaultsQuery.data?.items ?? []).filter((v) => v.is_owner !== false),
 		[vaultsQuery.data],
@@ -88,7 +88,7 @@ export function CopyKeysDialog({
 				value: targetVault.id,
 				label: targetVault.name,
 			})),
-			{ value: NEW_VAULT, label: "New vault…" },
+			{ value: NEW_VAULT, label: "Create vault…" },
 		],
 		[targetVaults],
 	);
@@ -99,21 +99,11 @@ export function CopyKeysDialog({
 	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
 	const newVaultSlugTaken =
 		creatingNewVault && newVaultSlug.length > 0 && ownVaults.some((v) => v.slug === newVaultSlug);
-	const writableProject = useMemo(
-		() =>
-			(projectsQuery.data ?? []).find((p) => p.kind === "personal") ??
-			(projectsQuery.data ?? []).find((p) => p.is_owner !== false),
-		[projectsQuery.data],
-	);
-	const newVaultPending = creatingNewVault && (vaultsQuery.isLoading || projectsQuery.isLoading);
-	const newVaultUnavailable =
-		creatingNewVault &&
-		!projectsQuery.isLoading &&
-		!vaultsQuery.isLoading &&
-		!projectsQuery.error &&
-		!vaultsQuery.error &&
-		writableProject === undefined;
-	const destinationLoadError = vaultsQuery.error ?? (creatingNewVault ? projectsQuery.error : null);
+	const newVaultPending = creatingNewVault && vaultsQuery.isLoading;
+	const blockingVaultsError = shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data)
+		? vaultsQuery.error
+		: null;
+	const destinationLoadError = blockingVaultsError;
 	const canRun =
 		keys.length > 0 &&
 		!destinationLoadError &&
@@ -123,7 +113,6 @@ export function CopyKeysDialog({
 			newVaultSlug,
 			newVaultSlugTaken,
 			newVaultPending,
-			newVaultUnavailable,
 		);
 
 	const run = useMutation({
@@ -138,10 +127,9 @@ export function CopyKeysDialog({
 				if (ownVaults.some((v) => v.slug === targetSlug)) {
 					throw new Error("A vault with that name already exists");
 				}
-				if (!writableProject) throw new Error("No writable Project available yet");
 				const created = unwrap(
 					await api.POST("/v1/vault", {
-						params: { query: { project_id: writableProject.id, create_only: true } },
+						params: { query: { create_only: true } },
 						body: { slug: targetSlug, name },
 					}),
 				);
@@ -168,7 +156,6 @@ export function CopyKeysDialog({
 								params: {
 									path: { slug: vault.slug },
 									query: {
-										project_id: anyProjectId ?? undefined,
 										vault_id: vault.id,
 										target_vault_id: targetVaultId,
 									},
@@ -190,7 +177,6 @@ export function CopyKeysDialog({
 										params: {
 											path: { slug: vault.slug },
 											query: {
-												project_id: anyProjectId ?? undefined,
 												vault_id: vault.id,
 												global_delete: true,
 											},
@@ -213,7 +199,7 @@ export function CopyKeysDialog({
 			return { targetSlug, copied, failed, sourceRemoveFailed };
 		},
 		onSuccess: ({ targetSlug, copied, failed, sourceRemoveFailed }) => {
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			qc.invalidateQueries({ queryKey: ["vault-items"] });
 			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
 			toast.success(
@@ -284,7 +270,7 @@ export function CopyKeysDialog({
 									))}
 									<SelectItem value={NEW_VAULT}>
 										<Plus className="size-3.5" />
-										New vault…
+										Create vault…
 									</SelectItem>
 								</SelectContent>
 							</Select>
@@ -295,17 +281,12 @@ export function CopyKeysDialog({
 									value={newVaultName}
 									onChange={(e) => setNewVaultName(e.target.value)}
 									placeholder="Vault name…"
-									aria-label="New vault name"
+									aria-label="Vault name"
 									className="sm:w-44"
 								/>
 								{newVaultSlugTaken ? (
 									<p className="max-w-44 text-xs text-destructive">
 										That vault already exists. Choose it from the list or use a different name.
-									</p>
-								) : null}
-								{newVaultUnavailable ? (
-									<p className="max-w-44 text-xs text-destructive">
-										No writable Project is available yet.
 									</p>
 								) : null}
 							</div>
@@ -316,7 +297,6 @@ export function CopyKeysDialog({
 							error={destinationLoadError}
 							onRetry={() => {
 								if (vaultsQuery.error) void vaultsQuery.refetch();
-								if (creatingNewVault && projectsQuery.error) void projectsQuery.refetch();
 							}}
 							title="Couldn't load destinations"
 						/>
@@ -330,7 +310,7 @@ export function CopyKeysDialog({
 					{mode === "copy" ? (
 						<p className="text-xs text-muted-foreground">
 							Just want these keys available in another Project? Use{" "}
-							<span className="font-medium text-foreground">Add to Project</span> on this vault
+							<span className="font-medium text-foreground">Attach vault</span> on this vault
 							instead — one source of truth, changes apply everywhere.
 						</p>
 					) : null}
@@ -354,14 +334,9 @@ function runIsBlockedForNewVault(
 	newVaultSlug: string,
 	newVaultSlugTaken: boolean,
 	newVaultPending: boolean,
-	newVaultUnavailable: boolean,
 ): boolean {
 	return (
 		creatingNewVault &&
-		(!newVaultName.trim() ||
-			!newVaultSlug ||
-			newVaultSlugTaken ||
-			newVaultPending ||
-			newVaultUnavailable)
+		(!newVaultName.trim() || !newVaultSlug || newVaultSlugTaken || newVaultPending)
 	);
 }

@@ -13,24 +13,11 @@ import {
 } from "@/hosted/v2/ai-providers/provider-types";
 import type {
 	AiProvider,
-	AiProviderAuth,
 	AiProviderUpsert,
 	AiProviderUpsertAuth,
 } from "@/hosted/v2/ai-providers/types";
 
-export type AuthMethod = "api_key" | "oauth" | "none";
-
-export type ApiKeyKeepKind = "managed" | "env" | "vault" | "legacy_secret_ref";
-
-export interface ApiKeyEditState {
-	canKeepManagedApiKey: boolean;
-	canKeepLegacySecretRef: boolean;
-	canKeepExternalApiKeyRef: boolean;
-	canKeepExistingKey: boolean;
-	keyRequired: boolean;
-	labelSuffix: string;
-	helpText: string;
-}
+export type AuthMethod = "api_key" | "oauth";
 
 export interface ProviderFormIdentity {
 	providerId: string;
@@ -42,52 +29,15 @@ export interface DerivedProviderFields {
 	apiMode: ApiMode;
 	runtimeEnv: string;
 	modelsText: string;
-	suggestedPrimaryModel?: string;
-}
-
-export function isAuthMethod(value: string | null): value is AuthMethod {
-	return value === "api_key" || value === "oauth" || value === "none";
 }
 
 export function authFor(method: AuthMethod): AiProviderUpsertAuth {
 	if (method === "api_key") return { type: "api_key", source: "managed" };
-	if (method === "oauth") return { type: "agent_profile", tool: "codex", profile: "default" };
-	return { type: "none" };
+	return { type: "agent_profile", tool: "codex", profile: "default" };
 }
 
-export function apiKeyEditState(
-	authMethod: AuthMethod,
-	editingAuth: AiProviderAuth | null | undefined,
-): ApiKeyEditState {
-	const keepable = keepableExistingApiKeyAuth(editingAuth);
-	const keepKind = authMethod === "api_key" ? keepable?.kind : undefined;
-	const canKeepExistingKey = keepKind !== undefined;
-	return {
-		canKeepManagedApiKey: keepKind === "managed",
-		canKeepLegacySecretRef: keepKind === "legacy_secret_ref",
-		canKeepExternalApiKeyRef: keepKind === "env" || keepKind === "vault",
-		canKeepExistingKey,
-		keyRequired: authMethod === "api_key" && !canKeepExistingKey,
-		labelSuffix: apiKeyLabelSuffix(keepKind),
-		helpText: apiKeyHelpText(keepKind),
-	};
-}
-
-export function providerAuthForSubmit({
-	authMethod,
-	editingAuth,
-	hasNewManagedKey,
-}: {
-	authMethod: AuthMethod;
-	editingAuth: AiProviderAuth | null | undefined;
-	hasNewManagedKey: boolean;
-}): AiProviderUpsertAuth {
-	if (authMethod !== "api_key") return authFor(authMethod);
-	if (!hasNewManagedKey) {
-		const keepable = keepableExistingApiKeyAuth(editingAuth);
-		if (keepable) return keepable.auth;
-	}
-	return authFor("api_key");
+export function providerListAllowsSubmit(isEdit: boolean, listLoaded: boolean): boolean {
+	return isEdit || listLoaded;
 }
 
 export function modelsToText(models: ReadonlyArray<{ id: string }> | null | undefined): string {
@@ -143,7 +93,6 @@ export function derivedProviderFields(
 			apiMode: preset.api_mode,
 			runtimeEnv: presetRuntimeEnvName(preset),
 			modelsText: modelsToText(presetCatalogToProviderModels(preset)),
-			suggestedPrimaryModel: preset.suggested_primary_model,
 		};
 	}
 	return {
@@ -178,16 +127,22 @@ export function providerFormIdentity({
 	editing?: Pick<AiProvider, "provider_id" | "label"> | null;
 	preset?: ProviderPreset | null;
 }): ProviderFormIdentity {
-	if (authMethod === "oauth") {
-		return {
-			providerId: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
-			label: "Codex (ChatGPT)",
-		};
-	}
 	if (editing) {
 		return {
 			providerId: editing.provider_id,
-			label: normalizeLabel(labelInput) ?? null,
+			label: normalizeLabel(labelInput) ?? editing.label ?? null,
+		};
+	}
+	if (authMethod === "oauth") {
+		const baseId = CLAWDI_CODEX_OAUTH_PROVIDER_ID;
+		const baseLabel = "ChatGPT (Codex)";
+		let suffix = 1;
+		while (existingProviderIds.includes(suffix === 1 ? baseId : `${baseId}-${suffix}`)) {
+			suffix += 1;
+		}
+		return {
+			providerId: suffix === 1 ? baseId : `${baseId}-${suffix}`,
+			label: suffix === 1 ? baseLabel : `${baseLabel} ${suffix}`,
 		};
 	}
 	const baseLabel =
@@ -195,10 +150,11 @@ export function providerFormIdentity({
 		(providerTypeMeta(type).custom === true
 			? (normalizeLabel(labelInput) ?? defaultProviderLabel(type))
 			: defaultProviderLabel(type));
+	const requestedPresetLabel = preset ? normalizeLabel(labelInput) : null;
 	const baseId = toProviderId(preset?.id ?? baseLabel);
 	if (!baseId) return { providerId: "", label: baseLabel };
 	if (!existingProviderIds.includes(baseId)) {
-		return { providerId: baseId, label: baseLabel };
+		return { providerId: baseId, label: requestedPresetLabel ?? baseLabel };
 	}
 	let suffix = 2;
 	while (existingProviderIds.includes(`${baseId}-${suffix}`)) {
@@ -206,41 +162,8 @@ export function providerFormIdentity({
 	}
 	return {
 		providerId: `${baseId}-${suffix}`,
-		label: `${baseLabel} ${suffix}`,
+		label: requestedPresetLabel ?? `${baseLabel} ${suffix}`,
 	};
-}
-
-function keepableExistingApiKeyAuth(
-	auth: AiProviderAuth | null | undefined,
-): { kind: ApiKeyKeepKind; auth: AiProviderUpsertAuth } | null {
-	if (!auth) return null;
-	if (auth.type === "secret_ref" && auth.ref) return { kind: "legacy_secret_ref", auth };
-	if (auth.type !== "api_key") return null;
-	if (auth.source === "managed") return { kind: "managed", auth };
-	if ((auth.source === "env" || auth.source === "vault") && auth.ref) {
-		return { kind: auth.source, auth };
-	}
-	return null;
-}
-
-function apiKeyLabelSuffix(kind: ApiKeyKeepKind | undefined): string {
-	if (!kind) return "";
-	if (kind === "managed") return " (leave blank to keep)";
-	if (kind === "legacy_secret_ref") return " (leave blank to keep legacy reference)";
-	return ` (leave blank to keep current ${kind} reference)`;
-}
-
-function apiKeyHelpText(kind: ApiKeyKeepKind | undefined): string {
-	if (kind === "legacy_secret_ref") {
-		return "Leave blank to preserve this provider's existing legacy secret reference. Enter a key to switch it to managed API-key auth.";
-	}
-	if (kind === "env" || kind === "vault") {
-		return `Leave blank to keep the current ${kind} reference. Enter a key to switch it to managed API-key auth.`;
-	}
-	if (kind === "managed") {
-		return "Leave blank to keep the current managed key. Enter a key to replace it.";
-	}
-	return "Stored encrypted for the hosted runtime and delivered as a manifest secret. The dashboard will not show it again.";
 }
 
 function normalizeLabel(value: string | null | undefined): string | null {

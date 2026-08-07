@@ -1,11 +1,18 @@
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401 — register `projects` table for FK resolution
+from app.models.project import Project
+
+SKILL_AUTHORITY_AGENT_SYNC = "agent_sync"
+SKILL_AUTHORITY_CLOUD = "cloud"
+SKILL_AUTHORITIES = (
+    SKILL_AUTHORITY_AGENT_SYNC,
+    SKILL_AUTHORITY_CLOUD,
+)
 
 
 class Skill(Base, TimestampMixin):
@@ -23,7 +30,7 @@ class Skill(Base, TimestampMixin):
         # and its env-local project is archived) takes its skills
         # with it. Otherwise the project delete would be RESTRICTed
         # by every child skill and turn into a manual cleanup chore.
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -32,6 +39,25 @@ class Skill(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text)
     version: Mapped[int] = mapped_column(Integer, server_default="1")
     source: Mapped[str] = mapped_column(String(50), server_default="local")
+    # Durable write authority. Existing rows are deliberately backfilled to
+    # `cloud`: historical project/source metadata cannot prove that an Agent
+    # filesystem authored the bytes. Only the authenticated Agent sync route
+    # may claim a row as `agent_sync` after observing it on that filesystem.
+    # Manifest Skills remain desired-state inventory and are not persisted as
+    # mutable Skill rows.
+    authority: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=SKILL_AUTHORITY_CLOUD,
+        server_default=SKILL_AUTHORITY_CLOUD,
+    )
+    # The Agent that owns an `agent_sync` projection. CASCADE keeps
+    # an Agent deletion from leaving an unclaimable authoritative row behind.
+    authority_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_environments.id", ondelete="CASCADE"),
+        index=True,
+    )
     agent_types: Mapped[list[str] | None] = mapped_column(ARRAY(String))
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     file_key: Mapped[str | None] = mapped_column(Text)
@@ -40,6 +66,15 @@ class Skill(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, server_default="true")
 
     __table_args__ = (
+        CheckConstraint(
+            "authority IN ('agent_sync', 'cloud')",
+            name="ck_skills_authority",
+        ),
+        CheckConstraint(
+            "(authority = 'agent_sync' AND authority_agent_id IS NOT NULL) OR "
+            "(authority = 'cloud' AND authority_agent_id IS NULL)",
+            name="ck_skills_authority_agent",
+        ),
         # Partial unique — only active rows compete for the
         # (user_id, project_id, skill_key) slot. Soft-deleted
         # duplicates remain in the table for audit but don't block

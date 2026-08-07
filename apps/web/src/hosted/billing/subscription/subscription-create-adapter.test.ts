@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type {
-	CheckoutResult,
-	ComputeSubscriptionQuoteResponse,
-	DeployRequest,
-} from "@/hosted/billing/contracts";
+import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
+import type { ComputeSubscriptionQuoteResponse, DeployRequest } from "@/hosted/billing/contracts";
 import {
 	type SubscriptionCreateRequestView,
 	subscriptionCreateOutcome,
@@ -26,10 +23,9 @@ const walletQuote: ComputeSubscriptionQuoteResponse = {
 	term_price_cents: 18_000,
 	preview_invoice_id: "upcoming_in_annual",
 	expires_at: "2026-07-16T00:05:00Z",
-	debit_credits: "180000",
-	points_per_usd: 1_000,
-	balance_before_credits: "200000.25",
-	balance_after_credits: "20000.25",
+	debit_amount_usd: "180",
+	balance_before_usd: "200.00025",
+	balance_after_usd: "20.00025",
 };
 
 function createRequest(
@@ -66,11 +62,9 @@ describe("subscription creation adapter", () => {
 			expiresAt: "2026-07-16T00:05:00Z",
 			serverQuote: walletQuote,
 			walletDebit: {
-				balanceBeforeCredits: "200000.25",
-				exactDebitCredits: "180000",
-				exactDebitCents: 18_000,
-				balanceAfterCredits: "20000.25",
-				pointsPerUsd: 1_000,
+				balanceBeforeUsd: "200.00025",
+				debitAmountUsd: "180",
+				balanceAfterUsd: "20.00025",
 			},
 		});
 	});
@@ -83,7 +77,10 @@ describe("subscription creation adapter", () => {
 				billing_term_months: 12,
 				funding_source: "wallet",
 				ui_mode: "custom",
-				deploy_config: deployConfig,
+				deploy_config: {
+					...deployConfig,
+					deploy_request_id: "subscription-create-test",
+				},
 				quote: walletQuote,
 			},
 		});
@@ -112,18 +109,32 @@ describe("subscription creation adapter", () => {
 		});
 	});
 
-	test("projects only the wallet activation fields consumed by the UI", () => {
-		const activation: CheckoutResult = {
+	test("projects activation identity and entitlement fields consumed by the UI", () => {
+		const activation: Extract<CheckoutOperationResult, { flow_type: "subscription_activation" }> = {
 			flow_type: "subscription_activation",
 			funding_source: "wallet",
 			checkout_url: "",
+			subscription_id: "csub_contract",
+			invoice_id: null,
 			deploy_request_id: "subscription-create-test",
 			deployment_id: "hdep_created",
+			deployment_name: null,
+			metadata_generation: null,
+			debited_usd: null,
+			balance_after_usd: null,
+			current_period_start: null,
+			current_period_end: "2027-07-15T00:00:00Z",
+			entitled_until: "2027-07-16T00:00:00Z",
 		};
 		expect(subscriptionCreateOutcome(activation)).toEqual({
 			flowType: "subscription_activation",
 			deploymentId: "hdep_created",
 			deployRequestId: "subscription-create-test",
+			currentPeriodEnd: "2027-07-15T00:00:00Z",
+			entitledUntil: "2027-07-16T00:00:00Z",
 		});
+		expect(() => subscriptionCreateOutcome({ ...activation, deployment_id: null })).toThrow(
+			"Wallet activation did not return an agent.",
+		);
 	});
 });

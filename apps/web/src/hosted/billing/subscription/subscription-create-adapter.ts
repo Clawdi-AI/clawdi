@@ -1,6 +1,14 @@
+import {
+	buildHostedDeployCheckoutRequest,
+	buildHostedDeploySubscriptionQuoteRequest,
+	type HostedDeployCheckoutUiMode,
+} from "@clawdi/shared/api";
+import {
+	acceptDeclarativeOperation,
+	type CheckoutOperationResult,
+} from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
-	CheckoutResult,
 	ComputePlanSlug,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionQuoteResponse,
@@ -12,6 +20,10 @@ export type SubscriptionFundingSource = ComputeSubscriptionQuoteRequest["funding
 export type SubscriptionBillingTermMonths = NonNullable<
 	ComputeSubscriptionQuoteRequest["billing_term_months"]
 >;
+
+export function supportedBillingTerm(value: number): SubscriptionBillingTermMonths | null {
+	return value === 1 || value === 12 ? value : null;
+}
 
 /** UI selection for the rail-neutral subscription creation flow. */
 export type SubscriptionCreateSelection = {
@@ -38,7 +50,7 @@ export type SubscriptionCreateTarget =
 export type SubscriptionCreateRequestView = {
 	selection: SubscriptionCreateSelection;
 	target: SubscriptionCreateTarget;
-	uiMode: string;
+	uiMode: HostedDeployCheckoutUiMode;
 	idempotencyKey: string;
 	quote: SubscriptionCreateQuoteView | null;
 };
@@ -46,34 +58,25 @@ export type SubscriptionCreateRequestView = {
 export type SubscriptionCreateOutcomeView =
 	| {
 			flowType: "checkout";
-			checkout: CheckoutResult;
+			checkout: CheckoutOperationResult;
 	  }
 	| {
 			flowType: "subscription_activation";
-			deploymentId: string | null;
+			deploymentId: string;
 			deployRequestId: string | null;
+			currentPeriodEnd: string | null;
+			entitledUntil: string | null;
 	  };
 
 export function subscriptionCreateQuoteRequest(
 	selection: SubscriptionCreateSelection | null,
 ): ComputeSubscriptionQuoteRequest | null {
 	if (!selection) return null;
-	return {
-		plan_slug: selection.planSlug,
-		billing_term_months: selection.billingTermMonths,
-		funding_source: selection.fundingSource,
-	};
+	return buildHostedDeploySubscriptionQuoteRequest(selection);
 }
 
 function decimalString(value: string | null | undefined, field: string): string {
 	if (value === null || value === undefined || value.trim() === "") {
-		throw new Error(`Subscription quote is missing ${field}.`);
-	}
-	return value;
-}
-
-function requiredQuoteNumber(value: number | null | undefined, field: string): number {
-	if (value === null || value === undefined) {
 		throw new Error(`Subscription quote is missing ${field}.`);
 	}
 	return value;
@@ -86,14 +89,9 @@ export function subscriptionCreateQuoteView(
 	const walletDebit =
 		quote.funding_source === "wallet"
 			? {
-					balanceBeforeCredits: decimalString(quote.balance_before_credits, "the wallet balance"),
-					exactDebitCredits: decimalString(quote.debit_credits, "the exact wallet debit"),
-					exactDebitCents: quote.term_price_cents,
-					balanceAfterCredits: decimalString(
-						quote.balance_after_credits,
-						"the post-debit wallet balance",
-					),
-					pointsPerUsd: requiredQuoteNumber(quote.points_per_usd, "the wallet conversion rate"),
+					balanceBeforeUsd: decimalString(quote.balance_before_usd, "the wallet balance"),
+					debitAmountUsd: decimalString(quote.debit_amount_usd, "the exact wallet debit"),
+					balanceAfterUsd: decimalString(quote.balance_after_usd, "the post-debit wallet balance"),
 				}
 			: null;
 	return {
@@ -112,28 +110,33 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 	idempotencyKey: string;
 } {
 	const { selection, target } = request;
-	const body: CheckoutRequest = {
-		plan_slug: selection.planSlug,
-		billing_term_months: selection.billingTermMonths,
-		funding_source: selection.fundingSource,
-		ui_mode: request.uiMode,
-		...(target.kind === "new_deployment"
-			? { deploy_config: target.deployConfig }
-			: { upgrade_deployment_id: target.deploymentId }),
-		...(selection.fundingSource === "wallet" && request.quote
-			? { quote: request.quote.serverQuote }
-			: {}),
-	};
+	const body: CheckoutRequest = buildHostedDeployCheckoutRequest({
+		selection,
+		target:
+			target.kind === "new_deployment"
+				? { kind: "new_deployment", deployRequest: target.deployConfig }
+				: { kind: "upgrade_deployment", deploymentId: target.deploymentId },
+		idempotencyKey: request.idempotencyKey,
+		quote: request.quote?.serverQuote ?? null,
+		uiMode: request.uiMode,
+	});
 	return { body, idempotencyKey: request.idempotencyKey };
 }
 
-export function subscriptionCreateOutcome(result: CheckoutResult): SubscriptionCreateOutcomeView {
+export function subscriptionCreateOutcome(
+	result: CheckoutOperationResult,
+): SubscriptionCreateOutcomeView {
 	if (result.flow_type !== "subscription_activation") {
 		return { flowType: "checkout", checkout: result };
 	}
 	return {
 		flowType: "subscription_activation",
-		deploymentId: result.deployment_id ?? null,
+		deploymentId: acceptDeclarativeOperation(
+			{ deploymentId: result.deployment_id, operation: null },
+			"Wallet activation did not return an agent.",
+		).deploymentId,
 		deployRequestId: result.deploy_request_id ?? null,
+		currentPeriodEnd: result.current_period_end ?? null,
+		entitledUntil: result.entitled_until ?? null,
 	};
 }

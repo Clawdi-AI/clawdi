@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
-import { runtimeSecretValue } from "./secret-values";
+import { canonicalSecretRefSchema, runtimeSecretValue } from "./secret-values";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 export const runtimeNameSchema = z
 	.string()
@@ -28,7 +28,7 @@ export const runtimeRunSettingsSchema = z.object({
 	command: z.string().min(1).optional(),
 	args: z.array(z.string()).optional(),
 	env: z.record(envKeySchema, z.string()).default({}),
-	secretEnv: z.record(envKeySchema, z.string().min(1)).optional(),
+	secretEnv: z.record(envKeySchema, canonicalSecretRefSchema).optional(),
 	cwd: z.string().min(1).optional(),
 	prependPath: z.array(z.string().min(1)).default([]),
 });
@@ -47,7 +47,7 @@ const runtimeRunConfigSchema = z
 		command: z.string().min(1),
 		defaultArgs: z.array(z.string()).default([]),
 		env: z.record(envKeySchema, z.string()).default({}),
-		secretEnv: z.record(envKeySchema, z.string().min(1)).default({}),
+		secretEnv: z.record(envKeySchema, canonicalSecretRefSchema).default({}),
 		secretFilePath: z.string().min(1).nullable().default(null),
 		prependPath: z.array(z.string().min(1)).default([]),
 		cwd: z.string().min(1).optional(),
@@ -148,7 +148,7 @@ export function buildRuntimeRunConfig(input: {
 
 export function writeRuntimeRunConfig(config: RuntimeRunConfig, paths: RuntimePaths): string {
 	const path = runtimeRunConfigPath(config.runtime, paths, config.service);
-	writePrivateFileAtomic(path, `${JSON.stringify(config, null, 2)}\n`, {
+	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(config, null, 2)}\n`, {
 		mode: 0o644,
 		dirMode: 0o755,
 	});
@@ -220,7 +220,7 @@ export function buildRuntimeRunInvocation(
 	paths = getRuntimePaths(),
 ): RuntimeRunInvocation {
 	const pathPrefix = read.config.prependPath.join(":");
-	const currentPath = withoutPathEntry(baseEnv.PATH ?? "", runtimeManagedBinDir(paths));
+	const currentPath = withoutPathEntry(baseEnv.PATH ?? "", dirname(paths.cliManagedBin));
 	const env = {
 		...baseEnv,
 		...read.config.env,
@@ -248,10 +248,6 @@ export function buildRuntimeRunInvocation(
 	};
 }
 
-export function runtimeManagedBinDir(paths = getRuntimePaths()): string {
-	return join(paths.serviceStateRoot, "bin");
-}
-
 export function withoutPathEntry(path: string, entry: string): string {
 	return path
 		.split(":")
@@ -270,12 +266,11 @@ function runtimeSecretEnv(
 ): Record<string, string> {
 	const entries = Object.entries(secretEnv);
 	if (entries.length === 0) return {};
-	const fileBackedEntries = entries.filter(([, ref]) => !ref.startsWith("env://"));
-	if (fileBackedEntries.length > 0 && !secretFilePath) {
+	if (!secretFilePath) {
 		throw new Error("Runtime run config references secrets but has no secret file.");
 	}
 	let secrets: Record<string, unknown> = {};
-	if (fileBackedEntries.length > 0 && secretFilePath) {
+	if (secretFilePath) {
 		let rawSecrets: unknown;
 		try {
 			rawSecrets = JSON.parse(readFileSync(secretFilePath, "utf-8"));

@@ -1,19 +1,17 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	Brain,
+	FolderKanban,
 	Key,
-	LayoutDashboard,
 	type LucideIcon,
 	MessageSquare,
-	MessagesSquare,
 	Settings,
 	Sparkles,
 } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
 	Command,
 	CommandDialog,
@@ -25,73 +23,27 @@ import {
 	CommandSeparator,
 } from "@/components/ui/command";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import {
-	PROJECT_RESOURCE_GROUPS,
-	projectResourceDefinitionsForGroup,
-	projectResourcePathLabel,
-	projectResourceScopeLabel,
-} from "@/lib/project-resource-model";
-import {
-	DEFAULT_SETTINGS_SECTION,
-	normalizeSettingsSection,
-	settingsQueryHref,
-} from "@/lib/settings-routes";
+import { consoleCommandPaletteItems } from "@/lib/navigation-model";
+import type { SettingsSectionId } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
 interface NavShortcut {
 	label: string;
 	href: string;
+	settingsSection?: SettingsSectionId;
 	icon: LucideIcon;
 	subtitle: string;
 	searchText: string;
 }
 
-const BASE_NAV_SHORTCUTS: NavShortcut[] = [
-	{
-		label: "Overview",
-		href: "/",
-		icon: LayoutDashboard,
-		subtitle: "Dashboard",
-		searchText: "overview dashboard",
-	},
-	...PROJECT_RESOURCE_GROUPS.flatMap((group) =>
-		projectResourceDefinitionsForGroup(group.id).map((definition) => ({
-			label: definition.navLabel,
-			href: definition.href,
-			icon: PROJECT_RESOURCE_ICONS[definition.id],
-			subtitle: projectResourcePathLabel(definition),
-			searchText: `${definition.navLabel} ${definition.label} ${group.label} ${projectResourceScopeLabel(
-				definition.projectScope,
-			)} ${projectResourcePathLabel(definition)}`,
-		})),
-	),
-];
-
-const CLOUD_NAV_SHORTCUTS: NavShortcut[] = [
-	{
-		label: "Channels",
-		href: "/channels",
-		icon: MessagesSquare,
-		subtitle: "Account resources",
-		searchText: "channels telegram discord whatsapp bots messaging",
-	},
-	{
-		label: "Model Providers",
-		href: "/ai-providers",
-		icon: Sparkles,
-		subtitle: "Account resources",
-		searchText:
-			"model providers ai providers models openai anthropic openrouter gemini mistral byok api key",
-	},
-];
-
 const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
 	session: MessageSquare,
 	memory: Brain,
+	project: FolderKanban,
 	skill: Sparkles,
 	vault: Key,
 };
@@ -99,6 +51,7 @@ const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
 const TYPE_LABEL: Record<SearchHit["type"], string> = {
 	session: "Sessions",
 	memory: "Memories",
+	project: "Projects",
 	skill: "Skills",
 	vault: "Vaults",
 };
@@ -157,57 +110,61 @@ function CommandPalette({
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
-	const api = useApi();
+	const api = useOpenApi();
 	const router = useRouter();
 	const hostedAccess = useHostedProductAccess();
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
 	const navShortcuts = useMemo(() => {
+		const shortcuts: NavShortcut[] = consoleCommandPaletteItems(false).map((item) => ({
+			label: item.label,
+			href: item.href,
+			icon: item.icon,
+			subtitle: item.commandPalette.subtitle,
+			searchText: item.commandPalette.searchText,
+		}));
 		const settingsShortcut: NavShortcut = {
 			label: "Settings",
-			href: settingsQueryHref("general"),
+			href: ".",
+			settingsSection: "general",
 			icon: Settings,
 			subtitle: "General, Profile, API Keys",
 			searchText: "settings general profile api keys model providers billing preferences account",
 		};
-		const shortcuts = [...BASE_NAV_SHORTCUTS, settingsShortcut];
+		shortcuts.push(settingsShortcut);
 		if (IS_HOSTED && hostedAccess.canCreateCloudAgents) {
-			shortcuts.push(...CLOUD_NAV_SHORTCUTS);
+			shortcuts.push(
+				...consoleCommandPaletteItems(true)
+					.filter((item) => item.availability === "cloud")
+					.map((item) => ({
+						label: item.label,
+						href: item.href,
+						icon: item.icon,
+						subtitle: item.commandPalette.subtitle,
+						searchText: item.commandPalette.searchText,
+					})),
+			);
 		}
 		return shortcuts;
 	}, [hostedAccess.canCreateCloudAgents]);
 
-	// Reset the input when the palette closes so reopening is a fresh state
-	// — otherwise stale results from the previous query briefly flash before
-	// a new debounce cycle fires.
-	useEffect(() => {
-		if (!open) setQuery("");
-	}, [open]);
-
-	const { data, isFetching } = useQuery({
-		queryKey: ["command-search", debounced],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/search", { params: { query: { q: debounced } } })),
-		enabled: open && debounced.trim().length > 0,
-		staleTime: 30_000,
-		// Keep the last page of results visible while a new debounced query
-		// flies out — prevents the palette flashing to "empty" on every
-		// keystroke.
-		placeholderData: keepPreviousData,
-	});
+	const { data, isFetching } = api.useQuery(
+		"get",
+		"/v1/search",
+		{ params: { query: { q: debounced } } },
+		{
+			enabled: open && debounced.trim().length > 0,
+			staleTime: 30_000,
+			// Keep the last page of results visible while a new debounced query
+			// flies out — prevents the palette flashing to "empty" on every
+			// keystroke.
+			placeholderData: keepPreviousData,
+		},
+	);
 
 	const jump = useCallback(
 		(href: string) => {
 			onOpenChange(false);
-			if (href.startsWith("?settings=") && typeof window !== "undefined") {
-				const section =
-					normalizeSettingsSection(new URLSearchParams(href).get("settings")) ??
-					DEFAULT_SETTINGS_SECTION;
-				void router.navigate({
-					href: settingsQueryHref(section, new URLSearchParams(window.location.search)),
-				});
-				return;
-			}
 			if (/^https?:\/\//i.test(href) && typeof window !== "undefined") {
 				window.location.assign(href);
 				return;
@@ -215,6 +172,18 @@ function CommandPalette({
 			void router.navigate({ href });
 		},
 		[router, onOpenChange],
+	);
+	const openSettings = useCallback(
+		(section: SettingsSectionId) => {
+			onOpenChange(false);
+			void router.navigate({
+				to: ".",
+				search: (current) => ({ ...current, settings: section }),
+				hash: true,
+				replace: true,
+			});
+		},
+		[onOpenChange, router],
 	);
 
 	// Group hits by type — cmdk groups handle the visual separator/label.
@@ -256,6 +225,9 @@ function CommandPalette({
 		<CommandDialog
 			open={open}
 			onOpenChange={onOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) setQuery("");
+			}}
 			title="Search"
 			description="Open a page or search sessions, memories, skills, and vaults. Use the Search button in the sidebar or Cmd/Ctrl+K."
 		>
@@ -291,7 +263,9 @@ function CommandPalette({
 								<CommandItem
 									key={s.href}
 									value={s.searchText}
-									onSelect={() => jump(s.href)}
+									onSelect={() =>
+										s.settingsSection ? openSettings(s.settingsSection) : jump(s.href)
+									}
 									className={COMMAND_RESULT_ROW_CLASS}
 								>
 									<s.icon className="mt-0.5 size-4 shrink-0" />
@@ -305,7 +279,7 @@ function CommandPalette({
 					) : null}
 
 					{hasQuery
-						? (["session", "memory", "skill", "vault"] as const).map((type, i) => {
+						? (["session", "memory", "project", "skill", "vault"] as const).map((type, i) => {
 								const hits = grouped[type];
 								if (!hits?.length) return null;
 								const Icon = TYPE_ICON[type];

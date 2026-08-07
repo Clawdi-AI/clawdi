@@ -1,10 +1,9 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Scissors } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -17,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -76,24 +76,14 @@ export function SplitVaultDialog({
 	const [excluded, setExcluded] = useState<Set<string>>(new Set());
 	const [removeOriginals, setRemoveOriginals] = useState(true);
 	const [progress, setProgress] = useState<string | null>(null);
+	const exit = useDialogExitLifecycle({ open, value: progress, emptyValue: null });
+	const renderedProgress = exit.renderedValue;
 
-	const anyProjectId = vault.project_ids?.[0];
 	const selected = useMemo(() => groups.filter((g) => !excluded.has(g.slug)), [groups, excluded]);
 	const selectedKeyCount = selected.reduce((n, g) => n + g.keys.length, 0);
 
-	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		enabled: open,
-	});
-	const projects = projectsQuery.data;
-
 	const run = useMutation({
 		mutationFn: async () => {
-			const personal =
-				(projects ?? []).find((p) => p.kind === "personal") ??
-				(projects ?? []).find((p) => p.is_owner !== false);
-			if (!personal) throw new Error("No writable Project available yet");
 			let done = 0;
 			let affectedKeys = 0;
 			const failed: string[] = [];
@@ -102,7 +92,7 @@ export function SplitVaultDialog({
 				try {
 					const target = unwrap(
 						await api.POST("/v1/vault", {
-							params: { query: { project_id: personal.id, create_only: true } },
+							params: { query: { create_only: true } },
 							body: { slug: group.slug, name: group.prefix.slice(0, -1) },
 						}),
 					);
@@ -123,7 +113,6 @@ export function SplitVaultDialog({
 									params: {
 										path: { slug: vault.slug },
 										query: {
-											project_id: anyProjectId ?? undefined,
 											vault_id: vault.id,
 											target_vault_id: target.id,
 										},
@@ -144,7 +133,6 @@ export function SplitVaultDialog({
 											params: {
 												path: { slug: vault.slug },
 												query: {
-													project_id: anyProjectId ?? undefined,
 													vault_id: vault.id,
 													global_delete: true,
 												},
@@ -171,9 +159,9 @@ export function SplitVaultDialog({
 			return { done, failed, affectedKeys };
 		},
 		onSuccess: ({ done, failed, affectedKeys }) => {
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			qc.invalidateQueries({ queryKey: ["vault-items"] });
-			setProgress(null);
+			exit.beginClose();
 			toast.success(`Split into ${done} ${done === 1 ? "vault" : "vaults"}`, {
 				description:
 					`${affectedKeys} keys ${removeOriginals ? "moved" : "copied"} with clean names.` +
@@ -189,7 +177,22 @@ export function SplitVaultDialog({
 	});
 
 	return (
-		<Dialog open={open} onOpenChange={(next) => !run.isPending && setOpen(next)}>
+		<Dialog
+			open={open}
+			onOpenChange={(next) => {
+				if (run.isPending) return;
+				if (next) exit.beginOpen();
+				else exit.beginClose();
+				setOpen(next);
+			}}
+			onOpenChangeComplete={(next) => {
+				if (next) return;
+				exit.completeClose();
+				setProgress(null);
+				setExcluded(new Set());
+				setRemoveOriginals(true);
+			}}
+		>
 			<DialogTrigger render={<Button variant="outline" size="sm" />}>
 				<Scissors className="size-3.5" />
 				Split into vaults…
@@ -248,31 +251,17 @@ export function SplitVaultDialog({
 					{removeOriginals && (vault.project_ids?.length ?? 0) > 1 ? (
 						<p className="text-xs font-medium text-warning-muted-foreground">
 							{vault.name} is used by {vault.project_ids?.length} Projects — moved keys leave all of
-							them. Add the new vaults to those Projects afterwards.
+							them. Attach the new Vaults to those Projects afterwards.
 						</p>
-					) : null}
-					{projectsQuery.error ? (
-						<ApiErrorPanel
-							error={projectsQuery.error}
-							onRetry={() => {
-								void projectsQuery.refetch();
-							}}
-							title="Couldn't load destinations"
-						/>
 					) : null}
 					<Button
 						className="w-full"
-						disabled={
-							selected.length === 0 ||
-							run.isPending ||
-							projectsQuery.isLoading ||
-							!!projectsQuery.error
-						}
+						disabled={selected.length === 0 || run.isPending}
 						onClick={() => run.mutate()}
 					>
 						{run.isPending ? <Spinner /> : <Scissors className="size-3.5" />}
-						{run.isPending && progress
-							? `Splitting ${progress}`
+						{(run.isPending || !open) && renderedProgress
+							? `Splitting ${renderedProgress}`
 							: `Split ${selectedKeyCount} keys into ${selected.length} ${selected.length === 1 ? "vault" : "vaults"}`}
 					</Button>
 				</div>

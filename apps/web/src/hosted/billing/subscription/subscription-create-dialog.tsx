@@ -30,17 +30,12 @@ import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import type { ComputePlanSlug, Plan } from "@/hosted/billing/contracts";
 import {
-	billingErrorDetail,
 	billingErrorNormalizer,
 	isIdempotencyKeyReusedError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
-import { billingTermLabel, formatCents, formatCentsCompact } from "@/hosted/billing/format";
-import {
-	useCreateSubscription,
-	useSubscriptionCreateQuote,
-	useWallet,
-} from "@/hosted/billing/hooks";
+import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
+import { useSubscriptionCreateQuote } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
 	type IdempotencyAttempt,
@@ -48,10 +43,11 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
-import type {
-	SubscriptionBillingTermMonths,
-	SubscriptionCreateSelection,
-	SubscriptionFundingSource,
+import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actions";
+import {
+	type SubscriptionCreateSelection,
+	type SubscriptionFundingSource,
+	supportedBillingTerm,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import {
 	computeTierLabel,
@@ -62,9 +58,14 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
-import { walletDebitShortfallCredits } from "@/hosted/billing/wallet/wallet-debit-summary";
+import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-summary";
+import {
+	SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY,
+	useWalletTopUpDialog,
+} from "@/hosted/billing/wallet/wallet-funding";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 const PLAN_ITEMS = [
 	{ value: "compute_basic", label: "Basic" },
@@ -73,16 +74,6 @@ const PLAN_ITEMS = [
 
 function computePlanSlug(value: string | null): ComputePlanSlug | null {
 	return value === "compute_basic" || value === "compute_performance" ? value : null;
-}
-
-function supportedBillingTerm(value: number): SubscriptionBillingTermMonths | null {
-	return value === 1 || value === 12 ? value : null;
-}
-
-function decimalCredits(value: unknown): number | null {
-	if (typeof value !== "string" && typeof value !== "number") return null;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function planForSlug(plans: Plan[], planSlug: ComputePlanSlug): Plan | undefined {
@@ -112,14 +103,13 @@ export function SubscriptionCreateDialog({
 	initialBillingTermMonths: number;
 }) {
 	const hostedAccess = useHostedProductAccess();
-	const createSubscription = useCreateSubscription();
+	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
 	const createAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const [planSlug, setPlanSlug] = useState(initialPlanSlug);
 	const [billingTermMonths, setBillingTermMonths] = useState(initialBillingTermMonths);
 	const [fundingSource, setFundingSource] = useState<SubscriptionFundingSource>("stripe");
-	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
-	const [walletTopUpAmountCents, setWalletTopUpAmountCents] = useState<number | null>(null);
+	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
 	const selectedPlan = useMemo(() => planForSlug(plans, planSlug), [planSlug, plans]);
 	const offers = useMemo(() => offersForPlan(selectedPlan, planSlug), [planSlug, selectedPlan]);
 	const selectedOffer =
@@ -133,20 +123,23 @@ export function SubscriptionCreateDialog({
 					fundingSource,
 				}
 			: null;
-	const wallet = useWallet({
-		enabled: open && hostedAccess.canUsePlanCBilling && fundingSource === "wallet",
+	const wallet = useWalletSnapshot({
+		enabled: open && hostedAccess.canCreateCloudAgents && fundingSource === "wallet",
 	});
 	const createQuote = useSubscriptionCreateQuote(createSelection, {
-		enabled: open && hostedAccess.canUsePlanCBilling && fundingSource === "wallet",
+		enabled: open && hostedAccess.canCreateCloudAgents && fundingSource === "wallet",
 	});
 	const walletDebit = createQuote.data?.walletDebit ?? null;
-	const walletShortfallCredits = walletDebitShortfallCredits(walletDebit);
-	const walletInsufficient = walletShortfallCredits !== null;
+	const blockingCreateQuoteError = shouldBlockQueryError(createQuote.error, createQuote.data)
+		? createQuote.error
+		: null;
+	const walletShortfallUsd = walletDebitShortfallUsd(walletDebit);
+	const walletInsufficient = walletShortfallUsd !== null;
 	const isPending = createSubscription.isPending;
-	const submitLabel = !hostedAccess.canUsePlanCBilling
+	const submitLabel = !hostedAccess.canCreateCloudAgents
 		? "Temporarily unavailable"
 		: fundingSource === "wallet" && walletDebit
-			? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet`
+			? `Pay ${formatUsdExact(walletDebit.debitAmountUsd)} from Wallet`
 			: fundingSource === "wallet"
 				? "Review wallet quote"
 				: "Continue to card checkout";
@@ -163,15 +156,14 @@ export function SubscriptionCreateDialog({
 		setPlanSlug(initialPlanSlug);
 		setBillingTermMonths(nextTerm);
 		setFundingSource("stripe");
-		setWalletTopUpOpen(false);
-		setWalletTopUpAmountCents(null);
-	}, [initialBillingTermMonths, initialPlanSlug, open, plans]);
+		walletTopUp.reset();
+	}, [initialBillingTermMonths, initialPlanSlug, open, plans, walletTopUp.reset]);
 
 	useEffect(() => {
-		if (open && !hostedAccess.isLoading && !hostedAccess.canUsePlanCBilling) {
+		if (open && !hostedAccess.isLoading && !hostedAccess.canCreateCloudAgents) {
 			onOpenChange(false);
 		}
-	}, [hostedAccess.canUsePlanCBilling, hostedAccess.isLoading, onOpenChange, open]);
+	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, onOpenChange, open]);
 
 	function updatePlan(value: string | null) {
 		const nextPlanSlug = computePlanSlug(value);
@@ -186,34 +178,9 @@ export function SubscriptionCreateDialog({
 		setBillingTermMonths(nextTerm);
 	}
 
-	function openWalletTopUp(shortfallCredits: number | null) {
-		const pointsPerUsd = walletDebit?.pointsPerUsd ?? wallet.data?.points_per_usd ?? 0;
-		setWalletTopUpAmountCents(topUpAmountCentsForCreditShortfall(shortfallCredits, pointsPerUsd));
-		setWalletTopUpOpen(true);
-	}
-
-	function handleWalletCreateError(error: unknown): boolean {
-		const detail = billingErrorDetail(error);
-		if (detail?.code === "insufficient_wallet_balance" || detail?.code === "insufficient_balance") {
-			openWalletTopUp(decimalCredits(detail.shortfall_credits));
-			toast.error("Not enough AI Credits", {
-				description: "Top up the shortfall, then review a fresh wallet quote.",
-			});
-			return true;
-		}
-		if (detail?.code === "open_refund_debt") {
-			openWalletTopUp(decimalCredits(detail.outstanding_debt_credits));
-			toast.error("Refund debt must be repaid", {
-				description: "Top up before starting this wallet subscription.",
-			});
-			return true;
-		}
-		return false;
-	}
-
 	async function create() {
 		if (
-			!hostedAccess.canUsePlanCBilling ||
+			!hostedAccess.canCreateCloudAgents ||
 			!selectedOffer ||
 			!createSelection ||
 			isPending ||
@@ -224,7 +191,7 @@ export function SubscriptionCreateDialog({
 		const target = { kind: "terminal_fallback", deploymentId } as const;
 		const fingerprint = idempotencyFingerprint({ selection: createSelection, target });
 		try {
-			if (!(await hostedAccess.recheckPlanCBilling())) {
+			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
 				onOpenChange(false);
 				return;
 			}
@@ -234,7 +201,7 @@ export function SubscriptionCreateDialog({
 				fingerprint,
 				newIdempotencyKey,
 			);
-			const outcome = await createSubscription.mutateAsync({
+			const outcome = await createSubscription.execute({
 				selection: createSelection,
 				target,
 				uiMode: "hosted",
@@ -245,7 +212,7 @@ export function SubscriptionCreateDialog({
 				forgetIdempotencyAttempt("subscription-terminal-fallback", fingerprint);
 				createAttemptRef.current = null;
 				toast.success("Subscription started", {
-					description: `${formatCents(walletDebit?.exactDebitCents ?? selectedOffer.price_cents)} was paid with AI Credits. Compute updates after payment is projected.`,
+					description: `${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(selectedOffer.price_cents)} was paid from Wallet. Compute updates after payment is projected.`,
 				});
 				onOpenChange(false);
 				return;
@@ -262,7 +229,7 @@ export function SubscriptionCreateDialog({
 		} catch (error) {
 			if (fundingSource === "wallet") {
 				void createQuote.refetch();
-				if (handleWalletCreateError(error)) return;
+				if (walletTopUp.handleFundingError(error)) return;
 			}
 			if (isIdempotencyKeyReusedError(error) && createAttemptRef.current) {
 				forgetIdempotencyAttempt(
@@ -278,19 +245,19 @@ export function SubscriptionCreateDialog({
 	}
 
 	const submitDisabled =
-		!hostedAccess.canUsePlanCBilling ||
+		!hostedAccess.canCreateCloudAgents ||
 		!selectedOffer ||
 		!createSelection ||
 		isPending ||
 		(fundingSource === "wallet" &&
-			(!walletDebit || createQuote.isFetching || !!createQuote.error || walletInsufficient));
+			(!walletDebit || blockingCreateQuoteError !== null || walletInsufficient));
 
 	return (
 		<>
 			<Dialog
 				open={open}
 				onOpenChange={(nextOpen) => {
-					if (!isPending && !walletTopUpOpen) onOpenChange(nextOpen);
+					if (!isPending && !walletTopUp.dialogProps.open) onOpenChange(nextOpen);
 				}}
 			>
 				<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!isPending}>
@@ -360,7 +327,7 @@ export function SubscriptionCreateDialog({
 						{selectedOffer ? (
 							<p className="text-sm text-muted-foreground">
 								{computeTierLabel(planSlug)} · {billingTermLabel(billingTermMonths)} ·{" "}
-								{formatCentsCompact(selectedOffer.price_cents)}
+								{formatCents(selectedOffer.price_cents)}
 								{billingTermMonths === 1 ? "/month" : "/year"}
 							</p>
 						) : (
@@ -378,25 +345,24 @@ export function SubscriptionCreateDialog({
 								<p className="text-sm text-muted-foreground" role="status">
 									Getting the exact wallet debit…
 								</p>
-							) : createQuote.error ? (
+							) : blockingCreateQuoteError ? (
 								<ApiErrorPanel
 									normalizer={billingErrorNormalizer}
-									error={createQuote.error}
+									error={blockingCreateQuoteError}
 									onRetry={() => void createQuote.refetch()}
 									title="Couldn’t get subscription quote"
 								/>
 							) : walletDebit ? (
 								<div className="flex flex-col gap-3">
 									<WalletDebitEquation
-										balanceBeforeCredits={walletDebit.balanceBeforeCredits}
-										exactDebitCredits={walletDebit.exactDebitCredits}
-										exactDebitCents={walletDebit.exactDebitCents}
-										balanceAfterCredits={walletDebit.balanceAfterCredits}
+										balanceBeforeUsd={walletDebit.balanceBeforeUsd}
+										debitAmountUsd={walletDebit.debitAmountUsd}
+										balanceAfterUsd={walletDebit.balanceAfterUsd}
 									/>
 									{walletInsufficient ? (
 										<Alert variant="destructive">
 											<TriangleAlert aria-hidden />
-											<AlertTitle>Not enough AI Credits</AlertTitle>
+											<AlertTitle>Not enough Wallet balance</AlertTitle>
 											<AlertDescription className="flex flex-col items-start gap-3">
 												<span>Top up the shortfall, then review a fresh wallet quote.</span>
 												<Button
@@ -404,9 +370,9 @@ export function SubscriptionCreateDialog({
 													size="sm"
 													variant="outline"
 													disabled={!wallet.data}
-													onClick={() => openWalletTopUp(walletShortfallCredits)}
+													onClick={() => walletTopUp.show(walletShortfallUsd)}
 												>
-													<WalletCards data-icon="inline-start" /> Top up AI Credits
+													<WalletCards data-icon="inline-start" /> Top up Wallet
 												</Button>
 											</AlertDescription>
 										</Alert>
@@ -444,13 +410,7 @@ export function SubscriptionCreateDialog({
 			</Dialog>
 
 			{wallet.data ? (
-				<TopUpDialog
-					open={walletTopUpOpen}
-					onOpenChange={setWalletTopUpOpen}
-					wallet={wallet.data}
-					initialAmountCents={walletTopUpAmountCents}
-					onComplete={() => void createQuote.refetch()}
-				/>
+				<TopUpDialog {...walletTopUp.dialogProps} onComplete={() => void createQuote.refetch()} />
 			) : null}
 		</>
 	);

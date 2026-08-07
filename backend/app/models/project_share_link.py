@@ -8,8 +8,8 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401
-from app.models.user import User as User  # noqa: F401
+from app.models.project import Project
+from app.models.user import User
 
 
 class ProjectShareLink(Base, TimestampMixin):
@@ -18,7 +18,7 @@ class ProjectShareLink(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -27,7 +27,7 @@ class ProjectShareLink(Base, TimestampMixin):
     label: Mapped[str | None] = mapped_column(String(200))
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(User.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

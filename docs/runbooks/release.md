@@ -3,6 +3,9 @@
 Use this runbook when a PR is ready to merge or when an operator needs to
 create a Clawdi release from an already-deployed commit.
 
+Kamal host log retention and the one-time journald rollout prerequisite are in
+[`kamal-service-logs.md`](kamal-service-logs.md).
+
 ## Release Lines
 
 - App/backend/web/shared/root-config changes use calendar GitHub releases:
@@ -70,20 +73,38 @@ releases.
    uv run alembic upgrade head
    ```
 
-6. If the PR touches the CLI package and should publish, bump
-   `packages/cli/package.json` using semver. If no npm publish is intended,
-   leave the version unchanged.
+6. Bump `packages/cli/package.json` using semver whenever the commit is intended
+   to produce a new CLI artifact. This package identity change is what triggers
+   the publish workflow. Rerun the original workflow run after an incomplete
+   release; do not create a new commit with the same version.
    For the managed agent-v2 release line, this repository's release workflow must
-   build, typecheck, run the full CLI suite, and pack one immutable tarball. It
-   installs that tarball, records and verifies its SHA-256, transfers the same
-   artifact to the protected npm job, verifies it again, and publishes it once
+   build, typecheck, run the full CLI suite, pack one immutable npm tarball, and
+   build the native matrix once. It installs the npm tarball and exercises the
+   compiled Linux artifact through the native installer/daemon lifecycle. The
+   exact-version release manifest is the sole checksum contract for native
+   archives. The workflow transfers the same artifacts to the protected npm
+   job, verifies them again, and publishes the npm package once
    to `beta` for a prerelease or `latest` for a stable version with
    trusted-publisher OIDC. Package-level tag overrides are rejected. The build
    job may use the configured fast runner; the protected publish job must use
    GitHub-hosted `ubuntu-latest`, because npm trusted publishing does not support
    self-hosted or third-party GitHub Actions runners. The CLI workflow does not
    call workflows in the Hosted repository or depend on Hosted repository
-   settings.
+   settings. The run builds from its own `GITHUB_SHA`. An absent exact npm
+   version is published with provenance; an existing version is never
+   republished and must have the same `dist.integrity` as this run's artifact.
+   Fresh publish completion does not wait for the eventually consistent
+   attestation read API. The GitHub Release may be created or a draft may be
+   completed only for the same `GITHUB_SHA`; another target fails closed. After
+   npm succeeds, rerun the original
+   workflow run to complete GitHub assets. A different commit whose artifact
+   differs must bump the package version instead of recovering across commits.
+   Native ownership is separate: installed native executables update only from
+   the exact `clawdi-cli-v<version>` manifest and assets. npm/Bun installs use
+   exact npm versions. Hosted remains a separate exact-version npm authority and
+   never invokes native self-update. Bun's macOS artifacts are linker ad-hoc
+   signed; this release line does not claim Developer ID signing, notarization,
+   or browser-download Gatekeeper behavior.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -94,12 +115,97 @@ releases.
 
 1. Merge the PR into `main` after required checks are green.
 2. Watch Actions for these workflows:
+   - `Backend CI` is the sole automatic backend-image change gate. Its
+     `push.main.paths` filter includes every backend image/release input, and
+     main concurrency may cancel an older run in favor of the newest cumulative
+     commit. A push outside that path filter does not start a backend image
+     release. Because a `workflow_run` workflow can access secrets and write
+     tokens even when its predecessor could not, the privileged image workflow
+     accepts only a successful `push` run for `main` whose
+     `head_repository.full_name` is this repository. This follows GitHub's
+     official [`workflow_run` privilege and untrusted-code
+     warning](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows.md#workflow_run).
+   - `Clawdi Image Release` uses one workflow-level production concurrency
+     group with `cancel-in-progress: false` and `queue: max`. GitHub permits one
+     running release plus up to 100 pending runs in that group instead of
+     replacing an older pending run. Waiting runs are processed by the time each
+     run starts waiting, but workflow dispatch order is not guaranteed; do not
+     infer dispatch ordering or stale-rollback impossibility from the queue
+     alone. After the automatic queue drains, confirm the deployed version is
+     the newest successful `Backend CI` head SHA. If it is not, wait for the
+     group to become idle and dispatch that newest exact ref.
+   - A release that starts checks out, builds, tags, and deploys its exact
+     `workflow_run.head_sha`. It must not narrow that trusted signal with a
+     single-commit diff because a canceled predecessor's backend changes are
+     already ancestors of the successful cumulative SHA. The exact SHA is both
+     the commit-addressed OCI image tag and the Kamal deployment version; GHCR
+     tags remain mutable and are not a registry immutability guarantee.
+   - Manual dispatch always builds its resolved ref through the same production
+     concurrency group. An older ref is an explicit rollback and can defeat the
+     intended automatic release history if it waits behind automatic runs.
+     Do not dispatch an older ref while an automatic release is running or
+     pending. Confirm the `Clawdi Image Release` group is idle first. There is no
+     separate deploy-job concurrency gate; the workflow-level gate covers build
+     and deploy together. These rules follow the current official GitHub
+     [`workflow_run` conclusion/data
+     contract](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#running-a-workflow-based-on-the-conclusion-of-another-workflow)
+     and [`queue: max` workflow concurrency
+     contract](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency.md).
    - `.github/workflows/clawdi-release.yml` is manual-only. Run `Release Clawdi`
      only after the deployed commit should get public app/backend/web release
      notes.
-   - `.github/workflows/cli-publish.yml` runs for `packages/cli/**` and the
-     CLI publish workflow file, then publishes only when the local CLI version
-     differs from npm.
+   - `.github/workflows/cli-publish.yml` runs only when
+     `packages/cli/package.json` changes. It builds from the run's `GITHUB_SHA`, publishes
+     only when the exact npm version is absent, and otherwise verifies exact
+     registry integrity before completing the same-commit GitHub Release.
+
+   Done: `bun test packages/cli/tests/clawdi-image-release-workflow.test.ts`
+   exits 0 and the backend image release workflow contract passes.
+
+### Discord reserved-command cutover
+
+The pair-code endpoint owns the safe cutover. Before it can return instructions
+that mention `/clawdi_pair`, it checks a persisted reserved-command version and
+reconciles only the reserved command namespace in the global scope. It lists
+the existing commands, upserts and validates both `clawdi_pair` and
+`clawdi_unpair`, and only then deletes the exact legacy `bot_pair` and
+`bot_unpair` chat-input command IDs. This ordering avoids a destructive partial
+provider update if either new-command upsert fails; it does not make the legacy
+names accepted input aliases. A DELETE 404 for an exact ID from the preceding
+list is an idempotent success because another reconciliation has already
+removed it. Unrelated global commands are never deleted or resubmitted.
+For an existing account with a configured legacy `guild_id`, the same request
+performs the reserved-only reconciliation in that known guild scope while
+preserving unrelated guild commands. If Discord rejects, rate-limits, or cannot
+complete any other required list, upsert, or deletion, the endpoint returns an
+error without creating a pair code or advancing the reserved-command version.
+This prevents the pairing UI from getting ahead of the registered commands
+during rollout.
+
+No operator sync is required before users can pair. To reconcile accounts
+proactively after deploying the matching backend, an operator may run the
+default command sync below. Do not run it before the backend is deployed.
+
+```bash
+CHANNEL_API_URL='https://api.example.test'
+CHANNEL_ACCOUNT_ID='<discord-channel-account-id>'
+curl -sS -X POST \
+  "$CHANNEL_API_URL/v1/admin/channels/$CHANNEL_ACCOUNT_ID/commands/sync" \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{}' \
+  | jq -e '.commands | map(.name) | sort == ["clawdi_pair", "clawdi_unpair"]'
+```
+
+Done: the command exits 0 for each account and the response contains exactly
+the two upserted `clawdi_*` command names. This response is not the complete
+Discord command set; unrelated commands in the reconciled scope remain intact.
+
+Discord scopes are independent. If an operator previously used an explicit
+`guild_id` that is not the account's configured guild, that scope is not
+discoverable from account state and should be reconciled separately with
+`{"guild_id":"<discord-guild-id>"}` during the controlled cleanup.
+
 3. For CLI releases, verify npm after the workflow succeeds:
 
    ```bash
@@ -111,30 +217,25 @@ releases.
    Done: the exact version exists from the verified CLI artifact and the
    version-derived standard channel points to it: `beta` for a prerelease or
    `latest` for a stable release. The Hosted image repository has a separate
-   release boundary. An operator supplies the exact `clawdi@<semver>` package
-   spec to the Hosted image workflow, which fails when the exact spec is
-   missing. For `clawdi@0.12.10-beta.55`, first run
-   `hosted-runtime-image-release.yml` with `validate_only=true`,
-   `runtime_image` set to the current digest-pinned image, and
-   `cli_package_spec=clawdi@0.12.10-beta.55`. It verifies registry integrity,
-   signatures, provenance, and the image/CLI pairing without ever resolving an
-   npm dist-tag or publishing an image. Reuse the validated digest. Build a new
-   image only if validate-only fails for a demonstrated image compatibility
-   reason. The Hosted HOME and manifest refactor changes no Dockerfile-copied
-   runtime-image input, so it does not by itself justify image churn. The
-   workflow does not call back into this workflow. The `beta` tag is publication
-   metadata, not an operator gate.
+   artifact-validation boundary. An operator supplies the exact
+   `clawdi@<semver>` package spec to its workflow. The workflow
+   fails when the exact spec is missing, verifies registry integrity,
+   signatures, provenance, and image compatibility, and never resolves an npm
+   dist-tag. It does not select the production desired version.
 
-   Hosted rollout uses that same exact package spec in the Cloud manifest. The
-   runtime never resolves an npm dist-tag.
+   Hosted rollout resolves `agent_v2_cli_package_spec` from its database,
+   persists that exact value in deployment/bootstrap/runtime state, and projects
+   it unchanged into `clawdiCli.packageSpec`. The runtime verifies the trusted
+   bootstrap handoff matches the manifest, installs that exact package, and
+   re-execs before applying the manifest when the CLI changes.
 
    Hosted Codex is a CLI-owned tool-plane dependency pinned by the immutable
-   Clawdi CLI release. For `0.12.10-beta.55`, verify the audited exact package
-   and executable before activating Hosted:
+   Clawdi CLI release. Verify its audited exact package and executable before
+   activating Hosted:
 
    ```bash
-   test "$(npm view @openai/codex@0.142.4 version)" = "0.142.4"
-   npx --yes @openai/codex@0.142.4 --version | grep -F '0.142.4'
+   test "$(npm view @openai/codex@0.146.0 version)" = "0.146.0"
+   npx --yes @openai/codex@0.146.0 --version | grep -F '0.146.0'
    ```
 
    A Hosted Codex version change therefore requires a new exact Clawdi CLI
@@ -149,17 +250,17 @@ releases.
    deliberately sends the public marker can opt in, and resulting usage is
    charged to that deployment user's wallet.
 
-   Agent deployment v2 is not live. Keep creation and runtime-state
-   reconciliation disabled until the Hosted image contract, CLI version
-   `0.12.10-beta.55`, and the Cloud manifest contract are all deployed. Hosted
-   promotion must set `agent_v2_cli_package_spec` to the exact `.55` package
-   while retaining the validated existing `agent_v2_runtime_image` digest; if
-   that database setting is absent, write the already-validated existing
-   digest. Keep `clawdi_v2_enabled=false` and preserve existing environment
-   overrides. Validate
-   one fresh deployment end to end through `/v1/runtime/manifest` and SSE before
-   enabling v2. Do not add compatibility fields, aliases, or fallback package
-   channels.
+   For the current direct-cut release, keep Agent v2 creation disabled until
+   `clawdi@0.13.36` is published and its exact registry identity and provenance
+   are verified, then set and read back the Hosted database AppSetting
+   `agent_v2_cli_package_spec` as exactly `clawdi@0.13.36`. Only after those
+   gates pass may any new Agent deployment be allowed. A missing setting fails
+   closed; if it still contains a previous valid exact spec, keep deployment
+   creation disabled until the operator updates it. There is no code default or
+   fallback to a previous package. Then validate one fresh deployment end to
+   end through persisted deployment state, `/v1/runtime/manifest`, exact CLI
+   handoff, SSE, and runtime services. Do not add version floors, compatibility
+   fields, aliases, or fallback package channels.
 
 4. For app/backend/web releases, run `Release Clawdi` manually with the
    deployed commit SHA, then verify the GitHub release exists and has
@@ -175,27 +276,90 @@ releases.
 
 ## Production Deployment Checks
 
-The deployment platform is outside this repository, but every deploy should
-run these checks before traffic is considered healthy:
+Managed physical WhatsApp sessions use one exact-SHA Kamal accessory. The
+singleton must pass its authenticated healthcheck before the app deploy.
+Configure, scan, rotate, back up, restore, retire, or roll it back only through
+[`whatsapp-baileys-sidecars.md`](whatsapp-baileys-sidecars.md). Kamal does not
+update accessories as part of `kamal deploy`; the workflow's accessory reboot
+and authenticated readiness loop are required release steps.
 
-1. Apply migrations before starting code that depends on them:
+### Production values
 
-   ```bash
-   cd backend
-   uv run alembic upgrade head
-   ```
+[`config/deploy.yml`](../../config/deploy.yml) keeps the Kamal structure public
+while production values stay outside the repository. CI injects them from
+GitHub Actions secrets; operators keep Kamal secrets in the gitignored
+`.kamal/secrets` file and export deployment parameters before running Kamal.
+Self-hosters set `DEPLOY_HOST` to their own server.
 
-2. Confirm required extensions and services are available:
+The GitHub Actions deploy step rewrites the two Cloudflare certificate entries
+in `.kamal/secrets` to literal `$CLOUDFLARE_ORIGIN_CERT` and
+`$CLOUDFLARE_ORIGIN_KEY` references. This keeps an operator-local `$(cat ...)`
+path from being evaluated on an ephemeral runner; the dedicated GitHub secrets
+remain the only CI certificate source.
+
+The deployment workflow installs and verifies exactly Kamal `2.12.0`; the
+configuration keeps `minimum_version: 2.12.0` as an independent floor. The
+workflow-level GitHub concurrency queue is the scheduler layer. Kamal's
+automatic remote deploy lock remains the fail-fast second layer, so deployment
+commands must not add `--lock-wait`. These choices follow the audited Kamal
+v2.12.0 [non-proxied health and primary-role
+barrier](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/app/boot.rb),
+[Docker health polling](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/healthcheck/poller.rb),
+and [automatic deploy lock](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/base.rb)
+source.
+
+For accessories specifically, the audited v2.12.0
+[`reboot`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L78-L89)
+sequence is prepare, pull, stop, remove-container, then boot. Its
+[`stop`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L108-L123)
+tolerates a nonzero exit, and the subsequent
+[`remove_container`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/commands/accessory.rb#L102-L117)
+uses the exact accessory service-label filter for stopped-container pruning
+before boot. Because stop's nonzero status is tolerated, the workflow
+exact-inspects the resulting container image and requires the intended full-SHA
+tag before authenticated readiness. It deliberately calls this reconcile
+because a normal `kamal deploy` does not update accessories; it never calls the
+broader `kamal accessory remove`, which also removes image/data resources.
+
+The Kamal `web` primary role runs the image's default API process. That API
+entrypoint alone runs `alembic upgrade head`, and it starts Uvicorn only after
+the migration succeeds; the non-primary `channels-worker` role does not run
+migrations. Kamal keeps the still-serving old API in rotation while the new
+primary boots, then requires the new primary to pass the proxy `/health` gate
+before it boots non-primary roles. Consequently every migration must use an
+expand/contract sequence compatible with the old API during this rolling
+window. A routine Kamal deploy must not separately run Alembic by hand.
+
+The proxy `/health` gate reaches the API handler that executes database
+`SELECT 1`. The image-level Docker HEALTHCHECK calls the same local path for
+both roles. On the worker, `/health` returns failure until
+`ChannelWorkerHealth.ready` is true and returns failure again while stopping,
+so Docker cannot report the worker healthy before its worker stack is ready.
+Under Docker's official [HEALTHCHECK timing
+contract](https://docs.docker.com/reference/dockerfile/#healthcheck), the
+30-second start period still allows migration startup. Even allowing one full
+5-second check to straddle that boundary, the 5-second interval and timeout
+with eight counted retries give a conservative 115-second unhealthy deadline,
+strictly below the 120-second Kamal `deploy_timeout`.
+
+The workflow does not add a public-network post-deploy request: without an
+authenticated, environment-specific assertion it would be a brittle duplicate
+of the deterministic proxy and container readiness gates. Run authenticated
+surface smokes deliberately after those gates when the release requires them.
+
+Before traffic is considered healthy, complete these checks:
+
+1. Confirm required extensions and services are available:
    - PostgreSQL has `pgvector` and `pg_trgm`.
    - File store credentials point at the intended bucket/prefix.
    - `VAULT_ENCRYPTION_KEY` and `ENCRYPTION_KEY` are both set and distinct.
    - Clerk JWT configuration is present for web auth.
-3. Smoke test:
+2. Smoke test:
    - Web dashboard loads after sign-in.
    - Backend health/API requests return 2xx.
    - CLI can authenticate and run `clawdi vault list --json`.
    - A Vault key resolves only through CLI/API-key auth, never through web auth.
-4. Check logs for migration errors, 5xx spikes, auth failures, and frontend
+3. Check logs for migration errors, 5xx spikes, auth failures, and frontend
    build/runtime errors.
 
 ### Connector Post-Deploy Smoke

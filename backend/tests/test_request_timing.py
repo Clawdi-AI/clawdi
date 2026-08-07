@@ -77,3 +77,62 @@ async def test_request_timing_logs_errors_without_query_string(caplog: pytest.Lo
     assert "request_error method=GET path=/v1/sessions status=500" in caplog.text
     assert "request_id=req_test" in caplog.text
     assert "token=secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "expected_path"),
+    [
+        (
+            "/v1/channels/telegram/bot123456:secret/getUpdates",
+            "/v1/channels/telegram/bot[redacted]/getUpdates",
+        ),
+        (
+            "/api/channels/telegram/bot/123456:secret/sendMessage",
+            "/api/channels/telegram/bot/[redacted]/sendMessage",
+        ),
+        (
+            "/v1/channels/telegram/file/bot123456:secret/documents/file.txt",
+            "/v1/channels/telegram/file/bot[redacted]/documents/file.txt",
+        ),
+    ],
+)
+async def test_request_timing_redacts_telegram_routing_credentials(
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    expected_path: str,
+):
+    async def inner(_scope: Scope, _receive: Receive, send: Send) -> None:
+        await send({"type": "http.response.start", "status": 500, "headers": []})
+        await send({"type": "http.response.body", "body": b"error"})
+
+    caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
+    await _collect(RequestTimingMiddleware(inner, slow_ms=750), _scope(path=path))
+
+    assert f"path={expected_path}" in caplog.text
+    assert "123456:secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/sync/events",
+        "/v1/channels/telegram/bot123456:secret/getUpdates",
+    ],
+)
+async def test_request_timing_does_not_warn_for_successful_long_request(
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+):
+    async def inner(_scope: Scope, _receive: Receive, send: Send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
+    await _collect(
+        RequestTimingMiddleware(inner, slow_ms=0.000_001),
+        _scope(path=path),
+    )
+
+    assert caplog.text == ""

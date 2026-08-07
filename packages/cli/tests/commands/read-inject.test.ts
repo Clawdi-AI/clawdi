@@ -35,10 +35,16 @@ beforeEach(() => {
 	const clawdiHome = join(tmpRoot, "state");
 	mkdirSync(clawdiHome, { recursive: true });
 	mkdirSync(projectRoot, { recursive: true });
-	writeFileSync(join(clawdiHome, "auth.json"), JSON.stringify({ apiKey: "test-key" }));
+	writeFileSync(
+		join(clawdiHome, "auth.json"),
+		JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		}),
+	);
 	process.env.HOME = tmpHome;
 	process.env.CLAWDI_HOME = clawdiHome;
-	process.env.CLAWDI_API_URL = "http://api.test";
+	process.env.CLAWDI_API_URL = "https://api.test";
 	process.chdir(projectRoot);
 });
 

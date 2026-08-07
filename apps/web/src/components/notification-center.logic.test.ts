@@ -6,6 +6,7 @@ import {
 	getNotificationCenterTriggerLabel,
 	getPendingNotificationCount,
 	getProjectInvitationAccessCopy,
+	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
 
@@ -56,6 +57,13 @@ describe("notification center logic", () => {
 		expect(getAcceptedProjectInvitationToastCopy().title).toBe("Project Joined");
 		expect(accepted.description).toContain("Read-only access");
 		expect(accepted.description).toContain("Open the Project");
-		expect(accepted.description).toContain("add it to an agent");
+		expect(accepted.description).toContain("link it to an Agent");
+	});
+
+	test("refreshes canonical OpenAPI membership caches after accepting an invitation", () => {
+		expect(NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS).toContainEqual(["get", "/v1/projects"]);
+		expect(NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS).toContainEqual(["get", "/v1/agents"]);
+		expect(NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS).not.toContainEqual(["projects"]);
+		expect(NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS).not.toContainEqual(["agents"]);
 	});
 });

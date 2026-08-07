@@ -1,132 +1,178 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { isProjectOwner } from "@/components/projects/project-metadata";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { resolveAgentProjectScope } from "@/components/dashboard/agent-project-scope";
+import { fetchAgentProjectSkills } from "@/components/dashboard/agent-skill-inventory";
+import {
+	AGENT_PROJECT_SKILLS_REFRESH_POLICY,
+	agentProjectSkillsQueryEnabled,
+	agentProjectSkillsQueryKey,
+	agentSkillForegroundRefetchInterval,
+} from "@/components/dashboard/agent-skills-query";
+import { displayProjectName } from "@/components/projects/project-metadata";
 import { SkillCardGrid } from "@/components/skills/skill-card";
-import { unwrap, useApi } from "@/lib/api";
-import { fetchAllPages } from "@/lib/api-pagination";
-import type { components } from "@/lib/api-schemas";
-import { errorMessage } from "@/lib/utils";
+import { type AgentRouteSearch, agentSkillDetailLink } from "@/lib/agent-routes";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import { skillCapabilities } from "@/lib/skill-authority";
 
-type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type ProjectRow = components["schemas"]["ProjectResponse"];
-
-export function useAgentProjectSkills(agentProjectId: string | null | undefined) {
+export function useAgentProjectSkills(
+	agentId: string,
+	agentProjectId: string | null | undefined,
+	projectionFence: string,
+	foregroundRefresh = true,
+	enabled = true,
+) {
 	const api = useApi();
+	const bindings = useAgentProjectBindings(agentId, { enabled });
+	const scope = useMemo<{ projectIds: string[]; error: unknown | null }>(() => {
+		if (!bindings.data) return { projectIds: [], error: null };
+		try {
+			return {
+				projectIds: resolveAgentProjectScope(bindings.data, agentProjectId).projectIds,
+				error: null,
+			};
+		} catch (error) {
+			return { projectIds: [], error };
+		}
+	}, [agentProjectId, bindings.data]);
+	const bindingsResolved = bindings.data !== undefined;
+	const queryEnabled =
+		enabled && agentProjectSkillsQueryEnabled(bindingsResolved, scope.projectIds) && !scope.error;
 
-	// Fetch only this agent's Agent Project. The `project_id` query pushes the
-	// filter into the database, then we walk every page so a large agent library
-	// does not silently lose rows beyond the first page.
+	// Bindings are resolved before any Skill request. Each effective Project is
+	// server-filtered and fully paginated, then rows remain in Project read order.
 	const query = useQuery({
-		queryKey: ["skills", agentProjectId, "all-pages"],
+		queryKey: agentProjectSkillsQueryKey(agentId, scope.projectIds, projectionFence),
 		queryFn: async () => {
-			if (!agentProjectId) return { items: [], total: 0, page: 1, page_size: 200 };
-			return fetchAllPages<SkillSummary>(
-				async (page, pageSize) =>
+			return fetchAgentProjectSkills(
+				scope.projectIds,
+				async (projectId, page, pageSize) =>
 					unwrap(
 						await api.GET("/v1/skills", {
 							params: {
 								query: {
 									page,
 									page_size: pageSize,
-									project_id: agentProjectId,
+									project_id: projectId,
 								},
 							},
 						}),
 					),
-				{ pageSize: 200, resourceName: "agent skills" },
+				{ pageSize: 200 },
 			);
 		},
-		enabled: !!agentProjectId,
+		enabled: queryEnabled,
+		...AGENT_PROJECT_SKILLS_REFRESH_POLICY,
+		refetchInterval: agentSkillForegroundRefetchInterval(foregroundRefresh && queryEnabled),
 	});
 
-	const skills = query.data?.items;
-	return { ...query, skills };
+	const skills = query.data;
+	const blockingBindingsError = shouldBlockQueryError(bindings.error, bindings.data)
+		? bindings.error
+		: null;
+	const error = blockingBindingsError ?? scope.error ?? query.error;
+	const isLoading =
+		enabled &&
+		(bindings.isLoading ||
+			(bindingsResolved && !scope.error && scope.projectIds.length > 0 && query.isLoading));
+	const refetch = async () => {
+		if (!bindings.data || blockingBindingsError || scope.error) {
+			await bindings.refetch();
+			return;
+		}
+		await query.refetch();
+	};
+	return { ...query, skills, error, isLoading, refetch, projectIds: scope.projectIds };
 }
 
 export function AgentSkillsTab({
 	agentId,
 	agentProjectId,
+	routeSearch,
 	isResolvingAgentProject = false,
-	writableProjectIds,
+	projectionFence = agentId,
 }: {
 	agentId: string;
 	agentProjectId: string | null | undefined;
+	routeSearch: AgentRouteSearch;
 	isResolvingAgentProject?: boolean;
-	writableProjectIds?: ReadonlySet<string> | null;
+	projectionFence?: string;
 }) {
-	const api = useApi();
-	const { data: projects } = useQuery({
-		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
-		enabled: writableProjectIds === undefined && !!agentProjectId,
-	});
-	const derivedWritableProjectIds =
-		writableProjectIds === undefined
-			? new Set(
-					(projects ?? [])
-						.filter((project) => isProjectOwner(project))
-						.map((project) => project.id),
-				)
-			: writableProjectIds;
+	const $api = useOpenApi();
 	const {
 		skills,
 		isLoading: skillsLoading,
 		error: skillsError,
 		refetch: refetchSkills,
-	} = useAgentProjectSkills(agentProjectId);
-	const uninstallSkill = useUninstallAgentSkill();
+	} = useAgentProjectSkills(
+		agentId,
+		agentProjectId,
+		projectionFence,
+		true,
+		!isResolvingAgentProject,
+	);
+	const projects = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			enabled: !isResolvingAgentProject,
+		},
+	);
+	const projectsById = useMemo(
+		() => new Map((projects.data ?? []).map((project) => [project.id, project])),
+		[projects.data],
+	);
 
-	if (skillsError) {
+	if (shouldBlockQueryError(skillsError, skills)) {
 		return (
-			<ApiErrorPanel
-				error={skillsError}
-				onRetry={() => {
-					void refetchSkills();
-				}}
-				title="Couldn't load agent skills"
-			/>
+			<div>
+				<ApiErrorPanel
+					error={skillsError}
+					onRetry={() => {
+						void refetchSkills();
+					}}
+					title="Couldn't load agent Skills"
+				/>
+			</div>
 		);
 	}
 
 	return (
-		<SkillCardGrid
-			skills={skills ?? []}
-			isLoading={isResolvingAgentProject || skillsLoading}
-			emptyMessage="No skills installed on this agent yet."
-			readOnlySkillCheck={(s) =>
-				!s.project_id || !(derivedWritableProjectIds?.has(s.project_id) ?? false)
-			}
-			onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
-			uninstallPending={uninstallSkill.isPending}
-			skillLink={(skill) => ({
-				to: "/agents/$id/skills/$" as const,
-				params: { id: agentId, _splat: skill.skill_key },
-				search: skill.project_id ? { project: skill.project_id } : undefined,
-			})}
-		/>
+		<div className="space-y-4" data-testid="agent-skills-inventory">
+			{shouldBlockQueryError(projects.error, projects.data) ? (
+				<ApiErrorPanel
+					error={projects.error}
+					onRetry={() => {
+						void projects.refetch();
+					}}
+					title="Couldn't load Project labels"
+				/>
+			) : null}
+			<SkillCardGrid
+				skills={skills ?? []}
+				isLoading={isResolvingAgentProject || skillsLoading}
+				emptyMessage="No Skills yet."
+				capabilitiesFor={(skill) =>
+					skillCapabilities(
+						skill,
+						skill.project_id ? projectsById.get(skill.project_id) : undefined,
+					)
+				}
+				sourceLabelFor={(skill) => {
+					const project = skill.project_id ? projectsById.get(skill.project_id) : undefined;
+					const name = project ? displayProjectName(project) : skill.project_name?.trim();
+					return name ? { name, emoji: identityFor(name).emoji } : null;
+				}}
+				skillLink={(skill) =>
+					agentSkillDetailLink(agentId, skill.skill_key, skill.project_id, routeSearch)
+				}
+			/>
+		</div>
 	);
-}
-
-function useUninstallAgentSkill() {
-	const api = useApi();
-	const queryClient = useQueryClient();
-
-	return useMutation({
-		mutationFn: async ({ skillKey, projectId }: { skillKey: string; projectId: string }) =>
-			unwrap(
-				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-					params: { path: { project_id: projectId, skill_key: skillKey } },
-				}),
-			),
-		onSuccess: (_data, vars) => {
-			toast.success("Skill uninstalled", {
-				description: `${vars.skillKey} was removed from this agent. Other agents keep their copies.`,
-			});
-			queryClient.invalidateQueries({ queryKey: ["skills"] });
-		},
-		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
-	});
 }

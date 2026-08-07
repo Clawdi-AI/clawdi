@@ -32,7 +32,7 @@ export async function projectInviteCommand(
 	projectArg: string,
 	opts: { email: string },
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 	if (!opts.email || !/^\S+@\S+\.\S+$/.test(opts.email)) {
@@ -83,7 +83,7 @@ export async function projectInviteCommand(
 	console.log(
 		chalk.gray("  They will join as a viewer with read access, including CLI Vault runtime reads."),
 	);
-	console.log(chalk.gray("  Attaching it to an Agent is separate; after accept they can run:"));
+	console.log(chalk.gray("  Linking it to an Agent is separate; after accept they can run:"));
 	console.log(`  ${chalk.cyan("clawdi project list --shared-with-me")}`);
-	console.log(`  ${chalk.cyan("clawdi agent projects attach <agent-id> --project <project>")}`);
+	console.log(`  ${chalk.cyan("clawdi agent projects link <agent-id> --project <project>")}`);
 }

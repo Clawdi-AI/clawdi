@@ -1,7 +1,18 @@
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal, TypeGuard
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, SecretStr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    RootModel,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic.json_schema import SkipJsonSchema
 
 ProviderType = Literal[
@@ -19,6 +30,24 @@ ApiMode = Literal[
     "google_generate_content",
 ]
 AuthType = Literal["secret_ref", "api_key", "oauth_profile", "agent_profile", "none"]
+CredentialMaterialState = Literal["available", "referenced", "not_required", "missing"]
+VerificationState = Literal["not_tested", "verified", "failed"]
+ConnectionErrorCategory = Literal[
+    "validation",
+    "credential",
+    "ssrf",
+    "dns",
+    "timeout",
+    "tls",
+    "network",
+    "authentication",
+    "authorization",
+    "rate_limit",
+    "redirect",
+    "endpoint",
+    "protocol_model",
+    "upstream",
+]
 InputModality = Literal["text", "image", "video", "audio"]
 AuthProfile = Annotated[
     str,
@@ -42,20 +71,30 @@ SecretRef = Annotated[
 ]
 
 
-def _reject_explicit_nulls(value: Any, fields: frozenset[str]) -> Any:
-    if isinstance(value, dict):
+def _reject_explicit_nulls(value: object, fields: frozenset[str]) -> object:
+    if _is_string_object_dict(value):
         null_fields = sorted(field for field in fields if field in value and value[field] is None)
         if null_fields:
             raise ValueError(f"fields cannot be null: {', '.join(null_fields)}")
     return value
 
 
-def _reject_normal_upsert_oauth(value: Any) -> Any:
-    if isinstance(value, dict):
+def _reject_normal_upsert_oauth(value: object) -> object:
+    if _is_string_object_dict(value):
         auth = value.get("auth")
-        if isinstance(auth, dict) and auth.get("type") == "oauth_profile":
+        if _is_string_object_dict(auth) and auth.get("type") == "oauth_profile":
             raise ValueError("oauth_profile auth is not supported; use Codex OAuth connect")
     return value
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    if not _is_object_mapping(value):
+        return False
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
 
 
 class AiProviderModelCost(BaseModel):
@@ -68,7 +107,7 @@ class AiProviderModelCost(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_null_optional_fields(cls, value: Any) -> Any:
+    def _reject_null_optional_fields(cls, value: object) -> object:
         return _reject_explicit_nulls(value, frozenset({"cache_read", "cache_write"}))
 
 
@@ -77,14 +116,14 @@ class _AiProviderAuthVariant(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _redact_rejected_plaintext_value(cls, value: Any) -> Any:
-        if isinstance(value, dict) and isinstance(value.get("value"), str):
+    def _redact_rejected_plaintext_value(cls, value: object) -> object:
+        if _is_string_object_dict(value) and isinstance(plaintext := value.get("value"), str):
             sanitized = dict(value)
-            sanitized["value"] = SecretStr(value["value"])
+            sanitized["value"] = SecretStr(plaintext)
             return sanitized
         return value
 
-    def persistence_fields(self) -> tuple[str | None, dict[str, str] | None]:
+    def persistence_fields(self) -> tuple[str | None, dict[str, JsonValue] | None]:
         raise NotImplementedError
 
 
@@ -98,11 +137,10 @@ class AiProviderSecretRefAuth(_AiProviderAuthVariant):
 
 class _AiProviderApiKeyAuth(_AiProviderAuthVariant):
     type: Literal["api_key"]
-    source: Literal["env", "vault", "managed"]
     profile: AuthProfile | None = None
 
-    def _metadata(self) -> dict[str, str]:
-        metadata = {"source": self.source}
+    def _metadata(self, source: Literal["env", "vault", "managed"]) -> dict[str, JsonValue]:
+        metadata: dict[str, JsonValue] = {"source": source}
         if self.profile is not None:
             metadata["profile"] = self.profile
         return metadata
@@ -112,23 +150,23 @@ class AiProviderEnvApiKeyAuth(_AiProviderApiKeyAuth):
     source: Literal["env"]
     ref: EnvSecretRef
 
-    def persistence_fields(self) -> tuple[str, dict[str, str]]:
-        return self.ref, self._metadata()
+    def persistence_fields(self) -> tuple[str, dict[str, JsonValue]]:
+        return self.ref, self._metadata(self.source)
 
 
 class AiProviderVaultApiKeyAuth(_AiProviderApiKeyAuth):
     source: Literal["vault"]
     ref: VaultSecretRef
 
-    def persistence_fields(self) -> tuple[str, dict[str, str]]:
-        return self.ref, self._metadata()
+    def persistence_fields(self) -> tuple[str, dict[str, JsonValue]]:
+        return self.ref, self._metadata(self.source)
 
 
 class AiProviderManagedApiKeyAuth(_AiProviderApiKeyAuth):
     source: Literal["managed"]
 
-    def persistence_fields(self) -> tuple[None, dict[str, str]]:
-        return None, self._metadata()
+    def persistence_fields(self) -> tuple[None, dict[str, JsonValue]]:
+        return None, self._metadata(self.source)
 
 
 type AiProviderApiKeyAuth = Annotated[
@@ -142,7 +180,7 @@ class AiProviderOAuthProfileAuth(_AiProviderAuthVariant):
     provider: AuthProfile
     profile: AuthProfile
 
-    def persistence_fields(self) -> tuple[None, dict[str, str]]:
+    def persistence_fields(self) -> tuple[None, dict[str, JsonValue]]:
         return None, {"provider": self.provider, "profile": self.profile}
 
 
@@ -151,7 +189,7 @@ class AiProviderAgentProfileAuth(_AiProviderAuthVariant):
     tool: AuthProfile
     profile: AuthProfile
 
-    def persistence_fields(self) -> tuple[None, dict[str, str]]:
+    def persistence_fields(self) -> tuple[None, dict[str, JsonValue]]:
         return None, {"tool": self.tool, "profile": self.profile}
 
 
@@ -182,14 +220,14 @@ type AiProviderAuth = Annotated[
 def ai_provider_auth_from_persistence(
     auth_type: str,
     auth_ref: str | None,
-    auth_metadata: dict | None,
+    auth_metadata: Mapping[str, JsonValue] | None,
 ) -> AiProviderAuth:
     metadata = auth_metadata or {}
     if auth_type == "secret_ref":
         return AiProviderSecretRefAuth.model_validate({"type": auth_type, "ref": auth_ref})
     if auth_type == "api_key":
         source = metadata.get("source")
-        payload = {
+        payload: dict[str, JsonValue] = {
             "type": auth_type,
             "source": source,
             "profile": metadata.get("profile"),
@@ -238,7 +276,7 @@ class AiProviderModelCapabilities(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_null_optional_fields(cls, value: Any) -> Any:
+    def _reject_null_optional_fields(cls, value: object) -> object:
         return _reject_explicit_nulls(
             value,
             frozenset(
@@ -266,13 +304,14 @@ class AiProviderModel(BaseModel):
     supports_tools: bool | SkipJsonSchema[None] = None
     supports_reasoning: bool | SkipJsonSchema[None] = None
     context_window: int | SkipJsonSchema[None] = Field(default=None, gt=0)
+    max_input_tokens: int | SkipJsonSchema[None] = Field(default=None, gt=0)
     max_tokens: int | SkipJsonSchema[None] = Field(default=None, gt=0)
     cost: AiProviderModelCost | SkipJsonSchema[None] = None
     capabilities: AiProviderModelCapabilities | SkipJsonSchema[None] = None
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_null_optional_fields(cls, value: Any) -> Any:
+    def _reject_null_optional_fields(cls, value: object) -> object:
         return _reject_explicit_nulls(
             value,
             frozenset(
@@ -285,6 +324,7 @@ class AiProviderModel(BaseModel):
                     "supports_tools",
                     "supports_reasoning",
                     "context_window",
+                    "max_input_tokens",
                     "max_tokens",
                     "cost",
                     "capabilities",
@@ -300,7 +340,7 @@ class AiProviderBase(BaseModel):
     api_mode: ApiMode | None = None
     managed_by: Literal["user", "clawdi"] = "user"
     runtime_env_name: str | None = Field(default=None, max_length=128)
-    capabilities: dict[str, Any] | None = None
+    capabilities: dict[str, JsonValue] | None = None
     models: list[AiProviderModel] | None = None
 
 
@@ -310,7 +350,7 @@ class AiProviderUpsert(AiProviderBase):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_unsupported_oauth_profile(cls, value: Any) -> Any:
+    def _reject_unsupported_oauth_profile(cls, value: object) -> object:
         return _reject_normal_upsert_oauth(value)
 
 
@@ -322,13 +362,38 @@ class AiProviderPatch(BaseModel):
     auth: AiProviderUpsertAuth | None = None
     managed_by: Literal["user", "clawdi"] | None = None
     runtime_env_name: str | None = Field(default=None, max_length=128)
-    capabilities: dict[str, Any] | None = None
+    capabilities: dict[str, JsonValue] | None = None
     models: list[AiProviderModel] | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_unsupported_oauth_profile(cls, value: Any) -> Any:
+    def _reject_unsupported_oauth_profile(cls, value: object) -> object:
         return _reject_normal_upsert_oauth(value)
+
+
+class AiProviderRuntimeCompatibility(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    openclaw: bool
+    hermes: bool
+    codex: bool
+
+
+class AiProviderReadiness(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    credential_material: CredentialMaterialState
+    runtime_compatibility: AiProviderRuntimeCompatibility
+    deployable: bool
+    endpoint_reachability: VerificationState = "not_tested"
+    inference_verification: VerificationState = "not_tested"
+
+
+class AiProviderConsumer(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    environment_id: UUID
+    runtime: Literal["codex", "hermes", "openclaw"]
 
 
 class AiProviderResponse(AiProviderBase):
@@ -336,6 +401,23 @@ class AiProviderResponse(AiProviderBase):
     provider_id: str
     scope: str
     auth: AiProviderAuth
+    usable: bool = Field(
+        description=(
+            "Whether the provider has the credential material required for runtime use. "
+            "This does not validate the credential or test endpoint connectivity."
+        )
+    )
+    readiness: AiProviderReadiness | None = Field(
+        default=None,
+        description="Structured readiness dimensions used for Hosted runtime admission.",
+    )
+    consumer: AiProviderConsumer | None = Field(
+        default=None,
+        description=(
+            "Non-secret hosted runtime claim for single-consumer credentials; omitted when "
+            "the connection is unclaimed."
+        ),
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -347,6 +429,7 @@ class AiProviderListResponse(BaseModel):
 class AiProviderDeleteResponse(BaseModel):
     status: Literal["deleted"]
     provider_id: str
+    remote_revoke_status: Literal["pending", "not_required"] = "not_required"
 
 
 class AiProviderValidationResponse(BaseModel):
@@ -361,6 +444,27 @@ class AiProviderManagedApiKeyRequest(BaseModel):
     value: SecretStr
     runtime_env_name: str | None = Field(default=None, max_length=128)
 
+    @field_validator("value")
+    @classmethod
+    def _reject_blank_value(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("credential cannot be blank")
+        return value
+
+
+class AiProviderApiKeyAcceptCredential(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    type: Literal["api_key"]
+    value: SecretStr
+
+    @field_validator("value")
+    @classmethod
+    def _reject_blank_value(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("credential cannot be blank")
+        return value
+
 
 class _AiProviderAuthImportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
@@ -370,11 +474,18 @@ class _AiProviderAuthImportRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _redact_payload_before_validation(cls, value: Any) -> Any:
-        if isinstance(value, dict) and isinstance(value.get("payload"), str):
+    def _redact_payload_before_validation(cls, value: object) -> object:
+        if _is_string_object_dict(value) and isinstance(payload := value.get("payload"), str):
             sanitized = dict(value)
-            sanitized["payload"] = SecretStr(value["payload"])
+            sanitized["payload"] = SecretStr(payload)
             return sanitized
+        return value
+
+    @field_validator("payload")
+    @classmethod
+    def _reject_blank_payload(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("credential payload cannot be blank")
         return value
 
 
@@ -400,7 +511,17 @@ class AiProviderAuthImportRequest(
 
 
 class AiProviderAuthResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     profile: str = Field(default="default", min_length=1, max_length=120)
+    environment_id: UUID | None = None
+    consumer_runtime: Literal["codex", "hermes", "openclaw"] | None = None
+
+    @model_validator(mode="after")
+    def _validate_consumer_identity(self) -> "AiProviderAuthResolveRequest":
+        if (self.environment_id is None) != (self.consumer_runtime is None):
+            raise ValueError("environment_id and consumer_runtime must be provided together")
+        return self
 
 
 class AiProviderAuthResolveResponse(BaseModel):
@@ -411,6 +532,7 @@ class AiProviderAuthResolveResponse(BaseModel):
     tool: str | None = None
     provider: str | None = None
     profile: str | None = None
+    credential_revision: str | None = None
 
 
 class AiProviderOAuthStartRequest(BaseModel):
@@ -420,7 +542,58 @@ class AiProviderOAuthStartRequest(BaseModel):
     redirect_uri: str | None = Field(default=None, max_length=1000)
 
 
+class AiProviderOAuthAcceptCredential(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    type: Literal["oauth"]
+    provider: str = Field(min_length=1, max_length=80)
+    flow: Literal["device_code"] = "device_code"
+
+
+class AiProviderAcceptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: AiProviderUpsert
+    credential: Annotated[
+        AiProviderApiKeyAcceptCredential | AiProviderOAuthAcceptCredential,
+        Field(discriminator="type"),
+    ]
+    replace: bool = False
+
+
+class AiProviderConnectionTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: AiProviderUpsert
+    credential: AiProviderApiKeyAcceptCredential
+    model: str | None = Field(default=None, min_length=1, max_length=300)
+
+
+class AiProviderConnectionError(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    category: ConnectionErrorCategory
+    code: str
+    message: str
+    retryable: bool
+
+
+class AiProviderConnectionTestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    ok: bool
+    readiness: AiProviderReadiness
+    error: AiProviderConnectionError | None = None
+
+
+class AiProviderSavedConnectionTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    model: str | None = Field(default=None, min_length=1, max_length=300)
+
+
 class AiProviderOAuthStartResponse(BaseModel):
+    flow: Literal["authorization_code"] = "authorization_code"
     provider_id: str
     oauth_provider: str
     profile: str
@@ -428,6 +601,63 @@ class AiProviderOAuthStartResponse(BaseModel):
     state: str
     redirect_uri: str
     expires_at: datetime
+
+
+class AiProviderOAuthDeviceStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: str = Field(min_length=1, max_length=80)
+
+
+class AiProviderOAuthDeviceStartResponse(BaseModel):
+    flow: Literal["device_code"] = "device_code"
+    provider_id: str
+    oauth_provider: str
+    profile: str
+    verification_url: str
+    user_code: str
+    state: str
+    expires_at: datetime
+    poll_interval_seconds: int = Field(ge=1, le=30)
+
+
+class AiProviderReadyAcceptResponse(BaseModel):
+    status: Literal["ready"]
+    provider: AiProviderResponse
+
+
+class AiProviderOAuthPendingAcceptResponse(BaseModel):
+    status: Literal["pending"]
+    provider: AiProviderResponse
+    authorization: AiProviderOAuthDeviceStartResponse
+
+
+type AiProviderAcceptResponse = Annotated[
+    AiProviderReadyAcceptResponse | AiProviderOAuthPendingAcceptResponse,
+    Field(discriminator="status"),
+]
+
+
+class AiProviderOAuthDevicePollRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    state: str = Field(min_length=1, max_length=8000)
+
+
+class AiProviderOAuthDevicePendingResponse(BaseModel):
+    status: Literal["pending"]
+    retry_after_seconds: int = Field(ge=1, le=30)
+
+
+class AiProviderOAuthDeviceReadyResponse(BaseModel):
+    status: Literal["ready"]
+    provider: AiProviderResponse
+
+
+type AiProviderOAuthDevicePollResponse = Annotated[
+    AiProviderOAuthDevicePendingResponse | AiProviderOAuthDeviceReadyResponse,
+    Field(discriminator="status"),
+]
 
 
 class AiProviderOAuthCompleteRequest(BaseModel):

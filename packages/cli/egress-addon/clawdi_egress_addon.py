@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 try:  # pragma: no cover - exercised only under mitmdump.
     from mitmproxy import ctx, http
@@ -114,6 +115,7 @@ class ClawdiEgressAddon:
         self.secret_file_path = Path(secret_file) if secret_file else None
         self.profiles = load_profiles(self.profile_bundle_path)
         self.secrets = load_secrets(self.secret_file_path)
+        validate_profile_secrets(self.profiles, self.secrets)
         self.profile_hosts = profile_host_set(self.profiles)
 
     def should_intercept_sni(self, server_name: str) -> bool:
@@ -205,6 +207,30 @@ def load_secrets(path: Path | None) -> dict[str, str]:
     return {str(key): str(value) for key, value in raw.items() if isinstance(value, str)}
 
 
+def validate_profile_secrets(
+    profiles: list[dict[str, Any]], secrets: dict[str, str]
+) -> None:
+    required: set[str] = set()
+    for profile in profiles:
+        collect_secret_refs(profile, required)
+    missing = sorted(ref for ref in required if not secrets.get(ref))
+    if missing:
+        raise ConfigError(f"egress profile secrets are missing: {', '.join(missing)}")
+
+
+def collect_secret_refs(value: Any, refs: set[str]) -> None:
+    if isinstance(value, list):
+        for item in value:
+            collect_secret_refs(item, refs)
+        return
+    if not isinstance(value, dict):
+        return
+    for key, entry in value.items():
+        if isinstance(entry, str) and (key == "secretRef" or key.endswith("SecretRef")):
+            refs.add(entry)
+        collect_secret_refs(entry, refs)
+
+
 def profile_host_set(profiles: list[dict[str, Any]]) -> set[str]:
     hosts: set[str] = set()
     for profile in profiles:
@@ -258,6 +284,8 @@ def profile_matches(flow: Any, profile: dict[str, Any], secrets: dict[str, str])
     match = profile.get("match")
     if not isinstance(match, dict):
         return False
+    if not match_time_is_valid(match):
+        return False
     kind = profile.get("kind")
     request_scheme = request_profile_scheme(flow)
     configured_scheme = match.get("scheme")
@@ -293,12 +321,31 @@ def profile_matches(flow: Any, profile: dict[str, Any], secrets: dict[str, str])
     return True
 
 
+def match_time_is_valid(match: dict[str, Any], now: datetime | None = None) -> bool:
+    if "notAfter" not in match:
+        return True
+    not_after = match.get("notAfter")
+    if not isinstance(not_after, str):
+        return False
+    try:
+        parsed = datetime.fromisoformat(not_after.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        return False
+    return (now or datetime.now(UTC)) < parsed
+
+
 def host_matches(flow: Any, profile: dict[str, Any]) -> bool:
     match = profile.get("match")
     if not isinstance(match, dict):
         return False
-    expected = normalize_host(str(match.get("host", "")))
+    expected_authority = str(match.get("host", "")).strip().lower()
+    expected_host, expected_port = split_authority(expected_authority)
+    expected = normalize_host(expected_host)
     if not expected:
+        return False
+    if expected_port is not None and getattr(flow.request, "port", None) != expected_port:
         return False
     return expected in request_host_candidates(flow)
 
@@ -378,9 +425,14 @@ def matcher_matches(value: str | None, matcher: Any, secrets: dict[str, str]) ->
         return False
     if matcher_type == "equals":
         return value == f"{matcher.get('prefix', '')}{matcher.get('value', '')}"
-    if matcher_type == "secretRefEquals":
+    if matcher_type in {"secretRefEquals", "secretRefPrefix"}:
         secret = secrets.get(str(matcher.get("secretRef", "")))
-        return secret is not None and value == f"{matcher.get('prefix', '')}{secret}"
+        if secret is None:
+            return False
+        expected = f"{matcher.get('prefix', '')}{secret}{matcher.get('suffix', '')}"
+        if matcher_type == "secretRefEquals":
+            return value == expected
+        return value.startswith(expected)
     return False
 
 
@@ -427,6 +479,8 @@ def split_authority(authority: str) -> tuple[str, int | None]:
 
 def apply_rewrite_headers(flow: Any, profile: dict[str, Any], secrets: dict[str, str]) -> None:
     rewrite = profile.get("rewrite") if isinstance(profile.get("rewrite"), dict) else {}
+    for name in rewrite.get("removeHeaders", []):
+        header_delete(flow.request.headers, str(name))
     for name, setter in rewrite.get("setHeaders", {}).items():
         resolved = resolve_header_setter(setter, secrets)
         if resolved is not None:
@@ -447,7 +501,12 @@ def apply_http_rewrite(flow: Any, profile: dict[str, Any], secrets: dict[str, st
     flow.request.port = parsed.port or default_port(parsed.scheme)
     header_set(flow.request.headers, "host", parsed.netloc)
     preserve_path = bool(rewrite.get("preservePath", True))
-    flow.request.path = combine_paths(parsed.path or "/", original_path if preserve_path else "")
+    if preserve_path:
+        flow.request.path = combine_paths(parsed.path or "/", original_path)
+    else:
+        original_query = urlsplit(original_path).query
+        target_path = parsed.path or "/"
+        flow.request.path = f"{target_path}?{original_query}" if original_query else target_path
     apply_rewrite_headers(flow, profile, secrets)
 
 
@@ -521,6 +580,18 @@ def header_get_optional(headers: Any, name: str) -> str | None:
 
 def header_set(headers: Any, name: str, value: str) -> None:
     headers[name] = value
+
+
+def header_delete(headers: Any, name: str) -> None:
+    lower = name.lower()
+    for key in list(getattr(headers, "keys", lambda: [])()):
+        if str(key).lower() != lower:
+            continue
+        try:
+            del headers[key]
+        except (KeyError, TypeError):
+            pass
+        return
 
 
 def redact_url(url: str, profile: dict[str, Any] | None) -> str:

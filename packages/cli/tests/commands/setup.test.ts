@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	chmodSync,
+	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -9,8 +10,12 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setup } from "../../src/commands/setup";
+import {
+	managedSkillReservationState,
+	releaseManagedSkill,
+} from "../../src/runtime/managed-skill-reservation";
 import {
 	type AgentHomeOverrideSnapshot,
 	jsonResponse,
@@ -29,6 +34,8 @@ const ENV_KEYS = [
 	"CLAWDI_AUTH_TOKEN",
 	"CLAWDI_ENVIRONMENT_ID",
 	"CLAWDI_STATE_DIR",
+	"CLAWDI_SERVICE_STATE_DIR",
+	"CLAWDI_RUNTIME_MODE",
 	"CLAWDI_SERVE_MODE",
 	"CLAWDI_SERVE_DEBUG",
 ] as const;
@@ -39,6 +46,7 @@ let restoreFetch: (() => void) | null = null;
 let restoreConsole: (() => void) | null = null;
 let originalArgv1: string | undefined;
 let home = "";
+let consoleOutput: string[] = [];
 
 afterAll(() => {
 	rmSync(tmpRoot, { recursive: true, force: true });
@@ -56,7 +64,7 @@ beforeEach(() => {
 
 	process.env.CI = "1";
 	process.env.HOME = home;
-	process.env.CLAWDI_API_URL = "http://api.test";
+	process.env.CLAWDI_API_URL = "https://api.test";
 
 	originalArgv1 = process.argv[1];
 	const fakeEntry = join(home, "clawdi-bin");
@@ -68,7 +76,7 @@ beforeEach(() => {
 	writeExecutable(join(stubDir, "codex"), "#!/bin/sh\nexit 0\n");
 	writeExecutable(
 		join(stubDir, "openclaw"),
-		'#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
+		'#!/bin/sh\nif [ "$*" = "agents list --json" ]; then printf \'[{"id":"main","workspace":"%s/.openclaw/agents/main"}]\\n\' "$HOME"; exit 0; fi\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
 	);
 	writeExecutable(join(stubDir, "systemctl"), "#!/bin/sh\nexit 0\n");
 	writeExecutable(join(stubDir, "launchctl"), "#!/bin/sh\nexit 0\n");
@@ -77,8 +85,13 @@ beforeEach(() => {
 	seedAuth();
 	const originalLog = console.log;
 	const originalError = console.error;
-	console.log = () => {};
-	console.error = () => {};
+	consoleOutput = [];
+	console.log = (...args: unknown[]) => {
+		consoleOutput.push(args.map(String).join(" "));
+	};
+	console.error = (...args: unknown[]) => {
+		consoleOutput.push(args.map(String).join(" "));
+	};
 	restoreConsole = () => {
 		console.log = originalLog;
 		console.error = originalError;
@@ -143,6 +156,85 @@ describe("setup daemon install", () => {
 		expect(existsSync(join(home, ".clawdi", "environments", "codex.json"))).toBe(false);
 		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
+	});
+
+	it("installs the bundled Skill with explicit local-setup ownership", async () => {
+		installEnvironmentMock("env-codex");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		const target = join(home, ".codex", "skills", "clawdi");
+		expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+	});
+
+	it("reconciles the bundled Skill as an exact directory replacement", async () => {
+		installEnvironmentMock("env-codex");
+		await setup({ agent: "codex", yes: true, daemon: false });
+		const target = join(home, ".codex", "skills", "clawdi");
+		writeFileSync(join(target, "removed-by-upgrade.txt"), "stale\n");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(existsSync(join(target, "removed-by-upgrade.txt"))).toBe(false);
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+	});
+
+	it("adopts a pre-ledger clawdi target under the previous exclusion contract", async () => {
+		const target = join(home, ".codex", "skills", "clawdi");
+		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), target, { recursive: true });
+		installEnvironmentMock("env-codex");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+	});
+
+	it("refuses to replace a custom pre-ledger same-name Skill", async () => {
+		const target = join(home, ".codex", "skills", "clawdi");
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "# User-owned Clawdi\n");
+		installEnvironmentMock("env-codex");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# User-owned Clawdi\n");
+		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
+	});
+
+	it("does not reclaim a future user clawdi target after migration and release", async () => {
+		installEnvironmentMock("env-codex");
+		await setup({ agent: "codex", yes: true, daemon: false });
+		const target = join(home, ".codex", "skills", "clawdi");
+		releaseManagedSkill({
+			targetDir: target,
+			id: "clawdi",
+			manager: "local-setup",
+			removeTarget: () => rmSync(target, { recursive: true, force: true }),
+		});
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "# Future user Clawdi\n");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# Future user Clawdi\n");
+		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
+	});
+
+	it("sets a failing exit code without printing install success when service activation fails", async () => {
+		if (process.platform !== "linux") return;
+		installEnvironmentMock("env-codex");
+		writeExecutable(join(home, "bin", "systemctl"), "#!/bin/sh\nexit 1\n");
+
+		await setup({ agent: "codex", yes: true });
+
+		expect(process.exitCode).toBe(1);
+		process.exitCode = 0;
+		expect(daemonUnitExists("daemon")).toBe(true);
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("systemctl activation failed");
+		expect(output).toContain("systemctl --user daemon-reload");
+		expect(output).not.toContain("Singleton daemon installed");
 	});
 });
 
@@ -295,7 +387,12 @@ function seedAuth(): void {
 	mkdirSync(clawdiDir, { recursive: true });
 	writeFileSync(
 		join(clawdiDir, "auth.json"),
-		`${JSON.stringify({ apiKey: "test-key", userId: "u1", email: "u@example.test" })}\n`,
+		`${JSON.stringify({
+			apiKey: "test-key",
+			userId: "u1",
+			email: "u@example.test",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		})}\n`,
 		{ mode: 0o600 },
 	);
 }

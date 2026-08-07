@@ -38,10 +38,8 @@ function DeployRouteSkeleton() {
 						<Skeleton className="h-3.5 w-80 max-w-full" />
 						<Skeleton className="h-3.5 w-56 max-w-full" />
 					</div>
-					<div
-						className={cn("grid gap-2", sectionIndex === 0 ? "sm:grid-cols-3" : "sm:grid-cols-2")}
-					>
-						{Array.from({ length: sectionIndex === 0 ? 3 : 2 }).map((_, tileIndex) => (
+					<div className="grid gap-2 @2xl/main:grid-cols-2">
+						{Array.from({ length: 2 }).map((_, tileIndex) => (
 							<Skeleton key={tileIndex} className="h-[86px] w-full rounded-lg" />
 						))}
 					</div>

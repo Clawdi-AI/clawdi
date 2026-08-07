@@ -27,6 +27,7 @@ x-backend-env: &backend-env
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
   CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
   TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-false}
+  CLERK_JWT_ISSUER: ${CLERK_JWT_ISSUER:-}
   CLERK_PEM_PUBLIC_KEY: ${CLERK_PEM_PUBLIC_KEY:-}
   VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY:-}
   ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
@@ -79,7 +80,7 @@ services:
       - "${API_HOST:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
       - files:/data/files
-      - fastembed_cache:/home/app/.cache/fastembed
+      - fastembed_cache:/tmp/fastembed_cache
     healthcheck:
       test:
         [
@@ -100,7 +101,7 @@ services:
     environment: *backend-env
     volumes:
       - files:/data/files
-      - fastembed_cache:/home/app/.cache/fastembed
+      - fastembed_cache:/tmp/fastembed_cache
     command: ["python", "-m", "app.workers.channels"]
     healthcheck:
       test:

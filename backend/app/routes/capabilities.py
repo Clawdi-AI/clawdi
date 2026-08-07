@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.core.auth import AuthContext, require_user_auth
-from app.services.memory_provider import mem0_available
+from app.services.memory_provider_mem0 import mem0_available
 
 router = APIRouter(prefix="", tags=["capabilities"])
 

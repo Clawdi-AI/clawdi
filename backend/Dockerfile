@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 ARG APP_UID=1000
 ARG APP_GID=1000
@@ -32,6 +32,14 @@ RUN mkdir -p /data/files /home/app/.cache/fastembed \
 
 USER app
 
+# Kamal requires images to carry the service identity label.
+LABEL service="clawdi"
+
 EXPOSE 8000
+
+# Kamal uses Docker health for non-proxied roles. Both the API and channels
+# worker serve readiness-aware GET /health on this port.
+HEALTHCHECK --interval=5s --timeout=5s --start-period=30s --retries=8 \
+    CMD ["curl", "--fail", "--silent", "--show-error", "--max-time", "4", "http://127.0.0.1:8000/health"]
 
 CMD ["python", "-m", "app.runtime_entrypoint"]

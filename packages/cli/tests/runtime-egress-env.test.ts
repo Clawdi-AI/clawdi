@@ -28,15 +28,13 @@ describe("runtime egress env projection", () => {
 		expect(env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-egress-placeholder");
 	});
 
-	it("builds a minimal egress engine env without bridge credentials", () => {
+	it("builds a minimal egress engine env", () => {
 		const env = buildEgressEngineEnv(
 			{
 				PATH: "/usr/bin",
 				LANG: "C.UTF-8",
 				NODE_OPTIONS: "--inspect",
 				CLAWDI_AUTH_TOKEN: "runtime-auth",
-				CLAWDI_RUNTIME_BRIDGE_TOKEN: "bridge-secret",
-				CLAWDI_RUNTIME_BRIDGE_SURFACES: '[{"name":"openclaw"}]',
 				CLAWDI_EGRESS_ENV_FILE: "/run/clawdi/egress.env",
 				CLAWDI_EGRESS_PROFILE_BUNDLE: "/run/clawdi/egress-profiles.json",
 				CLAWDI_EGRESS_SECRET_FILE: "/run/clawdi/egress-secrets.json",
@@ -57,7 +55,6 @@ describe("runtime egress env projection", () => {
 		const env = buildEgressEngineEnv(
 			{
 				PATH: "/usr/bin",
-				CLAWDI_RUNTIME_BRIDGE_TOKEN: "bridge-secret",
 				CLAWDI_EGRESS_PROFILE_BUNDLE: "/run/clawdi/egress-profiles.json",
 				CLAWDI_EGRESS_SECRET_FILE: "/run/clawdi/egress-secrets.json",
 				CLAWDI_EGRESS_ENGINE_BINARY_PATH: "/opt/mitmdump",

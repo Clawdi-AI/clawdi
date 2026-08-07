@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { push } from "../../src/commands/push";
+import { recordProjectSkillMaterialization } from "../../src/lib/skills-lock";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
 	type AgentHomeOverrideSnapshot,
@@ -123,7 +124,6 @@ describe("push — Hermes fixture", () => {
 
 	it("skills module uploads multipart per skill", async () => {
 		setup("hermes");
-		const projectId = "00000000-0000-0000-0000-000000000099";
 		const { captured, restore } = mockFetch([
 			// `okEnvironmentProbe` returns `default_project_id =
 			// "00000000-...-099"` by default; the upload mock below
@@ -134,7 +134,7 @@ describe("push — Hermes fixture", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/v1/projects/${projectId}/skills/upload`,
+				path: "/v1/agents/env-test/skills/sync/upload",
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -143,9 +143,34 @@ describe("push — Hermes fixture", () => {
 		} finally {
 			restore();
 		}
-		const uploads = captured.filter((c) => c.path === `/v1/projects/${projectId}/skills/upload`);
+		const uploads = captured.filter((c) => c.path === "/v1/agents/env-test/skills/sync/upload");
 		expect(uploads.length).toBeGreaterThan(0);
 		for (const upload of uploads) expect(upload.isMultipart).toBe(true);
+	});
+
+	it("does not upload a Project materialization even after its local bytes are edited", async () => {
+		setup("hermes");
+		recordProjectSkillMaterialization({
+			agentType: "hermes",
+			localSkillKey: "core/demo",
+			sourceProjectId: "project-source",
+			sourceSkillKey: "demo",
+			contentHash: "downloaded-hash",
+		});
+		writeFileSync(
+			join(tmpHome, ".hermes", "skills", "core", "demo", "SKILL.md"),
+			"---\nname: demo\ndescription: edited locally\n---\n# Still Project-owned\n",
+		);
+		const { captured, restore } = mockFetch([okEnvironmentProbe()]);
+		try {
+			await push({ agent: "hermes", modules: "skills", all: true });
+		} finally {
+			restore();
+		}
+
+		expect(
+			captured.some((request) => request.path === "/v1/agents/env-test/skills/sync/upload"),
+		).toBe(false);
 	});
 
 	it("skips local skills with invalid skill_keys before upload", async () => {
@@ -157,12 +182,11 @@ describe("push — Hermes fixture", () => {
 			"---\nname: Bad Skill\ndescription: invalid local directory name\n---\n# Bad\n",
 		);
 
-		const projectId = "00000000-0000-0000-0000-000000000099";
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/v1/projects/${projectId}/skills/upload`,
+				path: "/v1/agents/env-test/skills/sync/upload",
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -172,23 +196,22 @@ describe("push — Hermes fixture", () => {
 			restore();
 		}
 
-		const uploads = captured.filter((c) => c.path === `/v1/projects/${projectId}/skills/upload`);
+		const uploads = captured.filter((c) => c.path === "/v1/agents/env-test/skills/sync/upload");
 		expect(uploads).toHaveLength(1);
 	});
 
 	it("a skill already in the skills-lock is skipped on the next push", async () => {
 		setup("hermes");
-		const projectId = "00000000-0000-0000-0000-000000000099";
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/v1/projects/${projectId}/skills/upload`,
+				path: "/v1/agents/env-test/skills/sync/upload",
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
 		const uploadCount = () =>
-			captured.filter((c) => c.path === `/v1/projects/${projectId}/skills/upload`).length;
+			captured.filter((c) => c.path === "/v1/agents/env-test/skills/sync/upload").length;
 		try {
 			// First push computes the skill's folder hash, uploads it, and
 			// records the hash in the skills-lock.
@@ -453,7 +476,6 @@ describe("push — --all flag fan-out", () => {
 
 	it("--all alone reaches all axes for a single registered agent", async () => {
 		setup("claude-code");
-		const projectId = "00000000-0000-0000-0000-000000000099";
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
@@ -463,7 +485,7 @@ describe("push — --all flag fan-out", () => {
 			},
 			{
 				method: "POST",
-				path: `/v1/projects/${projectId}/skills/upload`,
+				path: "/v1/agents/env-test/skills/sync/upload",
 				response: () => jsonResponse({ skill_key: "demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -481,7 +503,7 @@ describe("push — --all flag fan-out", () => {
 		// Skill axis was also exercised — proves --all defaults modules
 		// to the full set when --modules isn't passed.
 		const skillUploads = captured.filter(
-			(c) => c.path === `/v1/projects/${projectId}/skills/upload`,
+			(c) => c.path === "/v1/agents/env-test/skills/sync/upload",
 		);
 		expect(skillUploads.length).toBeGreaterThan(0);
 	});

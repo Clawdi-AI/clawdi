@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import socket
-
 import pytest
 
-from app.services.private_ip import has_private_resolved_ip, is_private_hostname
+from app.services.private_ip import is_private_hostname
 
 
 @pytest.mark.parametrize(
@@ -61,59 +59,3 @@ def test_is_private_hostname_blocks_private_ranges_and_aliases(hostname: str):
 )
 def test_is_private_hostname_allows_public_hosts(hostname: str):
     assert is_private_hostname(hostname) is False
-
-
-@pytest.mark.asyncio
-async def test_has_private_resolved_ip_blocks_private_dns(monkeypatch):
-    def fake_getaddrinfo(host, port):
-        assert host == "public-name.example"
-        assert port is None
-        return [
-            (
-                socket.AF_INET,
-                socket.SOCK_STREAM,
-                6,
-                "",
-                ("10.0.0.10", 0),
-            )
-        ]
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
-
-    assert await has_private_resolved_ip("public-name.example") is True
-
-
-@pytest.mark.asyncio
-async def test_has_private_resolved_ip_blocks_unresolved_dns(monkeypatch):
-    def fake_getaddrinfo(host, port):
-        assert host == "unresolved.example"
-        assert port is None
-        raise socket.gaierror
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
-
-    assert await has_private_resolved_ip("unresolved.example") is True
-
-
-@pytest.mark.asyncio
-async def test_has_private_resolved_ip_blocks_dns_os_errors(monkeypatch):
-    def fake_getaddrinfo(host, port):
-        assert host == "timeout.example"
-        assert port is None
-        raise TimeoutError
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
-
-    assert await has_private_resolved_ip("timeout.example") is True
-
-
-@pytest.mark.asyncio
-async def test_has_private_resolved_ip_blocks_empty_dns_results(monkeypatch):
-    def fake_getaddrinfo(host, port):
-        assert host == "empty.example"
-        assert port is None
-        return []
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
-
-    assert await has_private_resolved_ip("empty.example") is True

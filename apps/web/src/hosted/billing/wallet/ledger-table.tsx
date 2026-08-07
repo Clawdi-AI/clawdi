@@ -1,8 +1,9 @@
 "use client";
 
-import { Receipt } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { ExternalLink, Receipt } from "lucide-react";
+import { useMemo, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
+import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import {
 	Select,
@@ -23,7 +24,7 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import type { WalletLedgerEntry, WalletLedgerStatus } from "@/hosted/billing/contracts";
-import { creditsToUsd, formatCredits } from "@/hosted/billing/format";
+import { formatUsdExact } from "@/hosted/billing/format";
 import {
 	filteredLedgerEntries,
 	isLedgerFilter,
@@ -34,7 +35,7 @@ import {
 import { cn, relativeTime } from "@/lib/utils";
 
 const STATUS_LABELS: Record<WalletLedgerStatus, string> = {
-	applied: "Applied",
+	applied: "Completed",
 	pending: "Pending",
 	failed: "Failed",
 };
@@ -42,7 +43,6 @@ const LEDGER_FILTER_ITEMS = [
 	{ value: "all", label: "All activity" },
 	{ value: "topup", label: "Top-ups" },
 	{ value: "grant", label: "Grants" },
-	{ value: "usage", label: "Usage" },
 	{ value: "compute", label: "Compute" },
 	{ value: "refund", label: "Refunds" },
 ] as const;
@@ -56,49 +56,56 @@ function statusVariant(
 	return "neutral";
 }
 
-function opLabel(op: string): string {
-	return ledgerOperationLabel(op);
-}
 function statusLabel(status: WalletLedgerStatus): string {
 	return STATUS_LABELS[status] ?? "Unknown";
 }
-function signedAmount(entry: WalletLedgerEntry, pointsPerUsd: number): string {
-	const positive = entry.credits_amount >= 0;
-	const sign = positive ? "+" : "−";
-	const absCredits = Math.abs(entry.credits_amount);
-	// Sub-cent rows (e.g. a few credits of usage at 1000 credits/USD) round to
-	// "$0.00" and read as misleading zero rows. Show the raw credit amount
-	// instead so real, tiny entries stay legible.
-	if (absCredits > 0 && pointsPerUsd > 0 && absCredits / pointsPerUsd < 0.005) {
-		return `${sign}${formatCredits(absCredits)}`;
-	}
-	return `${sign}${creditsToUsd(absCredits, pointsPerUsd)}`;
+function amountIsPositive(entry: WalletLedgerEntry): boolean {
+	return !entry.amount_usd.trim().startsWith("-");
+}
+
+function signedAmount(entry: WalletLedgerEntry): string {
+	const positive = amountIsPositive(entry);
+	const unsignedAmount = entry.amount_usd.trim().replace(/^[+-]/, "");
+	return `${positive ? "+" : "−"}${formatUsdExact(unsignedAmount)}`;
+}
+
+function ledgerEntryKey(entry: WalletLedgerEntry): string {
+	return `${entry.created_at}:${entry.operation}:${entry.amount_usd}`;
+}
+
+function ReceiptLink({ entry }: { entry: WalletLedgerEntry }) {
+	if (!entry.receipt_url) return null;
+	return (
+		<Button
+			render={<a href={entry.receipt_url} target="_blank" rel="noopener noreferrer" />}
+			nativeButton={false}
+			variant="link"
+			size="xs"
+			className="h-auto px-0"
+		>
+			Receipt <ExternalLink data-icon="inline-end" />
+		</Button>
+	);
 }
 
 export function LedgerTable({
 	entries,
-	pointsPerUsd,
 	isLoading = false,
 	hasMore = false,
-	atCap = false,
 	isFetchingMore = false,
 	onShowMore,
 }: {
 	entries: WalletLedgerEntry[];
-	pointsPerUsd: number;
 	isLoading?: boolean;
 	/** More entries likely exist beyond the current window. */
 	hasMore?: boolean;
-	/** The client-side row cap is reached — stop offering "Show more". */
-	atCap?: boolean;
 	isFetchingMore?: boolean;
 	onShowMore?: () => void;
 }) {
 	const [filter, setFilter] = useState<LedgerFilter>("all");
-	const headingId = useId();
 
 	const filtered = useMemo(() => filteredLedgerEntries(entries, filter), [entries, filter]);
-	const canLoadMore = !atCap && hasMore && onShowMore != null;
+	const canLoadMore = hasMore && onShowMore != null;
 	const emptyState = ledgerEmptyStateCopy({ entriesCount: entries.length, filter, canLoadMore });
 
 	function handleFilterChange(value: string) {
@@ -118,7 +125,7 @@ export function LedgerTable({
 							<Spinner /> Loading…
 						</>
 					) : (
-						"Show more"
+						"Load more"
 					)}
 				</Button>
 			</div>
@@ -126,11 +133,11 @@ export function LedgerTable({
 	}
 
 	return (
-		<section data-hosted="true" className="space-y-3" aria-labelledby={headingId}>
-			<div className="flex items-center justify-between gap-2">
-				<h2 id={headingId} className="text-base font-semibold">
-					Activity
-				</h2>
+		<SettingsSection
+			data-hosted="true"
+			headingLevel={3}
+			title="Activity"
+			actions={
 				<Select
 					items={LEDGER_FILTER_ITEMS}
 					value={filter}
@@ -141,7 +148,7 @@ export function LedgerTable({
 					<SelectTrigger size="sm" className="w-40" aria-label="Filter activity">
 						<SelectValue />
 					</SelectTrigger>
-					<SelectContent>
+					<SelectContent align="end">
 						{LEDGER_FILTER_ITEMS.map((item) => (
 							<SelectItem key={item.value} value={item.value}>
 								{item.label}
@@ -149,118 +156,120 @@ export function LedgerTable({
 						))}
 					</SelectContent>
 				</Select>
-			</div>
-
-			{isLoading ? (
-				<div className="space-y-px overflow-hidden rounded-lg border">
-					{Array.from({ length: 5 }, (_, i) => `s-${i}`).map((key) => (
-						<div key={key} className="flex items-center justify-between gap-4 px-3 py-3">
-							<Skeleton className="h-4 w-40" />
-							<Skeleton className="h-4 w-16" />
-						</div>
-					))}
-				</div>
-			) : filtered.length === 0 ? (
-				<>
-					<EmptyState
-						variant="inset"
-						icon={Receipt}
-						title={emptyState.title}
-						description={emptyState.description}
-					/>
-					{renderLoadMoreControl()}
-				</>
-			) : (
-				<>
-					{/* Mobile: a stacked list — a 4-column table would clip on narrow
+			}
+		>
+			<div className="flex flex-col gap-4">
+				{isLoading ? (
+					<div className="space-y-px overflow-hidden rounded-lg border">
+						{Array.from({ length: 5 }, (_, i) => `s-${i}`).map((key) => (
+							<div key={key} className="flex items-center justify-between gap-4 px-3 py-3">
+								<Skeleton className="h-4 w-40" />
+								<Skeleton className="h-4 w-16" />
+							</div>
+						))}
+					</div>
+				) : filtered.length === 0 ? (
+					<>
+						<EmptyState
+							variant="inset"
+							icon={Receipt}
+							title={emptyState.title}
+							description={emptyState.description}
+						/>
+						{renderLoadMoreControl()}
+					</>
+				) : (
+					<>
+						{/* Mobile: a stacked list — a 4-column table would clip on narrow
 					    viewports. sm+ gets the full table. */}
-					<ul className="divide-y overflow-hidden rounded-lg border sm:hidden">
-						{filtered.map((entry) => {
-							const positive = entry.credits_amount >= 0;
-							return (
-								<li key={entry.id} className="flex items-start justify-between gap-3 p-3">
-									<div className="min-w-0 space-y-1">
-										<div className="font-medium">{opLabel(entry.operation)}</div>
-										{entry.notes ? (
-											<div className="truncate text-xs text-muted-foreground">{entry.notes}</div>
-										) : null}
-										<div className="flex items-center gap-2">
-											<StatusBadge status={statusVariant(entry.status)}>
-												{statusLabel(entry.status)}
-											</StatusBadge>
-											<span className="text-xs text-muted-foreground">
-												{relativeTime(entry.created_at)}
-											</span>
-										</div>
-									</div>
-									<span
-										className={cn(
-											"shrink-0 font-medium tabular-nums",
-											positive ? "text-success-muted-foreground" : "text-foreground",
-										)}
+						<ul className="divide-y overflow-hidden rounded-lg border sm:hidden">
+							{filtered.map((entry) => {
+								const positive = amountIsPositive(entry);
+								return (
+									<li
+										key={ledgerEntryKey(entry)}
+										className="flex items-start justify-between gap-3 p-3"
 									>
-										{signedAmount(entry, pointsPerUsd)}
-									</span>
-								</li>
-							);
-						})}
-					</ul>
-
-					<div className="hidden overflow-hidden rounded-lg border sm:block">
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead>Type</TableHead>
-									<TableHead>Status</TableHead>
-									<TableHead className="text-right">Amount</TableHead>
-									<TableHead className="text-right">When</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{filtered.map((entry) => {
-									const positive = entry.credits_amount >= 0;
-									return (
-										<TableRow key={entry.id}>
-											<TableCell>
-												<div className="font-medium">{opLabel(entry.operation)}</div>
-												{entry.notes ? (
-													<div className="max-w-[18rem] truncate text-xs text-muted-foreground">
-														{entry.notes}
-													</div>
-												) : null}
-											</TableCell>
-											<TableCell>
+										<div className="min-w-0 space-y-1">
+											<div className="font-medium">{ledgerOperationLabel(entry.operation)}</div>
+											<div className="truncate text-xs text-muted-foreground">
+												{entry.description}
+											</div>
+											<div className="flex items-center gap-2">
 												<StatusBadge status={statusVariant(entry.status)}>
 													{statusLabel(entry.status)}
 												</StatusBadge>
-											</TableCell>
-											<TableCell
-												className={cn(
-													"text-right font-medium tabular-nums",
-													positive ? "text-success-muted-foreground" : "text-foreground",
-												)}
-											>
-												{signedAmount(entry, pointsPerUsd)}
-											</TableCell>
-											<TableCell className="whitespace-nowrap text-right text-sm text-muted-foreground">
-												{relativeTime(entry.created_at)}
-											</TableCell>
-										</TableRow>
-									);
-								})}
-							</TableBody>
-						</Table>
-					</div>
+												<span className="text-xs text-muted-foreground">
+													{relativeTime(entry.created_at)}
+												</span>
+											</div>
+											<ReceiptLink entry={entry} />
+										</div>
+										<span
+											className={cn(
+												"shrink-0 font-medium tabular-nums",
+												positive ? "text-success-muted-foreground" : "text-foreground",
+											)}
+										>
+											{signedAmount(entry)}
+										</span>
+									</li>
+								);
+							})}
+						</ul>
 
-					{atCap ? (
-						<p className="text-center text-xs text-muted-foreground">
-							Showing your most recent activity. Older entries are archived.
-						</p>
-					) : (
-						renderLoadMoreControl()
-					)}
-				</>
-			)}
-		</section>
+						<div className="hidden overflow-hidden rounded-lg border sm:block">
+							<Table>
+								<TableHeader>
+									<TableRow>
+										<TableHead>Type</TableHead>
+										<TableHead>Status</TableHead>
+										<TableHead className="text-right">Amount</TableHead>
+										<TableHead className="text-right">When</TableHead>
+										<TableHead className="text-right">Receipt</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									{filtered.map((entry) => {
+										const positive = amountIsPositive(entry);
+										return (
+											<TableRow key={ledgerEntryKey(entry)}>
+												<TableCell>
+													<div className="font-medium">{ledgerOperationLabel(entry.operation)}</div>
+													<div className="max-w-[18rem] truncate text-xs text-muted-foreground">
+														{entry.description}
+													</div>
+												</TableCell>
+												<TableCell>
+													<StatusBadge status={statusVariant(entry.status)}>
+														{statusLabel(entry.status)}
+													</StatusBadge>
+												</TableCell>
+												<TableCell
+													className={cn(
+														"text-right font-medium tabular-nums",
+														positive ? "text-success-muted-foreground" : "text-foreground",
+													)}
+												>
+													{signedAmount(entry)}
+												</TableCell>
+												<TableCell className="whitespace-nowrap text-right text-sm text-muted-foreground">
+													{relativeTime(entry.created_at)}
+												</TableCell>
+												<TableCell className="text-right">
+													<ReceiptLink entry={entry} />
+												</TableCell>
+											</TableRow>
+										);
+									})}
+								</TableBody>
+							</Table>
+						</div>
+
+						{renderLoadMoreControl()}
+					</>
+				)}
+			</div>
+		</SettingsSection>
 	);
 }

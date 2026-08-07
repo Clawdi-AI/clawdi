@@ -3,12 +3,21 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { AgentTile } from "@/components/dashboard/agents-card";
+import {
+	claimedEnvIdsFromDeployments,
+	hostedDeploymentMembers,
+} from "@/hosted/hosted-agent-resolution";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 type Env = components["schemas"]["AgentResponse"];
 type SelectUnifiedAgentList =
 	typeof import("@/hosted/use-unified-agent-list").selectUnifiedAgentList;
+type DeploymentToTiles = typeof import("@/hosted/use-hosted-agent-tiles").deploymentToTiles;
+type ResolveLegacyEnvIds = typeof import("@/hosted/agents/ownership-sensor").resolveLegacyEnvIds;
 
 let getUnifiedAgentList: SelectUnifiedAgentList | null = null;
+let getDeploymentToTiles: DeploymentToTiles | null = null;
+let getLegacyEnvIdsResolution: ResolveLegacyEnvIds | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -16,11 +25,25 @@ beforeAll(async () => {
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/use-unified-agent-list");
 	getUnifiedAgentList = module.selectUnifiedAgentList;
+	const tilesModule = await import("@/hosted/use-hosted-agent-tiles");
+	getDeploymentToTiles = tilesModule.deploymentToTiles;
+	const ownershipModule = await import("@/hosted/agents/ownership-sensor");
+	getLegacyEnvIdsResolution = ownershipModule.resolveLegacyEnvIds;
 });
 
 function selectUnifiedAgentList(args: Parameters<SelectUnifiedAgentList>[0]) {
 	if (!getUnifiedAgentList) throw new Error("selectUnifiedAgentList was not loaded");
 	return getUnifiedAgentList(args);
+}
+
+function deploymentToTiles(...args: Parameters<DeploymentToTiles>) {
+	if (!getDeploymentToTiles) throw new Error("deploymentToTiles was not loaded");
+	return getDeploymentToTiles(...args);
+}
+
+function resolveLegacyEnvIds(...args: Parameters<ResolveLegacyEnvIds>) {
+	if (!getLegacyEnvIdsResolution) throw new Error("resolveLegacyEnvIds was not loaded");
+	return getLegacyEnvIdsResolution(...args);
 }
 
 function env(id: string, name: string): Env {
@@ -55,9 +78,7 @@ describe("selectUnifiedAgentList", () => {
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
-			statusLabel: "Failed",
 			href: null,
-			active: false,
 			env: null,
 		};
 
@@ -75,7 +96,6 @@ describe("selectUnifiedAgentList", () => {
 			[legacy.id, "legacy-hosted"],
 			[connected.id, "self-managed"],
 		]);
-		expect(selection.tiles[0]?.statusLabel).toBe("Failed");
 		expect(selection.tiles.some((tile) => tile.id === claimed.id)).toBe(false);
 	});
 
@@ -87,9 +107,7 @@ describe("selectUnifiedAgentList", () => {
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
-			statusLabel: "Starting",
 			href: null,
-			active: false,
 			env: null,
 		};
 
@@ -134,9 +152,7 @@ describe("selectUnifiedAgentList", () => {
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
-			statusLabel: "Running",
 			href: `/agents/${claimed.id}?source=on-clawdi&d=dep_running`,
-			active: true,
 			env: claimed,
 		};
 		const selection = selectUnifiedAgentList({
@@ -171,6 +187,55 @@ describe("selectUnifiedAgentList", () => {
 		]);
 		expect(selection.membershipResolved).toBe(true);
 	});
+
+	test("hides a deleted deployment without resurfacing its lagging environment as connected", () => {
+		const projected = env("44444444-4444-4444-8444-444444444444", "deleted-hosted-env");
+		const deleted = hostedDeploymentFixture({
+			id: "dep_deleted",
+			status: "deleted",
+			cloudEnvironments: { openclaw: projected.id },
+		});
+		const deployments = hostedDeploymentMembers([deleted]);
+		const hostedTiles = deploymentToTiles(deleted, new Map([[projected.id, projected]]));
+		const selection = selectUnifiedAgentList({
+			cloudEnvs: [projected],
+			hostedTiles,
+			claimedEnvIds: claimedEnvIdsFromDeployments(deployments),
+			legacyEnvIds: new Set(),
+			hostedInventoryStatus: "resolved",
+			showLegacyAgents: false,
+		});
+
+		expect(deployments).toEqual([deleted]);
+		expect(selection.hostedTiles).toEqual([]);
+		expect(selection.connectedTiles).toEqual([]);
+		expect(selection.tiles).toEqual([]);
+	});
+});
+
+describe("legacy membership resolution", () => {
+	test("surfaces an initial endpoint failure instead of remaining in loading state", () => {
+		const error = new Error("legacy endpoint unavailable");
+		const unifiedSource = readFileSync(
+			new URL("./use-unified-agent-list.ts", import.meta.url),
+			"utf8",
+		);
+		const sectionSource = readFileSync(
+			new URL("./hosted-agents-section.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(resolveLegacyEnvIds(true, undefined, error)).toEqual({
+			envIds: null,
+			error,
+			isLoading: false,
+		});
+		expect(unifiedSource).toContain(
+			"error: hosted.error ?? (showLegacyAgents ? legacy.error : null)",
+		);
+		expect(sectionSource).toContain("{unified.error ? (");
+		expect(sectionSource).toContain("<HostedUnavailableBanner");
+	});
 });
 
 describe("unified list consumers", () => {
@@ -178,6 +243,10 @@ describe("unified list consumers", () => {
 		const srcDir = resolve(import.meta.dir, "..");
 		const sidebar = readFileSync(resolve(srcDir, "components/app-sidebar.tsx"), "utf8");
 		const homepage = readFileSync(resolve(srcDir, "hosted/hosted-agents-section.tsx"), "utf8");
+		const onboarding = readFileSync(
+			resolve(srcDir, "components/dashboard/onboarding-card.tsx"),
+			"utf8",
+		);
 
 		expect(sidebar).toContain('import("@/hosted/use-unified-agent-list")');
 		expect(sidebar).toContain("hostedMembershipResolved");
@@ -185,5 +254,9 @@ describe("unified list consumers", () => {
 		expect(homepage).toContain("useUnifiedAgentList({");
 		expect(homepage).not.toContain("connectedAgentTilesForHostedView");
 		expect(homepage).not.toContain("useHostedAgentTiles({");
+		expect(homepage).toContain("<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />");
+		expect(homepage).toContain("<WelcomeWalletCard showDeployAction={false} />");
+		expect(onboarding).toContain("Deploy on Clawdi");
+		expect(onboarding).toContain("Connect an agent on your machine");
 	});
 });

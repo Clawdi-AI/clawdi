@@ -23,6 +23,7 @@ node_modules
 backend/.venv
 backend/data
 backend/tests
+packages/whatsapp-baileys-sidecar/src/*.test.ts
 
 *.log
 coverage

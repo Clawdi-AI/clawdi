@@ -1,12 +1,12 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useMemo } from "react";
 import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -28,23 +28,28 @@ const HostedAgentsByCompute = IS_HOSTED_BUILD
 	: null;
 
 export default function AgentsIndexPage() {
-	const api = useApi();
+	const api = useOpenApi();
 	const hostedAccess = useHostedProductAccess();
 	const {
 		data: environments,
 		isLoading: envsLoading,
 		error: envsError,
 		refetch: refetchEnvs,
-	} = useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-		// Match the Overview/agent-detail 10s cadence so the live status badges
-		// stay live on this list too.
-		refetchInterval: 10_000,
-	});
+	} = api.useQuery(
+		"get",
+		"/v1/agents",
+		{},
+		{
+			// Match the Overview/agent-detail 10s cadence so the live status badges
+			// stay live on this list too.
+			refetchInterval: 10_000,
+			refetchIntervalInBackground: false,
+		},
+	);
 
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 	const selfManagedCount = selfManagedTiles.length;
+	const blockingEnvsError = shouldBlockQueryError(envsError, environments) ? envsError : null;
 	const hostedAccessLoading = Boolean(HostedAgentsByCompute && hostedAccess.isLoading);
 	const cloudDeploymentManagementEnabled = Boolean(HostedAgentsByCompute);
 	const legacyHostedAgentsEnabled = Boolean(
@@ -61,12 +66,13 @@ export default function AgentsIndexPage() {
 				<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
 					<HostedAgentsByCompute
 						envsLoading={envsLoading}
-						selfManagedError={envsError}
+						selfManagedError={blockingEnvsError}
 						onRetrySelfManaged={() => {
 							void refetchEnvs();
 						}}
 						selfManagedCount={selfManagedCount}
 						cloudEnvs={environments ?? []}
+						canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
 						showCloudDeployments={cloudDeploymentManagementEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
 					/>
@@ -75,7 +81,7 @@ export default function AgentsIndexPage() {
 				<AgentsCard
 					agents={selfManagedTiles}
 					isLoading={envsLoading}
-					error={envsError}
+					error={blockingEnvsError}
 					onRetry={() => {
 						void refetchEnvs();
 					}}

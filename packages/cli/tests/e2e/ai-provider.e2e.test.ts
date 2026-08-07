@@ -1,13 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,7 +42,7 @@ afterAll(() => {
 });
 
 describe("ai-provider CLI process e2e", () => {
-	it("adds, optionally probes, encrypts, imports secrets, and applies agent config without leaking secrets", async () => {
+	it("adds, optionally probes, encrypts, and imports secrets without leaking them", async () => {
 		const source = createFixture();
 		const destination = createFixture();
 		const exportPath = join(source.root, "providers-with-secrets.json");
@@ -136,78 +128,6 @@ describe("ai-provider CLI process e2e", () => {
 			expect(imported.stdout).not.toContain(SECRET);
 			expect(imported.stderr).not.toContain(SECRET);
 			expect(readFileSync(importedEnv, "utf8")).toBe(`OPENAI_API_KEY='${SECRET}'\n`);
-
-			const codexHome = join(destination.root, "codex-home");
-			mkdirSync(codexHome, { recursive: true });
-			const codexPrimaryConfig = join(codexHome, "config.toml");
-			writeFileSync(codexPrimaryConfig, 'model = "user-model"\n');
-			const codexApplied = await runCli(
-				destination,
-				["ai-provider", "apply", "openai-main", "--target", "codex", "--json"],
-				{ CODEX_HOME: codexHome },
-			);
-			expect(codexApplied.code).toBe(0);
-			expect(codexApplied.stdout).toContain("clawdi-ai-provider.config.toml");
-			expect(codexApplied.stdout).not.toContain(SECRET);
-			expect(codexApplied.stderr).not.toContain(SECRET);
-			expect(readFileSync(codexPrimaryConfig, "utf8")).toBe('model = "user-model"\n');
-			const codexProfile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf8");
-			expect(codexProfile).toContain('model = "gpt-5.2"');
-			expect(codexProfile).toContain('model_provider = "openai-main"');
-			expect(codexProfile).toContain('base_url = "http://127.0.0.1:');
-			expect(codexProfile).toContain('env_key = "OPENAI_API_KEY"');
-			expect(codexProfile).not.toContain(SECRET);
-
-			const dryRun = await runCli(destination, [
-				"ai-provider",
-				"apply",
-				"openai-main",
-				"--target",
-				"hermes",
-				"--dry-run",
-				"--json",
-			]);
-			expect(dryRun.code).toBe(0);
-			expect(dryRun.stdout).toContain('"dry_run": true');
-			expect(dryRun.stdout).toContain("Hermes config.yaml provider merge");
-			expect(dryRun.stdout).toContain("custom:openai-main");
-			expect(dryRun.stdout).toContain("OPENAI_API_KEY");
-			expect(dryRun.stdout).not.toContain(SECRET);
-			expect(existsSync(join(destination.clawdiHome, "runtime", "hermes"))).toBe(false);
-
-			const stubDir = join(destination.root, "bin");
-			const openClawArgs = join(destination.root, "openclaw-args");
-			const openClawStdin = join(destination.root, "openclaw-stdin.json");
-			mkdirSync(stubDir, { recursive: true });
-			writeFileSync(
-				join(stubDir, "openclaw"),
-				`#!/bin/sh\nprintf "%s\\n" "$@" > "${openClawArgs}"\ncat > "${openClawStdin}"\nexit 0\n`,
-			);
-			chmodSync(join(stubDir, "openclaw"), 0o755);
-
-			const openClawApplied = await runCli(
-				destination,
-				["ai-provider", "apply", "openai-main", "--target", "openclaw", "--json"],
-				{ PATH: `${stubDir}:${process.env.PATH ?? ""}` },
-			);
-			expect(openClawApplied.code).toBe(0);
-			expect(openClawApplied.stdout).toContain('"target": "openclaw"');
-			expect(openClawApplied.stdout).not.toContain(SECRET);
-			expect(openClawApplied.stderr).not.toContain(SECRET);
-			expect(readFileSync(openClawArgs, "utf8").trim().split("\n")).toEqual([
-				"config",
-				"patch",
-				"--stdin",
-			]);
-			const openClawPatch = JSON.parse(readFileSync(openClawStdin, "utf8"));
-			expect(openClawPatch.agents.defaults.model.primary).toBe("openai-main/gpt-5.2");
-			expect(openClawPatch.models.mode).toBe("merge");
-			expect(openClawPatch.models.providers["openai-main"].api).toBe("openai-responses");
-			expect(openClawPatch.models.providers["openai-main"].apiKey).toEqual({
-				source: "env",
-				provider: "default",
-				id: "OPENAI_API_KEY",
-			});
 		} finally {
 			rmSync(source.root, { recursive: true, force: true });
 			rmSync(destination.root, { recursive: true, force: true });
@@ -221,9 +141,14 @@ function createFixture(): Fixture {
 	const clawdiHome = join(root, "clawdi-state");
 	mkdirSync(home, { recursive: true });
 	mkdirSync(clawdiHome, { recursive: true });
-	writeFileSync(join(clawdiHome, "auth.json"), `${JSON.stringify({ apiKey: "test-key" })}\n`, {
-		mode: 0o600,
-	});
+	writeFileSync(
+		join(clawdiHome, "auth.json"),
+		`${JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		})}\n`,
+		{ mode: 0o600 },
+	);
 	return { root, home, clawdiHome };
 }
 
@@ -237,7 +162,7 @@ async function runCli(
 		stdout: "pipe",
 		stderr: "pipe",
 		env: {
-			CLAWDI_API_URL: "http://api.test",
+			CLAWDI_API_URL: "https://api.test",
 			CLAWDI_HOME: fixture.clawdiHome,
 			CLAWDI_NO_AUTO_UPDATE: "1",
 			CLAWDI_NO_UPDATE_CHECK: "1",

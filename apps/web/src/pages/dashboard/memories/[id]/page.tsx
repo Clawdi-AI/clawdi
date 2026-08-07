@@ -1,76 +1,91 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Brain, Laptop, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
+import { DetailBackLink } from "@/components/detail/back-link";
+import { DetailMeta, DetailNotFound, DetailPanel } from "@/components/detail/layout";
+import { IconChip } from "@/components/icon-chip";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { TimeTooltip } from "@/components/time-tooltip";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
-import { unwrap, useApi } from "@/lib/api";
-import { isApiNotFoundError } from "@/lib/api-errors";
-import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
-import { projectResourceHref } from "@/lib/project-resource-model";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { useOpenApi } from "@/lib/api";
+import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
+import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
+import {
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+	resourceCollectionTarget,
+} from "@/lib/resource-navigation";
+import { cn, relativeTime } from "@/lib/utils";
 
-export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
+export default function MemoryDetailPage({
+	memoryId,
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	memoryId: string;
+	scope?: ResourceNavigationScope;
+}) {
 	const router = useRouter();
-	const api = useApi();
+	const api = useOpenApi();
 	const queryClient = useQueryClient();
+	const collectionTarget = resourceCollectionTarget(scope, "memories");
 
 	const {
 		data: memory,
 		isLoading,
 		error,
 		refetch,
-	} = useQuery({
-		queryKey: ["memory", memoryId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/memories/{memory_id}", {
-					params: { path: { memory_id: memoryId } },
-				}),
-			),
+	} = api.useQuery("get", "/v1/memories/{memory_id}", {
+		params: { path: { memory_id: memoryId } },
 	});
 
-	// First sentence (or 80 chars) — keeps the breadcrumb readable.
-	const memoryTitle = memory?.content
-		? memory.content.split(/[.\n]/)[0]?.slice(0, 80)?.trim() || null
-		: null;
+	const memoryTitle = memory?.content ? memoryDisplayName(memory.content) : null;
 	useSetBreadcrumbTitle(memoryTitle);
+	const blockingError =
+		isApiNotFoundError(error) || shouldBlockQueryError(error, memory) ? error : null;
 
-	const deleteMemory = useMutation({
-		mutationFn: async () =>
-			unwrap(
-				await api.DELETE("/v1/memories/{memory_id}", {
-					params: { path: { memory_id: memoryId } },
-				}),
-			),
+	const deleteMemory = api.useMutation("delete", "/v1/memories/{memory_id}", {
 		onSuccess: () => {
-			toast.success("Memory Deleted", {
+			toast.success("Memory deleted", {
 				description: "Your agents will no longer recall it.",
 			});
-			queryClient.invalidateQueries({ queryKey: ["memories"] });
-			void router.navigate({ href: projectResourceHref("memories") });
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
+			void router.navigate({ href: collectionTarget.href });
 		},
-		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
+		onError: (error) =>
+			toast.error("Couldn't delete memory", { description: normalizeApiError(error) }),
 	});
 
-	const onDelete = () => deleteMemory.mutate();
+	const onDelete = () => deleteMemory.mutateAsync({ params: { path: { memory_id: memoryId } } });
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			{error && isApiNotFoundError(error) ? (
-				<DetailNotFound title="Memory not found" message={errorMessage(error)} />
-			) : error ? (
+			<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
+			{scope.kind === "agent" ? (
+				<Alert>
+					<Brain />
+					<AlertTitle>Shared across all agents</AlertTitle>
+					<AlertDescription>
+						This memory belongs to the account. Changes here affect all agents.
+					</AlertDescription>
+				</Alert>
+			) : null}
+			{blockingError && isApiNotFoundError(blockingError) ? (
+				<DetailNotFound title="Memory not found" message="This memory is no longer available." />
+			) : blockingError ? (
 				<ApiErrorPanel
-					error={error}
+					error={blockingError}
 					onRetry={() => {
 						void refetch();
 					}}
@@ -78,21 +93,20 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 				/>
 			) : isLoading ? (
 				<div className="space-y-4 py-2">
-					<Skeleton className="h-5 w-24" />
+					<PageHeaderSkeleton icon actions description={false} />
 					<Skeleton className="h-24 w-full" />
 					<Skeleton className="h-4 w-48" />
 				</div>
 			) : memory ? (
 				<>
-					<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-						<div className="min-w-0 flex-1 space-y-2">
-							<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-								<Brain className="size-3.5" />
-								<span>Memory</span>
-							</div>
-							<DetailTitle className="whitespace-pre-wrap leading-snug">
-								{memory.content}
-							</DetailTitle>
+					<PageHeader
+						title={memory.content}
+						icon={
+							<IconChip tint={RESOURCE_TINT_CLASSES.memories}>
+								<Brain />
+							</IconChip>
+						}
+						status={
 							<DetailMeta>
 								<Badge
 									variant="secondary"
@@ -118,30 +132,32 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 										: "Never recalled yet"}
 								</span>
 							</DetailMeta>
-						</div>
-						<ConfirmAction
-							title="Delete this memory?"
-							description={
-								<>
-									<p>Your AI will stop recalling it across every agent within seconds.</p>
-									<p>You can tell it the same thing again later.</p>
-								</>
-							}
-							confirmLabel="Delete Memory"
-							destructive
-							onConfirm={onDelete}
-						>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={deleteMemory.isPending}
-								className="w-fit shrink-0 text-destructive hover:text-destructive"
+						}
+						actions={
+							<ConfirmAction
+								title="Delete this memory?"
+								description={
+									<>
+										<p>All agents will stop recalling it within seconds.</p>
+										<p>You can tell it the same thing again later.</p>
+									</>
+								}
+								confirmLabel="Delete memory"
+								destructive
+								onConfirm={onDelete}
 							>
-								<Trash2 />
-								Delete
-							</Button>
-						</ConfirmAction>
-					</div>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={deleteMemory.isPending}
+									className="w-fit shrink-0 text-destructive hover:text-destructive"
+								>
+									<Trash2 />
+									Delete
+								</Button>
+							</ConfirmAction>
+						}
+					/>
 
 					<DetailPanel className="space-y-4">
 						<div className="space-y-1">
@@ -182,7 +198,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 											params={{ id: memory.source_session_id }}
 											className="underline hover:text-foreground"
 										>
-											View session
+											{scope.kind === "agent" ? "View in session library" : "View session"}
 										</Link>
 									</>
 								) : null}

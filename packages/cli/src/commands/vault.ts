@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
+import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { isLoggedIn } from "../lib/config";
 import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
@@ -152,14 +153,13 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 	let projectId: string | undefined;
 	if (opts.project) {
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
+		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+		projectId = await resolveProjectId(
+			cfg.apiUrl,
+			await getClawdiAccessToken(cfg.apiUrl),
+			opts.project,
+		);
 	}
 	const page = await fetchAllVaults(api, projectId);
 	const vaults = page.items;
@@ -232,7 +232,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		return;
 	}
 
-	const projects = await listProjects(api.baseUrl, api.apiKey).catch(() => []);
+	const projects = await listProjects(api.baseUrl, await api.getAccessToken()).catch(() => []);
 	const projectLabel = (projectId: string | undefined) => {
 		if (!projectId) return "unattached";
 		const project = projects.find((item) => item.id === projectId);
@@ -675,8 +675,9 @@ async function resolveVaultWriteProject(
 	api: ApiClient,
 	projectArg: string | undefined,
 ): Promise<VaultWriteProject> {
-	const projectId = await resolveProjectId(api.baseUrl, api.apiKey, projectArg);
-	const project = (await listProjects(api.baseUrl, api.apiKey).catch(() => [])).find(
+	const accessToken = await api.getAccessToken();
+	const projectId = await resolveProjectId(api.baseUrl, accessToken, projectArg);
+	const project = (await listProjects(api.baseUrl, accessToken).catch(() => [])).find(
 		(item) => item.id === projectId,
 	);
 	return {

@@ -9,15 +9,16 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
 	assertCurrentEgressIdentity,
-	buildEgressEngineSpawnCommand,
+	publishEgressSystemCaBundle,
 	runtimeApplyCommand,
 	runtimePlanCommand,
 	runtimeStatusCommand,
 } from "../../src/commands/runtime";
+import { runtimeUserUid } from "../../src/runtime/runtime-user-command";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -25,56 +26,15 @@ let origHome: string | undefined;
 let origApiUrl: string | undefined;
 
 describe("runtime sidecar egress privilege drop", () => {
-	it("prefers setpriv with an explicit non-root numeric identity", () => {
-		expect(
-			buildEgressEngineSpawnCommand(
-				(command) => command === "setpriv" || command === "gosu",
-				10002,
-				10003,
-				"/opt/mitmdump",
-				["--mode", "transparent"],
-			),
-		).toEqual({
-			command: "setpriv",
-			args: [
-				"--reuid=10002",
-				"--regid=10003",
-				"--clear-groups",
-				"--",
-				"/opt/mitmdump",
-				"--mode",
-				"transparent",
-			],
-		});
-	});
-
-	it("uses a numeric gosu identity and never runuser", () => {
-		const checked: string[] = [];
-		const child = buildEgressEngineSpawnCommand(
-			(command) => {
-				checked.push(command);
-				return command === "gosu";
-			},
-			10002,
-			10003,
-			"/opt/mitmdump",
-			[],
-		);
-
-		expect(child).toEqual({
-			command: "gosu",
-			args: ["10002:10003", "/opt/mitmdump"],
-		});
-		expect(checked).toEqual(["setpriv", "gosu"]);
-	});
-
-	it("fails closed for root or unavailable privilege-drop tools", () => {
-		expect(() => buildEgressEngineSpawnCommand(() => true, 0, 10002, "mitmdump", [])).toThrow(
-			"egress engine identity must be non-root",
-		);
-		expect(() => buildEgressEngineSpawnCommand(() => false, 10002, 10002, "mitmdump", [])).toThrow(
-			"install setpriv or gosu",
-		);
+	it("accepts the current numeric uid without a passwd entry", () => {
+		const previousRuntimeUid = process.env.CLAWDI_RUNTIME_UID;
+		delete process.env.CLAWDI_RUNTIME_UID;
+		try {
+			expect(runtimeUserUid("2147483646")).toBe(2_147_483_646);
+		} finally {
+			if (previousRuntimeUid === undefined) delete process.env.CLAWDI_RUNTIME_UID;
+			else process.env.CLAWDI_RUNTIME_UID = previousRuntimeUid;
+		}
 	});
 
 	it("allows a matching non-root current identity", () => {
@@ -94,12 +54,74 @@ describe("runtime sidecar egress privilege drop", () => {
 	});
 });
 
+describe("runtime sidecar egress CA projection", () => {
+	it("creates and overwrites the runtime-readable bundle as root:runtime-group 0640", () => {
+		const root = join(tmpdir(), `clawdi-egress-ca-${Date.now()}-${Math.random().toString(36)}`);
+		const caCertPath = join(root, "private", "mitmproxy-ca-cert.pem");
+		const systemCaBundle = join(root, "published", "ca.pem");
+		const runtimeGid = process.getuid?.() === 0 ? 12_345 : (process.getgid?.() ?? 0);
+		const config = {
+			runtimeUser: "clawdi",
+			runtimeUid: 10_001,
+			runtimeGid,
+			egressUid: 10_002,
+			egressGid: 10_002,
+			transparentPort: 25_080,
+			nftTable: "clawdi_transparent_egress",
+			profileBundlePath: join(root, "profiles.json"),
+			secretFilePath: join(root, "secrets.json"),
+			caDir: join(root, "private"),
+			caCertPath,
+			systemCaBundle,
+			engineVersion: "test",
+			engineUrl: "https://example.invalid/mitmproxy.tar.gz",
+			engineSha256: "a".repeat(64),
+			engineBinaryPath: join(root, "mitmdump"),
+			addonPath: join(root, "addon.py"),
+			addonSha256: "b".repeat(64),
+		};
+
+		try {
+			mkdirSync(join(root, "private"), { recursive: true });
+			writeFileSync(caCertPath, "first-egress-ca\n");
+			publishEgressSystemCaBundle(config);
+			const created = statSync(systemCaBundle);
+			expect(statSync(dirname(systemCaBundle)).mode & 0o777).toBe(0o711);
+			expect(created.mode & 0o777).toBe(0o640);
+			expect(readFileSync(systemCaBundle, "utf-8")).toContain("first-egress-ca");
+			if (process.getuid?.() === 0) {
+				expect(created.uid).toBe(0);
+				expect(created.gid).toBe(runtimeGid);
+			}
+
+			chmodSync(systemCaBundle, 0o666);
+			writeFileSync(caCertPath, "rotated-egress-ca\n");
+			publishEgressSystemCaBundle(config);
+			const overwritten = statSync(systemCaBundle);
+			expect(overwritten.mode & 0o777).toBe(0o640);
+			expect(readFileSync(systemCaBundle, "utf-8")).toContain("rotated-egress-ca");
+			if (process.getuid?.() === 0) {
+				expect(overwritten.uid).toBe(0);
+				expect(overwritten.gid).toBe(runtimeGid);
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origApiUrl = process.env.CLAWDI_API_URL;
 	tmpHome = join(tmpdir(), `clawdi-runtime-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
-	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
+	writeFileSync(
+		join(tmpHome, ".clawdi", "auth.json"),
+		JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		}),
+	);
 	process.env.HOME = tmpHome;
 	process.env.CLAWDI_API_URL = "https://api.test";
 	process.exitCode = 0;
@@ -139,7 +161,6 @@ channels:
         runtime:
           token_env: TELEGRAM_AGENT_TOKEN
         pair_code:
-          ttl_seconds: 600
           command_env: TELEGRAM_PAIR_COMMAND
     commands:
       sync: true
@@ -201,8 +222,9 @@ outputs:
 							id: "pair-1",
 							agent_link_id: "link-1",
 							agent_id: "agent-1",
-							code: "PAIR123",
+							code: "BCDFGHJKLM",
 							expires_at: "2026-06-08T00:10:00Z",
+							pairing_command: "/clawdi_pair BCDFGHJKLM",
 						},
 						201,
 					),
@@ -213,7 +235,7 @@ outputs:
 				response: () =>
 					jsonResponse({
 						provider: "telegram",
-						commands: [{ command: "bot_pair", description: "Pair chat" }],
+						commands: [{ command: "clawdi_pair", description: "Pair chat" }],
 					}),
 			},
 		]);
@@ -238,12 +260,12 @@ outputs:
 		});
 		expect(captured[4]?.body).toMatchObject({
 			agent_link_id: "link-1",
-			ttl_seconds: 600,
+			ttl_seconds: 300,
 		});
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("TELEGRAM_AGENT_TOKEN=agent-token");
 		expect(dotenv).toContain("TELEGRAM_BOT_API_BASE_URL=https://api.test/v1/channels/telegram");
-		expect(dotenv).toContain('TELEGRAM_PAIR_COMMAND="/bot_pair PAIR123"');
+		expect(dotenv).toContain('TELEGRAM_PAIR_COMMAND="/clawdi_pair BCDFGHJKLM"');
 		expect(dotenv).toContain("# >>> clawdi channel runtime >>>");
 		expect(dotenv).toContain("# <<< clawdi channel runtime <<<");
 		expect(
@@ -265,6 +287,9 @@ channels:
         agent_id: agent-1
         runtime:
           token_env: DISCORD_AGENT_TOKEN
+        pair_code:
+          ttl_seconds: 600
+          command_env: DISCORD_PAIR_COMMAND
 outputs:
   dotenv: .env.channels
 `);
@@ -305,6 +330,24 @@ outputs:
 						201,
 					),
 			},
+			{
+				method: "POST",
+				path: /^\/v1\/channels\/channel-public\/pair-codes$/,
+				response: () =>
+					jsonResponse(
+						{
+							id: "pair-discord",
+							agent_link_id: "link-1",
+							agent_id: "agent-1",
+							code: "NPQRSTVWXY",
+							expires_at: "2026-06-08T00:10:00Z",
+							pairing_command: "/clawdi_pair NPQRSTVWXY",
+							discord_user_install_url:
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
+						},
+						201,
+					),
+			},
 		]);
 
 		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
@@ -314,6 +357,7 @@ outputs:
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("DISCORD_AGENT_TOKEN=discord-token");
 		expect(dotenv).toContain("DISCORD_GATEWAY_URL=wss://api.test/v1/channels/discord/gateway");
+		expect(dotenv).toContain('DISCORD_PAIR_COMMAND="/clawdi_pair NPQRSTVWXY"');
 	});
 
 	it("does not rotate an existing link token unless explicitly requested", async () => {
@@ -691,7 +735,7 @@ channels:
 		expect(captured).toHaveLength(0);
 	});
 
-	it("skips WhatsApp Baileys credentials while upstream support is gated", async () => {
+	it("writes WhatsApp runtime outputs", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -704,14 +748,9 @@ channels:
         agent_id: agent-1
         runtime:
           token_env: WHATSAPP_AGENT_TOKEN
-        whatsapp:
-          baileys_credentials_dir: .wa-creds
 outputs:
   dotenv: .env.channels
 	`);
-		const credsDir = join(tmpHome, ".wa-creds");
-		mkdirSync(credsDir, { recursive: true, mode: 0o755 });
-		if (process.platform !== "win32") chmodSync(credsDir, 0o755);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
@@ -745,20 +784,22 @@ outputs:
 			},
 		]);
 
-		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
+		const out = await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
 		restore();
 
 		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
 			"GET /v1/channels/channel-wa",
 			"GET /v1/channels/channel-wa/agent-links",
 		]);
-		expect(existsSync(join(tmpHome, ".wa-creds", "creds.json"))).toBe(false);
-		expect(existsSync(join(tmpHome, ".wa-creds", "auth-cert.json"))).toBe(false);
-		expect(existsSync(join(tmpHome, ".wa-creds", "clawdi-whatsapp.json"))).toBe(false);
-		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
-		if (process.platform !== "win32") {
-			expect(statSync(credsDir).mode & 0o777).toBe(0o755);
-		}
+		expect(JSON.parse(out).applied).toMatchObject({
+			links: [{ token_written: true }],
+			pair_codes: [],
+			writes: [join(tmpHome, ".env.channels")],
+			warnings: [],
+		});
+		expect(readFileSync(join(tmpHome, ".env.channels"), "utf8")).toContain(
+			"WHATSAPP_AGENT_TOKEN=wa-token",
+		);
 	});
 
 	it("requires explicit confirmation before rotating every declared token", async () => {
@@ -840,7 +881,7 @@ outputs:
 		expect(captured).toHaveLength(0);
 	});
 
-	it("skips WhatsApp runtime env conflict preflight while upstream support is gated", async () => {
+	it("writes distinct WhatsApp runtime token outputs", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -932,106 +973,9 @@ outputs:
 		restore();
 
 		expect(captured).toHaveLength(4);
-		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
-	});
-
-	it("skips explicit WhatsApp runtime env names while upstream support is gated", async () => {
-		const manifestPath = writeManifest(`
-version: 1
-channels:
-  - ref: wa-a
-    provider: whatsapp
-    account:
-      id: channel-wa-a
-    links:
-      - ref: wa-a-main
-        agent_id: agent-1
-        runtime:
-          token_env: WHATSAPP_AGENT_TOKEN_A
-          env:
-            websocket_url: WA_A_WEBSOCKET_URL
-  - ref: wa-b
-    provider: whatsapp
-    account:
-      id: channel-wa-b
-    links:
-      - ref: wa-b-main
-        agent_id: agent-2
-        runtime:
-          token_env: WHATSAPP_AGENT_TOKEN_B
-          env:
-            websocket_url: WA_B_WEBSOCKET_URL
-outputs:
-  dotenv: .env.channels
-`);
-		const { captured, restore } = mockFetch([
-			{
-				method: "GET",
-				path: /^\/v1\/channels\/channel-wa-a$/,
-				response: () =>
-					jsonResponse({
-						id: "channel-wa-a",
-						provider: "whatsapp",
-						name: "wa-a",
-						status: "active",
-						visibility: "public",
-						has_provider_token: true,
-						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa-a/webhook",
-						created_at: "2026-06-08T00:00:00Z",
-					}),
-			},
-			{
-				method: "GET",
-				path: /^\/v1\/channels\/channel-wa-a\/agent-links$/,
-				response: () =>
-					jsonResponse([
-						{
-							id: "link-a",
-							account_id: "channel-wa-a",
-							agent_id: "agent-1",
-							status: "active",
-							created_at: "2026-06-08T00:00:01Z",
-							agent_token: "token-a",
-						},
-					]),
-			},
-			{
-				method: "GET",
-				path: /^\/v1\/channels\/channel-wa-b$/,
-				response: () =>
-					jsonResponse({
-						id: "channel-wa-b",
-						provider: "whatsapp",
-						name: "wa-b",
-						status: "active",
-						visibility: "public",
-						has_provider_token: true,
-						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa-b/webhook",
-						created_at: "2026-06-08T00:00:00Z",
-					}),
-			},
-			{
-				method: "GET",
-				path: /^\/v1\/channels\/channel-wa-b\/agent-links$/,
-				response: () =>
-					jsonResponse([
-						{
-							id: "link-b",
-							account_id: "channel-wa-b",
-							agent_id: "agent-2",
-							status: "active",
-							created_at: "2026-06-08T00:00:01Z",
-							agent_token: "token-b",
-						},
-					]),
-			},
-		]);
-
-		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
-		restore();
-
-		expect(captured).toHaveLength(4);
-		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
+		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf8");
+		expect(dotenv).toContain("WHATSAPP_AGENT_TOKEN_A=token-a");
+		expect(dotenv).toContain("WHATSAPP_AGENT_TOKEN_B=token-b");
 	});
 
 	it("reuses account link reads across multiple links for the same bot", async () => {

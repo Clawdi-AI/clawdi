@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
-	chownSync,
 	copyFileSync,
 	mkdirSync,
 	mkdtempSync,
@@ -35,10 +34,20 @@ export interface RuntimeMitmproxyDegraded {
 
 export type RuntimeMitmproxyEnsureResult = RuntimeMitmproxyReady | RuntimeMitmproxyDegraded;
 
-interface EnsureRuntimeMitmproxyOptions {
+export interface EnsureRuntimeMitmproxyOptions {
 	allowFileUrls?: boolean;
 	downloadCommand?: string;
 }
+
+const SAFE_MITMPROXY_ERRORS = new Set([
+	"egress engine must use mitmproxy",
+	"mitmproxy version contains unsafe characters",
+	"mitmproxy sha256 must be 64 hex characters",
+	"mitmproxy URL must use https",
+	"mitmproxy URL must use official mitmproxy downloads",
+	"mitmproxy URL must use the pinned linux x86_64 release archive",
+	"mitmproxy archive did not contain mitmdump",
+]);
 
 export function ensureRuntimeMitmproxy(
 	pin: EgressEnginePin | null | undefined,
@@ -53,9 +62,7 @@ export function ensureRuntimeMitmproxy(
 		validateMitmproxyPin(pin, options);
 		const cacheDir = join(paths.egressEngineMaintainedRoot, pin.version, normalizedSha);
 		const binaryPath = join(cacheDir, "mitmdump");
-		if (isExecutableFile(binaryPath)) {
-			return ready(pin, cacheDir, binaryPath);
-		}
+		if (isExecutableFile(binaryPath)) return ready(pin, cacheDir, binaryPath);
 
 		const tempRoot = mkdtempSync(join(tmpdir(), "clawdi-egress-engine-"));
 		try {
@@ -75,18 +82,24 @@ export function ensureRuntimeMitmproxy(
 			mkdirSync(cacheDir, { recursive: true, mode: 0o755 });
 			copyFileSync(extractedMitmdump, binaryPath);
 			chmodSync(binaryPath, 0o755);
-			rootOwnedBestEffort(paths.maintainedRoot);
-			rootOwnedBestEffort(paths.egressEngineMaintainedRoot);
-			rootOwnedBestEffort(join(paths.egressEngineMaintainedRoot, pin.version));
-			rootOwnedBestEffort(cacheDir);
-			rootOwnedBestEffort(binaryPath);
 			return ready(pin, cacheDir, binaryPath);
 		} finally {
 			rmSync(tempRoot, { recursive: true, force: true });
 		}
 	} catch (error) {
-		return degraded(pin, error instanceof Error ? error.message : String(error));
+		return degraded(pin, safeMitmproxyError(error));
 	}
+}
+
+function safeMitmproxyError(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	if (SAFE_MITMPROXY_ERRORS.has(message)) return message;
+	if (/^failed to download mitmproxy \(exit (?:[0-9]+|unknown)\)$/.test(message)) return message;
+	if (/^tar failed to extract mitmproxy \(exit (?:[0-9]+|unknown)\)$/.test(message)) return message;
+	if (/^mitmproxy checksum mismatch: expected [a-f0-9]{64}, got [a-f0-9]{64}$/.test(message)) {
+		return message;
+	}
+	return "mitmproxy preparation failed";
 }
 
 function validateMitmproxyPin(pin: EgressEnginePin, options: EnsureRuntimeMitmproxyOptions): void {
@@ -129,8 +142,7 @@ function fetchArtifact(
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	if (result.status !== 0) {
-		const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-		throw new Error(`${command} failed to download mitmproxy${detail ? `\n${detail}` : ""}`);
+		throw new Error(`failed to download mitmproxy (exit ${result.status ?? "unknown"})`);
 	}
 }
 
@@ -140,8 +152,7 @@ function extractTarGz(archivePath: string, destination: string): void {
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	if (result.status !== 0) {
-		const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-		throw new Error(`tar failed to extract mitmproxy${detail ? `\n${detail}` : ""}`);
+		throw new Error(`tar failed to extract mitmproxy (exit ${result.status ?? "unknown"})`);
 	}
 }
 
@@ -174,19 +185,6 @@ function isExecutableFile(path: string): boolean {
 		return stat.isFile() && (stat.mode & 0o111) !== 0;
 	} catch {
 		return false;
-	}
-}
-
-function rootOwnedBestEffort(path: string): void {
-	try {
-		chownSync(path, 0, 0);
-	} catch {
-		// Non-root local verification cannot chown; hosted converge runs as root.
-	}
-	try {
-		chmodSync(path, statSync(path).isDirectory() ? 0o755 : 0o755);
-	} catch {
-		// Best effort on non-POSIX filesystems.
 	}
 }
 

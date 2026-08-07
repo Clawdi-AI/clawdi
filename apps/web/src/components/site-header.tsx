@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { NotificationCenter } from "@/components/notification-center";
 import { Separator } from "@/components/ui/separator";
@@ -10,7 +11,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
  * Keeps shadcn dashboard-01's trigger/separator/content/action shape,
  * with Clawdi-specific breadcrumbs and notifications.
  */
-export function SiteHeader() {
+export function SiteHeader({ actions }: { actions?: ReactNode }) {
 	return (
 		<header className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background">
 			<div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
@@ -22,6 +23,7 @@ export function SiteHeader() {
 				<div className="min-w-0 flex-1">
 					<AppBreadcrumb />
 				</div>
+				{actions}
 				<NotificationCenter />
 			</div>
 		</header>

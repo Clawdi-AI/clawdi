@@ -3,38 +3,30 @@
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ContributionDay, DashboardStats } from "@/lib/api-schemas";
+import type { DashboardStats } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
 import { formatNumber } from "@/lib/utils";
 
-function sessionsInLastDays(contribution: ContributionDay[] | undefined, days: number): number {
-	if (!contribution) return 0;
-	return contribution.slice(-days).reduce((sum, d) => sum + d.count, 0);
-}
-
 export function ThisWeekCard({
 	stats,
-	contribution,
 	error,
 	onRetry,
 }: {
 	stats: DashboardStats | undefined;
-	contribution: ContributionDay[] | undefined;
 	error?: unknown;
 	onRetry?: () => void;
 }) {
 	const ready = !!stats;
-	const weekSessions = sessionsInLastDays(contribution, 7);
-	const todaySessions = sessionsInLastDays(contribution, 1);
-	const topModel = formatModelLabel(stats?.favorite_model) || null;
+	const todaySessions = stats?.sessions_today;
+	const topModel = formatModelLabel(stats?.top_model_last_7_days) || null;
 	const manualWeek = stats?.manual_sessions_last_7_days;
-	const automatedWeek = manualWeek === undefined ? null : Math.max(0, weekSessions - manualWeek);
+	const automatedWeek = stats?.automated_sessions_last_7_days;
 
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>This week</CardTitle>
-				<CardDescription>Last 7 days of agent activity.</CardDescription>
+				<CardTitle>Last 7 days</CardTitle>
+				<CardDescription>Agent activity, measured in UTC.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-5">
 				{error ? (
@@ -48,9 +40,9 @@ export function ThisWeekCard({
 							{ready && manualWeek !== undefined ? (
 								<>
 									<div className="text-3xl font-semibold tabular-nums leading-none">
-										{formatNumber(Math.min(manualWeek, weekSessions))}
+										{formatNumber(manualWeek)}
 									</div>
-									{automatedWeek !== null && automatedWeek > 0 ? (
+									{automatedWeek !== undefined && automatedWeek > 0 ? (
 										<div className="mt-1 text-xs text-muted-foreground tabular-nums">
 											+ {formatNumber(automatedWeek)} automated (cron, heartbeat)
 										</div>
@@ -63,7 +55,10 @@ export function ThisWeekCard({
 
 						{/* Secondary stats — smaller, grouped. */}
 						<dl className="grid grid-cols-3 gap-3 text-sm">
-							<SecondaryStat label="Today" value={ready ? formatNumber(todaySessions) : null} />
+							<SecondaryStat
+								label="Today"
+								value={ready && todaySessions !== undefined ? formatNumber(todaySessions) : null}
+							/>
 							<SecondaryStat label="Streak" value={ready ? `${stats.current_streak}d` : null} />
 							<SecondaryStat label="Top model" value={ready ? (topModel ?? "—") : null} small />
 						</dl>

@@ -27,77 +27,177 @@ can land in this file under the same auth dep.
 """
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import JsonValue, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.auth import invalidate_api_key_auth_cache, require_admin_api_key
 from app.core.database import get_session
+from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
+from app.models.app_setting import AppSetting
 from app.models.channel import (
+    BOT_AGENT_LINK_STATUS_ACTIVE,
+    CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_PROVIDERS,
+    CHANNEL_VISIBILITY_PUBLIC,
     ChannelAccount,
+    ChannelBotAgentLink,
 )
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
-from app.models.user import PRINCIPAL_KIND_CLERK, User
+from app.models.user import (
+    PRINCIPAL_KIND_CLERK,
+    PRINCIPAL_KIND_PARTNER_TENANT,
+    User,
+)
 from app.schemas.admin import (
     AdminAgentCreate,
     AdminApiKeyCreate,
+    AdminAppSettingListResponse,
+    AdminAppSettingResponse,
+    AdminAppSettingUpsert,
     AdminChannelCreate,
     AdminChannelCreatedResponse,
     AdminChannelResponse,
     AdminChannelUpdate,
     AdminChannelVisibility,
     AdminChannelWebhookSecretResponse,
+    AdminDeploymentManagedAiProviderResponse,
+    AdminDeploymentManagedAiProviderUpsert,
     AdminEnvironmentCreate,
     AdminManagedAiProviderResponse,
     AdminManagedAiProviderUpsert,
+    AdminPlatformWhatsAppPairingSessionCreate,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
 )
+from app.schemas.ai_provider import AiProviderDeleteResponse, ai_provider_auth_from_persistence
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
-from app.schemas.channel import ChannelCommandSyncRequest, ChannelCommandSyncResponse
+from app.schemas.channel import (
+    ChannelCommandSyncRequest,
+    ChannelCommandSyncResponse,
+    ChannelWhatsAppOnboardingSessionResponse,
+)
+from app.schemas.platform import PlatformOwner
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
+    clear_connected_agent_registration,
     local_machine_registration_key,
     register_agent_environment,
 )
+from app.services.agent_lifecycle import (
+    AgentLifecycleBoundaryError,
+    active_agent_filter,
+    archive_agent_and_project,
+)
+from app.services.ai_provider_credentials import (
+    OAuthCredentialClaimConflict,
+    lock_ai_provider_owner,
+    reconcile_runtime_oauth_claims,
+    release_runtime_oauth_claims,
+)
 from app.services.api_key import mint_api_key
+from app.services.app_setting_registry import (
+    APP_SETTING_SPEC_BY_KEY,
+    AppSettingValueError,
+    get_app_setting_spec,
+)
+from app.services.app_settings import stage_app_setting_upsert
 from app.services.audit import record_control_plane_audit
-from app.services.channel_config import validate_channel_account_config_urls
+from app.services.channel_config import (
+    discord_interactions_config_error,
+    validate_channel_account_config_urls,
+    validate_required_discord_interactions_config,
+)
 from app.services.channels import (
     archive_channel_account,
+    build_channel_account,
     channel_webhook_url,
+    configure_discord_application,
+    configure_telegram_provider_webhook,
+    discord_application_id_from_config,
+    discord_config_without_unverified_install_state,
     encrypt_optional_token,
+    ensure_discord_application_identity_available,
     generate_webhook_secret,
+    get_telegram_bot_username,
     hash_token,
+    mark_discord_reserved_commands_current,
+    mark_telegram_reserved_commands_current,
+    normalize_telegram_bot_username,
+    rearm_discord_command_reconciliation,
+    require_unchanged_discord_application_identity,
     store_channel_secrets,
     sync_channel_commands,
     upsert_channel_secrets,
+    verify_discord_application_token_identity,
+)
+from app.services.hosted_runtime_secrets import (
+    hosted_runtime_secret_values_changed,
+    load_hosted_runtime_secrets_for_update,
+    sync_hosted_runtime_secret_values,
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_API_MODE,
+    MANAGED_AI_PROVIDER_LABEL,
+    MANAGED_AI_PROVIDER_PROFILE,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    MANAGED_AI_PROVIDER_SCOPE,
+    MANAGED_AI_PROVIDER_TYPE,
+    V2_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_IDS,
+    archive_clawdi_managed_provider,
+    find_clawdi_managed_provider,
+    is_v2_deployment_managed_provider_id,
+    lock_deployment_managed_provider_mutation,
     upsert_clawdi_managed_provider,
 )
-from app.services.runtime_observation import (
-    RuntimeObservationProtocolError,
-    provision_runtime_environment_fence,
+from app.services.principal_lifecycle import (
+    PrincipalIdentityConflictError,
+    PrincipalLifecycleConfigurationError,
+    PrincipalTerminatedError,
+    assert_user_authority_active,
+    load_clerk_user_for_issuer,
+    resolve_clerk_owner_issuer,
+)
+from app.services.project_runtime_skills import (
+    assert_agent_workspace_skill_write_compatible,
+)
+from app.services.runtime_generation import (
+    RuntimeApplyGenerationUpdateError,
+    resolve_runtime_apply_generation_update,
+)
+from app.services.runtime_manifest_resources import (
+    enabled_runtime_manifest_skill_ids,
+    lock_runtime_manifest_skill_reservations,
 )
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
-    queue_provider_runtime_manifest_changed,
     queue_runtime_manifest_changed,
 )
-from app.services.user_provisioning import lazy_create_user_with_personal_project
+from app.services.user_provisioning import (
+    lazy_create_partner_user_with_personal_project,
+    lazy_create_user_with_personal_project,
+)
+from app.services.whatsapp_device_onboarding import require_whatsapp_logout_for_archive
+from app.services.whatsapp_managed_onboarding import (
+    cancel_platform_whatsapp_pairing,
+    get_platform_whatsapp_pairing,
+    start_platform_whatsapp_pairing,
+)
+from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +208,122 @@ logger = logging.getLogger(__name__)
 # tell admin endpoints exist let alone what header they expect. The
 # routes themselves stay live — gating is `require_admin_api_key`.
 router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
+whatsapp_pairing_router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    include_in_schema=False,
+)
 
 
-async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
+def _no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+
+
+def _admin_app_setting_response(setting: AppSetting) -> AdminAppSettingResponse:
+    spec = get_app_setting_spec(setting.key)
+    return AdminAppSettingResponse(
+        key=setting.key,
+        value=setting.value_json,
+        description=spec.description,
+        created_at=setting.created_at,
+        updated_at=setting.updated_at,
+    )
+
+
+def _setting_enabled(value: JsonValue | None) -> bool | None:
+    if isinstance(value, dict):
+        enabled = value.get("enabled")
+        if isinstance(enabled, bool):
+            return enabled
+    return None
+
+
+@router.get("/settings", response_model=AdminAppSettingListResponse)
+async def admin_list_app_settings(
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminAppSettingListResponse:
+    """List registered global application settings."""
+
+    rows = list(
+        (
+            await db.execute(
+                select(AppSetting)
+                .where(AppSetting.key.in_(APP_SETTING_SPEC_BY_KEY))
+                .order_by(AppSetting.key)
+            )
+        ).scalars()
+    )
+    return AdminAppSettingListResponse(
+        items=[_admin_app_setting_response(setting) for setting in rows]
+    )
+
+
+@router.get("/settings/{key}", response_model=AdminAppSettingResponse)
+async def admin_get_app_setting(
+    key: str,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminAppSettingResponse:
+    """Read one registered global application setting."""
+
+    try:
+        get_app_setting_spec(key)
+    except AppSettingValueError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "App setting not found") from error
+    setting = await db.get(AppSetting, key)
+    if setting is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "App setting not found")
+    return _admin_app_setting_response(setting)
+
+
+@router.put("/settings/{key}", response_model=AdminAppSettingResponse)
+async def admin_upsert_app_setting(
+    key: str,
+    body: AdminAppSettingUpsert,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminAppSettingResponse:
+    """Atomically replace one registered global setting and audit the mutation."""
+
+    try:
+        setting, previous, created = await stage_app_setting_upsert(
+            db,
+            key=key,
+            value=body.value,
+        )
+    except AppSettingValueError as error:
+        if key not in APP_SETTING_SPEC_BY_KEY:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "App setting not found") from error
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid app setting value") from error
+
+    current = setting.value_json
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="app_setting.upsert",
+        resource_type="app_setting",
+        resource_id=key,
+        source="api.admin",
+        details={
+            "created": created,
+            "previous_enabled": _setting_enabled(previous),
+            "enabled": _setting_enabled(current),
+            "schema_version": (
+                current.get("schema_version") if isinstance(current, dict) else None
+            ),
+        },
+    )
+    await db.commit()
+    await db.refresh(setting)
+    return _admin_app_setting_response(setting)
+
+
+async def _resolve_or_create_user(
+    db: AsyncSession,
+    clerk_id: str,
+) -> User:
     """Resolve a user by clerk_id, lazy-creating the row + Personal
     project if needed.
 
@@ -132,26 +345,271 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     an operational anomaly worth a loud failure rather than a
     user-flow retry.
     """
-    target = (
-        await db.execute(
-            select(User).where(
-                User.principal_kind == PRINCIPAL_KIND_CLERK,
-                User.clerk_id == clerk_id,
-            )
+    try:
+        issuer = await resolve_clerk_owner_issuer(
+            db,
+            subject=clerk_id,
         )
-    ).scalar_one_or_none()
+        target = await load_clerk_user_for_issuer(
+            db,
+            issuer=issuer,
+            subject=clerk_id,
+            bind_legacy=False,
+        )
+    except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
+    except PrincipalLifecycleConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Clerk owner issuer is not configured",
+        ) from None
     if target is not None:
+        try:
+            await assert_user_authority_active(db, target.id)
+        except PrincipalTerminatedError:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
         return target
 
     user = await lazy_create_user_with_personal_project(
         db,
         clerk_id=clerk_id,
+        clerk_issuer=issuer,
         email=None,
         name=None,
         race_loser_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
     logger.info("admin_lazy_create_user clerk_id=%s user_id=%s", clerk_id, user.id)
     return user
+
+
+async def _find_admin_owner(
+    db: AsyncSession,
+    owner: PlatformOwner,
+) -> User:
+    if owner.kind == PRINCIPAL_KIND_CLERK:
+        try:
+            issuer = await resolve_clerk_owner_issuer(
+                db,
+                subject=owner.ref,
+            )
+            target = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=owner.ref,
+                bind_legacy=False,
+            )
+        except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
+        except PrincipalLifecycleConfigurationError:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Clerk owner issuer is not configured",
+            ) from None
+    else:
+        target = (
+            await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                    User.partner_tenant_ref == owner.ref,
+                    User.clerk_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Owner not found")
+    try:
+        await assert_user_authority_active(db, target.id)
+    except PrincipalTerminatedError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
+    return target
+
+
+async def _resolve_or_create_admin_owner(
+    db: AsyncSession,
+    owner: PlatformOwner,
+) -> User:
+    if owner.kind == PRINCIPAL_KIND_CLERK:
+        return await _resolve_or_create_user(db, owner.ref)
+
+    target = (
+        await db.execute(
+            select(User).where(
+                User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                User.partner_tenant_ref == owner.ref,
+                User.clerk_id.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if target is not None:
+        try:
+            await assert_user_authority_active(db, target.id)
+        except PrincipalTerminatedError:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
+        return target
+    return await lazy_create_partner_user_with_personal_project(
+        db,
+        partner_tenant_ref=owner.ref,
+        race_loser_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
+
+
+def _require_managed_provider_contract(provider: AiProvider) -> None:
+    if (
+        provider.type != MANAGED_AI_PROVIDER_TYPE
+        or provider.api_mode != MANAGED_AI_PROVIDER_API_MODE
+        or provider.auth_type != "api_key"
+        or provider.auth_ref is not None
+        or (provider.auth_metadata or {}).get("source") != "managed"
+        or provider.managed_by != "clawdi"
+        or provider.runtime_env_name != MANAGED_AI_PROVIDER_RUNTIME_ENV
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Stored managed AI provider contract is invalid",
+        )
+
+
+async def _admin_deployment_managed_provider_response(
+    db: AsyncSession,
+    *,
+    provider: AiProvider,
+    owner: PlatformOwner,
+    target: User,
+) -> AdminDeploymentManagedAiProviderResponse:
+    _require_managed_provider_contract(provider)
+    try:
+        auth = ai_provider_auth_from_persistence(
+            provider.auth_type,
+            provider.auth_ref,
+            provider.auth_metadata,
+        )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Stored managed AI provider auth metadata is invalid",
+        ) from exc
+    has_api_key = (
+        await db.scalar(
+            select(AiProviderAuthPayload.id).where(
+                AiProviderAuthPayload.owner_user_id == target.id,
+                AiProviderAuthPayload.provider_id == provider.provider_id,
+                AiProviderAuthPayload.auth_profile == MANAGED_AI_PROVIDER_PROFILE,
+                AiProviderAuthPayload.kind == "api_key",
+                AiProviderAuthPayload.source == "managed",
+                AiProviderAuthPayload.archived_at.is_(None),
+            )
+        )
+        is not None
+    )
+    return AdminDeploymentManagedAiProviderResponse(
+        id=provider.id,
+        owner=owner,
+        owner_user_id=target.id,
+        owner_clerk_id=target.clerk_id,
+        provider_id=provider.provider_id,
+        scope=MANAGED_AI_PROVIDER_SCOPE,
+        type=MANAGED_AI_PROVIDER_TYPE,
+        label=provider.label or MANAGED_AI_PROVIDER_LABEL,
+        api_mode=provider.api_mode or "",
+        auth=auth,
+        managed_by="clawdi",
+        runtime_env_name=provider.runtime_env_name or "",
+        base_url=provider.base_url,
+        capabilities=provider.capabilities,
+        models=provider.models,
+        has_api_key=has_api_key,
+    )
+
+
+def _record_deployment_managed_provider_audit(
+    db: AsyncSession,
+    *,
+    action: str,
+    owner: PlatformOwner,
+    owner_user_id: UUID | None,
+    provider_id: str,
+    outcome: str,
+    provider_uuid: UUID | None = None,
+) -> None:
+    details: dict[str, Any] = {
+        "auth_method": "x_admin_key",
+        "owner": owner.model_dump(mode="json"),
+        "owner_user_id": str(owner_user_id) if owner_user_id is not None else None,
+        "provider_id": provider_id,
+        "outcome": outcome,
+    }
+    if provider_uuid is not None:
+        details["provider_uuid"] = str(provider_uuid)
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action=action,
+        resource_type="ai_provider",
+        resource_id=provider_id,
+        target_user_id=owner_user_id,
+        source="api.admin",
+        details=details,
+    )
+
+
+async def _find_deployment_managed_provider_owner(
+    db: AsyncSession,
+    *,
+    owner: PlatformOwner,
+    provider_id: str,
+    action: str,
+) -> User:
+    try:
+        return await _find_admin_owner(db, owner)
+    except HTTPException:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=None,
+            provider_id=provider_id,
+            outcome="failed",
+        )
+        await db.commit()
+        raise
+
+
+async def _raise_deployment_managed_provider_scope_denied(
+    db: AsyncSession,
+    *,
+    action: str,
+    owner: PlatformOwner,
+    owner_user_id: UUID,
+    provider_id: str,
+) -> Never:
+    # Deliberately do not probe by provider id alone. A scoped miss is reported
+    # uniformly, so the admin contract neither leaks nor crosses another owner.
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
+        outcome="cross_owner_denied",
+    )
+    await db.commit()
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
+
+
+def _deployment_managed_provider_query_owner(
+    *,
+    kind: str | None,
+    ref: str | None,
+) -> PlatformOwner:
+    if kind is None or ref is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "owner is required")
+    try:
+        return PlatformOwner.model_validate({"kind": kind, "ref": ref})
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "owner is invalid",
+        ) from exc
 
 
 async def _assert_admin_target_owns_environment(
@@ -163,14 +621,15 @@ async def _assert_admin_target_owns_environment(
     if target_clerk_id is None:
         return env.user_id
 
-    target = (
-        await db.execute(
-            select(User).where(
-                User.principal_kind == PRINCIPAL_KIND_CLERK,
-                User.clerk_id == target_clerk_id,
-            )
+    try:
+        target = await _find_admin_owner(
+            db,
+            PlatformOwner(kind=PRINCIPAL_KIND_CLERK, ref=target_clerk_id),
         )
-    ).scalar_one_or_none()
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        target = None
     if target is None or env.user_id != target.id:
         logger.warning(
             "admin_environment_owner_rejected target_clerk_id=%s env_id=%s owner_user_id=%s",
@@ -219,29 +678,18 @@ async def admin_mint_api_key(
     # tooling that only needs to push sessions); the route doesn't
     # impose a ceiling.
     try:
-        if body.managed and env_uuid is not None and body.deployment_id is not None:
-            await provision_runtime_environment_fence(
-                db,
-                environment_id=env_uuid,
-                owner_id=target.id,
-                deployment_id=body.deployment_id,
-            )
         minted = await mint_api_key(
             db,
             user_id=target.id,
             label=body.label,
             scopes=body.scopes,
             environment_id=env_uuid,
-            runtime_deployment_id=body.deployment_id,
             managed=body.managed,
             # Key row and its audit event must land in one transaction:
             # a key that exists without the caller learning its id is an
             # untrackable, unrevokable credential.
             commit=False,
         )
-    except RuntimeObservationProtocolError as e:
-        await db.rollback()
-        raise HTTPException(status_code=e.status_code, detail=e.detail()) from e
     except ValueError as e:
         # `mint_api_key` raises ValueError for cross-tenant
         # environment_id (env not owned by target user). Surface
@@ -278,7 +726,6 @@ async def admin_mint_api_key(
             "key_prefix": api_key.key_prefix,
             "managed": api_key.managed,
             "has_environment_binding": api_key.environment_id is not None,
-            "has_runtime_deployment_binding": api_key.runtime_deployment_id is not None,
             "scope_count": None if api_key.scopes is None else len(api_key.scopes),
         },
     )
@@ -342,27 +789,172 @@ async def admin_revoke_api_key(
     return ApiKeyRevokeResponse(status="revoked")
 
 
+@router.get(
+    "/ai-providers/{provider_id}",
+    response_model=AdminDeploymentManagedAiProviderResponse,
+    response_model_exclude_none=True,
+)
+async def admin_get_clawdi_managed_ai_provider(
+    provider_id: str,
+    owner_kind: Annotated[str | None, Query(alias="kind")] = None,
+    owner_ref: Annotated[str | None, Query(alias="ref")] = None,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminDeploymentManagedAiProviderResponse:
+    """Read one first-party managed provider within an explicit owner scope."""
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        raise HTTPException(
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+            "Method Not Allowed",
+            headers={"Allow": "PUT"},
+        )
+    owner = _deployment_managed_provider_query_owner(kind=owner_kind, ref=owner_ref)
+    action = "ai_provider.managed.read"
+    target = await _find_deployment_managed_provider_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action=action,
+    )
+    provider = await find_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    if provider is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+    try:
+        response = await _admin_deployment_managed_provider_response(
+            db,
+            provider=provider,
+            owner=owner,
+            target=target,
+        )
+    except HTTPException:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider_uuid=provider.id,
+            outcome="failed",
+        )
+        await db.commit()
+        raise
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    await db.commit()
+    return response
+
+
 @router.put(
     "/ai-providers/{provider_id}",
-    response_model=AdminManagedAiProviderResponse,
+    response_model=AdminManagedAiProviderResponse | AdminDeploymentManagedAiProviderResponse,
 )
 async def admin_upsert_clawdi_managed_ai_provider(
     provider_id: str,
-    body: AdminManagedAiProviderUpsert,
+    body: AdminManagedAiProviderUpsert | AdminDeploymentManagedAiProviderUpsert,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
-) -> AdminManagedAiProviderResponse:
+) -> AdminManagedAiProviderResponse | AdminDeploymentManagedAiProviderResponse:
     """Upsert the first-party managed AI provider for a target user.
 
     This intentionally does not expose a generic admin AI-provider write API.
-    Hosted deploy orchestration only needs to install the fixed
-    Clawdi-managed OpenAI-compatible chat provider and rotate its key.
+    Hosted deploy orchestration can install either the fixed imperative
+    provider or one deployment-scoped declarative provider and rotate its key.
     """
-    # TODO(#425): Remove legacy v2 route acceptance after hosted#892 is deployed
-    # everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
-    if provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
+    if provider_id in V2_MANAGED_AI_PROVIDER_IDS:
+        if not isinstance(body, AdminManagedAiProviderUpsert):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "target_clerk_id is required for fixed managed AI providers",
+            )
+        # Legacy route ids remain accepted during the cross-service rollout,
+        # but fixed managed-provider writes and responses are canonical.
+        target = await _resolve_or_create_user(db, body.target_clerk_id)
+        try:
+            provider = await upsert_clawdi_managed_provider(
+                db,
+                user=target,
+                provider_id=V2_MANAGED_AI_PROVIDER_ID,
+                base_url=body.base_url,
+                api_key=body.api_key.get_secret_value(),
+                default_model=body.default_model,
+                models=(
+                    [model.model_dump(exclude_none=True) for model in body.models]
+                    if body.models is not None
+                    else None
+                ),
+                label=body.label,
+                capabilities=body.capabilities,
+            )
+        except ValueError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from e
+
+        record_control_plane_audit(
+            db,
+            actor_type="admin",
+            action="ai_provider.managed.upsert",
+            resource_type="ai_provider",
+            resource_id=provider.provider_id,
+            target_user_id=target.id,
+            source="api.admin",
+            details={
+                "provider_id": provider.provider_id,
+                "api_mode": MANAGED_AI_PROVIDER_API_MODE,
+                "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
+                "models": provider.models,
+                "has_capabilities": body.capabilities is not None,
+            },
+        )
+        await db.commit()
+        await db.refresh(provider)
+        logger.info(
+            "admin_managed_ai_provider_upserted target_clerk_id=%s provider_id=%s",
+            body.target_clerk_id,
+            provider.provider_id,
+        )
+        return AdminManagedAiProviderResponse(
+            owner_user_id=target.id,
+            owner_clerk_id=target.clerk_id,
+            provider_id=provider.provider_id,
+            api_mode=provider.api_mode or "",
+            runtime_env_name=provider.runtime_env_name or "",
+            base_url=provider.base_url,
+            models=provider.models,
+            has_api_key=True,
+        )
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
-    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    if not isinstance(body, AdminDeploymentManagedAiProviderUpsert):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "owner is required for deployment-scoped managed AI providers",
+        )
+    owner = body.owner
+    target = await _resolve_or_create_admin_owner(db, owner)
+    # This must precede the first provider/auth lookup in the upsert service.
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
     try:
         provider = await upsert_clawdi_managed_provider(
             db,
@@ -380,47 +972,151 @@ async def admin_upsert_clawdi_managed_ai_provider(
             capabilities=body.capabilities,
         )
     except ValueError as e:
+        _record_deployment_managed_provider_audit(
+            db,
+            action="ai_provider.managed.upsert",
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            outcome="failed",
+        )
+        await db.commit()
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
 
-    await queue_provider_runtime_manifest_changed(
+    await db.flush()
+    _record_deployment_managed_provider_audit(
         db,
-        target.id,
-        provider.provider_id,
-    )
-
-    record_control_plane_audit(
-        db,
-        actor_type="admin",
         action="ai_provider.managed.upsert",
-        resource_type="ai_provider",
-        resource_id=provider.provider_id,
-        target_user_id=target.id,
-        source="api.admin",
-        details={
-            "provider_id": provider.provider_id,
-            "api_mode": MANAGED_AI_PROVIDER_API_MODE,
-            "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
-            "models": provider.models,
-            "has_capabilities": body.capabilities is not None,
-        },
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider.provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    _record_deployment_managed_provider_audit(
+        db,
+        action="ai_provider.managed.credential.rotate",
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider.provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
     )
     await db.commit()
     await db.refresh(provider)
     logger.info(
-        "admin_managed_ai_provider_upserted target_clerk_id=%s provider_id=%s",
-        body.target_clerk_id,
+        "admin_managed_ai_provider_upserted owner_kind=%s owner_ref=%s provider_id=%s",
+        owner.kind,
+        owner.ref,
         provider.provider_id,
     )
-    return AdminManagedAiProviderResponse(
-        owner_user_id=target.id,
-        owner_clerk_id=target.clerk_id,
-        provider_id=provider.provider_id,
-        api_mode=provider.api_mode or "",
-        runtime_env_name=provider.runtime_env_name or "",
-        base_url=provider.base_url,
-        models=provider.models,
-        has_api_key=True,
+    return await _admin_deployment_managed_provider_response(
+        db,
+        provider=provider,
+        owner=owner,
+        target=target,
     )
+
+
+@router.delete(
+    "/ai-providers/{provider_id}",
+    response_model=AiProviderDeleteResponse,
+)
+async def admin_delete_clawdi_managed_ai_provider(
+    provider_id: str,
+    owner_kind: Annotated[str | None, Query(alias="kind")] = None,
+    owner_ref: Annotated[str | None, Query(alias="ref")] = None,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AiProviderDeleteResponse:
+    """Archive one first-party managed provider within an explicit owner scope."""
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        raise HTTPException(
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+            "Method Not Allowed",
+            headers={"Allow": "PUT"},
+        )
+    owner = _deployment_managed_provider_query_owner(kind=owner_kind, ref=owner_ref)
+    action = "ai_provider.managed.delete"
+    target = await _find_deployment_managed_provider_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action=action,
+    )
+    # Use the same transaction lock as PUT before checking archived state.
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    provider = await find_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    if provider is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+    try:
+        _require_managed_provider_contract(provider)
+    except HTTPException:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider_uuid=provider.id,
+            outcome="failed",
+        )
+        await db.commit()
+        raise
+    archived = await archive_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    if archived is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    _record_deployment_managed_provider_audit(
+        db,
+        action="ai_provider.managed.credential.archive",
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    await db.commit()
+    logger.info(
+        "admin_managed_ai_provider_deleted owner_kind=%s owner_ref=%s provider_id=%s",
+        owner.kind,
+        owner.ref,
+        provider_id,
+    )
+    return AiProviderDeleteResponse(status="deleted", provider_id=provider_id)
 
 
 @router.get("/channels", response_model=list[AdminChannelResponse])
@@ -433,7 +1129,7 @@ async def admin_list_channels(
 ) -> list[AdminChannelResponse]:
     if provider is not None and provider not in CHANNEL_PROVIDERS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "unsupported provider")
-    filters = []
+    filters: list[ColumnElement[bool]] = []
     if provider is not None:
         filters.append(ChannelAccount.provider == provider)
     if visibility is not None:
@@ -443,7 +1139,7 @@ async def admin_list_channels(
 
     result = await db.execute(
         select(ChannelAccount, User)
-        .join(User, User.id == ChannelAccount.user_id)
+        .outerjoin(User, User.id == ChannelAccount.user_id)
         .where(*filters)
         .order_by(ChannelAccount.provider, ChannelAccount.visibility, ChannelAccount.name)
     )
@@ -461,22 +1157,58 @@ async def admin_create_channel(
     db: AsyncSession = Depends(get_session),
 ) -> AdminChannelCreatedResponse:
     await validate_channel_account_config_urls(provider=body.provider, config=body.config)
-    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    if body.provider == CHANNEL_PROVIDER_WHATSAPP and body.visibility == CHANNEL_VISIBILITY_PUBLIC:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Public WhatsApp accounts require a physical pairing session.",
+        )
+    if body.provider == CHANNEL_PROVIDER_DISCORD:
+        if body.provider_token is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Discord channels require a bot token.",
+            )
+        validate_required_discord_interactions_config(body.config)
+    target = (
+        await _resolve_or_create_user(db, body.target_clerk_id)
+        if body.target_clerk_id is not None
+        else None
+    )
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
     webhook_secret = generate_webhook_secret()
-    account = ChannelAccount(
-        user_id=target.id,
+    account_config = (
+        discord_config_without_unverified_install_state(body.config)
+        if body.provider == CHANNEL_PROVIDER_DISCORD
+        else body.config
+    )
+    account = build_channel_account(
+        owner_user_id=target.id if target is not None else None,
         provider=body.provider,
         name=body.name,
         visibility=body.visibility,
         encrypted_provider_token=ciphertext,
         provider_token_nonce=nonce,
         webhook_secret_hash=hash_token(webhook_secret),
-        config=body.config,
+        config=account_config,
     )
     db.add(account)
     try:
         await db.flush()
+        if body.provider == CHANNEL_PROVIDER_TELEGRAM and body.provider_token:
+            bot_username = await configure_telegram_provider_webhook(
+                provider_token=body.provider_token,
+                webhook_url=channel_webhook_url(account.id, body.provider),
+                webhook_secret=webhook_secret,
+            )
+            if body.visibility == "public" and bot_username is None:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    "Telegram bot identity has no valid bot username",
+                )
+            if bot_username is not None:
+                config = dict(account.config) if isinstance(account.config, dict) else {}
+                config["bot_username"] = bot_username
+                account.config = config
         await store_channel_secrets(db, account=account, secrets_by_name=body.secrets)
         record_control_plane_audit(
             db,
@@ -485,7 +1217,7 @@ async def admin_create_channel(
             resource_type="channel_account",
             resource_id=str(account.id),
             channel_account_id=account.id,
-            target_user_id=target.id,
+            target_user_id=target.id if target is not None else None,
             source="api.admin",
             details={
                 "provider": account.provider,
@@ -501,18 +1233,115 @@ async def admin_create_channel(
             status.HTTP_409_CONFLICT,
             "channel name already exists for this provider and owner",
         ) from exc
+    if (
+        account.provider == CHANNEL_PROVIDER_DISCORD
+        and account.visibility == CHANNEL_VISIBILITY_PUBLIC
+    ):
+        # Discord validates the PATCH with a signed PING, so the account and
+        # public key must be committed and webhook-visible first. Bot-pool
+        # eligibility remains false until the readiness marker commits below.
+        await ensure_discord_application_identity_available(db, account=account)
+        await configure_discord_application(account)
+        await rearm_discord_command_reconciliation(db, account=account)
+        await sync_channel_commands(
+            account=account,
+            use_configured_discord_guild=False,
+        )
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_interactions_configured"] = True
+        account.config = config
+        mark_discord_reserved_commands_current(account)
+        await db.commit()
     await db.refresh(account)
     logger.info(
-        "admin_channel_created target_clerk_id=%s channel_id=%s provider=%s visibility=%s",
-        body.target_clerk_id,
+        "admin_channel_created channel_id=%s provider=%s visibility=%s owner_user_id=%s",
         account.id,
         account.provider,
         account.visibility,
+        account.user_id,
     )
     return AdminChannelCreatedResponse(
         **_admin_channel_response(account, target).model_dump(),
         webhook_secret=webhook_secret,
     )
+
+
+@whatsapp_pairing_router.post(
+    "/channels/whatsapp/pairing-sessions",
+    response_model=ChannelWhatsAppOnboardingSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def admin_start_platform_whatsapp_pairing(
+    body: AdminPlatformWhatsAppPairingSessionCreate,
+    response: Response,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelWhatsAppOnboardingSessionResponse:
+    _no_store(response)
+    result = await start_platform_whatsapp_pairing(
+        db,
+        account_id=body.account_id,
+        request_id=body.request_id,
+        name=body.name,
+        registry=get_active_whatsapp_sidecar_registry(),
+    )
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="channel.whatsapp.pairing.start",
+        resource_type="channel_whatsapp_pairing_session",
+        resource_id=str(result.id),
+        channel_account_id=result.channel_account_id,
+        source="api.admin",
+        details={"account_id": str(body.account_id), "state": result.state},
+    )
+    await db.commit()
+    return result
+
+
+@whatsapp_pairing_router.get(
+    "/channels/whatsapp/pairing-sessions/{session_id}",
+    response_model=ChannelWhatsAppOnboardingSessionResponse,
+)
+async def admin_get_platform_whatsapp_pairing(
+    session_id: UUID,
+    response: Response,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelWhatsAppOnboardingSessionResponse:
+    _no_store(response)
+    result = await get_platform_whatsapp_pairing(
+        db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
+    )
+    return result
+
+
+@whatsapp_pairing_router.delete(
+    "/channels/whatsapp/pairing-sessions/{session_id}",
+    response_model=ChannelWhatsAppOnboardingSessionResponse,
+)
+async def admin_cancel_platform_whatsapp_pairing(
+    session_id: UUID,
+    response: Response,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelWhatsAppOnboardingSessionResponse:
+    _no_store(response)
+    result = await cancel_platform_whatsapp_pairing(
+        db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
+    )
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="channel.whatsapp.pairing.cancel",
+        resource_type="channel_whatsapp_pairing_session",
+        resource_id=str(result.id),
+        channel_account_id=result.channel_account_id,
+        source="api.admin",
+        details={"state": result.state},
+    )
+    await db.commit()
+    return result
 
 
 @router.get("/channels/{account_id}", response_model=AdminChannelResponse)
@@ -533,20 +1362,104 @@ async def admin_update_channel(
     db: AsyncSession = Depends(get_session),
 ) -> AdminChannelResponse:
     account, owner = await _admin_get_channel_row(db, account_id=account_id)
-    updates = body.model_fields_set
+    updates = set(body.model_fields_set)
     if "name" in updates:
         account.name = body.name or account.name
     if "status" in updates and body.status is not None:
         account.status = body.status
-    if "visibility" in updates and body.visibility is not None:
-        account.visibility = body.visibility
+    if "visibility" in updates:
+        if body.visibility != account.visibility:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Channel visibility cannot be changed in place; recreate the channel.",
+            )
+        updates.remove("visibility")
+    current_telegram_bot_username = (
+        normalize_telegram_bot_username(
+            account.config.get("bot_username") if isinstance(account.config, dict) else None
+        )
+        if account.provider == CHANNEL_PROVIDER_TELEGRAM
+        else None
+    )
+    telegram_bot_username = current_telegram_bot_username
+    if account.provider == CHANNEL_PROVIDER_DISCORD and "config" in updates:
+        require_unchanged_discord_application_identity(account, body.config)
+    if (
+        account.provider == CHANNEL_PROVIDER_DISCORD
+        and "provider_token" in updates
+        and body.provider_token is not None
+    ):
+        application_id = discord_application_id_from_config(account.config)
+        if application_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Discord application identity is missing; recreate the channel.",
+            )
+        await verify_discord_application_token_identity(
+            application_id=application_id,
+            provider_token=body.provider_token,
+            config=account.config,
+        )
     if "provider_token" in updates:
+        if account.provider == CHANNEL_PROVIDER_TELEGRAM and body.provider_token:
+            if current_telegram_bot_username is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Telegram bot identity is missing; recreate the channel "
+                        "to replace its token."
+                    ),
+                )
+            telegram_bot_username = await get_telegram_bot_username(body.provider_token)
+            if telegram_bot_username.casefold() != current_telegram_bot_username.casefold():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Telegram provider token belongs to a different bot.",
+                )
         ciphertext, nonce = encrypt_optional_token(body.provider_token)
         account.encrypted_provider_token = ciphertext
         account.provider_token_nonce = nonce
+        if account.provider == CHANNEL_PROVIDER_DISCORD and body.provider_token is not None:
+            await rearm_discord_command_reconciliation(db, account=account)
     if "config" in updates:
         await validate_channel_account_config_urls(provider=account.provider, config=body.config)
-        account.config = body.config
+        account.config = (
+            discord_config_without_unverified_install_state(body.config)
+            if account.provider == CHANNEL_PROVIDER_DISCORD
+            else body.config
+        )
+    elif account.provider == CHANNEL_PROVIDER_DISCORD and "provider_token" in updates:
+        # A replacement token may belong to a different application. Force the
+        # next pairing request through /applications/@me identity and install
+        # capability verification before exposing install URLs or commands.
+        account.config = discord_config_without_unverified_install_state(account.config)
+    if account.provider == CHANNEL_PROVIDER_TELEGRAM and (
+        "provider_token" in updates or "config" in updates
+    ):
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        if "provider_token" in updates and body.provider_token is None:
+            config.pop("bot_username", None)
+        elif telegram_bot_username is not None:
+            config["bot_username"] = telegram_bot_username
+        account.config = config
+    reconcile_public_discord = bool(
+        account.provider == CHANNEL_PROVIDER_DISCORD
+        and account.visibility == CHANNEL_VISIBILITY_PUBLIC
+        and updates.intersection({"visibility", "provider_token", "config"})
+    )
+    if reconcile_public_discord:
+        if not account.encrypted_provider_token or not account.provider_token_nonce:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Public Discord channels require a bot token.",
+            )
+        config_error = discord_interactions_config_error(account.config)
+        if config_error is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=config_error)
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_interactions_configured"] = False
+        account.config = config
+        await ensure_discord_application_identity_available(db, account=account)
     try:
         if "secrets" in updates:
             await upsert_channel_secrets(db, account=account, secrets_by_name=body.secrets)
@@ -568,6 +1481,18 @@ async def admin_update_channel(
             status.HTTP_409_CONFLICT,
             "channel name already exists for this provider and owner",
         ) from exc
+    if reconcile_public_discord:
+        await configure_discord_application(account)
+        await rearm_discord_command_reconciliation(db, account=account)
+        await sync_channel_commands(
+            account=account,
+            use_configured_discord_guild=False,
+        )
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_interactions_configured"] = True
+        account.config = config
+        mark_discord_reserved_commands_current(account)
+        await db.commit()
     await db.refresh(account)
     return _admin_channel_response(account, owner)
 
@@ -613,11 +1538,25 @@ async def admin_sync_channel_commands(
         if body.commands is not None
         else None
     )
+    if account.provider == CHANNEL_PROVIDER_DISCORD and commands is None:
+        await ensure_discord_application_identity_available(db, account=account)
+        await configure_discord_application(account)
+        await rearm_discord_command_reconciliation(db, account=account)
     synced = await sync_channel_commands(
         account=account,
         commands=commands,
         guild_id=body.guild_id,
     )
+    if account.provider == CHANNEL_PROVIDER_DISCORD and commands is None:
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_interactions_configured"] = True
+        account.config = config
+        if body.guild_id is None:
+            mark_discord_reserved_commands_current(account)
+        await db.commit()
+    if account.provider == CHANNEL_PROVIDER_TELEGRAM:
+        mark_telegram_reserved_commands_current(account)
+        await db.commit()
     return ChannelCommandSyncResponse(provider=account.provider, commands=synced)
 
 
@@ -628,7 +1567,30 @@ async def admin_delete_channel(
     db: AsyncSession = Depends(get_session),
 ) -> None:
     account, _owner = await _admin_get_channel_row(db, account_id=account_id)
+    active_links = list(
+        (
+            await db.execute(
+                select(ChannelBotAgentLink).where(
+                    ChannelBotAgentLink.account_id == account.id,
+                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                    ChannelBotAgentLink.archived_at.is_(None),
+                )
+            )
+        ).scalars()
+    )
+    await require_whatsapp_logout_for_archive(
+        db,
+        account=account,
+        registry=get_active_whatsapp_sidecar_registry(),
+    )
     await archive_channel_account(db, account=account)
+    if account.provider in (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD):
+        for link in active_links:
+            await queue_environment_runtime_manifest_changed(
+                db,
+                link.user_id,
+                link.agent_id,
+            )
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -647,6 +1609,8 @@ async def admin_delete_channel(
 async def _admin_register_environment(
     body: AdminEnvironmentCreate,
     db: AsyncSession,
+    *,
+    default_name: str | None = None,
 ) -> EnvironmentCreatedResponse:
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     try:
@@ -663,8 +1627,14 @@ async def _admin_register_environment(
             registration_key=None
             if body.environment_id is not None
             else local_machine_registration_key(body.machine_id, body.agent_type),
+            default_name=default_name,
+            commit=False,
         )
         env = registered.env
+        # Admin registration is a hosted/managed origin, including the
+        # historical implicit Legacy V1 shape that had registration_key.
+        clear_connected_agent_registration(env)
+        await db.commit()
     except AgentEnvironmentIdConflict as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
@@ -702,6 +1672,7 @@ async def admin_register_agent(
             os_name=body.os_name,
         ),
         db,
+        default_name=body.default_name,
     )
 
 
@@ -747,6 +1718,21 @@ async def _admin_delete_environment(
         env=env,
         target_clerk_id=target_clerk_id,
     )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+                active_agent_filter(),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -763,8 +1749,17 @@ async def _admin_delete_environment(
         },
     )
     await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
-    await db.delete(env)
+    try:
+        revoked_key_ids = await archive_agent_and_project(db, agent=env)
+    except AgentLifecycleBoundaryError:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Agent Project ownership could not be proven; no resources were archived.",
+        ) from None
     await db.commit()
+    for key_id in revoked_key_ids:
+        invalidate_api_key_auth_cache(key_id)
     logger.info(
         "admin_environment_deleted target_clerk_id=%s env_id=%s",
         target_clerk_id,
@@ -819,9 +1814,7 @@ async def _admin_upsert_runtime_state(
     db: AsyncSession,
 ) -> AdminRuntimeStateResponse:
     env = (
-        await db.execute(
-            select(AgentEnvironment).where(AgentEnvironment.id == environment_id).with_for_update()
-        )
+        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
@@ -829,6 +1822,30 @@ async def _admin_upsert_runtime_state(
         db,
         env=env,
         target_clerk_id=body.target_clerk_id,
+    )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+                active_agent_filter(),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+
+    new_workspace_skill_keys: set[str] = (
+        set(body.skills.entries) if body.skills is not None else set()
+    )
+    await assert_agent_workspace_skill_write_compatible(
+        db,
+        agent_id=environment_id,
+        skill_keys=new_workspace_skill_keys,
     )
 
     # Lock the parent before the optional child row so concurrent first creates
@@ -841,21 +1858,70 @@ async def _admin_upsert_runtime_state(
         )
     ).scalar_one_or_none()
     existing_state = state
+    secret_rows = await load_hosted_runtime_secrets_for_update(
+        db,
+        environment_id=environment_id,
+    )
+    secret_values_changed = hosted_runtime_secret_values_changed(
+        secret_rows,
+        body.secret_values,
+    )
+    old_skill_ids = enabled_runtime_manifest_skill_ids(state.skills if state is not None else None)
+    new_skill_ids = enabled_runtime_manifest_skill_ids(
+        body.skills.model_dump(mode="json", exclude_none=True) if body.skills is not None else None
+    )
+    await lock_runtime_manifest_skill_reservations(
+        db,
+        user_id=target_user_id,
+        project_id=env.default_project_id,
+        skill_ids=old_skill_ids | new_skill_ids,
+    )
     previous_generation = state.generation if state is not None else None
-    desired_state = _runtime_state_values(body)
-    changed_fields = _runtime_state_changed_fields(existing_state, desired_state)
-    if existing_state is not None and body.generation <= existing_state.generation:
+    previous_apply_generation = state.apply_generation if state is not None else None
+    if existing_state is not None and body.generation < existing_state.generation:
         current_generation = existing_state.generation
-        if body.generation < current_generation:
-            await db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "stale_generation",
-                    "current_generation": current_generation,
-                },
-            )
-        material_changes = [field for field in changed_fields if field != "generation"]
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "stale_generation",
+                "current_generation": current_generation,
+            },
+        )
+    try:
+        apply_generation = resolve_runtime_apply_generation_update(
+            current=previous_apply_generation,
+            requested=body.apply_generation,
+            explicitly_set="apply_generation" in body.model_fields_set,
+        )
+    except RuntimeApplyGenerationUpdateError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": exc.code,
+                "current_apply_generation": exc.current_apply_generation,
+            },
+        ) from exc
+    desired_state = _runtime_state_values(body, apply_generation=apply_generation)
+    changed_fields = _runtime_state_changed_fields(existing_state, desired_state)
+    try:
+        await reconcile_runtime_oauth_claims(
+            db,
+            owner_user_id=target_user_id,
+            environment_id=environment_id,
+            runtimes=desired_state["runtimes"],
+        )
+    except OAuthCredentialClaimConflict as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if secret_values_changed:
+        changed_fields.append("secretValues")
+    if existing_state is not None and body.generation == existing_state.generation:
+        current_generation = existing_state.generation
+        material_changes = [
+            field for field in changed_fields if field not in {"generation", "apply_generation"}
+        ]
         if material_changes:
             await db.rollback()
             raise HTTPException(
@@ -865,19 +1931,29 @@ async def _admin_upsert_runtime_state(
                     "current_generation": current_generation,
                 },
             )
-        await db.commit()
-        return AdminRuntimeStateResponse(
-            environment_id=environment_id,
-            deployment_id=body.deployment_id,
-            instance_id=body.instance_id,
-            generation=body.generation,
-        )
+        if not changed_fields:
+            await db.commit()
+            return AdminRuntimeStateResponse(
+                environment_id=environment_id,
+                deployment_id=body.deployment_id,
+                instance_id=body.instance_id,
+                generation=body.generation,
+                apply_generation=apply_generation,
+            )
     if state is None:
         state = HostedRuntimeState(environment_id=environment_id)
         db.add(state)
 
     for field, value in desired_state.items():
         setattr(state, field, value)
+    if secret_values_changed:
+        await db.flush()
+        await sync_hosted_runtime_secret_values(
+            db,
+            environment_id=environment_id,
+            rows=secret_rows,
+            desired=body.secret_values,
+        )
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -892,12 +1968,16 @@ async def _admin_upsert_runtime_state(
             "instance_id": body.instance_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
+            "apply_generation": apply_generation,
+            "previous_apply_generation": previous_apply_generation,
             "cli_package_spec": body.cli_package_spec,
             "locale": body.locale.model_dump(),
             "enabled_runtimes": _enabled_runtime_names(desired_state["runtimes"]),
-            "has_bridge": body.bridge is not None,
             "has_mcp": body.mcp is not None,
-            "has_tools": body.tools is not None,
+            "has_skills": body.skills is not None,
+            "has_tools": True,
+            "has_secret_values": bool(body.secret_values),
+            "secret_refs": sorted(body.secret_values),
             "changed_fields": changed_fields,
         },
     )
@@ -917,6 +1997,7 @@ async def _admin_upsert_runtime_state(
         deployment_id=body.deployment_id,
         instance_id=body.instance_id,
         generation=body.generation,
+        apply_generation=apply_generation,
     )
 
 
@@ -962,6 +2043,21 @@ async def _admin_delete_runtime_state(
         env=env,
         target_clerk_id=target_clerk_id,
     )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+                active_agent_filter(),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
 
     state = (
         await db.execute(
@@ -980,8 +2076,14 @@ async def _admin_delete_runtime_state(
                 "cli_package_spec": state.cli_package_spec,
                 "enabled_runtimes": _enabled_runtime_names(state.runtimes),
                 "has_mcp": state.mcp is not None,
+                "has_skills": state.skills is not None,
                 "has_tools": state.tools is not None,
             }
+        )
+        await release_runtime_oauth_claims(
+            db,
+            owner_user_id=env.user_id,
+            environment_id=environment_id,
         )
         await db.delete(state)
         queue_runtime_manifest_changed(db, env.user_id, environment_id)
@@ -1038,12 +2140,14 @@ async def _admin_get_channel_row(
     *,
     account_id: UUID,
     include_archived: bool = False,
-) -> tuple[ChannelAccount, User]:
+) -> tuple[ChannelAccount, User | None]:
     filters = [ChannelAccount.id == account_id]
     if not include_archived:
         filters.append(ChannelAccount.archived_at.is_(None))
     result = await db.execute(
-        select(ChannelAccount, User).join(User, User.id == ChannelAccount.user_id).where(*filters)
+        select(ChannelAccount, User)
+        .outerjoin(User, User.id == ChannelAccount.user_id)
+        .where(*filters)
     )
     row = result.one_or_none()
     if row is None:
@@ -1052,15 +2156,15 @@ async def _admin_get_channel_row(
     return account, owner
 
 
-def _admin_channel_response(account: ChannelAccount, owner: User) -> AdminChannelResponse:
+def _admin_channel_response(account: ChannelAccount, owner: User | None) -> AdminChannelResponse:
     return AdminChannelResponse(
         id=account.id,
         owner_user_id=account.user_id,
-        owner_clerk_id=owner.clerk_id,
+        owner_clerk_id=owner.clerk_id if owner is not None else None,
         provider=account.provider,
         name=account.name,
         status=account.status,
-        visibility=account.visibility,
+        visibility=cast(AdminChannelVisibility, account.visibility),
         has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
         webhook_url=channel_webhook_url(account.id, account.provider),
         config=account.config,
@@ -1070,7 +2174,7 @@ def _admin_channel_response(account: ChannelAccount, owner: User) -> AdminChanne
     )
 
 
-def _enabled_runtime_names(runtimes: dict[str, object]) -> list[str]:
+def _enabled_runtime_names(runtimes: Mapping[str, JsonValue]) -> list[str]:
     return sorted(
         name
         for name, value in runtimes.items()
@@ -1078,7 +2182,11 @@ def _enabled_runtime_names(runtimes: dict[str, object]) -> list[str]:
     )
 
 
-def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
+def _runtime_state_values(
+    body: AdminRuntimeStateUpsert,
+    *,
+    apply_generation: int | None = None,
+) -> dict[str, Any]:
     def optional_wire_value(field: str) -> Any:
         value = getattr(body, field)
         if value is None:
@@ -1089,24 +2197,22 @@ def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
         "deployment_id": body.deployment_id,
         "instance_id": body.instance_id,
         "generation": body.generation,
+        "apply_generation": apply_generation,
         "cli_package_spec": body.cli_package_spec,
         "locale": body.locale.model_dump(mode="json"),
         "system": body.system.model_dump(exclude_none=True, mode="json"),
         "egress_engine": optional_wire_value("egress_engine"),
+        "companions": optional_wire_value("companions"),
         "runtimes": {
             name: runtime.model_dump(exclude_none=True, mode="json")
             for name, runtime in body.runtimes.items()
         },
-        "bridge": optional_wire_value("bridge"),
         "live_sync": body.live_sync.model_dump(mode="json"),
         "recovery": body.recovery.model_dump(mode="json"),
         "egress_profiles": optional_wire_value("egress_profiles"),
-        "mcp": body.mcp,
-        "tools": (
-            body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
-            if body.tools is not None
-            else None
-        ),
+        "mcp": optional_wire_value("mcp"),
+        "skills": optional_wire_value("skills"),
+        "tools": body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json"),
     }
 
 
@@ -1117,7 +2223,8 @@ def _runtime_state_changed_fields(
     return [
         field
         for field, value in desired_state.items()
-        if state is None or getattr(state, field) != value
+        if (state is None and (field != "apply_generation" or value is not None))
+        or (state is not None and getattr(state, field) != value)
     ]
 
 

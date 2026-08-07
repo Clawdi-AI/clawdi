@@ -96,13 +96,12 @@ Channel projection should:
 ## Sidecar Boundary
 
 The `clawdi runtime sidecar` command is the runtime-local Clawdi support process.
-It hosts the inbound bridge module when `bridge.surfaces` are declared and the
-outbound egress module when a manifest profile requires it.
+It hosts the outbound egress module when a manifest profile requires it.
 
 The CLI may own:
 
 - profile validation;
-- local bridge and egress module lifecycle;
+- local egress module lifecycle;
 - proxy and trust environment projection;
 - request matching for explicit profiles;
 - secret reference lookup from short-lived runtime state.
@@ -115,11 +114,9 @@ The CLI must not own:
 - target runtime update channels;
 - user BYOK provider traffic interception by default.
 
-The egress module is not the bridge module and not the Clawdi daemon. They share
-the sidecar process, but module boundaries stay explicit: egress owns outbound
-proxy and CA behavior, bridge owns inbound browser surface auth, and the daemon
-owns live-sync/API authority. Manifest state, status, token scope, and logs must
-keep those responsibilities separate.
+The egress module is not the Clawdi daemon. Egress owns outbound proxy and CA
+behavior, while the daemon owns live-sync/API authority. Manifest state, status,
+token scope, and logs must keep those responsibilities separate.
 
 ## Runtime Command Boundary
 
@@ -165,15 +162,13 @@ in-place official UI updates are required.
 
 ## Control UI And Terminal Boundary
 
-Control UI is a runtime browser UI surface proxied by the sidecar bridge module.
-Terminal is a deployment shell surface exposed by the dashboard and hosted API
-contract. They are intentionally separate:
+Control UI is a runtime-native browser UI surface. Terminal is a deployment
+shell surface exposed by the dashboard and hosted API contract. They are
+intentionally separate:
 
 - Runtime UI is runtime-specific and should use the runtime's own product
   wording, such as OpenClaw Control UI or Hermes Dashboard.
-- The bridge accepts explicitly declared runtime surfaces with listen/upstream
-  targets and surface-specific policy; it must not become arbitrary port
-  forwarding.
+- Runtime UI authentication stays with the official runtime.
 - Terminal is deployment-scoped and not split per agent.
 - Terminal token transport should prefer WebSocket subprotocols, with query
   string transport only as a compatibility fallback.

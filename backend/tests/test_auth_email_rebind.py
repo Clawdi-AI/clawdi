@@ -26,8 +26,11 @@ miss → fresh user, no Clerk-API call, no email matching.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
+from datetime import UTC, datetime
 
+import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -38,7 +41,9 @@ from sqlalchemy import select
 from app.core import auth as auth_module
 from app.core.auth import _auth_via_clerk_jwt
 from app.core.config import settings
+from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.user import User
+from app.services.principal_lifecycle import fence_clerk_user_deleted
 
 
 def _rsa_keypair() -> tuple[str, str]:
@@ -72,9 +77,19 @@ def signing_key(monkeypatch):
     yield private_pem
 
 
-def _sign(private_pem: str, sub: str, email: str | None) -> str:
+def _sign(
+    private_pem: str,
+    sub: str,
+    email: str | None,
+    *,
+    issuer: str | None = None,
+) -> str:
     return jwt.encode(
-        {"sub": sub, **({"email": email} if email else {})},
+        {
+            "sub": sub,
+            **({"email": email} if email else {}),
+            **({"iss": issuer} if issuer else {}),
+        },
         private_pem,
         algorithm="RS256",
     )
@@ -87,24 +102,79 @@ def _sign(private_pem: str, sub: str, email: str | None) -> str:
 
 @pytest.mark.asyncio
 async def test_rebind_swaps_clerk_id_when_jwt_email_matches(db_session, signing_key, monkeypatch):
+    issuer = "https://snapshot-rebind.clerk.example.test"
     monkeypatch.setattr(settings, "enable_snapshot_email_rebind", True)
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", issuer)
     email = f"rebind_{uuid.uuid4().hex[:8]}@example.test"
-    original = User(clerk_id=f"orig_{uuid.uuid4().hex[:8]}", email=email, name="Rebind")
+    original = User(
+        clerk_id=f"orig_{uuid.uuid4().hex[:8]}",
+        clerk_issuer=issuer,
+        email=email,
+        name="Rebind",
+    )
     db_session.add(original)
     await db_session.commit()
     await db_session.refresh(original)
     original_id = original.id
 
     new_sub = f"new_{uuid.uuid4().hex[:8]}"
-    token = _sign(signing_key, sub=new_sub, email=email)
+    token = _sign(signing_key, sub=new_sub, email=email, issuer=issuer)
     ctx = await _auth_via_clerk_jwt(token, db_session)
 
     assert ctx is not None
     assert ctx.user.id == original_id  # same row, snapshot data still attached
     assert ctx.user.clerk_id == new_sub  # rebound to new Clerk's sub
+    assert ctx.user.clerk_issuer == issuer
 
     await db_session.delete(ctx.user)
     await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_rebind_refuses_tombstoned_new_subject_without_mutating_snapshot_user(
+    db_session,
+    signing_key,
+    monkeypatch,
+):
+    issuer = "https://snapshot-tombstone.clerk.example.test"
+    monkeypatch.setattr(settings, "enable_snapshot_email_rebind", True)
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", issuer)
+    email = f"tombstone_{uuid.uuid4().hex[:8]}@example.test"
+    old_sub = f"old_{uuid.uuid4().hex[:8]}"
+    original = User(
+        clerk_id=old_sub,
+        clerk_issuer=issuer,
+        email=email,
+        name="Tombstone Rebind",
+    )
+    db_session.add(original)
+    await db_session.commit()
+
+    new_sub = f"terminated_{uuid.uuid4().hex[:8]}"
+    message_id = f"snapshot-tombstone-{uuid.uuid4().hex}"
+    receipt = await fence_clerk_user_deleted(
+        db_session,
+        issuer=issuer,
+        subject=new_sub,
+        message_id=message_id,
+        payload_sha256=hashlib.sha256(message_id.encode()).hexdigest(),
+        event_occurred_at=datetime.now(UTC),
+    )
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await _auth_via_clerk_jwt(
+            _sign(signing_key, sub=new_sub, email=email, issuer=issuer),
+            db_session,
+        )
+    assert exc.value.status_code == 401
+    await db_session.rollback()
+    await db_session.refresh(original)
+    lifecycle = await db_session.get(PrincipalLifecycle, receipt.lifecycle_id)
+    assert lifecycle is not None
+    assert lifecycle.cleanup_completed_at is None
+    assert original.clerk_id == old_sub
+    assert original.clerk_issuer == issuer
 
 
 @pytest.mark.asyncio
@@ -126,18 +196,27 @@ async def test_rebind_falls_back_to_clerk_api_when_jwt_lacks_email(
     original_id = original.id
 
     new_sub = f"new_{uuid.uuid4().hex[:8]}"
-    fetched: list[str] = []
-
-    async def fake_fetch(clerk_user_id: str):
-        fetched.append(clerk_user_id)
-        return email
-
-    monkeypatch.setattr(auth_module, "_fetch_clerk_primary_email", fake_fetch)
+    requests: list[httpx.Request] = []
+    _mock_clerk_backend(
+        monkeypatch,
+        user_id=new_sub,
+        response=_clerk_user_response(
+            primary_id="primary",
+            addresses=[
+                auth_module.ClerkEmailAddress(
+                    id="primary",
+                    email_address=email,
+                    verification=auth_module.ClerkEmailVerification(status="verified"),
+                )
+            ],
+        ),
+        requests=requests,
+    )
 
     token = _sign(signing_key, sub=new_sub, email=None)
     ctx = await _auth_via_clerk_jwt(token, db_session)
 
-    assert fetched == [new_sub]
+    assert [request.url.path for request in requests] == [f"/v1/users/{new_sub}"]
     assert ctx is not None
     assert ctx.user.id == original_id
     assert ctx.user.clerk_id == new_sub
@@ -243,12 +322,8 @@ async def test_rebind_refuses_when_clerk_api_returns_none(db_session, signing_ke
     monkeypatch.setattr(settings, "enable_snapshot_email_rebind", True)
     monkeypatch.setattr(settings, "clerk_secret_key", "sk_test_dummy")
 
-    async def fake_fetch(clerk_user_id: str):
-        return None  # simulate any failure mode
-
-    monkeypatch.setattr(auth_module, "_fetch_clerk_primary_email", fake_fetch)
-
     new_sub = f"new_{uuid.uuid4().hex[:8]}"
+    _mock_clerk_backend(monkeypatch, user_id=new_sub, status_code=503)
     token = _sign(signing_key, sub=new_sub, email=None)
 
     with pytest.raises(HTTPException) as exc:
@@ -337,20 +412,13 @@ async def test_rebind_disabled_does_not_call_clerk_api(db_session, signing_key, 
     monkeypatch.setattr(settings, "enable_snapshot_email_rebind", False)
     monkeypatch.setattr(settings, "clerk_secret_key", "sk_test_dummy")
 
-    called = False
-
-    async def fake_fetch(clerk_user_id: str):
-        nonlocal called
-        called = True
-        return "should-not-be-used@example.test"
-
-    monkeypatch.setattr(auth_module, "_fetch_clerk_primary_email", fake_fetch)
-
     new_sub = f"new_{uuid.uuid4().hex[:8]}"
+    requests: list[httpx.Request] = []
+    _mock_clerk_backend(monkeypatch, user_id=new_sub, requests=requests)
     token = _sign(signing_key, sub=new_sub, email=None)
     ctx = await _auth_via_clerk_jwt(token, db_session)
 
-    assert called is False
+    assert requests == []
     assert ctx is not None
     assert ctx.user.clerk_id == new_sub
     assert ctx.user.email is None
@@ -364,8 +432,42 @@ async def test_rebind_disabled_does_not_call_clerk_api(db_session, signing_key, 
 # ---------------------------------------------------------------------------
 
 
-def _clerk_user_response(*, primary_id: str | None, addresses: list[dict]) -> dict:
-    return {"primary_email_address_id": primary_id, "email_addresses": addresses}
+def _clerk_user_response(
+    *,
+    primary_id: str | None,
+    addresses: list[auth_module.ClerkEmailAddress],
+) -> auth_module.ClerkUserResponse:
+    return auth_module.ClerkUserResponse(
+        primary_email_address_id=primary_id,
+        email_addresses=addresses,
+    )
+
+
+def _mock_clerk_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    user_id: str = "user_x",
+    response: auth_module.ClerkUserResponse | None = None,
+    content: bytes = b"",
+    status_code: int = 200,
+    requests: list[httpx.Request] | None = None,
+) -> None:
+    real_client = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if requests is not None:
+            requests.append(request)
+        assert request.url == f"https://api.clerk.com/v1/users/{user_id}"
+        if response is not None:
+            return httpx.Response(status_code, content=response.model_dump_json())
+        return httpx.Response(status_code, content=content)
+
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return real_client(transport=transport)
+
+    monkeypatch.setattr(auth_module.httpx, "AsyncClient", client_factory)
 
 
 @pytest.mark.asyncio
@@ -375,39 +477,19 @@ async def test_clerk_helper_returns_verified_primary(monkeypatch):
     payload = _clerk_user_response(
         primary_id="idn_1",
         addresses=[
-            {
-                "id": "idn_1",
-                "email_address": "alice@example.test",
-                "verification": {"status": "verified"},
-            },
-            {
-                "id": "idn_2",
-                "email_address": "alice+alt@example.test",
-                "verification": {"status": "verified"},
-            },
+            auth_module.ClerkEmailAddress(
+                id="idn_1",
+                email_address="alice@example.test",
+                verification=auth_module.ClerkEmailVerification(status="verified"),
+            ),
+            auth_module.ClerkEmailAddress(
+                id="idn_2",
+                email_address="alice+alt@example.test",
+                verification=auth_module.ClerkEmailVerification(status="verified"),
+            ),
         ],
     )
-
-    class FakeResp:
-        status_code = 200
-
-        def json(self):
-            return payload
-
-    class FakeClient:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        async def get(self, *a, **kw):
-            return FakeResp()
-
-    monkeypatch.setattr(auth_module.httpx, "AsyncClient", FakeClient)
+    _mock_clerk_backend(monkeypatch, response=payload)
 
     got = await auth_module._fetch_clerk_primary_email("user_x")
     assert got == "alice@example.test"
@@ -420,34 +502,14 @@ async def test_clerk_helper_refuses_unverified_primary(monkeypatch):
     payload = _clerk_user_response(
         primary_id="idn_1",
         addresses=[
-            {
-                "id": "idn_1",
-                "email_address": "alice@example.test",
-                "verification": {"status": "unverified"},
-            },
+            auth_module.ClerkEmailAddress(
+                id="idn_1",
+                email_address="alice@example.test",
+                verification=auth_module.ClerkEmailVerification(status="unverified"),
+            ),
         ],
     )
-
-    class FakeResp:
-        status_code = 200
-
-        def json(self):
-            return payload
-
-    class FakeClient:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        async def get(self, *a, **kw):
-            return FakeResp()
-
-    monkeypatch.setattr(auth_module.httpx, "AsyncClient", FakeClient)
+    _mock_clerk_backend(monkeypatch, response=payload)
 
     got = await auth_module._fetch_clerk_primary_email("user_x")
     assert got is None
@@ -463,34 +525,14 @@ async def test_clerk_helper_returns_none_when_no_primary_marked(monkeypatch):
     payload = _clerk_user_response(
         primary_id=None,
         addresses=[
-            {
-                "id": "idn_1",
-                "email_address": "alice@example.test",
-                "verification": {"status": "verified"},
-            },
+            auth_module.ClerkEmailAddress(
+                id="idn_1",
+                email_address="alice@example.test",
+                verification=auth_module.ClerkEmailVerification(status="verified"),
+            ),
         ],
     )
-
-    class FakeResp:
-        status_code = 200
-
-        def json(self):
-            return payload
-
-    class FakeClient:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        async def get(self, *a, **kw):
-            return FakeResp()
-
-    monkeypatch.setattr(auth_module.httpx, "AsyncClient", FakeClient)
+    _mock_clerk_backend(monkeypatch, response=payload)
 
     got = await auth_module._fetch_clerk_primary_email("user_x")
     assert got is None
@@ -499,27 +541,15 @@ async def test_clerk_helper_returns_none_when_no_primary_marked(monkeypatch):
 @pytest.mark.asyncio
 async def test_clerk_helper_returns_none_on_non_200(monkeypatch):
     monkeypatch.setattr(settings, "clerk_secret_key", "sk_test_dummy")
-
-    class FakeResp:
-        status_code = 503
-
-        def json(self):
-            return {}
-
-    class FakeClient:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        async def get(self, *a, **kw):
-            return FakeResp()
-
-    monkeypatch.setattr(auth_module.httpx, "AsyncClient", FakeClient)
+    _mock_clerk_backend(monkeypatch, status_code=503)
 
     got = await auth_module._fetch_clerk_primary_email("user_x")
     assert got is None
+
+
+@pytest.mark.asyncio
+async def test_clerk_helper_rejects_malformed_response_json(monkeypatch):
+    monkeypatch.setattr(settings, "clerk_secret_key", "sk_test_dummy")
+    _mock_clerk_backend(monkeypatch, content=b'{"email_addresses": [')
+
+    assert await auth_module._fetch_clerk_primary_email("user_x") is None

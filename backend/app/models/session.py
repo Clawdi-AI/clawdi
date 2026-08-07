@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime
 
+from pydantic import JsonValue
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -16,19 +18,38 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401 — register `projects` table for FK resolution
+from app.models.project import Project
 
 
 class AgentEnvironment(Base, TimestampMixin):
     __tablename__ = "agent_environments"
-    # `id` is the stable agent identity. `registration_key` is only
-    # an idempotency key for self-managed setup flows that do not
-    # provide an explicit agent id; hosted agents leave it NULL.
+    # `id` is the stable agent identity. `registration_key` is an
+    # idempotency key for implicit registration flows. Current Hosted V2
+    # identities are explicit and leave it NULL, but historical Legacy V1
+    # Admin registration could populate the same key shape as self-managed
+    # setup, so registration_key alone is never Connected origin evidence.
     __table_args__ = (
         UniqueConstraint(
             "user_id",
             "registration_key",
             name="uq_agent_envs_user_registration_key",
+        ),
+        CheckConstraint(
+            "connected_agent_registered_at IS NULL OR registration_key IS NOT NULL",
+            name="ck_agent_envs_connected_registration_origin",
+        ),
+        CheckConstraint(
+            "project_skill_reconcile_version IS NULL OR project_skill_reconcile_version = 1",
+            name="ck_agent_environments_project_skill_reconcile_version",
+        ),
+        CheckConstraint(
+            "project_skill_reconcile_version IS NULL OR connected_agent_registered_at IS NOT NULL",
+            name="ck_agent_environments_project_skill_reconcile_eligibility",
+        ),
+        CheckConstraint(
+            "(project_skill_reconcile_version IS NULL) = "
+            "(project_skill_reconcile_observed_at IS NULL)",
+            name="ck_agent_environments_project_skill_reconcile_observation",
         ),
     )
 
@@ -45,6 +66,10 @@ class AgentEnvironment(Base, TimestampMixin):
     agent_version: Mapped[str | None] = mapped_column(String(50))
     os: Mapped[str] = mapped_column(String(50), nullable=False)
     registration_key: Mapped[str | None] = mapped_column(String(300))
+    # Archived agents retain their stable identity and every relationship.
+    # Operational/query boundaries treat only NULL as active; registration
+    # may reactivate the row in place.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Agent identity labels. `default_name` is assigned by Cloud API for
     # explicit hosted identities; `display_name` is the user's dashboard override.
@@ -57,13 +82,13 @@ class AgentEnvironment(Base, TimestampMixin):
 
     # `clawdi daemon` observability. last_seen_at is the
     # legacy "anything happened on this env" timestamp; sync_*
-    # fields are specifically about the daemon's push/pull cycle.
+    # fields are specifically about the daemon's projection cycle.
     # Dashboard renders "Last synced: X ago" + "Daemon offline" red
     # badge by reading these.
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_sync_error: Mapped[str | None] = mapped_column(Text)
-    # Last `users.skills_revision` the daemon pulled successfully —
-    # lets server detect "missed events" if SSE drops mid-flight.
+    # Last `users.skills_revision` the daemon reconciled successfully —
+    # lets the server detect missed invalidations if SSE drops mid-flight.
     last_revision_seen: Mapped[int | None] = mapped_column(Integer)
     # Peak retry-queue depth since the daemon last booted. Resets
     # on `clawdi daemon` start. NOT a 24h rolling window — that
@@ -80,6 +105,19 @@ class AgentEnvironment(Base, TimestampMixin):
     # auto-pick-up the new sync until operator opts them in); new
     # envs created post-v1 default to true.
     sync_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    # Positive, durable Connected Agent origin evidence. Only the current
+    # self-managed registration route may write this marker, and only for an
+    # OAuth CLI or unbound unmanaged API key. Historical ambiguous rows remain
+    # NULL; Admin, managed, and environment-bound registration never qualify.
+    connected_agent_registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Connected Agent-only leased capability observation. Legacy V1 deployments
+    # never use it; Hosted V2 deployments prove readiness through their desired
+    # manifest and same-generation observation. Old Connected daemons cannot
+    # renew observed_at, so a downgrade expires instead of retaining evidence.
+    project_skill_reconcile_version: Mapped[int | None] = mapped_column(Integer)
+    project_skill_reconcile_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     # Default project this env's daemon writes into. Phase-1 migration
     # creates one env-local project per env and points this column at
@@ -93,7 +131,7 @@ class AgentEnvironment(Base, TimestampMixin):
     # blocking the whole tear-down.
     default_project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
     )
 
@@ -169,4 +207,4 @@ class Session(Base, TimestampMixin):
     # would clobber related_refs back to JSON null. With this flag,
     # Python None → SQL NULL, and the coalesce preserves the
     # server-computed value across re-pushes.
-    related_refs: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    related_refs: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))

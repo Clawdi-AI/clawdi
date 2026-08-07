@@ -7,7 +7,8 @@ those concepts to backend tables and API boundaries.
 The model intentionally does not mirror the legacy channel bridge shape. The
 backend owns the control plane, routing state, durable outboxes, and
 agent-facing SDK emulation. Provider protocol adapters may exist only where a
-provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
+provider protocol requires them. The WhatsApp package is the sole physical
+provider transport, not an Agent-facing connector.
 
 ## Goals
 
@@ -28,15 +29,15 @@ provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
 | --- | --- | --- |
 | User | A Clawdi account. The user owns private bots, agent links, pair codes, bindings, messages, deliveries, and provider-specific credentials they create. | `users` plus `user_id` columns on channel tables |
 | Agent | A Clawdi runtime endpoint that can receive channel messages and send replies through an SDK-compatible surface. Channels bind to `AgentEnvironment`, not Projects. | `agent_environments` |
-| Provider | The external network family: Telegram, Discord, WhatsApp, or iMessage/BlueBubbles. | `ChannelAccount.provider` |
-| External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, one WhatsApp phone identity, or one BlueBubbles server. | `channel_accounts` |
-| Visibility | Whether an external bot is private to its owner or available as a Clawdi-managed public bot. | `ChannelAccount.visibility` |
+| Provider | The external network family: Telegram, Discord, or WhatsApp. | `ChannelAccount.provider` |
+| External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, or one WhatsApp phone identity. | `channel_accounts` |
+| Visibility | Whether an external bot is private to its owner or available as a Clawdi-managed public bot. Private rows have a tenant `user_id`; public rows have `user_id = NULL`. | `ChannelAccount.visibility`, `ChannelAccount.user_id` |
 | Bot access | The caller's effective relationship to a selectable bot account: `owner` for caller-owned private bots, `public` for Clawdi-managed public bots. | `/v1/channels/bot-pool` response |
 | Bot capabilities | The caller's allowed actions for a selectable bot account, such as link, pair, send, manage account, or sync commands. | `/v1/channels/bot-pool` response |
 | Bot pool | The authenticated user's selectable bot candidates: owned private bots and active Clawdi-managed public bots. This is a read-only view, not a separate state table. | `/v1/channels/bot-pool` |
 | Bot-agent link | A user's authorization edge from one external bot to one Clawdi agent. This is the unit that owns the mock provider SDK token. | `channel_bot_agent_links` |
-| Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, WhatsApp Graph/Baileys, or BlueBubbles-compatible endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
-| External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, WhatsApp JID, or iMessage chat GUID. | `ChannelBinding.external_chat_id` |
+| Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, or WhatsApp synthetic Noise endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
+| External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, or WhatsApp JID. | `ChannelBinding.external_chat_id` |
 | External actor | The provider user or sender who issued a control command in a chat. In a DM this is usually the chat itself; in a group it is the participant id. | `ChannelBinding.paired_external_user_id` |
 | Conversation route | The active routing decision for one `(external bot, external chat)` session. It points to one bot-agent link and therefore one agent. | `channel_bindings` |
 | Route alias | A provider-specific alternate id for the same conversation, such as WhatsApp LID/PN aliases or Discord guild/channel aliases. | `channel_binding_aliases` |
@@ -44,7 +45,7 @@ provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
 | Inbound message | A persisted provider message, optionally bound to a route and link. Agent inboxes replay these rows. | `channel_messages` |
 | Outbound delivery | A durable send request processed by the backend worker. | `channel_deliveries` |
 | Provider secret | Real upstream credentials or provider-specific secrets, encrypted at rest. | `channel_accounts`, `channel_secrets` |
-| WhatsApp tenant credential | A Baileys-facing credential for a specific user/link on a WhatsApp account. | `channel_agent_credentials`, `channel_whatsapp_auth_certs` |
+| WhatsApp synthetic credential | Link-scoped Baileys auth and Noise identity that contains no physical account auth state or provider token. | `channel_agent_credentials`, `channel_whatsapp_auth_certs` |
 
 ## Relationship Model
 
@@ -56,6 +57,7 @@ User
 
 ChannelAccount (external bot)
   has one provider and one visibility
+  belongs to one User when private; is ownerless platform inventory when public
   has many ChannelBotAgentLink rows
   has many ChannelBinding rows
   has many ChannelMessage and ChannelDelivery rows
@@ -89,6 +91,7 @@ Cardinality rules:
 | Active binding target | Exactly one bot-agent link, therefore one agent. |
 | Binding aliases | Many aliases may resolve to one active binding, but an alias is unique per account. |
 | Pair code | One pair code targets one bot-agent link and can be claimed once. |
+| Default managed Agent profile | At most one active Link per provider is projected into one default OpenClaw or Hermes profile. |
 
 ## Hard Invariants
 
@@ -110,8 +113,11 @@ These rules define the product, not just the current implementation:
 - Pair/unpair commands are system commands and must not be delivered to agents.
 - The legacy channel bridge process does not own routing, queueing, or product
   state.
-- A WhatsApp Baileys sidecar may own protocol connectivity, but FastAPI and
-  Postgres own authorization, routing, and persistence.
+- The WhatsApp physical provider transport owns the one real-account Baileys
+  socket and durable linked-device state. FastAPI/Postgres own authorization,
+  routing, aliases, synthetic identity, and durable inbox/outbox state.
+- A WhatsApp synthetic Agent socket never receives physical auth state or a
+  real provider credential.
 
 ## Ownership And Visibility
 
@@ -126,15 +132,17 @@ Private bots:
 Public bots:
 
 - Created and managed only through `/v1/admin/channels`.
-- Stored as `visibility = public`.
+- Stored as `visibility = public` with `user_id = NULL`; they do not cascade
+  with any tenant `User`.
 - Visible to authenticated users for linking and pairing.
 - Provider credentials, webhook secret rotation, archive, and provider-wide
-  command sync remain admin operations. The backing `user_id` is not product
-  ownership and does not grant mutable user API access.
+  command sync remain admin operations. Account-level encrypted secrets and
+  WhatsApp auth certificates are platform-owned and likewise have no tenant
+  `user_id`.
 - User-created child state is still owned by the requesting user:
   `channel_bot_agent_links`, `channel_pair_codes`, `channel_bindings`,
   `channel_messages`, `channel_deliveries`, attachments, scheduled messages,
-  WhatsApp tenant credentials, and agent references.
+  WhatsApp synthetic credentials, and agent references.
 
 This means a public bot is shared infrastructure, but each user's route and
 agent token state is private to that user.
@@ -150,7 +158,7 @@ can access the account. The difference is account management, not runtime use:
 | Create pair code | Caller-owned link only | Caller-owned link only |
 | Pair/unpair external chat | Actor-scoped shared state machine | Actor-scoped shared state machine |
 | List bindings/messages/send | Caller-owned child state only | Caller-owned child state only |
-| WhatsApp tenant credentials/auth cert | Caller-owned child state plus shared account cert | Caller-owned child state plus shared account cert |
+| WhatsApp synthetic runtime state | Internal Link-scoped projection only | Internal Link-scoped projection only |
 | Delete account | Owner through user API | Admin API only |
 | Provider token/config/webhook secret | Owner/admin for private managed accounts | Admin API only |
 | Provider-wide command sync | Owner through user API | Admin API only |
@@ -186,7 +194,8 @@ Pair flow:
 
 1. A user chooses an accessible channel account and one of their agents.
 2. Clawdi creates or reuses a `channel_bot_agent_links` row.
-3. Clawdi returns a one-time `/bot_pair <code>` value.
+3. Clawdi returns the one-time `/clawdi_pair <code>` command. Telegram,
+   Discord, and WhatsApp all use this canonical spelling.
 4. The user sends the code into the external chat.
 5. Provider ingress extracts:
    - external bot account from the webhook route,
@@ -199,21 +208,157 @@ Pair flow:
    external actor id.
 8. The provider adapter sends a best-effort visible reply to the same external
    chat, such as `Paired! This chat is now connected to your agent.`.
-9. If the provider has persistent bot command menus, the adapter replays the
+9. If the provider has persistent bot command menus, the adapter reconciles the
    link's stored broad-scope command state onto the newly paired chat. Telegram
-   replays broad `setMyCommands` scopes to a per-chat scope. Discord replays
-   stored global application commands to the newly paired guild when the guild
-   is uncontested.
+   replays broad `setMyCommands` scopes to a per-chat scope. Discord stores the
+   Link shadow as desired state and materializes it only into uncontested Guild
+   bindings. A per-Guild fingerprint is written only after Discord accepts the
+   idempotent bulk overwrite; the channel worker retries missing or stale
+   fingerprints after transient failures and after the bot joins later.
+
+Pair-code security and rollout rules:
+
+- Newly issued codes contain 10 characters from an unambiguous 32-character
+  alphabet, for 50 bits of entropy, and have no display prefix. The default
+  TTL is 5 minutes; API callers may explicitly request 60 through 86,400
+  seconds. Changing the default does not shorten the stored expiry of a code
+  that was already issued.
+- The database stores only the SHA-256 code hash. The hash is globally unique,
+  while lookup also requires the channel account id; global uniqueness does
+  not make a code claimable through another bot. Each row targets one
+  caller-owned bot-agent link and user.
+- Generation retries a code-hash uniqueness collision at most five times using
+  the named database constraint without aborting the caller's transaction.
+- Provider ingress is authenticated before claim processing. Claim locks the
+  code row and the target chat identity. Exactly one concurrent claim can mark
+  the code claimed; later attempts return `already_used`. Invalid,
+  actor-forbidden, or already-paired attempts do not consume the code, so a
+  legitimate user can retry until its stored expiry. An expired code is always
+  rejected even if its row still has pending status.
+- There is no dedicated durable invalid-guess limiter. Ten characters are used
+  instead of eight for that reason: at an intentionally conservative 1,000
+  online guesses per second for the full 300-second default TTL, one pending
+  code on the account has an upper-bound success probability of about
+  `300,000 / 2^50 = 2.7e-10`. The same bound for an eight-character, 40-bit
+  code would be about `2.7e-7`. Risk scales linearly with simultaneously
+  pending codes on the same account.
+- The 10-character code fits Telegram's `/start` payload and every native
+  provider command parser. Previously issued `PAIR...` code values remain
+  claimable with the canonical command until their stored expiry, and their
+  Telegram `/start` payloads remain parseable. `/bot_pair` and `/bot_unpair`
+  are not accepted command aliases.
 
 The visible reply is not part of the database transaction that claims the pair
 code. If the provider send fails, the claimed binding remains valid and the
 webhook still succeeds. This prevents a transient provider outage from rolling
-back a pairing operation that was already accepted by Clawdi. Command replay is
-also best-effort and must not roll back the binding.
+back a pairing operation that was already accepted by Clawdi. Discord command
+materialization does not roll back the binding, but it is not silent best
+effort: failed desired state remains pending for durable worker reconciliation
+and is not returned to the Agent as materialized state.
+
+Discord pairing claims fail closed on Discord-signed HTTP interactions or the
+backend's Discord Gateway `INTERACTION_CREATE` ingress. A server pair requires
+interaction context `0`, `authorizing_integration_owners["0"]` equal to the
+interaction `guild_id`, sufficient member permissions, and a successful
+bot-authenticated `GET /guilds/{guild_id}` membership check before the code is
+claimed. A direct-message pair requires interaction context `1` and
+`authorizing_integration_owners["1"]` equal to the invoking user. Context `2`
+(`PRIVATE_CHANNEL`), message-shaped payloads, and webhook-secret-only requests
+cannot claim pair codes.
+
+Discord binding display names are metadata only; routing and authority always
+use immutable provider ids. A newly paired Guild reuses the trusted name from
+the existing bot-authenticated membership response, without a second provider
+request. A newly paired DM uses the invoking actor's `global_name`, then
+`username`, from a Discord-signed interaction or trusted Gateway event after
+trimming blank values. Existing Guild bindings are lazily healed from trusted
+`GUILD_CREATE` events, and existing DM bindings from signed interactions or
+trusted Gateway actors that match the original pairing actor. Guild healing
+also normalizes legacy `guild_text` rows to `guild` while preserving
+`external_chat_id` as the Guild id. Listing bindings never makes per-row
+provider requests, webhook-secret-only payloads cannot update display
+metadata, and a blank or id-shaped candidate never overwrites a useful stored
+name.
+
+Normal unpair follows the same context and installation-owner checks; a Guild
+unpair with a valid owner also requires current Manage Server authority. If
+Discord has removed the required owner key after uninstall, a cleanup-only
+fallback is allowed for a verified application-command interaction only when
+an active binding exactly matches the scope and the invoker is the original
+pairing actor. That fallback does not require current Manage Server permission
+or bot membership. A present-but-mismatched owner never falls back.
+
+Agent-defined Discord commands are Guild-only. Discord's global User Install
+command namespace belongs to the shared application, so per-Link command menus
+cannot be safely materialized in DMs. User Install DMs support Clawdi's
+account-global reserved pair/unpair commands and routed messages only.
+
+The managed server install requests only Add Reactions, View Channels, Send
+Messages, Embed Links, Attach Files, Read Message History, Create Public
+Threads, and Send Messages in Threads (`309237763136`). Create Public Threads
+supports Hermes' public `/thread`, auto-thread, and forum-post behavior plus the
+transparent transport's public thread-create contract. Create Private Threads
+and Manage Threads remain excluded: Clawdi does not create private threads or
+archive, lock, or delete threads. Hermes supplies names in its thread-create
+requests and does not rename existing threads. OpenClaw can asynchronously
+replace an auto-thread's provisional name with a generated title, but it PATCHes
+only the thread ID returned by that same bot create request; Discord permits a
+thread creator to change `name`, `archived`, and `auto_archive_duration` without
+Manage Threads. Managed OpenClaw projections also set `actions.channels` and
+`actions.threads` to false, blocking arbitrary `sendMessage.threadName` renames
+and the optional thread action tool; ordinary replies in existing threads
+continue through normal message sending. Managed Hermes projections leave user
+allowlists empty instead of writing a `"*"` username, so they do not accidentally
+request Server Members intent while preserving the adapter's documented
+allow-everyone behavior.
+
+OAuth scopes, bot role permissions, and Gateway intents are independent. Guild
+Install uses the `bot` and `applications.commands` OAuth scopes and the exact
+permission bitfield above. User Install uses only `applications.commands`, has
+no `bot` scope, and carries no bot permission bitfield. The native Gateway
+default (`46593`) separately enables Guilds, Guild Messages, Guild Message
+Reactions, Direct Messages, Direct Message Reactions, and Message Content. It
+does not enable Guild Members, Presences, moderation, or voice intents.
+Discord account preparation verifies that the application flags contain either
+the approved or limited Message Content capability before configuring installs.
+If the owner has not enabled that privileged intent, preparation stops with an
+actionable configuration error; Clawdi does not try to mutate privileged-intent
+Portal settings.
+
+The backend is the sole authority for Discord installation contexts, scopes,
+role permissions, install-configuration versions, PATCH/read-back verification,
+Message Content readiness, and the generated Guild and User Install URLs. The
+Web treats those query values as opaque provider policy. Before rendering an
+external link or QR code it validates only a bounded HTTPS URL on the exact
+`discord.com` origin and `/oauth2/authorize` path, without credentials,
+fragments, redirect-flow parameters, duplicate query keys, or an invalid
+`client_id`. It does not reinterpret `integration_type`, scopes, or the
+permission bitfield.
+
+This boundary is intentionally split-deploy compatible: a newer Web accepts a
+safe install URL generated by either the preceding or current backend policy.
+An absent or unsafe Guild Install URL disables only the server-install action;
+it does not invalidate a valid pair code or a separately safe User Install/DM
+path. The backend's preparation contract remains fail closed before it returns
+those values.
+
+Done: `bun test apps/web/src/hosted/v2/channels/channel-linking.logic.test.ts`
+exits 0 and the split-deploy and unsafe-URL cases pass.
+
+Hermes' upstream Discord client also asks for Voice States, but the managed
+Clawdi Gateway is the event authority and intentionally ignores the downstream
+IDENTIFY intent selection. Managed Discord voice is not enabled: the install
+does not grant Connect, Speak, or Send Voice Messages, and the upstream voice
+message helper can fall back to an ordinary attachment. Likewise, managed
+Hermes uses its allow-everyone mode without the Members intent. Member search
+from its optional admin toolset is therefore not a managed capability; Clawdi
+does not broaden the privileged Guild Members intent merely because the raw
+adapter exposes that tool.
 
 Unpair flow:
 
-1. The external actor sends `/bot_unpair`.
+1. The external actor sends `/clawdi_unpair`. Telegram, Discord, and WhatsApp
+   all use this canonical spelling.
 2. Provider ingress resolves the active binding for the chat.
 3. The backend verifies the command actor matches
    `ChannelBinding.paired_external_user_id`.
@@ -226,28 +371,28 @@ Pair codes are not consumed when actor authorization fails.
 
 Pairing control is actor-scoped, not just chat-scoped.
 
-The backend must prevent this attack:
+The backend must prevent this attack. For example, on Telegram:
 
 1. Alice pairs a public bot in a group chat to Alice's agent.
 2. Bob is another group participant.
-3. Bob sends `/bot_unpair`.
-4. Bob sends `/bot_pair <bob-code>`.
+3. Bob sends `/clawdi_unpair`.
+4. Bob sends `/clawdi_pair <bob-code>`.
 
 Bob must not be able to unpair Alice's route or replace it with Bob's agent.
 
 Rules:
 
 - A successful pair stores the external actor that claimed the route.
-- Later `/bot_pair` and `/bot_unpair` commands for the same active route must
-  come from the same external actor.
+- Later provider pair/unpair commands for the same active route must come from
+  the same external actor.
 - Non-DM pair/unpair commands without an extractable actor are rejected.
 - DM payloads may fall back to the external chat id as actor id when the
   provider does not send a separate sender field.
 - Pair/unpair commands are system commands. They are persisted for audit and
   marked handled, including failed commands, so pair codes are not delivered to
   the current agent inbox.
-- Unknown `/bot_*` commands are also treated as system commands and acknowledged
-  by provider-specific reply logic.
+- Unknown provider-reserved commands are also treated as system commands and
+  acknowledged by provider-specific reply logic.
 
 Provider actor extraction:
 
@@ -255,8 +400,7 @@ Provider actor extraction:
 | --- | --- |
 | Telegram | `callback_query.from.id`, `message.from.id`, `sender_chat.id`, or DM chat id fallback. |
 | Discord | `author.id`, `user.id`, `member.user.id`, or interaction member user id. |
-| WhatsApp | Baileys or Cloud payload sender fields such as `participant`, `senderJid`, `senderPnJid`, `senderLidJid`, or DM `from`/`remoteJid` fallback. Group JIDs are not used as actor ids. |
-| iMessage / BlueBubbles | Sender or handle address/id fields, with DM chat GUID fallback. |
+| WhatsApp | Baileys key fields such as `participant`, `participantAlt`, `remoteJid`, or `remoteJidAlt`. Group JIDs are not used as actor ids. |
 
 ## Agent Token Model
 
@@ -277,8 +421,7 @@ Examples of link-scoped state:
 - Telegram and Discord agent inbox cursors.
 - Discord application command shadows visible to the agent.
 - Discord Gateway replay sessions.
-- WhatsApp tenant credentials and Baileys auth material.
-- BlueBubbles-compatible agent webhook registration.
+- WhatsApp synthetic credentials, Noise identity, and Signal state.
 
 Provider-wide state stays account-scoped:
 
@@ -288,12 +431,62 @@ Provider-wide state stays account-scoped:
 - Admin-managed command sync.
 - Provider-side credentials and extra encrypted secrets.
 
+## Delivery, Replay, And Diagnostic Boundaries
+
+Telegram polling follows the Bot API's upstream retention contract. The
+official Bot API says updates [are not kept longer than 24
+hours](https://core.telegram.org/bots/api#getting-updates). A bounded retention
+worker phase terminally consumes enabled Telegram bound inbox rows older than
+that horizon even when a polling runtime is offline and no Link webhook is
+configured. This sets the delivery acknowledgement timestamp; it does not
+physically delete the message. The row remains until the normal delivered-row
+retention horizon. Pending rows inside 24 hours are durable, but they are not
+count-bounded: a safe capacity bound still needs atomic database admission that
+can backpressure webhook and polling ingress without silently deleting
+authenticated updates.
+
+The synthetic Discord Gateway treats PostgreSQL, not its process-local Resume
+buffer, as delivery authority. A socket send leaves the exact
+`channel_messages` row pending. The client's next opcode 1 heartbeat sequence
+or opcode 6 Resume sequence acknowledges only message rows mapped at or below
+that received dispatch sequence, matching Discord's [Gateway sequence and
+Resume contract](https://discord.com/developers/docs/events/gateway#resuming).
+Disconnected Resume sessions use a bounded, expiring in-memory replay cache;
+active sessions are never evicted. An unknown or expired session receives
+opcode 9 with `d=false`, and the following Identify replays still-pending DB
+messages. The per-connection unacknowledged window backpressures one live
+socket, but durable Discord pending rows are also not globally count-bounded.
+
+Queued Discord Create Message retries use one stable UUID-derived `nonce` with
+`enforce_nonce=true`, following Discord's [Create Message
+contract](https://discord.com/developers/docs/resources/message#create-message-jsonform-params).
+Telegram exposes no equivalent idempotency primitive, so an HTTP timeout after
+provider acceptance can still duplicate a retried Telegram send.
+
+Discord REST limiter state is scoped by a stable, non-secret Clawdi account or
+Discord application identifier. It never uses the provider token as a key and
+never shares route or global 429 state across unrelated bot authentication
+identities, matching Discord's [authentication-scoped rate-limit
+contract](https://discord.com/developers/docs/topics/rate-limits).
+
+User-authenticated activity, health, and debug APIs never return raw provider
+or exception strings. `delivery_last_error` and health `last_error` preserve an
+allowlisted `channel_*` delivery code or fall back to
+`channel_delivery_failed`; debug event `error` uses
+`channel_operation_failed`, and debug `details` retains only bounded structural
+values. Telegram and Discord debug/delivery write paths persist the same stable
+codes and safe provider-message metadata. Full exception context belongs only
+in already-redacted internal logs.
+
+Done: with a migrated throwaway PostgreSQL configured as `DATABASE_URL`,
+`cd backend && uv run pytest -q tests/test_channel_inbox.py tests/test_channel_debug_events.py`
+exits 0.
+
 ## Outbound URL Security
 
 Channel accounts can carry public provider endpoint overrides, such as
-Discord REST/Gateway URLs, WhatsApp Graph API base URLs, or an
-iMessage/BlueBubbles server URL. Agent SDK emulation can also persist Telegram
-and BlueBubbles webhook URLs supplied by an agent.
+Discord REST/Gateway URLs. Agent SDK emulation can also persist Telegram
+webhook URLs supplied by an agent.
 
 These values are user- or admin-supplied configuration that can drive backend
 egress. The backend must therefore validate them at both boundaries:
@@ -311,11 +504,10 @@ Required behavior:
 - Literal loopback/private/link-local/CGNAT hosts, local hostname aliases,
   `.local`/`.localhost` names, private DNS results, and unresolved DNS names
   are rejected.
-- Telegram and BlueBubbles webhook delivery only acknowledges messages after a
-  successful `2xx` or `3xx` response. Telegram makes one inline delivery attempt
-  and leaves `5xx`, network, `4xx`, and DNS failures pending for
-  `ChannelWebhookDeliveryWorker` retry or TTL drop. BlueBubbles keeps short
-  in-process retries for `5xx` or network failures.
+- Telegram webhook delivery only acknowledges messages after a successful
+  `2xx` or `3xx` response. Telegram makes one inline delivery attempt and
+  leaves `5xx`, network, `4xx`, and DNS failures pending for
+  `ChannelWebhookDeliveryWorker` retry or TTL drop.
 
 ## Message Routing Model
 
@@ -327,8 +519,8 @@ Inbound provider messages:
 4. The message is stored in `channel_messages`.
 5. If bound, the message carries `binding_id`, `bot_agent_link_id`, and the
    binding owner `user_id`.
-6. Agent-facing inbox, webhook redelivery, Gateway replay, and BlueBubbles
-   queries only read messages scoped to the token's bot-agent link.
+6. Agent-facing inbox, webhook redelivery, and Gateway replay only read
+   messages scoped to the token's bot-agent link.
 
 Unbound inbound messages:
 
@@ -367,7 +559,7 @@ Repository and service ownership:
 
 First-party hosted control planes must not duplicate channel bindings,
 pair-code claiming, provider webhook handlers, provider protocol state, or
-`/bot_pair` behavior.
+provider pair-command behavior.
 Those are product-state concerns owned by `clawdi` native Channels. Managed
 runtime code may pass a Clawdi auth token and selected channel intent into a
 runtime, or call user-facing channel APIs before launch, but canonical channel
@@ -389,9 +581,6 @@ User-facing control plane:
 | `POST /v1/channels/{id}/messages` | Sends only through the caller's active binding on an active accessible bot. |
 | `DELETE /v1/channels/{id}` | Archives only caller-owned private bots. Public bots must use admin API. |
 | `POST /v1/channels/{id}/commands/sync` | Syncs commands only for caller-owned private bots. Public bots must use admin API. |
-| `POST /v1/channels/whatsapp/{id}/tenant-creds` | Creates or reuses caller-owned WhatsApp runtime credentials for an accessible WhatsApp bot. |
-| `GET /v1/channels/whatsapp/{id}/tenant-creds` | Lists only caller-owned WhatsApp runtime credentials. |
-| `GET /v1/channels/whatsapp/{id}/auth-cert` | Returns WhatsApp account public auth material for an active accessible WhatsApp bot. |
 
 CLI control plane:
 
@@ -402,7 +591,7 @@ CLI control plane:
 | `clawdi channel create <provider> <name>` | Creates a private bot, optionally with an initial `--agent` link. |
 | `clawdi channel links <channel-id>` | Lists only the caller's bot-agent links for that bot. |
 | `clawdi channel link <channel-id> --agent <agent-id>` | Creates a caller-owned link from an accessible bot to one of the caller's agents. |
-| `clawdi channel pair-code <channel-id> --agent <agent-id>` | Creates or reuses the caller's link and returns `/bot_pair <code>`. |
+| `clawdi channel pair-code <channel-id> --agent <agent-id>` | Creates or reuses the caller's link and returns the provider-specific pair command. |
 | `clawdi channel pair-code <channel-id> --link <link-id>` | Creates a pair code for an existing caller-owned link. |
 | `clawdi channel bindings <channel-id>` | Lists only the caller's active chat bindings. |
 
@@ -421,22 +610,23 @@ Admin control plane:
 | API | Scope |
 | --- | --- |
 | `GET /v1/admin/channels` | Lists managed channel accounts. |
-| `POST /v1/admin/channels` | Creates private or public managed channel accounts. |
+| `POST /v1/admin/channels` | Creates Telegram/Discord accounts. Private creation requires `target_clerk_id`; public creation rejects it. Public WhatsApp uses physical pairing below. |
 | `GET /v1/admin/channels/{id}` | Reads a managed channel account. |
-| `PATCH /v1/admin/channels/{id}` | Updates account metadata, provider token, config, and encrypted secrets. |
+| `PATCH /v1/admin/channels/{id}` | Updates account metadata, provider token, config, and encrypted secrets. Visibility cannot change in place; recreate the account instead. |
 | `POST /v1/admin/channels/{id}/webhook-secret/rotate` | Rotates provider ingress secret. |
 | `POST /v1/admin/channels/{id}/commands/sync` | Syncs provider-wide pair/unpair commands. |
 | `DELETE /v1/admin/channels/{id}` | Archives the account and active child state. |
+| `POST /v1/admin/channels/whatsapp/pairing-sessions` | Starts an ownerless platform WhatsApp physical QR session for `{account_id, request_id, name}`. |
+| `GET /v1/admin/channels/whatsapp/pairing-sessions/{id}` | Reads QR/pairing status and promotes a connected session into the same public `ChannelAccount` inventory. |
+| `DELETE /v1/admin/channels/whatsapp/pairing-sessions/{id}` | Cancels an unconnected physical session after confirmed logout. Connected accounts use the ordinary admin archive route. |
 
 Provider ingress:
 
 - `/v1/channels/telegram/{id}/webhook`
 - `/v1/channels/discord/{id}/webhook`
-- `/v1/channels/whatsapp/{id}/webhook`
-- `/v1/channels/imessage/{id}/webhook`
 - `/v1/channels/discord/gateway` for agent-facing replay
-- `/v1/channels/whatsapp/{id}/baileys` for Baileys-compatible WhatsApp Web
-  runtime ingress
+- `/v1/channels/whatsapp/baileys` for Link-bearer-authenticated Baileys-compatible WhatsApp Web
+  synthetic runtime ingress. It is not a physical provider webhook.
 
 Agent SDK emulation:
 
@@ -445,9 +635,7 @@ Agent SDK emulation:
   `<9-digit bot id>:<secret>` shape so SDKs and OpenClaw-compatible clients
   that validate token syntax continue to work.
 - Discord REST and Gateway-compatible routes under `/v1/channels/discord`.
-- WhatsApp Graph and Baileys-compatible routes under `/v1/channels/whatsapp`.
-- BlueBubbles-compatible REST and Socket.IO routes under
-  `/v1/channels/imessage`.
+- WhatsApp synthetic Noise websocket under `/v1/channels/whatsapp/baileys`.
 
 ## Provider Adapter Contract
 
@@ -489,7 +677,7 @@ the shared channel service.
 | An unbound normal message arrives | It is not delivered to any agent. |
 | A bound normal message arrives | It is stored with binding/link ids and becomes visible only to that link's agent-facing inbox. |
 | Agent sends a message by mock provider SDK token | The token resolves one link; send permission is checked against that link's active binding. |
-| WhatsApp needs live Web protocol behavior | The Baileys sidecar may provide protocol transport, but routing and ownership stay in FastAPI/Postgres. |
+| WhatsApp needs live Web protocol behavior | One physical provider transport owns the real socket; stock Agent plugins use separate synthetic sockets. Routing and ownership stay in FastAPI/Postgres. |
 
 ## Non-Goals
 

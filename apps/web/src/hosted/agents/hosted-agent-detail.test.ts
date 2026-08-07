@@ -1,0 +1,84 @@
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+
+describe("hosted agent detail header", () => {
+	test("embeds owner SSO Files without credentials and keeps a top-level launch", () => {
+		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+
+		expect(source).toContain("function FilesTab(");
+		expect(source).toContain("src={url}");
+		expect(source).toContain('title="Files"');
+		expect(source).toContain('target="_blank"');
+		expect(source).toContain("Open in new tab");
+		expect(source).not.toContain("Opening Files…");
+		expect(source).not.toContain("Couldn’t open Files");
+		expect(source).not.toContain("onError=");
+		expect(source).toContain(
+			'const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;',
+		);
+		expect(source).not.toContain("The secure Files endpoint did not load");
+		expect(source).not.toContain("fileBrowserPassword");
+		expect(source).not.toContain("Files credentials");
+	});
+
+	test("shows Cloud origin only on the established Overview title", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+		const sidebarSource = readFileSync(
+			new URL("../../components/app-sidebar.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(detailSource).toContain('<AgentSourceBadge source="hosted" compact />');
+		expect(detailSource).toContain('activeTab === "overview" ? (');
+		expect(detailSource).not.toContain("AllAgentsAccessBadge");
+		expect(sidebarSource).toContain("AgentSourceBadge");
+	});
+
+	test("keeps persisted provider state visible until a replacement provider is selected", () => {
+		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+		expect(source).toContain("const disabled = Boolean(issue) && !selected;");
+		expect(source).toContain("disabled={disabled}");
+		expect(source).toContain("selectProvider,");
+		expect(source).toContain("onClick={() => selectProvider(p.provider_id)}");
+		expect(source).toContain("onClick={() => selectProvider(MANAGED_AI_CHOICE)}");
+		expect(source).toContain('data-testid="provider-choice-grid"');
+		expect(source).toContain("<EntityAddCard");
+		expect(source).not.toContain("customProviders=");
+		expect(source).not.toContain("onPrimaryProviderChange=");
+	});
+
+	test("removes the shared runtime dashboard action without removing Console access", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(detailSource).not.toContain("const headerActions");
+		expect(detailSource).not.toContain("actions={headerActions}");
+		expect(detailSource).not.toContain("Access {runtimeBrowserUiLabel(runtime)}");
+		expect(detailSource).toContain("<RuntimeUiAccessDialog");
+	});
+
+	test("describes missing projection sections with visible navigation labels", () => {
+		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+
+		expect(source).toContain(
+			"Projects, Skills, Vaults, and Channels will appear when this agent is ready.",
+		);
+		expect(source).not.toContain(
+			"Sessions, Projects, Skills, Vaults, and Channels will appear when this agent is ready.",
+		);
+		expect(source).not.toContain("Vaults, profile, and channels");
+	});
+
+	test("uses the shared billing query contract for overview workspace skills", () => {
+		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+
+		expect(source).toContain("queryKey: billingKeys.workspaceSkills(deployment.resource.id)");
+		expect(source).toContain("enabled: isRunningStatus(deploymentStatus)");
+		expect(source).toContain("retry: billingQueryRetry");
+	});
+});

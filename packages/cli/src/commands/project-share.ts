@@ -37,7 +37,7 @@ export async function projectShareCommand(
 	projectArg: string | undefined,
 	opts: { label?: string },
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 
@@ -98,17 +98,17 @@ export async function projectShareCommand(
 	);
 	console.log(chalk.gray("Access: viewer role, no write access."));
 	console.log(chalk.gray("Viewers can resolve shared Vault values through CLI runtime reads."));
-	console.log(chalk.gray("Attaching it to an Agent is separate and explicit after accept."));
+	console.log(chalk.gray("Linking it to an Agent is separate and explicit after accept."));
 	console.log(chalk.gray(`Owner handle: @${body.owner_handle}`));
 	if (body.label) console.log(chalk.gray(`Label: ${body.label}`));
 	console.log();
 	console.log(`Recipient accepts: ${chalk.cyan(`clawdi inbox accept ${body.url}`)}`);
 	if (projectSlug) {
 		console.log(
-			`Recipient attaches to Agent later: ${chalk.cyan(`clawdi agent projects attach <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
+			`Recipient links to Agent later: ${chalk.cyan(`clawdi agent projects link <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
 		);
 	}
 	console.log();
-	console.log(chalk.bold("Attach to Agent prompt:"));
+	console.log(chalk.bold("Link to Agent prompt:"));
 	console.log(buildShareAgentHandoffPrompt(body));
 }

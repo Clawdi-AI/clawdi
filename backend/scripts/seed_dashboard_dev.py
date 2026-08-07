@@ -65,6 +65,7 @@ from app.services.channels import (  # noqa: E402
     generate_agent_token,
     hash_token,
 )
+from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID  # noqa: E402
 from app.services.vault_crypto import encrypt  # noqa: E402
 
 DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
@@ -72,8 +73,8 @@ DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
 DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
-DEV_V2_CODEX_PROVIDER_ID = "clawdi-v2"
-DEV_V2_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
+DEV_V2_CODEX_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID
+DEV_V2_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
 _STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 
@@ -245,7 +246,25 @@ async def _create_hosted_runtime_graph(
                 generation=3,
                 cli_package_spec=DEV_V2_CLI_PACKAGE_SPEC,
                 locale={"language": "en", "timezone": "UTC"},
-                system={},
+                system=(
+                    {
+                        "hermesDashboardAuth": {
+                            "mode": "password",
+                            "provider": "basic",
+                            "username": "admin",
+                            "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
+                            "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
+                            "sessionTtlSeconds": 43200,
+                            "publicUrl": "https://hermes.dev-preview.local",
+                            "activation": {
+                                "enabled": True,
+                                "capability": "hermes-basic-auth-v1",
+                            },
+                        }
+                    }
+                    if runtime == "hermes"
+                    else {}
+                ),
                 runtimes={
                     runtime: {
                         "enabled": True,
@@ -263,24 +282,24 @@ async def _create_hosted_runtime_graph(
                                 else ["gateway", "run"]
                             )
                         },
-                        "services": {},
+                        "services": (
+                            {
+                                "dashboard": {
+                                    "args": [
+                                        "dashboard",
+                                        "--host",
+                                        "0.0.0.0",
+                                        "--port",
+                                        "9119",
+                                        "--no-open",
+                                    ]
+                                }
+                            }
+                            if runtime == "hermes"
+                            else {}
+                        ),
                     }
                 },
-                bridge=(
-                    {
-                        "surfaces": [
-                            {
-                                "name": "hermes",
-                                "kind": "control-ui",
-                                "listenPort": 28793,
-                                "upstreamHost": "127.0.0.1",
-                                "upstreamPort": 9119,
-                            }
-                        ]
-                    }
-                    if runtime == "hermes"
-                    else None
-                ),
                 live_sync={
                     "enabled": True,
                     "agents": [
@@ -292,7 +311,7 @@ async def _create_hosted_runtime_graph(
                 },
                 recovery={"cacheManifest": True, "allowOfflineBoot": True},
                 egress_profiles={},
-                mcp={"enabled": True},
+                mcp={"servers": {}},
                 tools={
                     "codex": {
                         "enabled": True,

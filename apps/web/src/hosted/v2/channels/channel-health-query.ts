@@ -7,5 +7,6 @@ export function channelHealthQueryOptions<TData>(queryFn: () => Promise<TData>) 
 		queryKey: channelKeys.health,
 		queryFn,
 		refetchInterval: CHANNEL_HEALTH_REFETCH_INTERVAL_MS,
+		refetchIntervalInBackground: false,
 	};
 }

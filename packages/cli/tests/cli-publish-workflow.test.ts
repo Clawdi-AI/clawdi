@@ -1,11 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse } from "yaml";
+
+interface WorkflowJob {
+	needs?: unknown;
+	permissions?: Record<string, string>;
+	steps?: Array<Record<string, unknown>>;
+}
+
+interface WorkflowDocument {
+	jobs: Record<string, WorkflowJob>;
+}
 
 const workflow = readFileSync(
 	resolve(import.meta.dir, "../../../.github/workflows/cli-publish.yml"),
 	"utf8",
 );
+const workflowDocument = parse(workflow) as WorkflowDocument;
 const releaseRunbookDoc = readFileSync(
 	resolve(import.meta.dir, "../../../docs/runbooks/release.md"),
 	"utf8",
@@ -26,11 +38,38 @@ const cliPackage = JSON.parse(
 	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
 ) as { version: string; publishConfig?: { access?: string; tag?: unknown } };
 
-function expectedNpmTag(version: string): string {
-	return version.includes("-") ? "beta" : "latest";
-}
-
 describe("CLI publish workflow contract", () => {
+	test("keeps current-run release decisions inside the protected publish topology", () => {
+		const build = workflowDocument.jobs["build-immutable-artifact"];
+		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
+
+		expect(Object.keys(workflowDocument.jobs)).toEqual([
+			"build-immutable-artifact",
+			"publish-immutable-artifact-with-oidc",
+		]);
+		expect(build.permissions).toEqual({ contents: "read" });
+		expect(publish.needs).toBe("build-immutable-artifact");
+		expect(publish.permissions).toEqual({ contents: "write", "id-token": "write" });
+		expect(build.steps?.find((step) => step.id === "check")?.["working-directory"]).toBe(
+			"packages/cli",
+		);
+		expect(build.steps?.map((step) => step.id).filter(Boolean)).toEqual([
+			"check",
+			"build_native_release",
+			"pack_release",
+		]);
+		for (const stepId of ["build_native_release", "pack_release"]) {
+			expect(build.steps?.find((step) => step.id === stepId)?.["working-directory"]).toBe(
+				"packages/cli",
+			);
+		}
+		expect(publish.steps?.map((step) => step.id).filter(Boolean)).toEqual([
+			"verify_release",
+			"publish",
+			"release",
+		]);
+	});
+
 	test("keeps the protected OIDC publish fully repository-local", () => {
 		const build = workflow.indexOf("  build-immutable-artifact:");
 		const publish = workflow.indexOf("  publish-immutable-artifact-with-oidc:");
@@ -44,15 +83,15 @@ describe("CLI publish workflow contract", () => {
 		);
 		expect(publishJob).toContain("runs-on: ubuntu-latest");
 		expect(publishJob).not.toContain("vars.CI_RUNNER");
-		expect(workflow).toContain(
-			'echo "cli_tarball_filename=clawdi-$version.tgz" >> "$GITHUB_OUTPUT"',
-		);
 		expect(workflow).toContain("needs: build-immutable-artifact");
 		expect(workflow).toContain("environment: npm");
 		expect(workflow).toContain("id-token: write");
 		expect(publishJob).toContain('node-version: "24"');
 		expect(publishJob).toContain("npm install --global npm@11.5.1");
 		expect(publishJob).toContain('test "$(npm --version)" = "11.5.1"');
+		expect(workflow.match(/test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/g)).toHaveLength(2);
+		expect(workflow).not.toContain("git checkout --detach");
+		expect(workflow).not.toContain("source_commit");
 		expect(workflow).not.toContain("Clawdi-AI/clawdi-hosted");
 		expect(workflow).not.toContain("uses: Clawdi-AI/");
 		expect(workflow).not.toContain("repository_dispatch");
@@ -64,8 +103,6 @@ describe("CLI publish workflow contract", () => {
 		const publishCommands = workflow.match(/npm publish /g) ?? [];
 
 		expect(publishCommands).toHaveLength(1);
-		expect(workflow).toContain('echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"');
-		expect(workflow).toContain("p.version.includes('-') ? 'beta' : 'latest'");
 		expect(workflow).not.toContain("publishConfig");
 		expect(workflow).toContain(
 			`NPM_TAG: \${{ needs['build-immutable-artifact'].outputs.npm_tag }}`,
@@ -73,10 +110,7 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain(
 			'npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
 		);
-		expect(cliPackage.version).toContain("-");
-		expect(expectedNpmTag(cliPackage.version)).toBe("beta");
-		expect(expectedNpmTag("1.2.3-beta.1")).toBe("beta");
-		expect(expectedNpmTag("1.2.3")).toBe("latest");
+		expect(cliPackage.version).not.toContain("-");
 		expect(cliPackage.publishConfig).toEqual({ access: "public" });
 		expect(publishManifestChecker).toContain(
 			'Object.hasOwn(packageJson.publishConfig ?? {}, "tag")',
@@ -92,10 +126,14 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain('tarball="$CLI_TARBALL_FILENAME"');
 		expect(workflow).toContain(`name: \${{ env.CLI_ARTIFACT_NAME }}`);
 		expect(workflow).toContain("run: bun run typecheck");
-		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1");
+		expect(workflow).toContain("- name: Test (ephemeral internal suite)");
+		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1 packages/cli");
+		expect(workflow).toContain("- name: Native lifecycle (ephemeral internal suite)");
+		expect(workflow.indexOf("- name: Test")).toBeLessThan(
+			workflow.indexOf("- name: Build package and native release matrix"),
+		);
 		expect(workflow).toContain('npm install "$tarball_path" --ignore-scripts --no-audit --no-fund');
 		expect(workflow).toContain('sha256sum --check "$tarball.sha256"');
-		expect(workflow).toContain("sha256sum --check clawdi-cli-linux-x64.tar.gz.sha256");
 		expect(workflow.match(/npm pack /g) ?? []).toHaveLength(1);
 		expect(workflow.indexOf("npm pack ")).toBeLessThan(workflow.indexOf("npm publish "));
 		expect(workflow).not.toMatch(/npm dist-tag (?:add|rm)/);
@@ -103,10 +141,54 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).not.toContain("NPM_TOKEN");
 	});
 
-	test("creates the CLI release only after publishing", () => {
+	test("publishes only an absent exact version and verifies artifact integrity", () => {
+		const publishJob = workflow.slice(workflow.indexOf("  publish-immutable-artifact-with-oidc:"));
+		const absenceCheck = publishJob.indexOf("if ! npm_release_visible; then");
+		const publishCommand = publishJob.indexOf("npm publish ");
+		const visibilityWait = publishJob.indexOf("for attempt in $(seq 1 12); do", publishCommand);
+		const versionRead = publishJob.indexOf(
+			'registry_version=$(npm view "clawdi@$VERSION" version)',
+		);
+		const integrityRead = publishJob.indexOf(
+			'published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)',
+		);
+
+		expect(workflow).toContain('- "packages/cli/package.json"');
+		expect(absenceCheck).toBeGreaterThan(-1);
+		expect(absenceCheck).toBeLessThan(publishCommand);
+		expect(visibilityWait).toBeGreaterThan(publishCommand);
+		expect(visibilityWait).toBeLessThan(versionRead);
+		expect(versionRead).toBeLessThan(integrityRead);
+		expect(publishJob).toContain('test "$registry_version" = "$VERSION"');
+		expect(publishJob).toContain('if [ "$published_integrity" != "$local_integrity" ]; then');
+		expect(publishJob).toContain(
+			'echo "clawdi@$VERSION registry integrity does not match this workflow artifact" >&2',
+		);
+		expect(workflow).toContain('if [ "$attempt" -lt 12 ]; then sleep 5; fi');
+		expect(workflow).toContain(
+			'echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2',
+		);
+	});
+
+	test("creates or completes only the current commit GitHub release", () => {
 		expect(workflow.indexOf("npm publish ")).toBeLessThan(
 			workflow.indexOf('release create "$tag"'),
 		);
+		expect(workflow).toContain('if [ "$tag_commit" != "$GITHUB_SHA" ]; then');
+		expect(workflow).toContain("release.targetCommitish !== process.env.EXPECTED_COMMIT");
+		expect(workflow).toContain('console.log(release.isDraft ? "resume-draft" : "none")');
+		expect(workflow).toContain('gh release upload "$tag"');
+		expect(workflow).toContain("--clobber");
+		expect(workflow).toContain('--target "$GITHUB_SHA"');
+		expect(workflow).toContain("--draft");
+		expect(workflow).toContain('gh release edit "$tag" --draft=false');
+		expect(workflow.match(/gh release upload /g)).toHaveLength(1);
+		expect(workflow.match(/gh release edit "\$tag" --draft=false/g)).toHaveLength(2);
+		expect(workflow.match(/release create "\$tag"/g)).toHaveLength(1);
+		expect(workflow).toContain('case "$NPM_TAG" in');
+		expect(workflow).toContain("args+=(--prerelease)");
+		expect(workflow).toContain("latest) ;;");
+		expect(workflow).toContain('echo "unsupported npm release tag: $NPM_TAG" >&2');
 		expect(workflow).not.toContain("pull_request:");
 	});
 

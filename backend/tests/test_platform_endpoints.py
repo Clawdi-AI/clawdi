@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from collections.abc import AsyncIterator
 
@@ -15,20 +16,44 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
-from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
 from app.models.platform_idempotency import PlatformMutationIdempotency
-from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
+from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
-from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES
+from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES, PlatformRuntimeStateUpsert
+from app.services.hosted_runtime_secrets import runtime_secret_values_idempotency_identity
+from app.services.platform_contract import platform_request_hash, store_platform_response
+from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
 from app.services.user_provisioning import lazy_create_partner_user_with_personal_project
+from app.services.vault_crypto import decrypt
 from tests.conftest import create_env_with_project
+from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
 
 _ADMIN_KEY = "test-platform-admin-secret"
+_CLERK_ISSUER = "https://platform-tests.clerk.example.test"
 _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
+_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@1.2.5-test"
 _TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
 _TEST_SYSTEM = {}
+_TEST_SECRET_VALUES = {
+    "secret://clawdi/auth-token": "runtime-auth-token-test",
+    "secret://runtime/openclaw/gateway-token": "openclaw-gateway-token-test",
+}
+_TEST_HERMES_DASHBOARD_AUTH = {
+    "mode": "password",
+    "provider": "basic",
+    "username": "admin",
+    "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
+    "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
+    "sessionTtlSeconds": 43_200,
+    "publicUrl": "https://agent.example.test/hermes",
+    "activation": {
+        "enabled": True,
+        "capability": "hermes-basic-auth-v1",
+    },
+}
 _TEST_TOOLS = {
     "codex": {
         "enabled": True,
@@ -47,7 +72,9 @@ async def platform_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncCli
         yield db_session
 
     original_admin_key = settings.admin_api_key
+    original_clerk_issuer = settings.clerk_jwt_issuer
     settings.admin_api_key = _ADMIN_KEY
+    settings.clerk_jwt_issuer = _CLERK_ISSUER
     app.dependency_overrides[get_session] = _override_get_session
     try:
         async with httpx.AsyncClient(
@@ -58,6 +85,7 @@ async def platform_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncCli
     finally:
         app.dependency_overrides.clear()
         settings.admin_api_key = original_admin_key
+        settings.clerk_jwt_issuer = original_clerk_issuer
 
 
 def _headers(key: str, *, request_id: str | None = None) -> dict[str, str]:
@@ -89,7 +117,7 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
         "deployment_id": "deployment-1",
         "instance_id": "instance-1",
         "generation": 1,
-        "cli_package_spec": _TEST_CLI_PACKAGE_SPEC,
+        "cli_package_spec": _TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
         "locale": _TEST_LOCALE,
         "system": _TEST_SYSTEM,
         "runtimes": {
@@ -116,7 +144,10 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
             ],
         },
         "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+        "mcp": {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
+        "skills": {"entries": {"clawdi": {"enabled": True, "version": 1}}},
         "tools": _TEST_TOOLS,
+        "secretValues": dict(_TEST_SECRET_VALUES),
     }
 
 
@@ -233,7 +264,6 @@ async def test_platform_mutations_require_idempotency_key(platform_client, seed_
             {
                 "label": "unknown-owner",
                 "environment_id": str(uuid.uuid4()),
-                "deployment_id": "unknown-owner-deployment",
                 "scopes": list(PLATFORM_RUNTIME_KEY_SCOPES),
             },
         ),
@@ -283,10 +313,13 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     created = await platform_client.post(
         "/v1/platform/agents",
         headers=_headers("lifecycle-agent-create", request_id=request_id),
-        json=_agent_body(owner, agent_id),
+        json={**_agent_body(owner, agent_id), "default_name": "e2e-2"},
     )
     assert created.status_code == 200, created.text
     assert created.json() == {"id": str(agent_id)}
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    assert agent.default_name == "e2e-2"
 
     runtime = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
@@ -297,8 +330,25 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     assert runtime.json()["environment_id"] == str(agent_id)
     runtime_state = await db_session.get(HostedRuntimeState, agent_id)
     assert runtime_state is not None
+    assert runtime_state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
+    assert runtime_state.skills == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
     assert runtime_state.tools == _TEST_TOOLS
-    assert await db_session.get(V2RuntimeEnvironmentFence, agent_id) is None
+
+    secret_rows = list(
+        (
+            await db_session.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id == agent_id)
+                .order_by(HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    assert [row.secret_ref for row in secret_rows] == sorted(_TEST_SECRET_VALUES)
+    for row in secret_rows:
+        plaintext = _TEST_SECRET_VALUES[row.secret_ref]
+        assert row.encrypted_value != plaintext.encode()
+        assert decrypt(row.encrypted_value, row.nonce) == plaintext
+        assert row.key_version == "vault.v1"
 
     minted = await platform_client.post(
         "/v1/platform/auth/keys",
@@ -307,7 +357,6 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
             "owner": owner,
             "label": "platform-runtime",
             "environment_id": str(agent_id),
-            "deployment_id": "deployment-1",
         },
     )
     assert minted.status_code == 200, minted.text
@@ -316,13 +365,8 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     assert api_key is not None
     assert api_key.user_id == seed_user.id
     assert api_key.environment_id == agent_id
-    assert api_key.runtime_deployment_id == "deployment-1"
     assert api_key.scopes == list(PLATFORM_RUNTIME_KEY_SCOPES)
     assert api_key.managed is True
-    fence = await db_session.get(V2RuntimeEnvironmentFence, agent_id)
-    assert fence is not None
-    assert fence.deployment_id == "deployment-1"
-    assert fence.state == "active"
 
     revoked = await platform_client.request(
         "DELETE",
@@ -351,7 +395,9 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         json={"owner": owner},
     )
     assert deleted_agent.status_code == 204, deleted_agent.text
-    assert await db_session.get(AgentEnvironment, agent_id) is None
+    archived_agent = await db_session.get(AgentEnvironment, agent_id)
+    assert archived_agent is not None
+    assert archived_agent.archived_at is not None
 
     events = (
         (
@@ -368,14 +414,15 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         .scalars()
         .all()
     )
-    assert [event.action for event in events] == [
+    assert len(events) == 6
+    assert {event.action for event in events} == {
         "agent_environment.create",
         "hosted_runtime_state.upsert",
         "api_key.mint",
         "api_key.revoke",
         "hosted_runtime_state.delete",
         "agent_environment.delete",
-    ]
+    }
     for event in events:
         assert event.actor_type == "platform"
         assert event.details["owner"] == owner
@@ -384,6 +431,146 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         assert event.details["workload_sub"] is None
         assert event.details["credential_id"] is None
         assert event.details["token_jti"] is None
+        assert all(secret not in str(event.details) for secret in _TEST_SECRET_VALUES.values())
+
+
+@pytest.mark.asyncio
+async def test_platform_agent_reregistration_updates_its_name(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    body = _agent_body(owner, agent_id)
+
+    first = await platform_client.post(
+        "/v1/platform/agents",
+        headers=_headers(f"agent-name-create-{uuid.uuid4().hex}"),
+        json={**body, "default_name": "Research"},
+    )
+    renamed = await platform_client.post(
+        "/v1/platform/agents",
+        headers=_headers(f"agent-name-update-{uuid.uuid4().hex}"),
+        json={**body, "default_name": "Writing"},
+    )
+
+    assert first.status_code == 200, first.text
+    assert renamed.status_code == 200, renamed.text
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    assert agent.default_name == "Writing"
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_revision(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key="stable-runtime-secret-agent",
+    )
+    assert created.status_code == 200, created.text
+    body = _runtime_body(owner, agent_id)
+    first = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("stable-runtime-secret-first"),
+        json=body,
+    )
+    assert first.status_code == 200, first.text
+    rows = list(
+        (
+            await db_session.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id == agent_id)
+                .order_by(HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    stored_identity = {
+        row.secret_ref: (row.id, row.encrypted_value, row.nonce, row.key_version) for row in rows
+    }
+    batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    first_source = render_runtime_source(
+        batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+
+    second = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("stable-runtime-secret-second"),
+        json=body,
+    )
+    assert second.status_code == 200, second.text
+    db_session.expire_all()
+    repeated_rows = list(
+        (
+            await db_session.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id == agent_id)
+                .order_by(HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    assert {
+        row.secret_ref: (row.id, row.encrypted_value, row.nonce, row.key_version)
+        for row in repeated_rows
+    } == stored_identity
+    repeated_batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    repeated_source = render_runtime_source(
+        repeated_batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert repeated_source.secret_values == {}
+    assert repeated_source.source_revision == first_source.source_revision
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_secret_validation_redacts_plaintext(
+    platform_client,
+    db_session,
+    seed_user,
+    caplog,
+):
+    marker = "platform-secret-must-not-leak\n"
+    body = _runtime_body(_clerk_owner(seed_user), uuid.uuid4())
+    body["secretValues"] = {"secret://runtime/invalid": marker}
+    caplog.set_level(logging.WARNING, logger="app.main")
+    audit_count = await db_session.scalar(select(func.count(ControlPlaneAuditEvent.id)))
+    idempotency_count = await db_session.scalar(select(func.count(PlatformMutationIdempotency.id)))
+
+    response = await platform_client.put(
+        f"/v1/platform/agents/{uuid.uuid4()}/runtime-state",
+        headers=_headers("invalid-runtime-secret"),
+        json=body,
+    )
+
+    assert response.status_code == 422
+    assert marker.strip() not in response.text
+    assert marker.strip() not in caplog.text
+    assert await db_session.scalar(select(func.count(ControlPlaneAuditEvent.id))) == audit_count
+    assert (
+        await db_session.scalar(select(func.count(PlatformMutationIdempotency.id)))
+        == idempotency_count
+    )
+    audits = list((await db_session.scalars(select(ControlPlaneAuditEvent))).all())
+    idempotency_rows = list((await db_session.scalars(select(PlatformMutationIdempotency))).all())
+    assert all(marker.strip() not in str(event.details) for event in audits)
+    assert all(marker.strip() not in row.request_hash for row in idempotency_rows)
+    assert all(marker.strip().encode() not in row.encrypted_response for row in idempotency_rows)
 
 
 @pytest.mark.asyncio
@@ -454,16 +641,22 @@ async def test_platform_runtime_only_state_is_explicitly_unmanaged(
     runtime.update({"providerMode": "unmanaged", "provider_ids": []})
     body["runtimes"] = {runtime_name: runtime}
     if runtime_name == "hermes":
-        body["bridge"] = {
-            "surfaces": [
-                {
-                    "name": "hermes",
-                    "kind": "control-ui",
-                    "listenPort": 28793,
-                    "upstreamHost": "127.0.0.1",
-                    "upstreamPort": 9119,
-                }
-            ]
+        runtime["services"] = {
+            "dashboard": {
+                "args": [
+                    "dashboard",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "9119",
+                    "--no-open",
+                ]
+            }
+        }
+        body["system"] = {"hermesDashboardAuth": _TEST_HERMES_DASHBOARD_AUTH}
+        body["live_sync"] = {
+            "enabled": True,
+            "agents": [{"agentType": "hermes", "environmentId": str(agent_id)}],
         }
 
     response = await platform_client.put(
@@ -480,6 +673,34 @@ async def test_platform_runtime_only_state_is_explicitly_unmanaged(
     assert persisted_runtime["provider_ids"] == []
     assert "primary_model" not in persisted_runtime
     assert state.tools == _TEST_TOOLS
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_state_rejects_removed_bridge_field(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key=f"removed-runtime-field-agent-{uuid.uuid4()}",
+    )
+    assert created.status_code == 200, created.text
+    body = _runtime_body(owner, agent_id)
+    body["bridge"] = {}
+
+    response = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers(f"removed-runtime-field-state-{uuid.uuid4()}"),
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+    assert await db_session.get(HostedRuntimeState, agent_id) is None
 
 
 @pytest.mark.asyncio
@@ -506,6 +727,13 @@ async def test_platform_runtime_state_enforces_generation_contract(
     )
     assert initial.status_code == 200, initial.text
 
+    same_generation = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("generation-same-mcp-model"),
+        json=initial_body,
+    )
+    assert same_generation.status_code == 200, same_generation.text
+
     stale = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
         headers=_headers("generation-stale"),
@@ -526,6 +754,139 @@ async def test_platform_runtime_state_enforces_generation_contract(
     assert state is not None
     assert state.generation == 2
     assert state.instance_id == initial_body["instance_id"]
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_state_advances_apply_generation_without_weakening_checkpoint(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key="apply-generation-agent-create",
+    )
+    assert created.status_code == 200, created.text
+    body = {
+        **_runtime_body(owner, agent_id),
+        "generation": 2,
+        "apply_generation": 1,
+    }
+    invalid = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-invalid"),
+        json={**body, "apply_generation": 0},
+    )
+    assert invalid.status_code == 422, invalid.text
+
+    initial = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-initial"),
+        json=body,
+    )
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["apply_generation"] == 1
+
+    advanced = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-advanced"),
+        json={**body, "apply_generation": 2},
+    )
+    assert advanced.status_code == 200, advanced.text
+    assert advanced.json()["apply_generation"] == 2
+
+    independent_advance = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-independent-advance"),
+        json={**body, "apply_generation": 3},
+    )
+    assert independent_advance.status_code == 200, independent_advance.text
+    assert independent_advance.json()["generation"] == 2
+    assert independent_advance.json()["apply_generation"] == 3
+
+    for key, apply_generation, code in (
+        ("apply-generation-regression", 2, "stale_apply_generation"),
+        ("apply-generation-clear", None, "apply_generation_conflict"),
+    ):
+        rejected = await platform_client.put(
+            f"/v1/platform/agents/{agent_id}/runtime-state",
+            headers=_headers(key),
+            json={**body, "apply_generation": apply_generation},
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["detail"]["code"] == code
+        assert rejected.json()["detail"]["current_apply_generation"] == 3
+
+    checkpoint_only = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-checkpoint-only"),
+        json={**_runtime_body(owner, agent_id), "generation": 4},
+    )
+    assert checkpoint_only.status_code == 200, checkpoint_only.text
+    assert checkpoint_only.json()["apply_generation"] == 3
+
+    state = await db_session.get(HostedRuntimeState, agent_id)
+    assert state is not None
+    assert state.generation == 4
+    assert state.apply_generation == 3
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_state_replays_pre_apply_generation_idempotency_shape(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key="idempotency-shape-agent-create",
+    )
+    assert created.status_code == 200, created.text
+    body = _runtime_body(owner, agent_id)
+    parsed = PlatformRuntimeStateUpsert.model_validate(body)
+    legacy_payload = {
+        "agent_id": str(agent_id),
+        **parsed.model_dump(mode="json", exclude={"secret_values"}),
+        "secretValuesIdentity": runtime_secret_values_idempotency_identity(parsed.secret_values),
+    }
+    legacy_payload.pop("apply_generation")
+    idempotency_key = "runtime-state-before-apply-generation"
+    replay_body = {
+        "environment_id": str(agent_id),
+        "deployment_id": body["deployment_id"],
+        "instance_id": body["instance_id"],
+        "generation": body["generation"],
+    }
+    store_platform_response(
+        db_session,
+        operation="runtime_state.upsert",
+        idempotency_key=idempotency_key,
+        request_hash=platform_request_hash(legacy_payload),
+        owner_user_id=seed_user.id,
+        resource_type="hosted_runtime_state",
+        resource_id=str(agent_id),
+        response_status=200,
+        response_body=replay_body,
+    )
+    await db_session.commit()
+
+    replay = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers(idempotency_key),
+        json=body,
+    )
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == replay_body
+    assert await db_session.get(HostedRuntimeState, agent_id) is None
 
 
 @pytest.mark.asyncio
@@ -558,7 +919,6 @@ async def test_platform_partner_tenant_resolves_null_clerk_principal(
                 "owner": owner,
                 "label": "partner-runtime",
                 "environment_id": str(agent_id),
-                "deployment_id": "partner-deployment",
                 "scopes": ["sessions:write", "skills:read"],
             },
         )
@@ -640,7 +1000,6 @@ async def test_platform_existing_resources_reject_owner_mismatch(
                     "owner": owner,
                     "label": "cross-owner",
                     "environment_id": str(other_agent.id),
-                    "deployment_id": "cross-owner-deployment",
                     "scopes": list(PLATFORM_RUNTIME_KEY_SCOPES),
                 },
             ),
@@ -736,6 +1095,36 @@ async def test_platform_idempotency_replays_every_mutation_without_second_side_e
     )
     assert created_once.status_code == created_twice.status_code == 200
     assert created_once.json() == created_twice.json()
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    db_session.add_all(
+        [
+            Skill(
+                user_id=seed_user.id,
+                project_id=agent.default_project_id,
+                skill_key="platform-delete-legacy",
+                name="Platform delete legacy",
+                description="Legacy Cloud row",
+                content_hash="9" * 64,
+                authority=SKILL_AUTHORITY_CLOUD,
+            ),
+            Skill(
+                user_id=seed_user.id,
+                project_id=agent.default_project_id,
+                skill_key="platform-delete-claimed",
+                name="Platform delete claimed",
+                description="Agent projection",
+                content_hash="a" * 64,
+                source=SKILL_AUTHORITY_AGENT_SYNC,
+                authority=SKILL_AUTHORITY_AGENT_SYNC,
+                authority_agent_id=agent_id,
+            ),
+        ]
+    )
+    await db_session.commit()
+    await db_session.refresh(seed_user)
+    revision_before_agent_delete = seed_user.skills_revision
+    agent_project_id = agent.default_project_id
 
     runtime_body = _runtime_body(owner, agent_id)
     runtime_headers = _headers("idem-runtime-upsert")
@@ -756,7 +1145,6 @@ async def test_platform_idempotency_replays_every_mutation_without_second_side_e
         "owner": owner,
         "label": "idempotent-key",
         "environment_id": str(agent_id),
-        "deployment_id": "deployment-1",
         "scopes": list(PLATFORM_RUNTIME_KEY_SCOPES),
     }
     mint_headers = _headers("idem-key-mint")
@@ -819,13 +1207,18 @@ async def test_platform_idempotency_replays_every_mutation_without_second_side_e
         json={"owner": owner},
     )
     assert deleted_agent_once.status_code == deleted_agent_twice.status_code == 204
-
     assert (
         await db_session.scalar(
-            select(func.count()).select_from(ApiKey).where(ApiKey.id == uuid.UUID(key_id))
+            select(func.count()).select_from(Skill).where(Skill.project_id == agent_project_id)
         )
-        == 0
+        == 2
     )
+    await db_session.refresh(seed_user)
+    assert seed_user.skills_revision == revision_before_agent_delete
+
+    retained_key = await db_session.get(ApiKey, uuid.UUID(key_id))
+    assert retained_key is not None
+    assert retained_key.revoked_at is not None
     idempotency_count = await db_session.scalar(
         select(func.count())
         .select_from(PlatformMutationIdempotency)
@@ -922,22 +1315,12 @@ async def test_platform_routes_are_canonical_and_exposed_in_openapi(platform_cli
         "/v1/platform/agents",
         "/v1/platform/agents/{agent_id}",
         "/v1/platform/agents/{agent_id}/runtime-state",
-        "/v1/platform/agents/{agent_id}/runtime-environment/retire",
-        "/v1/platform/agents/{agent_id}/runtime-observation-consumers/register",
-        "/v1/platform/agents/{agent_id}/runtime-observation-consumers/ack",
-        "/v1/platform/agents/{agent_id}/runtime-observation-consumers/reset",
-        "/v1/platform/agents/{agent_id}/runtime-observations/read",
         "/v1/platform/auth/keys",
         "/v1/platform/auth/keys/{key_id}",
         "/v1/platform/oauth/token",
     }
     assert all(not path.startswith("/api/platform") for path in paths)
     assert set(paths["/v1/platform/agents/{agent_id}/runtime-state"]) == {"put", "delete"}
-    observation_description = paths["/v1/platform/agents/{agent_id}/runtime-observations/read"][
-        "post"
-    ]["description"]
-    assert "authenticated guest report" in observation_description
-    assert "not attestation-bound instance identity" in observation_description
 
     missing_alias = await platform_client.post(
         "/api/platform/agents",

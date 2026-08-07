@@ -14,16 +14,6 @@ from pydantic import (
 )
 
 RuntimeObservedStatus = Literal["ok", "error", "unknown"]
-RUNTIME_OBSERVATION_COMPANION_FIELDS = frozenset(
-    {
-        "applyReceiptId",
-        "bootNonce",
-        "bootSessionId",
-        "sequence",
-        "eventId",
-        "capturedAt",
-    }
-)
 
 
 class _StrictObservedWireModel(BaseModel):
@@ -133,32 +123,6 @@ class HostedRuntimeObservedV2(_StrictObservedWireModel):
     error: str | None = Field(default=None, max_length=4000)
     converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
     truncated: bool | None = None
-    apply_receipt_id: str | None = Field(
-        alias="applyReceiptId",
-        default=None,
-        min_length=16,
-        max_length=128,
-    )
-    boot_nonce: str | None = Field(
-        alias="bootNonce",
-        default=None,
-        min_length=16,
-        max_length=128,
-    )
-    boot_session_id: str | None = Field(
-        alias="bootSessionId",
-        default=None,
-        min_length=1,
-        max_length=128,
-    )
-    sequence: int | None = Field(default=None, ge=1, le=9_007_199_254_740_991)
-    event_id: str | None = Field(
-        alias="eventId",
-        default=None,
-        min_length=1,
-        max_length=128,
-    )
-    captured_at: datetime | None = Field(alias="capturedAt", default=None)
 
     @field_validator("reported_at", mode="before")
     @classmethod
@@ -175,42 +139,6 @@ class HostedRuntimeObservedV2(_StrictObservedWireModel):
         if parsed.tzinfo is None:
             raise ValueError("reportedAt must include a timezone")
         return parsed.astimezone(UTC)
-
-    @field_validator("captured_at", mode="before")
-    @classmethod
-    def validate_captured_at(cls, value: object) -> datetime | None:
-        if value is None:
-            return None
-        return cls.validate_reported_at(value)
-
-    @model_validator(mode="after")
-    def validate_companion_event(self) -> HostedRuntimeObservedV2:
-        values = (
-            self.apply_receipt_id,
-            self.boot_nonce,
-            self.boot_session_id,
-            self.sequence,
-            self.event_id,
-            self.captured_at,
-        )
-        present = sum(value is not None for value in values)
-        if present not in {0, len(values)}:
-            raise ValueError("runtime observation companion fields must be present together")
-        if present == 0:
-            return self
-        if self.applied is None:
-            raise ValueError("companion runtime observations require applied identity")
-        if self.applied.generation < 1:
-            raise ValueError("companion runtime observation generation must be at least 1")
-        if self.reported_at != self.captured_at:
-            raise ValueError("reportedAt must equal capturedAt for companion observations")
-        if self.truncated:
-            raise ValueError("companion runtime observations cannot be truncated")
-        return self
-
-    @property
-    def is_companion_event(self) -> bool:
-        return self.event_id is not None
 
 
 HostedRuntimeObserved = HostedRuntimeObservedV2

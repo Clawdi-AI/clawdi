@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { BillingOffer, HostedDeployment, Plan } from "@/hosted/billing/contracts";
+import type { BillingOffer, HostedComputeSubscription, Plan } from "@/hosted/billing/contracts";
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
+	commonExplicitBillingOffers,
 	computeFundingMode,
 	computeFundingSource,
 	computeSubscriptionId,
@@ -13,10 +14,12 @@ import {
 	isComputeSubscriptionRenewing,
 	isComputeSubscriptionTermChangeable,
 	isIncludedBasicSubscription,
+	largestSignupGrantUsd,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	resolveSubscriptionCreatePlanSlug,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -36,8 +39,7 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 		slug,
 		name: slug,
 		price_cents: priceCents,
-		points_per_usd: 100,
-		signup_grant_credits: 0,
+		signup_grant_usd: "0",
 		vcpu: 1,
 		ram_gb: 1,
 		disk_size: 10,
@@ -45,7 +47,7 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 	};
 }
 
-function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+function subscription(): HostedComputeSubscription {
 	return {
 		status: "active",
 		funding_source: "stripe",
@@ -57,7 +59,7 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 	};
 }
 
-function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+function includedSubscription(): HostedComputeSubscription {
 	return {
 		subscription_id: 7,
 		status: "active",
@@ -97,6 +99,62 @@ describe("compute plan resolvers", () => {
 
 		expect(resolveBasicPlan([otherPaid, basic])).toBe(basic);
 		expect(resolveBasicPlan([otherPaid])).toBeUndefined();
+	});
+});
+
+describe("largestSignupGrantUsd", () => {
+	test("returns the largest positive configured grant", () => {
+		expect(
+			largestSignupGrantUsd([
+				plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 0, signup_grant_usd: "5.00" }),
+				plan({
+					slug: COMPUTE_PERFORMANCE_SLUG,
+					price_cents: 1900,
+					signup_grant_usd: "12.50",
+				}),
+			]),
+		).toBe("12.50");
+	});
+
+	test("returns null when no positive grant is configured", () => {
+		expect(largestSignupGrantUsd(undefined)).toBeNull();
+		expect(
+			largestSignupGrantUsd([
+				plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 0, signup_grant_usd: "0" }),
+			]),
+		).toBeNull();
+	});
+});
+
+describe("resolveSubscriptionCreatePlanSlug", () => {
+	test("defaults resubscribe to the authoritative prior plan", () => {
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_BASIC_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_BASIC_SLUG);
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_PERFORMANCE_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_PERFORMANCE_SLUG);
+	});
+
+	test("uses the other saleable plan only when the prior plan is unavailable", () => {
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_BASIC_SLUG, {
+				basicAvailable: false,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_PERFORMANCE_SLUG);
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_PERFORMANCE_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: false,
+			}),
+		).toBe(COMPUTE_BASIC_SLUG);
 	});
 });
 
@@ -225,6 +283,44 @@ describe("selectExplicitOfferForTerm", () => {
 				1,
 			),
 		).toBeNull();
+	});
+});
+
+describe("commonExplicitBillingOffers", () => {
+	test("keeps only terms explicitly offered by both compute plans", () => {
+		const monthly = offer(1, 1_234);
+		const annual = offer(12, 12_345);
+		const shared = commonExplicitBillingOffers([
+			plan({
+				slug: COMPUTE_BASIC_SLUG,
+				price_cents: 1_234,
+				offers: [annual, monthly],
+			}),
+			plan({
+				slug: COMPUTE_PERFORMANCE_SLUG,
+				price_cents: 5_678,
+				offers: [offer(1, 5_678)],
+			}),
+		]);
+
+		expect(shared).toEqual([monthly]);
+	});
+
+	test("returns no shared term for disjoint non-empty explicit offer sets", () => {
+		expect(
+			commonExplicitBillingOffers([
+				plan({
+					slug: COMPUTE_BASIC_SLUG,
+					price_cents: 1_234,
+					offers: [offer(1, 1_234)],
+				}),
+				plan({
+					slug: COMPUTE_PERFORMANCE_SLUG,
+					price_cents: 5_678,
+					offers: [offer(12, 54_324)],
+				}),
+			]),
+		).toEqual([]);
 	});
 });
 

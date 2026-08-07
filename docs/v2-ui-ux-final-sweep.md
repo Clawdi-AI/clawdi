@@ -33,7 +33,7 @@ any hosted surface.
 The residual issues are quality/polish, led by one **systemic cosmetic defect**
 (a Base UI `Select` label regression leaking internal ids/sentinels to users on
 several v2 surfaces) and one **correctness risk worth verifying** (the #696
-managed-rebind may leave the AI tab showing stale "Bound" BYOK providers until a
+managed-rebind may leave the AI tab showing a stale BYOK selection until a
 manual reload).
 
 ## Per-surface verdict
@@ -43,10 +43,10 @@ manual reload).
 | Deploy wizard — Free (direct create) | **OK** | Managed default `gpt-5.5`; free-slot-used → auto-Performance; plans-error state designed. |
 | Deploy wizard — Performance (Stripe hand-off) | **OK** | Term switcher, per-agent subscription copy; checkout redirect via `action_url`/`checkout_url`. |
 | Deploy wizard — channel step removal (#331) | **OK** | Credential inputs gone; reframed to "Channels · optional / Link after deploy" with correct copy. No stale "set up at deploy" copy anywhere. |
-| Deploy wizard — model/provider (managed/BYOK/multi) | **ISSUE (fast-follow)** | `Select` shows `__managed__` raw sentinel (F1). Otherwise correct: managed=wallet, BYOK, multi-provider, custom model id. |
+| Deploy wizard — model/provider (managed/BYOK) | **ISSUE (fast-follow)** | `Select` shows `__managed__` raw sentinel (F1). Otherwise correct: managed=wallet, scalar BYOK selection, custom model id. |
 | Agent detail — OpenClaw (overview/console/terminal/sessions/skills/ai/channels/settings) | **OK** | Dashboard link `Open OpenClaw Control UI` (token in href only); lifecycle status-gated; designed empty/loading/error. |
 | Agent detail — Hermes | **OK** | `Open Hermes Dashboard`; single-runtime (no switcher, correct). |
-| Agent detail — AI tab / rebind (#696) | **ISSUE (fast-follow)** | Possible stale "Bound" pool after managed rebind (F2); `Select` shows raw provider id (F1); "Claude models" copy vs `gpt-5.5` default (F7). |
+| Agent detail — AI tab / rebind (#696) | **ISSUE (fast-follow)** | Possible stale BYOK selection after managed rebind (F2); `Select` shows raw provider id (F1); "Claude models" copy vs `gpt-5.5` default (F7). |
 | Agent detail — lifecycle actions | **ISSUE (polish)** | Restart confirms on Overview but not in Settings (F6). Stop/Delete confirms present and correct. |
 | Terminal / Codex add-on | **OK (observe)** | Terminal is a real shell (ttyd), designed disconnected/error states. Codex is surfaced as an **AI provider** (ChatGPT OAuth), not a terminal add-on — confirm this matches the intended gated-beta model (F16). |
 | Channels — post-deploy native linking | **OK** | Discoverable from the agent's **Channel Links** tab; gated behind provisioning; connect + link flows complete, not dead-ended. |
@@ -73,7 +73,7 @@ Every required user intent → is there a complete, discoverable path?
 | Deploy a Free agent (direct create) | Yes | Yes | `01-deploy-free-default`; `deploy-wizard.tsx:571-586` |
 | Deploy a Performance agent (Stripe checkout) | Yes | Yes | `02-deploy-performance`; `deploy-wizard.tsx:547-568` |
 | Choose managed model (default `gpt-5.5`) | Yes | Yes | `01`; `model-binding.ts:10` |
-| Use BYOK / multi-provider at deploy | Yes | Yes | `03-deploy-byok-providers`; `deploy-wizard.tsx:465-515` |
+| Use one BYOK provider at deploy | Yes | Yes | `03-deploy-byok-providers`; `deploy-wizard.tsx:465-515` |
 | Understand "link channel after deploy" | Yes | Yes | `01` (Channels · optional); `deploy-wizard.tsx:743-775` |
 | Open OpenClaw dashboard | Yes | Yes | `20-agent-openclaw-overview`; `runtimes.ts:59-65` |
 | Open Hermes dashboard | Yes | Yes | `21-agent-hermes-overview` |
@@ -104,9 +104,9 @@ Severity: **launch-blocker** > **fast-follow** > **polish**.
 collapsed trigger renders the **raw selected value** on initial render whenever
 the value differs from the visible option text. Confirmed on four v2 surfaces:
 
-- Deploy wizard → Primary provider shows **`__managed__`** (`01`, `03`) — worst
+- Deploy wizard → Selected provider shows **`__managed__`** (`01`, `03`) — worst
   case: an internal sentinel on the primary deploy surface.
-- Agent AI tab → Primary provider shows **`my-openai`** (raw provider_id) (`21-agent-hermes-ai`).
+- Agent AI tab → Selected provider shows **`my-openai`** (raw provider_id) (`21-agent-hermes-ai`).
 - Settings → Language shows **`default`** (lowercase) instead of "Default" (`20-...-settings`).
 - Add-provider → Authentication shows **`api_key`** instead of "API key" (`42-...-add-dialog`).
 
@@ -115,7 +115,7 @@ shadcn-for-Base-UI pattern), or give `SelectValue` a `children` function at the
 affected call sites. Cosmetic (selects function correctly) but reads as unfinished
 on core flows.
 
-### F2 — Managed rebind (#696) can leave stale "Bound" BYOK providers in the AI tab — fast-follow (verify)
+### F2 — Managed rebind (#696) can leave a stale BYOK selection in the AI tab — fast-follow (verify)
 
 `hosted-agent-detail.tsx:1226-1285` builds the rebind body correctly (managed-only →
 `provider_ids: ["clawdi-managed-v2"]`, `auth_kind: "managed"`, no bootstrap), but
@@ -124,12 +124,12 @@ on core flows.
 and `useSetAgentLanguageTimezone`, it does **not** schedule a settling refresh.
 Deployments only background-poll while status is transitional
 (`hooks.ts` → `shouldPollDeployments`), and a live rebind keeps the agent
-`running`. The tab derives the pool from `config_info.ai_provider_bindings[runtime]`
+`running`. The tab derives the selected binding from `config_info.ai_provider_bindings[runtime]`
 (`:1123`). If that binding is eventually-consistent — which the "Updating the
 runtime…" copy implies — the single immediate refetch can read the pre-rebind
-binding and then never re-poll, so the cleared BYOK providers keep showing as
-**Bound** until the user navigates away and back. This directly contradicts #696's
-cleared-pool intent and the "applies live — no restart" promise. Verify backend
+binding and then never re-poll, so the replaced BYOK selection keeps showing as
+**Selected** until the user navigates away and back. This directly contradicts #696's
+managed-only replacement intent and the "applies live — no restart" promise. Verify backend
 settle timing; if non-instant, add a `scheduleDeploymentSettlingRefresh` to the
 rebind mutation.
 

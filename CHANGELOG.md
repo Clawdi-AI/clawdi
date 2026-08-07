@@ -10,6 +10,140 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.43
+
+Package: `clawdi@0.13.43`
+
+### Fixed
+
+- Hosted runtime platform roots keep their systemd-defined access modes:
+  the CLI no longer re-asserts modes on `/etc/clawdi`, `/var/lib/clawdi`,
+  `/var/cache/clawdi`, or `/run/clawdi` when it writes files inside them, so
+  the root-owned `0700` configuration and cache boundaries stay closed to
+  the tenant user.
+
+## Clawdi CLI v0.13.42
+
+Package: `clawdi@0.13.42`
+
+### Fixed
+
+- Transparent egress on every tenant: the runtime now publishes
+  `transparent-egress.env` owned by root with a mode that lets the numeric
+  egress identity read it, so the mitmproxy add-on can load the tenant's
+  mTLS and copy rules instead of failing convergence.
+
+## Clawdi CLI v0.13.41
+
+Package: `clawdi@0.13.41`
+
+### Fixed
+
+- Hosted convergence now refuses to run unless the resolved runtime identity
+  matches the tenant contract, so a stray `HOME` can no longer redirect a tenant
+  into the wrong home or let installers run as root.
+- The shared `/run/clawdi` root is owned solely by the boot preparation unit,
+  and convergence can no longer recreate a missing platform root.
+- External runtime probes, installs, and uninstalls are bounded, so a wedged
+  third-party CLI fails convergence instead of hanging it.
+
+## Clawdi CLI v0.13.40
+
+Package: `clawdi@0.13.40`
+
+### Changed
+
+- The hosted runtime context is now the single file `/etc/clawdi/runtime-context.json`
+  instead of a directory containing one identically named file.
+- Hosted platform data follows FHS and systemd conventions: configuration under
+  `/etc/clawdi`, durable state under `/var/lib/clawdi`, disposable data under
+  `/var/cache/clawdi`, and runtime data under `/run/clawdi`. systemd owns these
+  roots through its directory directives, and every status file now lives in one
+  place. Tenant tools use their own npm and XDG defaults.
+
+## Clawdi CLI v0.13.38
+
+Package: `clawdi@0.13.38`
+
+### Fixed
+
+- Hosted runtime convergence now uses one probed privilege-drop strategy for
+  runtime-user CA checks, systemd operations, installers, and launched services,
+  without depending on `gosu`.
+
+## Clawdi CLI v0.13.36
+
+Package: `clawdi@0.13.36`
+
+### Changed
+
+- Hosted runtime manifests now use the exact `clawdiCli.packageSpec` as their
+  sole desired CLI version, with exact installation, verification, atomic
+  activation, and self-re-exec completed before manifest convergence.
+
+## Clawdi CLI v0.13.13
+
+Package: `clawdi@0.13.13`
+
+### Changed
+
+- Agent filesystem Skills are now the authoritative local copies and appear in
+  Cloud as read-only projections. Cloud-owned workspace and personal Project
+  Skills remain explicitly importable.
+- The local MCP process now forwards complete tool definitions and results
+  without rebuilding dynamic schemas.
+
+### Fixed
+
+- Bundled platform Skills and MCP resources no longer appear as user-managed
+  inventory.
+- Mixed-version Skill sync now pauses safely instead of overwriting or deleting
+  Agent-owned files.
+
+## Clawdi CLI v0.13.12
+
+Package: `clawdi@0.13.12`
+
+### Fixed
+
+- Made Hosted runtime reconciliation recover live systemd drift without
+  redundant restarts, reject stale generations, verify managed installer state,
+  and keep rollback snapshots within root-controlled paths.
+- Reduced deployment readiness latency while bounding retry load.
+
+## Clawdi CLI v0.13.11
+
+Package: `clawdi@0.13.11`
+
+### Added
+
+- Added the recommended native curl installer for macOS x64/arm64 and Linux
+  x64/arm64 systems, including glibc and musl builds with bundled skills and
+  egress resources.
+
+### Changed
+
+- CLI updates now follow the current installation owner: native installs use
+  checksum-verified exact release assets, npm/Bun installs use exact npm
+  versions, and Hosted remains a separate exact-version npm authority.
+
+### Fixed
+
+- Improved local update transaction fencing, daemon restart lifecycle,
+  share-token handling, and immutable release recovery.
+
+## Clawdi CLI v0.12.10-beta.57
+
+Package: `clawdi@0.12.10-beta.57`
+
+### Fixed
+
+- Managed Telegram method and file requests now keep agent-link credentials out
+  of Cloud request URLs while preserving standard Telegram Bot API client
+  behavior.
+- Managed runtime CA trust bundles are readable only by root and the runtime
+  user's primary group, including after an existing bundle is replaced.
+
 ## Clawdi CLI v0.12.10-beta.55
 
 Package: `clawdi@0.12.10-beta.55`

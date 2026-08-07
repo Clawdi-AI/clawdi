@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import JsonValue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +12,7 @@ from app.schemas.settings import (
     SettingsUpdate,
     SettingsUpdateResponse,
 )
-from app.services.memory_provider import mem0_available
+from app.services.memory_provider_mem0 import mem0_available
 from app.services.vault_crypto import encrypt_field, is_encrypted_field
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 _SECRET_MASK = "••••••••"
 
 
-def _encrypt_secrets(data: dict) -> dict:
+def _encrypt_secrets(data: dict[str, JsonValue]) -> dict[str, JsonValue]:
     """Return a copy of *data* with secret fields encrypted.
 
     Always encrypts string secret values (including those that happen to start
@@ -36,7 +37,7 @@ def _encrypt_secrets(data: dict) -> dict:
     return out
 
 
-def _mask_secrets(data: dict) -> dict:
+def _mask_secrets(data: dict[str, JsonValue]) -> dict[str, JsonValue]:
     """Return a copy of *data* safe to send to the client.
 
     Replaces secret values with a fixed mask string so the frontend can detect

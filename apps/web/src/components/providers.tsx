@@ -1,39 +1,16 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NuqsAdapter } from "nuqs/adapters/tanstack-router";
 import { useEffect, useRef, useState } from "react";
 import { AnalyticsProvider } from "@/components/providers/analytics-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ApiError } from "@/lib/api-errors";
 import { useCurrentUser } from "@/lib/auth-client";
+import { createAppQueryClient } from "@/lib/query-client";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-	const [queryClient] = useState(
-		() =>
-			new QueryClient({
-				defaultOptions: {
-					queries: {
-						staleTime: 30_000,
-						retry: (failureCount, error) => {
-							if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
-								return false;
-							}
-							// Fetch-level failures (no HTTP response) get a longer budget
-							// (~7s of backoff) than server errors (~3s): backend deploys
-							// swap containers behind the proxy, and for a few seconds the
-							// proxy answers with its own CORS-less 502, which the browser
-							// can only see as a fetch failure.
-							if (!(error instanceof ApiError)) {
-								return failureCount < 3;
-							}
-							return failureCount < 2;
-						},
-					},
-				},
-			}),
-	);
+	const [queryClient] = useState(createAppQueryClient);
 	return (
 		<ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
 			<NuqsAdapter>

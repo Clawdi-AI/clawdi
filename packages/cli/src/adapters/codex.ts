@@ -1,8 +1,14 @@
-import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
-import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
+import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
+import {
+	migrateLegacyLocalSetupSkill,
+	mutateUserSkillTarget,
+	shouldIgnoreUserSkill,
+} from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -235,6 +241,12 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
@@ -243,10 +255,8 @@ export class CodexAdapter implements AgentAdapter {
 			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			// Bundled by `clawdi setup`, not user-authored. See claude-code.ts
-			// for the full reasoning.
-			if (entry.name === "clawdi") continue;
 			const dirPath = join(skillsDir(), entry.name);
+			if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 
@@ -272,13 +282,19 @@ export class CodexAdapter implements AgentAdapter {
 	async listSkillKeys(): Promise<string[]> {
 		// Flat layout. Mirrors `collectSkills` filtering so the
 		// daemon's rescan and the bulk push see the same set.
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (entry.name === "clawdi") continue;
+			if (shouldIgnoreUserSkill(join(skillsDir(), entry.name), entry.name)) continue;
 			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 			out.push(entry.name);
@@ -303,17 +319,17 @@ export class CodexAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(skillsDir(), key);
-		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		mutateUserSkillTarget(dir, key, () => {
+			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		});
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const targetDir = join(skillsDir(), key);
-		if (existsSync(targetDir)) {
-			rmSync(targetDir, { recursive: true, force: true });
-		}
-		mkdirSync(targetDir, { recursive: true });
-
-		await extractTarGz(skillsDir(), tarGzBytes);
+		const root = skillsDir();
+		const targetDir = join(root, key);
+		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
+			mutateUserSkillTarget(targetDir, key, mutation),
+		);
 	}
 
 	async writeSharedSkillArchive(
@@ -321,7 +337,12 @@ export class CodexAdapter implements AgentAdapter {
 		ownerHandle: string,
 		tarGzBytes: Buffer,
 	): Promise<void> {
-		await extractSharedSkillTarGz(key, this.getSharedSkillPath(key, ownerHandle), tarGzBytes);
+		await replaceSkillArchiveTarGz(
+			key,
+			this.getSkillsRootDir(),
+			this.getSharedSkillPath(key, ownerHandle),
+			tarGzBytes,
+		);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

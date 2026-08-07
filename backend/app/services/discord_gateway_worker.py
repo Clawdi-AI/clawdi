@@ -7,25 +7,36 @@ import json
 import logging
 import random
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from types import TracebackType
+from typing import Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
 from fastapi import HTTPException
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from app.core.config import settings
 from app.models.channel import (
+    BINDING_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelBinding,
 )
-from app.services.channels import decrypt_provider_token, record_discord_dispatch
+from app.services.channels import (
+    decrypt_provider_token,
+    record_discord_dispatch,
+    update_discord_binding_display_name_from_trusted_event,
+)
+from app.services.discord_command_reconciliation_worker import (
+    reconcile_discord_guild_commands,
+    reconcile_discord_guild_departure,
+)
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_websocket_url
 
 log = logging.getLogger(__name__)
@@ -36,6 +47,43 @@ DISCORD_DEFAULT_INTENTS = 46593
 
 _NON_RETRYABLE_CLOSE_CODES = {4004, 4010, 4011, 4012, 4013, 4014}
 _SESSION_RESET_CLOSE_CODES = {4007, 4009}
+
+type GatewayFrame = dict[str, JsonValue]
+
+_GATEWAY_JSON_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+
+
+class _GatewayConnection(Protocol):
+    """The WebSocket operations required by one Discord Gateway session."""
+
+    async def recv(self) -> str | bytes: ...
+
+    async def send(self, message: str, /) -> None: ...
+
+    async def close(self, *, code: int, reason: str) -> None: ...
+
+
+class _GatewayConnectionContext(Protocol):
+    async def __aenter__(self) -> _GatewayConnection: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+
+class _GatewayConnectFactory(Protocol):
+    def __call__(
+        self,
+        uri: str,
+        *,
+        ping_interval: float | None,
+        max_size: int | None,
+        open_timeout: float | None,
+    ) -> _GatewayConnectionContext: ...
 
 
 @dataclass
@@ -65,7 +113,7 @@ class DiscordGatewayWorker:
         scan_interval_seconds: float = 10.0,
         reconnect_initial_seconds: float = 1.0,
         reconnect_max_seconds: float = 60.0,
-        connect_factory: Callable[..., Any] = connect,
+        connect_factory: _GatewayConnectFactory = connect,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._worker_id = worker_id or f"discord-gateway-{uuid.uuid4()}"
@@ -145,7 +193,8 @@ class DiscordGatewayWorker:
                     await _sleep_until_stop(stop, self._reconnect_max_seconds)
                     continue
                 log.warning("discord gateway account %s disconnected: %s", account_id, exc)
-            except Exception as exc:  # noqa: BLE001 - gateway worker must reconnect after faults.
+            except Exception as exc:
+                # Gateway workers must reconnect after transport and protocol faults.
                 log.exception("discord gateway account %s failed: %s", account_id, exc)
             await _sleep_until_stop(stop, backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, self._reconnect_max_seconds)
@@ -179,16 +228,38 @@ class DiscordGatewayWorker:
         try:
             token = decrypt_provider_token(account)
         except HTTPException as exc:
-            detail = exc.detail if isinstance(exc.detail, str) else "provider token unavailable"
-            raise RuntimeError(detail) from exc
+            raise RuntimeError(_provider_token_error_detail(exc.detail)) from exc
 
         can_resume = state.can_resume()
-        gateway_url = state.resume_gateway_url if can_resume else _account_gateway_url(account)
+        gateway_url = state.resume_gateway_url
+        if not can_resume or gateway_url is None:
+            gateway_url = _account_gateway_url(account)
         try:
             await validate_channel_websocket_url(gateway_url, label="discord gateway url")
         except UnsafeOutboundUrlError as exc:
             raise RuntimeError(str(exc)) from exc
         uri = discord_gateway_uri(gateway_url)
+        await self._run_gateway_session(
+            account_id=account_id,
+            stop=stop,
+            state=state,
+            uri=uri,
+            token=token,
+            intents=discord_gateway_intents(account),
+            resume=can_resume,
+        )
+
+    async def _run_gateway_session(
+        self,
+        *,
+        account_id: UUID,
+        stop: asyncio.Event,
+        state: _GatewayState,
+        uri: str,
+        token: str,
+        intents: int,
+        resume: bool,
+    ) -> None:
         state.heartbeat_acknowledged = True
         async with self._connect_factory(
             uri,
@@ -203,7 +274,7 @@ class DiscordGatewayWorker:
                 name=f"discord-gateway-heartbeat-{account_id}",
             )
             try:
-                if can_resume and state.session_id is not None and state.sequence is not None:
+                if resume and state.session_id is not None and state.sequence is not None:
                     await websocket.send(
                         _gateway_json(
                             discord_resume_payload(
@@ -219,7 +290,7 @@ class DiscordGatewayWorker:
                         _gateway_json(
                             discord_identify_payload(
                                 token=token,
-                                intents=discord_gateway_intents(account),
+                                intents=intents,
                             )
                         )
                     )
@@ -239,18 +310,26 @@ class DiscordGatewayWorker:
         account_id: UUID,
         raw_frame: str | bytes,
         state: _GatewayState,
-        websocket: Any,
+        websocket: _GatewayConnection,
     ) -> None:
         frame = parse_gateway_frame(raw_frame)
         if frame is None:
             return
         sequence = frame.get("s")
-        if isinstance(sequence, int):
-            state.sequence = sequence
         op = frame.get("op")
         if op == 0:
             _update_gateway_session_state(state, frame)
-            await record_discord_gateway_dispatch(self._sessionmaker, account_id, frame)
+            await record_discord_gateway_dispatch(
+                self._sessionmaker,
+                account_id,
+                frame,
+                gateway_session_id=state.session_id,
+            )
+            # A RESUME sequence acknowledges every Dispatch through this value.
+            # Advance it only after the event's durable admission succeeds, or
+            # a reconnect could skip the failed event permanently.
+            if isinstance(sequence, int) and not isinstance(sequence, bool):
+                state.sequence = sequence
         elif op == 1:
             await _send_heartbeat(websocket, state)
         elif op == 7:
@@ -310,19 +389,129 @@ async def load_discord_gateway_account(
 async def record_discord_gateway_dispatch(
     sessionmaker: async_sessionmaker[AsyncSession],
     account_id: UUID,
-    frame: dict[str, Any],
+    frame: GatewayFrame,
+    *,
+    gateway_session_id: str | None = None,
 ) -> bool:
     async with sessionmaker() as db:
         account = await _load_active_discord_account(db, account_id)
         if account is None:
             await db.rollback()
             return False
-        recorded = await record_discord_dispatch(db, account=account, frame=frame)
-        if recorded:
-            await db.commit()
+        if frame.get("t") == "GUILD_DELETE":
+            await db.rollback()
+            guild_id = _discord_departed_guild_id(frame)
+            if guild_id is None:
+                # unavailable=true is a temporary outage, not a departure.
+                return True
+            # Do not acknowledge an authority-loss event until its binding
+            # mutation is durable. A database failure must reconnect/resume so
+            # Discord can replay the sequence; provider cleanup itself is
+            # persisted as retry state and does not raise for normal failures.
+            await reconcile_discord_guild_departure(
+                sessionmaker,
+                account_id=account_id,
+                guild_id=guild_id,
+                lifecycle_event_id=_discord_lifecycle_event_id(
+                    frame,
+                    gateway_session_id=gateway_session_id,
+                    guild_id=guild_id,
+                ),
+            )
             return True
-        await db.rollback()
+        display_name_healed = await _heal_discord_guild_binding_display_name(
+            db,
+            account=account,
+            frame=frame,
+        )
+        recorded = await record_discord_dispatch(db, account=account, frame=frame)
+        if recorded or display_name_healed:
+            await db.commit()
+        else:
+            await db.rollback()
+        guild_id = _discord_available_guild_id(frame)
+        if guild_id is not None:
+            try:
+                await reconcile_discord_guild_commands(
+                    sessionmaker,
+                    account_id=account_id,
+                    guild_id=guild_id,
+                )
+            # Reconciliation failures must not reconnect the healthy Gateway.
+            except Exception:
+                log.exception(
+                    "discord_command_guild_create_reconciliation_failed account_id=%s guild_id=%s",
+                    account_id,
+                    guild_id,
+                )
+        return recorded
+
+
+async def _heal_discord_guild_binding_display_name(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    frame: GatewayFrame,
+) -> bool:
+    """Backfill a bound guild name from one bot-authenticated Gateway event."""
+    guild_id = _discord_available_guild_id(frame)
+    if guild_id is None:
         return False
+    data = frame.get("d")
+    guild_name = data.get("name") if isinstance(data, dict) else None
+    result = await db.execute(
+        select(ChannelBinding).where(
+            ChannelBinding.account_id == account.id,
+            ChannelBinding.external_chat_id == guild_id,
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+        )
+    )
+    changed = False
+    for binding in result.scalars().all():
+        if update_discord_binding_display_name_from_trusted_event(
+            binding,
+            external_chat_id=guild_id,
+            external_chat_type="guild",
+            external_chat_name=guild_name if isinstance(guild_name, str) else None,
+            external_user_id=None,
+        ):
+            changed = True
+    return changed
+
+
+def _discord_available_guild_id(frame: GatewayFrame) -> str | None:
+    if frame.get("t") != "GUILD_CREATE":
+        return None
+    data = frame.get("d")
+    if not isinstance(data, dict) or data.get("unavailable") is True:
+        return None
+    guild_id = data.get("id")
+    return guild_id if isinstance(guild_id, str) and guild_id else None
+
+
+def _discord_departed_guild_id(frame: GatewayFrame) -> str | None:
+    data = frame.get("d")
+    if not isinstance(data, dict) or data.get("unavailable") is True:
+        return None
+    guild_id = data.get("id")
+    return guild_id if isinstance(guild_id, str) and guild_id else None
+
+
+def _discord_lifecycle_event_id(
+    frame: GatewayFrame,
+    *,
+    gateway_session_id: str | None,
+    guild_id: str,
+) -> str:
+    sequence = frame.get("s")
+    sequence_key = (
+        str(sequence)
+        if isinstance(sequence, int) and not isinstance(sequence, bool)
+        else hashlib.sha256(
+            json.dumps(frame, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    )
+    return f"{gateway_session_id or 'unknown'}:{sequence_key}:GUILD_DELETE:{guild_id}"
 
 
 async def _load_active_discord_account(
@@ -356,7 +545,7 @@ def discord_gateway_uri(base_url: str) -> str:
     )
 
 
-def discord_identify_payload(*, token: str, intents: int) -> dict[str, Any]:
+def discord_identify_payload(*, token: str, intents: int) -> GatewayFrame:
     return {
         "op": 2,
         "d": {
@@ -376,7 +565,7 @@ def discord_resume_payload(
     token: str,
     session_id: str,
     sequence: int,
-) -> dict[str, Any]:
+) -> GatewayFrame:
     return {
         "op": 6,
         "d": {
@@ -401,14 +590,16 @@ def discord_gateway_enabled(account: ChannelAccount) -> bool:
     return value is not False
 
 
-def parse_gateway_frame(raw_frame: str | bytes) -> dict[str, Any] | None:
-    if isinstance(raw_frame, bytes):
-        raw_frame = raw_frame.decode("utf-8")
-    payload = json.loads(raw_frame)
+def parse_gateway_frame(raw_frame: str | bytes) -> GatewayFrame | None:
+    payload = _GATEWAY_JSON_ADAPTER.validate_json(raw_frame)
     return payload if isinstance(payload, dict) else None
 
 
-def _update_gateway_session_state(state: _GatewayState, frame: dict[str, Any]) -> None:
+def _provider_token_error_detail(detail: object) -> str:
+    return detail if isinstance(detail, str) else "provider token unavailable"
+
+
+def _update_gateway_session_state(state: _GatewayState, frame: GatewayFrame) -> None:
     if frame.get("t") != "READY":
         return
     data = frame.get("d")
@@ -431,11 +622,10 @@ def discord_gateway_advisory_lock_key(account_id: UUID) -> int:
 
 
 def discord_gateway_close_code(exc: ConnectionClosed) -> int | None:
-    value = getattr(exc, "code", None)
-    return value if isinstance(value, int) else None
+    return exc.rcvd.code if exc.rcvd is not None else None
 
 
-async def _try_advisory_lock(connection: Any, lock_key: int) -> bool:
+async def _try_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool:
     result = await connection.execute(
         text("SELECT pg_try_advisory_lock(:lock_key)"),
         {"lock_key": lock_key},
@@ -444,7 +634,7 @@ async def _try_advisory_lock(connection: Any, lock_key: int) -> bool:
     return result.scalar_one() is True
 
 
-async def _release_advisory_lock(connection: Any, lock_key: int) -> None:
+async def _release_advisory_lock(connection: AsyncConnection, lock_key: int) -> None:
     await connection.execute(
         text("SELECT pg_advisory_unlock(:lock_key)"),
         {"lock_key": lock_key},
@@ -452,14 +642,14 @@ async def _release_advisory_lock(connection: Any, lock_key: int) -> None:
     await connection.commit()
 
 
-async def _recv_gateway_frame(websocket: Any) -> dict[str, Any]:
+async def _recv_gateway_frame(websocket: _GatewayConnection) -> GatewayFrame:
     frame = parse_gateway_frame(await websocket.recv())
     if frame is None:
         raise RuntimeError("discord gateway sent a non-object frame")
     return frame
 
 
-def _heartbeat_interval_seconds(hello: dict[str, Any]) -> float:
+def _heartbeat_interval_seconds(hello: GatewayFrame) -> float:
     if hello.get("op") != 10:
         raise RuntimeError("discord gateway did not send hello")
     data = hello.get("d")
@@ -472,7 +662,7 @@ def _heartbeat_interval_seconds(hello: dict[str, Any]) -> float:
 
 
 async def _heartbeat_loop(
-    websocket: Any,
+    websocket: _GatewayConnection,
     state: _GatewayState,
     interval_seconds: float,
     stop: asyncio.Event,
@@ -486,7 +676,7 @@ async def _heartbeat_loop(
         await _sleep_until_stop(stop, interval_seconds)
 
 
-async def _send_heartbeat(websocket: Any, state: _GatewayState) -> None:
+async def _send_heartbeat(websocket: _GatewayConnection, state: _GatewayState) -> None:
     state.heartbeat_acknowledged = False
     await websocket.send(_gateway_json({"op": 1, "d": state.sequence}))
 
@@ -498,7 +688,7 @@ async def _sleep_until_stop(stop: asyncio.Event, timeout_seconds: float) -> None
         pass
 
 
-def _gateway_json(payload: dict[str, Any]) -> str:
+def _gateway_json(payload: GatewayFrame) -> str:
     return json.dumps(payload, separators=(",", ":"))
 
 
@@ -509,7 +699,7 @@ def _account_gateway_url(account: ChannelAccount) -> str:
     return settings.channel_discord_gateway_url.strip()
 
 
-def _account_config_value(account: ChannelAccount, key: str) -> Any:
+def _account_config_value(account: ChannelAccount, key: str) -> object:
     if not isinstance(account.config, dict):
         return None
     return account.config.get(key)

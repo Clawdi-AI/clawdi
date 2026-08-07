@@ -201,9 +201,14 @@ function createFixture(): Fixture {
 	const clawdiHome = join(root, "clawdi-state");
 	mkdirSync(home, { recursive: true });
 	mkdirSync(clawdiHome, { recursive: true });
-	writeFileSync(join(clawdiHome, "auth.json"), `${JSON.stringify({ apiKey: "test-key" })}\n`, {
-		mode: 0o600,
-	});
+	writeFileSync(
+		join(clawdiHome, "auth.json"),
+		`${JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: server.url.origin },
+		})}\n`,
+		{ mode: 0o600 },
+	);
 	return { root, home, clawdiHome };
 }
 

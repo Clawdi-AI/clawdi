@@ -1,20 +1,40 @@
-"""Settings secret-masking + MCP bridge JWT verification.
+"""Settings secret-masking and the Clawdi MCP contract.
 
 These cover two small-but-sharp security edges: secrets stored via PATCH
-/api/settings must come back masked on GET, and the MCP bridge endpoint
-must reject requests without a valid HS256 token.
+/api/settings must come back masked on GET, and the authenticated Clawdi MCP
+endpoint must remain the only public MCP surface.
 """
 
 from __future__ import annotations
 
+import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import httpx
 import pytest
+from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
 
-from app.core.config import settings
 from app.main import app
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeMcpConfig:
+    type: object
+    url: str
+    headers: dict[str, str | None] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeToolRouterSession:
+    mcp: _FakeMcpConfig
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeComposioSdk:
+    sessions: object
 
 
 @pytest.mark.asyncio
@@ -23,10 +43,9 @@ async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncCl
     # `[mem0]` extra isn't installed (the prod-default since the
     # package was never declared). Stub `mem0_available()` so this
     # masking test can still exercise the secret-handling path.
-    import app.services.memory_provider as mp
+    import app.services.memory_provider_mem0 as mem0_adapter
 
-    monkeypatch.setattr(mp, "_mem0_available_cached", None)
-    monkeypatch.setattr(mp, "mem0_available", lambda: True)
+    monkeypatch.setattr(mem0_adapter, "mem0_available", lambda: True)
     import app.routes.settings as st
 
     monkeypatch.setattr(st, "mem0_available", lambda: True)
@@ -84,9 +103,29 @@ async def test_project_migration_banner_dismiss_persists(client: httpx.AsyncClie
     assert body["project_migration_banner_dismissed_at"] == dismissed_at
 
 
+def test_legacy_mcp_compatibility_routes_and_schema():
+    route_methods = {
+        (route.path, method)
+        for route in iter_route_contexts(app.routes)
+        for method in (getattr(route, "methods", None) or set())
+    }
+
+    for prefix in ("/v1", "/api"):
+        assert (f"{prefix}/connectors/mcp-config", "GET") in route_methods
+        assert (f"{prefix}/mcp/composio", "POST") in route_methods
+        assert (f"{prefix}/mcp/clawdi", "POST") in route_methods
+
+    paths = app.openapi()["paths"]
+    assert "/v1/connectors/mcp-config" in paths
+    assert "/v1/mcp/composio" not in paths
+    assert "/api/connectors/mcp-config" not in paths
+    assert "/api/mcp/composio" not in paths
+
+
 @pytest.mark.asyncio
-async def test_connector_mcp_config_points_at_composio_bridge(monkeypatch):
+async def test_legacy_mcp_config_preserves_cli_response_for_both_aliases(monkeypatch):
     from app.core.auth import AuthContext, get_auth
+    from app.core.config import settings
     from app.models.user import User
     from app.services.composio import verify_mcp_bridge_token
 
@@ -100,92 +139,142 @@ async def test_connector_mcp_config_points_at_composio_bridge(monkeypatch):
         )
 
     monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
     monkeypatch.setattr(settings, "public_api_url", "https://api.example.test/")
-
     app.dependency_overrides[get_auth] = fake_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.get("/v1/connectors/mcp-config")
+            responses = [
+                await ac.get("/v1/connectors/mcp-config"),
+                await ac.get("/api/connectors/mcp-config"),
+            ]
     finally:
         app.dependency_overrides.clear()
 
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["mcp_url"] == "https://api.example.test/v1/mcp/composio"
-    assert verify_mcp_bridge_token(body["mcp_token"]) == "clerk_user_123"
+    for response in responses:
+        assert response.status_code == 200, response.text
+        assert set(response.json()) == {"mcp_url", "mcp_token"}
+        assert response.json()["mcp_url"] == "https://api.example.test/v1/mcp/composio"
+        assert verify_mcp_bridge_token(response.json()["mcp_token"]) == "clerk_user_123"
 
 
 @pytest.mark.asyncio
-async def test_mcp_bridge_rejects_missing_and_invalid_tokens():
+async def test_legacy_composio_bridge_rejects_missing_and_invalid_bearer_tokens(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        r_missing = await ac.post("/v1/mcp/composio", json={"method": "tools/list"})
-        assert r_missing.status_code == 401, r_missing.text
-
-        r_bad = await ac.post(
+        missing = await ac.post("/v1/mcp/composio", json={"method": "tools/list"})
+        invalid = await ac.post(
             "/v1/mcp/composio",
-            json={"method": "tools/list"},
             headers={"Authorization": "Bearer not.a.valid.jwt"},
+            json={"method": "tools/list"},
         )
-        assert r_bad.status_code == 401, r_bad.text
+
+    assert missing.status_code == 401, missing.text
+    assert missing.json() == {"detail": "Missing auth token"}
+    assert invalid.status_code == 401, invalid.text
+    assert invalid.json() == {"detail": "Invalid token"}
 
 
 @pytest.mark.asyncio
-async def test_mcp_composio_bridge_forwards_json_rpc_with_user_scoped_session(monkeypatch):
+async def test_legacy_composio_bridge_rejects_unknown_methods_without_upstream_session(monkeypatch):
+    from app.core.config import settings
+    from app.routes import mcp_bridge
+    from app.services.composio import create_mcp_bridge_token
+
+    async def unexpected_session(_user_id: str):
+        raise AssertionError("unsupported methods must not create an upstream session")
+
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", unexpected_session)
+    token = create_mcp_bridge_token("clerk_user_123")
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        responses = [
+            await ac.post(
+                "/v1/mcp/composio",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"jsonrpc": "2.0", "id": rpc_id, "method": method},
+            )
+            for rpc_id, method in ((1, "resources/list"), (2, 42))
+        ]
+
+    for rpc_id, response in enumerate(responses, start=1):
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": {"code": -32601, "message": "Method not found"},
+        }
+
+
+@pytest.mark.asyncio
+async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
+    from mcp.types import CallToolResult, ListToolsResult
+
+    from app.core.config import settings
     from app.routes import mcp_bridge
     from app.services.composio import ComposioMcpSession, create_mcp_bridge_token
 
-    seen: dict = {}
+    seen: list[tuple[str, object]] = []
+    session = ComposioMcpSession(
+        url="https://composio.example.test/mcp",
+        headers={"x-session": "secret"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
 
     async def fake_session(user_id: str) -> ComposioMcpSession:
-        seen["user_id"] = user_id
-        return ComposioMcpSession(
-            url="https://app.composio.dev/tool_router/v3/trs_test/mcp",
-            headers={"x-session": "trs_test"},
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        seen.append(("session", user_id))
+        return session
+
+    async def fake_list(value: ComposioMcpSession) -> ListToolsResult:
+        assert value is session
+        return ListToolsResult.model_validate(
+            {"tools": [{"name": "COMPOSIO_SEARCH_TOOLS", "inputSchema": {"type": "object"}}]}
         )
 
-    async def fake_forward(session: ComposioMcpSession, body):
-        seen["session"] = session
-        seen["body"] = body
-        return {
-            "jsonrpc": "2.0",
-            "id": body["id"],
-            "result": {
-                "tools": [
-                    {
-                        "name": "COMPOSIO_SEARCH_TOOLS",
-                        "description": "Search Composio tools",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {"query": {"type": "string"}},
-                            "required": ["query"],
-                        },
-                    }
-                ]
-            },
-        }
+    async def fake_call(value: ComposioMcpSession, name: str, arguments: dict) -> CallToolResult:
+        assert value is session
+        seen.append((name, arguments))
+        return CallToolResult.model_validate(
+            {"content": [{"type": "text", "text": "called"}], "isError": False}
+        )
 
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
-    monkeypatch.setattr(mcp_bridge, "_forward_composio_mcp_request", fake_forward)
-
+    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
     token = create_mcp_bridge_token("clerk_user_123")
-    payload = {"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {}}
+    headers = {"Authorization": f"Bearer {token}"}
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.post(
-            "/v1/mcp/composio",
-            json=payload,
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        for prefix in ("/v1", "/api"):
+            listed = await ac.post(
+                f"{prefix}/mcp/composio",
+                headers=headers,
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            )
+            called = await ac.post(
+                f"{prefix}/mcp/composio",
+                headers=headers,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "COMPOSIO_SEARCH_TOOLS", "arguments": {"query": "mail"}},
+                },
+            )
+            assert listed.status_code == 200, listed.text
+            assert listed.json()["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
+            assert called.status_code == 200, called.text
+            assert called.json()["result"]["content"] == [{"type": "text", "text": "called"}]
+            assert called.json()["result"]["isError"] is False
 
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
-    assert body["result"]["tools"][0]["inputSchema"]["properties"]["query"]["type"] == "string"
-    assert seen["user_id"] == "clerk_user_123"
-    assert seen["body"] == payload
+    assert seen.count(("session", "clerk_user_123")) == 4
+    assert seen.count(("COMPOSIO_SEARCH_TOOLS", {"query": "mail"})) == 2
 
 
 @pytest.mark.asyncio
@@ -208,7 +297,7 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
         yield None
 
     async def no_connector_session(user_id: str):
-        raise RuntimeError("connectors disabled for test")
+        raise mcp_bridge.ComposioMcpUpstreamError("connectors disabled for test")
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", no_connector_session)
     app.dependency_overrides[get_auth] = fake_auth
@@ -229,25 +318,147 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
                     },
                 },
             )
-            legacy_listed = await ac.post(
+            pinged = await ac.post(
                 "/v1/mcp/clawdi",
-                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                json={"jsonrpc": "2.0", "id": 2, "method": "ping", "params": {}},
+            )
+            listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
             )
     finally:
         app.dependency_overrides.clear()
 
     assert canonical_init.status_code == 200, canonical_init.text
     assert canonical_init.json()["result"]["capabilities"]["tools"]["listChanged"] is False
+    assert pinged.json() == {"jsonrpc": "2.0", "id": 2, "result": {}}
 
-    assert legacy_listed.status_code == 200, legacy_listed.text
-    names = {tool["name"] for tool in legacy_listed.json()["result"]["tools"]}
+    assert listed.status_code == 200, listed.text
+    names = {tool["name"] for tool in listed.json()["result"]["tools"]}
     assert {"memory_search", "memory_add", "memory_extract", "session_search", "session_read"} <= (
         names
     )
 
 
 @pytest.mark.asyncio
-async def test_clawdi_mcp_memory_search_respects_env_bound_api_key(
+async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch):
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.user import User
+    from app.routes import mcp_bridge
+    from app.services.composio import ComposioMcpSession
+
+    expected_tool = {
+        "name": "COMPOSIO_FUTURE_META_TOOL",
+        "description": "A future schema-driven meta-tool",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"],
+                }
+            },
+            "required": ["target"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {"redirect_url": {"type": ["string", "null"]}},
+        },
+        "annotations": {"openWorldHint": True},
+        "_meta": {"composio": {"future_contract": True}},
+    }
+    expected_arguments = {"target": {"id": "recipient_123"}, "preserve": [1, {"x": True}]}
+    expected_result = {
+        "content": [
+            {
+                "type": "text",
+                "text": '{"status":"initiated","redirect_url":"https://connect.test/link"}',
+            }
+        ],
+        "structuredContent": {
+            "status": "initiated",
+            "redirect_url": "https://connect.test/link",
+        },
+        "isError": False,
+        "resultType": "complete",
+        "_meta": {"future": {"preserved": True}},
+    }
+    forwarded: list[tuple[str, object]] = []
+
+    async def fake_auth() -> AuthContext:
+        return AuthContext(
+            user=User(
+                email="mcp-passthrough-test@clawdi.local",
+                name="MCP Passthrough Test",
+                clerk_id="clerk_mcp_passthrough",
+            )
+        )
+
+    async def fake_db_session():
+        yield None
+
+    async def fake_composio_session(user_id: str) -> ComposioMcpSession:
+        assert user_id == "clerk_mcp_passthrough"
+        return ComposioMcpSession(
+            url="https://composio.test/mcp",
+            headers={},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+
+    async def fake_list(session: ComposioMcpSession):
+        from mcp.types import ListToolsResult
+
+        forwarded.append(("tools/list", session))
+        return ListToolsResult.model_validate({"tools": [expected_tool]})
+
+    async def fake_call(session: ComposioMcpSession, name: str, arguments: dict):
+        from mcp.types import CallToolResult
+
+        forwarded.append((name, arguments))
+        return CallToolResult.model_validate(expected_result)
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_composio_session)
+    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
+    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
+    app.dependency_overrides[get_auth] = fake_auth
+    app.dependency_overrides[get_session] = fake_db_session
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 10, "method": "tools/list", "params": {}},
+            )
+            called = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "COMPOSIO_FUTURE_META_TOOL",
+                        "arguments": expected_arguments,
+                    },
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+
+    listed_tools = listed.json()["result"]["tools"]
+    listed_composio_tool = next(
+        tool for tool in listed_tools if tool["name"] == expected_tool["name"]
+    )
+    assert listed_composio_tool == expected_tool
+    assert called.json() == {"jsonrpc": "2.0", "id": 11, "result": expected_result}
+    assert forwarded[1] == ("COMPOSIO_FUTURE_META_TOOL", expected_arguments)
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_memory_search_shares_account_memory_across_agents(
     db_session,
     seed_user,
     monkeypatch,
@@ -323,7 +534,7 @@ async def test_clawdi_mcp_memory_search_respects_env_bound_api_key(
         )
 
     async def no_connector_session(user_id: str):
-        raise RuntimeError("connectors disabled for test")
+        raise mcp_bridge.ComposioMcpUpstreamError("connectors disabled for test")
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", no_connector_session)
     app.dependency_overrides[get_session] = override_session
@@ -349,7 +560,7 @@ async def test_clawdi_mcp_memory_search_respects_env_bound_api_key(
     assert response.status_code == 200, response.text
     text = response.json()["result"]["content"][0]["text"]
     assert "OpenClaw alpha runtime" in text
-    assert "Hermes beta runtime" not in text
+    assert "Hermes beta runtime" in text
 
 
 @pytest.mark.asyncio
@@ -429,125 +640,225 @@ async def test_clawdi_mcp_session_search_escapes_like_wildcards(
 
 
 @pytest.mark.asyncio
-async def test_mcp_composio_bridge_sends_api_key_accept_and_parses_sse(monkeypatch):
-    from app.routes import mcp_bridge
+async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkeypatch):
+    import json
+
+    import httpx2
+
+    from app.services import composio
     from app.services.composio import ComposioMcpSession
 
-    seen: dict = {}
+    requests: list[tuple[str, dict | None, dict[str, str]]] = []
+    client_settings: list[tuple[dict[str, str], httpx2.Timeout, bool]] = []
+    real_async_client = httpx2.AsyncClient
 
-    class FakeResponse:
-        status_code = 200
-        is_success = True
-        headers = {"content-type": "text/event-stream"}
-        text = (
-            "event: message\n"
-            'data: {"jsonrpc":"2.0","id":9,"result":{"tools":[{"name":"COMPOSIO_SEARCH_TOOLS",'
-            '"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}}}]}}\n\n'
-            "event: done\n"
-            "data: [DONE]\n\n"
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        payload = json.loads(request.content) if request.content else None
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        requests.append((request.method, payload, headers))
+        if request.method == "DELETE":
+            return httpx2.Response(200)
+        assert payload is not None
+        method = payload.get("method")
+        if method == "server/discover":
+            return httpx2.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "error": {"code": -32601, "message": "Method not found"},
+                },
+            )
+        if method == "initialize":
+            return httpx2.Response(
+                200,
+                headers={"Mcp-Session-Id": "sdk-session"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "composio-test", "version": "1"},
+                    },
+                },
+            )
+        if method == "notifications/initialized":
+            return httpx2.Response(202)
+        if method == "tools/call":
+            return httpx2.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {
+                        "content": [{"type": "text", "text": "connected"}],
+                        "structuredContent": {"status": "connected"},
+                        "isError": False,
+                        "_meta": {"composio": {"request": "complete"}},
+                        "futureResultField": "not-a-standard-extension",
+                    },
+                },
+            )
+        assert method == "tools/list"
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {
+                    "tools": [
+                        {
+                            "name": "COMPOSIO_SEARCH_TOOLS",
+                            "inputSchema": {"type": "object"},
+                            "_meta": {"composio": {"version": 1}},
+                        }
+                    ]
+                },
+            }
+        )
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=f"event: message\ndata: {body}\n\n",
         )
 
-    class FakeAsyncClient:
-        def __init__(self, *, timeout: float):
-            self.timeout = timeout
+    def fake_async_client(*, headers, timeout, follow_redirects):
+        client_settings.append((headers, timeout, follow_redirects))
+        return real_async_client(
+            headers=headers,
+            transport=httpx2.MockTransport(handler),
+            follow_redirects=follow_redirects,
+        )
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def post(self, url: str, *, json: dict, headers: dict):
-            seen["url"] = url
-            seen["json"] = json
-            seen["headers"] = headers
-            return FakeResponse()
-
-    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
-    monkeypatch.setattr(mcp_bridge.httpx, "AsyncClient", FakeAsyncClient)
-
+    monkeypatch.setattr(composio.httpx2, "AsyncClient", fake_async_client)
     session = ComposioMcpSession(
-        url="https://backend.composio.dev/tool_router/trs_test/mcp",
-        headers={},
+        url="https://composio.test/mcp",
+        headers={"x-api-key": "session-scoped-key"},
         expires_at=datetime.now(UTC) + timedelta(minutes=30),
     )
-    result = await mcp_bridge._forward_composio_mcp_request(
-        session,
-        {"jsonrpc": "2.0", "id": 9, "method": "tools/list", "params": {}},
-    )
+    result = await composio.list_tool_router_mcp_tools(session)
+    called = await composio.call_tool_router_mcp_tool(session, "COMPOSIO_CONNECT", {"app": "x"})
 
-    assert seen["headers"]["Accept"] == "application/json, text/event-stream"
-    assert seen["headers"]["x-api-key"] == "composio_test_key"
-    assert result["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
-    assert result["result"]["tools"][0]["inputSchema"]["properties"]["query"]["type"] == "string"
+    assert len(client_settings) == 2
+    for headers, timeout, follow_redirects in client_settings:
+        assert headers == {"x-api-key": "session-scoped-key"}
+        assert timeout.connect == 30.0
+        assert timeout.write == 30.0
+        assert timeout.pool == 30.0
+        assert timeout.read == 300.0
+        assert follow_redirects is True
+    methods = [payload.get("method") for _, payload, _ in requests if payload]
+    assert methods.index("initialize") < methods.index("notifications/initialized")
+    assert methods.index("notifications/initialized") < methods.index("tools/list")
+    followups = [
+        headers
+        for _, payload, headers in requests
+        if payload
+        and payload.get("method") in {"notifications/initialized", "tools/list", "tools/call"}
+    ]
+    assert all(headers.get("mcp-protocol-version") == "2025-06-18" for headers in followups)
+    assert all(headers.get("mcp-session-id") == "sdk-session" for headers in followups)
+    assert requests[-1][0] == "DELETE"
+    assert result.tools[0].name == "COMPOSIO_SEARCH_TOOLS"
+    assert result.tools[0].meta == {"composio": {"version": 1}}
+    serialized_call = called.model_dump(by_alias=True, exclude_none=True)
+    assert serialized_call == {
+        "content": [{"type": "text", "text": "connected"}],
+        "structuredContent": {"status": "connected"},
+        "isError": False,
+        "resultType": "complete",
+        "_meta": {"composio": {"request": "complete"}},
+    }
 
 
 @pytest.mark.asyncio
-async def test_create_tool_router_mcp_session_uses_composio_v31_api(monkeypatch):
+async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(monkeypatch):
+    from composio.core.models.tool_router import ToolRouterMCPServerType
+
     from app.services import composio
 
-    requests: list[dict] = []
+    calls: list[dict] = []
+    event_loop_thread = threading.get_ident()
 
-    class FakeResponse:
-        status_code = 201
-        is_success = True
+    class FakeSessions:
+        def create(self, *, user_id: str, mcp: bool) -> _FakeToolRouterSession:
+            kwargs = {"user_id": user_id, "mcp": mcp}
+            calls.append({"kwargs": kwargs, "thread": threading.get_ident()})
+            return _FakeToolRouterSession(
+                mcp=_FakeMcpConfig(
+                    type=ToolRouterMCPServerType.HTTP,
+                    url="https://app.composio.dev/tool_router/v3/trs_test/mcp",
+                    headers={"x-api-key": "session_scoped_key", "x-session": "trs_test"},
+                )
+            )
 
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "session_id": "trs_test",
-                "mcp": {
-                    "type": "http",
-                    "url": "https://app.composio.dev/tool_router/v3/trs_test/mcp",
-                    "headers": {"x-session": "trs_test"},
-                },
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, *, timeout: float):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def post(self, url: str, *, headers: dict, json: dict):
-            requests.append({"url": url, "headers": headers, "json": json})
-            return FakeResponse()
-
-    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
-    monkeypatch.setattr(settings, "composio_api_base_url", "https://backend.composio.dev/")
-    monkeypatch.setattr(composio.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        composio,
+        "get_composio_sdk",
+        lambda: _FakeComposioSdk(sessions=FakeSessions()),
+    )
 
     now = datetime(2026, 5, 24, tzinfo=UTC)
     session = await composio._create_tool_router_mcp_session("clerk_user_123", now=now)
 
-    assert requests == [
-        {
-            "url": "https://backend.composio.dev/api/v3.1/tool_router/session",
-            "headers": {"x-api-key": "composio_test_key"},
-            "json": {"user_id": "clerk_user_123"},
-        }
-    ]
+    assert calls[0]["kwargs"] == {"user_id": "clerk_user_123", "mcp": True}
+    assert calls[0]["thread"] != event_loop_thread
     assert session.url == "https://app.composio.dev/tool_router/v3/trs_test/mcp"
-    assert session.headers == {"x-session": "trs_test"}
+    assert session.headers == {
+        "x-api-key": "session_scoped_key",
+        "x-session": "trs_test",
+    }
     assert session.expires_at == now + timedelta(minutes=30)
 
 
 @pytest.mark.asyncio
-async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
+@pytest.mark.parametrize(
+    "mcp",
+    [
+        _FakeMcpConfig(type="http", url="", headers={"x-api-key": "key"}),
+        _FakeMcpConfig(type="http", url="https://composio.test/mcp", headers={}),
+        _FakeMcpConfig(
+            type="http",
+            url="https://composio.test/mcp",
+            headers={"x-api-key": None},
+        ),
+        _FakeMcpConfig(
+            type="sse",
+            url="https://composio.test/mcp",
+            headers={"x-api-key": "key"},
+        ),
+    ],
+)
+async def test_create_tool_router_mcp_session_fails_closed_on_invalid_sdk_contract(
+    monkeypatch,
+    mcp,
+):
+    from app.services import composio
+
+    config = mcp
+
+    class FakeSessions:
+        def create(self, *, user_id: str, mcp: bool) -> _FakeToolRouterSession:
+            assert user_id and mcp is True
+            return _FakeToolRouterSession(mcp=config)
+
+    monkeypatch.setattr(
+        composio,
+        "get_composio_sdk",
+        lambda: _FakeComposioSdk(sessions=FakeSessions()),
+    )
+
+    with pytest.raises(composio.ComposioMcpUpstreamError, match="invalid MCP configuration"):
+        await composio._create_tool_router_mcp_session("clerk_user_123")
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
     db_session,
     seed_user,
     monkeypatch,
 ):
-    """Scoped api keys are deliberate capability narrowing; the old
-    connector config route rejected them via `require_user_auth`, and the
-    MCP entrypoint must not reopen that surface: connector tools are
-    neither listed nor callable."""
+    """A scoped key without Connector permissions cannot list or invoke them."""
     from datetime import timedelta
 
     from app.core.auth import AuthContext, get_auth
@@ -559,11 +870,16 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
     async def override_session():
         yield db_session
 
-    async def override_auth() -> AuthContext:
-        return AuthContext(
+    scoped_key = ApiKey(user_id=seed_user.id, scopes=["sessions:read"])
+    active_auth = {
+        "value": AuthContext(
             user=seed_user,
-            api_key=ApiKey(user_id=seed_user.id, scopes=["sessions:read"]),
+            api_key=scoped_key,
         )
+    }
+
+    async def override_auth() -> AuthContext:
+        return active_auth["value"]
 
     async def fake_session(user_id: str) -> ComposioMcpSession:
         return ComposioMcpSession(
@@ -572,17 +888,23 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
         )
 
-    async def fake_forward(session, payload):
-        return {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "tools": [{"name": "COMPOSIO_DANGEROUS", "inputSchema": {"type": "object"}}]
-            },
-        }
+    async def fake_list(session):
+        from mcp.types import ListToolsResult
+
+        return ListToolsResult.model_validate(
+            {"tools": [{"name": "COMPOSIO_DANGEROUS", "inputSchema": {"type": "object"}}]}
+        )
+
+    async def fake_call(session, name, arguments):
+        from mcp.types import CallToolResult
+
+        return CallToolResult.model_validate(
+            {"content": [{"type": "text", "text": "connector allowed"}]}
+        )
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
-    monkeypatch.setattr(mcp_bridge, "_forward_composio_mcp_request", fake_forward)
+    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
     monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
@@ -602,6 +924,21 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
                     "params": {"name": "COMPOSIO_DANGEROUS", "arguments": {}},
                 },
             )
+            scoped_key.scopes = ["connectors:read", "connectors:invoke"]
+            mcp_bridge._connector_tools_cache.clear()
+            allowed_list = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+            )
+            allowed_call = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {"name": "COMPOSIO_DANGEROUS", "arguments": {}},
+                },
+            )
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
@@ -609,12 +946,235 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
     assert listed.status_code == 200, listed.text
     tool_names = [tool["name"] for tool in listed.json()["result"]["tools"]]
     assert "COMPOSIO_DANGEROUS" not in tool_names
-    assert "memory_search" in tool_names
+    assert "memory_search" not in tool_names
 
     assert called.status_code == 200, called.text
     result = called.json()["result"]
     assert result["isError"] is True
-    assert "scoped api keys" in result["content"][0]["text"]
+    assert "missing scope: connectors:invoke" in result["content"][0]["text"]
+    allowed_names = [tool["name"] for tool in allowed_list.json()["result"]["tools"]]
+    assert "COMPOSIO_DANGEROUS" in allowed_names
+    assert allowed_call.json()["result"]["content"][0]["text"] == "connector allowed"
+
+
+@pytest.mark.asyncio
+async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_account_memory(
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    from app.core.auth import AuthContext, get_auth, is_runtime_deployment_principal
+    from app.core.database import get_session
+    from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
+    from app.models.session import Session
+    from app.routes import mcp_bridge
+    from app.services.composio import ComposioMcpSession
+    from tests.conftest import create_env_with_project
+
+    env_a = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="strict-mcp-a",
+        machine_name="Strict MCP A",
+        agent_type="openclaw",
+    )
+    env_b = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="strict-mcp-b",
+        machine_name="Strict MCP B",
+        agent_type="hermes",
+    )
+    now = datetime.now(UTC)
+    session_b_file_key = f"sessions/strict-b-{uuid4().hex}.json"
+    session_a = Session(
+        user_id=seed_user.id,
+        environment_id=env_a.id,
+        local_session_id="strict-a",
+        started_at=now,
+        summary="Alpha hosted runtime work",
+    )
+    session_b = Session(
+        user_id=seed_user.id,
+        environment_id=env_b.id,
+        local_session_id="strict-b",
+        started_at=now,
+        summary="Beta hosted runtime work",
+        file_key=session_b_file_key,
+    )
+    db_session.add_all([session_a, session_b])
+    await db_session.commit()
+
+    runtime_key = ApiKey(
+        user_id=seed_user.id,
+        environment_id=env_a.id,
+        runtime_deployment_id="strict-deployment",
+        managed=True,
+        scopes=[*RUNTIME_DEPLOYMENT_KEY_SCOPES, "future:runtime-capability"],
+    )
+    runtime_auth = AuthContext(user=seed_user, api_key=runtime_key)
+    assert is_runtime_deployment_principal(runtime_auth)
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return runtime_auth
+
+    async def fake_session(user_id: str) -> ComposioMcpSession:
+        assert user_id == seed_user.clerk_id
+        return ComposioMcpSession(
+            url="https://composio.test/mcp",
+            headers={},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+
+    async def fake_list(session):
+        from mcp.types import ListToolsResult
+
+        return ListToolsResult.model_validate(
+            {
+                "tools": [
+                    {"name": "connector_calendar", "inputSchema": {"type": "object"}},
+                    {"name": "memory_search", "inputSchema": {"type": "object"}},
+                ]
+            }
+        )
+
+    async def fake_call(session, name, arguments):
+        from mcp.types import CallToolResult
+
+        return CallToolResult.model_validate(
+            {"content": [{"type": "text", "text": "connector ok"}]}
+        )
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
+    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
+    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
+    await mcp_bridge.file_store.put(
+        session_b_file_key,
+        b'[{"role":"user","content":"Cross-agent session detail"}]',
+        "application/json",
+    )
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            )
+            searched = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "session_search",
+                        "arguments": {"query": "hosted runtime work"},
+                    },
+                },
+            )
+            read = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "session_read",
+                        "arguments": {"reference": str(session_b.id)},
+                    },
+                },
+            )
+            connector = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {"name": "connector_calendar", "arguments": {}},
+                },
+            )
+            memory = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "tools/call",
+                    "params": {"name": "memory_search", "arguments": {"query": "x"}},
+                },
+            )
+            runtime_key.scopes = None
+            identity_only_listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {}},
+            )
+            identity_only_session = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "session_search",
+                        "arguments": {"query": "hosted runtime work"},
+                    },
+                },
+            )
+            identity_only_connector = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "tools/call",
+                    "params": {"name": "connector_calendar", "arguments": {}},
+                },
+            )
+            identity_only_memory = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 9,
+                    "method": "tools/call",
+                    "params": {"name": "memory_search", "arguments": {"query": "x"}},
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+        await mcp_bridge.file_store.delete(session_b_file_key)
+
+    names = [tool["name"] for tool in listed.json()["result"]["tools"]]
+    assert "connector_calendar" in names
+    assert "session_search" in names
+    assert "session_read" in names
+    assert {"memory_search", "memory_add", "memory_extract"} <= set(names)
+    search_text = searched.json()["result"]["content"][0]["text"]
+    assert "Alpha hosted runtime work" in search_text
+    assert "Beta hosted runtime work" in search_text
+    assert "Cross-agent session detail" in read.json()["result"]["content"][0]["text"]
+    assert connector.json()["result"]["content"][0]["text"] == "connector ok"
+    assert memory.json()["result"]["content"][0]["text"] == "No memories found."
+    identity_only_names = {tool["name"] for tool in identity_only_listed.json()["result"]["tools"]}
+    assert "session_search" not in identity_only_names
+    assert "connector_calendar" not in identity_only_names
+    assert not {"memory_search", "memory_add", "memory_extract"} & identity_only_names
+    assert (
+        "missing scope: sessions:read"
+        in identity_only_session.json()["result"]["content"][0]["text"]
+    )
+    assert (
+        "missing scope: connectors:invoke"
+        in identity_only_connector.json()["result"]["content"][0]["text"]
+    )
+    assert (
+        "missing scope: memories:read"
+        in identity_only_memory.json()["result"]["content"][0]["text"]
+    )
 
 
 @pytest.mark.asyncio
@@ -649,13 +1209,15 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
         agent_type="hermes",
     )
     now = datetime.now(UTC)
+    session_a_file_key = f"sessions/share-a-{uuid4().hex}.json"
+    session_b_file_key = f"sessions/share-b-{uuid4().hex}.json"
     session_a = Session(
         user_id=seed_user.id,
         environment_id=env_a.id,
         local_session_id="share-a",
         started_at=now,
         summary="Env A session",
-        file_key="sessions/share-a.json",
+        file_key=session_a_file_key,
     )
     session_b = Session(
         user_id=seed_user.id,
@@ -663,7 +1225,7 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
         local_session_id="share-b",
         started_at=now,
         summary="Env B session",
-        file_key="sessions/share-b.json",
+        file_key=session_b_file_key,
     )
     db_session.add_all([session_a, session_b])
     await db_session.commit()
@@ -677,10 +1239,12 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
             api_key=ApiKey(user_id=seed_user.id, environment_id=env_a.id, scopes=None),
         )
 
-    async def fake_messages(session, store):
-        return [{"role": "user", "content": "hello"}]
-
-    monkeypatch.setattr(mcp_bridge, "load_session_messages", fake_messages)
+    for file_key in (session_a_file_key, session_b_file_key):
+        await mcp_bridge.file_store.put(
+            file_key,
+            b'[{"role":"user","content":"hello"}]',
+            "application/json",
+        )
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
 
@@ -712,6 +1276,8 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
+        for file_key in (session_a_file_key, session_b_file_key):
+            await mcp_bridge.file_store.delete(file_key)
 
     assert not own_env.get("isError"), own_env
     assert cross_env["isError"] is True, cross_env

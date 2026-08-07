@@ -8,6 +8,7 @@ groups and renders icons per type.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Literal
 from urllib.parse import quote
 
@@ -16,14 +17,16 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, _is_env_bound_api_key, _is_scoped_api_key, get_auth
+from app.core.auth import AuthContext, get_auth, is_scoped_api_key
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
 from app.core.query_utils import like_needle
+from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault, VaultProjectAttachment
 from app.services.memory_provider import get_memory_provider
+from app.services.memory_types import MemoryItem
 
 
 def _has_scope(auth: AuthContext, scope: str) -> bool:
@@ -42,7 +45,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/search", tags=["search"])
 
-SearchType = Literal["session", "memory", "skill", "vault"]
+SearchType = Literal["session", "memory", "project", "skill", "vault"]
 
 
 class SearchHit(BaseModel):
@@ -59,10 +62,16 @@ class SearchResponse(BaseModel):
 
 
 TYPE_LIMIT = 5
+type Searcher = Callable[
+    [AsyncSession, AuthContext, str],
+    Awaitable[list[SearchHit]],
+]
 
 
 async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     needle = like_needle(query)
+    # Historical search retains archived Agent labels; this join grants no
+    # operational Agent authority.
     stmt = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
@@ -100,35 +109,31 @@ async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> l
 
 async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     provider = await get_memory_provider(str(auth.user_id), db)
-    # Same overfetch trick the direct `/v1/memories?q=` path uses
-    # for scoped keys: provider.search returns top-N ranked across
-    # ALL of the user's memories, then `_project_filter_memories`
-    # drops out-of-Agent rows. Asking for only TYPE_LIMIT hits when
-    # other Agents rank ahead truncated the in-Agent hits to nothing.
-    # Overfetch by 10x then re-cap to TYPE_LIMIT after the filter
-    # so the response shape stays predictable.
-    fetch_limit = max(TYPE_LIMIT * 10, 100) if _is_env_bound_api_key(auth) else TYPE_LIMIT
-    rows = await provider.search(str(auth.user_id), query, limit=fetch_limit)
-    # Apply the same Agent Project filter the direct /v1/memories route
-    # uses. Without this, a scoped Agent API key with `memories:read`
-    # could read memories from other Agents (or manual memories with
-    # no Agent attribution) via the search palette — a side-channel
-    # around _project_filter_memories. Imported lazily to avoid a
-    # circular import between search.py and memories.py.
-    from app.routes.memories import _project_filter_memories
+    rows = await provider.search(
+        str(auth.user_id),
+        query,
+        limit=TYPE_LIMIT,
+    )
+    hits: list[SearchHit] = []
+    for item in rows:
+        if hit := _memory_search_hit(item):
+            hits.append(hit)
+    return hits
 
-    rows = await _project_filter_memories(db, auth, list(rows))
-    rows = rows[:TYPE_LIMIT]
-    return [
-        SearchHit(
-            type="memory",
-            id=str(m["id"]),
-            title=m["content"][:80] + ("…" if len(m["content"]) > 80 else ""),
-            subtitle=m.get("category"),
-            href=f"/memories/{m['id']}",
-        )
-        for m in rows
-    ]
+
+def _memory_search_hit(item: MemoryItem) -> SearchHit | None:
+    memory_id = item.get("id")
+    content = item.get("content")
+    category = item.get("category")
+    if not isinstance(memory_id, str) or not isinstance(content, str):
+        return None
+    return SearchHit(
+        type="memory",
+        id=memory_id,
+        title=content[:80] + ("…" if len(content) > 80 else ""),
+        subtitle=category if isinstance(category, str) else None,
+        href=f"/memories/{memory_id}",
+    )
 
 
 async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
@@ -172,6 +177,35 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
             href=f"/skills/{quote(s.skill_key, safe='')}?project={s.project_id}",
         )
         for s in rows
+    ]
+
+
+async def _search_projects(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
+    needle = like_needle(query)
+    visible_project_ids = await project_ids_visible_to(db, auth)
+    stmt = (
+        select(Project)
+        .where(
+            Project.id.in_(visible_project_ids),
+            Project.archived_at.is_(None),
+            or_(
+                Project.name.ilike(needle, escape="\\"),
+                Project.slug.ilike(needle, escape="\\"),
+            ),
+        )
+        .order_by(Project.name)
+        .limit(TYPE_LIMIT)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        SearchHit(
+            type="project",
+            id=str(p.id),
+            title=p.name,
+            subtitle=p.slug,
+            href=f"/projects/{p.id}",
+        )
+        for p in rows
     ]
 
 
@@ -239,10 +273,10 @@ async def global_search(
     # we limit it to user JWT and wide-access personal CLI keys
     # (mirrors `require_user_auth` semantics on the direct vault
     # routes).
-    jobs = []
+    jobs: list[tuple[str, Searcher]] = []
     if _has_scope(auth, "skills:read"):
         jobs.append(("skills", _search_skills))
-    if not _is_scoped_api_key(auth):
+    if not is_scoped_api_key(auth):
         jobs.append(("vaults", _search_vaults))
     if _has_scope(auth, "sessions:read"):
         jobs.insert(0, ("sessions", _search_sessions))
@@ -250,6 +284,10 @@ async def global_search(
         # Insert memories right after sessions if present, otherwise first.
         idx = 1 if any(label == "sessions" for label, _fn in jobs) else 0
         jobs.insert(idx, ("memories", _search_memories))
+    if _has_scope(auth, "projects:read"):
+        # Projects are the Library hubs — after activity objects, before assets.
+        idx = next((i + 1 for i, (label, _fn) in enumerate(jobs) if label == "memories"), len(jobs))
+        jobs.insert(idx, ("projects", _search_projects))
     hits: list[SearchHit] = []
     for source, searcher in jobs:
         try:

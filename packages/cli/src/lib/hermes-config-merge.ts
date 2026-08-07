@@ -78,38 +78,92 @@ export function renderHermesMcpServer(
 	return String(document);
 }
 
-export function mergeHermesChannelConfig(
-	configPath: string,
-	platforms: Record<string, Record<string, unknown>>,
-): void {
+export function mergeHermesChannelConfig(configPath: string, patch: Record<string, unknown>): void {
 	writeHermesConfig(
 		configPath,
-		renderHermesChannelConfig(readHermesConfigContent(configPath), platforms),
+		renderHermesChannelConfig(readHermesConfigContent(configPath), patch),
 	);
 }
 
-export function renderHermesChannelConfig(
-	content: string,
-	platforms: Record<string, Record<string, unknown>>,
-): string {
+export function renderHermesChannelConfig(content: string, patch: Record<string, unknown>): string {
 	const document = parseHermesConfig(content, "Hermes config");
-	for (const [platform, config] of Object.entries(platforms)) {
-		if (platform === "platforms") {
+	for (const [platform, config] of Object.entries(patch)) {
+		if (platform === "platforms" || platform === "display") {
+			if (!isPlainRecord(config)) {
+				throw new Error(`Hermes channel patch field ${platform} must be a YAML object.`);
+			}
 			const root = document.toJS();
-			if (isPlainRecord(root) && root.platforms !== undefined && !isPlainRecord(root.platforms)) {
-				throw new Error("Hermes config field platforms must be a YAML object.");
+			if (isPlainRecord(root) && root[platform] !== undefined && !isPlainRecord(root[platform])) {
+				throw new Error(`Hermes config field ${platform} must be a YAML object.`);
 			}
-			if (!isPlainRecord(root) || !isPlainRecord(root.platforms)) {
-				document.set("platforms", document.createNode({}));
+			if (!isPlainRecord(root) || !isPlainRecord(root[platform])) {
+				document.set(platform, document.createNode({}));
 			}
-			for (const [nestedPlatform, nestedConfig] of Object.entries(config)) {
-				document.setIn(["platforms", nestedPlatform], document.createNode(nestedConfig));
+			if (platform === "display") {
+				applyHermesChannelNestedPatch(document, [platform], config);
+			} else {
+				for (const [nestedPlatform, nestedConfig] of Object.entries(config)) {
+					if (nestedPlatform === "telegram" && isPlainRecord(nestedConfig)) {
+						applyHermesChannelNestedPatch(document, [platform, nestedPlatform], nestedConfig);
+						const updated = valueAtPath(document.toJS(), [platform, nestedPlatform]);
+						if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
+							document.deleteIn([platform, nestedPlatform]);
+						}
+					} else {
+						document.setIn([platform, nestedPlatform], document.createNode(nestedConfig));
+					}
+				}
 			}
+			const updated = valueAtPath(document.toJS(), [platform]);
+			if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
+				document.delete(platform);
+			}
+			continue;
+		}
+		if (config === null) {
+			document.delete(platform);
 			continue;
 		}
 		document.set(platform, document.createNode(config));
 	}
 	return String(document);
+}
+
+function applyHermesChannelNestedPatch(
+	document: ReturnType<typeof parseDocument>,
+	path: string[],
+	patch: Record<string, unknown>,
+): void {
+	for (const [key, value] of Object.entries(patch)) {
+		const nextPath = [...path, key];
+		if (value === null) {
+			document.deleteIn(nextPath);
+			continue;
+		}
+		if (!isPlainRecord(value)) {
+			document.setIn(nextPath, value);
+			continue;
+		}
+		const root = document.toJS();
+		const existing = valueAtPath(root, nextPath);
+		if (!isPlainRecord(existing)) {
+			document.setIn(nextPath, document.createNode({}));
+		}
+		applyHermesChannelNestedPatch(document, nextPath, value);
+		const updated = valueAtPath(document.toJS(), nextPath);
+		if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
+			document.deleteIn(nextPath);
+		}
+	}
+}
+
+function valueAtPath(value: unknown, path: readonly string[]): unknown {
+	let current = value;
+	for (const key of path) {
+		if (!isPlainRecord(current)) return undefined;
+		current = current[key];
+	}
+	return current;
 }
 
 export function mergeHermesRuntimeLocale(configPath: string, timezone: string): void {
@@ -122,6 +176,55 @@ export function mergeHermesRuntimeLocale(configPath: string, timezone: string): 
 export function renderHermesRuntimeLocale(content: string, timezone: string): string {
 	const document = parseHermesConfig(content, "Hermes config");
 	document.set("timezone", timezone);
+	return String(document);
+}
+
+export function mergeHermesDashboardBasicAuth(
+	configPath: string,
+	username: string,
+	sessionTtlSeconds: number,
+): void {
+	writeHermesConfig(
+		configPath,
+		renderHermesDashboardBasicAuth(
+			readHermesConfigContent(configPath),
+			username,
+			sessionTtlSeconds,
+		),
+	);
+}
+
+export function renderHermesDashboardBasicAuth(
+	content: string,
+	username: string,
+	sessionTtlSeconds: number,
+): string {
+	const document = parseHermesConfig(content, "Hermes config");
+	const root = document.toJS();
+	if (isPlainRecord(root) && root.dashboard !== undefined && !isPlainRecord(root.dashboard)) {
+		throw new Error("Hermes config field dashboard must be a YAML object.");
+	}
+	if (isPlainRecord(root) && root.plugins !== undefined && !isPlainRecord(root.plugins)) {
+		throw new Error("Hermes config field plugins must be a YAML object.");
+	}
+	if (!isPlainRecord(root) || !isPlainRecord(root.dashboard)) {
+		document.set("dashboard", document.createNode({}));
+	}
+	document.setIn(
+		["dashboard", "basic_auth"],
+		document.createNode({ username, session_ttl_seconds: sessionTtlSeconds }),
+	);
+	const plugins = isPlainRecord(root) && isPlainRecord(root.plugins) ? root.plugins : {};
+	const disabled = Array.isArray(plugins.disabled)
+		? plugins.disabled.filter((value): value is string => typeof value === "string")
+		: [];
+	const nextDisabled = new Set(disabled.filter((value) => value !== "dashboard_auth/basic"));
+	nextDisabled.add("dashboard_auth/nous");
+	nextDisabled.add("dashboard_auth/self_hosted");
+	if (!isPlainRecord(root) || !isPlainRecord(root.plugins)) {
+		document.set("plugins", document.createNode({}));
+	}
+	document.setIn(["plugins", "disabled"], [...nextDisabled].sort());
 	return String(document);
 }
 

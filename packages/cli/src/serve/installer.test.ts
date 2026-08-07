@@ -277,6 +277,45 @@ describe("installer.install (Linux systemd)", () => {
 			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_HOST=0.0.0.0"');
 			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_PORT=17654"');
 			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1"');
+			expect(content).toContain("Restart=always");
+			expect(content).toContain("RestartPreventExitStatus=2");
+		} finally {
+			process.env.PATH = oldPath;
+		}
+	});
+
+	it("preserves the unit and throws an actionable error when activation fails", async () => {
+		const os = await import("node:os");
+		if (os.platform() !== "linux") return;
+
+		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
+		mkdirSync(stubBin, { recursive: true });
+		const stubSystemctl = join(stubBin, "systemctl");
+		writeFileSync(stubSystemctl, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+		chmodSync(stubSystemctl, 0o755);
+		const oldPath = process.env.PATH;
+		process.env.PATH = `${stubBin}:${oldPath}`;
+
+		try {
+			const { install } = await import("./installer");
+			let error: unknown;
+			try {
+				install();
+			} catch (caught) {
+				error = caught;
+			}
+			const unit = join(
+				process.env.HOME ?? "",
+				".config",
+				"systemd",
+				"user",
+				"clawdi-serve.service",
+			);
+			expect(existsSync(unit)).toBe(true);
+			if (!(error instanceof Error)) throw new Error("expected activation error");
+			expect(error.message).toContain("systemctl activation failed");
+			expect(error.message).toContain("systemctl --user daemon-reload");
+			expect(error.message).toContain("enable --now clawdi-serve.service");
 		} finally {
 			process.env.PATH = oldPath;
 		}

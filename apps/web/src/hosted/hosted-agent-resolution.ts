@@ -1,9 +1,10 @@
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { isNetworkError } from "@/hosted/billing/errors";
 import {
+	type DeploymentStatus,
+	deploymentStatusFromResource,
 	isRunningStatus,
 	isTransitionalStatus,
-	parseDeploymentStatus,
 } from "@/hosted/deployment-status";
 import { runtimeEnvironmentId } from "@/hosted/runtimes";
 import { isApiNotFoundError } from "@/lib/api-errors";
@@ -13,7 +14,8 @@ export type HostedInventoryStatus = "resolved" | "loading" | "error" | "unavaila
 export type HostedInventoryResolution = {
 	status: HostedInventoryStatus;
 	/**
-	 * The last successful membership snapshot, with deleted deployments removed.
+	 * The last successful membership snapshot. Deleted deployments retain any
+	 * projected agent claim until the projection is cleaned up.
 	 * `null` means membership has never resolved; an empty array is authoritative.
 	 */
 	deployments: HostedDeployment[] | null;
@@ -36,9 +38,24 @@ export class HostedInventoryUnavailableError extends Error {
 	}
 }
 
-/** Deleted deployments stop owning an agent as soon as the deploy API says so. */
+/** Deleted deployments retain a projected agent claim during asynchronous cleanup. */
 export function isHostedDeploymentMember(deployment: HostedDeployment): boolean {
-	return parseDeploymentStatus(deployment.status).kind !== "deleted";
+	return (
+		deploymentStatusFromResource(deployment.resource.status).kind !== "deleted" ||
+		runtimeEnvironmentId(deployment) !== undefined
+	);
+}
+
+/** Pending or authoritatively accepted deletion dismisses the agent during cleanup. */
+export function isHostedDeploymentVisible(deployment: HostedDeployment): boolean {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	const acceptedOperation = deployment.accepted_operation;
+	return (
+		status.kind !== "deleting" &&
+		status.kind !== "deleted" &&
+		!(acceptedOperation?.metadata.verb === "delete" && !acceptedOperation.done) &&
+		deployment.compute_slot_occupancy?.reason !== "delete_accepted"
+	);
 }
 
 export function hostedDeploymentMembers(
@@ -54,7 +71,7 @@ export function claimedEnvIdsFromDeployments(
 	const environmentIds = new Set<string>();
 	for (const deployment of deployments) {
 		if (!isHostedDeploymentMember(deployment)) continue;
-		const environmentId = runtimeEnvironmentId(deployment.config_info);
+		const environmentId = runtimeEnvironmentId(deployment);
 		if (environmentId) environmentIds.add(environmentId.toLowerCase());
 	}
 	return environmentIds;
@@ -76,29 +93,39 @@ export function resolveAgentDeployment(
 	environmentId: string,
 	deploymentSelector?: string | null,
 ): AgentDeploymentResolution {
-	const members = hostedDeploymentMembers(deployments);
+	const members = deployments.filter(isHostedDeploymentVisible);
 	const target = environmentId.toLowerCase();
-	const direct = members.find((deployment) => deployment.id.toLowerCase() === target);
+	const direct = members.find((deployment) => deployment.resource.id.toLowerCase() === target);
 	if (direct) {
 		return { match: { deployment: direct, runtime: null }, ambiguousMatches: [] };
 	}
+	const selectedDeployment = deploymentSelector
+		? members.find(
+				(deployment) => deployment.resource.id.toLowerCase() === deploymentSelector.toLowerCase(),
+			)
+		: undefined;
 
 	const matches: AgentDeploymentMatch[] = [];
 	for (const deployment of members) {
-		const environments = deployment.config_info?.clawdi_cloud_environments ?? {};
-		const runtime = Object.entries(environments).find(
-			([, value]) => (value ?? "").toLowerCase() === target,
-		);
-		if (runtime) matches.push({ deployment, runtime: runtime[0] });
+		const runtime = deployment.resource.spec.runtime;
+		if (runtimeEnvironmentId(deployment, runtime)?.toLowerCase() === target) {
+			matches.push({ deployment, runtime });
+		}
 	}
 
 	if (deploymentSelector) {
 		const selector = deploymentSelector.toLowerCase();
-		const selected = matches.find((item) => item.deployment.id.toLowerCase() === selector);
+		const selected = matches.find((item) => item.deployment.resource.id.toLowerCase() === selector);
 		if (selected) return { match: selected, ambiguousMatches: [] };
 	}
 
 	if (matches.length === 1) return { match: matches[0], ambiguousMatches: [] };
+	// Stop removes the runtime projection (and therefore its environment-id
+	// mapping) but leaves the deployment itself. Tile/detail links carry this
+	// selector specifically so the retained deployment remains addressable.
+	if (matches.length === 0 && selectedDeployment) {
+		return { match: { deployment: selectedDeployment, runtime: null }, ambiguousMatches: [] };
+	}
 	return { match: null, ambiguousMatches: matches };
 }
 
@@ -128,17 +155,20 @@ export function resolveHostedInventory({
 	}
 
 	const deployments = data === undefined ? null : hostedDeploymentMembers(data);
+	// TanStack Query retains the last successful data when a later refetch
+	// fails. That snapshot remains the authoritative membership view; the
+	// refresh error must not turn a resolved list (including an empty list)
+	// back into a blocking inventory state.
+	if (deployments !== null) {
+		return { status: "resolved", deployments, hasSnapshot: true, error: null };
+	}
 	if (error) {
 		return {
 			status: isNetworkError(error) ? "unavailable" : "error",
-			deployments,
-			hasSnapshot: deployments !== null,
+			deployments: null,
+			hasSnapshot: false,
 			error,
 		};
-	}
-
-	if (deployments !== null) {
-		return { status: "resolved", deployments, hasSnapshot: true, error: null };
 	}
 
 	return {
@@ -183,20 +213,20 @@ const PROJECTION_MISSING_BACKOFF_MS = [5_000, 10_000, 20_000, 30_000, 60_000] as
 /** Bounded, foreground-only reconciliation cadence for a lagging projection. */
 export function missingProjectionRefetchInterval(
 	error: Error | null,
-	deploymentStatus: string | null | undefined,
+	deploymentStatus: DeploymentStatus,
 	failureCount: number,
 ): number | false {
 	if (!error || !isApiNotFoundError(error)) return false;
-	const status = parseDeploymentStatus(deploymentStatus);
-	if (!isRunningStatus(status) && !isTransitionalStatus(status)) return false;
+	if (!deploymentStatus.known) return false;
+	if (!isRunningStatus(deploymentStatus) && !isTransitionalStatus(deploymentStatus)) return false;
 	const index = Math.min(Math.max(failureCount - 1, 0), PROJECTION_MISSING_BACKOFF_MS.length - 1);
 	return PROJECTION_MISSING_BACKOFF_MS[index] ?? false;
 }
 
 /** The same authoritative gate is shared by header and inline Runtime UI actions. */
 export function canOpenHostedRuntimeUi(
-	deploymentStatus: string | null | undefined,
+	deploymentStatus: DeploymentStatus,
 	consoleUrl: string | null | undefined,
 ): boolean {
-	return Boolean(consoleUrl) && isRunningStatus(parseDeploymentStatus(deploymentStatus));
+	return Boolean(consoleUrl) && isRunningStatus(deploymentStatus);
 }

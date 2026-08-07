@@ -29,7 +29,9 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-	return getRuntimePaths({ mode: "hosted" });
+	const paths = getRuntimePaths({ mode: "hosted" });
+	mkdirSync(paths.serviceStateRoot);
+	return paths;
 }
 
 function legacyAppliedState(generation: number): RuntimeAppliedStateV2 {
@@ -96,6 +98,37 @@ function blockAtomicWrite(path: string): () => void {
 }
 
 describe("hosted runtime heartbeat observation", () => {
+	test("emits the exact apply tuple when checkpoint and apply generations differ", () => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(
+			{
+				...companionAppliedState(1),
+				generation: 2,
+				applyGeneration: 1,
+			},
+			paths,
+		);
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_split_generation",
+			paths,
+			now: clockSequence(["2026-07-16T01:00:00.000Z"]),
+			createId: idSequence(["boot-session-split", "event-split-000001"]),
+		});
+
+		const event = session.nextEvent()?.event;
+		expect(event).toMatchObject({
+			applyReceiptId: "apply-receipt-0001",
+			bootNonce: "boot-nonce-000001",
+			bootSessionId: "boot-session-split",
+			sequence: 1,
+			eventId: "event-split-000001",
+			applied: {
+				generation: 1,
+				etag: '"frozen-manifest-1"',
+			},
+		});
+	});
+
 	test("captures one immutable apply identity for the entire boot session", () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
@@ -151,6 +184,71 @@ describe("hosted runtime heartbeat observation", () => {
 				generation: 7,
 				etag: '"frozen-manifest-7"',
 			},
+		});
+	});
+
+	test("re-reads the durable applied tuple and starts a new boot session after rotation", () => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(companionAppliedState(7), paths);
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_rotation",
+			paths,
+			now: clockSequence(["2026-07-16T01:00:00.000Z", "2026-07-16T01:01:00.000Z"]),
+			createId: idSequence([
+				"boot-session-0001",
+				"event-0000000001",
+				"boot-session-0002",
+				"event-0000000002",
+			]),
+		});
+		const first = session.nextEvent();
+		if (!first) throw new Error("expected first tuple event");
+		expect(session.acknowledge(first.event.eventId)).toBe(true);
+
+		writeRuntimeAppliedState(companionAppliedState(8), paths);
+		expect(session.refreshAppliedState()).toBe(true);
+		const rotated = session.nextEvent();
+		if (!rotated) throw new Error("expected rotated tuple event");
+		expect(rotated.event).toMatchObject({
+			applyReceiptId: "apply-receipt-0008",
+			bootNonce: "boot-nonce-000008",
+			bootSessionId: "boot-session-0002",
+			sequence: 1,
+			eventId: "event-0000000002",
+			applied: {
+				generation: 8,
+				etag: '"frozen-manifest-8"',
+			},
+		});
+	});
+
+	test("supersedes a pending old-tuple event instead of blocking rotation", () => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(companionAppliedState(7), paths);
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_pending_rotation",
+			paths,
+			now: clockSequence(["2026-07-16T01:00:00.000Z", "2026-07-16T01:01:00.000Z"]),
+			createId: idSequence([
+				"boot-session-0001",
+				"old-event-000001",
+				"boot-session-0002",
+				"new-event-000001",
+			]),
+		});
+		const oldPending = session.nextEvent();
+		if (!oldPending) throw new Error("expected old pending event");
+
+		writeRuntimeAppliedState(companionAppliedState(8), paths);
+		expect(session.refreshAppliedState()).toBe(true);
+		const rotated = session.nextEvent();
+		if (!rotated) throw new Error("expected rotated event");
+		expect(rotated.event.eventId).toBe("new-event-000001");
+		expect(rotated.event.eventId).not.toBe(oldPending.event.eventId);
+		expect(rotated.event).toMatchObject({
+			bootSessionId: "boot-session-0002",
+			sequence: 1,
+			applied: { generation: 8 },
 		});
 	});
 

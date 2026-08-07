@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram
@@ -68,6 +68,48 @@ webhook_ttl_drops = Counter(
     "Total inbox rows dropped by TTL sweep or expired before delivery",
     registry=registry,
 )
+channel_queue_pending = Gauge(
+    "msg_router_channel_queue_pending",
+    "Pending durable channel queue rows",
+    ["provider", "queue"],
+    registry=registry,
+)
+channel_queue_stuck_pending = Gauge(
+    "msg_router_channel_queue_stuck_pending",
+    "Pending durable channel queue rows older than the configured alert horizon",
+    ["provider", "queue"],
+    registry=registry,
+)
+channel_queue_oldest_pending_age = Gauge(
+    "msg_router_channel_queue_oldest_pending_age_seconds",
+    "Age in seconds of the oldest pending durable channel queue row",
+    ["provider", "queue"],
+    registry=registry,
+)
+channel_retention_deletions = Counter(
+    "msg_router_channel_retention_deletions_total",
+    "Channel retention rows deleted by record kind",
+    ["record_kind"],
+    registry=registry,
+)
+channel_retention_delivery_expirations = Counter(
+    "msg_router_channel_retention_delivery_expirations_total",
+    "Pending channel deliveries terminally consumed at a provider retention horizon",
+    ["provider"],
+    registry=registry,
+)
+channel_retention_secret_scrubs = Counter(
+    "msg_router_channel_retention_secret_scrubs_total",
+    "Expired provider credential fields removed from retained channel payloads",
+    ["provider", "secret_kind"],
+    registry=registry,
+)
+channel_retention_budget_exhaustions = Counter(
+    "msg_router_channel_retention_budget_exhaustions_total",
+    "Channel retention runs that exhausted their configured batch budget",
+    ["record_kind"],
+    registry=registry,
+)
 
 
 def render_metrics() -> bytes:
@@ -79,6 +121,6 @@ def metrics_content_type() -> str:
 
 
 @contextmanager
-def track_proxy_latency(channel: str, method: str) -> Iterator[None]:
+def track_proxy_latency(channel: str, method: str) -> Generator[None, None, None]:
     with proxy_latency.labels(channel=channel, method=method).time():
         yield

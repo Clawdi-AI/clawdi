@@ -14,11 +14,10 @@ describe("wallet top-up return URL helpers", () => {
 	});
 
 	test("reads only marked Stripe PaymentIntent returns", () => {
-		expect(
-			readWalletTopupReturn(
-				"?settings=billing-wallet&topup_return=1&payment_intent_client_secret=pi_secret",
-			),
-		).toEqual({ clientSecret: "pi_secret" });
+		const result = readWalletTopupReturn(
+			"?settings=billing-wallet&topup_return=1&payment_intent_client_secret=pi_secret",
+		);
+		expect(result?.clientSecret === "pi_secret").toBe(true);
 		expect(
 			readWalletTopupReturn("?settings=billing-wallet&payment_intent_client_secret=pi_secret"),
 		).toBe(null);
@@ -35,11 +34,11 @@ describe("wallet top-up return URL helpers", () => {
 });
 
 describe("walletTopupReturnToast", () => {
-	test("maps succeeded to success copy", () => {
+	test("maps succeeded to accepted copy while Wallet credit is still unconfirmed", () => {
 		expect(walletTopupReturnToast("succeeded")).toEqual({
-			kind: "success",
-			title: "Top-up complete",
-			description: "Your AI Credits will appear in a moment.",
+			kind: "info",
+			title: "Payment accepted",
+			description: "We're confirming your Wallet credit now.",
 		});
 	});
 

@@ -37,6 +37,14 @@ export function configList() {
 			chalk.gray(`  note: CLAWDI_API_URL=${process.env.CLAWDI_API_URL} overrides apiUrl`),
 		);
 	}
+	if (process.env.CLAWDI_DEPLOY_API_URL) {
+		console.log();
+		console.log(
+			chalk.gray(
+				`  note: CLAWDI_DEPLOY_API_URL=${process.env.CLAWDI_DEPLOY_API_URL} overrides deployApiUrl`,
+			),
+		);
+	}
 }
 
 export function configGet(key: string) {
@@ -76,6 +84,12 @@ function apiUrlSource(): "CLAWDI_API_URL" | "config.json" | "default" {
 	return "default";
 }
 
+function deployApiUrlSource(): "CLAWDI_DEPLOY_API_URL" | "config.json" | "default" {
+	if (process.env.CLAWDI_DEPLOY_API_URL) return "CLAWDI_DEPLOY_API_URL";
+	if (getStoredConfig().deployApiUrl) return "config.json";
+	return "default";
+}
+
 export function configPaths(opts: { json?: boolean } = {}) {
 	const mode = detectRuntimeMode();
 	const paths = getRuntimePaths({ mode });
@@ -85,6 +99,8 @@ export function configPaths(opts: { json?: boolean } = {}) {
 		runtimeMode: mode,
 		apiUrl: getConfig().apiUrl,
 		apiUrlSource: apiUrlSource(),
+		deployApiUrl: getConfig().deployApiUrl,
+		deployApiUrlSource: deployApiUrlSource(),
 		local: {
 			clawdiHome: getClawdiDir(),
 			config: paths.localConfig,
@@ -94,9 +110,7 @@ export function configPaths(opts: { json?: boolean } = {}) {
 			serveState: paths.serveState,
 		},
 		hosted: {
-			imageShim: hostedPaths.imageShim,
 			hostPolicy: hostedPaths.hostPolicy,
-			shareRoot: hostedPaths.shareRoot,
 			serviceStateRoot: hostedPaths.serviceStateRoot,
 			managedConfig: hostedPaths.managedConfig,
 			syncState: hostedPaths.syncState,
@@ -130,4 +144,7 @@ export function configPaths(opts: { json?: boolean } = {}) {
 	console.log(chalk.gray(`    home:       ${payload.hosted.persistentHome}`));
 	console.log();
 	console.log(chalk.gray(`  API URL: ${payload.apiUrl} (${payload.apiUrlSource})`));
+	console.log(
+		chalk.gray(`  Deploy API URL: ${payload.deployApiUrl} (${payload.deployApiUrlSource})`),
+	);
 }

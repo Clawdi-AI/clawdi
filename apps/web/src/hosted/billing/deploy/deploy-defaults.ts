@@ -1,34 +1,30 @@
-import type { DeployAiFields } from "@/hosted/billing/deploy/deploy-request";
-import type { HostedRuntime } from "@/hosted/runtimes";
 import {
-	MANAGED_AI_CHOICE,
-	MANAGED_PRIMARY_MODEL_FALLBACK,
-	MANAGED_PROVIDER_ID,
-	type PrimaryModelRef,
-} from "@/hosted/v2/ai-providers/model-binding";
+	DEFAULT_HOSTED_DEPLOY_AI_ACCESS_MODE,
+	DEFAULT_HOSTED_DEPLOY_PRIMARY_MODEL,
+	DEFAULT_HOSTED_DEPLOY_RUNTIME,
+	hostedDeployAgentNameAfterRuntimeChange,
+} from "@clawdi/shared/api";
+import type { HostedRuntime } from "@/hosted/runtimes";
+import { MANAGED_AI_CHOICE } from "@/hosted/v2/ai-providers/model-binding";
 
 export type DeployWizardAiAccessMode = "unmanaged" | "configured";
 
-// Deploy-form pre-selection. Independent from the config-interpretation
-// fallback in runtimes.ts (which stays openclaw for existing deployment records).
-export const DEFAULT_DEPLOY_RUNTIME: HostedRuntime = "hermes";
-export const DEFAULT_DEPLOY_AI_ACCESS_MODE: DeployWizardAiAccessMode = "configured";
-export const DEFAULT_DEPLOY_AI_PROVIDER_CHOICES = [MANAGED_AI_CHOICE] as const;
+// Product pre-selection for new deployments.
+export const DEFAULT_DEPLOY_RUNTIME: HostedRuntime = DEFAULT_HOSTED_DEPLOY_RUNTIME;
+export const DEFAULT_DEPLOY_AI_ACCESS_MODE: DeployWizardAiAccessMode =
+	DEFAULT_HOSTED_DEPLOY_AI_ACCESS_MODE;
 export const DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE = MANAGED_AI_CHOICE;
-export const DEFAULT_DEPLOY_PRIMARY_MODEL = MANAGED_PRIMARY_MODEL_FALLBACK;
+// The managed catalog supplies the real default model after it loads.
+export const DEFAULT_DEPLOY_PRIMARY_MODEL = DEFAULT_HOSTED_DEPLOY_PRIMARY_MODEL;
 
-export function defaultManagedPrimaryModel(): PrimaryModelRef {
-	return {
-		provider_id: MANAGED_PROVIDER_ID,
-		model: DEFAULT_DEPLOY_PRIMARY_MODEL,
-	};
-}
-
-export function defaultManagedDeployAiFields(): DeployAiFields {
-	return {
-		ai_provider_id: null,
-		ai_provider_auth_kind: "managed",
-		provider_ids: [MANAGED_PROVIDER_ID],
-		primary_model: defaultManagedPrimaryModel(),
-	};
+export function deployAgentNameAfterRuntimeChange({
+	currentName,
+	hasBeenEdited,
+	runtime,
+}: {
+	currentName: string;
+	hasBeenEdited: boolean;
+	runtime: HostedRuntime;
+}): string {
+	return hostedDeployAgentNameAfterRuntimeChange({ currentName, hasBeenEdited, runtime });
 }

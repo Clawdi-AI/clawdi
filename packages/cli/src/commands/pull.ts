@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
@@ -10,14 +10,18 @@ import { errMessage } from "../lib/errors";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
+import { adapterForType, getEnvIdByAgent, resolveTargetAgentTypes } from "../lib/select-adapter";
 import {
-	adapterForType,
-	fetchProjectIdForEnv,
-	getEnvIdByAgent,
-	resolveTargetAgentTypes,
-} from "../lib/select-adapter";
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "../lib/skill-sync-protocol";
 import {
+	canonicalMaterializedSkillKey,
+	commitProjectSkillMaterialization,
+	hasExactProjectSkillMaterialization,
+	readSkillProjectionClaimsForAgent,
 	readSkillsLock,
+	removeSkillProjectionClaim,
 	type SkillsLock,
 	skillCacheKey,
 	writeSkillsLock,
@@ -35,15 +39,15 @@ interface PullOpts {
 }
 
 /**
- * What `scanOneAgent` found for a single agent: the skills and sessions
- * staged for download. Splitting scan from download lets `pull` show a
+ * What `scanOneAgent` found for a single agent: explicit Cloud-owned Skill
+ * imports and mirrored sessions. Splitting scan from apply lets `pull` show a
  * combined, per-agent summary across every target agent before downloading,
  * the same shape as `clawdi push`.
  */
 interface AgentPullScan {
 	agentType: AgentType;
-	/** Project to download skills from; null when skills aren't being
-	 * pulled or the agent has no registered environment. */
+	/** Explicit Cloud-owned Project to import Skills from; null when Skills
+	 * are not part of this pull. */
 	skillProjectId: string | null;
 	/** Non-null for shared projects so duplicate skill keys land under
 	 * `<key>__<ownerHandle>` instead of overwriting the user's own skill. */
@@ -55,18 +59,16 @@ interface AgentPullScan {
 	skillsInSync: number;
 	sessions: { remote: SessionListItem; reason: "new" | "updated" }[];
 	sessionsUnchanged: number;
-	/** Per-agent advisories rendered under the agent in the summary. */
-	notes: string[];
 }
 
-/** What `downloadOneAgent` actually pulled for a single agent. */
+/** What `applyOneAgentPull` committed for a single agent. */
 interface AgentPullResult {
-	skillsPulled: number;
+	skillsImported: number;
 	sessionsNew: number;
 	sessionsUpdated: number;
 }
 
-/** Whether a scan turned up anything to actually download. */
+/** Whether a scan turned up an explicit import or session mirror to apply. */
 function scanHasWork(scan: AgentPullScan): boolean {
 	return scan.skills.length > 0 || scan.sessions.length > 0;
 }
@@ -94,10 +96,22 @@ export async function pull(opts: PullOpts) {
 		return;
 	}
 
-	// Module default: when --modules is omitted, take every module —
-	// no multi-select prompt to block an agent harness on.
-	const modules = parseModules(opts.modules, DOWN_MODULES);
+	// Module default remains broad for compatibility, but Agent Skills are
+	// never sourced from the implicit Agent Project. Without an explicit
+	// Cloud-owned Project, pull only mirrors sessions.
+	let modules = parseModules(opts.modules, DOWN_MODULES);
 	if (!modules) return;
+	if (!opts.project && modules.includes("skills")) {
+		if (modules.length === 1) {
+			p.log.error(
+				"Skill import requires --project naming a Custom or personal Project. Agent Workspaces are filesystem-authoritative.",
+			);
+			p.outro(chalk.red("Aborted."));
+			process.exitCode = 1;
+			return;
+		}
+		modules = modules.filter((module) => module !== "skills");
+	}
 
 	if (opts.project && modules.includes("sessions")) {
 		p.log.error("--project is supported for skill pulls only. Use --modules skills.");
@@ -107,9 +121,9 @@ export async function pull(opts: PullOpts) {
 	}
 
 	const api = new ApiClient();
-	// Read once before the loop, mutate as downloads land, persist once at
-	// the end. Lost work on partial failure is safe — re-running a pull is
-	// idempotent (the cloud diff just kicks in again).
+	// Read once before the loop, mutate as explicit imports land, persist once
+	// at the end. This is only an import dedup baseline, never projection
+	// deletion authority.
 	const skillsLock = modules.includes("skills") ? readSkillsLock() : null;
 
 	// Scan every agent first — one spinner, one combined summary — so a
@@ -135,24 +149,21 @@ export async function pull(opts: PullOpts) {
 		const bits: string[] = [];
 		if (modules.includes("skills")) {
 			const sync = scan.skillsInSync > 0 ? ` (${scan.skillsInSync} in sync)` : "";
-			bits.push(`${scan.skills.length} skill${scan.skills.length === 1 ? "" : "s"}${sync}`);
+			bits.push(`${scan.skills.length} skill import${scan.skills.length === 1 ? "" : "s"}${sync}`);
 		}
 		if (modules.includes("sessions")) {
 			const sync = scan.sessionsUnchanged > 0 ? ` (${scan.sessionsUnchanged} unchanged)` : "";
 			bits.push(`${scan.sessions.length} session${scan.sessions.length === 1 ? "" : "s"}${sync}`);
 		}
-		p.log.message(`${chalk.bold(name)} — ${bits.join(", ")} to download`);
-		for (const note of scan.notes) {
-			p.log.message(chalk.gray(`  ${note}`));
-		}
+		p.log.message(`${chalk.bold(name)} — ${bits.join(", ")} pending`);
 	}
 
-	const toDownload = scans.filter(scanHasWork);
+	const toApply = scans.filter(scanHasWork);
 
 	if (opts.dryRun) {
 		p.outro(
 			chalk.gray(
-				toDownload.length > 0
+				toApply.length > 0
 					? "Dry run complete."
 					: "Dry run — nothing to pull, everything already in sync.",
 			),
@@ -161,7 +172,7 @@ export async function pull(opts: PullOpts) {
 	}
 
 	const totals = {
-		skills: 0,
+		skillImports: 0,
 		skillsInSync: 0,
 		sessionsNew: 0,
 		sessionsUpdated: 0,
@@ -173,24 +184,32 @@ export async function pull(opts: PullOpts) {
 		totals.skillsInSync += scan.skillsInSync;
 		totals.sessionsUnchanged += scan.sessionsUnchanged;
 		if (!scanHasWork(scan)) continue;
-		// Header only when more than one agent actually downloads.
-		if (toDownload.length > 1) {
+		// Header only when more than one agent actually applies work.
+		if (toApply.length > 1) {
 			p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
 		}
-		const result = await downloadOneAgent(api, scan, skillsLock);
-		totals.skills += result.skillsPulled;
+		const result = await applyOneAgentPull(api, scan, skillsLock);
+		totals.skillImports += result.skillsImported;
 		totals.sessionsNew += result.sessionsNew;
 		totals.sessionsUpdated += result.sessionsUpdated;
 	}
 
-	if (skillsLock) writeSkillsLock(skillsLock);
+	if (skillsLock) {
+		// Pull keeps a long-lived hash baseline snapshot while per-Skill
+		// authority handoffs update claims/materializations transactionally.
+		// Merge only the baselines into fresh authority state so this stale
+		// snapshot cannot resurrect a projection claim retired above.
+		const latestSkillsLock = readSkillsLock();
+		latestSkillsLock.skills = { ...latestSkillsLock.skills, ...skillsLock.skills };
+		writeSkillsLock(latestSkillsLock);
+	}
 
 	const parts: string[] = [];
 	if (modules.includes("skills")) {
 		parts.push(
 			totals.skillsInSync > 0
-				? `${totals.skills} skill${totals.skills === 1 ? "" : "s"} downloaded, ${totals.skillsInSync} already in sync`
-				: `${totals.skills} skill${totals.skills === 1 ? "" : "s"}`,
+				? `${totals.skillImports} skill import${totals.skillImports === 1 ? "" : "s"}, ${totals.skillsInSync} already imported`
+				: `${totals.skillImports} skill import${totals.skillImports === 1 ? "" : "s"}`,
 		);
 	}
 	if (modules.includes("sessions")) {
@@ -198,12 +217,17 @@ export async function pull(opts: PullOpts) {
 			`${totals.sessionsNew} new sessions, ${totals.sessionsUpdated} updated, ${totals.sessionsUnchanged} unchanged`,
 		);
 	}
+	if (opts.project && totals.skillImports > 0) {
+		p.log.info(
+			"Imported Skills remain Project-owned references and are not pushed back as Agent Skills. Explicit `clawdi skill install <repo> --agent <type>` or `clawdi skill add <path> --agent <type>` transfers that local key to Agent authority.",
+		);
+	}
 	p.outro(chalk.green(`✓ Pull complete — ${parts.join(", ")}`));
 }
 
 /**
- * Scan one agent against the cloud and stage what would be downloaded.
- * Prints nothing — advisories go into `notes` for the combined summary.
+ * Scan one agent against the cloud and stage explicit imports/session mirrors.
+ * Prints nothing; the caller renders one combined summary.
  * Does network reads (skill listing, session paging) but writes nothing.
  */
 async function scanOneAgent(
@@ -213,7 +237,6 @@ async function scanOneAgent(
 	opts: PullOpts,
 	skillsLock: SkillsLock | null,
 ): Promise<AgentPullScan> {
-	const notes: string[] = [];
 	let skillProjectId: string | null = null;
 	let sharedOwnerHandle: string | null = null;
 	const skills: SkillSummary[] = [];
@@ -221,12 +244,27 @@ async function scanOneAgent(
 
 	if (modules.includes("skills") && skillsLock) {
 		const adapter = adapterForType(agentType);
+		const agentId = getEnvIdByAgent(agentType);
+		const claimedLocalSkillKeys = new Set(
+			agentId
+				? readSkillProjectionClaimsForAgent(agentType, agentId).map((claim) => claim.skill_key)
+				: [],
+		);
 		if (adapter && opts.project) {
-			skillProjectId = await resolveProjectId(api.baseUrl, api.apiKey, opts.project);
-			const project = (await listProjects(api.baseUrl, api.apiKey)).find(
+			const accessToken = await api.getAccessToken();
+			skillProjectId = await resolveProjectId(api.baseUrl, accessToken, opts.project);
+			const project = (await listProjects(api.baseUrl, accessToken)).find(
 				(p) => p.id === skillProjectId,
 			);
-			if (project?.is_owner === false) {
+			if (!project) {
+				throw new Error("The selected Project is no longer visible.");
+			}
+			if (project.kind !== "workspace" && project.kind !== "personal") {
+				throw new Error(
+					"Skill import only accepts Custom or personal Projects; Agent Workspaces are filesystem-authoritative.",
+				);
+			}
+			if (project.is_owner === false) {
 				sharedOwnerHandle = project.owner_handle ?? null;
 				if (!sharedOwnerHandle) {
 					throw new Error(
@@ -234,24 +272,13 @@ async function scanOneAgent(
 					);
 				}
 			}
-		} else if (adapter) {
-			const envId = getEnvIdByAgent(agentType);
-			if (!envId) {
-				// Sessions still pull fine (they query by agent type), but
-				// skills need the env's Agent Project — skip them with a notice.
-				notes.push("No environment registered — skipping skills. Run `clawdi setup`.");
-			} else {
-				// Resolve THIS agent's project so a multi-agent account doesn't
-				// install sibling-agent skills into this adapter's directory.
-				skillProjectId = await fetchProjectIdForEnv(api, envId);
-			}
 		}
 
 		if (adapter && skillProjectId) {
 			for (const skill of await fetchCloudSkills(api, skillProjectId)) {
-				// A skill is "in sync" iff its cloud content_hash matches
-				// our cached hash AND a local file exists — the local
-				// check restores skills the user wiped but kept the lock.
+				// A Project import is unchanged only when the hash, local path, and
+				// exact durable materialization marker all agree. Legacy caches are
+				// download baselines, not enough to fence reverse projection.
 				const cacheKey = opts.project
 					? skillCacheKey(agentType, `${skillProjectId}:${skill.skill_key}`)
 					: skillCacheKey(agentType, skill.skill_key);
@@ -259,9 +286,26 @@ async function scanOneAgent(
 				const localPath = sharedOwnerHandle
 					? adapter.getSharedSkillPath(skill.skill_key, sharedOwnerHandle)
 					: adapter.getSkillPath(skill.skill_key);
+				const localDirectory = sharedOwnerHandle ? localPath : dirname(localPath);
+				const localSkillKey = canonicalMaterializedSkillKey(
+					relative(adapter.getSkillsRootDir(), localDirectory),
+				);
 				const localExists = existsSync(localPath);
-				if (cached && cached === skill.content_hash && localExists) skillsInSync++;
-				else skills.push(skill);
+				const materializationIsExact = hasExactProjectSkillMaterialization({
+					agentType,
+					localSkillKey,
+					sourceProjectId: skillProjectId,
+					sourceSkillKey: skill.skill_key,
+					contentHash: skill.content_hash,
+				});
+				if (
+					cached === skill.content_hash &&
+					localExists &&
+					materializationIsExact &&
+					!claimedLocalSkillKeys.has(localSkillKey)
+				) {
+					skillsInSync++;
+				} else skills.push(skill);
 			}
 		}
 	}
@@ -293,37 +337,52 @@ async function scanOneAgent(
 		skillsInSync,
 		sessions,
 		sessionsUnchanged,
-		notes,
 	};
 }
 
-/** Download one agent's scanned skills + sessions. Mutates `skillsLock`. */
-async function downloadOneAgent(
+/** Apply one agent's explicit Skill imports and session mirrors. Mutates `skillsLock`. */
+async function applyOneAgentPull(
 	api: ApiClient,
 	scan: AgentPullScan,
 	skillsLock: SkillsLock | null,
 ): Promise<AgentPullResult> {
-	let skillsPulled = 0;
+	let skillsImported = 0;
 	if (scan.skills.length > 0 && scan.skillProjectId && skillsLock) {
 		const adapter = adapterForType(scan.agentType);
 		if (adapter) {
 			for (const skill of scan.skills) {
 				const safeKey = sanitizeMetadata(skill.skill_key);
 				try {
-					// Project-explicit download so duplicate skill_keys across
-					// projects resolve to the right bytes for THIS agent.
+					// The explicit Cloud-owned source Project selects the import bytes.
 					const tarBytes = await api.getBytes(
 						`/v1/projects/${encodeURIComponent(scan.skillProjectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+						{
+							[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+						},
 					);
-					if (scan.sharedOwnerHandle) {
-						await adapter.writeSharedSkillArchive(
-							skill.skill_key,
-							scan.sharedOwnerHandle,
-							tarBytes,
-						);
-					} else {
-						await adapter.writeSkillArchive(skill.skill_key, tarBytes);
-					}
+					const localSkillDirectory = scan.sharedOwnerHandle
+						? adapter.getSharedSkillPath(skill.skill_key, scan.sharedOwnerHandle)
+						: dirname(adapter.getSkillPath(skill.skill_key));
+					const localSkillKey = canonicalMaterializedSkillKey(
+						relative(adapter.getSkillsRootDir(), localSkillDirectory),
+					);
+					// Persist the source authority before committing any bytes. If
+					// ledger persistence fails, the Agent filesystem stays untouched;
+					// if archive activation fails, retaining this fence is fail-closed.
+					await commitProjectSkillMaterialization(
+						{
+							agentType: scan.agentType,
+							localSkillKey,
+							sourceProjectId: scan.skillProjectId,
+							sourceSkillKey: skill.skill_key,
+							contentHash: skill.content_hash,
+						},
+						() =>
+							scan.sharedOwnerHandle
+								? adapter.writeSharedSkillArchive(skill.skill_key, scan.sharedOwnerHandle, tarBytes)
+								: adapter.writeSkillArchive(skill.skill_key, tarBytes),
+					);
+					await retireAgentProjectionClaims(api, scan.agentType, localSkillKey);
 					const cacheKey = scan.projectQualifiedSkillCache
 						? skillCacheKey(scan.agentType, `${scan.skillProjectId}:${skill.skill_key}`)
 						: skillCacheKey(scan.agentType, skill.skill_key);
@@ -336,7 +395,7 @@ async function downloadOneAgent(
 							: adapter.getSkillPath(skill.skill_key),
 					);
 					p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
-					skillsPulled++;
+					skillsImported++;
 				} catch (e) {
 					p.log.warn(`${safeKey} failed: ${errMessage(e)}`);
 				}
@@ -374,7 +433,32 @@ async function downloadOneAgent(
 		);
 	}
 
-	return { skillsPulled, sessionsNew, sessionsUpdated };
+	return { skillsImported, sessionsNew, sessionsUpdated };
+}
+
+/** Complete an Agent-to-Project authority handoff using only exact claims.
+ * The materialization fence is already durable before this runs, so a failed
+ * delete cannot cause the Project bytes to be reverse-claimed. A surviving
+ * claim remains durable retry evidence for the daemon and the next pull. */
+async function retireAgentProjectionClaims(
+	api: ApiClient,
+	agentType: AgentType,
+	localSkillKey: string,
+): Promise<void> {
+	const agentId = getEnvIdByAgent(agentType);
+	if (!agentId) return;
+	const claims = readSkillProjectionClaimsForAgent(agentType, agentId).filter(
+		(claim) => claim.skill_key === localSkillKey,
+	);
+	for (const claim of claims) {
+		await api.deleteAgentSkill(agentId, localSkillKey, claim.project_id);
+		removeSkillProjectionClaim({
+			agentType,
+			agentId,
+			projectId: claim.project_id,
+			skillKey: localSkillKey,
+		});
+	}
 }
 
 /** Page through every cloud skill for one Project. */

@@ -19,7 +19,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings
 from app.core.database import get_runtime_observation_session, get_session
 from app.main import app
-from app.models.api_key import ApiKey
+from app.models.ai_provider import AiProviderAuthPayload
+from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
 from app.models.audit import ControlPlaneAuditEvent
 from app.models.platform_workload_auth import (
     PLATFORM_WORKLOAD_CLIENT_ACTIVE,
@@ -28,9 +29,9 @@ from app.models.platform_workload_auth import (
     PlatformWorkloadClient,
     PlatformWorkloadSigningKey,
 )
+from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
 from app.models.user import User
-from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES
 from app.services import platform_workload_auth
 from app.services.platform_workload_auth import (
     PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE,
@@ -44,9 +45,11 @@ from app.services.platform_workload_auth import (
     canonical_platform_workload_token_endpoint,
     get_platform_workload_key_resolver,
 )
+from app.services.vault_crypto import encrypt
 
 _ADMIN_KEY = "test-platform-admin-secret"
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
+_CLERK_ISSUER = "https://platform-workload.clerk.example.test"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
 _TEST_TOOLS = {
     "codex": {
         "enabled": True,
@@ -117,11 +120,13 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
         return resolver
 
     original_admin_key = settings.admin_api_key
+    original_clerk_issuer = settings.clerk_jwt_issuer
     original_legacy_flag = settings.platform_legacy_admin_auth_enabled
     original_public_api_url = settings.public_api_url
     original_token_endpoint = settings.platform_workload_token_endpoint
     original_issuer = settings.platform_workload_issuer
     settings.admin_api_key = _ADMIN_KEY
+    settings.clerk_jwt_issuer = _CLERK_ISSUER
     settings.platform_legacy_admin_auth_enabled = True
     settings.public_api_url = "http://test"
     settings.platform_workload_token_endpoint = ""
@@ -147,6 +152,7 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
     finally:
         app.dependency_overrides.clear()
         settings.admin_api_key = original_admin_key
+        settings.clerk_jwt_issuer = original_clerk_issuer
         settings.platform_legacy_admin_auth_enabled = original_legacy_flag
         settings.public_api_url = original_public_api_url
         settings.platform_workload_token_endpoint = original_token_endpoint
@@ -281,6 +287,7 @@ def _runtime_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, Any]:
         },
         "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
         "tools": _TEST_TOOLS,
+        "secretValues": {},
     }
 
 
@@ -501,240 +508,559 @@ async def test_oauth_storage_failures_are_503(
     async def unavailable_client(*args, **kwargs):
         raise SQLAlchemyError("client storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "load_platform_workload_client",
-        unavailable_client,
-    )
-    client_failure = await _token_response(workload_harness, scope="platform:agents:create")
-    assert client_failure.status_code == 503, client_failure.text
-    assert client_failure.json()["error"] == "temporarily_unavailable"
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "load_platform_workload_client",
+            unavailable_client,
+        )
+        client_failure = await _token_response(
+            workload_harness,
+            scope="platform:agents:create",
+        )
+        assert client_failure.status_code == 503, client_failure.text
+        assert client_failure.json()["error"] == "temporarily_unavailable"
 
     async def unavailable_replay(*args, **kwargs):
         raise SQLAlchemyError("replay storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "store_platform_workload_assertion_replay",
-        unavailable_replay,
-    )
-    replay_failure = await _token_response(workload_harness, scope="platform:agents:create")
-    assert replay_failure.status_code == 503, replay_failure.text
-    assert replay_failure.json()["error"] == "temporarily_unavailable"
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "store_platform_workload_assertion_replay",
+            unavailable_replay,
+        )
+        replay_failure = await _token_response(
+            workload_harness,
+            scope="platform:agents:create",
+        )
+        assert replay_failure.status_code == 503, replay_failure.text
+        assert replay_failure.json()["error"] == "temporarily_unavailable"
 
     async def unavailable_signing_key(*args, **kwargs):
         raise SQLAlchemyError("issuer key storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "load_platform_workload_signing_key_for_issue",
-        unavailable_signing_key,
-    )
-    signing_key_failure = await _token_response(
-        workload_harness,
-        scope="platform:agents:create",
-    )
-    assert signing_key_failure.status_code == 503, signing_key_failure.text
-    assert signing_key_failure.json()["error"] == "temporarily_unavailable"
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "load_platform_workload_signing_key_for_issue",
+            unavailable_signing_key,
+        )
+        signing_key_failure = await _token_response(
+            workload_harness,
+            scope="platform:agents:create",
+        )
+        assert signing_key_failure.status_code == 503, signing_key_failure.text
+        assert signing_key_failure.json()["error"] == "temporarily_unavailable"
 
     async def unavailable_signer(**kwargs):
         raise PlatformWorkloadKeyUnavailable("signer unavailable")
 
-    monkeypatch.setattr(workload_harness.resolver, "sign_jwt", unavailable_signer)
-    signer_failure = await _token_response(workload_harness, scope="platform:agents:create")
-    assert signer_failure.status_code == 503, signer_failure.text
-    assert signer_failure.json()["error"] == "temporarily_unavailable"
+    with monkeypatch.context() as scoped:
+        scoped.setattr(workload_harness.resolver, "sign_jwt", unavailable_signer)
+        signer_failure = await _token_response(
+            workload_harness,
+            scope="platform:agents:create",
+        )
+        assert signer_failure.status_code == 503, signer_failure.text
+        assert signer_failure.json()["error"] == "temporarily_unavailable"
 
 
 @pytest.mark.asyncio
-async def test_workload_tokens_cover_platform_route_scope_mapping(
+@pytest.mark.parametrize("operation", ["provision", "retire", "register", "read", "ack", "reset"])
+async def test_companion_routes_require_and_accept_admin_key(
     workload_harness,
     seed_user,
     db_session,
+    operation,
 ):
-    owner = _owner(seed_user)
-    agent_id = uuid.uuid4()
+    from app.services.runtime_observation import provision_runtime_environment_fence
+    from tests.conftest import create_env_with_project
 
-    create_token = await _access_token(workload_harness, "platform:agents:create")
-    created = await workload_harness.client.post(
-        "/v1/platform/agents",
-        headers=_workload_headers(create_token, "workload-create"),
-        json=_agent_body(owner, agent_id),
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"admin-fallback-{uuid.uuid4().hex}",
+        machine_name="admin-key-companion",
     )
-    assert created.status_code == 200, created.text
+    deployment_id = f"deployment-admin-key-{uuid.uuid4().hex}"
+    if operation != "provision":
+        await provision_runtime_environment_fence(
+            db_session,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id=deployment_id,
+        )
+        await db_session.commit()
 
-    runtime_token = await _access_token(workload_harness, "platform:runtime-state:write")
-    runtime = await workload_harness.client.put(
-        f"/v1/platform/agents/{agent_id}/runtime-state",
-        headers=_workload_headers(runtime_token, "workload-runtime-put"),
-        json=_runtime_body(owner, agent_id),
-    )
-    assert runtime.status_code == 200, runtime.text
-
-    mint_token = await _access_token(workload_harness, "platform:keys:mint")
-    minted = await workload_harness.client.post(
-        "/v1/platform/auth/keys",
-        headers=_workload_headers(mint_token, "workload-key-mint"),
-        json={
-            "owner": owner,
-            "label": "workload-managed",
-            "environment_id": str(agent_id),
-            "deployment_id": "deployment-workload",
-            "scopes": list(PLATFORM_RUNTIME_KEY_SCOPES),
-        },
-    )
-    assert minted.status_code == 200, minted.text
-    key_id = minted.json()["id"]
-
-    observation_token = await _access_token(
-        workload_harness,
-        "platform:runtime-observations:read",
-    )
-    wrong_scope = await workload_harness.client.post(
-        f"/v1/platform/agents/{agent_id}/runtime-observation-consumers/register",
-        headers=_workload_headers(runtime_token, "workload-observation-wrong-scope"),
-        json={
-            "owner": owner,
-            "deployment_id": "deployment-workload",
-            "consumer_id": "wrong-scope-consumer",
-        },
-    )
-    assert wrong_scope.status_code == 403, wrong_scope.text
-
-    registered = await workload_harness.client.post(
-        f"/v1/platform/agents/{agent_id}/runtime-observation-consumers/register",
-        headers=_workload_headers(observation_token, "workload-observation-register"),
-        json={
-            "owner": owner,
-            "deployment_id": "deployment-workload",
-            "consumer_id": "hosted-controller",
-        },
-    )
-    assert registered.status_code == 200, registered.text
-    initial_cursor = registered.json()["cursor"]
-    observations = await workload_harness.client.post(
-        f"/v1/platform/agents/{agent_id}/runtime-observations/read",
-        headers=_workload_headers(observation_token, "workload-observation-read"),
-        json={
-            "owner": owner,
-            "deployment_id": "deployment-workload",
-            "consumer_id": "hosted-controller",
+    path = "/v2/runtime/auth/keys"
+    payload: dict[str, Any] = {
+        "label": "admin-key-runtime",
+        "environmentId": str(environment.id),
+        "deploymentId": deployment_id,
+    }
+    if operation == "retire":
+        path = f"/v2/runtime/environments/{environment.id}/retire"
+        payload = {
+            "expectedDeploymentBinding": deployment_id,
+            "retirementId": f"retirement-admin-key-{environment.id}",
+        }
+    elif operation == "register":
+        path = f"/v2/runtime/environments/{environment.id}/observation-consumers/register"
+        payload = {}
+    elif operation == "read":
+        path = f"/v2/runtime/environments/{environment.id}/observations/read"
+        payload = {
             "expectedApplyIdentity": {
                 "generation": 1,
                 "manifestETag": '"manifest-etag-0001"',
                 "applyReceiptId": "apply-receipt-00000001",
                 "bootNonce": "boot-nonce-0000000001",
             },
-            "afterCursor": initial_cursor,
-            "limit": 100,
-        },
-    )
-    assert observations.status_code == 200, observations.text
-    observation_body = observations.json()
-    assert observation_body["events"] == []
-    assert observation_body["heads"] == []
-    assert observation_body["streamHighWaterCursor"].startswith("clawdi-ro-v1.")
+            "afterCursor": "clawdi-ro-v1.invalid",
+        }
+    elif operation == "ack":
+        path = f"/v2/runtime/environments/{environment.id}/observation-consumers/ack"
+        payload = {"cursor": "clawdi-ro-v1.invalid"}
+    elif operation == "reset":
+        path = f"/v2/runtime/environments/{environment.id}/observation-consumers/reset"
+        payload = {}
 
-    acknowledged = await workload_harness.client.post(
-        f"/v1/platform/agents/{agent_id}/runtime-observation-consumers/ack",
-        headers=_workload_headers(observation_token, "workload-observation-ack"),
-        json={
-            "owner": owner,
-            "deployment_id": "deployment-workload",
-            "consumer_id": "hosted-controller",
-            "cursor": observation_body["streamHighWaterCursor"],
-        },
+    request_body = {"owner": _owner(seed_user), **payload} if operation == "provision" else payload
+    idempotency_key = f"admin-auth-{uuid.uuid4()}"
+    missing = await workload_harness.client.post(
+        path,
+        headers={"Idempotency-Key": idempotency_key},
+        json=request_body,
     )
-    assert acknowledged.status_code == 200, acknowledged.text
-
-    invalid_cursor_body = {
-        "owner": owner,
-        "deployment_id": "deployment-workload",
-        "consumer_id": "hosted-controller",
-        "expectedApplyIdentity": {
-            "generation": 1,
-            "manifestETag": '"manifest-etag-0001"',
-            "applyReceiptId": "apply-receipt-00000001",
-            "bootNonce": "boot-nonce-0000000001",
+    invalid = await workload_harness.client.post(
+        path,
+        headers={"X-Admin-Key": "invalid", "Idempotency-Key": idempotency_key},
+        json=request_body,
+    )
+    workload_token = await _access_token(workload_harness, "platform:keys:mint")
+    oauth_only = await workload_harness.client.post(
+        path,
+        headers={
+            "Authorization": f"Bearer {workload_token}",
+            "Idempotency-Key": idempotency_key,
         },
-        "afterCursor": "clawdi-ro-v1.invalid",
-        "limit": 100,
+        json=request_body,
+    )
+
+    assert missing.status_code == invalid.status_code == oauth_only.status_code == 401
+    assert missing.json() == invalid.json() == oauth_only.json() == {"detail": "invalid admin auth"}
+
+    settings.platform_legacy_admin_auth_enabled = False
+    admin_headers = {
+        "X-Admin-Key": _ADMIN_KEY,
+        "Idempotency-Key": idempotency_key,
     }
-    expired = await workload_harness.client.post(
-        f"/v1/platform/agents/{agent_id}/runtime-observations/read",
-        headers=_workload_headers(observation_token, "workload-observation-expired"),
-        json=invalid_cursor_body,
-    )
-    assert expired.status_code == 410, expired.text
-    assert expired.json()["detail"]["code"] == "observation_cursor_expired"
-    assert expired.json()["detail"]["resetBoundary"] is not None
+    valid_body = request_body
+    if operation in {"read", "ack", "reset"}:
+        registered = await workload_harness.client.post(
+            f"/v2/runtime/environments/{environment.id}/observation-consumers/register",
+            headers={"X-Admin-Key": _ADMIN_KEY},
+            json={},
+        )
+        assert registered.status_code == 200, registered.text
+        if operation == "read":
+            path = f"/v2/runtime/environments/{environment.id}/observations/read"
+            payload = {
+                "expectedApplyIdentity": {
+                    "generation": 1,
+                    "manifestETag": '"manifest-etag-0001"',
+                    "applyReceiptId": "apply-receipt-00000001",
+                    "bootNonce": "boot-nonce-0000000001",
+                },
+                "afterCursor": registered.json()["cursor"],
+            }
+        elif operation == "ack":
+            path = f"/v2/runtime/environments/{environment.id}/observation-consumers/ack"
+            payload = {"cursor": registered.json()["cursor"]}
+        else:
+            expired = await workload_harness.client.post(
+                f"/v2/runtime/environments/{environment.id}/observations/read",
+                headers={"X-Admin-Key": _ADMIN_KEY},
+                json={
+                    "expectedApplyIdentity": {
+                        "generation": 1,
+                        "manifestETag": '"manifest-etag-0001"',
+                        "applyReceiptId": "apply-receipt-00000001",
+                        "bootNonce": "boot-nonce-0000000001",
+                    },
+                    "afterCursor": "clawdi-ro-v1.invalid",
+                },
+            )
+            assert expired.status_code == 410, expired.text
+            path = f"/v2/runtime/environments/{environment.id}/observation-consumers/reset"
+            payload = {}
+        valid_body = payload
+    response = await workload_harness.client.post(path, headers=admin_headers, json=valid_body)
 
-    reset = await workload_harness.client.post(
-        f"/v1/platform/agents/{agent_id}/runtime-observation-consumers/reset",
-        headers=_workload_headers(observation_token, "workload-observation-reset"),
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_v2_provision_precedes_scoped_deploy_key_and_retirement_replays_exact_receipt(
+    workload_harness,
+    seed_user,
+    db_session,
+    monkeypatch,
+):
+    from app.routes import runtime_observation_v2 as v2_routes
+    from tests.conftest import create_env_with_project
+
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"v2-provision-{uuid.uuid4().hex}",
+        machine_name="v2-provision",
+    )
+    environment_id = environment.id
+    owner_id = seed_user.id
+    deployment_id = f"deployment-{uuid.uuid4().hex}"
+    original_mint = v2_routes.mint_api_key
+
+    async def assert_fence_precedes_key(db, **kwargs):
+        fence = await db.get(V2RuntimeEnvironmentFence, environment_id)
+        assert fence is not None
+        assert fence.owner_id == owner_id
+        assert fence.deployment_id == deployment_id
+        assert fence.state == "active"
+        return await original_mint(db, **kwargs)
+
+    monkeypatch.setattr(v2_routes, "mint_api_key", assert_fence_precedes_key)
+    caller_scoped = await workload_harness.client.post(
+        "/v2/runtime/auth/keys",
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"mint-caller-scopes-{environment_id}",
+        },
         json={
-            "owner": owner,
-            "deployment_id": "deployment-workload",
-            "consumer_id": "hosted-controller",
+            "owner": _owner(seed_user),
+            "label": "strict-v2-runtime",
+            "environmentId": str(environment_id),
+            "deploymentId": deployment_id,
+            "scopes": ["runtime-observations:write"],
         },
     )
-    assert reset.status_code == 200, reset.text
-    assert (
-        reset.json()["resetBoundary"]["cursor"]
-        == (expired.json()["detail"]["resetBoundary"]["cursor"])
-    )
+    assert caller_scoped.status_code == 422, caller_scoped.text
 
-    revoke_token = await _access_token(workload_harness, "platform:keys:revoke")
-    revoked = await workload_harness.client.request(
-        "DELETE",
-        f"/v1/platform/auth/keys/{key_id}",
-        headers=_workload_headers(revoke_token, "workload-key-revoke"),
-        json={"owner": owner},
+    minted = await workload_harness.client.post(
+        "/v2/runtime/auth/keys",
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"mint-{environment_id}",
+        },
+        json={
+            "owner": _owner(seed_user),
+            "label": "strict-v2-runtime",
+            "environmentId": str(environment_id),
+            "deploymentId": deployment_id,
+        },
     )
-    assert revoked.status_code == 200, revoked.text
-    revoked_key = await db_session.get(ApiKey, uuid.UUID(key_id))
-    assert revoked_key is not None and revoked_key.revoked_at is not None
-
-    deleted_runtime = await workload_harness.client.request(
-        "DELETE",
-        f"/v1/platform/agents/{agent_id}/runtime-state",
-        headers=_workload_headers(runtime_token, "workload-runtime-delete"),
-        json={"owner": owner},
-    )
-    assert deleted_runtime.status_code == 204, deleted_runtime.text
-
-    delete_token = await _access_token(workload_harness, "platform:agents:delete")
-    deleted_agent = await workload_harness.client.request(
-        "DELETE",
-        f"/v1/platform/agents/{agent_id}",
-        headers=_workload_headers(delete_token, "workload-agent-delete"),
-        json={"owner": owner},
-    )
-    assert deleted_agent.status_code == 204, deleted_agent.text
-
-    events = (
+    assert minted.status_code == 200, minted.text
+    key = await db_session.get(ApiKey, uuid.UUID(minted.json()["id"]))
+    assert key is not None
+    assert key.runtime_deployment_id == deployment_id
+    assert key.scopes == list(RUNTIME_DEPLOYMENT_KEY_SCOPES)
+    assert set(key.scopes) == {
+        "connectors:read",
+        "connectors:invoke",
+        "memories:read",
+        "memories:write",
+        "projects:read",
+        "runtime-observations:write",
+        "sessions:read",
+        "sessions:write",
+        "skills:read",
+        "skills:write",
+        "vault:read",
+    }
+    provision_audit = (
         await db_session.execute(
             select(ControlPlaneAuditEvent).where(
-                ControlPlaneAuditEvent.source == "api.platform",
-                ControlPlaneAuditEvent.details["workload_sub"].astext
-                == workload_harness.credential.client_id,
+                ControlPlaneAuditEvent.source == "api.v2.runtime",
+                ControlPlaneAuditEvent.action == "runtime_environment.provision",
+                ControlPlaneAuditEvent.resource_id == str(environment_id),
             )
         )
-    ).scalars()
-    event_list = list(events)
-    assert len(event_list) == 6
-    assert all(
-        event.details["credential_id"] == "[REDACTED]"
-        and event.details["token_jti"] == "[REDACTED]"
-        for event in event_list
+    ).scalar_one()
+    assert provision_audit.actor_type == "admin"
+    assert provision_audit.details["auth_method"] == "x_admin_key"
+    assert "workload_client_id" not in provision_audit.details
+
+    path = f"/v2/runtime/environments/{environment_id}/retire"
+    body = {
+        "expectedDeploymentBinding": deployment_id,
+        "retirementId": f"retirement-{environment_id}",
+    }
+    first_headers = {
+        "X-Admin-Key": _ADMIN_KEY,
+        "Idempotency-Key": f"retire-first-{environment_id}",
+    }
+    original_record_audit = v2_routes.record_control_plane_audit
+
+    def fail_transition_audit(db, **kwargs):
+        if kwargs.get("action") == "runtime_environment.retire":
+            raise RuntimeError("injected transition audit failure")
+        return original_record_audit(db, **kwargs)
+
+    monkeypatch.setattr(v2_routes, "record_control_plane_audit", fail_transition_audit)
+    with pytest.raises(RuntimeError, match="injected transition audit failure"):
+        await workload_harness.client.post(path, headers=first_headers, json=body)
+    await db_session.rollback()
+    fence_after_rollback = await db_session.get(V2RuntimeEnvironmentFence, environment_id)
+    assert fence_after_rollback is not None
+    assert fence_after_rollback.state == "active"
+    assert fence_after_rollback.retirement_receipt is None
+    assert fence_after_rollback.retirement_receipt_id is None
+
+    monkeypatch.setattr(v2_routes, "record_control_plane_audit", original_record_audit)
+    first = await workload_harness.client.post(path, headers=first_headers, json=body)
+    same_http_replay = await workload_harness.client.post(
+        path,
+        headers=first_headers,
+        json=body,
     )
-    assert await db_session.get(AgentEnvironment, agent_id) is None
+    domain_replay = await workload_harness.client.post(
+        path,
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"retire-domain-replay-{environment_id}",
+        },
+        json=body,
+    )
+
+    assert first.status_code == same_http_replay.status_code == domain_replay.status_code == 200
+    assert first.content == same_http_replay.content == domain_replay.content
+    assert set(first.json()) == {
+        "environmentReference",
+        "expectedDeploymentBinding",
+        "retirementId",
+        "retiredAt",
+        "finalCursor",
+        "finalSessionHighWaterMarks",
+    }
+    assert first.json()["environmentReference"] == str(environment_id)
+    assert first.json()["expectedDeploymentBinding"] == deployment_id
+    assert first.json()["finalSessionHighWaterMarks"] == []
+
+    fence = await db_session.get(V2RuntimeEnvironmentFence, environment_id)
+    assert fence is not None
+    await db_session.refresh(fence)
+    assert fence.state == "retired"
+    assert fence.retirement_receipt == first.json()
+    assert fence.retirement_receipt_id is not None
+    transition_audits = list(
+        (
+            await db_session.execute(
+                select(ControlPlaneAuditEvent).where(
+                    ControlPlaneAuditEvent.source == "api.v2.runtime",
+                    ControlPlaneAuditEvent.action == "runtime_environment.retire",
+                    ControlPlaneAuditEvent.resource_id == str(environment_id),
+                    ControlPlaneAuditEvent.details["outcome"].astext == "transitioned",
+                )
+            )
+        ).scalars()
+    )
+    replay_audits = list(
+        (
+            await db_session.execute(
+                select(ControlPlaneAuditEvent).where(
+                    ControlPlaneAuditEvent.source == "api.v2.runtime",
+                    ControlPlaneAuditEvent.action == "runtime_environment.retire_replay",
+                    ControlPlaneAuditEvent.resource_id == str(environment_id),
+                )
+            )
+        ).scalars()
+    )
+    assert len(transition_audits) == 1
+    assert len(replay_audits) == 1
+    transition = transition_audits[0]
+    assert transition.actor_type == "admin"
+    assert transition.details["auth_method"] == "x_admin_key"
+    assert "workload_client_id" not in transition.details
+    assert "workload_principal_id" not in transition.details
+    assert transition.details["retirement_receipt_id"] == str(fence.retirement_receipt_id)
+    assert transition.details["previous_state"] == "active"
+    assert transition.details["new_state"] == "retired"
+
+    conflicting = await workload_harness.client.post(
+        path,
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"retire-conflict-{environment_id}",
+        },
+        json={**body, "retirementId": f"other-{environment_id}"},
+    )
+    assert conflicting.status_code == 409, conflicting.text
+    assert conflicting.json()["detail"]["code"] == "runtime_environment_retirement_conflict"
+    rejection_audit = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.source == "api.v2.runtime",
+                ControlPlaneAuditEvent.action == "runtime_environment.retire",
+                ControlPlaneAuditEvent.resource_id == str(environment_id),
+                ControlPlaneAuditEvent.details["outcome"].astext
+                == "runtime_environment_retirement_conflict",
+            )
+        )
+    ).scalar_one()
+    assert rejection_audit.actor_type == "admin"
+    assert rejection_audit.details["auth_method"] == "x_admin_key"
+
+
+@pytest.mark.asyncio
+async def test_observation_consumer_identity_is_bound_to_admin_actor(
+    workload_harness,
+    seed_user,
+    db_session,
+):
+    from app.models.runtime_observation import V2RuntimeObservationConsumerCursor
+    from app.services.runtime_observation import (
+        provision_runtime_environment_fence,
+        register_runtime_observation_consumer,
+    )
+    from tests.conftest import create_env_with_project
+
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"consumer-scope-{uuid.uuid4().hex}",
+        machine_name="consumer-scope",
+    )
+    deployment_id = f"deployment-{uuid.uuid4().hex}"
+    await provision_runtime_environment_fence(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=deployment_id,
+    )
+    await db_session.commit()
+
+    foreign = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=deployment_id,
+        consumer_id="foreign-controller",
+    )
+    await db_session.commit()
+    path = f"/v2/runtime/environments/{environment.id}"
+    admin_headers = {"X-Admin-Key": _ADMIN_KEY}
+    common: dict[str, str] = {}
+
+    caller_supplied_binding = await workload_harness.client.post(
+        f"{path}/observation-consumers/register",
+        headers=admin_headers,
+        json={"owner": _owner(seed_user), "deploymentId": deployment_id},
+    )
+    assert caller_supplied_binding.status_code == 422, caller_supplied_binding.text
+    assert {error["loc"][-1] for error in caller_supplied_binding.json()["detail"]} == {
+        "owner",
+        "deploymentId",
+    }
+
+    registered = await workload_harness.client.post(
+        f"{path}/observation-consumers/register",
+        headers=admin_headers,
+        json=common,
+    )
+    assert registered.status_code == 200, registered.text
+    assert registered.json()["consumerId"] == "hosted-controller"
+
+    apply_identity = {
+        "generation": 1,
+        "manifestETag": '"manifest-etag-0001"',
+        "applyReceiptId": "apply-receipt-00000001",
+        "bootNonce": "boot-nonce-0000000001",
+    }
+    cross_read = await workload_harness.client.post(
+        f"{path}/observations/read",
+        headers=admin_headers,
+        json={
+            **common,
+            "expectedApplyIdentity": apply_identity,
+            "afterCursor": foreign["cursor"],
+        },
+    )
+    assert cross_read.status_code == 410, cross_read.text
+    assert cross_read.json()["detail"]["code"] == "observation_cursor_expired"
+
+    cross_ack = await workload_harness.client.post(
+        f"{path}/observation-consumers/ack",
+        headers=admin_headers,
+        json={**common, "cursor": foreign["cursor"]},
+    )
+    assert cross_ack.status_code == 410, cross_ack.text
+    assert cross_ack.json()["detail"]["code"] == "observation_cursor_expired"
+    expired_a = await db_session.get(
+        V2RuntimeObservationConsumerCursor,
+        {"environment_id": environment.id, "consumer_id": "hosted-controller"},
+    )
+    assert expired_a is not None
+    await db_session.refresh(expired_a)
+    assert expired_a.state == "expired"
+    expiry_audits = list(
+        (
+            await db_session.execute(
+                select(ControlPlaneAuditEvent).where(
+                    ControlPlaneAuditEvent.source == "api.v2.runtime",
+                    ControlPlaneAuditEvent.action == "runtime_observation.cursor_expired",
+                    ControlPlaneAuditEvent.resource_id == str(environment.id),
+                )
+            )
+        ).scalars()
+    )
+    assert len(expiry_audits) == 2
+    assert {event.details["operation"] for event in expiry_audits} == {"read", "ack"}
+    assert all(event.actor_type == "admin" for event in expiry_audits)
+    assert all(event.details["auth_method"] == "x_admin_key" for event in expiry_audits)
+    assert all(event.details["consumer_id"] == "hosted-controller" for event in expiry_audits)
+    assert all("workload_client_id" not in event.details for event in expiry_audits)
+    assert foreign["cursor"] not in json.dumps(
+        [event.details for event in expiry_audits],
+        sort_keys=True,
+    )
+
+    caller_controlled_reset = await workload_harness.client.post(
+        f"{path}/observation-consumers/reset",
+        headers=admin_headers,
+        json={**common, "consumer_id": "foreign-controller"},
+    )
+    assert caller_controlled_reset.status_code == 422, caller_controlled_reset.text
+    assert any(
+        error["loc"][-1] == "consumer_id" for error in caller_controlled_reset.json()["detail"]
+    )
+
+    reset = await workload_harness.client.post(
+        f"{path}/observation-consumers/reset",
+        headers=admin_headers,
+        json=common,
+    )
+    assert reset.status_code == 200, reset.text
+    assert reset.json()["consumerId"] == "hosted-controller"
+
+    own_read = await workload_harness.client.post(
+        f"{path}/observations/read",
+        headers=admin_headers,
+        json={
+            **common,
+            "expectedApplyIdentity": apply_identity,
+            "afterCursor": reset.json()["cursor"],
+        },
+    )
+    assert own_read.status_code == 200, own_read.text
+    cursor = await db_session.get(
+        V2RuntimeObservationConsumerCursor,
+        {"environment_id": environment.id, "consumer_id": "hosted-controller"},
+    )
+    assert cursor is not None
+    assert cursor.state == "active"
+    assert cursor.acked_stream_position == 0
+    assert cursor.reset_at is not None
 
 
 @pytest.mark.asyncio
@@ -785,6 +1111,53 @@ async def test_workload_owner_is_still_mandatory_and_mismatch_is_forbidden(
     await db_session.execute(delete(AgentEnvironment).where(AgentEnvironment.id == agent_id))
     await db_session.delete(other_user)
     await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_platform_agent_archive_preserves_runtime_oauth_claim(
+    workload_harness,
+    seed_user,
+    db_session,
+):
+    owner = _owner(seed_user)
+    agent_id = uuid.uuid4()
+    create_token = await _access_token(workload_harness, "platform:agents:create")
+    created = await workload_harness.client.post(
+        "/v1/platform/agents",
+        headers=_workload_headers(create_token, "oauth-claim-agent-create"),
+        json=_agent_body(owner, agent_id),
+    )
+    assert created.status_code == 200, created.text
+
+    encrypted, nonce = encrypt('{"kind":"oauth-test"}')
+    payload = AiProviderAuthPayload(
+        owner_user_id=seed_user.id,
+        provider_id=f"delete-platform-{uuid.uuid4().hex}",
+        auth_profile="default",
+        kind="agent_profile",
+        source="test",
+        encrypted_payload=encrypted,
+        nonce=nonce,
+        consumer_environment_id=agent_id,
+        consumer_runtime="openclaw",
+    )
+    db_session.add(payload)
+    await db_session.commit()
+
+    delete_token = await _access_token(workload_harness, "platform:agents:delete")
+    deleted = await workload_harness.client.request(
+        "DELETE",
+        f"/v1/platform/agents/{agent_id}",
+        headers=_workload_headers(delete_token, "oauth-claim-agent-delete"),
+        json={"owner": owner},
+    )
+
+    assert deleted.status_code == 204, deleted.text
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None and agent.archived_at is not None
+    await db_session.refresh(payload)
+    assert payload.consumer_environment_id == agent_id
+    assert payload.consumer_runtime == "openclaw"
 
 
 @pytest.mark.asyncio
@@ -876,51 +1249,50 @@ async def test_workload_resource_storage_failure_is_503_without_admin_fallback(
     async def unavailable_client(*args, **kwargs):
         raise SQLAlchemyError("status storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "load_platform_workload_client",
-        unavailable_client,
-    )
-    response = await workload_harness.client.post(
-        "/v1/platform/agents",
-        headers=_workload_headers(token, "workload-status-unavailable"),
-        json=_agent_body(owner, uuid.uuid4()),
-    )
-    assert response.status_code == 503, response.text
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "load_platform_workload_client",
+            unavailable_client,
+        )
+        response = await workload_harness.client.post(
+            "/v1/platform/agents",
+            headers=_workload_headers(token, "workload-status-unavailable"),
+            json=_agent_body(owner, uuid.uuid4()),
+        )
+        assert response.status_code == 503, response.text
 
     async def unavailable_signing_key(*args, **kwargs):
         raise SQLAlchemyError("issuer key status storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "load_platform_workload_signing_key",
-        unavailable_signing_key,
-    )
-    signing_key_failure = await workload_harness.client.post(
-        "/v1/platform/agents",
-        headers=_workload_headers(token, "workload-signing-key-unavailable"),
-        json=_agent_body(owner, uuid.uuid4()),
-    )
-    assert signing_key_failure.status_code == 503, signing_key_failure.text
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "load_platform_workload_signing_key",
+            unavailable_signing_key,
+        )
+        signing_key_failure = await workload_harness.client.post(
+            "/v1/platform/agents",
+            headers=_workload_headers(token, "workload-signing-key-unavailable"),
+            json=_agent_body(owner, uuid.uuid4()),
+        )
+        assert signing_key_failure.status_code == 503, signing_key_failure.text
 
     async def unavailable_verifier(**kwargs):
         raise PlatformWorkloadKeyUnavailable("verification key unavailable")
 
-    monkeypatch.setattr(
-        workload_harness.resolver,
-        "resolve_verification_key",
-        unavailable_verifier,
-    )
-    verifier_failure = await workload_harness.client.post(
-        "/v1/platform/agents",
-        headers=_workload_headers(token, "workload-verifier-unavailable"),
-        json=_agent_body(owner, uuid.uuid4()),
-    )
-    assert verifier_failure.status_code == 503, verifier_failure.text
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            workload_harness.resolver,
+            "resolve_verification_key",
+            unavailable_verifier,
+        )
+        verifier_failure = await workload_harness.client.post(
+            "/v1/platform/agents",
+            headers=_workload_headers(token, "workload-verifier-unavailable"),
+            json=_agent_body(owner, uuid.uuid4()),
+        )
+        assert verifier_failure.status_code == 503, verifier_failure.text
 
 
 @pytest.mark.asyncio

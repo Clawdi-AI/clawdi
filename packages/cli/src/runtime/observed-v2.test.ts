@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getCliVersion } from "../lib/version";
-import { writeRuntimeAppliedState } from "./applied-state";
+import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-state";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths } from "./paths";
 
@@ -23,14 +23,19 @@ describe("hosted runtime observed v2", () => {
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
+		mkdirSync(paths.serviceStateRoot);
 		writeRuntimeAppliedState(
 			{
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T06:00:00.000Z",
 				instanceId: "hri_observed",
 				etag: '"bundle-applied"',
+				manifestETag: '"frozen-companion-manifest"',
+				applyReceiptId: "apply-receipt-observed-v2",
+				bootNonce: "boot-nonce-observed-v2-01",
 				sourceRevision: "a".repeat(64),
-				generation: 9,
+				generation: 2,
+				applyGeneration: 1,
 				contentIdentity: {
 					sourcePath: "https://runtime.test/v1/runtime/manifest",
 					sha256: "b".repeat(64),
@@ -49,10 +54,24 @@ describe("hosted runtime observed v2", () => {
 		expect(observed?.applied).toEqual({
 			etag: '"bundle-applied"',
 			sourceRevision: "a".repeat(64),
-			generation: 9,
+			generation: 1,
 			instanceId: "hri_observed",
 			appliedProviderIds: ["managed"],
 		});
+		const companion = readHostedRuntimeObserved(paths, {
+			reportedAt: "2026-07-13T06:01:00.000Z",
+			appliedState: readRuntimeAppliedState(paths),
+			etagAuthority: "control-plane",
+		});
+		expect(companion?.applied).toEqual({
+			etag: '"frozen-companion-manifest"',
+			sourceRevision: "a".repeat(64),
+			generation: 1,
+			instanceId: "hri_observed",
+			appliedProviderIds: ["managed"],
+		});
+		expect(JSON.stringify(observed)).not.toContain("b".repeat(64));
+		expect(observed?.applied).not.toHaveProperty("contentIdentity");
 	});
 
 	test("reports missing applied state as unknown authority", () => {

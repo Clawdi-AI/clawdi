@@ -26,7 +26,7 @@
 			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/biome.json"],
 			"outputs": []
 		},
-		"test": {
+		"test:internal": {
 			"dependsOn": ["typecheck"],
 			"outputs": []
 		}

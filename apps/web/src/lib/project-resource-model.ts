@@ -8,8 +8,17 @@ export type ProjectResourceId =
 	| "memories"
 	| "connectors";
 
-export type ProjectResourceScope = "container" | "project-managed" | "activity" | "account-wide";
+export type ProjectResourceScope = "container" | "project-managed" | "activity" | "all-agents";
 export type ProjectResourceGroup = "project-registry" | "project-resources" | "user-resources";
+
+export const PROJECT_RESOURCE_LIST_PATHS = {
+	projects: "/projects",
+	skills: "/skills",
+	vaults: "/vaults",
+	sessions: "/sessions",
+	memories: "/memories",
+	connectors: "/connectors",
+} as const satisfies Record<ProjectResourceId, string>;
 
 type DashboardStatCountKey = {
 	[K in keyof DashboardStats]: DashboardStats[K] extends number ? K : never;
@@ -33,7 +42,7 @@ export interface ProjectResourceDefinition {
 }
 
 export const PROJECT_CANONICAL_DEFINITION =
-	"A Project groups the skills and Vault access an agent or teammate can use.";
+	"A Project owns Skills and attaches Vault access for a workflow or team.";
 
 const PROJECT_RESOURCE_DEFINITIONS = [
 	{
@@ -43,9 +52,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Projects",
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
-			"Create Projects to share resources with teammates. Use the Global Project for account defaults. Agent Projects belong to one connected agent and cannot be shared.",
-		href: "/projects",
-		emptyCta: "Create Project",
+			"Create shareable Projects that bundle Skills with attached Vault access. Each Agent also has a private Workspace on that Agent's page.",
+		href: PROJECT_RESOURCE_LIST_PATHS.projects,
+		emptyCta: "Create project",
 		routeGroup: "project-registry",
 		projectScope: "container",
 		pathSegments: ["Projects"],
@@ -56,11 +65,11 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Skills",
 		singularLabel: "Skill",
 		navLabel: "Skills",
-		description: "Reusable instructions agents can read from a Project.",
+		description: "Reusable instructions that belong to a Project.",
 		managementDescription:
-			"Skills are Project resources. Choose a Project, then install or remove its skills.",
-		href: "/skills",
-		emptyCta: "Browse Marketplace",
+			"Skills belong to Projects. Choose a Project before adding, editing, removing, copying, or moving a Skill. Linked Agents use the whole Project bundle.",
+		href: PROJECT_RESOURCE_LIST_PATHS.skills,
+		emptyCta: "Add skill",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Skills"],
@@ -73,17 +82,17 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Vaults",
 		singularLabel: "Vault",
 		navLabel: "Vaults",
-		description: "Encrypted key collections that can be added to one or more Projects.",
+		description: "Encrypted key collections attached to one or more Projects.",
 		managementDescription:
-			"Store API keys once, then add Vaults to the Projects where agents should use those keys.",
-		href: "/vault",
-		emptyCta: "Create Vault",
+			"Keep API keys in a Vault, then attach it to the Projects where Agents should use those keys.",
+		href: PROJECT_RESOURCE_LIST_PATHS.vaults,
+		emptyCta: "Create vault",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Vaults"],
 		projectQueryParam: "project",
-		statsKey: "vault_keys_count",
-		countLabel: "keys",
+		statsKey: "vault_count",
+		countLabel: "vaults",
 	},
 	{
 		id: "sessions",
@@ -93,8 +102,8 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		description: "Conversation history synced from connected agents.",
 		managementDescription:
 			"Sessions are agent activity. Browse conversations and filter by the agent that produced them.",
-		href: "/sessions",
-		emptyCta: "Start Syncing",
+		href: PROJECT_RESOURCE_LIST_PATHS.sessions,
+		emptyCta: "Start syncing",
 		routeGroup: "user-resources",
 		projectScope: "activity",
 		pathSegments: ["Account resources", "Sessions"],
@@ -106,13 +115,12 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Memories",
 		singularLabel: "Memory",
 		navLabel: "Memories",
-		description: "Account-level notes agents can recall when they run.",
-		managementDescription:
-			"Memories are account-level context agents can recall. Project resources stay in Projects.",
-		href: "/memories",
-		emptyCta: "Add Memory",
+		description: "Notes shared across all agents in this account.",
+		managementDescription: "Memories are shared across all agents in this account.",
+		href: PROJECT_RESOURCE_LIST_PATHS.memories,
+		emptyCta: "Create memory",
 		routeGroup: "user-resources",
-		projectScope: "account-wide",
+		projectScope: "all-agents",
 		pathSegments: ["Account resources", "Memory"],
 		statsKey: "memories_count",
 		countLabel: "memories",
@@ -122,13 +130,12 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Connectors",
 		singularLabel: "Connector",
 		navLabel: "Connectors",
-		description: "Account-wide app connections that agents can use after approval.",
-		managementDescription:
-			"Connect apps once at the account level. Agents can use approved connectors through tools.",
-		href: "/connectors",
-		emptyCta: "Connect App",
+		description: "App connections shared across all agents in this account.",
+		managementDescription: "Connect apps once to share approved tools across all agents.",
+		href: PROJECT_RESOURCE_LIST_PATHS.connectors,
+		emptyCta: "Browse connectors",
 		routeGroup: "user-resources",
-		projectScope: "account-wide",
+		projectScope: "all-agents",
 		pathSegments: ["Account resources", "Connectors"],
 		statsKey: "connectors_count",
 		countLabel: "connectors",
@@ -199,6 +206,11 @@ export function projectDetailHref(projectId: string): string {
 	return `/projects/${encodeURIComponent(projectId)}`;
 }
 
+export function vaultDetailHref(slug: string, vaultId?: string | null): string {
+	const path = `${PROJECT_RESOURCE_LIST_PATHS.vaults}/${encodeURIComponent(slug)}`;
+	return vaultId ? `${path}?vault=${encodeURIComponent(vaultId)}` : path;
+}
+
 export function skillDetailHref(skillKey: string, projectId?: string | null): string {
 	const base = `/skills/${encodeURIComponent(skillKey)}`;
 	return projectId ? `${base}?project=${encodeURIComponent(projectId)}` : base;
@@ -232,8 +244,8 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 			return "Saved in a Project";
 		case "activity":
 			return "Account resources";
-		case "account-wide":
-			return "Account resources";
+		case "all-agents":
+			return "All agents";
 	}
 }
 
@@ -245,8 +257,8 @@ export function projectResourceScopeDescription(resource: ProjectResourceDefinit
 			return "Saved in a Project. Pick the Project before you add, edit, or remove it.";
 		case "activity":
 			return "Activity from agents, shown with the agent that produced it.";
-		case "account-wide":
-			return "Managed for your account, not inside a specific Project.";
+		case "all-agents":
+			return "Shared across all agents in this account. Changes here affect all agents.";
 	}
 }
 
@@ -257,4 +269,14 @@ export function projectResourceCount(
 ): number {
 	if (resource.id === "projects") return projectCount;
 	return resource.statsKey ? (stats[resource.statsKey] ?? 0) : 0;
+}
+
+/** Consistent compact count copy for entity-card metadata. */
+export function formatResourceCount(
+	value: number | null | undefined,
+	singular: string,
+	plural = `${singular}s`,
+): string | null {
+	if (typeof value !== "number") return null;
+	return `${value} ${value === 1 ? singular : plural}`;
 }

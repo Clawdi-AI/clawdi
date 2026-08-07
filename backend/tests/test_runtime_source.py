@@ -3,15 +3,21 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
-from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import HostedCodexProviderProjection
+from app.services.managed_ai_provider import (
+    CLAWDI_MANAGED_PROVIDER_ID,
+    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+    V2_MANAGED_AI_PROVIDER_ID,
+)
 from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceError,
@@ -29,6 +35,8 @@ ACCOUNT_ID = UUID("50000000-0000-0000-0000-000000000005")
 LINK_ID = UUID("60000000-0000-0000-0000-000000000006")
 PREFIX_COLLISION_ACCOUNT_ID = UUID("50000000-0000-ffff-0000-000000000007")
 PREFIX_COLLISION_LINK_ID = UUID("60000000-0000-0000-0000-000000000008")
+AUTH_TOKEN_SECRET_ID = UUID("70000000-0000-0000-0000-000000000009")
+GATEWAY_TOKEN_SECRET_ID = UUID("70000000-0000-0000-0000-000000000010")
 
 
 def test_runtime_bundle_v2_etag_is_derived_from_source_revision() -> None:
@@ -40,7 +48,12 @@ def test_runtime_bundle_v2_etag_is_derived_from_source_revision() -> None:
 
 
 def _batch(
-    *, provider_label: str = "Primary", channel_name: str = "Bot", token: bytes = b"token"
+    *,
+    provider_label: str = "Primary",
+    channel_name: str = "Bot",
+    token: bytes = b"token",
+    generation: int = 2,
+    apply_generation: int | None = 1,
 ) -> RuntimeSourceBatch:
     now = datetime(2026, 7, 13, tzinfo=UTC)
     environment = AgentEnvironment(id=ENV_ID, user_id=USER_ID)
@@ -48,10 +61,28 @@ def _batch(
         environment_id=ENV_ID,
         deployment_id="dep_test",
         instance_id="hri_test",
-        generation=7,
-        cli_package_spec="clawdi@0.12.10-beta.55",
+        generation=generation,
+        apply_generation=apply_generation,
+        cli_package_spec="clawdi@1.2.3-test",
         locale={"language": "en", "timezone": "UTC"},
-        system={},
+        system={
+            "openclawControlUiAllowedOrigins": ["https://agent.example.test"],
+            "openclawGatewayAuth": {
+                "mode": "token",
+                "tokenRef": "secret://runtime/openclaw/gateway-token",
+                "deviceAuthRequired": False,
+                "activation": {
+                    "enabled": True,
+                    "capability": "openclaw-native-auth-v1",
+                },
+            },
+        },
+        egress_engine={
+            "type": "mitmproxy",
+            "version": "12.2.3",
+            "url": "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+            "sha256": "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+        },
         runtimes={
             "openclaw": {
                 "enabled": True,
@@ -59,7 +90,21 @@ def _batch(
                 "provider_ids": ["managed"],
                 "primary_model": {"provider_id": "managed", "model": "gpt-test"},
                 "install": {"source": "official"},
-                "run": {"args": ["gateway", "run"]},
+                "run": {
+                    "args": [
+                        "gateway",
+                        "run",
+                        "--allow-unconfigured",
+                        "--port",
+                        "18789",
+                        "--bind",
+                        "lan",
+                        "--force",
+                    ],
+                    "secretEnv": {
+                        "OPENCLAW_GATEWAY_TOKEN": "secret://runtime/openclaw/gateway-token"
+                    },
+                },
                 "services": {},
             }
         },
@@ -68,6 +113,7 @@ def _batch(
             "agents": [{"agentType": "openclaw", "environmentId": str(ENV_ID)}],
         },
         recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
         tools={
             "codex": {
                 "enabled": True,
@@ -81,7 +127,7 @@ def _batch(
         id=PROVIDER_ROW_ID,
         owner_user_id=USER_ID,
         provider_id="managed",
-        type="openai",
+        type="custom_openai_compatible",
         label=provider_label,
         base_url="https://provider.test/v1",
         api_mode="openai_chat",
@@ -122,10 +168,30 @@ def _batch(
         providers={(USER_ID, "managed"): provider},
         auth_payloads={(USER_ID, "managed", "default"): auth},
         channels={ENV_ID: ((account, link),)},
+        runtime_secrets={
+            ENV_ID: (
+                HostedRuntimeSecret(
+                    id=AUTH_TOKEN_SECRET_ID,
+                    environment_id=ENV_ID,
+                    secret_ref="secret://clawdi/auth-token",
+                    encrypted_value=b"runtime-auth-ciphertext",
+                    nonce=b"runtime-auth-nonce",
+                    key_version="vault.v1",
+                ),
+                HostedRuntimeSecret(
+                    id=GATEWAY_TOKEN_SECRET_ID,
+                    environment_id=ENV_ID,
+                    secret_ref="secret://runtime/openclaw/gateway-token",
+                    encrypted_value=b"gateway-token-ciphertext",
+                    nonce=b"gateway-token-nonce",
+                    key_version="vault.v1",
+                ),
+            )
+        },
     )
 
 
-def _add_managed_provider(
+def _replace_runtime_provider(
     batch: RuntimeSourceBatch,
     *,
     provider_id: str,
@@ -135,14 +201,15 @@ def _add_managed_provider(
     state = batch.rows[ENV_ID].state
     assert state is not None
     runtime = dict(state.runtimes["openclaw"])
-    runtime["provider_ids"] = [*runtime["provider_ids"], provider_id]
+    runtime["provider_ids"] = [provider_id]
+    runtime["primary_model"] = {"provider_id": provider_id, "model": "gpt-test"}
     state.runtimes = {"openclaw": runtime}
     batch.providers[(USER_ID, provider_id)] = AiProvider(
         id=provider_row_id,
         owner_user_id=USER_ID,
         provider_id=provider_id,
         type="openai",
-        label="Second provider",
+        label="Runtime provider",
         base_url="https://provider-two.test/v1",
         api_mode="responses",
         auth_type="api_key",
@@ -165,7 +232,7 @@ def _add_prefix_colliding_channel(batch: RuntimeSourceBatch) -> None:
     account = ChannelAccount(
         id=PREFIX_COLLISION_ACCOUNT_ID,
         user_id=USER_ID,
-        provider="telegram",
+        provider="discord",
         name="Second bot",
         status="active",
         visibility="private",
@@ -181,6 +248,42 @@ def _add_prefix_colliding_channel(batch: RuntimeSourceBatch) -> None:
         agent_token_nonce=b"second-channel-nonce",
     )
     batch.channels[ENV_ID] = (*batch.channels[ENV_ID], (account, link))
+
+
+def _use_managed_provider(
+    batch: RuntimeSourceBatch,
+    *,
+    bound_provider_id: str,
+    source_provider_id: str,
+) -> str:
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    state.deployment_id = "42"
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = [bound_provider_id]
+    runtime["primary_model"] = {
+        "provider_id": bound_provider_id,
+        "model": "gpt-test",
+    }
+    state.runtimes = {"openclaw": runtime}
+    state.tools = {
+        "codex": {
+            "enabled": True,
+            "provider_id": bound_provider_id,
+            "primary_model": {
+                "provider_id": bound_provider_id,
+                "model": "gpt-test",
+            },
+        }
+    }
+
+    provider = batch.providers.pop((USER_ID, "managed"))
+    provider.provider_id = source_provider_id
+    batch.providers[(USER_ID, source_provider_id)] = provider
+    auth = batch.auth_payloads.pop((USER_ID, "managed", "default"))
+    auth.provider_id = source_provider_id
+    batch.auth_payloads[(USER_ID, source_provider_id, "default")] = auth
+    return source_provider_id
 
 
 def _render(batch: RuntimeSourceBatch):
@@ -200,6 +303,7 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
 
     assert initial.source_revision == irrelevant.source_revision
     assert initial.source_revision != rotated.source_revision
+    assert initial.manifest["skills"] == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
     assert initial.secret_values == {}
     assert initial.channel_bindings == [
         {
@@ -213,6 +317,253 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
             ),
         }
     ]
+
+
+def test_runtime_source_delivers_owned_oauth_only_to_selected_runtime(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = ["openai-codex"]
+    runtime["primary_model"] = {
+        "provider_id": "openai-codex",
+        "model": "gpt-test",
+    }
+    state.runtimes = {"openclaw": runtime}
+    provider = AiProvider(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id="openai-codex",
+        type="openai",
+        label="ChatGPT",
+        base_url="https://api.openai.com/v1",
+        api_mode="openai_responses",
+        auth_type="agent_profile",
+        auth_metadata={"tool": "codex", "profile": "default"},
+        managed_by="user",
+    )
+    payload = AiProviderAuthPayload(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id="openai-codex",
+        auth_profile="default",
+        kind="agent_profile",
+        source="managed",
+        encrypted_payload=b"oauth-ciphertext",
+        nonce=b"oauth-nonce",
+        credential_revision="oauth-revision-1",
+        consumer_environment_id=ENV_ID,
+        consumer_runtime="openclaw",
+    )
+    batch.providers[(USER_ID, provider.provider_id)] = provider
+    batch.auth_payloads[(USER_ID, provider.provider_id, "default")] = payload
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        if ciphertext == b"oauth-ciphertext" and nonce == b"oauth-nonce":
+            return '{"kind":"local_agent_profile","files":[]}'
+        return "managed-tool-key"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+    source = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=True,
+    )
+
+    projected_provider = source.manifest["providers"]["openai-codex"]
+    auth = projected_provider["auth"]
+    assert auth == {
+        "type": "agent_profile",
+        "tool": "codex",
+        "profile": "default",
+        "credentialSecretRef": "secret://provider.openai-codex.oauthProfile",
+        "credentialRevision": "oauth-revision-1",
+    }
+    assert source.secret_values["secret://provider.openai-codex.oauthProfile"] == (
+        '{"kind":"local_agent_profile","files":[]}'
+    )
+    assert "apiKeySecretRef" not in projected_provider
+    terminal_provider = source.manifest["terminalTooling"]["codex"]["provider"]
+    assert terminal_provider["apiKeySecretRef"] == "secret://tool.codex.apiKey"
+    assert "auth" not in terminal_provider
+
+
+def test_runtime_source_refuses_oauth_owned_by_another_runtime() -> None:
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = ["openai-codex"]
+    runtime["primary_model"] = {
+        "provider_id": "openai-codex",
+        "model": "gpt-test",
+    }
+    state.runtimes = {"openclaw": runtime}
+    batch.providers[(USER_ID, "openai-codex")] = AiProvider(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id="openai-codex",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        api_mode="openai_responses",
+        auth_type="agent_profile",
+        auth_metadata={"tool": "codex", "profile": "default"},
+        managed_by="user",
+    )
+    batch.auth_payloads[(USER_ID, "openai-codex", "default")] = AiProviderAuthPayload(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id="openai-codex",
+        auth_profile="default",
+        kind="agent_profile",
+        source="managed",
+        encrypted_payload=b"oauth-ciphertext",
+        nonce=b"oauth-nonce",
+        credential_revision="oauth-revision-1",
+        consumer_environment_id=uuid4(),
+        consumer_runtime="hermes",
+    )
+
+    source = _render(batch)
+
+    projected = source.manifest["providers"]["openai-codex"]
+    assert projected["status"] == "error"
+    assert projected["error"]["code"] == "provider_oauth_credential_unavailable"
+    assert "credentialSecretRef" not in projected["auth"]
+
+
+def test_runtime_secret_summary_uses_ciphertext_identity_without_decrypt(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+
+    def fail_decrypt(_ciphertext: bytes, _nonce: bytes) -> str:
+        raise AssertionError("summary rendering must not decrypt runtime secrets")
+
+    monkeypatch.setattr(runtime_source, "decrypt", fail_decrypt)
+    initial = _render(batch)
+    assert initial.secret_values == {}
+    rotated = _batch()
+    rotated.runtime_secrets[ENV_ID][0].encrypted_value = b"rotated-runtime-auth-ciphertext"
+    assert _render(rotated).source_revision != initial.source_revision
+
+
+def test_runtime_secret_source_collision_fails_before_decrypt(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    batch.runtime_secrets[ENV_ID][0].secret_ref = "secret://tool.codex.apiKey"
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "unused"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+    with pytest.raises(
+        RuntimeSourceError,
+        match=r"Runtime secret reference collision: secret://tool\.codex\.apiKey",
+    ):
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://cloud.test/",
+            vault_key_identity="vault-key-generation-1",
+            decrypt_secrets=True,
+        )
+    assert decrypt_calls == []
+
+
+def test_runtime_source_rejects_non_public_provider_without_decrypting_secret(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    provider = batch.providers[(USER_ID, "managed")]
+    provider.base_url = "https://provider.home.arpa/v1"
+
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "must-not-be-projected"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+
+    with pytest.raises(RuntimeSourceError, match="public host"):
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://api.example.test",
+            vault_key_identity="vault-key",
+            decrypt_secrets=True,
+        )
+    assert decrypt_calls == []
+
+
+def test_runtime_source_never_decrypts_or_projects_channel_provider_token(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    account, _link = batch.channels[ENV_ID][0]
+    account.encrypted_provider_token = b"real-provider-token-ciphertext"
+    account.provider_token_nonce = b"real-provider-token-nonce"
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "projected-secret"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+    bundle = render_runtime_bundle(
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://cloud.test/",
+            vault_key_identity="vault-key-generation-1",
+            decrypt_secrets=True,
+        )
+    )
+
+    assert (b"real-provider-token-ciphertext", b"real-provider-token-nonce") not in decrypt_calls
+    assert "real-provider-token" not in json.dumps(bundle)
+
+
+def test_runtime_bundle_omits_legacy_apply_generation_and_tracks_explicit_apply_only_changes() -> (
+    None
+):
+    legacy = render_runtime_source(
+        _batch(apply_generation=None),
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+    )
+    apply_one = render_runtime_source(
+        _batch(apply_generation=1),
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+    )
+    apply_three = render_runtime_source(
+        _batch(apply_generation=3),
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+    )
+
+    legacy_bundle = render_runtime_bundle(legacy)
+    assert "applyGeneration" not in legacy_bundle
+    assert legacy_bundle["manifest"]["generation"] == 2
+    assert apply_one.manifest == apply_three.manifest
+    assert apply_one.source_revision != apply_three.source_revision
+    assert render_runtime_bundle(apply_one)["applyGeneration"] == 1
+    assert render_runtime_bundle(apply_three)["applyGeneration"] == 3
 
 
 def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs(
@@ -229,6 +580,7 @@ def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs
     runtime.pop("primary_model")
     state.runtimes = {"openclaw": runtime}
     batch.channels.clear()
+    batch.runtime_secrets.clear()
     decrypt_calls: list[tuple[bytes, bytes]] = []
 
     def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
@@ -251,7 +603,7 @@ def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs
     assert source.manifest["terminalTooling"]["codex"]["provider"]["apiMode"] == (
         "openai_responses"
     )
-    assert source.secret_values == {"tool.codex.apiKey": "sk-codex-tool"}
+    assert source.secret_values == {"secret://tool.codex.apiKey": "sk-codex-tool"}
     assert decrypt_calls == [(b"provider-ciphertext", b"provider-nonce")]
     assert "clawdi://" not in json.dumps(bundle)
 
@@ -265,7 +617,7 @@ def test_codex_tool_projection_pydantic_contract_rejects_openai_chat() -> None:
                 "apiMode": "openai_chat",
                 "managed_by": "clawdi",
                 "runtimeEnvName": "OPENAI_API_KEY",
-                "apiKeySecretRef": "tool.codex.apiKey",
+                "apiKeySecretRef": "secret://tool.codex.apiKey",
             }
         )
 
@@ -277,6 +629,95 @@ def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None
     assert source.manifest["terminalTooling"]["codex"]["provider"]["apiMode"] == (
         "openai_responses"
     )
+
+
+@pytest.mark.parametrize(
+    ("bound_provider_id", "source_provider_id"),
+    [
+        (CLAWDI_MANAGED_PROVIDER_ID, "clawdi-v2-deployment-42"),
+        (CLAWDI_MANAGED_PROVIDER_ID, V2_MANAGED_AI_PROVIDER_ID),
+        (CLAWDI_MANAGED_PROVIDER_ID, V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID),
+        (CLAWDI_MANAGED_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID),
+        (V2_MANAGED_AI_PROVIDER_ID, "clawdi-v2-deployment-42"),
+        ("clawdi-v2-deployment-42", "clawdi-v2-deployment-42"),
+        (
+            V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+            V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+        ),
+        (V2_LEGACY_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID),
+    ],
+    ids=[
+        "agent-alias-scoped-source",
+        "agent-alias-base-source",
+        "agent-alias-legacy-public-source",
+        "agent-alias-legacy-source",
+        "stable-internal",
+        "deployment-scoped",
+        "legacy-public",
+        "legacy-internal",
+    ],
+)
+def test_managed_v2_provider_projects_bare_agent_identity(
+    bound_provider_id: str,
+    source_provider_id: str,
+) -> None:
+    batch = _batch()
+    persisted_provider_id = _use_managed_provider(
+        batch,
+        bound_provider_id=bound_provider_id,
+        source_provider_id=source_provider_id,
+    )
+
+    source = _render(batch)
+    manifest = source.manifest
+
+    assert manifest["runtimes"]["openclaw"]["provider_ids"] == [CLAWDI_MANAGED_PROVIDER_ID]
+    assert manifest["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+        "model": "gpt-test",
+    }
+    assert set(manifest["providers"]) == {CLAWDI_MANAGED_PROVIDER_ID}
+    assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["apiKeySecretRef"] == (
+        "secret://tool.codex.apiKey"
+    )
+    assert manifest["terminalTooling"]["codex"]["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
+    assert manifest["terminalTooling"]["codex"]["primary_model"]["provider_id"] == (
+        CLAWDI_MANAGED_PROVIDER_ID
+    )
+    if persisted_provider_id != CLAWDI_MANAGED_PROVIDER_ID:
+        assert persisted_provider_id not in json.dumps(manifest)
+
+
+def test_bare_managed_alias_prefers_deployment_source_over_fallback_rows() -> None:
+    batch = _batch()
+    _use_managed_provider(
+        batch,
+        bound_provider_id=CLAWDI_MANAGED_PROVIDER_ID,
+        source_provider_id="clawdi-v2-deployment-42",
+    )
+    scoped_provider = batch.providers[(USER_ID, "clawdi-v2-deployment-42")]
+    scoped_provider.models = [{"id": "scoped-model"}]
+    for provider_id, model in [
+        (V2_MANAGED_AI_PROVIDER_ID, "base-model"),
+        (V2_LEGACY_MANAGED_AI_PROVIDER_ID, "legacy-model"),
+    ]:
+        batch.providers[(USER_ID, provider_id)] = AiProvider(
+            id=uuid4(),
+            owner_user_id=USER_ID,
+            provider_id=provider_id,
+            type=scoped_provider.type,
+            label=scoped_provider.label,
+            base_url=scoped_provider.base_url,
+            api_mode=scoped_provider.api_mode,
+            auth_type=scoped_provider.auth_type,
+            auth_metadata=scoped_provider.auth_metadata,
+            managed_by=scoped_provider.managed_by,
+            models=[{"id": model}],
+        )
+
+    manifest = _render(batch).manifest
+
+    assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == [{"id": "scoped-model"}]
 
 
 @pytest.mark.parametrize(
@@ -309,11 +750,11 @@ def test_codex_tool_provider_fails_closed_without_platform_credential(failure: s
         _render(batch)
 
 
-def test_runtime_source_preserves_distinct_valid_provider_ids(monkeypatch) -> None:
+def test_runtime_source_preserves_runtime_and_codex_tool_provider_ids(monkeypatch) -> None:
     from app.services import runtime_source
 
     batch = _batch()
-    _add_managed_provider(
+    _replace_runtime_provider(
         batch,
         provider_id="managed-",
         provider_row_id=UUID("30000000-0000-0000-0000-000000000013"),
@@ -335,9 +776,36 @@ def test_runtime_source_preserves_distinct_valid_provider_ids(monkeypatch) -> No
         vault_key_identity="vault-key-generation-1",
         decrypt_secrets=True,
     )
-    assert source.secret_values["tool.codex.apiKey"] == "provider-ciphertext"
-    assert source.secret_values["provider.managed-.apiKey"] == "provider-two-ciphertext"
-    assert len(decrypt_calls) == 3
+    assert source.secret_values["secret://tool.codex.apiKey"] == "provider-ciphertext"
+    assert source.secret_values["secret://provider.managed-.apiKey"] == "provider-two-ciphertext"
+    assert len(decrypt_calls) == 5
+
+
+def test_runtime_source_rejects_unknown_runtime_secret_key_version_before_decrypt(
+    monkeypatch,
+) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    runtime_secret = batch.runtime_secrets[ENV_ID][0]
+    runtime_secret.key_version = "vault.future"
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "must-not-decrypt"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+
+    with pytest.raises(RuntimeSourceError, match="Hosted runtime secret source is invalid"):
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://cloud.test/",
+            vault_key_identity="vault-key-generation-1",
+            decrypt_secrets=False,
+        )
+    assert decrypt_calls == []
 
 
 def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt(
@@ -346,7 +814,7 @@ def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt
     from app.services import runtime_source
 
     batch = _batch()
-    _add_managed_provider(
+    _replace_runtime_provider(
         batch,
         provider_id="managed-",
         provider_row_id=UUID("30000000-0000-0000-0000-000000000013"),
@@ -356,12 +824,12 @@ def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt
     monkeypatch.setattr(
         runtime_source,
         "_provider_secret_ref",
-        lambda value: f"provider.{value.rstrip('-')}.apiKey",
+        lambda value: f"secret://provider.{value.rstrip('-')}.apiKey",
     )
     monkeypatch.setattr(
         runtime_source,
         "_CODEX_TOOL_SECRET_REF",
-        "provider.managed.apiKey",
+        "secret://provider.managed.apiKey",
     )
     decrypt_calls: list[tuple[bytes, bytes]] = []
 
@@ -373,7 +841,7 @@ def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt
 
     with pytest.raises(
         RuntimeSourceError,
-        match=r"Runtime secret reference collision: provider\.managed\.apiKey",
+        match=r"Runtime secret reference collision: secret://provider\.managed\.apiKey",
     ):
         render_runtime_source(
             batch,
@@ -385,10 +853,20 @@ def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt
     assert decrypt_calls == []
 
 
-def test_runtime_source_rejects_duplicate_channel_ref_before_decrypt(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("provider", "label"),
+    [("telegram", "Telegram"), ("discord", "Discord")],
+)
+def test_runtime_source_rejects_duplicate_provider_accounts_before_decrypt(
+    monkeypatch,
+    provider: str,
+    label: str,
+) -> None:
     from app.services import runtime_source
 
     batch = _batch()
+    account, _link = batch.channels[ENV_ID][0]
+    account.provider = provider
     batch.channels[ENV_ID] = (*batch.channels[ENV_ID], *batch.channels[ENV_ID])
     decrypt_calls: list[tuple[bytes, bytes]] = []
 
@@ -401,8 +879,8 @@ def test_runtime_source_rejects_duplicate_channel_ref_before_decrypt(monkeypatch
     with pytest.raises(
         RuntimeSourceError,
         match=(
-            "Runtime secret reference collision: "
-            rf"secret://channels/telegram/clawdi_{ACCOUNT_ID.hex}/agent-token"
+            rf"This Agent has multiple active {label} bots\. "
+            r"Unlink the extras until only one remains\."
         ),
     ):
         render_runtime_source(
@@ -438,14 +916,16 @@ def test_runtime_source_account_keys_use_full_uuid_and_avoid_prefix_collisions()
 def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
     from app.services import runtime_source
 
+    plaintext_by_ciphertext = {
+        b"provider-ciphertext": "sk-provider-golden",
+        b"runtime-auth-ciphertext": "runtime-auth-token-golden",
+        b"gateway-token-ciphertext": "openclaw-gateway-token-golden",
+        b"token": "123456789:telegram-agent-golden",
+    }
     monkeypatch.setattr(
         runtime_source,
         "decrypt",
-        lambda ciphertext, _nonce: (
-            "sk-provider-golden"
-            if ciphertext == b"provider-ciphertext"
-            else "123456789:telegram-agent-golden"
-        ),
+        lambda ciphertext, _nonce: plaintext_by_ciphertext[ciphertext],
     )
     source = render_runtime_source(
         _batch(),

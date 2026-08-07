@@ -20,11 +20,15 @@ from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
+
 DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
 DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
-DEV_V2_MANAGED_PROVIDER_ID = "clawdi-v2"
+DEV_V2_MANAGED_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID
 STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
+OPERATIONS: dict[str, dict[str, Any]] = {}
+DEPLOY_REQUESTS: dict[str, dict[str, Any]] = {}
 
 
 def _now() -> datetime:
@@ -121,12 +125,12 @@ def _base_config() -> dict[str, Any]:
         "telegram_mux_enabled": True,
         "discord_mux_enabled": False,
         "whatsapp_mux_enabled": False,
-        "imessage_mux_enabled": False,
         "kobb_available": True,
         "channel": "telegram",
         "primary_model": "openai/gpt-4o-mini",
         "ai_provider_id": DEV_V2_PROVIDER_ID,
         "ai_provider_auth_kind": "api_key",
+        "runtime": "openclaw",
         "ai_provider_bindings": {
             "codex": {
                 "provider_id": DEV_V2_PROVIDER_ID,
@@ -182,7 +186,6 @@ def _deployment(
         "app_id": DEV_V2_APP_ID,
         "backend": "mock",
         "status": status,
-        "failure_reason": None,
         "endpoints": [
             "https://codex.dev-preview.local",
             "https://openclaw.dev-preview.local",
@@ -192,19 +195,6 @@ def _deployment(
         "openclaw_control_ui_url": "https://openclaw.dev-preview.local",
         "hermes_control_ui_url": "https://hermes.dev-preview.local",
         "config_info": config_info or _base_config(),
-        "compute_subscription": {
-            "id": f"sub_{deployment_id}",
-            "status": "active",
-            "payment_state": "ok",
-            "billing_term_months": 1,
-            "currency": "usd",
-            "current_period_end": _iso(_now() + timedelta(days=23)),
-            "cancel_at_period_end": False,
-            "cancel_at": None,
-            "latest_failed_invoice_id": None,
-            "latest_failed_invoice_hosted_url": None,
-            "next_payment_attempt_at": None,
-        },
         "created_at": _iso(created),
         "upgrade_available": False,
         "agent_version": "v2-dev",
@@ -212,14 +202,209 @@ def _deployment(
     }
 
 
-DEPLOYMENTS: dict[str, dict[str, Any]] = {DEV_V2_DEPLOYMENT_ID: _deployment()}
+def _summary_state(status: str) -> str:
+    if status == "provisioning":
+        return "creating"
+    if status == "ready":
+        return "running"
+    if status in {
+        "creating",
+        "starting",
+        "running",
+        "stopping",
+        "stopped",
+        "restarting",
+        "updating",
+        "deleting",
+        "deleted",
+        "failed",
+    }:
+        return status
+    raise ValueError(f"Unsupported mock deployment status: {status}")
 
 
-def _deployment_or_404(deployment_id: str) -> dict[str, Any]:
+def _read_provider_auth_kind(value: Any) -> str:
+    if value in {"unmanaged", "managed", "api_key", "codex_oauth"}:
+        return str(value)
+    raise ValueError(f"Unsupported mock provider auth kind: {value!r}")
+
+
+def _runtime_configuration(config: dict[str, Any], runtime: str) -> dict[str, Any]:
+    preferences = {
+        field: config[field]
+        for field in ("language", "timezone")
+        if isinstance(config.get(field), str) and config[field]
+    }
+    binding = (config.get("ai_provider_bindings") or {}).get(runtime) or {}
+    auth_kind = _read_provider_auth_kind(
+        binding.get("auth_kind") or config.get("ai_provider_auth_kind")
+    )
+    if auth_kind == "unmanaged":
+        return {
+            **preferences,
+            "primary_model": None,
+            "providers": [],
+            "features": [],
+        }
+
+    provider_id = binding.get("provider_id") or config.get("ai_provider_id")
+    primary_model = binding.get("primary_model")
+    providers = []
+    if isinstance(provider_id, str) and provider_id:
+        providers.append(
+            {
+                "provider_id": provider_id,
+                "auth_kind": "managed" if auth_kind == "managed" else "secret_reference",
+                "models": [],
+            }
+        )
+    return {
+        **preferences,
+        "primary_model": primary_model if isinstance(primary_model, dict) else None,
+        "providers": providers,
+        "features": [],
+    }
+
+
+def _funding_fact(record: dict[str, Any]) -> dict[str, Any] | None:
+    event = record.get("last_funding_event")
+    if not isinstance(event, dict):
+        return None
+    return {
+        "fact_kind": "funding_revoked",
+        "commercial_revision": 1,
+        "compute_subscription_id": event.get("subscription_id"),
+        "compute_plan_slug": None,
+        "funding_source": event.get("funding_source"),
+        "reason": event.get("reason"),
+        "prior_plan_slug": event.get("prior_plan_slug"),
+        "occurred_at": event.get("occurred_at"),
+        "emitted_at": event.get("occurred_at"),
+    }
+
+
+def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
+    config = record["config_info"]
+    runtime = config.get("runtime")
+    if runtime not in {"openclaw", "hermes"}:
+        raise ValueError(f"Unsupported mock deployment runtime: {runtime!r}")
+    summary_state = _summary_state(record["status"])
+    backing_infra = "absent" if summary_state in {"stopped", "deleted"} else "present"
+    binding = (config.get("ai_provider_bindings") or {}).get(runtime) or {}
+    provider_auth_kind = _read_provider_auth_kind(
+        binding.get("auth_kind") or config.get("ai_provider_auth_kind")
+    )
+    runtime_ui_url = (
+        record.get("openclaw_control_ui_url")
+        if runtime == "openclaw"
+        else record.get("hermes_control_ui_url")
+    )
+    failure_reason = record.get("failure_reason")
+    failure = (
+        {
+            "type": "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+            "title": failure_reason,
+            "status": 504,
+            "detail": "The runtime did not become ready before the startup deadline.",
+            "instance": record["id"],
+            "code": "runtime_readiness_timeout",
+            "phase": "readiness",
+            "retryable": True,
+            "conditionReason": "RuntimeReadinessTimeout",
+            "conditionMessage": failure_reason,
+            "observedGeneration": 1,
+        }
+        if isinstance(failure_reason, str) and failure_reason
+        else None
+    )
+    endpoints = [
+        {"name": f"endpoint-{index}", "url": url}
+        for index, url in enumerate(record.get("endpoints") or [], start=1)
+    ]
+    return {
+        "resource": {
+            "id": record["id"],
+            "name": record["name"],
+            "owner_user_id": record["user_id"],
+            "commercial_revision": 1,
+            "deployment_target": "saas",
+            "metadata": {
+                "generation": record.get("_generation", 1),
+                "manifestETag": f"etag_{record['id']}",
+                "resourceVersion": record.get("_resource_version", f"rv_{record['id']}"),
+                "createdAt": record["created_at"],
+                "updatedAt": record["created_at"],
+            },
+            "spec": {
+                "schema_version": 1,
+                "desired_lifecycle": (
+                    "stopped"
+                    if summary_state == "stopped"
+                    else "deleted"
+                    if summary_state == "deleted"
+                    else "running"
+                ),
+                "runtime": runtime,
+                "runtime_version": "dev",
+                "resources": {
+                    "vcpu": config.get("vcpu", 1),
+                    "memory_mib": config.get("ram_gb", 2) * 1024,
+                    "disk_gib": config.get("disk_gb", 20),
+                },
+                "agents": [],
+                "ports": [],
+                "runtime_configuration": _runtime_configuration(config, runtime),
+                "rollout_nonce": 0,
+                "secret_references": [],
+            },
+            "status": {
+                "summary_state": summary_state,
+                "observedGeneration": 1,
+                "conditions": [],
+                "failure": failure,
+                "backing_infrastructure": backing_infra,
+                "driver_acknowledged_generation": 1,
+                "driver_applied_generation": 1,
+                "driver_observation_sequence": 1,
+                "endpoints": endpoints,
+            },
+        },
+        "clawdi_cloud_environments": config.get("clawdi_cloud_environments") or {},
+        "ai_provider_auth_kinds": {runtime: provider_auth_kind},
+        "runtime_ui_endpoint": (
+            {
+                "runtime": runtime,
+                "role": "control_ui",
+                "url": runtime_ui_url,
+            }
+            if isinstance(runtime_ui_url, str) and runtime_ui_url
+            else None
+        ),
+        "accepted_operation": None,
+        "commercial_display": {
+            "compute_subscription": record.get("compute_subscription"),
+            "latest_funding_fact": _funding_fact(record),
+        },
+        "current_plan_slug": config["compute_plan_slug"],
+        "upgrade_available": record.get("upgrade_available", False),
+        "compute_slot_occupancy": {
+            "occupies_slot": backing_infra == "present",
+            "backing_infra": backing_infra,
+            "reason": (
+                "backing_infra_present" if backing_infra == "present" else "authoritative_absence"
+            ),
+        },
+    }
+
+
+def _get_deployment_record(deployment_id: str) -> dict[str, Any]:
     deployment = DEPLOYMENTS.get(deployment_id)
     if deployment is None:
         raise HTTPException(status_code=404, detail="Deployment not found")
     return deployment
+
+
+DEPLOYMENTS: dict[str, dict[str, Any]] = {DEV_V2_DEPLOYMENT_ID: _deployment()}
 
 app = FastAPI(title="Clawdi local deploy API mock")
 app.add_middleware(
@@ -250,27 +435,31 @@ async def me() -> dict[str, Any]:
     }
 
 
-@app.get("/agent-environments")
-async def list_v1_agent_environments() -> dict[str, Any]:
-    return {"environment_ids": []}
-
-
 @app.get("/v2/deployments")
 async def list_deployments() -> list[dict[str, Any]]:
-    return list(DEPLOYMENTS.values())
+    return [_deployment_read_response(record) for record in DEPLOYMENTS.values()]
 
 
-@app.post("/v2/deployments")
-async def create_deployment(request: Request) -> dict[str, Any]:
-    body = await request.json()
+def _create_deployment_record(body: dict[str, Any]) -> dict[str, Any]:
+    nested_config = body.get("config")
+    if "assistant_name" in body or (
+        isinstance(nested_config, dict) and "assistant_name" in nested_config
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="assistant_name is not part of the V2 deployment contract",
+        )
     deployment_id = f"hdep_dev_{uuid.uuid4().hex[:8]}"
-    enabled_optional = []
-    if body.get("enable_openclaw", True):
-        enabled_optional.append("openclaw")
-    if body.get("enable_hermes", False):
-        enabled_optional.append("hermes")
+    requested_runtime = body.get("runtime", "openclaw")
+    if not isinstance(requested_runtime, str) or requested_runtime not in {
+        "openclaw",
+        "hermes",
+    }:
+        raise HTTPException(status_code=422, detail="unsupported V2 runtime")
+    enabled_optional = [requested_runtime]
     agents = ["codex", *enabled_optional]
     config = _base_config()
+    config["runtime"] = requested_runtime
     config["compute_plan_slug"] = body.get("compute_plan_slug", "compute_basic")
     config["enable_openclaw"] = "openclaw" in enabled_optional
     config["enable_hermes"] = "hermes" in enabled_optional
@@ -297,36 +486,103 @@ async def create_deployment(request: Request) -> dict[str, Any]:
         }
         for runtime in agents
     }
+    requested_name = body.get("name")
+    deployment_name = (
+        requested_name.strip()
+        if isinstance(requested_name, str) and requested_name.strip()
+        else f"dev-agent-{deployment_id[-4:]}"
+    )
     created = _deployment(
         deployment_id=deployment_id,
-        name=body.get("assistant_name") or f"dev-agent-{deployment_id[-4:]}",
-        status="creating",
+        name=deployment_name,
+        status="provisioning",
         config_info=config,
     )
     DEPLOYMENTS[deployment_id] = created
     return created
 
 
+def _require_mutation_headers(request: Request, deployment: dict[str, Any]) -> str:
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if not idempotency_key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key is required")
+    resource_version = deployment.get("_resource_version", f"rv_{deployment['id']}")
+    if request.headers.get("If-Match") != f'"{resource_version}"':
+        raise HTTPException(status_code=412, detail="resource_version_mismatch")
+    return idempotency_key
+
+
+def _accept_operation(
+    deployment: dict[str, Any],
+    *,
+    verb: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    deployment["_generation"] = int(deployment.get("_generation", 1)) + 1
+    deployment["_resource_version"] = f"rv_{deployment['id']}_{uuid.uuid4().hex[:8]}"
+    now = _iso(_now())
+    operation_id = uuid.uuid5(
+        STABLE_UUID_NAMESPACE,
+        f"{deployment['id']}:{verb}:{idempotency_key}",
+    ).hex
+    operation = {
+        "name": f"operations/{operation_id}",
+        "metadata": {
+            "@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+            "deploymentId": deployment["id"],
+            "verb": verb,
+            "targetGeneration": deployment["_generation"],
+            "manifestETag": f"etag_{deployment['id']}",
+            "createTime": now,
+            "updateTime": now,
+        },
+        "done": True,
+        "response": {
+            "@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+            "deployment": _deployment_read_response(deployment)["resource"],
+        },
+    }
+    OPERATIONS[operation_id] = operation
+    return operation
+
+
 @app.get("/v2/deployments/{deployment_id}")
 async def get_deployment(deployment_id: str) -> dict[str, Any]:
-    deployment = _deployment_or_404(deployment_id)
-    return deployment
+    return _deployment_read_response(_get_deployment_record(deployment_id))
 
 
 @app.patch("/v2/deployments/{deployment_id}")
 async def update_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
-    deployment = _deployment_or_404(deployment_id)
+    deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
     body = await request.json()
-    next_name = body.get("name") or body.get("assistant_name")
-    if isinstance(next_name, str) and next_name.strip():
-        deployment["name"] = next_name.strip()
-    return deployment
+    if "name" in body or "assistant_name" in body:
+        raise HTTPException(
+            status_code=422,
+            detail="deployment names are not mutable runtime configuration",
+        )
+    config = deployment.get("config_info")
+    if isinstance(config, dict):
+        for field in ("language", "timezone"):
+            if field in body:
+                config[field] = body[field]
+    return _accept_operation(
+        deployment,
+        verb="update",
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.delete("/v2/deployments/{deployment_id}")
-async def delete_deployment(deployment_id: str) -> dict[str, Any]:
-    existed = DEPLOYMENTS.pop(deployment_id, None) is not None
-    return {"status": "deleted" if existed else "missing", "cvm_deleted": existed}
+async def delete_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
+    deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
+    deployment["status"] = "deleted"
+    return _accept_operation(
+        deployment,
+        verb="delete",
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.patch("/v2/deployments/{deployment_id}/agents/{agent_type}")
@@ -335,7 +591,7 @@ async def set_agent_enabled(
     agent_type: str,
     request: Request,
 ) -> dict[str, Any]:
-    deployment = _deployment_or_404(deployment_id)
+    deployment = _get_deployment_record(deployment_id)
     body = await request.json()
     enabled = bool(body.get("enabled"))
     config = deployment["config_info"]
@@ -370,7 +626,7 @@ async def set_agent_ai_provider(
     agent_type: str,
     request: Request,
 ) -> dict[str, Any]:
-    deployment = _deployment_or_404(deployment_id)
+    deployment = _get_deployment_record(deployment_id)
     body = await request.json()
     if agent_type not in {"codex", "openclaw", "hermes"}:
         raise HTTPException(status_code=400, detail="Unsupported runtime")
@@ -401,7 +657,7 @@ async def set_agent_ai_provider(
 @app.post("/v2/deployments/{deployment_id}/onboard-agent")
 async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
     body = await request.json()
-    deployment = _deployment_or_404(deployment_id)
+    deployment = _get_deployment_record(deployment_id)
     agent_type = body.get("agent_type", "openclaw")
     if agent_type not in {"codex", "openclaw", "hermes"}:
         raise HTTPException(status_code=400, detail="Unsupported runtime")
@@ -490,7 +746,7 @@ async def create_terminal_session(
     deployment_id: str,
     request: Request,
 ) -> dict[str, Any]:
-    deployment = _deployment_or_404(deployment_id)
+    deployment = _get_deployment_record(deployment_id)
     if deployment.get("status") not in {"running", "ready"}:
         raise HTTPException(
             status_code=409,
@@ -503,15 +759,6 @@ async def create_terminal_session(
         "deployment_id": deployment_id,
         "websocket_url": websocket_url,
         "expires_at": _iso(_now() + timedelta(minutes=30)),
-    }
-
-
-@app.post("/v2/deployments/{deployment_id}/runtime-ui/redemption")
-async def create_runtime_ui_redemption(deployment_id: str) -> dict[str, Any]:
-    _deployment_or_404(deployment_id)
-    return {
-        "url": f"{_web_base_url()}/agents/{deployment_id}?mockRuntime=1",
-        "expires_at": _iso(_now() + timedelta(minutes=5)),
     }
 
 
@@ -572,24 +819,47 @@ def _mock_terminal_command(command: str) -> str:
 
 
 @app.post("/v2/deployments/{deployment_id}/restart")
-async def restart_deployment(deployment_id: str) -> dict[str, Any]:
-    deployment = _deployment_or_404(deployment_id)
+async def restart_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
+    deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
     deployment["status"] = "running"
-    return {"status": "restarting", "upgrade_task_id": None, "upgrade_status": None}
+    return _accept_operation(
+        deployment,
+        verb="restart",
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.post("/v2/deployments/{deployment_id}/stop")
-async def stop_deployment(deployment_id: str) -> dict[str, Any]:
-    deployment = _deployment_or_404(deployment_id)
+async def stop_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
+    deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
     deployment["status"] = "stopped"
-    return {"status": "stopped", "upgrade_task_id": None, "upgrade_status": None}
+    return _accept_operation(
+        deployment,
+        verb="stop",
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.post("/v2/deployments/{deployment_id}/start")
-async def start_deployment(deployment_id: str) -> dict[str, Any]:
-    deployment = _deployment_or_404(deployment_id)
+async def start_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
+    deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
     deployment["status"] = "running"
-    return {"status": "starting", "upgrade_task_id": None, "upgrade_status": None}
+    return _accept_operation(
+        deployment,
+        verb="start",
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.get("/v2/operations/{operation_id}")
+async def get_operation(operation_id: str) -> dict[str, Any]:
+    operation = OPERATIONS.get(operation_id)
+    if operation is None:
+        raise HTTPException(status_code=404, detail="Operation not found")
+    return operation
 
 
 @app.get("/v2/subscription/plans")
@@ -609,10 +879,16 @@ async def plans() -> list[dict[str, Any]]:
             "offers": [
                 {
                     "billing_term_months": 1,
-                    "price_cents": 0,
-                    "effective_monthly_price_cents": 0,
+                    "price_cents": 900,
+                    "effective_monthly_price_cents": 900,
                     "discount_percent": 0,
-                }
+                },
+                {
+                    "billing_term_months": 12,
+                    "price_cents": 8640,
+                    "effective_monthly_price_cents": 720,
+                    "discount_percent": 20,
+                },
             ],
         },
         {
@@ -645,13 +921,56 @@ async def plans() -> list[dict[str, Any]]:
 
 
 @app.post("/v2/subscription/checkout")
-async def checkout() -> dict[str, Any]:
+async def checkout(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    deploy_config = body.get("deploy_config")
+    deployment = None
+    deploy_request_id = None
+    if isinstance(deploy_config, dict):
+        deployment = _create_deployment_record(deploy_config)
+        deployment["status"] = "running"
+        deploy_request_id = deploy_config.get("deploy_request_id")
+        if isinstance(deploy_request_id, str) and deploy_request_id:
+            operation = _accept_operation(
+                deployment,
+                verb="create",
+                idempotency_key=deploy_request_id,
+            )
+            DEPLOY_REQUESTS[deploy_request_id] = {
+                "deploy_request_id": deploy_request_id,
+                "request_status": "succeeded",
+                "lineage_tail": {
+                    "deployment_id": deployment["id"],
+                    "lineage_version": 1,
+                    "lineage_state": "succeeded",
+                    "operation": operation,
+                },
+            }
+    if body.get("funding_source") == "wallet":
+        return {
+            "flow_type": "subscription_activation",
+            "funding_source": "wallet",
+            "action_url": None,
+            "checkout_url": "",
+            "deployment_id": deployment["id"] if deployment else None,
+            "deploy_request_id": deploy_request_id,
+        }
+    deployment_query = f"&deployment_id={deployment['id']}" if deployment is not None else ""
     return {
         "flow_type": "checkout_session",
+        "funding_source": "stripe",
         "action_url": None,
-        "checkout_url": f"{_web_base_url()}/deploy?mockCheckout=1",
+        "checkout_url": (f"{_web_base_url()}/deploy?mockCheckout=1{deployment_query}"),
         "client_secret": None,
     }
+
+
+@app.get("/v2/deployments/by-request/{deploy_request_id}")
+async def get_deployment_by_request(deploy_request_id: str) -> dict[str, Any]:
+    status = DEPLOY_REQUESTS.get(deploy_request_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Deployment request not found")
+    return status
 
 
 @app.post("/v2/subscription/portal")
@@ -664,111 +983,49 @@ async def portal() -> dict[str, Any]:
     }
 
 
-@app.post("/v2/subscription/cancel")
-async def cancel_subscription(request: Request) -> dict[str, Any]:
-    body = await request.json()
-    deployment_id = body.get("deployment_id") if isinstance(body, dict) else None
-    if isinstance(deployment_id, str) and deployment_id:
-        deployment = DEPLOYMENTS.get(deployment_id)
-        subscription = deployment.get("compute_subscription") if deployment else None
-        if isinstance(subscription, dict):
-            subscription["cancel_at_period_end"] = True
-    return {
-        "status": "active",
-        "cancel_at_period_end": True,
-        "billing_term_months": 1,
-        "current_period_end": _iso(_now() + timedelta(days=23)),
-    }
-
-
-@app.post("/v2/subscription/resume")
-async def resume_subscription(request: Request) -> dict[str, Any]:
-    body = await request.json()
-    deployment_id = body.get("deployment_id") if isinstance(body, dict) else None
-    if isinstance(deployment_id, str) and deployment_id:
-        deployment = DEPLOYMENTS.get(deployment_id)
-        subscription = deployment.get("compute_subscription") if deployment else None
-        if isinstance(subscription, dict):
-            subscription["cancel_at_period_end"] = False
-    return {
-        "status": "active",
-        "cancel_at_period_end": False,
-        "billing_term_months": 1,
-        "current_period_end": _iso(_now() + timedelta(days=23)),
-    }
-
-
-@app.post("/v2/subscription/fix-payment")
-async def fix_payment() -> dict[str, Any]:
-    portal_url = f"{_web_base_url()}/?settings=billing-plan&mockFixPayment=1"
-    return {
-        "url": portal_url,
-        "portal_url": portal_url,
-        "status": "mock",
-    }
-
-
-@app.get("/v2/subscription/invoices")
-async def invoices() -> dict[str, Any]:
-    now = _now()
-    return {
-        "data": [
-            {
-                "id": "in_dev_performance",
-                "number": "E2E-0001",
-                "status": "paid",
-                "amount_cents": 1900,
-                "currency": "usd",
-                "hosted_invoice_url": f"{_web_base_url()}/?mockInvoice=1",
-                "created": _iso(now - timedelta(days=7)),
-            }
-        ],
-        "has_more": False,
-        "next_starting_after": None,
-    }
-
-
-@app.get("/v2/subscription/billing-history")
-async def billing_history() -> dict[str, Any]:
-    now = _now()
-    return {
-        "data": [
-            {
-                "id": "stripe:in_dev_performance",
-                "funding_source": "stripe",
-                "compute_subscription_id": 1,
-                "plan_slug": "compute_performance",
-                "status": "paid",
-                "amount_cents": 1900,
-                "currency": "usd",
-                "created": _iso(now - timedelta(days=7)),
-                "hosted_invoice_url": f"{_web_base_url()}/?mockInvoice=1",
-            }
-        ],
-        "has_more": False,
-        "next_cursor": None,
-    }
-
-
 @app.get("/v2/usage")
 async def usage() -> dict[str, Any]:
     today = _now().date()
     return {
         "period_start": str(today - timedelta(days=6)),
         "period_end": str(today),
-        "total_credits": 1280,
+        "availability": "complete",
+        "unavailable_sections": [],
+        "total_usd": "12.80",
         "total_requests": 94,
+        "by_agent": [
+            {
+                "agent_id": DEV_V2_DEPLOYMENT_ID,
+                "agent_name": "dev-sidebar-preview",
+                "amount_usd": "9.80",
+                "requests": 72,
+            },
+            {
+                "agent_id": None,
+                "agent_name": None,
+                "amount_usd": "3.00",
+                "requests": 22,
+            },
+        ],
         "by_model": [
             {
                 "model": "openai/gpt-4o-mini",
                 "provider": DEV_V2_PROVIDER_ID,
-                "credits": 980,
+                "amount_usd": "9.80",
                 "requests": 72,
             },
-            {"model": "managed/default", "provider": "clawdi", "credits": 300, "requests": 22},
+            {
+                "model": "managed/default",
+                "provider": "clawdi",
+                "amount_usd": "3.00",
+                "requests": 22,
+            },
         ],
         "by_day": [
-            {"date": str(today - timedelta(days=i)), "credits": 120 + i * 25}
+            {
+                "date": str(today - timedelta(days=i)),
+                "amount_usd": f"{(120 + i * 25) / 100:.2f}",
+            }
             for i in reversed(range(7))
         ],
     }
@@ -780,7 +1037,6 @@ async def wallet() -> dict[str, Any]:
         "balance_credits": 4200,
         "balance_snapshot_at": _iso(_now()),
         "payment_mode": "card",
-        "x402_enabled": False,
         "auto_reload_enabled": True,
         "auto_reload_threshold_credits": 1000,
         "auto_reload_amount_cents": 1000,

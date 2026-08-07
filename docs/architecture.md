@@ -76,6 +76,10 @@ API compatibility policy lives in [`api-compatibility.md`](api-compatibility.md)
 The CLI owns local agent detection, data collection, sync, setup, MCP stdio,
 vault/env injection, and runtime convergence commands.
 
+Cloud capabilities exposed to Agents live behind the authenticated MCP API.
+Vault mutation and template injection remain foreground operator CLI workflows;
+they are not daemon control RPC or alternate Agent APIs.
+
 Adapter roots are verified in `packages/cli/src/adapters/*`:
 
 | Agent | Sessions | Skills | Version |
@@ -91,9 +95,15 @@ interface than `packages/cli/src/adapters/base.ts`.
 
 ## Sync Engine
 
-`clawdi push` uploads sessions and skills. `clawdi pull` downloads skills.
-`clawdi daemon run` keeps skill state live through local watchers, SSE, and
-heartbeat updates.
+`clawdi push` uploads sessions and projects Agent filesystem Skills into their
+Cloud rows. Agent Project Skill sync is one-way: the adapter's guarded local
+Skills root is authoritative, and Cloud stores a read-only projection. Boot,
+watcher, and periodic scans compare local inventory with an identity-fenced
+claim ledger and durably queue the latest push or delete for each Skill key.
+Cloud list failures and truncated results never authorize deletion. SSE only
+wakes a local rescan; Cloud changes and deletes never write or remove Agent
+Workspace Skill files. `clawdi pull` remains for explicitly Cloud-owned user
+Project workflows, not Agent Workspace projections.
 
 Target selection:
 
@@ -102,9 +112,23 @@ Target selection:
 3. Adapter detection.
 4. Prompt when more than one candidate remains.
 
-Sync state is client-side under `~/.clawdi/`, including session/skill lock
-files. The backend stores metadata and file bodies, but it does not own each
-machine's upload watermark.
+Sync state is client-side under `~/.clawdi/`, including session state and a
+versioned Skill projection ledger fenced by stable Agent and resolved Agent
+Project identity. Only an exact successful Agent claim authorizes a later
+projection delete. After Project reassignment, the durable queue deletes that
+Agent's claimed row from the old Project before projecting current local state
+to the new Project. Legacy hash-only entries may suppress redundant upload
+work, but never prove delete authority.
+
+The released Agent Skill projection hash is a compatibility protocol over the
+safe dereferenced regular-file paths and bytes carried by the upload archive.
+It intentionally does not include permission modes, and its historical
+`path + content` stream has no length or domain framing. A chmod-only change is
+therefore not guaranteed to reproject, and the hash must not be described as a
+collision-unambiguous tree encoding. Fixing either limitation requires an
+explicitly versioned wire, ledger, and persisted-hash migration in a later
+protocol release; this change does not silently reinterpret old hashes or
+claims.
 
 ## Sessions
 
@@ -119,23 +143,89 @@ history.
 
 ## Projects And Agent Use
 
-Projects are resource and collaboration boundaries. Kinds are `personal`,
-`environment`, and `workspace`.
+The product domain has two deliberately distinct subjects:
 
-Every Agent has one fixed Agent Project through `default_project_id` and a
-`primary` `agent_project_bindings` row. Extra Projects are ordered `context`
-bindings. Sharing grants Project membership only; using a shared Project at
-runtime requires an explicit Agent attachment.
+- **Workspace** is the private system Project permanently owned and used by one
+  Agent. It contains that Agent's filesystem-authored Skill projections and
+  attached Vault access. It cannot be renamed, shared, archived, or unlinked.
+- **Project** is a user-created, optionally shareable resource bundle. It owns
+  Cloud-authored Skills and attaches account-owned Vaults. Memories,
+  Connectors, Channels, and AI Providers are outside Projects.
+
+The database retains compatibility kinds whose names predate this product
+language: `environment` backs an Agent Workspace, `workspace` backs a user
+Project, and `personal` is a hidden compatibility container. Routes and domain
+adapters translate this inversion; browser surfaces must not display those
+kind names or offer the compatibility container as a Project.
+
+Every Agent has one fixed Workspace through `default_project_id` and a
+`primary` `agent_project_bindings` row. User Projects are ordered `context`
+bindings. Sharing grants existing read access only; Link Project is an explicit
+whole-bundle action. A linked Agent uses every Skill in the Project and resolves
+its attached Vaults. Link, unlink, Project Skill changes, and Project archival
+invalidate the affected managed Agent desired state.
+
+Skill keys have no precedence across the Agent Workspace and linked Projects.
+The link or write transaction rejects a duplicate key before changing the
+binding, Skill row, or object-store content and tells the user to remove or
+rename one copy. A connected Agent must advertise the exact Project Skill
+reconcile capability in every heartbeat. Hosted requires an allowlisted exact
+CLI package specification plus a fresh, successful observation of that CLI
+applying the current generation. Missing, stale, or downgraded evidence fails
+closed with an update action before Link or a later Project Skill write. An
+empty Project can still be linked for Vault access.
+
+Project owners may rename, edit the description, and archive their Projects.
+Archival removes all Agent links immediately while retaining historical
+resource rows. Agent Workspaces and hidden compatibility containers are
+protected from these lifecycle mutations.
 
 Local folder links are CLI selection hints for `clawdi run`. They do not grant
 membership, attach Projects, or mutate cloud Project relationships.
 
 ## Skills
 
-Skills are project-scoped metadata rows plus tar.gz bodies in the object store.
-Active skills are unique by `(user_id, project_id, skill_key)`. The CLI uploads
-local skills with `clawdi push`, downloads cloud skills with `clawdi pull`, and
-can add or install skills through `clawdi skill ...`.
+Persisted Skills are project-scoped metadata rows plus tar.gz bodies in the
+object store. Active rows are unique by `(user_id, project_id, skill_key)` and
+carry durable `authority` provenance:
+
+| Inventory authority | Source of truth | Allowed mutation |
+| --- | --- | --- |
+| `cloud` | Cloud-owned user Project | Normal authenticated Cloud UI/API and explicit `--project` CLI operations |
+| `agent_sync` | One Agent Workspace's guarded filesystem target | Agent-authenticated claim/upload and absence/delete only; dashboard is read-only |
+
+Historical rows are backfilled as `cloud`; Project kind, source strings, and
+old environment metadata are not ownership evidence. A live authenticated
+Agent upload may atomically claim the matching row as `agent_sync`, including
+when its bytes are unchanged. Current CLIs use only the dedicated Agent sync
+boundary; a missing dedicated route or an unproven Agent identity fails closed
+without issuing a generic Project mutation. Compatibility writes still require
+a proven CLI Agent and Agent Project; browser writes and orphan Agent Projects
+fail closed. Slug-only delete is accepted only for an environment-bound API key,
+whose bound Agent resolves exactly one current Agent Project.
+
+Mixed-version behavior is selected by `X-Clawdi-Skill-Sync-Protocol`, never a
+User-Agent guess. A missing header or explicit `agent-authoritative-v0` selects
+the released legacy listing, SSE, upload, delete, and download behavior;
+`agent-authoritative-v1` selects the current one-way behavior. Malformed and
+unknown values return 400. Current CLIs use the dedicated Agent routes and do
+not download Agent Project projections; an explicit v1 download remains
+blocked. A current CLI reaching an old backend receives a dedicated-route 404,
+retains its local operation, and does not create a generic Project mutation.
+Additive
+`agent_skill_changed`/`agent_skill_deleted` invalidations protect mutations
+created by current backend workers from already-connected released parsers;
+current daemons treat both event families as rescan hints. Cloud-owned Project
+events retain their released names.
+
+The bundled `clawdi` Skill is private platform infrastructure, not a third
+inventory authority and not a user Skill. Its private runtime entry reserves
+the local key before managed installation, so the daemon never uploads the
+managed target as an `agent_sync` row. A previously claimed user file may yield
+that key by deleting only its old Cloud projection; reconciliation never uses
+Cloud state to delete the managed target. Internal enable/disable still
+reconciles the bundle lifecycle, but neither state appears in the Skills UI or
+a public deployment mutation contract.
 
 ## Vault
 
@@ -145,8 +235,8 @@ sectioned fields encrypted with AES-256-GCM using `VAULT_ENCRYPTION_KEY`.
 
 The dashboard can list and mutate metadata but never receives plaintext values.
 Plaintext resolution is restricted to API-key auth through `/v1/vault/resolve`
-and `/v1/vault/resolve/bulk`. Agent-scoped resolution reads the Agent Project
-first, then attached Projects in order; conflicts block unless explicitly
+and `/v1/vault/resolve/bulk`. Agent-scoped resolution reads the Agent Workspace
+first, then linked Projects in order; conflicts block unless explicitly
 allowed.
 
 Credential profile payloads live in `vault_credential_profiles` and are used by
@@ -154,9 +244,13 @@ CLI credential import/materialization flows.
 
 ## Memory
 
-The built-in memory provider stores account-scoped `memories` with text,
-category, source, tags, optional source session id, access counters, JSONB
-metadata, and a 768-dimensional embedding.
+The built-in memory provider stores account-owned `memories` with text,
+category, source, tags, optional source Session or direct source Agent id,
+access counters, JSONB metadata, and a 768-dimensional embedding. A write from
+an environment-bound principal records `source_environment_id` directly; it
+does not invent a Session. Provenance explains where a memory came from; it is
+not an authorization boundary. Memory is account-shared so preferences and
+durable decisions remain available across the user's agents.
 
 Retrieval merges available signals:
 
@@ -165,24 +259,45 @@ Retrieval merges available signals:
 - `pgvector` semantic search when local or API embeddings are enabled.
 
 `Mem0Provider` is the alternate provider when the user's settings choose Mem0
-and an API key is present. No session-to-memory automatic pipeline exists;
-agents or users add memories explicitly.
+and an API key is present. Environment provenance is stored in Mem0 metadata,
+while reads use the account user id as their server-side boundary and deletes
+verify that same owner before mutation. No session-to-memory automatic pipeline
+exists; agents or users add memories explicitly.
 
 ## MCP And Connectors
 
 The backend MCP endpoint is `POST /v1/mcp/clawdi`, a stateless JSON-RPC surface
-authenticated with a Clawdi API key. It exposes native tools such as memory and
-session tools, then dynamically lists connector tools and forwards those calls
-through the connector bridge.
+authenticated with a Clawdi API key. It is the single runtime authority for
+native tool schemas, scope gating, calls, and connector dispatch. Native tools
+cover memory, sessions, read-only Project metadata, Vault metadata/references,
+and explicit single-reference Vault plaintext resolution. Tools requiring unavailable scopes are omitted from
+`tools/list`, while direct calls still fail the scope check. Connector names
+can never shadow a declared native tool, including one hidden by scope.
 
-For agents that only support stdio MCP, `clawdi mcp` registers local tool
-schemas and forwards calls to the backend. The backend keeps connector OAuth
+For agents that only support stdio MCP, `clawdi mcp` is a protocol-transparent
+stdio-to-HTTP wrapper: it forwards MCP messages and does not declare a second
+copy of tool schemas or business logic. The backend keeps connector OAuth
 tokens and bridge credentials out of the agent process.
+
+`vault_list` and `vault_get` select only attachment metadata and field names;
+they never select or decrypt `encrypted_value`, `nonce`, or credential payloads.
+`vault_resolve` requires `vault:read`, accepts one exact Project-scoped
+reference, and returns its decrypted value. Returned references use the exact canonical forms
+`clawdi://project/<project-id>/vault/<vault>/field/<field>` and
+`clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
+Environment-bound callers see only attachments in their bound Agent Project.
+
+The safe MCP inventory API may contain only explicit user declarations whose
+provenance is supported by a user management contract. This release has no such
+contract, so the dashboard does not expose an MCP page. A valid private
+platform-only state is projected as empty and unknown server declarations fail
+closed. The preinstalled `clawdi` aggregate and its dynamic Composio tools stay
+behind `POST /v1/mcp/clawdi`; neither is a user-manageable MCP inventory row.
 
 ## Channels
 
 Native Channels are owned by the FastAPI backend and PostgreSQL. They support
-Telegram, Discord, WhatsApp, and iMessage/BlueBubbles provider families through
+Telegram, Discord, and WhatsApp provider families through
 channel accounts, bot-agent links, pair codes, bindings, message rows,
 delivery outbox rows, credentials, and provider-specific adapters.
 
@@ -193,21 +308,22 @@ deliveries, and agent SDK tokens remain user-owned.
 
 The product model is in
 [`designs/native-channels-product-model.md`](designs/native-channels-product-model.md).
-The WhatsApp Baileys sidecar is a protocol adapter only; routing and persistence
-stay in FastAPI/PostgreSQL.
+The package named WhatsApp Baileys sidecar is the single physical-provider
+transport per real account, not an Agent runtime connector. Real linked-device
+auth stays there; Link authorization, synthetic Noise/Signal state, routing,
+and durable inbox/outbox persistence stay in FastAPI/PostgreSQL.
 
 ## AI Providers
 
 AI Providers are account-global model-provider definitions with auth references
 and target-specific projection support. Metadata lives in `ai_providers`; stored
-auth payloads live in `ai_provider_auth_payloads`.
+auth payloads live in `ai_provider_auth_payloads`. Catalog CRUD remains
+multi-record, while a Core Hosted manifest binds at most one provider to its
+selected Hermes or OpenClaw runtime. BYOK model traffic goes directly from the
+runtime to the provider; Clawdi does not proxy those calls.
 
-The current apply targets are Codex, Hermes, and OpenClaw. Claude Code OAuth is
-not supported in AI Provider v1. BYOK model traffic goes directly from the
-agent/runtime to the configured provider; Clawdi does not proxy those calls.
-
-User docs live in [`ai-providers.md`](ai-providers.md); pinned target contracts
-live in [`ai-provider-agent-contract-audit.md`](ai-provider-agent-contract-audit.md).
+Current behavior and the Hosted manifest/controller boundary are documented in
+[`ai-providers.md`](ai-providers.md).
 
 ## Managed Runtime
 
@@ -216,6 +332,51 @@ environments. The CLI validates desired state, writes non-secret local
 projections, creates short-lived secret files under the runtime run directory,
 renders support/runtime service plans, and exposes `runtime init`, `watch`,
 `sidecar`, `status`, `doctor`, and explicit `clawdi run -- <command>`.
+
+Cloud API is the single desired-state composer for Skills. It merges Hosted V2
+Agent Workspace Skill intent with Cloud-owned Skills from linked Projects. The
+Project rows remain the only content writer; runtime observations never become
+another catalog. Each Project Skill entry uses the runtime-neutral `project`
+source discriminator and carries immutable content identity plus authenticated
+archive and signed file endpoints. The CLI verifies
+the canonical archive tree hash before cache or install. Historical Skills that
+were stored as one `.md` file retain their file-content SHA compatibility only
+when the delivered archive contains exactly one `SKILL.md`. It then preserves
+native runtime contracts: Hermes receives the signed `SKILL.md` URL through
+`hermes skills install`, while OpenClaw receives a verified staged directory through
+`openclaw skills install`. Unlink, archive, access loss, deletion, or hash change
+invalidates the signed file lookup.
+
+Hermes URL delivery follows the upstream native adapter verified at
+[`NousResearch/hermes-agent@aec331899e4748739927fddf02a54327e64419a0`](https://github.com/NousResearch/hermes-agent/blob/aec331899e4748739927fddf02a54327e64419a0/tools/skills_hub.py#L1425-L1558):
+it installs `SKILL.md` plus explicitly referenced files from the supported
+Skill directories and runs Hermes' normal quarantine and security scan. The
+CLI compares the native result with that exact projection; an older Hermes
+that only installs one file fails closed and rolls back instead of silently
+accepting incomplete Skill bytes.
+
+OpenClaw directory delivery follows the upstream native CLI verified at
+[`openclaw/openclaw@74014c286d36a4fd8ec16d451333a17e8776fcfe`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/cli/skills-cli.ts#L615-L695).
+The command resolves an explicit `--agent` Workspace and sends local-directory
+sources through
+[`installSkillFromSource`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/skills/lifecycle/source-install.ts#L360-L415),
+whose native archive path validates `SKILL.md`, runs the normal install policy
+and security scan, and copies the full directory into the resolved Workspace
+[`skills/<slug>` target](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/skills/lifecycle/archive-install.ts#L137-L238).
+Clawdi also checks the configured Workspace against the exact `workspace`
+field built into OpenClaw's
+[`AgentSummary`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/commands/agents.config.ts#L22-L113)
+and returned by
+[`openclaw agents list --json`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/commands/agents.commands.list.ts#L137-L140)
+before and after installation. Any target or byte mismatch rolls back instead
+of creating a second writer.
+
+Rollout is deliberately capability-first: ship the compatible CLI, wait for
+fresh same-generation readiness observations, configure the exact Hosted CLI
+package-spec allowlist (which defaults empty), and only then permit
+Skill-bearing Project links. Connected daemons advertise the capability only
+after the reconcile implementation is present; older daemons remain
+unavailable. No runtime name or unobserved desired row is capability evidence.
 
 The detailed contract is [`managed-runtime.md`](managed-runtime.md). This
 architecture page should not duplicate that runtime specification.
@@ -227,16 +388,18 @@ Core tables verified under `backend/app/models/`:
 | Tables | Purpose |
 | --- | --- |
 | `users`, `user_settings` | Clerk user mirror, profile fields, skill revision counter, user settings such as memory provider. |
+| `app_settings` | Strictly registered global JSON settings. Values are replaced atomically and have no per-user overrides. |
 | `api_keys` | SHA-256-hashed CLI/API tokens, optionally scoped to an Agent. |
 | `agent_environments` | Stable Agent identities plus refreshable machine metadata, labels, daemon observability, and fixed Agent Project id. |
 | `hosted_runtime_states` | Runtime desired CONFIG state keyed to an Agent identity for hosted surfaces and local mock flows. |
 | `hosted_runtime_config_observations` | Daemon-reported CONFIG convergence with `observed_at`, observed config generation, observed manifest ETag, and validated diagnostics JSONB; distinct from hosted provider COMPUTE observations. |
+| `v2_runtime_environment_fences`, `v2_runtime_observation_inbox`, `v2_runtime_observation_heads`, `v2_runtime_observation_consumer_cursors` | Additive declarative-v2 runtime evidence under direct `/v2/runtime/*` routes, permanent retirement fencing, boot-session high-waters/tombstones, and Hosted workload-bound replay cursors. Retention compacts private inbox payloads in place while permanent identity rows preserve event/session uniqueness. The existing v1 heartbeat and observation table remain unchanged. |
 | `projects`, `project_memberships`, `project_share_links`, `project_invitations`, `share_redeem_attempts` | Project ownership, viewer access, share links, directed invites, and redeem throttling/idempotency. |
 | `agent_project_bindings` | One fixed `primary` Agent Project plus ordered `context` attached Projects. |
 | `sessions`, `session_permissions` | Conversation metadata, object-store body pointer, public/user/email sharing permissions. |
 | `skills` | Project-scoped skill metadata and object-store tarball pointer. |
 | `vaults`, `vault_project_attachments`, `vault_project_slug_aliases`, `vault_items`, `vault_credential_profiles` | Account-owned vaults, Project access attachments, compatibility slug aliases, encrypted secret fields, encrypted local auth profiles. |
-| `memories` | Built-in memory text, tags, source, metadata, access counters, and optional embedding vector. |
+| `memories` | Built-in memory text, tags, direct Agent or legacy Session provenance, metadata, access counters, and optional embedding vector. |
 | `ai_providers`, `ai_provider_auth_payloads` | Account-global provider metadata and encrypted provider auth payloads. |
 | `channel_accounts`, `channel_bot_agent_links`, `channel_secrets`, `channel_bindings`, `channel_binding_aliases`, `channel_pair_codes`, `channel_messages`, `channel_deliveries`, `channel_agent_credentials`, `channel_whatsapp_auth_certs`, `channel_debug_events`, `channel_attachment_uploads`, `channel_scheduled_messages`, `channel_agent_references` | Native channel control state, routing, inbox/outbox, credentials, debug and provider-specific state. |
 | `control_plane_audit_events` | Audit events for control-plane-facing operations exposed by this backend. |
@@ -250,7 +413,20 @@ Core tables verified under `backend/app/models/`:
 - API-key auth powers CLI, local MCP, vault plaintext resolution, daemon sync,
   and agent-local operations.
 - `VAULT_ENCRYPTION_KEY` encrypts vault and credential payloads at rest.
-- `ENCRYPTION_KEY` signs MCP bridge JWTs and must remain separate.
+- `ENCRYPTION_KEY` derives channel credentials and acts as the runtime cursor
+  encryption fallback; it must remain separate.
+
+## CLI Distribution Ownership
+
+- The native macOS/Linux distribution uses immutable version directories and a
+  stable launcher symlink; its checksum-verified executable owns native updates.
+  Bun's macOS executables are linker ad-hoc signed, not Developer ID signed or
+  notarized; the curl installer does not claim browser-download Gatekeeper
+  behavior.
+- npm/Bun global installs remain package-manager-owned and update by exact npm
+  version.
+- Hosted transactions remain a separate exact-version npm authority and never
+  invoke native self-update.
 
 ## Known Absences
 
@@ -258,7 +434,6 @@ Core tables verified under `backend/app/models/`:
 - No Celery or async job table.
 - No automatic session-to-memory extraction pipeline.
 - No Cognee provider; memory providers are built-in PostgreSQL search and Mem0.
-- No single-file Bun compiled CLI distribution.
 
 Add an ADR or focused design note before turning a known absence into a new
 module.

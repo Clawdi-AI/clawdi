@@ -4,14 +4,12 @@ import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { getCliVersion } from "../lib/version";
 import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
-import { normalizeSecretRef } from "./hosted-egress-profiles";
+import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { spawnRuntimeUserCommand } from "./runtime-user-command";
+import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
-import {
-	isGeneratedRuntimeSystemdFile,
-	runtimeUserName,
-	runtimeUserSystemdEnvArgs,
-} from "./systemd-user";
+import { isGeneratedRuntimeSystemdFile, runtimeUserName } from "./systemd-user";
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
@@ -31,6 +29,7 @@ export function readHostedRuntimeObserved(
 	options: {
 		reportedAt?: string;
 		appliedState?: RuntimeAppliedState | null;
+		etagAuthority?: "bundle" | "control-plane";
 	} = {},
 ): HostedRuntimeObserved | null {
 	if (paths.mode !== "hosted") return null;
@@ -43,9 +42,12 @@ export function readHostedRuntimeObserved(
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
 		? {
-				etag: appliedState.manifestETag ?? appliedState.etag,
+				etag:
+					options.etagAuthority === "control-plane"
+						? (appliedState.manifestETag ?? appliedState.etag)
+						: appliedState.etag,
 				sourceRevision: appliedState.sourceRevision,
-				generation: appliedState.generation,
+				generation: resolveRuntimeApplyGeneration(appliedState),
 				instanceId: appliedState.instanceId,
 				appliedProviderIds: [...appliedState.providerIds],
 			}
@@ -152,7 +154,7 @@ function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProvide
 	if (!providers || Object.keys(providers).length === 0) return null;
 
 	const secrets = {
-		...(readJsonRecord(paths.managedSecretFile) ?? {}),
+		...(readJsonRecord(paths.managedSecretCacheFile) ?? {}),
 		...(readJsonRecord(join(paths.managedSecretRoot, "egress-secrets.json")) ?? {}),
 	};
 	const observed: HostedRuntimeObservedProviders = {};
@@ -178,8 +180,7 @@ function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProvide
 }
 
 function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
-	const normalized = normalizeSecretRef(ref);
-	return Boolean(secrets[ref] || (normalized ? secrets[normalized] : undefined));
+	return runtimeSecretValue(secrets, ref) !== null;
 }
 
 function providerReasons(provider: JsonRecord, secretAvailable: boolean | null): string[] {
@@ -308,32 +309,16 @@ function runRuntimeUserSystemctl(
 	args: string[],
 ): { exitCode: number | null; output: string } {
 	const runtimeUser = runtimeUserName();
-	if (process.getuid?.() === 0 && runtimeUser !== "root") {
-		const uidResult = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
-		const uid = uidResult.status === 0 ? (uidResult.stdout ?? "").trim() : "";
-		if (!uid) {
-			return {
-				exitCode: uidResult.status ?? 1,
-				output: `runtime user ${runtimeUser} uid lookup failed: ${
-					[uidResult.stderr, uidResult.error?.message].filter(Boolean).join("\n").trim() ||
-					"empty id output"
-				}`,
-			};
-		}
-		const result = spawnSync(
-			"gosu",
-			[
-				runtimeUser,
-				"env",
-				...runtimeUserSystemdEnvArgs(paths, runtimeUser, uid),
-				"systemctl",
-				"--user",
-				...args,
-			],
+	try {
+		const result = spawnRuntimeUserCommand(
+			systemctlPath(),
+			["--user", ...args],
+			paths.userHome,
+			paths.userHome,
 			{
-				encoding: "utf8",
-				maxBuffer: 64 * 1024,
-				timeout: SYSTEMD_STATUS_TIMEOUT_MS,
+				runtimeUser,
+				maxBufferBytes: 64 * 1024,
+				timeoutMs: SYSTEMD_STATUS_TIMEOUT_MS,
 			},
 		);
 		return {
@@ -343,8 +328,12 @@ function runRuntimeUserSystemctl(
 				.join("\n")
 				.trim(),
 		};
+	} catch (error) {
+		return {
+			exitCode: 1,
+			output: error instanceof Error ? error.message : String(error),
+		};
 	}
-	return runSystemctl(["--user", ...args]);
 }
 
 function systemctlPath(): string {

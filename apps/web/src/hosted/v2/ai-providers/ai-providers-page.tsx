@@ -1,34 +1,51 @@
 "use client";
 
-import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
-import { BadgeCheck, Pencil, Plus, Trash2 } from "lucide-react";
+import { CircleAlert, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
-import { EntityIcon } from "@/components/entity-icon";
-import { ListToolbar } from "@/components/list-toolbar";
+import {
+	ENTITY_CARD_BASE,
+	ENTITY_GRID_CLASS,
+	EntityCardSkeleton,
+	EntityHeader,
+} from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
+import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
+import { useDeleteProvider, useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import {
-	useAiProviders,
-	useDeleteProvider,
-	useValidateProvider,
-} from "@/hosted/v2/ai-providers/ai-providers-hooks";
-import { AuthBadge, ManagedProviderCard } from "@/hosted/v2/ai-providers/ai-providers-ui";
+	type ProviderUsage,
+	providerRemovalImpact,
+	providerUsage,
+} from "@/hosted/v2/ai-providers/ai-providers-page.logic";
 import {
-	API_MODE_LABEL,
-	type ApiMode,
-	providerTypeMeta,
-} from "@/hosted/v2/ai-providers/provider-types";
+	AuthBadge,
+	ManagedProviderCard,
+	ProviderIcon,
+	ProviderReadinessBadge,
+} from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { providerPresentation } from "@/hosted/v2/ai-providers/model-binding";
+import { ProviderConnectionTest } from "@/hosted/v2/ai-providers/provider-connection-test";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
-import { formatModelLabel } from "@/lib/format";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Choose how your agents reach a model.";
@@ -36,22 +53,25 @@ const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 
 const PROVIDER_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function AiProvidersPage() {
-	const providers = useAiProviders();
+	const providers = useUserAiProviders();
+	const inventory = useHostedDeploymentInventory();
 	const [addOpen, setAddOpen] = useState(false);
 	const [editing, setEditing] = useState<AiProvider | null>(null);
 
-	const list = (providers.data?.providers ?? []).filter(
-		(provider) => !isFirstPartyManagedAiProvider(provider),
-	);
+	const list = providers.data ?? [];
+	const blockingProvidersError = shouldBlockQueryError(providers.error, providers.data)
+		? providers.error
+		: null;
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-			<PageHeader title="Model Providers" description={DESCRIPTION} />
-
-			<ListToolbar
+			<PageHeader
+				title="AI Providers"
+				description={DESCRIPTION}
 				actions={
 					<Button
 						size="sm"
+						disabled={providers.data === undefined}
 						onClick={() => {
 							setEditing(null);
 							setAddOpen(true);
@@ -64,28 +84,44 @@ export function AiProvidersPage() {
 			/>
 
 			<div className="flex flex-col gap-2">
-				<SectionLabel>Managed default</SectionLabel>
+				<SectionLabel>Clawdi</SectionLabel>
 				<ManagedProviderCard />
 			</div>
 
 			<div className="flex flex-col gap-2">
-				<SectionLabel>Your providers</SectionLabel>
-				{providers.error ? (
+				<SectionLabel
+					count={!providers.isLoading && !blockingProvidersError ? list.length : undefined}
+				>
+					Your providers
+				</SectionLabel>
+				{blockingProvidersError ? (
 					<ApiErrorPanel
-						error={providers.error}
+						error={blockingProvidersError}
 						onRetry={() => providers.refetch()}
 						title="Couldn’t load providers"
 					/>
 				) : providers.isLoading ? (
 					<div className={PROVIDER_GRID_CLASS}>
 						{[0, 1, 2].map((i) => (
-							<ProviderCardSkeleton key={i} />
+							<EntityCardSkeleton key={i} metaLines={2} actions />
 						))}
 					</div>
 				) : list.length === 0 ? (
 					<EmptyState
-						title="No custom providers"
-						description="Add your own OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or a custom OpenAI-compatible endpoint."
+						title="No providers added"
+						description="Connect a provider to use your own model access with agents."
+						action={
+							<Button
+								variant="outline"
+								onClick={() => {
+									setEditing(null);
+									setAddOpen(true);
+								}}
+							>
+								<Plus />
+								Add provider
+							</Button>
+						}
 					/>
 				) : (
 					<div className={PROVIDER_GRID_CLASS}>
@@ -93,6 +129,7 @@ export function AiProvidersPage() {
 							<ProviderCard
 								key={provider.provider_id}
 								provider={provider}
+								usage={providerUsage(provider.provider_id, inventory.deployments)}
 								onEdit={() => {
 									setEditing(provider);
 									setAddOpen(true);
@@ -108,105 +145,148 @@ export function AiProvidersPage() {
 	);
 }
 
-function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () => void }) {
-	const meta = providerTypeMeta(provider.type);
-	const del = useDeleteProvider();
-	const validate = useValidateProvider();
-	const providerLabel = provider.label ?? provider.provider_id;
-	const modelSummary = modelCatalogSummary(provider);
-
-	function runValidate() {
-		validate.mutate(provider.provider_id, {
-			onSuccess: (result) => {
-				if (result.valid) toast.success("Configuration looks good");
-				else toast.warning("Validation issues", { description: result.errors.join(" · ") });
-			},
-		});
-	}
+function ProviderCard({
+	provider,
+	usage,
+	onEdit,
+}: {
+	provider: AiProvider;
+	usage: ProviderUsage;
+	onEdit: () => void;
+}) {
+	const presentation = providerPresentation(provider);
+	const deployable =
+		(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none";
 
 	return (
 		<div className={cn(ENTITY_CARD_BASE, "flex h-full flex-col")}>
 			<EntityHeader
 				align="start"
-				icon={<EntityIcon kind="provider" id={provider.type} label={providerLabel} />}
-				title={providerLabel}
-				titleAdornment={<AuthBadge auth={provider.auth} />}
+				icon={<ProviderIcon provider={provider} />}
+				title={presentation.label}
+				titleAdornment={
+					<span className="inline-flex items-center gap-1.5">
+						<AuthBadge auth={provider.auth} />
+						<ProviderReadinessBadge deployable={deployable} />
+					</span>
+				}
 				meta={[
-					`${meta.label} · ${modelSummary}${
-						provider.api_mode
-							? ` · ${API_MODE_LABEL[provider.api_mode as ApiMode] ?? provider.api_mode}`
-							: ""
-					}`,
-					<span key="base" className="font-mono">
-						{provider.base_url}
-						{provider.runtime_env_name ? ` · ${provider.runtime_env_name}` : ""}
-					</span>,
+					presentation.summary,
+					provider.auth.type === "none"
+						? "Add a credential before assigning this provider to an agent."
+						: deployable
+							? null
+							: provider.usable
+								? "This setup isn't available for hosted agents. Review Advanced settings."
+								: "Finish setup before assigning this provider to an agent.",
 				]}
 			/>
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
+				<ProviderConnectionTest provider={provider} providerLabel={presentation.label} />
 				<Button
-					variant="ghost"
+					variant="outline"
 					size="sm"
-					onClick={runValidate}
-					disabled={validate.isPending}
-					aria-label={`Validate ${providerLabel}`}
+					onClick={onEdit}
+					aria-label={`${deployable ? "Edit" : "Finish setup for"} ${presentation.label}`}
 				>
-					<BadgeCheck />
-					Validate
+					{deployable ? <Pencil /> : <CircleAlert />}
+					{deployable ? "Edit" : "Finish setup"}
 				</Button>
-				<Button variant="outline" size="sm" onClick={onEdit} aria-label={`Edit ${providerLabel}`}>
-					<Pencil />
-					Edit
-				</Button>
-				<ConfirmAction
-					title={`Remove ${providerLabel}?`}
-					description={
-						<p>
-							Agents using this provider fall back to the managed default. This can't be undone.
-						</p>
-					}
-					confirmLabel="Remove provider"
-					destructive
-					onConfirm={() => del.mutate(provider.provider_id)}
-				>
+				<RemoveProviderAction provider={provider} usage={usage} />
+			</div>
+		</div>
+	);
+}
+
+function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage: ProviderUsage }) {
+	const del = useDeleteProvider();
+	const [open, setOpen] = useState(false);
+	const [acknowledged, setAcknowledged] = useState(false);
+	const providerLabel = providerPresentation(provider).label;
+	const impact = providerRemovalImpact(usage);
+	const revokesChatGpt =
+		(provider.auth.type === "agent_profile" && provider.auth.tool === "codex") ||
+		provider.auth.type === "oauth_profile";
+	const acknowledgementId = `remove-provider-ack-${provider.provider_id}`;
+
+	function changeOpen(next: boolean) {
+		if (del.isPending) return;
+		setOpen(next);
+	}
+
+	function removeProvider() {
+		del.mutate(
+			{ params: { path: { provider_id: provider.provider_id } } },
+			{
+				onSuccess: () => {
+					setOpen(false);
+				},
+			},
+		);
+	}
+
+	return (
+		<AlertDialog
+			open={open}
+			onOpenChange={changeOpen}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) setAcknowledged(false);
+			}}
+		>
+			<AlertDialogTrigger
+				render={
 					<Button
 						variant="ghost"
 						size="icon-sm"
 						className="ml-auto text-muted-foreground hover:text-destructive"
 						disabled={del.isPending}
 						aria-label={`Remove ${providerLabel}`}
+					/>
+				}
+			>
+				<Trash2 />
+			</AlertDialogTrigger>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>Remove {providerLabel}?</AlertDialogTitle>
+					<AlertDialogDescription render={<div className="space-y-2" />}>
+						<p>This provider will be removed from your account and cannot be restored.</p>
+						{revokesChatGpt ? (
+							<p>
+								Local access is removed immediately. Upstream ChatGPT revocation may finish
+								asynchronously.
+							</p>
+						) : null}
+						<p>{impact.warning}</p>
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				{impact.acknowledgementRequired ? (
+					<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+						<Checkbox
+							id={acknowledgementId}
+							checked={acknowledged}
+							onCheckedChange={(checked) => setAcknowledged(checked === true)}
+						/>
+						<Label htmlFor={acknowledgementId} className="text-sm font-normal leading-snug">
+							I understand that affected agents will lose model access until reconfigured.
+						</Label>
+					</div>
+				) : null}
+				<AlertDialogFooter>
+					<AlertDialogCancel disabled={del.isPending}>Cancel</AlertDialogCancel>
+					<AlertDialogAction
+						onClick={(event) => {
+							event.preventDefault();
+							removeProvider();
+						}}
+						disabled={del.isPending || (impact.acknowledgementRequired && !acknowledged)}
+						variant="destructive"
 					>
-						<Trash2 />
-					</Button>
-				</ConfirmAction>
-			</div>
-		</div>
-	);
-}
-
-function modelCatalogSummary(provider: AiProvider): string {
-	const modelIds = (provider.models ?? []).map((model) => model.id).filter(Boolean);
-	if (modelIds.length === 0) return "No catalog models";
-	const visible = modelIds.slice(0, 2).map(formatModelLabel).join(", ");
-	return modelIds.length > 2 ? `${visible} +${modelIds.length - 2} more` : visible;
-}
-
-function ProviderCardSkeleton() {
-	return (
-		<div className={ENTITY_CARD_BASE}>
-			<div className="flex items-start gap-3">
-				<Skeleton className="size-10 shrink-0 rounded-lg" />
-				<div className="min-w-0 flex-1">
-					<Skeleton className="h-4 w-28" />
-					<Skeleton className="mt-2 h-3 w-40" />
-					<Skeleton className="mt-1.5 h-3 w-full max-w-56" />
-				</div>
-			</div>
-			<div className="mt-3 flex items-center gap-2">
-				<Skeleton className="h-8 w-20 rounded-md" />
-				<Skeleton className="h-8 w-14 rounded-md" />
-				<Skeleton className="ml-auto size-8 rounded-md" />
-			</div>
-		</div>
+						{del.isPending ? <Spinner /> : null}
+						Remove provider
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
 	);
 }

@@ -1,55 +1,55 @@
 import { readFileSync, rmSync } from "node:fs";
-import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
+import { runtimeSecretValue } from "./secret-values";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
-export const RUNTIME_AUTH_TOKEN_ENV = "CLAWDI_AUTH_TOKEN";
-export const RUNTIME_AUTH_ENV_SELECTOR = "CLAWDI_RUNTIME_AUTH_ENV";
-
-export function runtimeAuthEnvName(): string {
-	const selected = process.env[RUNTIME_AUTH_ENV_SELECTOR]?.trim();
-	if (!selected) {
-		throw new Error(`missing ${RUNTIME_AUTH_ENV_SELECTOR}`);
-	}
-	if (!/^[A-Z_][A-Z0-9_]*$/.test(selected)) {
-		throw new Error(
-			`invalid ${RUNTIME_AUTH_ENV_SELECTOR}: expected an uppercase environment variable name`,
-		);
-	}
-	return selected;
-}
+export const RUNTIME_AUTH_TOKEN_SECRET_REF = "secret://clawdi/auth-token";
 
 export function readRuntimeAuthToken(paths: RuntimePaths): string | null {
 	try {
-		const token = readFileSync(paths.daemonAuthToken, "utf-8").trim();
-		return token || null;
+		return normalizeRuntimeAuthToken(readFileSync(paths.daemonAuthToken, "utf-8"));
 	} catch {
 		return null;
 	}
 }
 
 export function writeRuntimeAuthToken(paths: RuntimePaths, token: string): string {
-	const normalized = token.trim();
+	const normalized = normalizeRuntimeAuthToken(token);
 	if (!normalized) {
-		throw new Error("runtime auth token must not be empty");
+		throw new Error("runtime auth token must be non-empty and contain no control characters");
 	}
-	writePrivateFileAtomic(paths.daemonAuthToken, `${normalized}\n`, {
+	writeRuntimePlatformFileAtomic(paths, paths.daemonAuthToken, `${normalized}\n`, {
 		mode: PRIVATE_FILE_MODE,
 		dirMode: PRIVATE_DIR_MODE,
 	});
 	return paths.daemonAuthToken;
 }
 
-export function ensureRuntimeAuthTokenFile(paths: RuntimePaths): string | null {
-	const envName = paths.mode === "hosted" ? runtimeAuthEnvName() : RUNTIME_AUTH_TOKEN_ENV;
-	const token = process.env[envName]?.trim();
+export function readRuntimeCredential(secretValues: Record<string, unknown>): string | null {
+	return runtimeSecretValue(secretValues, RUNTIME_AUTH_TOKEN_SECRET_REF);
+}
+
+export function ensureRuntimeAuthTokenFile(
+	paths: RuntimePaths,
+	secretValues: Record<string, unknown>,
+): string | null {
+	const token = readRuntimeCredential(secretValues);
 	if (token) return writeRuntimeAuthToken(paths, token);
-	if (readRuntimeAuthToken(paths)) {
-		return paths.daemonAuthToken;
-	}
 	rmSync(paths.daemonAuthToken, { force: true });
 	return null;
 }
 
 export function runtimeAuthTokenFileLabel(paths: RuntimePaths): string {
 	return paths.daemonAuthToken;
+}
+
+function normalizeRuntimeAuthToken(token: string): string | null {
+	const normalized = token.trim();
+	if (!normalized) return null;
+	for (const character of normalized) {
+		const code = character.charCodeAt(0);
+		if (code <= 0x1f || code === 0x7f) return null;
+	}
+	return normalized;
 }

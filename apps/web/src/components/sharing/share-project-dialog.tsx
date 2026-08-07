@@ -14,7 +14,7 @@ import {
 	UserMinus,
 	Users,
 } from "lucide-react";
-import { type ReactElement, useState } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { isCustomProject } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -42,9 +42,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { errorMessage } from "@/lib/utils";
 
 /**
@@ -87,7 +90,7 @@ export function ShareProjectDialog({
 	const trigger = children ?? (
 		<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
 			<Share2 className="mr-2 size-4" />
-			Share Project
+			Share project
 		</Button>
 	);
 
@@ -105,7 +108,7 @@ export function ShareProjectDialog({
 					<DialogDescription>
 						{isShareableProject
 							? "Share this Project without sharing ownership. People join as Viewers with read access; agent use is a separate choice they make later."
-							: "Only Projects you create can be shared with people. Global Projects and Agent Projects are created automatically and cannot be shared."}
+							: "Sharing is available for Projects you create. An Agent's private Workspace cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
@@ -131,18 +134,18 @@ export function ShareProjectDialog({
 								<Link2 className="size-3.5 text-muted-foreground" />
 								Share link
 							</h3>
-							<ShareLinksPanel projectId={projectId} />
+							<ShareLinksPanel projectId={projectId} open={open} />
 						</section>
 						<p className="border-t pt-3 text-xs text-muted-foreground">
 							Everyone joins as a viewer: they read skills and key names here, and their agents can
-							use key values through the CLI. The dashboard never reveals values, and only you can
+							use key values when the Project is linked. Key values stay protected, and only you can
 							edit anything.
 						</p>
 					</div>
 				) : (
 					<Alert>
 						<AlertCircle />
-						<AlertTitle>Managed Projects are not shareable</AlertTitle>
+						<AlertTitle>This resource cannot be shared</AlertTitle>
 						<AlertDescription>
 							Only Projects you create can have members, invitations, and share links.
 						</AlertDescription>
@@ -153,13 +156,25 @@ export function ShareProjectDialog({
 	);
 }
 
-function ShareLinksPanel({ projectId }: { projectId: string }) {
+function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const [label, setLabel] = useState("");
 	// The just-created link's full URL is shown once because the server
 	// stores only the prefix going forward.
 	const [freshLink, setFreshLink] = useState<ShareLinkCreated | null>(null);
+	const [revokeOpen, setRevokeOpen] = useState(false);
+	const [revokeTarget, setRevokeTarget] = useState<ShareLinkRow | null>(null);
+	const revokeSucceededRef = useRef(false);
+	const revokeExit = useDialogExitLifecycle({
+		open: revokeOpen,
+		value: revokeTarget,
+		emptyValue: null,
+	});
+	const renderedRevokeTarget = revokeExit.renderedValue;
+	useEffect(() => {
+		if (open) setFreshLink(null);
+	}, [open]);
 
 	const links = useQuery({
 		queryKey: ["share-links", projectId],
@@ -171,17 +186,15 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			),
 	});
 
-	const create = useMutation({
-		mutationFn: async (nextLabel: string): Promise<ShareLinkCreated> => {
+	const create = useSensitiveAction(async (nextLabel: string): Promise<ShareLinkCreated> => {
+		try {
 			const trimmedLabel = nextLabel.trim();
-			return unwrap(
+			const body = unwrap(
 				await api.POST("/v1/projects/{project_id}/share-links", {
 					params: { path: { project_id: projectId } },
 					body: { label: trimmedLabel.length > 0 ? trimmedLabel : null },
 				}),
 			);
-		},
-		onSuccess: (body) => {
 			setLabel("");
 			setFreshLink(body);
 			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
@@ -194,8 +207,8 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			toast.success("Share link created", {
 				description: "Copy it before closing this dialog. You can turn it off later.",
 			});
-		},
-		onError: (e) => {
+			return body;
+		} catch (e) {
 			toast.error(
 				e instanceof ApiError && e.status === 409
 					? "Set a display name on your profile before sharing."
@@ -203,7 +216,8 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 						? e.message
 						: "Couldn't create link",
 			);
-		},
+			throw e;
+		}
 	});
 
 	const revoke = useMutation({
@@ -215,8 +229,10 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			);
 		},
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
-			toast.success("Share Link Turned Off");
+			revokeSucceededRef.current = true;
+			revokeExit.beginClose();
+			setRevokeOpen(false);
+			toast.success("Share link turned off");
 		},
 		onError: (e) => {
 			toast.error("Couldn't turn off link", {
@@ -239,7 +255,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 				className="space-y-2 rounded-lg border p-3"
 				onSubmit={(e) => {
 					e.preventDefault();
-					create.mutate(label);
+					void create.execute(label).catch(() => undefined);
 				}}
 			>
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -281,7 +297,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 
 			{links.isLoading ? (
 				<Skeleton className="h-16 w-full" />
-			) : links.error ? (
+			) : shouldBlockQueryError(links.error, links.data) ? (
 				<EmptyHint
 					variant="destructive"
 					message={
@@ -298,12 +314,59 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 						<LinkRow
 							key={link.id}
 							link={link}
-							onRevoke={() => revoke.mutate(link.id)}
+							onRevoke={() => {
+								revokeSucceededRef.current = false;
+								setRevokeTarget(link);
+								setRevokeOpen(true);
+							}}
 							revoking={revoke.isPending && revoke.variables === link.id}
 						/>
 					))}
 				</ul>
 			)}
+			<AlertDialog
+				open={revokeOpen}
+				onOpenChange={(nextOpen) => {
+					if (!revoke.isPending) {
+						if (nextOpen) revokeExit.beginOpen();
+						else revokeExit.beginClose();
+						setRevokeOpen(nextOpen);
+					}
+				}}
+				onOpenChangeComplete={(nextOpen) => {
+					if (nextOpen) return;
+					setRevokeTarget(null);
+					revokeExit.completeClose();
+					if (revokeSucceededRef.current) {
+						revokeSucceededRef.current = false;
+						void qc.invalidateQueries({ queryKey: ["share-links", projectId] });
+					}
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
+						<AlertDialogDescription>
+							Anyone who has not already joined through this link will lose access to it. Existing
+							Viewers stay connected until you remove them from People.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={revoke.isPending}>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={(event) => {
+								event.preventDefault();
+								if (renderedRevokeTarget && !revoke.isPending)
+									revoke.mutate(renderedRevokeTarget.id);
+							}}
+							disabled={!renderedRevokeTarget || revoke.isPending}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						>
+							{revoke.isPending ? "Turning off…" : "Turn Off Link"}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }
@@ -315,10 +378,10 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 				.writeText(value)
 				.then(() => toast.success(success))
 				.catch(() =>
-					toast.error("Couldn't Copy", { description: "Select the text and copy it manually." }),
+					toast.error("Couldn't copy", { description: "Select the text and copy it manually." }),
 				);
 		} else {
-			toast.error("Couldn't Copy", { description: "Select the text and copy it manually." });
+			toast.error("Couldn't copy", { description: "Select the text and copy it manually." });
 		}
 	};
 	const agentPrompt = buildShareAgentHandoffPrompt(link);
@@ -444,39 +507,16 @@ function LinkRow({
 					</div>
 				</div>
 				{!revoked ? (
-					<AlertDialog>
-						<AlertDialogTrigger
-							render={
-								<Button
-									variant="ghost"
-									size="icon"
-									disabled={revoking}
-									title="Turn off link"
-									aria-label={`Turn off share link ${link.prefix}`}
-								/>
-							}
-						>
-							<Trash2 className="size-3.5 text-destructive" />
-						</AlertDialogTrigger>
-						<AlertDialogContent>
-							<AlertDialogHeader>
-								<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
-								<AlertDialogDescription>
-									Anyone who has not already joined through this link will lose access to it.
-									Existing Viewers stay connected until you remove them from People.
-								</AlertDialogDescription>
-							</AlertDialogHeader>
-							<AlertDialogFooter>
-								<AlertDialogCancel>Cancel</AlertDialogCancel>
-								<AlertDialogAction
-									onClick={onRevoke}
-									className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-								>
-									Turn Off Link
-								</AlertDialogAction>
-							</AlertDialogFooter>
-						</AlertDialogContent>
-					</AlertDialog>
+					<Button
+						variant="ghost"
+						size="icon"
+						disabled={revoking}
+						title="Turn off link"
+						aria-label={`Turn off share link ${link.prefix}`}
+						onClick={onRevoke}
+					>
+						<Trash2 className="size-3.5 text-destructive" />
+					</Button>
 				) : null}
 			</div>
 		</li>
@@ -487,6 +527,15 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const [email, setEmail] = useState("");
+	const [cancelOpen, setCancelOpen] = useState(false);
+	const [cancelTarget, setCancelTarget] = useState<Invitation | null>(null);
+	const cancelSucceededRef = useRef(false);
+	const cancelExit = useDialogExitLifecycle({
+		open: cancelOpen,
+		value: cancelTarget,
+		emptyValue: null,
+	});
+	const renderedCancelTarget = cancelExit.renderedValue;
 
 	const invites = useQuery({
 		queryKey: ["invitations", projectId],
@@ -509,7 +558,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			setEmail("");
-			toast.success("Invitation Sent", {
+			toast.success("Invitation sent", {
 				description:
 					"They will see it under the top-right Notification Center bell after signing in with that email.",
 			});
@@ -530,8 +579,10 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			);
 		},
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
-			toast.success("Invitation Cancelled");
+			cancelSucceededRef.current = true;
+			cancelExit.beginClose();
+			setCancelOpen(false);
+			toast.success("Invitation cancelled");
 		},
 		onError: (e) => {
 			toast.error("Couldn't cancel invitation", {
@@ -578,13 +629,14 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 				</Button>
 			</form>
 			<p className="text-xs text-muted-foreground">
-				Invitees join as Viewers with read access to skills and Vault values through CLI runtime
-				reads. After signing in, they accept from the top-right Notification Center bell.
+				Invitees join as Viewers with read access to Skills and key names. Key values stay protected
+				and can be used by their linked Agents. After signing in, they accept from the top-right
+				Notification Center bell.
 			</p>
 			<Separator />
 			{invites.isLoading ? (
 				<Skeleton className="h-16 w-full" />
-			) : invites.error ? (
+			) : shouldBlockQueryError(invites.error, invites.data) ? (
 				<EmptyHint
 					variant="destructive"
 					message={
@@ -618,42 +670,67 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 									</span>
 								</div>
 							</div>
-							<AlertDialog>
-								<AlertDialogTrigger
-									render={
-										<Button
-											variant="ghost"
-											size="icon"
-											disabled={cancel.isPending && cancel.variables === inv.id}
-											title="Cancel invitation"
-											aria-label={`Cancel invitation for ${inv.invitee_email}`}
-										/>
-									}
-								>
-									<Trash2 className="size-3.5 text-destructive" />
-								</AlertDialogTrigger>
-								<AlertDialogContent>
-									<AlertDialogHeader>
-										<AlertDialogTitle>Cancel this invitation?</AlertDialogTitle>
-										<AlertDialogDescription>
-											{inv.invitee_email} will no longer see this invitation in their dashboard.
-										</AlertDialogDescription>
-									</AlertDialogHeader>
-									<AlertDialogFooter>
-										<AlertDialogCancel>Keep invitation</AlertDialogCancel>
-										<AlertDialogAction
-											onClick={() => cancel.mutate(inv.id)}
-											className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-										>
-											Cancel invitation
-										</AlertDialogAction>
-									</AlertDialogFooter>
-								</AlertDialogContent>
-							</AlertDialog>
+							<Button
+								variant="ghost"
+								size="icon"
+								disabled={cancel.isPending && cancel.variables === inv.id}
+								title="Cancel invitation"
+								aria-label={`Cancel invitation for ${inv.invitee_email}`}
+								onClick={() => {
+									cancelSucceededRef.current = false;
+									setCancelTarget(inv);
+									setCancelOpen(true);
+								}}
+							>
+								<Trash2 className="size-3.5 text-destructive" />
+							</Button>
 						</li>
 					))}
 				</ul>
 			)}
+			<AlertDialog
+				open={cancelOpen}
+				onOpenChange={(nextOpen) => {
+					if (!cancel.isPending) {
+						if (nextOpen) cancelExit.beginOpen();
+						else cancelExit.beginClose();
+						setCancelOpen(nextOpen);
+					}
+				}}
+				onOpenChangeComplete={(nextOpen) => {
+					if (nextOpen) return;
+					setCancelTarget(null);
+					cancelExit.completeClose();
+					if (cancelSucceededRef.current) {
+						cancelSucceededRef.current = false;
+						void qc.invalidateQueries({ queryKey: ["invitations", projectId] });
+					}
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Cancel this invitation?</AlertDialogTitle>
+						<AlertDialogDescription>
+							{renderedCancelTarget?.invitee_email ?? "This person"} will no longer see this
+							invitation in their dashboard.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={cancel.isPending}>Keep invitation</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={(event) => {
+								event.preventDefault();
+								if (renderedCancelTarget && !cancel.isPending)
+									cancel.mutate(renderedCancelTarget.id);
+							}}
+							disabled={!renderedCancelTarget || cancel.isPending}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						>
+							{cancel.isPending ? "Cancelling…" : "Cancel invitation"}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }
@@ -661,6 +738,16 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 function MembersPanel({ projectId }: { projectId: string }) {
 	const api = useApi();
 	const qc = useQueryClient();
+	const [stopAllOpen, setStopAllOpen] = useState(false);
+	const [removeOpen, setRemoveOpen] = useState(false);
+	const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
+	const removeSucceededRef = useRef(false);
+	const removeExit = useDialogExitLifecycle({
+		open: removeOpen,
+		value: removeTarget,
+		emptyValue: null,
+	});
+	const renderedRemoveTarget = removeExit.renderedValue;
 
 	const members = useQuery({
 		queryKey: ["project-members", projectId],
@@ -677,7 +764,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		qc.invalidateQueries({ queryKey: ["share-links", projectId] });
 		qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
-		qc.invalidateQueries({ queryKey: ["projects"] });
+		qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 	};
 
 	const remove = useMutation({
@@ -689,8 +776,10 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			);
 		},
 		onSuccess: () => {
-			refreshSharingState();
-			toast.success("Member Removed");
+			removeSucceededRef.current = true;
+			removeExit.beginClose();
+			setRemoveOpen(false);
+			toast.success("Member removed");
 		},
 		onError: (e) =>
 			toast.error("Couldn't remove member", {
@@ -706,8 +795,9 @@ function MembersPanel({ projectId }: { projectId: string }) {
 				}),
 			),
 		onSuccess: (body) => {
+			setStopAllOpen(false);
 			refreshSharingState();
-			toast.success("Sharing Stopped", {
+			toast.success("Sharing stopped", {
 				description: `Turned off ${body.links_revoked} link(s) and removed ${body.members_removed} member(s).`,
 			});
 		},
@@ -727,7 +817,12 @@ function MembersPanel({ projectId }: { projectId: string }) {
 						People who accepted access. Viewers can read this Project until you remove them.
 					</p>
 				</div>
-				<AlertDialog>
+				<AlertDialog
+					open={stopAllOpen}
+					onOpenChange={(nextOpen) => {
+						if (!unshare.isPending) setStopAllOpen(nextOpen);
+					}}
+				>
 					<AlertDialogTrigger
 						render={
 							<Button
@@ -749,9 +844,10 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							</AlertDialogDescription>
 						</AlertDialogHeader>
 						<AlertDialogFooter>
-							<AlertDialogCancel>Keep Sharing</AlertDialogCancel>
+							<AlertDialogCancel disabled={unshare.isPending}>Keep Sharing</AlertDialogCancel>
 							<AlertDialogAction
 								onClick={() => unshare.mutate()}
+								disabled={unshare.isPending}
 								className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 							>
 								Stop all sharing
@@ -763,7 +859,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			<Separator />
 			{members.isLoading ? (
 				<Skeleton className="h-16 w-full" />
-			) : members.error ? (
+			) : shouldBlockQueryError(members.error, members.data) ? (
 				<EmptyHint
 					variant="destructive"
 					message={
@@ -794,43 +890,72 @@ function MembersPanel({ projectId }: { projectId: string }) {
 										})}
 									</div>
 								</div>
-								<AlertDialog>
-									<AlertDialogTrigger
-										render={
-											<Button
-												variant="ghost"
-												size="icon"
-												disabled={remove.isPending}
-												title="Remove member"
-												aria-label={`Remove member ${label}`}
-											/>
-										}
-									>
-										<UserMinus className="size-3.5 text-destructive" />
-									</AlertDialogTrigger>
-									<AlertDialogContent>
-										<AlertDialogHeader>
-											<AlertDialogTitle>Remove this member?</AlertDialogTitle>
-											<AlertDialogDescription>
-												{label} will lose access to this Project.
-											</AlertDialogDescription>
-										</AlertDialogHeader>
-										<AlertDialogFooter>
-											<AlertDialogCancel>Cancel</AlertDialogCancel>
-											<AlertDialogAction
-												onClick={() => remove.mutate(member.user_id)}
-												className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-											>
-												Remove Member
-											</AlertDialogAction>
-										</AlertDialogFooter>
-									</AlertDialogContent>
-								</AlertDialog>
+								<Button
+									variant="ghost"
+									size="icon"
+									disabled={remove.isPending}
+									title="Remove member"
+									aria-label={`Remove member ${label}`}
+									onClick={() => {
+										removeSucceededRef.current = false;
+										setRemoveTarget(member);
+										setRemoveOpen(true);
+									}}
+								>
+									<UserMinus className="size-3.5 text-destructive" />
+								</Button>
 							</li>
 						);
 					})}
 				</ul>
 			)}
+			<AlertDialog
+				open={removeOpen}
+				onOpenChange={(nextOpen) => {
+					if (!remove.isPending) {
+						if (nextOpen) removeExit.beginOpen();
+						else removeExit.beginClose();
+						setRemoveOpen(nextOpen);
+					}
+				}}
+				onOpenChangeComplete={(nextOpen) => {
+					if (nextOpen) return;
+					setRemoveTarget(null);
+					removeExit.completeClose();
+					if (removeSucceededRef.current) {
+						removeSucceededRef.current = false;
+						refreshSharingState();
+					}
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Remove this member?</AlertDialogTitle>
+						<AlertDialogDescription>
+							{renderedRemoveTarget
+								? (renderedRemoveTarget.user_email ??
+									renderedRemoveTarget.user_display ??
+									renderedRemoveTarget.user_id)
+								: "This member"}{" "}
+							will lose access to this Project.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={remove.isPending}>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={(event) => {
+								event.preventDefault();
+								if (renderedRemoveTarget && !remove.isPending)
+									remove.mutate(renderedRemoveTarget.user_id);
+							}}
+							disabled={!renderedRemoveTarget || remove.isPending}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						>
+							{remove.isPending ? "Removing…" : "Remove Member"}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }

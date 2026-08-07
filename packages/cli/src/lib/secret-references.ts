@@ -1,5 +1,6 @@
 import { readJson } from "./api-client";
-import { getAuth, getConfig } from "./config";
+import { getClawdiAccessToken } from "./clerk-oauth";
+import { getConfig } from "./config";
 import { resolveProjectId } from "./project-resolver";
 import { getEnvIdByAgent } from "./select-adapter";
 import {
@@ -217,10 +218,7 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 	}
 	const ref = parseClawdiReference(input);
 	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		throw new Error("Not logged in. Run `clawdi auth login` first.");
-	}
+	const accessToken = await getClawdiAccessToken(apiUrl);
 
 	const params = new URLSearchParams({
 		vault_slug: ref.vault,
@@ -228,9 +226,9 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 		field: ref.field,
 	});
 	if (ref.project) {
-		const referenceProjectId = await resolveProjectId(apiUrl, auth.apiKey, ref.project);
+		const referenceProjectId = await resolveProjectId(apiUrl, accessToken, ref.project);
 		if (opts.project) {
-			const explicitProjectId = await resolveProjectId(apiUrl, auth.apiKey, opts.project);
+			const explicitProjectId = await resolveProjectId(apiUrl, accessToken, opts.project);
 			if (explicitProjectId !== referenceProjectId) {
 				throw new Error(
 					`Reference points to Project ${referenceProjectId}, but --project resolved to ${explicitProjectId}. Omit --project or use a reference from that Project.`,
@@ -239,7 +237,7 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 		}
 		params.set("project_id", referenceProjectId);
 	} else if (opts.project) {
-		params.set("project_id", await resolveProjectId(apiUrl, auth.apiKey, opts.project));
+		params.set("project_id", await resolveProjectId(apiUrl, accessToken, opts.project));
 	} else if (opts.projectId) {
 		params.set("project_id", opts.projectId);
 	}
@@ -252,7 +250,7 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 
 	const response = await fetch(`${apiUrl}/v1/vault/resolve?${params.toString()}`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${auth.apiKey}` },
+		headers: { Authorization: `Bearer ${accessToken}` },
 	});
 	const body = await readJson<T | { detail?: unknown }>(response, "/v1/vault/resolve");
 	if (!response.ok) {
@@ -355,16 +353,13 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 	}
 
 	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		throw new Error("Not logged in. Run `clawdi auth login` first.");
-	}
+	const accessToken = await getClawdiAccessToken(apiUrl);
 
 	const projectIdCache = new Map<string, string>();
 	const resolveCachedProjectId = async (project: string): Promise<string> => {
 		const cached = projectIdCache.get(project);
 		if (cached) return cached;
-		const projectId = await resolveProjectId(apiUrl, auth.apiKey, project);
+		const projectId = await resolveProjectId(apiUrl, accessToken, project);
 		projectIdCache.set(project, projectId);
 		return projectId;
 	};
@@ -397,7 +392,7 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 		const response = await fetch(`${apiUrl}/v1/vault/resolve/bulk`, {
 			method: "POST",
 			headers: {
-				Authorization: `Bearer ${auth.apiKey}`,
+				Authorization: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({

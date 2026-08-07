@@ -3,11 +3,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
-import boto3
-from botocore.client import Config as BotoConfig
-from botocore.exceptions import ClientError
-
 from app.core.config import settings
+from app.services.file_store_s3 import S3ObjectStoreClient, create_s3_object_store_client
 
 
 class FileStore(Protocol):
@@ -82,64 +79,26 @@ class S3FileStore:
         if not bucket:
             raise RuntimeError("FILE_STORE_S3_BUCKET is required when FILE_STORE_TYPE=s3")
         self.bucket = bucket
-        config = BotoConfig(
-            s3={"addressing_style": "path" if force_path_style else "auto"},
+        self.client: S3ObjectStoreClient = create_s3_object_store_client(
+            bucket=bucket,
+            region=region,
+            endpoint_url=endpoint_url,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            force_path_style=force_path_style,
         )
-        kwargs = {
-            "service_name": "s3",
-            "region_name": region or None,
-            "endpoint_url": endpoint_url or None,
-            "config": config,
-        }
-        if access_key_id or secret_access_key:
-            kwargs["aws_access_key_id"] = access_key_id
-            kwargs["aws_secret_access_key"] = secret_access_key
-        self.client = boto3.client(**kwargs)
 
     async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
-        extra: dict[str, str] = {}
-        if content_type:
-            extra["ContentType"] = content_type
-        await asyncio.to_thread(
-            self.client.put_object,
-            Bucket=self.bucket,
-            Key=key,
-            Body=data,
-            **extra,
-        )
+        await asyncio.to_thread(self.client.put, key, data, content_type)
 
     async def get(self, key: str) -> bytes:
-        def _read() -> bytes:
-            try:
-                response = self.client.get_object(Bucket=self.bucket, Key=key)
-            except ClientError as exc:
-                code = exc.response.get("Error", {}).get("Code")
-                if code in {"404", "NoSuchKey", "NotFound"}:
-                    raise FileNotFoundError(key) from exc
-                raise
-            body = response["Body"]
-            try:
-                return body.read()
-            finally:
-                body.close()
-
-        return await asyncio.to_thread(_read)
+        return await asyncio.to_thread(self.client.get, key)
 
     async def delete(self, key: str) -> None:
-        await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
+        await asyncio.to_thread(self.client.delete, key)
 
     async def exists(self, key: str) -> bool:
-        def _exists() -> bool:
-            try:
-                self.client.head_object(Bucket=self.bucket, Key=key)
-                return True
-            except ClientError as exc:
-                code = exc.response.get("Error", {}).get("Code")
-                if code in {"404", "NoSuchKey", "NotFound"}:
-                    return False
-                raise
-
-        return await asyncio.to_thread(_exists)
+        return await asyncio.to_thread(self.client.exists, key)
 
 
 @lru_cache(maxsize=1)
@@ -149,7 +108,7 @@ def get_file_store() -> FileStore:
     Single factory read from `Settings`. Cached so route modules reuse
     the same local path / S3 client.
     """
-    kind = getattr(settings, "file_store_type", "local")
+    kind = settings.file_store_type
     if kind == "local":
         return LocalFileStore(settings.file_store_local_path)
     if kind == "s3":

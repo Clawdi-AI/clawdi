@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, readFileSync, statSync } from "node:fs";
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
-import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
+import {
+	type RuntimeApplyIdentity,
+	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitySchema,
+} from "./apply-identity";
 import type { RuntimePaths } from "./paths";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 const appliedContentSourceSchema = z
 	.object({
@@ -33,10 +37,19 @@ export const runtimeAppliedStateSchema = z
 		etag: z.string().min(1),
 		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
 		generation: z.number().int().nonnegative(),
+		applyGeneration: z.number().int().positive().safe().optional(),
 		manifestETag: z.string().min(1).max(128).optional(),
 		applyReceiptId: z.string().min(16).max(128).optional(),
 		bootNonce: z.string().min(16).max(128).optional(),
 		contentIdentity: appliedContentSourceSchema,
+		egressSidecarSecretRevision: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.optional(),
+		daemonAuthTokenRevision: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
 	})
@@ -51,7 +64,7 @@ export const runtimeAppliedStateSchema = z
 				path: ["manifestETag"],
 			});
 		}
-		if (present === applyFields.length && state.generation < 1) {
+		if (present === applyFields.length && resolveRuntimeApplyGeneration(state) < 1) {
 			ctx.addIssue({
 				code: "custom",
 				message: "apply identity generation must be at least 1",
@@ -76,7 +89,7 @@ export function runtimeAppliedApplyIdentity(
 		return null;
 	}
 	const parsed = runtimeApplyIdentitySchema.safeParse({
-		generation: state.generation,
+		generation: resolveRuntimeApplyGeneration(state),
 		manifestETag: state.manifestETag,
 		applyReceiptId: state.applyReceiptId,
 		bootNonce: state.bootNonce,
@@ -93,6 +106,7 @@ export function runtimeContentSha256(value: unknown): string {
 export function readRuntimeAppliedState(paths: RuntimePaths): RuntimeAppliedState | null {
 	if (!existsSync(paths.appliedState)) return null;
 	try {
+		secureRuntimeAppliedStateFile(paths.appliedState);
 		const raw = JSON.parse(readFileSync(paths.appliedState, "utf-8")) as unknown;
 		const parsed = runtimeAppliedStateSchema.safeParse(raw);
 		return parsed.success ? parsed.data : null;
@@ -106,11 +120,24 @@ export function writeRuntimeAppliedState(
 	paths: RuntimePaths,
 ): string {
 	const parsed = runtimeAppliedStateSchema.parse(state);
-	writePrivateFileAtomic(paths.appliedState, `${JSON.stringify(parsed, null, 2)}\n`, {
-		mode: 0o644,
-		dirMode: 0o755,
-	});
+	writeRuntimePlatformFileAtomic(
+		paths,
+		paths.appliedState,
+		`${JSON.stringify(parsed, null, 2)}\n`,
+		{
+			mode: 0o600,
+			dirMode: 0o755,
+		},
+	);
+	secureRuntimeAppliedStateFile(paths.appliedState);
 	return paths.appliedState;
+}
+
+function secureRuntimeAppliedStateFile(path: string): void {
+	if (typeof process.getuid !== "function") return;
+	const stat = statSync(path);
+	if ((stat.mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+	if (process.getuid() === 0 && (stat.uid !== 0 || stat.gid !== 0)) chownSync(path, 0, 0);
 }
 
 function canonicalize(value: unknown): unknown {

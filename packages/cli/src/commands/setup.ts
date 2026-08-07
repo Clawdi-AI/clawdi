@@ -1,8 +1,8 @@
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
@@ -16,9 +16,17 @@ import {
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
+import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import { errMessage } from "../lib/errors";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
+import {
+	installReservedManagedSkill,
+	managedSkillReservationState,
+	migrateLegacyLocalSetupSkill,
+	replaceManagedSkillDirectoryAtomic,
+} from "../runtime/managed-skill-reservation";
 import {
 	install as installDaemonService,
 	listInstalledAgents,
@@ -185,6 +193,7 @@ function installDaemonForAllRegisteredAgents() {
 	} catch (e) {
 		console.log(chalk.yellow(`⚠ Could not install daemon: ${errMessage(e)}`));
 		console.log(chalk.gray("  Run manually: clawdi daemon install"));
+		process.exitCode = 1;
 	}
 }
 
@@ -242,11 +251,7 @@ async function installBuiltinSkill(agentType: AgentType) {
 	if (!targetDir) return;
 	const label = adapterRegistry[agentType].displayName;
 
-	// Support both dev (src/commands/) and build (dist/) paths
-	let sourceDir = resolve(import.meta.dirname, "../../skills/clawdi");
-	if (!existsSync(sourceDir)) {
-		sourceDir = resolve(import.meta.dirname, "skills/clawdi");
-	}
+	const sourceDir = join(resolveCurrentCliResourceRoot(), "skills", "clawdi");
 	if (!existsSync(sourceDir)) {
 		console.log(chalk.yellow("⚠ Built-in skill not found, skipping."));
 		return;
@@ -255,17 +260,36 @@ async function installBuiltinSkill(agentType: AgentType) {
 	const alreadyInstalled = existsSync(join(targetDir, "SKILL.md"));
 
 	try {
-		mkdirSync(targetDir, { recursive: true });
-		// Always overwrite — the bundled skill content evolves with each CLI
-		// release (better trigger language, new tool descriptions), and users
-		// who ran setup once should get those improvements on re-run without
-		// having to manually delete the old copy.
-		cpSync(sourceDir, targetDir, { recursive: true, force: true });
+		const sourceDigest = managedSkillDirectoryDigest(sourceDir);
+		migrateLegacyLocalSetupSkill({
+			targetDir,
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
+		const reservationState = managedSkillReservationState(targetDir);
+		if (
+			existsSync(targetDir) &&
+			reservationState !== "reserved" &&
+			managedSkillDirectoryDigest(targetDir) !== sourceDigest
+		) {
+			throw new Error(`refusing to replace unmanaged Skill at ${targetDir}`);
+		}
+		installReservedManagedSkill(
+			{
+				targetDir,
+				id: "clawdi",
+				version: 1,
+				digest: sourceDigest,
+				manager: "local-setup",
+			},
+			() => replaceManagedSkillDirectoryAtomic(sourceDir, targetDir),
+		);
 		console.log(
 			chalk.green(`✓ Clawdi skill ${alreadyInstalled ? "updated" : "installed"} in ${label}`),
 		);
-	} catch {
-		console.log(chalk.yellow("⚠ Could not install Clawdi skill."));
+	} catch (error) {
+		console.log(chalk.yellow(`⚠ Could not install Clawdi skill (${errMessage(error)}).`));
 	}
 }
 

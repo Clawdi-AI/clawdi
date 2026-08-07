@@ -3,13 +3,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
 import { LayoutList, Table2 } from "lucide-react";
-import {
-	createParser,
-	parseAsBoolean,
-	parseAsString,
-	parseAsStringLiteral,
-	useQueryStates,
-} from "nuqs";
+import { parseAsBoolean, parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -25,10 +19,12 @@ import { DataTableFacetedFilter } from "@/components/ui/data-table-faceted-filte
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { SearchInput } from "@/components/ui/search-input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
+import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, recencyBucketFor } from "@/lib/utils";
 
@@ -48,17 +44,6 @@ const SORT_KEYS = [
 type SortKey = (typeof SORT_KEYS)[number];
 const SESSIONS_RESOURCE = getProjectResourceDefinition("sessions");
 
-// 1-indexed strict integer parser. `Number()` (unlike `parseInt`)
-// rejects mixed input like "3junk", so a malformed `?page=3junk`
-// falls back to the nuqs default instead of silently landing 3.
-const parseAsPositiveInt = createParser({
-	parse: (raw: string) => {
-		const n = Number(raw);
-		return Number.isInteger(n) && n >= 1 ? n : null;
-	},
-	serialize: (n: number) => String(n),
-});
-
 /**
  * Wrap the body in `<Suspense>` because nuqs reads URL state under the hood.
  * Pattern mirrors `connectors/page.tsx`.
@@ -68,7 +53,8 @@ export default function SessionsPage() {
 		<Suspense
 			fallback={
 				<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-					<PageHeader title="Sessions" />
+					<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
+					<SessionFeed sessions={[]} isLoading emptyMessage="" />
 				</div>
 			}
 		>
@@ -78,7 +64,7 @@ export default function SessionsPage() {
 }
 
 function SessionsListInner() {
-	const api = useApi();
+	const $api = useOpenApi();
 	const queryClient = useQueryClient();
 
 	// All filter / sort / pagination state lives in the URL via
@@ -142,18 +128,14 @@ function SessionsListInner() {
 		],
 	);
 
-	const { data, isLoading, isFetching, error, refetch } = useQuery({
-		...sessionListQueryOptions(api, sessionQuery),
-		// Keep previous results visible during refetch; the
-		// `isFetching && !isLoading` opacity transition below is
-		// the only "loading" signal the user sees.
+	const { data, isLoading, error, refetch } = useQuery({
+		...sessionListQueryOptions($api, sessionQuery),
+		// Keep the previous page visible while search, filters, or pagination
+		// move to a new query key.
 		placeholderData: keepPreviousData,
 	});
 
-	const { data: envs } = useQuery({
-		queryKey: ["agents", "filter"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-	});
+	const { data: envs } = $api.useQuery("get", "/v1/agents", {});
 	const agentOptions = useMemo(() => {
 		const set = new Set<string>();
 		for (const e of envs ?? []) {
@@ -197,9 +179,9 @@ function SessionsListInner() {
 	useEffect(() => {
 		if (!data || params.page >= pageCount) return;
 		void queryClient.prefetchQuery(
-			sessionListQueryOptions(api, { ...sessionQuery, page: params.page + 1 }),
+			sessionListQueryOptions($api, { ...sessionQuery, page: params.page + 1 }),
 		);
-	}, [api, data, pageCount, params.page, queryClient, sessionQuery]);
+	}, [$api, data, pageCount, params.page, queryClient, sessionQuery]);
 
 	const groupable = params.sort === "last_activity_at" || params.sort === "started_at";
 
@@ -343,7 +325,7 @@ function SessionsListInner() {
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
 
-			{error ? (
+			{shouldBlockQueryError(error, data) ? (
 				<ApiErrorPanel
 					error={error}
 					onRetry={() => {
@@ -352,12 +334,7 @@ function SessionsListInner() {
 					title="Couldn't load sessions"
 				/>
 			) : (
-				<div
-					className={cn(
-						"space-y-4 transition-opacity",
-						isFetching && !isLoading ? "opacity-60" : "opacity-100",
-					)}
-				>
+				<div className="space-y-4">
 					{sessionToolbar}
 					{params.view === "table" ? (
 						<div className="hidden md:block">

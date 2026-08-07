@@ -14,7 +14,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "d8f2a1c4b6e9"
-HEAD_REVISION = "4c8f2a1d7e9b"
+APP_SETTINGS_REVISION = "3e7a9c1d5b82"
+SKILL_AUTHORITY_REVISION = "5d2a9c7e4b18"
+APPLY_GENERATION_REVISION = "7c2e9a4b6d1f"
+HEAD_REVISION = "f4c8a1d7e2b9"
+RUNTIME_SCOPE_REVISION_DOWN_REVISION = "e2a7c9f4b6d1"
+SKILLS_REVISION_DOWN_REVISION = "b7e4d2a9c6f1"
+PREVIOUS_HEAD_REVISION = "a6d2f4c8b1e7"
 RUNTIME_OBSERVATION_DOWN_REVISION = "c7e4a9b2d6f1"
 WORKLOAD_OAUTH_DOWN_REVISION = "f1a7c3d9e2b4"
 CONFIG_OBSERVATION_REVISION = "f3a1c7d9e2b4"
@@ -39,8 +45,24 @@ def test_agent_v2_runtime_contract_migration_precedes_config_observation_migrati
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == [HEAD_REVISION]
-    assert scripts.get_revision(HEAD_REVISION).down_revision == RUNTIME_OBSERVATION_DOWN_REVISION
+    heads = scripts.get_heads()
+    assert len(heads) == 1
+    assert APPLY_GENERATION_REVISION in {
+        revision.revision for revision in scripts.iterate_revisions(heads[0], "base")
+    }
+    assert scripts.get_revision(APPLY_GENERATION_REVISION).down_revision == SKILL_AUTHORITY_REVISION
+    assert scripts.get_revision(SKILL_AUTHORITY_REVISION).down_revision == APP_SETTINGS_REVISION
+    assert scripts.get_revision(APP_SETTINGS_REVISION).down_revision == HEAD_REVISION
+    assert scripts.get_revision(HEAD_REVISION).down_revision == RUNTIME_SCOPE_REVISION_DOWN_REVISION
+    assert (
+        scripts.get_revision(RUNTIME_SCOPE_REVISION_DOWN_REVISION).down_revision
+        == SKILLS_REVISION_DOWN_REVISION
+    )
+    assert (
+        scripts.get_revision(SKILLS_REVISION_DOWN_REVISION).down_revision == PREVIOUS_HEAD_REVISION
+    )
+    assert scripts.get_revision(PREVIOUS_HEAD_REVISION).down_revision == "4c8f2a1d7e9b"
+    assert scripts.get_revision("4c8f2a1d7e9b").down_revision == RUNTIME_OBSERVATION_DOWN_REVISION
     assert (
         scripts.get_revision(RUNTIME_OBSERVATION_DOWN_REVISION).down_revision
         == WORKLOAD_OAUTH_DOWN_REVISION
@@ -482,7 +504,7 @@ def test_agent_v2_runtime_contract_migration_rejects_nonempty_downgrade_before_s
                 ),
                 {
                     "environment_id": str(environment_id),
-                    "cli_package_spec": "clawdi@0.12.10-beta.51",
+                    "cli_package_spec": "clawdi@1.2.2-test",
                     "locale": '{"language":"en","timezone":"UTC"}',
                     "system": '{"home":"/home/clawdi"}',
                     "live_sync": '{"enabled":false,"agents":[]}',
@@ -549,7 +571,7 @@ def test_agent_v2_runtime_contract_migration_rejects_nonempty_downgrade_before_s
             assert columns_after == columns_before
             assert state_after == state_before
             assert state_after.environment_id == environment_id
-            assert state_after.cli_package_spec == "clawdi@0.12.10-beta.51"
+            assert state_after.cli_package_spec == "clawdi@1.2.2-test"
             assert state_after.locale == {"language": "en", "timezone": "UTC"}
             assert state_after.system == {"home": "/home/clawdi"}
             assert state_after.live_sync == {"enabled": False, "agents": []}

@@ -14,7 +14,7 @@ export async function projectListCommand(opts: {
 	owned?: boolean;
 	includeEnvs?: boolean;
 }): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 	if (opts.sharedWithMe && opts.owned) {
@@ -106,7 +106,7 @@ export async function projectListCommand(opts: {
 		if (!opts.includeEnvs && environmentProjects.length > 0 && !opts.sharedWithMe) {
 			console.log(
 				chalk.gray(
-					`Hidden machine projects: ${environmentProjects.length}. Show them with \`clawdi project list --include-envs\`.`,
+					`Hidden Agent Workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
 				),
 			);
 		}
@@ -131,12 +131,12 @@ export async function projectListCommand(opts: {
 
 	if (!opts.sharedWithMe && machines.length > 0) {
 		if (owned.length > 0) console.log();
-		console.log(chalk.bold(`Machines (${machines.length}):`));
-		console.log(chalk.gray("  Auto-created environment projects for registered local agents."));
+		console.log(chalk.bold(`Agent Workspaces (${machines.length}):`));
+		console.log(chalk.gray("  Private resources permanently used by one registered Agent."));
 		for (const s of machines) {
 			const alias = projectAlias(s);
 			console.log(
-				`  ${chalk.cyan(alias.padEnd(24))} ${chalk.gray("machine")}  ${chalk.gray(s.id.slice(0, 8))}`,
+				`  ${chalk.cyan(alias.padEnd(24))} ${chalk.gray("Workspace")}  ${chalk.gray(s.id.slice(0, 8))}`,
 			);
 			if (s.name && s.name !== s.slug) {
 				console.log(`    ${chalk.dim(s.name)}`);
@@ -148,7 +148,7 @@ export async function projectListCommand(opts: {
 	if (!opts.owned && shared.length > 0) {
 		if (!opts.sharedWithMe) console.log();
 		console.log(chalk.bold(`Shared with me (${shared.length}):`));
-		console.log(chalk.gray("  Viewer access is read-only. Attach to an Agent when needed."));
+		console.log(chalk.gray("  Viewer access is read-only. Link to an Agent when needed."));
 		for (const s of shared) {
 			const alias = projectAlias(s);
 			console.log(
@@ -159,7 +159,7 @@ export async function projectListCommand(opts: {
 			);
 			console.log(`    ${chalk.gray(`Open:  clawdi project show ${alias}`)}`);
 			console.log(
-				`    ${chalk.gray(`Attach to Agent: clawdi agent projects attach <agent-id> --project ${alias}`)}`,
+				`    ${chalk.gray(`Link to Agent: clawdi agent projects link <agent-id> --project ${alias}`)}`,
 			);
 		}
 	}
@@ -168,7 +168,7 @@ export async function projectListCommand(opts: {
 		if (owned.length > 0 || shared.length > 0) console.log();
 		console.log(
 			chalk.gray(
-				`Hidden machine projects: ${environmentProjects.length}. Show them with \`clawdi project list --include-envs\`.`,
+				`Hidden Agent Workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
 			),
 		);
 	}

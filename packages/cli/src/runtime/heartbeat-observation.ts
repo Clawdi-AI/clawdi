@@ -1,16 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
-import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE } from "../lib/private-file";
 import {
 	type RuntimeAppliedState,
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
 } from "./applied-state";
-import { runtimeApplyIdentitySchema } from "./apply-identity";
-import { type HostedRuntimeObserved, readHostedRuntimeObserved } from "./observed";
+import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
+import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 const positiveSafeIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const isoTimestampSchema = z.string().datetime({ offset: true });
@@ -85,14 +87,7 @@ const observedSupervisorSchema = z
 	})
 	.strict();
 
-export type HostedRuntimeObservedEvent = HostedRuntimeObserved & {
-	applyReceiptId: string;
-	bootNonce: string;
-	bootSessionId: string;
-	sequence: number;
-	eventId: string;
-	capturedAt: string;
-};
+export type HostedRuntimeObservedEvent = components["schemas"]["RuntimeObservationEventV2"];
 
 const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = z
 	.object({
@@ -109,7 +104,7 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 		providers: z.record(z.string(), z.record(z.string(), z.unknown())).nullable().optional(),
 		error: z.string().nullable().optional(),
 		convergeError: z.string().nullable().optional(),
-		truncated: z.boolean().nullable().optional(),
+		truncated: z.literal(false).nullable().optional(),
 		applyReceiptId: z.string().min(16).max(128),
 		bootNonce: z.string().min(16).max(128),
 		bootSessionId: z.string().min(1).max(128),
@@ -172,13 +167,15 @@ export class HostedRuntimeHeartbeatSession {
 	private state: PersistedHeartbeatState | null;
 	private readonly statePath: string;
 	private readonly paths: RuntimePaths;
-	private readonly capturedAppliedState: RuntimeAppliedState | null;
-	private readonly currentBootIdentity: PersistedBootIdentity | null;
+	private readonly environmentId: string;
+	private capturedAppliedState: RuntimeAppliedState | null = null;
+	private currentBootIdentity: PersistedBootIdentity | null = null;
 	private readonly now: () => Date;
 	private readonly createId: () => string;
 
 	constructor(options: HostedRuntimeHeartbeatOptions) {
 		this.paths = options.paths ?? getRuntimePaths();
+		this.environmentId = options.environmentId;
 		this.now = options.now ?? (() => new Date());
 		this.createId = options.createId ?? randomUUID;
 		this.statePath = runtimeHeartbeatObservationStatePath(this.paths, options.environmentId);
@@ -187,29 +184,47 @@ export class HostedRuntimeHeartbeatSession {
 			throw new Error("runtime heartbeat state environment binding does not match");
 		}
 
-		this.capturedAppliedState =
-			this.paths.mode === "hosted" ? readRuntimeAppliedState(this.paths) : null;
-		const applyIdentity = this.capturedAppliedState
-			? runtimeAppliedApplyIdentity(this.capturedAppliedState)
-			: null;
-		if (!applyIdentity) {
+		this.refreshAppliedState(true);
+	}
+
+	refreshAppliedState(forceNewBoot = false): boolean {
+		const appliedState = this.paths.mode === "hosted" ? readRuntimeAppliedState(this.paths) : null;
+		const applyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
+		if (!appliedState || !applyIdentity) {
+			this.capturedAppliedState = null;
 			this.currentBootIdentity = null;
-			return;
+			return false;
+		}
+		if (
+			!forceNewBoot &&
+			this.currentBootIdentity &&
+			sameApplyIdentity(this.currentBootIdentity, applyIdentity)
+		) {
+			this.capturedAppliedState = appliedState;
+			return false;
 		}
 
-		this.currentBootIdentity = {
+		const nextBootIdentity = {
 			...applyIdentity,
 			bootSessionId: nonEmptyId(this.createId(), "boot session ID"),
 		};
-		this.state = {
+		const pending = this.state?.pending ?? null;
+		const candidate: PersistedHeartbeatState = {
 			schemaVersion: "clawdi.runtimeHeartbeatObservation.v1",
-			environmentId: options.environmentId,
-			bootIdentity: this.currentBootIdentity,
+			environmentId: this.environmentId,
+			bootIdentity: nextBootIdentity,
 			nextSequence: 1,
 			lastCapturedAt: null,
-			pending: this.state?.pending ?? null,
+			pending:
+				pending && eventMatchesApplyIdentity(decodePendingEvent(pending).event, applyIdentity)
+					? pending
+					: null,
 		};
-		writeState(this.statePath, this.state);
+		writeState(this.paths, this.statePath, candidate);
+		this.state = candidate;
+		this.capturedAppliedState = appliedState;
+		this.currentBootIdentity = nextBootIdentity;
+		return true;
 	}
 
 	nextEvent(): BufferedRuntimeObservedEvent | null {
@@ -229,9 +244,10 @@ export class HostedRuntimeHeartbeatSession {
 		const snapshot = readHostedRuntimeObserved(this.paths, {
 			reportedAt: capturedAt,
 			appliedState: this.capturedAppliedState,
+			etagAuthority: "control-plane",
 		});
 		if (!snapshot) return null;
-		const event: HostedRuntimeObservedEvent = {
+		const event = hostedRuntimeObservedEventSchema.parse({
 			...snapshot,
 			applyReceiptId: this.currentBootIdentity.applyReceiptId,
 			bootNonce: this.currentBootIdentity.bootNonce,
@@ -239,7 +255,7 @@ export class HostedRuntimeHeartbeatSession {
 			sequence: this.state.nextSequence,
 			eventId: nonEmptyId(this.createId(), "runtime heartbeat event ID"),
 			capturedAt,
-		};
+		});
 		const payloadJson = serializeObservedEvent(event);
 		const pending = {
 			payloadJson,
@@ -251,7 +267,7 @@ export class HostedRuntimeHeartbeatSession {
 			lastCapturedAt: capturedAt,
 			pending,
 		};
-		writeState(this.statePath, candidate);
+		writeState(this.paths, this.statePath, candidate);
 		this.state = candidate;
 		return decodePendingEvent(pending);
 	}
@@ -269,7 +285,7 @@ export class HostedRuntimeHeartbeatSession {
 		const pending = decodePendingEvent(this.state.pending);
 		if (pending.event.eventId !== eventId) return false;
 		const candidate = { ...this.state, pending: null };
-		writeState(this.statePath, candidate);
+		writeState(this.paths, this.statePath, candidate);
 		this.state = candidate;
 		return true;
 	}
@@ -301,9 +317,9 @@ function readState(path: string): PersistedHeartbeatState | null {
 	}
 }
 
-function writeState(path: string, state: PersistedHeartbeatState): void {
+function writeState(paths: RuntimePaths, path: string, state: PersistedHeartbeatState): void {
 	const parsed = heartbeatStateSchema.parse(state);
-	writePrivateFileAtomic(path, `${JSON.stringify(parsed, null, 2)}\n`, {
+	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(parsed, null, 2)}\n`, {
 		mode: PRIVATE_FILE_MODE,
 		dirMode: PRIVATE_DIR_MODE,
 	});
@@ -350,4 +366,28 @@ function nonEmptyId(value: string, name: string): string {
 	const normalized = value.trim();
 	if (!normalized) throw new Error(`${name} must not be empty`);
 	return normalized;
+}
+
+function sameApplyIdentity(
+	left: Pick<PersistedBootIdentity, keyof RuntimeApplyIdentity>,
+	right: RuntimeApplyIdentity,
+): boolean {
+	return (
+		left.generation === right.generation &&
+		left.manifestETag === right.manifestETag &&
+		left.applyReceiptId === right.applyReceiptId &&
+		left.bootNonce === right.bootNonce
+	);
+}
+
+function eventMatchesApplyIdentity(
+	event: HostedRuntimeObservedEvent,
+	identity: RuntimeApplyIdentity,
+): boolean {
+	return (
+		event.applied.generation === identity.generation &&
+		event.applied.etag === identity.manifestETag &&
+		event.applyReceiptId === identity.applyReceiptId &&
+		event.bootNonce === identity.bootNonce
+	);
 }

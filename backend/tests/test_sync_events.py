@@ -21,16 +21,226 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import HTTPException, Request
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.types import Message
 
+from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    SkillSyncProtocol,
+    resolve_skill_sync_protocol,
+)
+from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services import sync_events
+from app.services.managed_ai_provider import (
+    CLAWDI_MANAGED_PROVIDER_ID,
+    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+    V2_MANAGED_AI_PROVIDER_ID,
+)
 
 pytestmark = pytest.mark.committed_db
+
+
+def _connected_request() -> Request:
+    async def receive() -> Message:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request({"type": "http"}, receive)
+
+
+@pytest.mark.parametrize(
+    ("protocol", "expected"),
+    [
+        (None, SkillSyncProtocol.LEGACY),
+        (SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0, SkillSyncProtocol.LEGACY),
+        (
+            SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+            SkillSyncProtocol.AGENT_AUTHORITATIVE_V1,
+        ),
+    ],
+)
+def test_skill_sync_protocol_accepts_legacy_and_current_clients(
+    protocol: str | None,
+    expected: SkillSyncProtocol,
+) -> None:
+    assert resolve_skill_sync_protocol(protocol) is expected
+
+
+@pytest.mark.parametrize(
+    ("protocol", "expected_code"),
+    [
+        ("Agent authoritative", "invalid_skill_sync_protocol"),
+        ("agent-authoritative-v2", "unsupported_skill_sync_protocol"),
+    ],
+)
+def test_skill_sync_protocol_rejects_malformed_and_unknown_values(
+    protocol: str,
+    expected_code: str,
+) -> None:
+    with pytest.raises(HTTPException) as rejected:
+        resolve_skill_sync_protocol(protocol)
+    assert rejected.value.status_code == 400
+    assert rejected.value.detail["code"] == expected_code
+
+
+def test_oauth_cli_sse_handshake_uses_verified_utc_expiry_only():
+    from app.core.auth import AuthContext
+    from app.routes.sync import _oauth_cli_access_expired
+
+    now = datetime(2026, 7, 28, tzinfo=UTC)
+    user = User(clerk_id="oauth-sse-handshake")
+    oauth = AuthContext(
+        user=user,
+        oauth_cli=True,
+        oauth_access_expires_at=now + timedelta(minutes=5),
+    )
+    expired = AuthContext(
+        user=user,
+        oauth_cli=True,
+        oauth_access_expires_at=now,
+    )
+    browser = AuthContext(user=user)
+    api_key = AuthContext(user=user, api_key=ApiKey())
+
+    assert _oauth_cli_access_expired(oauth, now=now) is False
+    assert _oauth_cli_access_expired(expired, now=now) is True
+    assert _oauth_cli_access_expired(browser, now=now) is False
+    assert _oauth_cli_access_expired(api_key, now=now) is False
+
+
+@pytest.mark.asyncio
+async def test_oauth_cli_sse_closes_at_expiry_without_changing_other_auth_types():
+    from app.core.auth import AuthContext
+    from app.routes.sync import _close_on_oauth_access_expiry
+
+    start = datetime(2026, 7, 28, tzinfo=UTC)
+    current = start
+    delays: list[float] = []
+
+    async def advance(seconds: float) -> None:
+        nonlocal current
+        delays.append(seconds)
+        current += timedelta(seconds=seconds)
+        await asyncio.sleep(0)
+
+    user = User(clerk_id="oauth-sse-expiry")
+    oauth_close = asyncio.Event()
+    await _close_on_oauth_access_expiry(
+        AuthContext(
+            user=user,
+            oauth_cli=True,
+            oauth_access_expires_at=start + timedelta(seconds=6),
+        ),
+        oauth_close,
+        now=lambda: current,
+        sleep=advance,
+    )
+    assert oauth_close.is_set()
+    assert delays == [5.0]
+
+    for auth in (AuthContext(user=user), AuthContext(user=user, api_key=ApiKey())):
+        unchanged = asyncio.Event()
+        await _close_on_oauth_access_expiry(auth, unchanged, now=lambda: current, sleep=advance)
+        assert not unchanged.is_set()
+
+
+@pytest.mark.asyncio
+async def test_oauth_cli_sse_expiry_rechecks_clock_at_heartbeat_cadence():
+    from app.core.auth import AuthContext
+    from app.routes.sync import HEARTBEAT_INTERVAL_S, _close_on_oauth_access_expiry
+
+    start = datetime(2026, 7, 28, tzinfo=UTC)
+    current = start
+    delays: list[float] = []
+
+    async def jump_forward(seconds: float) -> None:
+        nonlocal current
+        delays.append(seconds)
+        current += timedelta(minutes=10)
+        await asyncio.sleep(0)
+
+    close_stream = asyncio.Event()
+    await _close_on_oauth_access_expiry(
+        AuthContext(
+            user=User(clerk_id="oauth-sse-clock-jump"),
+            oauth_cli=True,
+            oauth_access_expires_at=start + timedelta(minutes=5),
+        ),
+        close_stream,
+        now=lambda: current,
+        sleep=jump_forward,
+    )
+
+    assert close_stream.is_set()
+    assert delays == [HEARTBEAT_INTERVAL_S]
+
+
+@pytest.mark.asyncio
+async def test_oauth_cli_sse_without_protocol_header_subscribes_then_closes_at_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from fastapi import HTTPException
+
+    import app.routes.sync as sync_route
+    from app.core.auth import AuthContext
+
+    class ShortSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _traceback):
+            return False
+
+    async def visible_projects(_db, _auth):
+        return []
+
+    monkeypatch.setattr(sync_route, "async_session_factory", ShortSession)
+    monkeypatch.setattr(sync_route, "project_ids_visible_to", visible_projects)
+    monkeypatch.setattr(sync_route, "OAUTH_ACCESS_EXPIRY_SKEW", timedelta(0))
+
+    request = _connected_request()
+    user = User(id=uuid.uuid4(), clerk_id="oauth-sse-route")
+    expired = AuthContext(
+        user=user,
+        oauth_cli=True,
+        oauth_access_expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    with pytest.raises(HTTPException) as rejected:
+        await sync_route.events(
+            request,
+            expired,
+            SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+        )
+    assert rejected.value.status_code == 401
+    assert sync_events.connection_count(user.id) == 0
+
+    oauth = AuthContext(
+        user=user,
+        oauth_cli=True,
+        oauth_access_expires_at=datetime.now(UTC) + timedelta(milliseconds=100),
+    )
+    response = await sync_route.events(
+        request,
+        oauth,
+        None,
+    )
+    assert response.media_type == "text/event-stream"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert sync_events.connection_count(user.id) == 1
+
+    iterator = response.body_iterator.__aiter__()
+    assert await iterator.__anext__() == b": connected\n\n"
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(iterator.__anext__(), timeout=1)
+    assert sync_events.connection_count(user.id) == 0
 
 
 @pytest.mark.asyncio
@@ -42,18 +252,11 @@ async def test_stream_returns_when_revoked_event_set():
     daemon turns the latter into local file deletions) for as
     long as the TCP stream stayed alive — possibly hours past
     the revoke."""
-    from unittest.mock import Mock
-
     from app.routes.sync import _stream
 
     queue: asyncio.Queue = asyncio.Queue()
     revoked = asyncio.Event()
-    request = Mock()
-
-    async def _not_disconnected():
-        return False
-
-    request.is_disconnected = _not_disconnected
+    request = _connected_request()
 
     # Start the generator. First yield should be the connect
     # comment; second iteration sees `revoked` set and returns.
@@ -67,27 +270,102 @@ async def test_stream_returns_when_revoked_event_set():
 
 
 @pytest.mark.asyncio
+async def test_stream_cancellation_awaits_internal_wait_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Disconnect cancellation must not orphan Queue/Event wait tasks."""
+    from app.routes import sync as sync_route
+
+    queue: asyncio.Queue = asyncio.Queue()
+    revoked = asyncio.Event()
+    request = _connected_request()
+    gen = sync_route._stream(queue, request, revoked)
+    assert await gen.__anext__() == b": connected\n\n"
+
+    original_create_task = asyncio.create_task
+    internal_tasks: list[asyncio.Task] = []
+    internal_tasks_created = asyncio.Event()
+
+    def _track_create_task(coro):
+        task = original_create_task(coro)
+        internal_tasks.append(task)
+        if len(internal_tasks) == 2:
+            internal_tasks_created.set()
+        return task
+
+    monkeypatch.setattr(sync_route.asyncio, "create_task", _track_create_task)
+    next_chunk = original_create_task(gen.__anext__())
+    await asyncio.wait_for(internal_tasks_created.wait(), timeout=1)
+    assert len(internal_tasks) == 2
+
+    next_chunk.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await next_chunk
+
+    assert all(task.done() for task in internal_tasks)
+    assert all(task.cancelled() for task in internal_tasks)
+
+
+@pytest.mark.asyncio
+async def test_cancel_and_wait_collects_pending_sibling_before_surfacing_failure():
+    """Only real failures raise, after every sibling has been awaited."""
+    from app.routes import sync as sync_route
+
+    for cancel_and_wait in (sync_route._cancel_and_wait, sync_events._cancel_and_wait):
+        failure_started = asyncio.Event()
+        sibling_started = asyncio.Event()
+        sibling_cleaned = asyncio.Event()
+        release_sibling = asyncio.Event()
+
+        async def fail() -> None:
+            failure_started.set()
+            raise RuntimeError("child failed")
+
+        async def return_exception() -> RuntimeError:
+            return RuntimeError("returned as a value")
+
+        async def wait_for_release() -> None:
+            sibling_started.set()
+            try:
+                await release_sibling.wait()
+            finally:
+                sibling_cleaned.set()
+
+        returned_exception_task = asyncio.create_task(return_exception())
+        returned_exception = await asyncio.wait_for(
+            asyncio.shield(returned_exception_task),
+            timeout=1,
+        )
+        assert str(returned_exception) == "returned as a value"
+        failed_task = asyncio.create_task(fail())
+        sibling_task = asyncio.create_task(wait_for_release())
+        await asyncio.wait_for(failure_started.wait(), timeout=1)
+        await asyncio.wait_for(sibling_started.wait(), timeout=1)
+
+        with pytest.raises(RuntimeError, match="child failed"):
+            await cancel_and_wait(returned_exception_task, failed_task, sibling_task)
+
+        assert returned_exception_task.exception() is None
+        assert sibling_task.done()
+        assert sibling_task.cancelled()
+        assert sibling_cleaned.is_set()
+
+
+@pytest.mark.asyncio
 async def test_stream_drops_event_queued_before_revoke():
     """Race: event lands in the queue right before / during the
     25s `wait_for(queue.get())`. The refresher fires `revoked`
     while wait_for is parked. wait_for resolves the event without
     re-checking the flag — pre-fix the daemon got one extra
-    `skill_changed` / `skill_deleted` past revocation, and
-    `skill_deleted` triggers a local file rm. Verify the second
-    `__anext__` returns (closes the generator) instead of
-    yielding the event."""
-    from unittest.mock import Mock
-
+    `skill_changed` / `skill_deleted` past revocation. Skill events now wake
+    an Agent-authoritative local rescan rather than mutating local files, but
+    work must still stop at revocation. Verify the second `__anext__` returns
+    (closes the generator) instead of yielding the event."""
     from app.routes.sync import _stream
 
     queue: asyncio.Queue = asyncio.Queue()
     revoked = asyncio.Event()
-    request = Mock()
-
-    async def _not_disconnected():
-        return False
-
-    request.is_disconnected = _not_disconnected
+    request = _connected_request()
 
     gen = _stream(queue, request, revoked)
     first = await gen.__anext__()
@@ -174,6 +452,34 @@ async def test_broadcast_filters_by_visible_project():
         sync_events.unsubscribe(user_id, q_both)
 
 
+def test_broadcast_gives_each_subscriber_an_owned_payload():
+    user_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    first_queue = sync_events.subscribe(user_id, frozenset({project_id}))
+    second_queue = sync_events.subscribe(user_id, frozenset({project_id}))
+    payload = {
+        "type": "skill_changed",
+        "skill_key": "owned",
+        "project_id": str(project_id),
+        "skills_revision": 1,
+    }
+    try:
+        sync_events._broadcast(user_id, payload)
+
+        first = first_queue.get_nowait()
+        second = second_queue.get_nowait()
+        assert first is not payload
+        assert second is not payload
+        assert first is not second
+
+        first["skill_key"] = "consumer-mutated"
+        assert second["skill_key"] == "owned"
+        assert payload["skill_key"] == "owned"
+    finally:
+        sync_events.unsubscribe(user_id, first_queue)
+        sync_events.unsubscribe(user_id, second_queue)
+
+
 @pytest.mark.asyncio
 async def test_broadcast_drops_event_with_unparseable_project():
     """Defensive: a malformed project_id in the event payload
@@ -189,7 +495,6 @@ async def test_broadcast_drops_event_with_unparseable_project():
             {"type": "skill_changed", "skill_key": "x", "project_id": "not-a-uuid"},
         )
         # Filter rejects unparseable project.
-        await asyncio.sleep(0)
         assert q.empty()
     finally:
         sync_events.unsubscribe(user_id, q)
@@ -251,7 +556,6 @@ async def test_runtime_manifest_event_delivers_after_commit_not_rollback(
         sync_events.queue_runtime_manifest_changed(db_session, user_id, environment_id)
         assert queue.empty()
         await db_session.rollback()
-        await asyncio.sleep(0)
         assert queue.empty()
     finally:
         sync_events.unsubscribe(user_id, queue)
@@ -279,6 +583,43 @@ def test_runtime_provider_usage_includes_independent_codex_tool_ref() -> None:
 
     assert sync_events._runtime_state_may_use_provider(state, "codex-managed") is True
     assert sync_events._runtime_state_may_use_provider(state, "unrelated") is False
+
+
+@pytest.mark.parametrize(
+    "bound_provider_id",
+    [
+        CLAWDI_MANAGED_PROVIDER_ID,
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    ],
+)
+def test_managed_runtime_provider_usage_resolves_deployment_credential_identity(
+    bound_provider_id: str,
+) -> None:
+    state = HostedRuntimeState(
+        deployment_id="42",
+        runtimes={
+            "openclaw": {
+                "enabled": True,
+                "providerMode": "configured",
+                "provider_ids": [bound_provider_id],
+                "primary_model": {"provider_id": bound_provider_id, "model": "gpt-5.5"},
+                "install": {"source": "official"},
+                "services": {},
+            }
+        },
+        tools={
+            "codex": {
+                "enabled": True,
+                "provider_id": bound_provider_id,
+                "primary_model": {"provider_id": bound_provider_id, "model": "gpt-5.5"},
+            }
+        },
+    )
+
+    assert sync_events._runtime_state_may_use_provider(state, "clawdi-v2-deployment-42") is True
+    assert sync_events._runtime_state_may_use_provider(state, "clawdi-v2-deployment-43") is False
 
 
 @pytest.mark.asyncio
@@ -319,6 +660,73 @@ async def test_postgres_listener_delivers_remote_process_event(
 
 
 @pytest.mark.asyncio
+async def test_postgres_listener_ignores_malformed_notification_before_valid_event(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    environment_id = uuid.uuid4()
+    queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=environment_id,
+    )
+    await sync_events.start_postgres_listener()
+    try:
+        valid_event = {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(environment_id),
+        }
+        notifications = [
+            "not-json",
+            json.dumps(
+                {
+                    "origin": "other-api-process",
+                    "user_id": str(seed_user.id),
+                    "event": {"type": ["invalid"]},
+                }
+            ),
+            json.dumps(
+                {
+                    "origin": "other-api-process",
+                    "user_id": str(seed_user.id),
+                    "event": valid_event,
+                }
+            ),
+        ]
+        for payload in notifications:
+            await db_session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": sync_events._POSTGRES_CHANNEL, "payload": payload},
+            )
+        await db_session.commit()
+
+        assert await asyncio.wait_for(queue.get(), timeout=2) == valid_event
+        assert queue.empty()
+    finally:
+        await sync_events.stop_postgres_listener()
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_postgres_listener_start_failure_allows_clean_restart(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A failed first connection leaves the public lifecycle restartable."""
+
+    async def fail_connect(_dsn, _channel, _notification, _terminated):
+        raise RuntimeError("listener failed")
+
+    with monkeypatch.context() as failed_connection:
+        failed_connection.setattr(sync_events, "connect_postgres_listener", fail_connect)
+        with pytest.raises(RuntimeError, match="listener failed"):
+            await sync_events.start_postgres_listener()
+
+    await sync_events.start_postgres_listener()
+    await sync_events.stop_postgres_listener()
+    await sync_events.stop_postgres_listener()
+
+
+@pytest.mark.asyncio
 async def test_bump_skills_revision_after_commit_broadcasts(
     db_session: AsyncSession, seed_user: User
 ):
@@ -344,17 +752,50 @@ async def test_bump_skills_revision_after_commit_broadcasts(
             project_id=personal.id,
         )
         # Not delivered yet — the after_commit hook runs on commit.
-        await asyncio.sleep(0)
         assert queue.empty(), "event must wait for transaction commit"
         await db_session.commit()
-        # commit() schedules the broadcast synchronously inside the
-        # after_commit hook; give the loop one tick to deliver.
-        await asyncio.sleep(0)
         event = queue.get_nowait()
         assert event["type"] == "skill_changed"
         assert event["skill_key"] == "hello"
         assert event["project_id"] == str(personal.id)
         assert event["skills_revision"] == new_rev
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_agent_projection_event_names_are_additive_while_cloud_default_stays_legacy(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
+
+    personal = (
+        await db_session.execute(
+            select(Project).where(
+                Project.user_id == seed_user.id,
+                Project.kind == PROJECT_KIND_PERSONAL,
+            )
+        )
+    ).scalar_one()
+    queue = sync_events.subscribe(seed_user.id, frozenset({personal.id}))
+    try:
+        await sync_events.bump_skills_revision(
+            db_session,
+            seed_user.id,
+            skill_key="cloud-owned",
+            project_id=personal.id,
+        )
+        await sync_events.bump_skills_revision(
+            db_session,
+            seed_user.id,
+            skill_key="agent-projection",
+            project_id=personal.id,
+            event_type=sync_events.AGENT_SKILL_CHANGED_EVENT,
+        )
+        await db_session.commit()
+        assert queue.get_nowait()["type"] == "skill_changed"
+        assert queue.get_nowait()["type"] == "agent_skill_changed"
     finally:
         sync_events.unsubscribe(seed_user.id, queue)
 

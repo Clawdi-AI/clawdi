@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import {
 	buildRuntimeRunConfig,
@@ -22,7 +22,9 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-	return getRuntimePaths({ mode: "hosted" });
+	const paths = getRuntimePaths({ mode: "hosted" });
+	mkdirSync(paths.configurationRoot);
+	return paths;
 }
 
 function runSettings(command: string, args: string[]): RuntimeRunSettings {
@@ -87,6 +89,16 @@ describe("runtime run config services", () => {
 			"gateway",
 			"run",
 		]);
+		expect(
+			buildRuntimeRunInvocation(
+				runtime,
+				["hermes"],
+				{
+					PATH: `${dirname(paths.cliManagedBin)}:/usr/bin`,
+				},
+				paths,
+			).env.PATH,
+		).toBe("/usr/bin");
 
 		expect(readRuntimeRunConfigForCommand("hermes+dashboard", paths).status).toBe("not-runtime");
 		const service = readRuntimeServiceRunConfig("hermes", "dashboard", paths);

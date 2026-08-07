@@ -5,16 +5,17 @@ from fastapi import APIRouter
 from app.routes.channel_routers import (
     debug,
     discord,
-    imessage,
     public,
     telegram,
     whatsapp,
+    whatsapp_onboarding,
 )
 
 router = APIRouter(tags=["channels"])
 
 # Control-plane routes come first so fixed paths such as
 # /v1/channels/debug/* cannot be captured by /v1/channels/{account_id}.
+router.include_router(whatsapp_onboarding.router)
 router.include_router(debug.router)
 router.include_router(public.router)
 
@@ -22,5 +23,4 @@ router.include_router(public.router)
 # /v1/channels/{provider}/*.
 router.include_router(whatsapp.router)
 router.include_router(telegram.router)
-router.include_router(imessage.router)
 router.include_router(discord.router)

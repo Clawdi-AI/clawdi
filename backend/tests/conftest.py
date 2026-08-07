@@ -21,12 +21,14 @@ import socket
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
+from datetime import UTC, datetime
 from hashlib import sha256
 
 import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.auth import AuthContext, get_auth, get_auth_short_session, optional_web_auth
@@ -97,12 +99,14 @@ def _test_runtime_settings():
     prev_channel_long_poll_max = settings.channel_long_poll_max_seconds
     prev_channel_long_poll_interval = settings.channel_long_poll_interval_seconds
     prev_discord_gateway_poll_interval = settings.discord_gateway_poll_interval_seconds
+    prev_project_skill_specs = settings.project_skill_hosted_cli_package_specs
     settings.vault_encryption_key = secrets.token_hex(32)
     settings.encryption_key = secrets.token_hex(32)
     settings.memory_embedding_mode = "disabled"
     settings.channel_long_poll_max_seconds = 0.05
     settings.channel_long_poll_interval_seconds = 0.005
     settings.discord_gateway_poll_interval_seconds = 0.01
+    settings.project_skill_hosted_cli_package_specs = ["clawdi@1.2.3-test"]
     try:
         yield
     finally:
@@ -112,6 +116,7 @@ def _test_runtime_settings():
         settings.channel_long_poll_max_seconds = prev_channel_long_poll_max
         settings.channel_long_poll_interval_seconds = prev_channel_long_poll_interval
         settings.discord_gateway_poll_interval_seconds = prev_discord_gateway_poll_interval
+        settings.project_skill_hosted_cli_package_specs = prev_project_skill_specs
 
 
 @pytest.fixture(autouse=True)
@@ -242,6 +247,77 @@ async def create_env_with_project(
     return env
 
 
+async def create_test_hosted_runtime_state(db_session, env, *, runtime_name: str):
+    """Give a test Agent the same strict-v2 authority used by Channel links."""
+    from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+    from app.models.runtime_observation import V2RuntimeEnvironmentFence
+
+    deployment_id = f"dep-{uuid.uuid4().hex}"
+    state = HostedRuntimeState(
+        environment_id=env.id,
+        deployment_id=deployment_id,
+        instance_id=f"instance-{uuid.uuid4().hex}",
+        generation=1,
+        cli_package_spec="clawdi@1.2.3-test",
+        locale={"language": "en", "timezone": "UTC"},
+        system={},
+        runtimes={
+            runtime_name: {
+                "enabled": True,
+                "providerMode": "unmanaged",
+                "provider_ids": [],
+                "install": {"source": "official"},
+            }
+        },
+        live_sync={
+            "enabled": True,
+            "agents": [{"agentType": runtime_name, "environmentId": str(env.id)}],
+        },
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        tools={},
+    )
+    fence = V2RuntimeEnvironmentFence(
+        environment_id=env.id,
+        owner_id=env.user_id,
+        deployment_id=deployment_id,
+    )
+    now = datetime.now(UTC)
+    source_revision = "a" * 64
+    etag = '"test-ready"'
+    env.last_sync_at = now
+    db_session.add_all([state, fence])
+    await db_session.flush()
+    db_session.add(
+        HostedRuntimeConfigObservation(
+            environment_id=env.id,
+            observed_at=now,
+            observed_config_generation=state.generation,
+            observed_manifest_etag=etag,
+            observed_source_revision=source_revision,
+            diagnostics={
+                "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+                "reportedAt": now.isoformat(),
+                "runtimeMode": "hosted",
+                "status": "ok",
+                "activeCliVersion": state.cli_package_spec.removeprefix("clawdi@"),
+                "applied": {
+                    "etag": etag,
+                    "sourceRevision": source_revision,
+                    "generation": state.generation,
+                    "instanceId": state.instance_id,
+                    "appliedProviderIds": [],
+                },
+                "boot": None,
+                "cli": None,
+                "convergeError": None,
+            },
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(state)
+    return state
+
+
 @pytest_asyncio.fixture
 async def seed_user(
     db_session: AsyncSession, test_identity: str, request: pytest.FixtureRequest
@@ -253,7 +329,30 @@ async def seed_user(
     fallback target. Without this, write paths that resolve project
     server-side would 500 on a fresh test user.
     """
+    from app.models.channel import (
+        WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM,
+        ChannelAccount,
+        ChannelWhatsAppOnboardingSession,
+    )
     from app.models.project import PROJECT_KIND_PERSONAL, Project
+
+    uses_committed_db = request.node.get_closest_marker("committed_db") is not None
+    platform_account_ids_before: set[uuid.UUID] = set()
+    platform_session_ids_before: set[uuid.UUID] = set()
+    if uses_committed_db:
+        platform_account_ids_before = set(
+            await db_session.scalars(
+                select(ChannelAccount.id).where(ChannelAccount.user_id.is_(None))
+            )
+        )
+        platform_session_ids_before = set(
+            await db_session.scalars(
+                select(ChannelWhatsAppOnboardingSession.id).where(
+                    ChannelWhatsAppOnboardingSession.ownership_kind
+                    == WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM
+                )
+            )
+        )
 
     user = User(
         clerk_id=f"test_{test_identity}",
@@ -272,11 +371,43 @@ async def seed_user(
     db_session.add(personal)
     await db_session.commit()
     await db_session.refresh(user)
+    seed_user_id = user.id
     try:
         yield user
     finally:
-        if request.node.get_closest_marker("committed_db"):
-            await db_session.delete(user)
+        if uses_committed_db:
+            # A failed flush leaves the committed lane unusable until rollback.
+            # Public channel inventory is platform-owned, so deleting the test
+            # tenant no longer cascades through accounts created by the test.
+            await db_session.rollback()
+            platform_account_ids_after = set(
+                await db_session.scalars(
+                    select(ChannelAccount.id).where(ChannelAccount.user_id.is_(None))
+                )
+            )
+            platform_session_ids_after = set(
+                await db_session.scalars(
+                    select(ChannelWhatsAppOnboardingSession.id).where(
+                        ChannelWhatsAppOnboardingSession.ownership_kind
+                        == WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM
+                    )
+                )
+            )
+            created_platform_session_ids = platform_session_ids_after - platform_session_ids_before
+            created_platform_account_ids = platform_account_ids_after - platform_account_ids_before
+            if created_platform_session_ids:
+                await db_session.execute(
+                    delete(ChannelWhatsAppOnboardingSession).where(
+                        ChannelWhatsAppOnboardingSession.id.in_(created_platform_session_ids)
+                    )
+                )
+            if created_platform_account_ids:
+                await db_session.execute(
+                    delete(ChannelAccount).where(
+                        ChannelAccount.id.in_(created_platform_account_ids)
+                    )
+                )
+            await db_session.execute(delete(User).where(User.id == seed_user_id))
             await db_session.commit()
 
 
@@ -355,22 +486,28 @@ async def environment_project(db_session: AsyncSession, seed_user: User):
 
 @pytest_asyncio.fixture
 async def channel_agent(db_session: AsyncSession, seed_user: User):
-    return await create_env_with_project(
+    agent = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id=f"channel-agent-{uuid.uuid4().hex[:8]}",
         machine_name="Channel Test Agent",
+        agent_type="openclaw",
     )
+    await create_test_hosted_runtime_state(db_session, agent, runtime_name="openclaw")
+    return agent
 
 
 @pytest_asyncio.fixture
 async def second_channel_agent(db_session: AsyncSession, seed_user: User):
-    return await create_env_with_project(
+    agent = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id=f"channel-agent-2-{uuid.uuid4().hex[:8]}",
         machine_name="Second Channel Test Agent",
+        agent_type="openclaw",
     )
+    await create_test_hosted_runtime_state(db_session, agent, runtime_name="openclaw")
+    return agent
 
 
 @pytest_asyncio.fixture

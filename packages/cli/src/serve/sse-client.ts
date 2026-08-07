@@ -24,6 +24,12 @@
  * keep a long outage from drifting into an hour-long retry gap.
  */
 
+import { createParser, type EventSourceMessage } from "eventsource-parser";
+import { parseRetryAfter } from "../lib/retry-after";
+import {
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "../lib/skill-sync-protocol";
 import { log, toErrorMessage } from "./log";
 
 /** Events the server emits. Mirrors `bump_skills_revision` on
@@ -32,32 +38,36 @@ import { log, toErrorMessage } from "./log";
  *
  * `project_id` carries the project that owns the affected skill —
  * daemons MUST drop events whose project_id doesn't match their
- * env's default_project_id, otherwise a skill_deleted in project A
- * would prompt env B's daemon to delete its (different) local
- * skill with the same skill_key. The phase-1 design defers
- * server-side filtering to phase 2; daemon-side filtering is the
- * v1 mitigation. */
+ * Agent Project. Skill events are invalidation hints only: the
+ * filesystem-authoritative sync engine re-scans local state and never
+ * downloads or deletes local content in response to Cloud events. */
 export type SkillServerEvent =
 	| {
-			type: "skill_changed";
+			type: "skill_changed" | "agent_skill_changed";
 			skill_key: string;
 			project_id: string;
 			skills_revision: number;
-			/** Tree hash of the bytes the server now stores. The
-			 * daemon uses this to recognize its OWN upload echoing
-			 * back via SSE: if the event's content_hash matches the
-			 * daemon's lastPushedHash for that key, the bytes on
-			 * disk already match and pulling would race a fresher
-			 * local edit. Optional for forward/back compat with
-			 * server versions that didn't carry the field. */
+			/** Optional projection hash retained for wire compatibility.
+			 * It is never authority for local filesystem mutation. */
 			content_hash?: string;
 	  }
 	| {
-			type: "skill_deleted";
+			type: "skill_deleted" | "agent_skill_deleted";
 			skill_key: string;
 			project_id: string;
 			skills_revision: number;
 	  };
+
+type SkillChangedEventType = "skill_changed" | "agent_skill_changed";
+type SkillDeletedEventType = "skill_deleted" | "agent_skill_deleted";
+
+function isSkillChangedEventType(value: unknown): value is SkillChangedEventType {
+	return value === "skill_changed" || value === "agent_skill_changed";
+}
+
+function isSkillDeletedEventType(value: unknown): value is SkillDeletedEventType {
+	return value === "skill_deleted" || value === "agent_skill_deleted";
+}
 
 export type RuntimeManifestChangedEvent = {
 	type: "runtime_manifest_changed";
@@ -70,10 +80,13 @@ const STALE_MS = 60_000;
 const HEARTBEAT_HINT_MS = 25_000;
 const BASE_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
+const MAX_SSE_RETRY_AFTER_MS = 5 * 60 * 1000;
 
 interface Opts {
 	apiUrl: string;
 	apiKey: string;
+	/** Refresh-aware provider used by durable OAuth CLI sessions on reconnect. */
+	getAccessToken?: () => Promise<string>;
 	abort: AbortSignal;
 	onEvent: (event: ServerEvent) => void | Promise<void>;
 	/** Called when the stream connects. Used by the daemon to
@@ -106,13 +119,18 @@ class SseConnectionError extends Error {
 	readonly reason: string;
 	readonly httpStatus?: number;
 	readonly requestId?: string;
+	readonly retryAfterMs?: number;
 
-	constructor(reason: string, fields?: { httpStatus?: number; requestId?: string | null }) {
+	constructor(
+		reason: string,
+		fields?: { httpStatus?: number; requestId?: string | null; retryAfterMs?: number | null },
+	) {
 		super(reason);
 		this.name = "SseConnectionError";
 		this.reason = reason;
 		this.httpStatus = fields?.httpStatus;
 		this.requestId = fields?.requestId ?? undefined;
+		this.retryAfterMs = fields?.retryAfterMs ?? undefined;
 	}
 }
 
@@ -163,11 +181,7 @@ export async function consumeSse(opts: Opts): Promise<void> {
 				opts.onAuthFailure?.();
 				return;
 			}
-			// Honor Retry-After on 429 rate-limit. The error message
-			// carries the value as `rate_limited:<seconds>`; parse
-			// it and use as the floor for this reconnect's wait.
-			const rateLimitMs = parseRateLimit(error.reason);
-			const wait = rateLimitMs ?? backoffMs(attempt);
+			const wait = error.retry_after_ms ?? backoffMs(attempt);
 			const info = buildReconnectInfo({
 				reason: error.reason,
 				attempt,
@@ -220,43 +234,16 @@ function pruneUndefined(fields: Record<string, unknown>): Record<string, unknown
 	return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
 
-function parseRateLimit(reason: string): number | null {
-	if (!reason.startsWith("rate_limited:")) return null;
-	const raw = reason.slice("rate_limited:".length).trim();
-	if (!raw) return null;
-	// RFC 7231 §7.1.3 allows two formats for Retry-After:
-	//   - delta-seconds (integer)
-	//   - HTTP-date (RFC 1123 format, e.g. "Wed, 21 Oct 2015 07:28:00 GMT")
-	// Most servers send seconds, but Cloudflare and some CDNs send
-	// dates. Try seconds first; if the value looks non-numeric, fall
-	// through to Date.parse.
-	let ms: number;
-	const asSeconds = Number.parseInt(raw, 10);
-	if (Number.isFinite(asSeconds) && /^\s*\d+\s*$/.test(raw)) {
-		ms = asSeconds * 1000;
-	} else {
-		const t = Date.parse(raw);
-		if (!Number.isFinite(t)) {
-			log.warn("sse.retry_after_unparseable", { value: raw });
-			return null;
-		}
-		ms = t - Date.now();
-	}
-	if (ms <= 0) return null;
-	// Clamp at 5 minutes — if the server says wait an hour, that's
-	// almost certainly a misbehaving proxy, and we'd rather cap the
-	// daemon's silence to keep heartbeats flowing than sleep blind.
-	return Math.min(ms, 5 * 60 * 1000);
-}
-
 async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise<void> {
 	const url = `${opts.apiUrl.replace(/\/+$/, "")}/v1/sync/events`;
+	const accessToken = opts.getAccessToken ? await opts.getAccessToken() : opts.apiKey;
 	const res = await fetch(url, {
 		method: "GET",
 		headers: {
-			Authorization: `Bearer ${opts.apiKey}`,
+			Authorization: `Bearer ${accessToken}`,
 			Accept: "text/event-stream",
 			"Cache-Control": "no-cache",
+			[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 		},
 		signal: opts.abort,
 	});
@@ -268,9 +255,15 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 		});
 	}
 	if (res.status === 429) {
-		throw new SseConnectionError(`rate_limited:${res.headers.get("retry-after") ?? ""}`, {
+		const retryAfter = res.headers.get("retry-after");
+		const retryAfterMs = parseRetryAfter(retryAfter, { maxMs: MAX_SSE_RETRY_AFTER_MS });
+		if (retryAfter !== null && retryAfterMs === null) {
+			log.warn("sse.retry_after_unparseable", { value: retryAfter });
+		}
+		throw new SseConnectionError("rate_limited", {
 			httpStatus: res.status,
 			requestId: res.headers.get("x-request-id"),
+			retryAfterMs,
 		});
 	}
 	if (!res.ok) {
@@ -288,7 +281,6 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 
 	const reader = res.body.getReader();
 	const decoder = new TextDecoder("utf-8");
-	let buffer = "";
 	let lastChunkAt = Date.now();
 	let staleDetected = false;
 
@@ -308,6 +300,23 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 	}, HEARTBEAT_HINT_MS);
 
 	let firstByteFired = false;
+	let trailingBareCr = false;
+	const pendingEvents: EventSourceMessage[] = [];
+	const parser = createParser({
+		onEvent: (event) => pendingEvents.push(event),
+		onError: (error) => log.warn("sse.framing_invalid", { error: toErrorMessage(error) }),
+	});
+	const drainEvents = async (): Promise<void> => {
+		while (pendingEvents.length > 0) {
+			const parsed = parseEventMessage(pendingEvents.shift());
+			if (parsed) await opts.onEvent(parsed);
+		}
+	};
+	const feedDecodedChunk = (chunk: string): void => {
+		if (chunk.length === 0) return;
+		trailingBareCr = chunk.endsWith("\r");
+		parser.feed(chunk);
+	};
 	try {
 		while (true) {
 			const { value, done } = await reader.read();
@@ -319,6 +328,17 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 				// resets to 0, and the daemon hammers the server
 				// every cycle.
 				if (staleDetected) throw new Error("stale");
+				feedDecodedChunk(decoder.decode());
+				// A CR at the true end of the decoded stream is a complete line
+				// terminator, but the incremental parser holds it in case an LF
+				// arrives in the next chunk. Resolve only that ambiguity: adding
+				// an LF after any other ending would synthesize an empty line and
+				// incorrectly dispatch an incomplete final event.
+				if (trailingBareCr) parser.feed("\n");
+				// WHATWG requires pending event data to be discarded at EOF when
+				// no final empty line was received.
+				parser.reset();
+				await drainEvents();
 				return;
 			}
 			if (!firstByteFired) {
@@ -326,18 +346,8 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 				opts.onFirstByte?.();
 			}
 			lastChunkAt = Date.now();
-			buffer += decoder.decode(value, { stream: true });
-
-			// SSE record terminator is a blank line. Process every
-			// completed record and keep the partial tail in `buffer`.
-			let split: number = buffer.indexOf("\n\n");
-			while (split !== -1) {
-				const record = buffer.slice(0, split);
-				buffer = buffer.slice(split + 2);
-				split = buffer.indexOf("\n\n");
-				const parsed = parseRecord(record);
-				if (parsed) await opts.onEvent(parsed);
-			}
+			feedDecodedChunk(decoder.decode(value, { stream: true }));
+			await drainEvents();
 		}
 	} finally {
 		clearInterval(stale);
@@ -349,32 +359,26 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
  * tests can drive synthetic byte sequences without standing up a
  * full SSE round-trip. */
 export function parseRecord(record: string): ServerEvent | null {
-	let eventType = "";
-	let dataPayload = "";
-	for (const line of record.split("\n")) {
-		if (!line || line.startsWith(":")) continue;
-		const colon = line.indexOf(":");
-		if (colon === -1) continue;
-		const field = line.slice(0, colon);
-		// SSE allows one optional space after the colon.
-		const value = line.slice(colon + 1).replace(/^ /, "");
-		if (field === "event") eventType = value;
-		else if (field === "data") dataPayload += dataPayload ? `\n${value}` : value;
-	}
-	if (!eventType || !dataPayload) return null;
+	let message: EventSourceMessage | undefined;
+	createParser({ onEvent: (event) => (message = event) }).feed(`${record}\n\n`);
+	return parseEventMessage(message);
+}
+
+function parseEventMessage(message: EventSourceMessage | undefined): ServerEvent | null {
+	if (!message?.event || !message.data) return null;
 
 	try {
-		const parsed = parseServerEvent(JSON.parse(dataPayload) as unknown);
+		const parsed = parseServerEvent(JSON.parse(message.data) as unknown);
 		if (!parsed) {
-			log.warn("sse.event_invalid", { event_type: eventType });
+			log.warn("sse.event_invalid", { event_type: message.event });
 			return null;
 		}
-		if (parsed.type !== eventType) {
-			log.warn("sse.event_type_mismatch", { header: eventType, body_type: parsed.type });
+		if (parsed.type !== message.event) {
+			log.warn("sse.event_type_mismatch", { header: message.event, body_type: parsed.type });
 		}
 		return parsed;
 	} catch (e) {
-		log.warn("sse.parse_failed", { record, error: toErrorMessage(e) });
+		log.warn("sse.parse_failed", { data: message.data, error: toErrorMessage(e) });
 		return null;
 	}
 }
@@ -387,7 +391,9 @@ function parseServerEvent(value: unknown): ServerEvent | null {
 			? { type: event.type, environment_id: event.environment_id }
 			: null;
 	}
-	if (event.type !== "skill_changed" && event.type !== "skill_deleted") return null;
+	const changed = isSkillChangedEventType(event.type);
+	const deleted = isSkillDeletedEventType(event.type);
+	if (!changed && !deleted) return null;
 	if (
 		typeof event.skill_key !== "string" ||
 		event.skill_key.length === 0 ||
@@ -398,28 +404,36 @@ function parseServerEvent(value: unknown): ServerEvent | null {
 	) {
 		return null;
 	}
-	return event.type === "skill_changed"
-		? {
-				type: event.type,
-				skill_key: event.skill_key,
-				project_id: event.project_id,
-				skills_revision: event.skills_revision,
-				...(typeof event.content_hash === "string" ? { content_hash: event.content_hash } : {}),
-			}
-		: {
-				type: event.type,
-				skill_key: event.skill_key,
-				project_id: event.project_id,
-				skills_revision: event.skills_revision,
-			};
+	if (changed && isSkillChangedEventType(event.type)) {
+		return {
+			type: event.type,
+			skill_key: event.skill_key,
+			project_id: event.project_id,
+			skills_revision: event.skills_revision,
+			...(typeof event.content_hash === "string" ? { content_hash: event.content_hash } : {}),
+		};
+	}
+	if (!isSkillDeletedEventType(event.type)) return null;
+	return {
+		type: event.type,
+		skill_key: event.skill_key,
+		project_id: event.project_id,
+		skills_revision: event.skills_revision,
+	};
 }
 
-function errorInfo(err: unknown): { reason: string; http_status?: number; request_id?: string } {
+function errorInfo(err: unknown): {
+	reason: string;
+	http_status?: number;
+	request_id?: string;
+	retry_after_ms?: number;
+} {
 	if (err instanceof SseConnectionError) {
 		return {
 			reason: err.reason,
 			http_status: err.httpStatus,
 			request_id: err.requestId,
+			retry_after_ms: err.retryAfterMs,
 		};
 	}
 	if (!(err instanceof Error)) return { reason: "unknown" };

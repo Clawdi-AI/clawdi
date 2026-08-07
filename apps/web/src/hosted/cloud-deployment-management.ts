@@ -2,11 +2,11 @@ import type { HostedDeployment } from "@/hosted/billing/contracts";
 
 export type CloudDeploymentManagementGate = {
 	canCreateCloudAgents: boolean;
-	deployments: readonly Pick<HostedDeployment, "id">[] | null | undefined;
+	deployments: readonly HostedDeployment[] | null | undefined;
 };
 
 export function hasExistingCloudDeployments(
-	deployments: readonly Pick<HostedDeployment, "id">[] | null | undefined,
+	deployments: readonly HostedDeployment[] | null | undefined,
 ): boolean {
 	return (deployments?.length ?? 0) > 0;
 }

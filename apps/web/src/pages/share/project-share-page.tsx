@@ -1,6 +1,5 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
@@ -12,6 +11,7 @@ import {
 	ShieldCheck,
 	Sparkles,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 import { projectDetailHref } from "@/lib/project-resource-model";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /**
  * Public project-share landing page.
@@ -76,33 +77,51 @@ export default function SharePage({ token }: { token: string }) {
 	const router = useRouter();
 	const { isSignedIn, getToken } = useDashboardAuth();
 	const { user } = useCurrentUser();
+	const previewRequestRef = useRef(0);
+	const [preview, setPreview] = useState<{
+		data: SharePreview | null;
+		error: unknown;
+		isLoading: boolean;
+	}>({ data: null, error: null, isLoading: true });
+	const [upgradeSucceeded, setUpgradeSucceeded] = useState(false);
 
-	const preview = useQuery({
-		queryKey: ["share-preview", token],
-		queryFn: async (): Promise<SharePreview> => {
-			const result = await api.GET("/v1/share/{token}/preview", {
-				params: { path: { token } },
-			});
-			if (result.error !== undefined) throw shareErrorFromApi(result.response.status, result.error);
-			return unwrap(result);
-		},
-		retry: false,
-	});
+	useEffect(() => {
+		const requestId = previewRequestRef.current + 1;
+		previewRequestRef.current = requestId;
+		setPreview({ data: null, error: null, isLoading: true });
+		void (async () => {
+			try {
+				const result = await api.GET("/v1/share/{token}/preview", {
+					params: { path: { token } },
+				});
+				if (result.error !== undefined)
+					throw shareErrorFromApi(result.response.status, result.error);
+				if (previewRequestRef.current === requestId) {
+					setPreview({ data: unwrap(result), error: null, isLoading: false });
+				}
+			} catch (error) {
+				if (previewRequestRef.current === requestId) {
+					setPreview({ data: null, error, isLoading: false });
+				}
+			}
+		})();
+		return () => {
+			previewRequestRef.current += 1;
+		};
+	}, [api, token]);
 
-	const upgrade = useMutation({
-		mutationFn: async () => {
-			const bearer = await getToken();
-			if (!bearer) throw new ShareError("unknown");
-			const result = await api.POST("/v1/share/{token}/upgrade", {
-				params: { path: { token } },
-				body: { use_as: "attached" },
-			});
-			if (result.error !== undefined) throw shareErrorFromApi(result.response.status, result.error);
-			return unwrap(result);
-		},
-		onSuccess: (result) => {
-			void router.navigate({ href: `${projectDetailHref(result.project_id)}?joined=share` });
-		},
+	const upgrade = useSensitiveAction(async () => {
+		const bearer = await getToken();
+		if (!bearer) throw new ShareError("unknown");
+		const result = await api.POST("/v1/share/{token}/upgrade", {
+			params: { path: { token } },
+			body: { use_as: "attached" },
+		});
+		if (result.error !== undefined) throw shareErrorFromApi(result.response.status, result.error);
+		const body = unwrap(result);
+		setUpgradeSucceeded(true);
+		void router.navigate({ href: `${projectDetailHref(body.project_id)}?joined=share` });
+		return body;
 	});
 
 	if (preview.isLoading) {
@@ -162,7 +181,7 @@ export default function SharePage({ token }: { token: string }) {
 
 					<Separator />
 
-					{upgrade.isSuccess ? (
+					{upgradeSucceeded ? (
 						<Alert>
 							<CheckCircle2 />
 							<AlertTitle>You're In</AlertTitle>
@@ -180,7 +199,7 @@ export default function SharePage({ token }: { token: string }) {
 					) : isSignedIn ? (
 						<div className="space-y-3">
 							<Button
-								onClick={() => upgrade.mutate()}
+								onClick={() => void upgrade.execute().catch(() => undefined)}
 								disabled={upgrade.isPending}
 								className="w-full"
 								size="lg"
@@ -323,14 +342,14 @@ function CopyableCommand({ command }: { command: string }) {
 					if (typeof navigator !== "undefined" && navigator.clipboard) {
 						navigator.clipboard
 							.writeText(command)
-							.then(() => toast.success("Command Copied"))
+							.then(() => toast.success("Command copied"))
 							.catch(() =>
-								toast.error("Couldn't Copy", {
+								toast.error("Couldn't copy", {
 									description: "Select the command and copy it manually.",
 								}),
 							);
 					} else {
-						toast.error("Couldn't Copy", {
+						toast.error("Couldn't copy", {
 							description: "Select the command and copy it manually.",
 						});
 					}
@@ -380,7 +399,7 @@ function titleForError(code: ShareErrorCode): string {
 		case "already_owner":
 			return "That's Your Project";
 		default:
-			return "Couldn't Load This Share";
+			return "Couldn't load this share";
 	}
 }
 

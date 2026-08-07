@@ -38,10 +38,7 @@ import {
 } from "../lib/ai-provider-test";
 import { ApiClient } from "../lib/api-client";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
-import {
-	collectAgentCredentialProfilePayload,
-	materializeAgentCredentialProfilePayload,
-} from "./agent-credentials";
+import { collectAgentCredentialProfilePayload } from "./agent-credentials";
 
 interface AiProviderAddOptions {
 	type?: string;
@@ -123,15 +120,6 @@ interface AiProviderImportAuthOptions {
 	json?: boolean;
 }
 
-interface AiProviderMaterializeAuthOptions {
-	project?: string;
-	to?: string;
-	yes?: boolean;
-	dryRun?: boolean;
-	json?: boolean;
-	backup?: boolean;
-}
-
 interface AiProviderConnectOptions {
 	method?: string;
 	tool?: string;
@@ -156,13 +144,6 @@ interface AiProviderBackendResponse {
 	auth: AiProviderAuth;
 	models?: AiProvider["models"] | null;
 	runtime_env_name?: string | null;
-}
-
-interface AiProviderAuthResolveBackendResponse {
-	auth_type: AiProviderAuth["type"];
-	payload?: string | null;
-	tool?: string | null;
-	profile?: string | null;
 }
 
 interface AiProviderOAuthStartBackendResponse {
@@ -442,43 +423,6 @@ export async function aiProviderImportAuthCommand(
 		chalk.green(
 			`✓ Bound ${providerId} auth to agent profile ${collected.tool}/${collected.profile}`,
 		),
-	);
-}
-
-export async function aiProviderMaterializeAuthCommand(
-	providerId: string,
-	opts: AiProviderMaterializeAuthOptions = {},
-): Promise<void> {
-	if (opts.project) {
-		throw new Error("AI Provider auth is account-global; --project is not supported here.");
-	}
-	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
-	const provider = findProvider(catalog, providerId);
-	if (provider.auth.type !== "agent_profile") {
-		throw new Error(
-			`AI Provider ${providerId} does not use agent_profile auth. Current auth: ${describeAuth(provider.auth)}`,
-		);
-	}
-	assertSupportedAgentProfileTool(provider.auth.tool);
-	const profile = provider.auth.profile;
-	const resolved = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
-		`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
-		{ profile },
-	);
-	if (!resolved.payload) {
-		throw new Error(`AI Provider ${providerId} auth resolve returned no credential payload.`);
-	}
-	await materializeAgentCredentialProfilePayload(
-		resolved.tool ?? provider.auth.tool,
-		resolved.profile ?? profile,
-		resolved.payload,
-		{
-			to: opts.to,
-			yes: opts.yes,
-			dryRun: opts.dryRun,
-			json: opts.json,
-			backup: opts.backup,
-		},
 	);
 }
 

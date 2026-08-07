@@ -1,25 +1,30 @@
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	accessSync,
 	constants,
 	existsSync,
 	mkdirSync,
+	mkdtempSync,
 	readdirSync,
 	readFileSync,
 	readlinkSync,
 	renameSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
-import { chmodBestEffort, writePrivateFileAtomic } from "../lib/private-file";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { z } from "zod";
 import {
+	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	hostedCliPackageSpecSchema,
 	hostedFixtureCliPackageSpecSchema,
 	type RuntimeManifest,
 } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 export interface RuntimeCliUpdateResult {
 	status: "not_requested" | "current" | "installed" | "deferred" | "error";
@@ -30,19 +35,33 @@ export interface RuntimeCliUpdateResult {
 	activePath: string;
 	activeTarget: string | null;
 	version: string | null;
+	// The active managed target no longer matches the code in this process.
+	// Callers must stop before manifest convergence or any authority side effect.
+	selfReexec: boolean;
 	error?: string | null;
 }
 
 interface RuntimeCliBootstrapStatus {
+	schemaVersion?: string;
 	status?: string;
 	source?: string;
 	packageSpec?: string;
 	registry?: string | null;
 	npmPrefix?: string;
+	npmCache?: string;
 	activePath?: string;
 	activeTarget?: string;
 	version?: string;
+	verification?: RuntimeCliVerification;
+	error?: string | null;
 }
+
+type RuntimeCliInstallIdentity = Required<
+	Pick<
+		RuntimeCliBootstrapStatus,
+		"packageSpec" | "registry" | "npmPrefix" | "activeTarget" | "version"
+	>
+>;
 
 interface RuntimeCliBadVersion {
 	packageSpec: string;
@@ -52,25 +71,26 @@ interface RuntimeCliBadVersion {
 	markedAt: string;
 }
 
-interface RuntimeCliPendingUpgrade {
-	packageSpec: string;
-	registry: string | null;
-	version: string;
-	npmPrefix: string;
-	activeTarget: string;
-	previousStatus: RuntimeCliBootstrapStatus | null;
-	previousActiveTarget: string | null;
-	previousNpmPrefix: string | null;
-	previousVersion: string | null;
-	manifestGeneration: number | null;
-	manifestEtag: string | null;
+interface RuntimeCliVerification {
+	verifiedAt: string;
+	device: number;
+	inode: number;
+	size: number;
+	modifiedAtMs: number;
+}
+
+interface RuntimeCliUpgradeTransaction {
+	phase: "prepared" | "activated";
+	previousIdentity: RuntimeCliInstallIdentity | null;
+	newIdentity: RuntimeCliInstallIdentity;
 	rollbackEligible: boolean;
 	installedAt: string;
+	rollback: { reason: string; markedAt: string } | null;
 }
 
 interface RuntimeCliUpgradeState {
 	schemaVersion?: string;
-	pendingUpgrade?: RuntimeCliPendingUpgrade | null;
+	transaction?: RuntimeCliUpgradeTransaction | null;
 	badVersions?: RuntimeCliBadVersion[];
 }
 
@@ -86,12 +106,58 @@ export interface RuntimeCliRollbackResult {
 const NPM_INSTALL_TIMEOUT_MS = 180_000;
 const VERSION_SMOKE_TIMEOUT_MS = 20_000;
 const RUNTIME_VERIFY_TIMEOUT_MS = 20_000;
+const CLI_VERIFY_CACHE_MAX_AGE_MS = 300_000;
 
-interface RuntimeCliManifestIdentity {
-	generation?: number | null;
-	etag?: string | null;
-	previouslyApplied?: boolean;
+interface RuntimeCliReconciliationOptions {
+	runningVersion?: string;
 }
+
+export interface RuntimeCliReconciliationResult {
+	status: "unchanged" | "activated" | "rolled_back";
+	selfReexec: boolean;
+}
+
+const cliInstallIdentityStateSchema = z
+	.object({
+		packageSpec: z.string().min(1),
+		registry: z.string().min(1).nullable(),
+		npmPrefix: z.string().min(1),
+		activeTarget: z.string().min(1),
+		version: z.string().min(1),
+	})
+	.strict();
+
+const cliBadVersionStateSchema = z
+	.object({
+		packageSpec: z.string().min(1),
+		registry: z.string().min(1).nullable(),
+		version: z.string().min(1),
+		reason: z.string(),
+		markedAt: z.string().min(1),
+	})
+	.strict();
+
+const cliUpgradeTransactionStateSchema = z
+	.object({
+		phase: z.enum(["prepared", "activated"]),
+		previousIdentity: cliInstallIdentityStateSchema.nullable(),
+		newIdentity: cliInstallIdentityStateSchema,
+		rollbackEligible: z.boolean(),
+		installedAt: z.string().min(1),
+		rollback: z
+			.object({ reason: z.string(), markedAt: z.string().min(1) })
+			.strict()
+			.nullable(),
+	})
+	.strict();
+
+const cliUpgradeStateV2Schema = z
+	.object({
+		schemaVersion: z.literal("clawdi.cliUpgradeState.v2"),
+		transaction: cliUpgradeTransactionStateSchema.nullable(),
+		badVersions: z.array(cliBadVersionStateSchema),
+	})
+	.strict();
 
 export function applyRuntimeCliDesiredState(
 	manifest: RuntimeManifest,
@@ -99,9 +165,27 @@ export function applyRuntimeCliDesiredState(
 	opts: {
 		deferInstall?: boolean;
 		deferReason?: string;
-		manifestIdentity?: RuntimeCliManifestIdentity;
+		rollbackEligible?: boolean;
+		runningVersion?: string;
 	} = {},
 ): RuntimeCliUpdateResult {
+	const reconciliation = reconcileCliUpgradeTransaction(paths, opts);
+	if (reconciliation.selfReexec) {
+		const status = readBootstrapStatus(paths.cliBootstrapStatus);
+		return baseResult(
+			"deferred",
+			paths,
+			{
+				packageSpec: manifest.clawdiCli?.packageSpec?.trim() || null,
+				registry: status?.registry ?? null,
+				npmPrefix: status?.npmPrefix ?? paths.cliNpmPrefix,
+				activeTarget: status?.activeTarget ?? null,
+				version: status?.version ?? null,
+				error: `CLI transaction recovery ${reconciliation.status}; re-exec is required`,
+			},
+			true,
+		);
+	}
 	const packageSpec = manifest.clawdiCli?.packageSpec?.trim();
 	if (!packageSpec) {
 		return baseResult("not_requested", paths, {
@@ -125,13 +209,17 @@ export function applyRuntimeCliDesiredState(
 	}
 	const recovered = recoverCurrentCliInstallFromActiveLink(paths, packageSpec);
 	if (recovered) {
-		writeCliBootstrapStatus(paths, {
-			packageSpec,
-			registry,
-			npmPrefix: recovered.npmPrefix,
-			activeTarget: recovered.activeTarget,
-			version: recovered.version,
-		});
+		writeCliBootstrapStatus(
+			paths,
+			{
+				packageSpec,
+				registry,
+				npmPrefix: recovered.npmPrefix,
+				activeTarget: recovered.activeTarget,
+				version: recovered.version,
+			},
+			recovered.verification,
+		);
 		return baseResult("current", paths, {
 			packageSpec,
 			registry,
@@ -151,35 +239,61 @@ export function applyRuntimeCliDesiredState(
 		});
 	}
 
-	const previousActiveTarget = current?.activeTarget ?? activeLinkTarget(paths.cliManagedBin);
-	const previousActivePrefix = previousActiveTarget
-		? prefixForActiveTarget(previousActiveTarget)
-		: null;
+	const previousIdentity = lastGoodCliIdentity(paths, current);
+	if (
+		previousIdentity &&
+		activeLinkTarget(paths.cliManagedBin) === previousIdentity.activeTarget &&
+		(current?.status !== "installed" ||
+			current.source !== "npm" ||
+			current.packageSpec !== previousIdentity.packageSpec ||
+			(current.registry ?? null) !== previousIdentity.registry ||
+			current.npmPrefix !== previousIdentity.npmPrefix ||
+			current.activePath !== paths.cliManagedBin ||
+			current.activeTarget !== previousIdentity.activeTarget ||
+			current.version !== previousIdentity.version)
+	) {
+		const verification = verifyStoredCliIdentity(paths, previousIdentity);
+		if (!verification) throw new Error("active clawdi CLI changed during verification");
+		writeCliBootstrapStatus(paths, previousIdentity, verification);
+	}
 	const installed = installCliPackage(paths, packageSpec, registry);
+	prepareCliUpgradeTransaction(paths, {
+		newIdentity: {
+			packageSpec,
+			registry,
+			npmPrefix: installed.npmPrefix,
+			activeTarget: installed.activeTarget,
+			version: installed.version,
+		},
+		previousIdentity,
+		rollbackEligible: opts.rollbackEligible === true && previousIdentity !== null,
+	});
 	swapActiveCli(paths.cliManagedBin, installed.activeTarget);
-	writeCliBootstrapStatus(paths, {
-		packageSpec,
-		registry,
-		npmPrefix: installed.npmPrefix,
-		activeTarget: installed.activeTarget,
-		version: installed.version,
-	});
-	markPendingCliUpgrade(paths, {
-		packageSpec,
-		registry,
-		installed,
-		previousStatus: current,
-		previousActiveTarget,
-		manifestIdentity: opts.manifestIdentity,
-	});
-	pruneCliPackagePrefixes(paths, [installed.npmPrefix, previousActivePrefix]);
-	return baseResult("installed", paths, {
-		packageSpec,
-		registry,
-		npmPrefix: installed.npmPrefix,
-		activeTarget: installed.activeTarget,
-		version: installed.version,
-	});
+	writeCliBootstrapStatus(
+		paths,
+		{
+			packageSpec,
+			registry,
+			npmPrefix: installed.npmPrefix,
+			activeTarget: installed.activeTarget,
+			version: installed.version,
+		},
+		installed.verification,
+	);
+	activateCliUpgradeTransaction(paths);
+	pruneCliPackagePrefixes(paths, [installed.npmPrefix, previousIdentity?.npmPrefix ?? null]);
+	return baseResult(
+		"installed",
+		paths,
+		{
+			packageSpec,
+			registry,
+			npmPrefix: installed.npmPrefix,
+			activeTarget: installed.activeTarget,
+			version: installed.version,
+		},
+		true,
+	);
 }
 
 type RuntimeCliResultValues = Pick<
@@ -192,6 +306,7 @@ function baseResult(
 	status: RuntimeCliUpdateResult["status"],
 	paths: RuntimePaths,
 	values: RuntimeCliResultValues,
+	selfReexec = false,
 ): RuntimeCliUpdateResult {
 	return {
 		status,
@@ -199,6 +314,7 @@ function baseResult(
 		npmPrefix: values.npmPrefix ?? paths.cliNpmPrefix,
 		npmCache: values.npmCache ?? paths.cliNpmCache,
 		activePath: paths.cliManagedBin,
+		selfReexec,
 	};
 }
 
@@ -240,6 +356,20 @@ function readBootstrapStatus(path: string): RuntimeCliBootstrapStatus | null {
 	}
 }
 
+function ensureManagedCliDirectory(path: string): void {
+	mkdirSync(path, { recursive: true });
+}
+
+function isManagedCliPrefix(paths: RuntimePaths, path: string): boolean {
+	const root = resolve(paths.cliNpmPrefix);
+	const candidate = resolve(path);
+	return candidate === root || candidate.startsWith(`${root}/`);
+}
+
+function isManagedCliTarget(paths: RuntimePaths, path: string): boolean {
+	return isManagedCliPrefix(paths, path) && path.endsWith("/bin/clawdi");
+}
+
 function isCurrentCliInstall(
 	status: RuntimeCliBootstrapStatus | null,
 	paths: RuntimePaths,
@@ -248,31 +378,151 @@ function isCurrentCliInstall(
 ): status is RuntimeCliBootstrapStatus & { activeTarget: string } {
 	if (!status) return false;
 	if (status.status !== "installed" || status.source !== "npm") return false;
-	if (status.packageSpec !== packageSpec) return false;
-	if ((status.registry ?? null) !== registry) return false;
 	if (status.activePath !== paths.cliManagedBin) return false;
-	if (!status.activeTarget || !isExecutable(status.activeTarget)) return false;
+	if (!status.activeTarget) return false;
+	if (!isManagedCliTarget(paths, status.activeTarget)) return false;
+	if (activeLinkTarget(paths.cliManagedBin) !== status.activeTarget) return false;
+	if (
+		!status.npmPrefix ||
+		resolve(status.npmPrefix) !== resolve(prefixForActiveTarget(status.activeTarget))
+	) {
+		return false;
+	}
+	if (!isExecutable(status.activeTarget)) return false;
+	if (!status.version) return false;
 	const exactVersion = exactNpmPackageVersion(packageSpec);
 	if (exactVersion && status.version !== exactVersion) return false;
-	return isExecutable(paths.cliManagedBin);
+	const pairedFixtureMatches =
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS === "1" &&
+		status.packageSpec === HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE &&
+		exactVersion === status.version;
+	if (status.packageSpec !== packageSpec && !pairedFixtureMatches) return false;
+	if ((status.registry ?? null) !== registry) return false;
+	if (!isExecutable(paths.cliManagedBin)) return false;
+	const fileIdentity = cliVerificationIdentity(status.activeTarget);
+	if (
+		fileIdentity &&
+		status.verification &&
+		verificationIdentityMatches(status.verification, fileIdentity) &&
+		verificationIsFresh(status.verification)
+	) {
+		return true;
+	}
+	if (!fileIdentity) return false;
+	try {
+		if (smokeCliVersion(status.activeTarget) !== status.version) return false;
+		verifyCliRuntime(status.activeTarget);
+		const verification = finishCliVerification(status.activeTarget, fileIdentity);
+		writeCliBootstrapStatus(
+			paths,
+			{
+				packageSpec: pairedFixtureMatches ? HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE : packageSpec,
+				registry,
+				npmPrefix: status.npmPrefix,
+				activeTarget: status.activeTarget,
+				version: status.version,
+			},
+			verification,
+		);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function verifiedActiveCliIdentity(
+	paths: RuntimePaths,
+	status: RuntimeCliBootstrapStatus | null,
+): RuntimeCliInstallIdentity | null {
+	const activeTarget = activeLinkTarget(paths.cliManagedBin);
+	if (!activeTarget || !isManagedCliTarget(paths, activeTarget)) return null;
+	const npmPrefix = prefixForActiveTarget(activeTarget);
+	if (!isManagedCliPrefix(paths, npmPrefix)) return null;
+	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
+
+	try {
+		const before = cliVerificationIdentity(activeTarget);
+		if (!before) return null;
+		const version = smokeCliVersion(activeTarget);
+		verifyCliRuntime(activeTarget);
+		finishCliVerification(activeTarget, before);
+		const inferredPackageSpec = `clawdi@${version}`;
+		if (!hostedCliPackageSpecSchema.safeParse(inferredPackageSpec).success) return null;
+		const statusPackageSpec = status?.packageSpec;
+		const statusRegistry = status?.registry ?? null;
+		const exactStatusVersion = statusPackageSpec ? exactNpmPackageVersion(statusPackageSpec) : null;
+		const statusMatches =
+			status?.status === "installed" &&
+			status.source === "npm" &&
+			status.activePath === paths.cliManagedBin &&
+			status.activeTarget === activeTarget &&
+			status.npmPrefix !== undefined &&
+			resolve(status.npmPrefix) === resolve(npmPrefix) &&
+			status.version === version &&
+			statusPackageSpec !== undefined &&
+			hostedFixtureCliPackageSpecSchema.safeParse(statusPackageSpec).success &&
+			(exactStatusVersion === null || exactStatusVersion === version) &&
+			(statusRegistry === null || statusRegistry === "https://registry.npmjs.org");
+		return {
+			packageSpec: statusMatches && statusPackageSpec ? statusPackageSpec : inferredPackageSpec,
+			registry: statusMatches ? statusRegistry : null,
+			npmPrefix,
+			activeTarget,
+			version,
+		};
+	} catch {
+		return null;
+	}
+}
+
+function lastGoodCliIdentity(
+	paths: RuntimePaths,
+	status: RuntimeCliBootstrapStatus | null,
+): RuntimeCliInstallIdentity | null {
+	const activeIdentity = verifiedActiveCliIdentity(paths, status);
+	if (!activeIdentity) return null;
+	const transaction = readCliUpgradeState(paths).transaction;
+	if (
+		transaction?.phase !== "activated" ||
+		transaction.rollback ||
+		!transaction.rollbackEligible ||
+		!transaction.previousIdentity ||
+		transaction.newIdentity.activeTarget !== activeIdentity.activeTarget
+	) {
+		return activeIdentity;
+	}
+	return verifyStoredCliIdentity(paths, transaction.previousIdentity)
+		? transaction.previousIdentity
+		: activeIdentity;
 }
 
 function recoverCurrentCliInstallFromActiveLink(
 	paths: RuntimePaths,
 	packageSpec: string,
-): { npmPrefix: string; activeTarget: string; version: string } | null {
+): {
+	npmPrefix: string;
+	activeTarget: string;
+	version: string;
+	verification: RuntimeCliVerification;
+} | null {
 	const desiredVersion = exactNpmPackageVersion(packageSpec);
 	if (!desiredVersion) return null;
 	const npmPrefix = cliPackagePrefix(paths, desiredVersion);
 	const activeTarget = activeLinkTarget(paths.cliManagedBin);
 	if (activeTarget !== join(npmPrefix, "bin", "clawdi")) return null;
+	if (!isManagedCliTarget(paths, activeTarget)) return null;
 	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
+	const before = cliVerificationIdentity(activeTarget);
+	if (!before) return null;
 	const version = smokeCliVersion(activeTarget);
 	if (version !== desiredVersion) return null;
+	verifyCliRuntime(activeTarget);
+	const verification = finishCliVerification(activeTarget, before);
 	return {
 		npmPrefix: prefixForActiveTarget(activeTarget),
 		activeTarget,
 		version,
+		verification,
 	};
 }
 
@@ -285,7 +535,15 @@ function installCliPackage(
 	paths: RuntimePaths,
 	packageSpec: string,
 	registry: string | null,
-): { npmPrefix: string; activeTarget: string; version: string } {
+): {
+	npmPrefix: string;
+	activeTarget: string;
+	version: string;
+	verification: RuntimeCliVerification;
+} {
+	// The version-specific prefix is load-bearing: a fresh candidate is verified
+	// before cliManagedBin switches atomically, and the journal can restore the
+	// previous target without relying on an in-place npm rollback.
 	const installPlan = cliInstallPlan(paths, packageSpec, registry);
 	if (isBadCliVersion(paths, packageSpec, registry, installPlan.version)) {
 		throw new Error(
@@ -293,13 +551,11 @@ function installCliPackage(
 		);
 	}
 	const npmPrefix = installPlan.npmPrefix;
-	mkdirSync(dirname(paths.cliManagedBin), { recursive: true });
-	mkdirSync(npmPrefix, { recursive: true });
-	mkdirSync(paths.cliNpmCache, { recursive: true });
-	chmodBestEffort(dirname(paths.cliManagedBin), 0o755);
-	chmodBestEffort(paths.cliNpmPrefix, 0o755);
-	chmodBestEffort(npmPrefix, 0o755);
-	chmodBestEffort(paths.cliNpmCache, 0o755);
+	ensureManagedCliDirectory(dirname(dirname(paths.cliManagedBin)));
+	ensureManagedCliDirectory(dirname(paths.cliManagedBin));
+	ensureManagedCliDirectory(paths.cliNpmPrefix);
+	ensureManagedCliDirectory(npmPrefix);
+	ensureManagedCliDirectory(paths.cliNpmCache);
 
 	const args = [
 		"install",
@@ -345,6 +601,9 @@ function installCliPackage(
 	if (!isExecutable(activeTarget)) {
 		throw new Error(`npm install completed but clawdi bin is missing: ${activeTarget}`);
 	}
+	const before = cliVerificationIdentity(activeTarget);
+	if (!before)
+		throw new Error(`installed clawdi bin disappeared before verification: ${activeTarget}`);
 	const version = smokeCliVersion(activeTarget);
 	const exactVersion = exactNpmPackageVersion(packageSpec);
 	if (exactVersion && version !== exactVersion) {
@@ -353,7 +612,8 @@ function installCliPackage(
 		);
 	}
 	verifyCliRuntime(activeTarget);
-	return { npmPrefix, activeTarget, version };
+	const verification = finishCliVerification(activeTarget, before);
+	return { npmPrefix, activeTarget, version, verification };
 }
 
 function cliInstallPlan(
@@ -391,9 +651,54 @@ function prefixForActiveTarget(activeTarget: string): string {
 	return dirname(dirname(activeTarget));
 }
 
+function cliVerificationIdentity(
+	activeTarget: string,
+): Omit<RuntimeCliVerification, "verifiedAt"> | null {
+	try {
+		const stat = statSync(activeTarget);
+		return {
+			device: stat.dev,
+			inode: stat.ino,
+			size: stat.size,
+			modifiedAtMs: stat.mtimeMs,
+		};
+	} catch {
+		return null;
+	}
+}
+
+function verificationIdentityMatches(
+	verification: Omit<RuntimeCliVerification, "verifiedAt">,
+	identity: Omit<RuntimeCliVerification, "verifiedAt">,
+): boolean {
+	return (
+		verification.device === identity.device &&
+		verification.inode === identity.inode &&
+		verification.size === identity.size &&
+		verification.modifiedAtMs === identity.modifiedAtMs
+	);
+}
+
+function verificationIsFresh(verification: RuntimeCliVerification): boolean {
+	const verifiedAt = Date.parse(verification.verifiedAt);
+	const ageMs = Date.now() - verifiedAt;
+	return Number.isFinite(verifiedAt) && ageMs >= 0 && ageMs < CLI_VERIFY_CACHE_MAX_AGE_MS;
+}
+
+function finishCliVerification(
+	activeTarget: string,
+	before: Omit<RuntimeCliVerification, "verifiedAt">,
+): RuntimeCliVerification {
+	const after = cliVerificationIdentity(activeTarget);
+	if (!after || !verificationIdentityMatches(before, after)) {
+		throw new Error(`clawdi CLI target changed during verification: ${activeTarget}`);
+	}
+	return { verifiedAt: new Date().toISOString(), ...after };
+}
+
 function activeLinkTarget(activePath: string): string | null {
 	try {
-		return readlinkSync(activePath);
+		return resolve(dirname(activePath), readlinkSync(activePath));
 	} catch {
 		return null;
 	}
@@ -444,15 +749,24 @@ function smokeCliVersion(command: string): string {
 }
 
 function verifyCliRuntime(command: string): void {
-	const result = spawnSync(command, ["runtime", "verify", "--json"], {
-		encoding: "utf8",
-		timeout: RUNTIME_VERIFY_TIMEOUT_MS,
-		env: {
-			...process.env,
-			CLAWDI_NO_AUTO_UPDATE: "1",
-			CLAWDI_NO_UPDATE_CHECK: "1",
-		},
-	});
+	const verifyRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-verify-"));
+	let result: SpawnSyncReturns<string>;
+	try {
+		result = spawnSync(command, ["runtime", "verify", "--json"], {
+			encoding: "utf8",
+			timeout: RUNTIME_VERIFY_TIMEOUT_MS,
+			env: {
+				...process.env,
+				HOME: join(verifyRoot, "home"),
+				CLAWDI_SERVICE_STATE_DIR: join(verifyRoot, "state"),
+				CLAWDI_RUN_DIR: join(verifyRoot, "run"),
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+			},
+		});
+	} finally {
+		rmSync(verifyRoot, { recursive: true, force: true });
+	}
 	if (result.status !== 0) {
 		throw new Error(
 			`installed clawdi did not pass runtime verify self-check${
@@ -488,7 +802,8 @@ function verifyCliRuntime(command: string): void {
 
 function swapActiveCli(activePath: string, activeTarget: string): void {
 	const dir = dirname(activePath);
-	mkdirSync(dir, { recursive: true });
+	ensureManagedCliDirectory(dirname(dir));
+	ensureManagedCliDirectory(dir);
 	const tmp = `${dir}/.clawdi.next.${process.pid}.${Date.now()}`;
 	try {
 		rmSync(tmp, { force: true });
@@ -509,8 +824,17 @@ function writeCliBootstrapStatus(
 		activeTarget: string;
 		version: string;
 	},
+	verification?: RuntimeCliVerification,
 ): void {
-	writePrivateFileAtomic(
+	const currentIdentity = cliVerificationIdentity(input.activeTarget);
+	if (
+		verification &&
+		(!currentIdentity || !verificationIdentityMatches(verification, currentIdentity))
+	) {
+		throw new Error(`clawdi CLI target changed after verification: ${input.activeTarget}`);
+	}
+	writeRuntimePlatformFileAtomic(
+		paths,
 		paths.cliBootstrapStatus,
 		`${JSON.stringify(
 			{
@@ -525,23 +849,30 @@ function writeCliBootstrapStatus(
 				activePath: paths.cliManagedBin,
 				activeTarget: input.activeTarget,
 				version: input.version,
+				verification,
 				error: null,
 			},
 			null,
 			2,
 		)}\n`,
-		{ mode: 0o644, dirMode: 0o755 },
+		{ mode: 0o600, dirMode: 0o755 },
 	);
 }
 
 export function rollbackPendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	reason: string,
-	manifestIdentity: RuntimeCliManifestIdentity = {},
 ): RuntimeCliRollbackResult {
+	let transaction: RuntimeCliUpgradeTransaction | null = null;
+	try {
+		transaction = readCliUpgradeState(paths).transaction ?? null;
+		reconcileCliUpgradeTransaction(paths);
+	} catch (error) {
+		return rollbackErrorResult(transaction, error);
+	}
 	const state = readCliUpgradeState(paths);
-	const pending = state.pendingUpgrade ?? null;
-	if (!pending) {
+	transaction = state.transaction ?? null;
+	if (!transaction) {
 		return {
 			status: "not_pending",
 			version: null,
@@ -550,122 +881,437 @@ export function rollbackPendingRuntimeCliUpgrade(
 			previousActiveTarget: null,
 		};
 	}
-	if (!pending.rollbackEligible) {
+	if (!transaction.rollbackEligible || !transaction.previousIdentity) {
 		return {
 			status: "not_pending",
-			version: pending.version,
-			previousVersion: pending.previousVersion,
-			activeTarget: pending.activeTarget,
-			previousActiveTarget: pending.previousActiveTarget,
+			version: transaction.newIdentity.version,
+			previousVersion: transaction.previousIdentity?.version ?? null,
+			activeTarget: transaction.newIdentity.activeTarget,
+			previousActiveTarget: transaction.previousIdentity?.activeTarget ?? null,
 		};
 	}
-	if (!pendingMatchesManifestIdentity(pending, manifestIdentity)) {
-		return {
-			status: "not_pending",
-			version: pending.version,
-			previousVersion: pending.previousVersion,
-			activeTarget: pending.activeTarget,
-			previousActiveTarget: pending.previousActiveTarget,
-		};
-	}
-	if (!pending.previousActiveTarget || !isExecutable(pending.previousActiveTarget)) {
+	if (!verifyStoredCliIdentity(paths, transaction.previousIdentity)) {
 		return {
 			status: "error",
-			version: pending.version,
-			previousVersion: pending.previousVersion,
-			activeTarget: pending.activeTarget,
-			previousActiveTarget: pending.previousActiveTarget,
-			error: "previous clawdi CLI target is missing or not executable",
+			version: transaction.newIdentity.version,
+			previousVersion: transaction.previousIdentity.version,
+			activeTarget: transaction.newIdentity.activeTarget,
+			previousActiveTarget: transaction.previousIdentity.activeTarget,
+			error: "previous clawdi CLI identity is missing, inconsistent, or not executable",
+		};
+	}
+	if (activeLinkTarget(paths.cliManagedBin) !== transaction.newIdentity.activeTarget) {
+		return {
+			status: "error",
+			version: transaction.newIdentity.version,
+			previousVersion: transaction.previousIdentity.version,
+			activeTarget: transaction.newIdentity.activeTarget,
+			previousActiveTarget: transaction.previousIdentity.activeTarget,
+			error: "pending clawdi CLI target is no longer active",
 		};
 	}
 	try {
-		swapActiveCli(paths.cliManagedBin, pending.previousActiveTarget);
-		if (pending.previousStatus?.packageSpec && pending.previousStatus.activeTarget) {
-			writeCliBootstrapStatus(paths, {
-				packageSpec: pending.previousStatus.packageSpec,
-				registry: pending.previousStatus.registry ?? null,
-				npmPrefix:
-					pending.previousStatus.npmPrefix ?? prefixForActiveTarget(pending.previousActiveTarget),
-				activeTarget: pending.previousActiveTarget,
-				version: pending.previousStatus.version ?? pending.previousVersion ?? "unknown",
-			});
-		}
-		const nextState = normalizeCliUpgradeState(state);
-		nextState.pendingUpgrade = null;
-		nextState.badVersions = upsertBadVersion(nextState.badVersions ?? [], {
-			packageSpec: pending.packageSpec,
-			registry: pending.registry,
-			version: pending.version,
-			reason,
-			markedAt: new Date().toISOString(),
-		});
-		writeCliUpgradeState(paths, nextState);
-		pruneCliPackagePrefixes(paths, [pending.previousNpmPrefix]);
+		const rollbackTransaction: RuntimeCliUpgradeTransaction = {
+			...transaction,
+			rollback: { reason, markedAt: new Date().toISOString() },
+		};
+		writeCliUpgradeState(paths, { ...state, transaction: rollbackTransaction });
+		finishCliRollback(paths, rollbackTransaction);
 		return {
 			status: "rolled_back",
-			version: pending.version,
-			previousVersion: pending.previousVersion,
-			activeTarget: pending.activeTarget,
-			previousActiveTarget: pending.previousActiveTarget,
+			version: transaction.newIdentity.version,
+			previousVersion: transaction.previousIdentity.version,
+			activeTarget: transaction.newIdentity.activeTarget,
+			previousActiveTarget: transaction.previousIdentity.activeTarget,
 			error: null,
 		};
 	} catch (error) {
-		return {
-			status: "error",
-			version: pending.version,
-			previousVersion: pending.previousVersion,
-			activeTarget: pending.activeTarget,
-			previousActiveTarget: pending.previousActiveTarget,
-			error: error instanceof Error ? error.message : String(error),
-		};
+		return rollbackErrorResult(transaction, error);
 	}
 }
 
 export function completePendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	currentVersion: string,
-	manifestIdentity: RuntimeCliManifestIdentity = {},
-): void {
+): RuntimeCliReconciliationResult {
+	const reconciliation = reconcileCliUpgradeTransaction(paths, {
+		runningVersion: currentVersion,
+	});
+	if (reconciliation.selfReexec) return reconciliation;
 	const state = readCliUpgradeState(paths);
-	const pending = state.pendingUpgrade ?? null;
-	if (!pending) return;
-	if (pending.version !== currentVersion) return;
-	if (!pendingMatchesManifestIdentity(pending, manifestIdentity)) return;
+	const transaction = state.transaction ?? null;
+	if (transaction?.phase !== "activated" || transaction.rollback) return reconciliation;
+	if (transaction.newIdentity.version !== currentVersion) return reconciliation;
+	if (activeLinkTarget(paths.cliManagedBin) !== transaction.newIdentity.activeTarget) {
+		return reconciliation;
+	}
+	if (!verifyStoredCliIdentity(paths, transaction.newIdentity)) return reconciliation;
 	const nextState = normalizeCliUpgradeState(state);
-	nextState.pendingUpgrade = null;
+	nextState.transaction = null;
 	writeCliUpgradeState(paths, nextState);
+	pruneCliPackagePrefixes(paths, [transaction.newIdentity.npmPrefix]);
+	return reconciliation;
 }
 
-function markPendingCliUpgrade(
+export function reconcilePendingRuntimeCliUpgrade(
+	paths: RuntimePaths,
+	runningVersion: string,
+): RuntimeCliReconciliationResult {
+	return reconcileCliUpgradeTransaction(paths, { runningVersion });
+}
+
+function prepareCliUpgradeTransaction(
 	paths: RuntimePaths,
 	input: {
-		packageSpec: string;
-		registry: string | null;
-		installed: { npmPrefix: string; activeTarget: string; version: string };
-		previousStatus: RuntimeCliBootstrapStatus | null;
-		previousActiveTarget: string | null;
-		manifestIdentity?: RuntimeCliManifestIdentity;
+		newIdentity: RuntimeCliInstallIdentity;
+		previousIdentity: RuntimeCliInstallIdentity | null;
+		rollbackEligible: boolean;
 	},
 ): void {
 	const state = normalizeCliUpgradeState(readCliUpgradeState(paths));
-	state.pendingUpgrade = {
-		packageSpec: input.packageSpec,
-		registry: input.registry,
-		version: input.installed.version,
-		npmPrefix: input.installed.npmPrefix,
-		activeTarget: input.installed.activeTarget,
-		previousStatus: input.previousStatus,
-		previousActiveTarget: input.previousActiveTarget,
-		previousNpmPrefix: input.previousActiveTarget
-			? prefixForActiveTarget(input.previousActiveTarget)
-			: null,
-		previousVersion: input.previousStatus?.version ?? null,
-		manifestGeneration: input.manifestIdentity?.generation ?? null,
-		manifestEtag: input.manifestIdentity?.etag ?? null,
-		rollbackEligible: input.manifestIdentity?.previouslyApplied === true,
+	state.transaction = {
+		phase: "prepared",
+		previousIdentity: input.previousIdentity,
+		newIdentity: input.newIdentity,
+		rollbackEligible: input.rollbackEligible,
 		installedAt: new Date().toISOString(),
+		rollback: null,
 	};
 	writeCliUpgradeState(paths, state);
+}
+
+function activateCliUpgradeTransaction(paths: RuntimePaths): void {
+	const state = readCliUpgradeState(paths);
+	const transaction = state.transaction;
+	if (transaction?.phase !== "prepared") {
+		throw new Error("prepared clawdi CLI upgrade transaction is missing");
+	}
+	if (activeLinkTarget(paths.cliManagedBin) !== transaction.newIdentity.activeTarget) {
+		throw new Error("prepared clawdi CLI target is not active");
+	}
+	writeCliUpgradeState(paths, {
+		...state,
+		transaction: { ...transaction, phase: "activated" },
+	});
+}
+
+function reconcileCliUpgradeTransaction(
+	paths: RuntimePaths,
+	opts: RuntimeCliReconciliationOptions = {},
+): RuntimeCliReconciliationResult {
+	const state = readCliUpgradeState(paths);
+	const transaction = state.transaction ?? null;
+	if (!transaction) return { status: "unchanged", selfReexec: false };
+	if (transaction.rollback) {
+		finishCliRollback(paths, transaction);
+		return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
+	}
+
+	const activeTarget = activeLinkTarget(paths.cliManagedBin);
+	const previousTarget = transaction.previousIdentity?.activeTarget ?? null;
+	if (transaction.phase === "prepared") {
+		if (activeTarget === transaction.newIdentity.activeTarget) {
+			const verification = verifyStoredCliIdentity(paths, transaction.newIdentity);
+			if (!verification) {
+				rollBackInvalidTransaction(paths, transaction);
+				return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
+			}
+			writeCliBootstrapStatus(paths, transaction.newIdentity, verification);
+			activateCliUpgradeTransaction(paths);
+			pruneCliPackagePrefixes(paths, [
+				transaction.newIdentity.npmPrefix,
+				transaction.previousIdentity?.npmPrefix ?? null,
+			]);
+			return cliReconciliationResult(paths, "activated", opts.runningVersion);
+		}
+		if (activeTarget === previousTarget) {
+			if (transaction.previousIdentity) {
+				const verification = verifyStoredCliIdentity(paths, transaction.previousIdentity);
+				if (!verification) {
+					throw new Error("prepared clawdi CLI transaction has an invalid previous identity");
+				}
+				writeCliBootstrapStatus(paths, transaction.previousIdentity, verification);
+			}
+			writeCliUpgradeState(paths, { ...state, transaction: null });
+			pruneCliPackagePrefixes(paths, [transaction.previousIdentity?.npmPrefix ?? null]);
+			return cliReconciliationResult(paths, "unchanged", opts.runningVersion);
+		}
+		rollBackInvalidTransaction(paths, transaction);
+		return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
+	}
+
+	if (activeTarget === transaction.newIdentity.activeTarget) {
+		if (!verifyStoredCliIdentity(paths, transaction.newIdentity)) {
+			rollBackInvalidTransaction(paths, transaction);
+			return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
+		}
+		return cliReconciliationResult(paths, "unchanged", opts.runningVersion);
+	}
+	if (transaction.previousIdentity && activeTarget === previousTarget) {
+		const rollbackTransaction = withRecoveryRollback(transaction);
+		writeCliUpgradeState(paths, { ...state, transaction: rollbackTransaction });
+		finishCliRollback(paths, rollbackTransaction);
+		return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
+	}
+	// The root image bootstrap is an independent activation owner. Transfer the
+	// journal to its exact identity before ordinary reconciliation may continue.
+	if (handoffCliUpgradeTransactionToBootstrap(paths, transaction)) {
+		return cliReconciliationResult(paths, "activated", opts.runningVersion);
+	}
+	rollBackInvalidTransaction(paths, transaction);
+	return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
+}
+
+function handoffCliUpgradeTransactionToBootstrap(
+	paths: RuntimePaths,
+	expectedTransaction: RuntimeCliUpgradeTransaction,
+): boolean {
+	const bootstrapIdentity = verifiedActiveBootstrapIdentity(paths);
+	if (!bootstrapIdentity) return false;
+
+	// cli-upgrade-state has one writer under the runtime convergence lock. The
+	// complete prior transaction is the fence for this compare-and-replace.
+	const currentState = readCliUpgradeState(paths);
+	if (!cliUpgradeTransactionsMatch(currentState.transaction ?? null, expectedTransaction)) {
+		throw new Error("clawdi CLI transaction changed during bootstrap ownership handoff");
+	}
+	const currentBootstrapIdentity = verifiedActiveBootstrapIdentity(paths);
+	if (
+		!currentBootstrapIdentity ||
+		!cliInstallIdentitiesMatch(currentBootstrapIdentity, bootstrapIdentity)
+	) {
+		throw new Error("clawdi CLI bootstrap identity changed during ownership handoff");
+	}
+
+	writeCliUpgradeState(paths, {
+		...currentState,
+		transaction: {
+			phase: "activated",
+			previousIdentity: null,
+			newIdentity: bootstrapIdentity,
+			rollbackEligible: false,
+			installedAt: new Date().toISOString(),
+			rollback: null,
+		},
+	});
+	if (activeLinkTarget(paths.cliManagedBin) !== bootstrapIdentity.activeTarget) {
+		throw new Error("clawdi CLI bootstrap identity changed after ownership handoff");
+	}
+	pruneCliPackagePrefixes(paths, [bootstrapIdentity.npmPrefix]);
+	return true;
+}
+
+function cliUpgradeTransactionsMatch(
+	left: RuntimeCliUpgradeTransaction | null,
+	right: RuntimeCliUpgradeTransaction | null,
+): boolean {
+	if (left === null || right === null) return left === right;
+	return (
+		left.phase === right.phase &&
+		cliInstallIdentitiesMatch(left.previousIdentity, right.previousIdentity) &&
+		cliInstallIdentitiesMatch(left.newIdentity, right.newIdentity) &&
+		left.rollbackEligible === right.rollbackEligible &&
+		left.installedAt === right.installedAt &&
+		left.rollback?.reason === right.rollback?.reason &&
+		left.rollback?.markedAt === right.rollback?.markedAt
+	);
+}
+
+function cliInstallIdentitiesMatch(
+	left: RuntimeCliInstallIdentity | null,
+	right: RuntimeCliInstallIdentity | null,
+): boolean {
+	if (left === null || right === null) return left === right;
+	return (
+		left.packageSpec === right.packageSpec &&
+		left.registry === right.registry &&
+		left.npmPrefix === right.npmPrefix &&
+		left.activeTarget === right.activeTarget &&
+		left.version === right.version
+	);
+}
+
+function verifiedActiveBootstrapIdentity(paths: RuntimePaths): RuntimeCliInstallIdentity | null {
+	const status = readBootstrapStatus(paths.cliBootstrapStatus);
+	const activeTarget = activeLinkTarget(paths.cliManagedBin);
+	if (
+		status?.schemaVersion !== "clawdi.cliNpmBootstrapStatus.v1" ||
+		status.status !== "installed" ||
+		status.source !== "npm" ||
+		status.error !== null ||
+		status.activePath !== paths.cliManagedBin ||
+		status.activeTarget !== activeTarget ||
+		status.npmCache !== paths.cliNpmCache ||
+		typeof status.packageSpec !== "string" ||
+		(status.registry !== null && typeof status.registry !== "string") ||
+		typeof status.npmPrefix !== "string" ||
+		typeof status.activeTarget !== "string" ||
+		typeof status.version !== "string"
+	) {
+		return null;
+	}
+	const identity: RuntimeCliInstallIdentity = {
+		packageSpec: status.packageSpec,
+		registry: status.registry,
+		npmPrefix: status.npmPrefix,
+		activeTarget: status.activeTarget,
+		version: status.version,
+	};
+	if (!verifyStoredCliIdentity(paths, identity)) return null;
+	const currentStatus = readBootstrapStatus(paths.cliBootstrapStatus);
+	return activeLinkTarget(paths.cliManagedBin) === identity.activeTarget &&
+		statusMatchesIdentity(currentStatus, paths, identity) &&
+		currentStatus?.schemaVersion === "clawdi.cliNpmBootstrapStatus.v1" &&
+		currentStatus.error === null &&
+		currentStatus.npmCache === paths.cliNpmCache
+		? identity
+		: null;
+}
+
+function cliReconciliationResult(
+	paths: RuntimePaths,
+	status: RuntimeCliReconciliationResult["status"],
+	runningVersion: string | undefined,
+): RuntimeCliReconciliationResult {
+	const bootstrap = readBootstrapStatus(paths.cliBootstrapStatus);
+	const activeTarget = activeLinkTarget(paths.cliManagedBin);
+	const activeVersion = bootstrap?.activeTarget === activeTarget ? bootstrap.version : undefined;
+	return {
+		status,
+		selfReexec:
+			runningVersion !== undefined &&
+			activeVersion !== undefined &&
+			activeVersion !== runningVersion,
+	};
+}
+
+function rollBackInvalidTransaction(
+	paths: RuntimePaths,
+	transaction: RuntimeCliUpgradeTransaction,
+): void {
+	if (
+		!transaction.previousIdentity ||
+		!verifyStoredCliIdentity(paths, transaction.previousIdentity)
+	) {
+		throw new Error("clawdi CLI transaction cannot restore a verified previous identity");
+	}
+	const rollbackTransaction = withRecoveryRollback(transaction);
+	const state = readCliUpgradeState(paths);
+	writeCliUpgradeState(paths, { ...state, transaction: rollbackTransaction });
+	finishCliRollback(paths, rollbackTransaction);
+}
+
+function withRecoveryRollback(
+	transaction: RuntimeCliUpgradeTransaction,
+): RuntimeCliUpgradeTransaction {
+	return {
+		...transaction,
+		rollback: {
+			reason: "recovered interrupted or inconsistent clawdi CLI transaction",
+			markedAt: new Date().toISOString(),
+		},
+	};
+}
+
+function finishCliRollback(paths: RuntimePaths, transaction: RuntimeCliUpgradeTransaction): void {
+	const previousIdentity = transaction.previousIdentity;
+	if (!transaction.rollback || !previousIdentity) {
+		throw new Error("clawdi CLI rollback transaction is incomplete");
+	}
+	const verification = verifyStoredCliIdentity(paths, previousIdentity);
+	if (!verification) {
+		throw new Error("previous clawdi CLI identity failed rollback verification");
+	}
+	const activeTarget = activeLinkTarget(paths.cliManagedBin);
+	if (activeTarget !== previousIdentity.activeTarget) {
+		swapActiveCli(paths.cliManagedBin, previousIdentity.activeTarget);
+	}
+	writeCliBootstrapStatus(paths, previousIdentity, verification);
+	const state = readCliUpgradeState(paths);
+	writeCliUpgradeState(paths, {
+		...state,
+		transaction: null,
+		badVersions: upsertBadVersion(state.badVersions ?? [], {
+			packageSpec: transaction.newIdentity.packageSpec,
+			registry: transaction.newIdentity.registry,
+			version: transaction.newIdentity.version,
+			reason: transaction.rollback.reason,
+			markedAt: transaction.rollback.markedAt,
+		}),
+	});
+	pruneCliPackagePrefixes(paths, [previousIdentity.npmPrefix]);
+}
+
+function verifyStoredCliIdentity(
+	paths: RuntimePaths,
+	identity: RuntimeCliInstallIdentity,
+): RuntimeCliVerification | null {
+	if (
+		!hostedFixtureCliPackageSpecSchema.safeParse(identity.packageSpec).success ||
+		(identity.registry !== null && identity.registry !== "https://registry.npmjs.org") ||
+		!isManagedCliTarget(paths, identity.activeTarget) ||
+		!isManagedCliPrefix(paths, identity.npmPrefix) ||
+		resolve(prefixForActiveTarget(identity.activeTarget)) !== resolve(identity.npmPrefix) ||
+		!isExecutable(identity.activeTarget)
+	) {
+		return null;
+	}
+	const exactVersion = exactNpmPackageVersion(identity.packageSpec);
+	if (exactVersion && exactVersion !== identity.version) return null;
+	const status = readBootstrapStatus(paths.cliBootstrapStatus);
+	const fileIdentity = cliVerificationIdentity(identity.activeTarget);
+	if (
+		statusMatchesIdentity(status, paths, identity) &&
+		fileIdentity &&
+		status?.verification &&
+		verificationIdentityMatches(status.verification, fileIdentity) &&
+		verificationIsFresh(status.verification)
+	) {
+		return status.verification;
+	}
+	if (!fileIdentity) return null;
+	try {
+		if (smokeCliVersion(identity.activeTarget) !== identity.version) return null;
+		verifyCliRuntime(identity.activeTarget);
+		const verification = finishCliVerification(identity.activeTarget, fileIdentity);
+		if (activeLinkTarget(paths.cliManagedBin) === identity.activeTarget) {
+			writeCliBootstrapStatus(paths, identity, verification);
+		}
+		return verification;
+	} catch {
+		return null;
+	}
+}
+
+function statusMatchesIdentity(
+	status: RuntimeCliBootstrapStatus | null,
+	paths: RuntimePaths,
+	identity: RuntimeCliInstallIdentity,
+): boolean {
+	return (
+		status?.status === "installed" &&
+		status.source === "npm" &&
+		status.packageSpec === identity.packageSpec &&
+		(status.registry ?? null) === identity.registry &&
+		status.npmPrefix === identity.npmPrefix &&
+		status.activePath === paths.cliManagedBin &&
+		status.activeTarget === identity.activeTarget &&
+		status.version === identity.version
+	);
+}
+
+function rollbackErrorResult(
+	transaction: RuntimeCliUpgradeTransaction | null,
+	error: unknown,
+): RuntimeCliRollbackResult {
+	return {
+		status: "error",
+		version: transaction?.newIdentity.version ?? null,
+		previousVersion: transaction?.previousIdentity?.version ?? null,
+		activeTarget: transaction?.newIdentity.activeTarget ?? null,
+		previousActiveTarget: transaction?.previousIdentity?.activeTarget ?? null,
+		error: error instanceof Error ? error.message : String(error),
+	};
 }
 
 function isBadCliVersion(
@@ -684,31 +1330,51 @@ function isBadCliVersion(
 }
 
 function readCliUpgradeState(paths: RuntimePaths): RuntimeCliUpgradeState {
-	if (!existsSync(paths.cliUpgradeState)) return { schemaVersion: "clawdi.cliUpgradeState.v1" };
+	if (!existsSync(paths.cliUpgradeState)) return emptyCliUpgradeState();
+	let parsed: unknown;
 	try {
-		const parsed = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8")) as unknown;
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			return { schemaVersion: "clawdi.cliUpgradeState.v1" };
-		}
-		return parsed as RuntimeCliUpgradeState;
-	} catch {
-		return { schemaVersion: "clawdi.cliUpgradeState.v1" };
+		parsed = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8")) as unknown;
+	} catch (error) {
+		throw new Error(
+			`invalid clawdi CLI upgrade transaction JSON: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
+	const schemaVersion =
+		typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>).schemaVersion
+			: undefined;
+	if (schemaVersion === "clawdi.cliUpgradeState.v2") {
+		const result = cliUpgradeStateV2Schema.safeParse(parsed);
+		if (!result.success) {
+			throw new Error(`invalid clawdi CLI upgrade transaction: ${result.error.issues[0]?.message}`);
+		}
+		return result.data;
+	}
+	throw new Error(`unsupported clawdi CLI upgrade transaction schema: ${String(schemaVersion)}`);
 }
 
 function writeCliUpgradeState(paths: RuntimePaths, state: RuntimeCliUpgradeState): void {
-	writePrivateFileAtomic(
+	writeRuntimePlatformFileAtomic(
+		paths,
 		paths.cliUpgradeState,
 		`${JSON.stringify(normalizeCliUpgradeState(state), null, 2)}\n`,
-		{ mode: 0o644, dirMode: 0o755 },
+		{ mode: 0o600, dirMode: 0o755 },
 	);
 }
 
 function normalizeCliUpgradeState(state: RuntimeCliUpgradeState): RuntimeCliUpgradeState {
 	return {
-		schemaVersion: "clawdi.cliUpgradeState.v1",
-		pendingUpgrade: state.pendingUpgrade ?? null,
+		schemaVersion: "clawdi.cliUpgradeState.v2",
+		transaction: state.transaction ?? null,
 		badVersions: state.badVersions ?? [],
+	};
+}
+
+function emptyCliUpgradeState(): RuntimeCliUpgradeState {
+	return {
+		schemaVersion: "clawdi.cliUpgradeState.v2",
+		transaction: null,
+		badVersions: [],
 	};
 }
 
@@ -724,28 +1390,6 @@ function upsertBadVersion(
 	);
 	next.push(entry);
 	return next;
-}
-
-function pendingMatchesManifestIdentity(
-	pending: RuntimeCliPendingUpgrade,
-	manifestIdentity: RuntimeCliManifestIdentity,
-): boolean {
-	if (
-		pending.manifestEtag &&
-		manifestIdentity.etag &&
-		pending.manifestEtag !== manifestIdentity.etag
-	) {
-		return false;
-	}
-	if (
-		pending.manifestGeneration !== null &&
-		manifestIdentity.generation !== undefined &&
-		manifestIdentity.generation !== null &&
-		pending.manifestGeneration !== manifestIdentity.generation
-	) {
-		return false;
-	}
-	return true;
 }
 
 function isExecutable(path: string): boolean {

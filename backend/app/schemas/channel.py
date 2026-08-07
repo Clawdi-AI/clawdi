@@ -4,18 +4,37 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
-ChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
+ChannelProvider = Literal["telegram", "discord", "whatsapp"]
 ChannelVisibility = Literal["private", "public"]
 ChannelBotPoolAccess = Literal["owner", "public"]
 ChannelHealthStatus = Literal["ok", "warning", "error"]
+WhatsAppOnboardingState = Literal[
+    "generating",
+    "ready",
+    "scanned",
+    "connected",
+    "expired",
+    "canceled",
+    "error",
+]
+WhatsAppOnboardingReadinessReason = Literal[
+    "not_configured",
+    "no_capacity",
+    "managed_sidecar_required",
+    "temporarily_unavailable",
+]
 
 
 class ChannelAccountCreate(BaseModel):
     provider: ChannelProvider
     name: str = Field(min_length=1, max_length=120)
     agent_id: UUID | None = None
+    replace_existing_provider_link: bool = Field(
+        default_factory=bool,
+        description="Explicit opt-in to replace this Agent's active link for the same provider.",
+    )
     provider_token: str | None = Field(default=None, min_length=1, max_length=2000)
     config: dict[str, Any] | None = None
     secrets: dict[str, str] | None = None
@@ -38,10 +57,16 @@ class ChannelAccountCreate(BaseModel):
             name = key.strip()
             if not name or len(name) > 80 or not name.replace("_", "").isalnum():
                 raise ValueError("secret names must be alphanumeric or underscore")
-            if not isinstance(secret, str) or not secret:
+            if not secret:
                 raise ValueError("secret values cannot be blank")
             cleaned[name] = secret
         return cleaned
+
+    @model_validator(mode="after")
+    def _validate_provider_link_replacement(self) -> ChannelAccountCreate:
+        if self.replace_existing_provider_link and self.agent_id is None:
+            raise ValueError("agent_id is required to replace an existing provider link")
+        return self
 
 
 class ChannelAccountResponse(BaseModel):
@@ -109,8 +134,56 @@ class ChannelAccountCreatedResponse(ChannelAccountResponse):
     agent_token: str | None = None
 
 
+class ChannelWhatsAppOnboardingReadinessResponse(BaseModel):
+    available: bool
+    manual_pairing_code_supported: bool
+    reason: WhatsAppOnboardingReadinessReason | None = None
+
+
+class ChannelWhatsAppOnboardingCreate(BaseModel):
+    request_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name cannot be blank")
+        return stripped
+
+
+class ChannelWhatsAppOnboardingPairingCodeCreate(BaseModel):
+    phone_number: SecretStr
+
+
+class ChannelWhatsAppOnboardingSessionResponse(BaseModel):
+    id: UUID
+    channel_account_id: UUID | None = None
+    name: str
+    state: WhatsAppOnboardingState
+    method: Literal["qr", "code"]
+    qr: str | None = Field(default=None, repr=False)
+    qr_expires_at: datetime | None = None
+    pairing_code: str | None = Field(default=None, repr=False)
+    manual_pairing_code_supported: bool
+    started_at: datetime
+    expires_at: datetime
+    completed_at: datetime | None = None
+
+
 class ChannelAgentLinkCreate(BaseModel):
     agent_id: UUID | None = None
+    replace_existing_provider_link: bool = Field(
+        default_factory=bool,
+        description="Explicit opt-in to replace this Agent's active link for the same provider.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_provider_link_replacement(self) -> ChannelAgentLinkCreate:
+        if self.replace_existing_provider_link and self.agent_id is None:
+            raise ValueError("agent_id is required to replace an existing provider link")
+        return self
 
 
 class ChannelAgentLinkResponse(BaseModel):
@@ -124,12 +197,13 @@ class ChannelAgentLinkResponse(BaseModel):
 
 class ChannelAgentLinkWithAccountResponse(ChannelAgentLinkResponse):
     account: ChannelAccountResponse
+    binding_count: int = 0
 
 
 class ChannelPairCodeCreate(BaseModel):
     agent_id: UUID | None = None
     agent_link_id: UUID | None = None
-    ttl_seconds: int = Field(default=900, ge=60, le=86_400)
+    ttl_seconds: int = Field(default=300, ge=60, le=86_400)
 
 
 class ChannelPairCodeResponse(BaseModel):
@@ -139,6 +213,12 @@ class ChannelPairCodeResponse(BaseModel):
     agent_token: str | None = None
     code: str
     expires_at: datetime
+    pairing_command: str
+    bot_username: str | None = None
+    deep_link: str | None = None
+    qr_payload: str | None = None
+    discord_install_url: str | None = None
+    discord_user_install_url: str | None = None
 
 
 class ChannelCommandSpec(BaseModel):
@@ -187,6 +267,15 @@ class ChannelBindingResponse(BaseModel):
     external_chat_name: str | None
     status: str
     created_at: datetime
+    last_message_at: datetime | None = None
+
+
+class ChannelBindingDeleteResponse(BaseModel):
+    binding_id: UUID
+    unpaired: bool
+    notification_status: Literal["sent", "failed", "not_applicable"]
+    provider_cleanup_status: Literal["succeeded", "failed", "not_applicable"]
+    warning: str | None = None
 
 
 class ChannelSendMessageRequest(BaseModel):
@@ -249,6 +338,7 @@ class ChannelHealthItemResponse(BaseModel):
     health_status: ChannelHealthStatus
     reasons: list[str] = Field(default_factory=list)
     pending_inbox: int = 0
+    oldest_pending_inbox_at: datetime | None = None
     pending_deliveries: int = 0
     in_progress_deliveries: int = 0
     failed_deliveries: int = 0
@@ -270,55 +360,3 @@ class TelegramWebhookResponse(BaseModel):
     paired: bool = False
     unpaired: bool = False
     binding_id: UUID | None = None
-
-
-class WhatsAppSelfIdentity(BaseModel):
-    id: str = Field(min_length=1, max_length=300)
-    lid: str | None = Field(default=None, min_length=1, max_length=300)
-    name: str | None = Field(default=None, min_length=1, max_length=120)
-
-
-class WhatsAppTenantCredentialCreate(BaseModel):
-    agent_id: UUID | None = None
-    agent_link_id: UUID | None = None
-    phone_user: str | None = Field(default=None, min_length=1, max_length=20)
-    device: int = Field(default=1, ge=0, le=255)
-    name: str | None = Field(default=None, min_length=1, max_length=120)
-    self_identity: WhatsAppSelfIdentity | None = None
-
-    @field_validator("phone_user")
-    @classmethod
-    def _validate_phone_user(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        phone_user = value.strip()
-        if not phone_user.isdigit():
-            raise ValueError("phone_user must contain only digits")
-        return phone_user
-
-    @field_validator("name")
-    @classmethod
-    def _strip_optional_name(cls, value: str | None) -> str | None:
-        return value.strip() if isinstance(value, str) else value
-
-
-class WhatsAppTenantCredentialResponse(BaseModel):
-    channel: str = "whatsapp"
-    credential_id: UUID
-    agent_link_id: UUID
-    agent_id: UUID
-    jid: str
-    identity_pub_key_hex: str
-    creds: dict[str, Any]
-    auth_cert: dict[str, Any]
-    websocket_url: str
-    media_proxy_base_url: str
-
-
-class WhatsAppTenantCredentialMetadata(BaseModel):
-    credential_id: UUID
-    agent_link_id: UUID
-    agent_id: UUID
-    jid: str
-    identity_pub_key_hex: str
-    created_at: datetime

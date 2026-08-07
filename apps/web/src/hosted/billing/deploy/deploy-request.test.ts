@@ -1,44 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import {
-	DEFAULT_DEPLOY_RUNTIME,
-	defaultManagedDeployAiFields,
-} from "@/hosted/billing/deploy/deploy-defaults";
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 
 describe("buildHostedDeployRequest", () => {
-	test("serializes the default wizard state with explicit hermes and managed AI", () => {
+	test("serializes the real managed Luna catalog selection", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_basic",
-			runtime: DEFAULT_DEPLOY_RUNTIME,
+			runtime: "hermes",
 			persona: {
+				agentName: "Hermes",
 				language: "",
 				timezone: "",
 			},
-			aiFields: defaultManagedDeployAiFields(),
+			aiFields: {
+				ai_provider_id: null,
+				ai_provider_auth_kind: "managed",
+				provider_ids: ["clawdi"],
+				primary_model: {
+					provider_id: "clawdi",
+					model: "gpt-5.6-luna",
+				},
+			},
 		});
 
-		expect(request).toEqual({
-			compute_plan_slug: "compute_basic",
-			runtime: "hermes",
-			language: null,
-			timezone: null,
-			ai_provider_id: null,
-			ai_provider_auth_kind: "managed",
-			provider_ids: ["clawdi-v2"],
-			primary_model: {
-				provider_id: "clawdi-v2",
-				model: "gpt-5.5",
-			},
-			config: {
-				runtime: "hermes",
-				language: null,
-				timezone: null,
-			},
+		expect(request.primary_model).toEqual({
+			provider_id: "clawdi",
+			model: "gpt-5.6-luna",
 		});
-		expect("assistant_name" in request).toBe(false);
-		expect("assistant_name" in (request.config ?? {})).toBe(false);
-		expect("personality" in request).toBe(false);
-		expect("personality" in (request.config ?? {})).toBe(false);
 	});
 
 	test("serializes v2 hosted deploys without legacy deploy profile", () => {
@@ -46,6 +33,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_performance",
 			runtime: "openclaw",
 			persona: {
+				agentName: "  OpenClaw Studio  ",
 				language: "en",
 				timezone: "America/Los_Angeles",
 			},
@@ -53,11 +41,11 @@ describe("buildHostedDeployRequest", () => {
 		});
 
 		expect("profile" in request).toBe(false);
-		expect("assistant_name" in request).toBe(false);
 		expect("personality" in request).toBe(false);
 		expect(request).toMatchObject({
 			compute_plan_slug: "compute_performance",
 			runtime: "openclaw",
+			name: "OpenClaw Studio",
 			language: "en",
 			timezone: "America/Los_Angeles",
 			ai_provider_auth_kind: "managed",
@@ -67,7 +55,6 @@ describe("buildHostedDeployRequest", () => {
 				timezone: "America/Los_Angeles",
 			},
 		});
-		expect("assistant_name" in (request.config ?? {})).toBe(false);
 		expect("personality" in (request.config ?? {})).toBe(false);
 		expect("telegram_bot_token" in request).toBe(false);
 		expect("telegram_bot_token" in (request.config ?? {})).toBe(false);
@@ -82,6 +69,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_basic",
 			runtime: "hermes",
 			persona: {
+				agentName: "Hermes",
 				language: "en",
 				timezone: "Etc/UTC",
 			},
@@ -91,6 +79,7 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toMatchObject({
 			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
+			name: "Hermes",
 			language: "en",
 			timezone: "Etc/UTC",
 			config: {
@@ -101,18 +90,19 @@ describe("buildHostedDeployRequest", () => {
 		});
 	});
 
-	test("serializes backend provider pool contract at the deploy body boundary", () => {
+	test("serializes one selected provider at the deploy body boundary", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_performance",
 			runtime: "hermes",
 			persona: {
+				agentName: "Hermes",
 				language: "",
 				timezone: "",
 			},
 			aiFields: {
 				ai_provider_id: "anthropic-prod",
 				ai_provider_auth_kind: "api_key",
-				provider_ids: ["openai-prod", "anthropic-prod"],
+				provider_ids: ["anthropic-prod"],
 				primary_model: {
 					provider_id: "anthropic-prod",
 					model: "claude-sonnet-5",
@@ -124,7 +114,7 @@ describe("buildHostedDeployRequest", () => {
 			runtime: "hermes",
 			ai_provider_id: "anthropic-prod",
 			ai_provider_auth_kind: "api_key",
-			provider_ids: ["openai-prod", "anthropic-prod"],
+			provider_ids: ["anthropic-prod"],
 			primary_model: {
 				provider_id: "anthropic-prod",
 				model: "claude-sonnet-5",
@@ -139,6 +129,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_basic",
 			runtime: "hermes",
 			persona: {
+				agentName: "Hermes",
 				language: "",
 				timezone: "",
 			},
@@ -148,6 +139,7 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toEqual({
 			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
+			name: "Hermes",
 			language: null,
 			timezone: null,
 			ai_provider_auth_kind: "unmanaged",

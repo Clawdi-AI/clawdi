@@ -1,30 +1,65 @@
-import type { QueryClient } from "@tanstack/react-query";
+import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 export const channelKeys = {
-	list: ["channels"] as const,
-	pool: ["channel-bot-pool"] as const,
-	health: ["channel-health"] as const,
-	channel: (id: string) => ["channel", id] as const,
-	agentLinks: (id: string) => ["channel-agent-links", id] as const,
-	bindings: (id: string) => ["channel-bindings", id] as const,
-	activity: (id: string) => ["channel-activity", id] as const,
-	whatsappCreds: (id: string) => ["whatsapp-tenant-creds", id] as const,
+	list: ["get", "/v1/channels"] as const,
+	pool: ["get", "/v1/channels/bot-pool"] as const,
+	health: ["get", "/v1/channels/health", {}] as const,
+	// Broad prefix only for channel deletion, where the affected Agent ids are unknown.
+	agentLinksList: ["get", "/v1/channels/agent-links"] as const,
+	channel: (id: string) =>
+		["get", "/v1/channels/{account_id}", { params: { path: { account_id: id } } }] as const,
+	agentLinks: (id: string) =>
+		[
+			"get",
+			"/v1/channels/{account_id}/agent-links",
+			{ params: { path: { account_id: id } } },
+		] as const,
+	bindings: (id: string) =>
+		[
+			"get",
+			"/v1/channels/{account_id}/bindings",
+			{ params: { path: { account_id: id } } },
+		] as const,
+	activity: (id: string) =>
+		[
+			"get",
+			"/v1/channels/{account_id}/activity",
+			{ params: { path: { account_id: id }, query: { limit: 50 } } },
+		] as const,
 };
+
+export async function invalidateCreatedChannelQueries(
+	qc: QueryClient,
+	created: { id: string; agent_id?: string | null },
+	agentLinksQueryKey?: QueryKey,
+): Promise<void> {
+	const invalidations = [
+		qc.invalidateQueries({ queryKey: channelKeys.list }),
+		qc.invalidateQueries({ queryKey: channelKeys.pool }),
+		qc.invalidateQueries({ queryKey: channelKeys.health }),
+		qc.invalidateQueries({ queryKey: channelKeys.agentLinks(created.id) }),
+	];
+	if (created.agent_id && agentLinksQueryKey) {
+		invalidations.push(qc.invalidateQueries({ queryKey: agentLinksQueryKey, exact: true }));
+	}
+	await Promise.all(invalidations);
+}
 
 export async function removeDeletedChannelQueries(
 	qc: QueryClient,
 	channelId: string,
 ): Promise<void> {
 	qc.removeQueries({ queryKey: channelKeys.channel(channelId) });
+	// Bespoke command projections still use this non-OpenAPI cache namespace.
+	qc.removeQueries({ queryKey: ["channel", channelId] });
 	qc.removeQueries({ queryKey: channelKeys.agentLinks(channelId) });
 	qc.removeQueries({ queryKey: channelKeys.bindings(channelId) });
 	qc.removeQueries({ queryKey: channelKeys.activity(channelId) });
-	qc.removeQueries({ queryKey: channelKeys.whatsappCreds(channelId) });
 
 	await Promise.all([
 		qc.invalidateQueries({ queryKey: channelKeys.list }),
 		qc.invalidateQueries({ queryKey: channelKeys.pool }),
 		qc.invalidateQueries({ queryKey: channelKeys.health }),
-		qc.invalidateQueries({ queryKey: ["agent-channel-links"] }),
+		qc.invalidateQueries({ queryKey: channelKeys.agentLinksList }),
 	]);
 }

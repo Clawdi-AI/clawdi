@@ -12,12 +12,13 @@ re-upload invalidate cleanly without explicit cache-busting.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
 from collections import OrderedDict
 from typing import Protocol
+
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.models.session import Session
 
@@ -36,7 +37,14 @@ class _FileStoreLike(Protocol):
 # stops it from pinning memory forever.
 _MESSAGES_CACHE_MAX = 16
 _MESSAGES_CACHE_TTL_S = 300.0
-_messages_cache: OrderedDict[tuple[str, str], tuple[float, list]] = OrderedDict()
+type SessionMessageValue = dict[str, JsonValue]
+
+_SESSION_MESSAGES_ADAPTER: TypeAdapter[list[SessionMessageValue]] = TypeAdapter(
+    list[SessionMessageValue]
+)
+_messages_cache: OrderedDict[tuple[str, str], tuple[float, list[SessionMessageValue]]] = (
+    OrderedDict()
+)
 _messages_cache_lock = threading.Lock()
 
 
@@ -48,7 +56,7 @@ class SessionContentInvalid(Exception):
     """The stored content isn't a JSON array of messages — corrupted upload."""
 
 
-def _cache_get(key: tuple[str, str]) -> list | None:
+def _cache_get(key: tuple[str, str]) -> list[SessionMessageValue] | None:
     now = time.monotonic()
     with _messages_cache_lock:
         entry = _messages_cache.get(key)
@@ -63,7 +71,7 @@ def _cache_get(key: tuple[str, str]) -> list | None:
         return parsed
 
 
-def _cache_put(key: tuple[str, str], parsed: list) -> None:
+def _cache_put(key: tuple[str, str], parsed: list[SessionMessageValue]) -> None:
     now = time.monotonic()
     with _messages_cache_lock:
         _messages_cache[key] = (now, parsed)
@@ -75,7 +83,7 @@ def _cache_put(key: tuple[str, str], parsed: list) -> None:
 async def load_session_messages(
     session: Session,
     file_store: _FileStoreLike,
-) -> list:
+) -> list[SessionMessageValue]:
     """Fetch and parse the session's messages array.
 
     Cached by (file_key, content_hash). Returns the raw list of message
@@ -106,18 +114,12 @@ async def load_session_messages(
         ) from e
 
     try:
-        parsed = json.loads(data)
-    except json.JSONDecodeError as e:
-        log.exception("session %s content is not valid JSON", session.id)
-        raise SessionContentInvalid(f"session {session.id} content is not valid JSON") from e
-
-    if not isinstance(parsed, list):
-        log.error(
-            "session %s content is not a JSON array (got %s)",
-            session.id,
-            type(parsed).__name__,
-        )
-        raise SessionContentInvalid(f"session {session.id} content is not a JSON array")
+        parsed = _SESSION_MESSAGES_ADAPTER.validate_json(data, strict=True)
+    except ValidationError as exc:
+        log.exception("session %s content is not a valid JSON message array", session.id)
+        raise SessionContentInvalid(
+            f"session {session.id} content is not a valid JSON message array"
+        ) from exc
 
     _cache_put(cache_key, parsed)
     return parsed

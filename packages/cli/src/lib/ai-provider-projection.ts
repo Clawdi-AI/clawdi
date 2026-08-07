@@ -6,8 +6,11 @@ import type {
 	AiProviderModel,
 } from "@clawdi/shared";
 import {
+	aiProviderRuntimeCompatibility,
+	CLAWDI_MANAGED_PROVIDER_ID,
 	defaultAiProviderApiMode,
 	defaultAiProviderBaseUrl,
+	isClawdiManagedV2ProviderId,
 	validateAiProviderCatalog,
 } from "@clawdi/shared";
 
@@ -19,26 +22,27 @@ export const AGENT_TARGET_CONTRACTS: Record<
 	AgentTarget,
 	{
 		settingMethod: string;
-		supportedVersionRange: string;
+		verifiedContractBaseline: string;
 		status: "enabled" | "blocked";
 	}
 > = {
 	codex: {
 		settingMethod: "$CODEX_HOME/clawdi-ai-provider.config.toml selected with codex --profile",
-		supportedVersionRange:
-			"@openai/codex 0.134.0 through 0.142.4 with profile config, model_providers, and responses wire_api support",
+		verifiedContractBaseline:
+			"Codex profile config with model_providers and responses wire_api capabilities",
 		status: "enabled",
 	},
 	hermes: {
 		settingMethod:
 			"structured merge into $HERMES_HOME/config.yaml model/providers compatibility keys",
-		supportedVersionRange: "Hermes Agent 0.18.x config.yaml compatibility readers",
+		verifiedContractBaseline:
+			"Hermes providers-dict compatibility reader with codex_responses transport support",
 		status: "enabled",
 	},
 	openclaw: {
 		settingMethod: "openclaw config patch --stdin",
-		supportedVersionRange:
-			"openclaw 2026.5.12 through 2026.6.10 config patch contract and canonical openai auth-profiles",
+		verifiedContractBaseline:
+			"OpenClaw config patch and public provider-auth SDK contracts with namespaced SQLite profiles",
 		status: "enabled",
 	},
 };
@@ -150,12 +154,16 @@ function selectProjectionProviders(
 			`No AI Providers can be applied to ${target}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
 		);
 	}
-	const selectedPrimaryModel = primaryModel ?? legacyCatalogPrimaryModel(catalog, providers);
-	if (!selectedPrimaryModel) {
+	const selectedPrimaryModelInput = primaryModel ?? legacyCatalogPrimaryModel(catalog, providers);
+	if (!selectedPrimaryModelInput) {
 		throw new Error(
 			`No primary model is configured for ${target}; pass agent primary_model {provider_id, model} before agent config apply.`,
 		);
 	}
+	const selectedPrimaryModel = {
+		...selectedPrimaryModelInput,
+		provider_id: agentFacingProviderId(selectedPrimaryModelInput.provider_id),
+	};
 	if (hasLegacyOpenAiCodexModelPrefix(selectedPrimaryModel.model)) {
 		throw new Error(
 			`Primary model for ${selectedPrimaryModel.provider_id} must use the OpenAI model id without the legacy openai-codex prefix.`,
@@ -176,30 +184,31 @@ function normalizeProjectionProvider(
 	target: AgentTarget,
 	provider: AiProvider,
 ): ProjectionProvider | string {
+	const providerId = agentFacingProviderId(provider.id);
 	const legacyDefaultModel = legacyProviderDefaultModel(provider);
 	if (legacyDefaultModel && hasLegacyOpenAiCodexModelPrefix(legacyDefaultModel)) {
-		return `Provider ${provider.id} skipped for ${target}: legacy default_model must use the OpenAI model id without the legacy openai-codex prefix.`;
+		return `Provider ${providerId} skipped for ${target}: legacy default_model must use the OpenAI model id without the legacy openai-codex prefix.`;
 	}
 	const legacyModel = provider.models?.find((model) => hasLegacyOpenAiCodexModelPrefix(model.id));
 	if (legacyModel) {
-		return `Provider ${provider.id} skipped for ${target}: model ${legacyModel.id} must use the OpenAI model id without the legacy openai-codex prefix.`;
+		return `Provider ${providerId} skipped for ${target}: model ${legacyModel.id} must use the OpenAI model id without the legacy openai-codex prefix.`;
 	}
 	if (provider.auth.type === "oauth_profile") {
-		return `Provider ${provider.id} skipped for ${target}: uses oauth_profile auth, which does not have a verified agent config apply path yet.`;
+		return `Provider ${providerId} skipped for ${target}: uses oauth_profile auth, which does not have a verified agent config apply path yet.`;
 	}
 	if (provider.auth.type === "agent_profile" && !usesCodexNativeAuth(provider)) {
-		return `Provider ${provider.id} skipped for ${target}: uses agent_profile auth for ${provider.auth.tool}; AI Provider apply only supports agent:codex/<profile> profiles.`;
+		return `Provider ${providerId} skipped for ${target}: uses agent_profile auth for ${provider.auth.tool}; AI Provider apply only supports agent:codex/<profile> profiles.`;
 	}
 	const envName = authEnvName(provider);
 	if (provider.auth.type !== "none" && !envName && !usesCodexNativeAuth(provider)) {
-		return `Provider ${provider.id} skipped for ${target}: auth requires an agent env name (catalog runtime_env_name) or an env:<NAME> ref before agent config apply.`;
+		return `Provider ${providerId} skipped for ${target}: auth requires an agent env name (catalog runtime_env_name) or an env:<NAME> ref before agent config apply.`;
 	}
 	const apiMode = provider.api_mode ?? defaultAiProviderApiMode(provider.type);
 	if (!apiMode) {
-		return `Provider ${provider.id} skipped for ${target}: requires api_mode before agent config apply.`;
+		return `Provider ${providerId} skipped for ${target}: requires api_mode before agent config apply.`;
 	}
 	const projectionProvider = {
-		id: provider.id,
+		id: providerId,
 		type: provider.type,
 		label: provider.label,
 		base_url: provider.base_url,
@@ -221,6 +230,9 @@ function normalizeProjectionProvider(
 		const reason = openClawProjectionSkipReason(projectionProvider);
 		if (reason) return reason;
 	}
+	if (!aiProviderRuntimeCompatibility(provider)[target]) {
+		return `Provider ${providerId} skipped for ${target}: the provider protocol and auth shape are not runtime-compatible.`;
+	}
 	return projectionProvider;
 }
 
@@ -228,14 +240,22 @@ function legacyCatalogPrimaryModel(
 	catalog: AiProviderCatalog,
 	providers: ProjectionProvider[],
 ): AgentPrimaryModel | undefined {
-	const preferredProviderId = catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id;
+	const preferredProviderId = agentFacingProviderId(
+		catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id ?? "",
+	);
 	const preferredProvider =
 		providers.find((provider) => provider.id === preferredProviderId) ?? providers[0];
 	if (!preferredProvider) return undefined;
-	const source = catalog.providers.find((provider) => provider.id === preferredProvider.id);
+	const source = catalog.providers.find(
+		(provider) => agentFacingProviderId(provider.id) === preferredProvider.id,
+	);
 	const model = source ? (legacyProviderDefaultModel(source) ?? source.models?.[0]?.id) : undefined;
 	if (!model) return undefined;
 	return { provider_id: preferredProvider.id, model };
+}
+
+function agentFacingProviderId(providerId: string): string {
+	return isClawdiManagedV2ProviderId(providerId) ? CLAWDI_MANAGED_PROVIDER_ID : providerId;
 }
 
 function legacyProviderDefaultModel(provider: AiProvider): string | undefined {
@@ -424,7 +444,7 @@ function buildHermesProjection(
 	const customProviders = providers.filter((provider) => !usesNativeCodexOpenAiProvider(provider));
 	const lines: string[] = [
 		"# Generated by Clawdi. Merge this patch into Hermes config.yaml.",
-		`# Contract: ${AGENT_TARGET_CONTRACTS.hermes.supportedVersionRange}; ${AGENT_TARGET_CONTRACTS.hermes.settingMethod}.`,
+		`# Verified contract baseline: ${AGENT_TARGET_CONTRACTS.hermes.verifiedContractBaseline}; ${AGENT_TARGET_CONTRACTS.hermes.settingMethod}.`,
 		"model:",
 	];
 	if (nativeCodexDefault) {
@@ -459,7 +479,7 @@ function hermesModelLines(provider: ProjectionProvider): string[] {
 	if (models.length === 0) return [];
 	const lines = ["    models:"];
 	for (const model of models) {
-		lines.push(`      ${quoteYaml(model.id)}:`);
+		lines.push(`      ${quoteYaml(model.id)}:${Object.keys(model).length === 1 ? " {}" : ""}`);
 		if (model.context_length !== undefined) {
 			lines.push(`        context_length: ${model.context_length}`);
 		}
@@ -511,7 +531,7 @@ function hermesModels(provider: ProjectionProvider): HermesProjectedModel[] {
 		if (supportsVision !== undefined) entry.supports_vision = supportsVision;
 		const cost = hermesModelCost(model.cost);
 		if (cost) Object.assign(entry, cost);
-		if (Object.keys(entry).length > 1) entries.push(entry);
+		entries.push(entry);
 	}
 	return entries;
 }
@@ -580,7 +600,7 @@ function buildCodexProjection(
 	for (const provider of providers) validateCodexProjectionProvider(provider);
 	const lines: string[] = [
 		"# Generated by Clawdi. Do not put API keys in this file.",
-		`# Contract: ${AGENT_TARGET_CONTRACTS.codex.supportedVersionRange}; ${AGENT_TARGET_CONTRACTS.codex.settingMethod}.`,
+		`# Verified contract baseline: ${AGENT_TARGET_CONTRACTS.codex.verifiedContractBaseline}; ${AGENT_TARGET_CONTRACTS.codex.settingMethod}.`,
 	];
 	lines.push(`model = ${quoteTomlString(codexNativeModelId(primaryModel.model))}`);
 	lines.push(`model_provider = ${quoteTomlString(codexModelProviderId(primaryProvider))}`, "");

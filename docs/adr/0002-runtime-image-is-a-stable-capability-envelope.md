@@ -30,15 +30,21 @@ of them may be baked into the stable runtime image or its entrypoints.
 
 Hosted mode is an explicit CLI contract selected by
 `CLAWDI_RUNTIME_MODE=hosted`; it is not inferred from image files. The hosted
-command policy is built into the CLI. Deployment must provide
-`CLAWDI_RUNTIME_MANIFEST_URL` and `CLAWDI_RUNTIME_AUTH_ENV`, whose value names
-the environment variable containing the manifest bearer credential. The CLI
-validates both selectors and fails closed before datasource access. A hosted
-runtime does not read `host-policy.json` or `runtime-source.json`.
+command policy is built into the CLI. The image substrate supplies mode and
+runtime-user facts; the provisioner atomically delivers the root-owned strict
+`0400` `/etc/clawdi/runtime-context.json`, containing the apply tuple, exact CLI
+package pin, and typed manifest URL plus bootstrap bearer. On the current Incus
+substrate, the Incus file API atomically replaces that single file; no wrapper
+directory is part of the filesystem ABI. The CLI validates the context and
+fails closed before datasource access. It has no ambient manifest selector,
+auth selector, local-manifest path, or substrate-specific datasource branch.
 
 Hosted runtime manifests use the single canonical `/v1/runtime/manifest`
-datasource contract. `CLAWDI_RUNTIME_MANIFEST_URL` may carry normal query
-parameters, but its path must end with `/v1/runtime/manifest`.
+datasource contract. The typed context URL may carry normal query parameters,
+but its path must end with `/v1/runtime/manifest`. Business secrets live only
+in the fetched bundle's `secretValues` map and resolve through exact
+`secret://` references; runtime context and process environment are not
+business-secret authorities.
 
 For transparent egress:
 
@@ -50,9 +56,9 @@ For transparent egress:
 - Private egress CA and secret material is owned directly by that numeric
   UID/GID. Root-readable egress configuration and the projected system CA
   remain root-owned.
-- When the sidecar starts as root, it drops privileges with `setpriv --reuid`
-  and `--regid` plus `--clear-groups`, or with numeric `gosu UID:GID` when
-  `setpriv` is unavailable. Startup fails closed if neither mechanism exists.
+- When the sidecar starts as root, it probes for and drops privileges with
+  `setpriv --reuid` and `--regid` plus `--clear-groups`. Startup fails closed if
+  that numeric-identity mechanism is unavailable.
 - When the sidecar starts as non-root, its current UID and GID must exactly
   match the configured egress identity before `mitmdump` can start.
 - No named egress account, passwd lookup, account creation, compatibility
@@ -65,13 +71,14 @@ For transparent egress:
 
 ## Cloud Hosted Authority
 
-The Hosted rollout writer selects an exact CLI package spec. Cloud validates
-and persists it, enforces the Cloud-owned `0.12.10-beta.55` minimum, fixes the
-package source and official registry, and owns the public manifest projection.
-Remote Hosted state cannot provide a floating package, installer URL, installer
-args, source, or registry. Bootstrap tgz input is fixture-only, while generic
-non-Hosted desired state keeps its existing package, provider, and installer
-behavior.
+Hosted selects an exact CLI package spec from its database-backed setting and
+persists it with the deployment. Cloud validates and persists that value, fixes
+the package source and official registry, and projects it unchanged into the
+public manifest. There is no independent product-version floor. Wire evolution
+uses explicit manifest schemas or capabilities instead. Remote Hosted state
+cannot provide a floating package, installer URL, installer args, source, or
+registry. Bootstrap tgz input is fixture-only, while generic non-Hosted desired
+state keeps its existing package, provider, and installer behavior.
 
 Cloud serializes runtime-state create and update by locking the parent
 `AgentEnvironment` before the optional `HostedRuntimeState`, then applies
@@ -98,7 +105,7 @@ It conflicts with the stable capability-envelope boundary.
 
 This keeps the image generic, makes ownership explicit, avoids account lookup,
 and permits deterministic fail-closed privilege dropping. It requires the host
-envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
+envelope to provide `setpriv` and reserve the configured IDs.
 
 ## Consequences
 

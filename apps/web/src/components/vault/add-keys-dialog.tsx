@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
@@ -30,8 +31,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { buildKeyImportPreview } from "@/components/vault/key-import-logic";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { errorMessage } from "@/lib/utils";
 
 /* The #2 job of this dashboard: get keys in, fast. Paste-first composer —
@@ -53,6 +56,7 @@ export function AddKeysDialog({
 	children?: ReactElement;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [text, setText] = useState("");
@@ -60,18 +64,16 @@ export function AddKeysDialog({
 	const [newVaultName, setNewVaultName] = useState("");
 	const [updateExisting, setUpdateExisting] = useState(false);
 
-	const vaultsQuery = useQuery({
-		queryKey: ["vaults", "all"],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
-		enabled: open,
-	});
-	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		enabled: open,
-	});
-
+	const vaultsQuery = $api.useQuery(
+		"get",
+		"/v1/vault",
+		{
+			params: { query: { page_size: 200 } },
+		},
+		{
+			enabled: open && !vaultSlug,
+		},
+	);
 	const ownVaults = useMemo(
 		() => (vaultsQuery.data?.items ?? []).filter((v) => v.is_owner !== false),
 		[vaultsQuery.data],
@@ -79,7 +81,7 @@ export function AddKeysDialog({
 	const vaultItems = useMemo(
 		() => [
 			...ownVaults.map((vault) => ({ value: vault.id, label: vault.name })),
-			{ value: NEW_VAULT, label: "New vault…" },
+			{ value: NEW_VAULT, label: "Create vault…" },
 		],
 		[ownVaults],
 	);
@@ -88,30 +90,16 @@ export function AddKeysDialog({
 	const selectedVault = ownVaults.find((v) => v.id === effectiveChoice);
 	const effectiveSlug = selectedVault?.slug ?? (vaultSlug && vaultId ? vaultSlug : NEW_VAULT);
 	const selectedVaultId = selectedVault?.id ?? vaultId;
-	const selectedVaultProjectId = selectedVault?.project_ids?.[0] ?? vaultProjectId;
+	const selectedVaultProjectId = vaultProjectId;
 	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
 	const newVaultSlugTaken =
 		effectiveChoice === NEW_VAULT &&
 		newVaultSlug.length > 0 &&
 		ownVaults.some((v) => v.slug === newVaultSlug);
-	const writableProject = useMemo(
-		() =>
-			(projectsQuery.data ?? []).find((p) => p.kind === "personal") ??
-			(projectsQuery.data ?? []).find((p) => p.is_owner !== false),
-		[projectsQuery.data],
-	);
-	const newVaultPending =
-		effectiveChoice === NEW_VAULT &&
-		!vaultSlug &&
-		(vaultsQuery.isLoading || projectsQuery.isLoading);
-	const newVaultUnavailable =
-		effectiveChoice === NEW_VAULT &&
-		!vaultSlug &&
-		!vaultsQuery.isLoading &&
-		!projectsQuery.isLoading &&
-		!vaultsQuery.error &&
-		!projectsQuery.error &&
-		writableProject === undefined;
+	const newVaultPending = effectiveChoice === NEW_VAULT && !vaultSlug && vaultsQuery.isLoading;
+	const blockingVaultsError = shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data)
+		? vaultsQuery.error
+		: null;
 	const existingItems = useQuery({
 		queryKey: ["vault-items", selectedVaultId, effectiveSlug, selectedVaultProjectId],
 		queryFn: async () =>
@@ -139,21 +127,22 @@ export function AddKeysDialog({
 		open &&
 		effectiveChoice !== NEW_VAULT &&
 		(vaultsQuery.isLoading || selectedVaultId === undefined || existingItems.isLoading);
-	const destinationLoadError =
-		vaultsQuery.error ?? (effectiveChoice === NEW_VAULT ? projectsQuery.error : null);
+	const destinationLoadError = blockingVaultsError;
+	const existingItemsError = shouldBlockQueryError(existingItems.error, existingItems.data)
+		? existingItems.error
+		: null;
 	const canSave =
 		importPlan.parsed.errors.length === 0 &&
 		importableCount > 0 &&
 		!saveDisabledForNewVault(effectiveChoice, vaultSlug, newVaultName, newVaultSlug) &&
 		!newVaultSlugTaken &&
 		!newVaultPending &&
-		!newVaultUnavailable &&
 		!destinationPending &&
 		!destinationLoadError &&
-		!existingItems.error;
+		!existingItemsError;
 
-	const save = useMutation({
-		mutationFn: async () => {
+	const save = useSensitiveAction(async () => {
+		try {
 			let slug = effectiveSlug;
 			let targetVaultId = selectedVaultId;
 			let projectId: string | undefined;
@@ -165,8 +154,7 @@ export function AddKeysDialog({
 				if (ownVaults.some((v) => v.slug === slug)) {
 					throw new Error("A vault with that name already exists");
 				}
-				if (!writableProject) throw new Error("No writable Project available yet");
-				projectId = writableProject.id;
+				projectId = vaultProjectId;
 				const created = unwrap(
 					await api.POST("/v1/vault", {
 						params: { query: { project_id: projectId, create_only: true } },
@@ -191,10 +179,8 @@ export function AddKeysDialog({
 					}),
 				);
 			}
-			return { slug, vaultId: targetVaultId, summary: importPlan.summary };
-		},
-		onSuccess: ({ slug, vaultId: targetVaultId, summary }) => {
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			const summary = importPlan.summary;
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			qc.invalidateQueries({
 				queryKey: targetVaultId ? ["vault-items", targetVaultId] : ["vault-items"],
 			});
@@ -202,12 +188,14 @@ export function AddKeysDialog({
 			toast.success(`${changed} ${changed === 1 ? "key" : "keys"} saved`, {
 				description:
 					summary.updated > 0 || summary.skipped > 0
-						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped in vault://${slug}.`
-						: `In vault://${slug}. Agents read them through the CLI at runtime.`,
+						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped.`
+						: "Key values stay protected, and attached Projects and Agents can use them.",
 			});
 			setOpen(false);
-		},
-		onError: (e) => toast.error("Couldn't save keys", { description: errorMessage(e) }),
+		} catch (error) {
+			toast.error("Couldn't save keys", { description: errorMessage(error) });
+			throw error;
+		}
 	});
 
 	useEffect(() => {
@@ -226,7 +214,18 @@ export function AddKeysDialog({
 	);
 
 	return (
-		<Dialog open={open} onOpenChange={setOpen}>
+		<Dialog
+			open={open}
+			onOpenChange={setOpen}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) {
+					setText("");
+					setNewVaultName("");
+					setVaultChoice(vaultId ?? "");
+					setUpdateExisting(false);
+				}
+			}}
+		>
 			<DialogTrigger render={trigger} />
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
@@ -270,7 +269,7 @@ export function AddKeysDialog({
 										))}
 										<SelectItem value={NEW_VAULT}>
 											<Plus className="size-3.5" />
-											New vault…
+											Create vault…
 										</SelectItem>
 									</SelectContent>
 								</Select>
@@ -281,17 +280,12 @@ export function AddKeysDialog({
 										value={newVaultName}
 										onChange={(e) => setNewVaultName(e.target.value)}
 										placeholder="Vault name…"
-										aria-label="New vault name"
+										aria-label="Vault name"
 										className="sm:w-44"
 									/>
 									{newVaultSlugTaken ? (
 										<p className="max-w-44 text-xs text-destructive">
 											That vault already exists. Choose it from the list or use a different name.
-										</p>
-									) : null}
-									{newVaultUnavailable ? (
-										<p className="max-w-44 text-xs text-destructive">
-											No writable Project is available yet.
 										</p>
 									) : null}
 								</div>
@@ -303,9 +297,6 @@ export function AddKeysDialog({
 							error={destinationLoadError}
 							onRetry={() => {
 								if (vaultsQuery.error) void vaultsQuery.refetch();
-								if (effectiveChoice === NEW_VAULT && projectsQuery.error) {
-									void projectsQuery.refetch();
-								}
 							}}
 							title="Couldn't load destinations"
 						/>
@@ -323,9 +314,9 @@ export function AddKeysDialog({
 							</AlertDescription>
 						</Alert>
 					) : null}
-					{existingItems.error ? (
+					{existingItemsError ? (
 						<ApiErrorPanel
-							error={existingItems.error}
+							error={existingItemsError}
 							onRetry={() => {
 								void existingItems.refetch();
 							}}
@@ -388,15 +379,23 @@ export function AddKeysDialog({
 							</div>
 						</div>
 					) : null}
-					<div className="flex items-center justify-between gap-2">
+					<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<span className="text-xs text-muted-foreground tabular-nums">
 							{count} {count === 1 ? "key" : "keys"} detected
 							{importPlan.summary.skipped > 0 ? ` · ${importPlan.summary.skipped} skipped` : ""}
 						</span>
-						<Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
-							{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
-							Save {importableCount > 0 ? importableCount : ""}
-						</Button>
+						<DialogFooter className="sm:ml-auto">
+							<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+								Cancel
+							</Button>
+							<Button
+								onClick={() => void save.execute().catch(() => undefined)}
+								disabled={!canSave || save.isPending}
+							>
+								{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
+								Save {importableCount > 0 ? importableCount : ""}
+							</Button>
+						</DialogFooter>
 					</div>
 				</div>
 			</DialogContent>

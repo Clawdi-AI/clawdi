@@ -9,10 +9,15 @@ import type { components } from "@/lib/api-schemas";
 type Schemas = components["schemas"];
 
 export type AiProvider = Schemas["AiProviderResponse"];
+export type AiProviderList = Schemas["AiProviderListResponse"];
 export type AiProviderAuth = Schemas["AiProviderAuth"];
 export type AiProviderUpsertAuth = Schemas["AiProviderUpsertAuth"];
 export type AiProviderUpsert = Schemas["AiProviderUpsert"];
 export type AiProviderPatch = Schemas["AiProviderPatch"];
-export type AiProviderValidation = Schemas["AiProviderValidationResponse"];
-export type AiProviderOAuthStart = Schemas["AiProviderOAuthStartResponse"];
-export type AiProviderDeleted = Schemas["AiProviderDeleteResponse"];
+export type AiProviderAcceptRequest = Schemas["AiProviderAcceptRequest"];
+export type AiProviderAcceptResponse = Schemas["AiProviderAcceptResponse"];
+export type AiProviderReadyAcceptResponse = Schemas["AiProviderReadyAcceptResponse"];
+export type AiProviderConnectionTestRequest = Schemas["AiProviderConnectionTestRequest"];
+export type AiProviderConnectionTestResponse = Schemas["AiProviderConnectionTestResponse"];
+export type AiProviderOAuthDeviceStartResponse = Schemas["AiProviderOAuthDeviceStartResponse"];
+export type AiProviderOAuthDevicePollResponse = Schemas["AiProviderOAuthDevicePollResponse"];

@@ -16,7 +16,7 @@
 		"tailwindcss": "^4.3.2",
 		"@tailwindcss/postcss": "^4.3.2",
 		"@tailwindcss/vite": "^4.3.2",
-		"@tanstack/react-query": "^5.101.2",
+		"@tanstack/react-query": "^5.101.4",
 		"lucide-react": "^1.23.0",
 		"tailwind-merge": "^3.6.0",
 		"clsx": "^2.1.1"
@@ -26,7 +26,7 @@
 		"build": "turbo build",
 		"typecheck": "turbo typecheck",
 		"test": "scripts/test.sh",
-		"test:local": "turbo test",
+		"test:local": "turbo test:internal",
 		"check": "biome ci .",
 		"check:fix": "biome check --write .",
 		"generate-api": "scripts/openapi-typescript.sh http://localhost:8000/openapi.json -o packages/shared/src/api/api.generated.ts",

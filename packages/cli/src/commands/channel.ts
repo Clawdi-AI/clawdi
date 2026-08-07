@@ -388,7 +388,7 @@ function printPairCode(pairCode: ChannelPairCode): void {
 		console.log(`  Agent SDK token: ${pairCode.agent_token}`);
 	}
 	console.log(`  Expires at: ${pairCode.expires_at}`);
-	console.log(chalk.gray(`Send this in the external chat: /bot_pair ${pairCode.code}`));
+	console.log(chalk.gray(`Send this in the external chat: ${pairCode.pairing_command}`));
 }
 
 function printSentMessage(message: ChannelMessage): void {
@@ -447,14 +447,14 @@ function capabilitySummary(
 }
 
 function parseProvider(value: string): ChannelProvider {
-	if (value === "telegram" || value === "discord" || value === "whatsapp" || value === "imessage") {
+	if (value === "telegram" || value === "discord" || value === "whatsapp") {
 		return value;
 	}
-	throw new Error("provider must be one of: telegram, discord, whatsapp, imessage");
+	throw new Error("provider must be one of: telegram, discord, whatsapp");
 }
 
 function parseTtl(raw: string | undefined): number {
-	if (raw === undefined) return 900;
+	if (raw === undefined) return 300;
 	const ttl = Number(raw);
 	if (!Number.isInteger(ttl) || ttl < 60 || ttl > 86_400) {
 		throw new Error("--ttl must be an integer number of seconds between 60 and 86400.");

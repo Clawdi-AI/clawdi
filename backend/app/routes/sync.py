@@ -3,9 +3,10 @@
 Daemon opens a long-lived `GET /v1/sync/events` connection authed
 with the same Bearer token it uses for any other API call. The server pushes
 skill revision events and signal-only
-`{"type":"runtime_manifest_changed","environment_id":"…"}` events. The
-daemon immediately pulls the affected resource instead of waiting for normal
-reconcile and ETag polling.
+`{"type":"runtime_manifest_changed","environment_id":"…"}` events. Skill
+events wake a local inventory scan; they never download, write, or remove Agent
+filesystem content. Periodic revision-fenced complete Agent-Project listings
+catch up missed events and only reconcile Cloud projections.
 
 Outbound-only: daemon doesn't open an inbound HTTP server. Auth
 is the Bearer token at handshake; `401` mid-stream (key revoked)
@@ -36,14 +37,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import AuthContext, require_scope_short_session
 from app.core.database import async_session_factory
 from app.core.project import project_ids_visible_to
+from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_HEADER,
+    resolve_skill_sync_protocol,
+)
 from app.services import sync_events
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -65,10 +71,61 @@ PER_USER_CONNECTION_CAP = 10
 # typical 60s default. Daemon treats 60s of silence as "stale,
 # reconnect."
 HEARTBEAT_INTERVAL_S = 25.0
+OAUTH_ACCESS_EXPIRY_SKEW = timedelta(seconds=1)
+
+
+def _oauth_cli_access_expired(
+    auth: AuthContext,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not auth.oauth_cli:
+        return False
+    expires_at = auth.oauth_access_expires_at
+    if expires_at is None:
+        return True
+    current = now or datetime.now(UTC)
+    return current >= expires_at - OAUTH_ACCESS_EXPIRY_SKEW
+
+
+async def _close_on_oauth_access_expiry(
+    auth: AuthContext,
+    close_stream: asyncio.Event,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Close only OAuth CLI streams when their verified access JWT expires."""
+    if not auth.oauth_cli:
+        return
+    expires_at = auth.oauth_access_expires_at
+    if expires_at is None:
+        close_stream.set()
+        return
+    while not close_stream.is_set():
+        remaining = (expires_at - OAUTH_ACCESS_EXPIRY_SKEW - now()).total_seconds()
+        if remaining <= 0:
+            close_stream.set()
+            return
+        await sleep(min(remaining, HEARTBEAT_INTERVAL_S))
+
+
+async def _cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
+    """Cancel and collect every child before surfacing the first failure."""
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    for task in tasks:
+        if task.cancelled():
+            continue
+        failure = task.exception()
+        if failure is not None:
+            raise failure
 
 
 async def _stream(
-    queue: asyncio.Queue[dict],
+    queue: sync_events.SyncEventQueue,
     request: Request,
     revoked: asyncio.Event,
 ) -> AsyncIterator[bytes]:
@@ -83,20 +140,38 @@ async def _stream(
     while True:
         if await request.is_disconnected() or revoked.is_set():
             return
+        event_task = asyncio.create_task(queue.get())
+        revoked_task = asyncio.create_task(revoked.wait())
+        child_tasks = (event_task, revoked_task)
         try:
-            event_payload = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL_S)
-        except TimeoutError:
+            done, _pending = await asyncio.wait(
+                child_tasks,
+                timeout=HEARTBEAT_INTERVAL_S,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            # A client disconnect cancels the async generator while it may be
+            # parked inside ``asyncio.wait``. Cleanup after a normal wait is
+            # therefore insufficient: Queue.get/Event.wait tasks survive and
+            # asyncio later reports "Task was destroyed but it is pending".
+            # Own both child tasks on every exit, including generator
+            # cancellation and server shutdown.
+            await _cancel_and_wait(*child_tasks)
+        if revoked_task in done or revoked.is_set():
+            return
+        if event_task not in done:
             # No event in 25s; emit heartbeat comment and loop.
             yield b": ping\n\n"
             continue
+        event_payload = event_task.result()
         # Re-check revocation BEFORE emitting. The refresher can
         # set `revoked` while `wait_for` is parked on `queue.get()`;
         # an event landing in the queue right after revocation
         # would otherwise be emitted (one final `skill_changed`
-        # / `skill_deleted` slipping past). The daemon turns
-        # `skill_deleted` into a local file rm, so this is not
-        # cosmetic — without the re-check, a freshly-revoked
-        # token could still trigger a write on the client.
+        # / `skill_deleted` slipping past). Skill events wake an
+        # Agent-authoritative local rescan, so this is
+        # not cosmetic — without the re-check, a freshly-revoked token could
+        # still trigger client work after its authorization was revoked.
         if revoked.is_set():
             return
         # Real event: write SSE record.
@@ -125,10 +200,11 @@ async def events(
     # exhaust the connection pool. The refresh loop below opens
     # short-lived sessions on its own cadence.
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
 ):
-    """SSE event channel. Daemons subscribe here and pull any
-    skill referenced in incoming `skill_changed` events. Server-
-    side project filter applied at broker level: subscribers only
+    """SSE event channel. Daemons subscribe here and treat Skill events as
+    invalidations that trigger an Agent-filesystem rescan and Cloud projection.
+    Server-side project filtering is applied at broker level: subscribers only
     receive events for projects they have read access to.
 
     No request-scoped DB session: SSE streams live for hours,
@@ -139,7 +215,10 @@ async def events(
     query returns. With many connected daemons this keeps the
     pool free for normal request traffic.
     """
+    resolve_skill_sync_protocol(skill_sync_protocol)
     user_id = auth.user_id
+    if _oauth_cli_access_expired(auth):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OAuth access token has expired")
 
     # Resolve the caller's initial visible-project set, then atomic
     # cap-and-subscribe. The cap check + register pair is wrapped
@@ -179,8 +258,8 @@ async def events(
     # Set when the periodic refresher notices the caller's api_key
     # was revoked. Closes the auth-after-handshake window where a
     # subscriber kept receiving `skill_changed` / `skill_deleted`
-    # events — which the daemon turns into local file mutations —
-    # for as long as the TCP stream happened to stay alive.
+    # invalidations, which wake an Agent-authoritative local rescan and Cloud
+    # projection, for as long as the TCP stream happened to stay alive.
     revoked = asyncio.Event()
 
     async def refresh_visibility() -> None:
@@ -238,31 +317,35 @@ async def events(
                 log.warning("sync events: project refresh failed user=%s: %s", user_id, e)
                 continue
             if fresh != subscriber.visible_project_ids:
+                old_visible_count = (
+                    0
+                    if subscriber.visible_project_ids is None
+                    else len(subscriber.visible_project_ids)
+                )
                 log.info(
                     "sync events: project filter updated user=%s old=%d new=%d",
                     user_id,
-                    len(subscriber.visible_project_ids or set()),
+                    old_visible_count,
                     len(fresh),
                 )
                 subscriber.visible_project_ids = fresh
 
     async def gen() -> AsyncIterator[bytes]:
         refresh_task = asyncio.create_task(refresh_visibility())
+        expiry_task = asyncio.create_task(_close_on_oauth_access_expiry(auth, revoked))
         try:
             async for chunk in _stream(queue, request, revoked):
                 yield chunk
         finally:
-            refresh_task.cancel()
             try:
-                await refresh_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            sync_events.unsubscribe(user_id, queue)
-            log.info(
-                "sync events: unsubscribed user=%s remaining=%s",
-                user_id,
-                sync_events.connection_count(user_id),
-            )
+                await _cancel_and_wait(refresh_task, expiry_task)
+            finally:
+                sync_events.unsubscribe(user_id, queue)
+                log.info(
+                    "sync events: unsubscribed user=%s remaining=%s",
+                    user_id,
+                    sync_events.connection_count(user_id),
+                )
 
     # `text/event-stream` is the SSE content type. `X-Accel-Buffering:
     # no` disables nginx response buffering on the off chance an

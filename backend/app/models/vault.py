@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401 — register `projects` table for FK resolution
+from app.models.project import Project
 
 
 class Vault(Base, TimestampMixin):
@@ -30,7 +30,7 @@ class VaultProjectAttachment(Base, TimestampMixin):
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -49,7 +49,7 @@ class VaultProjectSlugAlias(Base, TimestampMixin):
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -89,7 +89,7 @@ class VaultCredentialProfile(Base, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

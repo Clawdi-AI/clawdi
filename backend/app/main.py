@@ -1,11 +1,10 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from http import HTTPStatus
-from typing import Any, Literal
+from typing import Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -16,8 +15,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.auth import warm_clerk_jwks
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import async_session_factory, get_session
+from app.core.logging_config import configure_application_logging
 from app.core.sentry import init_sentry
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
@@ -25,12 +26,14 @@ from app.middleware.request_timing import RequestTimingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.skill_upload_preflight import SkillUploadPreflightMiddleware
 from app.routes.admin import router as admin_router
+from app.routes.admin import whatsapp_pairing_router as admin_whatsapp_pairing_router
 from app.routes.agent_project_bindings import router as agent_project_bindings_router
 from app.routes.ai_providers import router as ai_providers_router
 from app.routes.audit import router as audit_router
 from app.routes.auth import router as auth_router
 from app.routes.capabilities import router as capabilities_router
 from app.routes.channels import router as channels_router
+from app.routes.clerk_webhooks import router as clerk_webhooks_router
 from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
@@ -40,26 +43,38 @@ from app.routes.memories import router as memories_router
 from app.routes.metrics import router as metrics_router
 from app.routes.platform import router as platform_router
 from app.routes.projects import router as projects_router
-from app.routes.public_sessions import router as public_sessions_router
+from app.routes.public_sessions import (
+    PUBLIC_SESSION_EXPORT_CACHE_CONTROL,
+    is_public_session_export_path,
+)
+from app.routes.public_sessions import (
+    router as public_sessions_router,
+)
 from app.routes.runtime import router as runtime_router
+from app.routes.runtime_observation_v2 import router as runtime_observation_v2_router
 from app.routes.search import router as search_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
 from app.routes.share_redeem import router as share_redeem_router
 from app.routes.sharing import router as sharing_router
+from app.routes.skills import agent_router as skills_agent_router
 from app.routes.skills import project_router as skills_project_router
 from app.routes.skills import router as skills_router
 from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
+from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
+from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
+from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
+from app.services.whatsapp_managed_onboarding import (
+    expire_stale_platform_whatsapp_pairing_sessions,
+)
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
-logging.basicConfig(level=logging.INFO)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+configure_application_logging()
 log = logging.getLogger(__name__)
 init_sentry()
 
@@ -72,8 +87,6 @@ def _validation_errors_for_log(exc: RequestValidationError) -> list[dict[str, ob
             "loc": err.get("loc"),
             "msg": err.get("msg"),
         }
-        if "ctx" in err:
-            item["ctx"] = err["ctx"]
         errors.append(item)
     return errors
 
@@ -83,7 +96,7 @@ class HealthResponse(BaseModel):
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """ASGI lifespan — warm slow singletons at startup so the first request
     path isn't the one that pays for them.
 
@@ -93,14 +106,55 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     background: set[asyncio.Task[None]] = set()
     whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
-        settings.channel_whatsapp_baileys_sidecars_json
+        settings.channel_whatsapp_baileys_sidecar_token.get_secret_value(),
+        base_url=settings.channel_whatsapp_baileys_sidecar_url or None,
     )
     await start_postgres_listener()
     try:
         await whatsapp_sidecars.start()
+        if whatsapp_sidecars.enabled:
+            await whatsapp_sidecars.reconcile_custom_ownership()
+            await whatsapp_sidecars.reconcile_managed_ownership()
     except Exception:
+        await whatsapp_sidecars.stop()
         await stop_postgres_listener()
         raise
+
+    await warm_clerk_jwks()
+
+    if whatsapp_sidecars.enabled:
+
+        async def _expire_whatsapp_onboarding() -> None:
+            while True:
+                await asyncio.sleep(15)
+                try:
+                    await whatsapp_sidecars.reconcile_custom_ownership()
+                    await whatsapp_sidecars.reconcile_managed_ownership()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("WhatsApp sidecar ownership reconciliation failed")
+                try:
+                    async with async_session_factory() as db:
+                        await expire_stale_whatsapp_onboarding_sessions(
+                            db,
+                            registry=whatsapp_sidecars,
+                        )
+                        await expire_stale_platform_whatsapp_pairing_sessions(
+                            db,
+                            registry=whatsapp_sidecars,
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("WhatsApp onboarding expiry sweep failed")
+
+        task = asyncio.create_task(
+            _expire_whatsapp_onboarding(),
+            name="whatsapp-onboarding-expiry",
+        )
+        background.add(task)
+        task.add_done_callback(background.discard)
 
     if settings.memory_embedding_mode.lower() == "local":
 
@@ -108,8 +162,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             try:
                 await asyncio.to_thread(LocalEmbedder.get)
                 log.info("Local embedder warmed.")
-            except Exception as e:  # noqa: BLE001 — never block startup on embedder
-                log.warning("Local embedder warmup failed: %s", e)
+            except (OSError, RuntimeError, ValueError) as exc:
+                log.warning("Local embedder warmup failed: %s", exc)
 
         # Hold a strong reference — asyncio.create_task returns a weak-ref'd
         # Task and the GC can reap it mid-flight otherwise. Python docs
@@ -192,6 +246,7 @@ app.add_middleware(
         "X-Correlation-ID",
         "X-Clawdi-Environment-Id",
         "X-Clawdi-Token",
+        "Idempotency-Key",
         # `If-None-Match` carries the daemon's last seen
         # `skills_revision` for the conditional GET /v1/skills.
         # The CLI daemon hits this without going through CORS, so
@@ -219,12 +274,44 @@ app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 
-@app.exception_handler(RequestValidationError)
+def _apply_public_session_export_cache_policy(
+    request: Request,
+    response: Response,
+) -> Response:
+    if is_public_session_export_path(request.url.path):
+        response.headers["Cache-Control"] = PUBLIC_SESSION_EXPORT_CACHE_CONTROL
+    return response
+
+
+def _apply_whatsapp_onboarding_cache_policy(request: Request, response: Response) -> Response:
+    if _is_whatsapp_onboarding_request(request):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 async def request_validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
-) -> JSONResponse:
+) -> Response:
     path = request.url.path
+    if _is_whatsapp_onboarding_request(request):
+        return _apply_whatsapp_onboarding_cache_policy(
+            request,
+            JSONResponse(
+                status_code=422,
+                content={"detail": "Invalid WhatsApp onboarding request"},
+            ),
+        )
+    if path.endswith("/runtime-state"):
+        errors = _validation_errors_for_log(exc)
+        log.warning(
+            "request_validation_failed method=%s path=%s errors=%s",
+            request.method,
+            path,
+            errors,
+        )
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
     if path.endswith("/skills/upload") or path.endswith("/sessions/batch"):
         log.warning(
             (
@@ -238,9 +325,12 @@ async def request_validation_exception_handler(
             request.headers.get("content-length", ""),
             _validation_errors_for_log(exc),
         )
-    return JSONResponse(
-        status_code=422,
-        content={"detail": jsonable_encoder(exc.errors())},
+    return _apply_public_session_export_cache_policy(
+        request,
+        JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(exc.errors())},
+        ),
     )
 
 
@@ -267,6 +357,7 @@ _VERSIONED_ROUTERS = (
     runtime_router,
     skills_router,
     skills_project_router,
+    skills_agent_router,
     sync_router,
     memories_router,
     settings_router,
@@ -285,10 +376,55 @@ for _router in _VERSIONED_ROUTERS:
     app.include_router(_router, prefix="/v1")
     if _router not in (runtime_router, platform_router):
         app.include_router(_router, prefix="/api", include_in_schema=False)
+
+app.include_router(admin_whatsapp_pairing_router, prefix="/v1")
+# Signed provider ingress is canonical-only; it does not inherit the legacy
+# hidden /api aliases used by older dashboard routes.
+app.include_router(clerk_webhooks_router, prefix="/v1")
+# The declarative runtime observation companion is a clean-v2 contract. It is
+# mounted directly and intentionally has neither a /v1 nor a hidden /api alias.
+app.include_router(runtime_observation_v2_router)
 # Scope skill reads predate the Scope -> Project migration and only
 # exist for old binaries; legacy /api alias only.
 app.include_router(skills_scope_router, prefix="/api", include_in_schema=False)
 app.include_router(metrics_router)
+
+
+@app.exception_handler(OAuthCredentialPayloadCorruptError)
+async def oauth_credential_payload_corrupt_exception_handler(
+    request: Request,
+    exc: OAuthCredentialPayloadCorruptError,
+) -> Response:
+    response = JSONResponse(
+        status_code=409,
+        content={"detail": str(exc)},
+    )
+    return _apply_whatsapp_onboarding_cache_policy(
+        request,
+        _apply_public_session_export_cache_policy(request, response),
+    )
+
+
+@app.exception_handler(MemoryProviderUnavailableError)
+async def memory_provider_unavailable_exception_handler(
+    _request: Request,
+    _exc: MemoryProviderUnavailableError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Memory provider temporarily unavailable"},
+    )
+
+
+@app.exception_handler(MemoryProviderUpstreamError)
+async def memory_provider_upstream_exception_handler(
+    _request: Request,
+    _exc: MemoryProviderUpstreamError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        content={"detail": "Memory provider request failed"},
+    )
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -296,13 +432,11 @@ async def clawdi_http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ):
-    if _is_bluebubbles_request(request):
-        return _bluebubbles_error_response(
-            status_code=exc.status_code,
-            detail=exc.detail,
-            headers=exc.headers,
-        )
-    return await http_exception_handler(request, exc)
+    response = await http_exception_handler(request, exc)
+    return _apply_whatsapp_onboarding_cache_policy(
+        request,
+        _apply_public_session_export_cache_policy(request, response),
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -310,45 +444,17 @@ async def clawdi_request_validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ):
-    if _is_bluebubbles_request(request):
-        return _bluebubbles_error_response(
-            status_code=422,
-            detail="validation error",
-        )
     return await request_validation_exception_handler(request, exc)
 
 
-def _is_bluebubbles_request(request: Request) -> bool:
+def _is_whatsapp_onboarding_request(request: Request) -> bool:
     return request.url.path.startswith(
-        ("/api/channels/imessage/bluebubbles/", "/v1/channels/imessage/bluebubbles/")
+        (
+            "/api/channels/whatsapp/onboarding/",
+            "/v1/channels/whatsapp/onboarding/",
+            "/v1/admin/channels/whatsapp/pairing-sessions",
+        )
     )
-
-
-def _bluebubbles_error_response(
-    *,
-    status_code: int,
-    detail: Any,
-    headers: dict[str, str] | None = None,
-) -> JSONResponse:
-    message = _bluebubbles_error_message(status_code=status_code, detail=detail)
-    return JSONResponse(
-        status_code=status_code,
-        content={"status": status_code, "message": message, "data": None},
-        headers=headers,
-    )
-
-
-def _bluebubbles_error_message(*, status_code: int, detail: Any) -> str:
-    if isinstance(detail, str) and detail:
-        return detail
-    if isinstance(detail, dict):
-        message = detail.get("message") or detail.get("detail")
-        if isinstance(message, str) and message:
-            return message
-    try:
-        return HTTPStatus(status_code).phrase
-    except ValueError:
-        return "Error"
 
 
 @app.get("/health", response_model=HealthResponse)

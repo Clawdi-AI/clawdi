@@ -1,23 +1,20 @@
-import type {
-	ComputePlanSlug,
-	DeployRequest,
-	HostedConfigRequest,
-} from "@/hosted/billing/contracts";
-import { normalizeHostedLanguage } from "@/hosted/billing/deploy/language-timezone-controls";
+import {
+	buildHostedDeployRequest as buildSharedHostedDeployRequest,
+	HOSTED_DEPLOY_AGENT_NAME_MAX_LENGTH,
+	type HostedDeployAiFields,
+} from "@clawdi/shared/api";
+import type { ComputePlanSlug, DeployRequest } from "@/hosted/billing/contracts";
 import type { HostedRuntime } from "@/hosted/runtimes";
 
 type DeployPersona = {
+	agentName: string;
 	language: string;
 	timezone: string;
 };
 
-export type DeployAiFields = Pick<DeployRequest, "ai_provider_auth_kind"> &
-	Partial<
-		Pick<
-			DeployRequest,
-			"ai_provider_bootstrap" | "ai_provider_id" | "primary_model" | "provider_ids"
-		>
-	>;
+export const DEPLOY_AGENT_NAME_MAX_LENGTH = HOSTED_DEPLOY_AGENT_NAME_MAX_LENGTH;
+
+export type DeployAiFields = HostedDeployAiFields;
 
 export function buildHostedDeployRequest({
 	computePlanSlug,
@@ -30,23 +27,5 @@ export function buildHostedDeployRequest({
 	persona: DeployPersona;
 	aiFields: DeployAiFields;
 }): DeployRequest {
-	const language = normalizeHostedLanguage(persona.language);
-	const timezone = persona.timezone.trim() || null;
-	const { ai_provider_auth_kind, ...restAiFields } = aiFields;
-	const personaFields = {
-		language,
-		timezone,
-	};
-	const config: HostedConfigRequest = {
-		runtime,
-		...personaFields,
-	};
-	return {
-		compute_plan_slug: computePlanSlug,
-		runtime,
-		config,
-		...personaFields,
-		ai_provider_auth_kind,
-		...restAiFields,
-	};
+	return buildSharedHostedDeployRequest({ computePlanSlug, runtime, persona, aiFields });
 }

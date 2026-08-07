@@ -17,6 +17,13 @@ interface Check {
 	hint?: string;
 }
 
+interface JsonRpcResponse {
+	jsonrpc?: unknown;
+	id?: unknown;
+	result?: unknown;
+	error?: unknown;
+}
+
 async function checkAuth(): Promise<Check> {
 	const auth = getAuth();
 	if (!auth) {
@@ -134,15 +141,28 @@ async function checkVault(): Promise<Check> {
 
 async function checkMcp(): Promise<Check> {
 	if (!isLoggedIn()) {
-		return { name: "MCP connectors", ok: false, detail: "skipped (not logged in)" };
+		return { name: "Clawdi MCP", ok: false, detail: "skipped (not logged in)" };
 	}
 	try {
 		const api = new ApiClient();
-		unwrap(await api.GET("/v1/connectors/mcp-config"));
-		return { name: "MCP connectors", ok: true, detail: "config reachable" };
+		const response = await api.postJsonBody<JsonRpcResponse>("/v1/mcp/clawdi", {
+			jsonrpc: "2.0",
+			id: 1,
+			method: "ping",
+			params: {},
+		});
+		if (
+			response.jsonrpc !== "2.0" ||
+			response.id !== 1 ||
+			!("result" in response) ||
+			response.error !== undefined
+		) {
+			throw new Error("invalid JSON-RPC response");
+		}
+		return { name: "Clawdi MCP", ok: true, detail: "endpoint reachable" };
 	} catch (e) {
 		return {
-			name: "MCP connectors",
+			name: "Clawdi MCP",
 			ok: false,
 			detail: e instanceof ApiError ? `status ${e.status}` : String(e),
 			hint: e instanceof ApiError ? e.hint : undefined,

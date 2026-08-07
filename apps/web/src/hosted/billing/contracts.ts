@@ -1,4 +1,4 @@
-import type { DeployComponents, DeployPaths } from "@clawdi/shared/api";
+import type { DeployComponents } from "@clawdi/shared/api";
 
 type Schemas = DeployComponents["schemas"];
 
@@ -10,46 +10,52 @@ export type AiProviderAuthKind = NonNullable<
 >;
 export type BillingOffer = Schemas["V2BillingOfferResponse"];
 export type CheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
-export type CheckoutResult = Schemas["V2CheckoutResponse"];
 export type ComputePlanSlug = Schemas["V2HostedDeployRequest"]["compute_plan_slug"];
 export type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActionResponse"];
 export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCancelRequest"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
 export type ComputeBillingHistoryItem = Schemas["V2ComputeBillingHistoryItem"];
-export type ComputeBillingHistoryPage = Schemas["V2ComputeBillingHistoryResponse"];
 export type ComputePlanChangeRequest = Schemas["V2ComputePlanChangeRequest"];
-export type ComputePlanChangeResponse = Schemas["V2ComputePlanChangeResponse"];
+export type ComputePlanChangeResult =
+	| { kind: "complete"; effectiveAt: string }
+	| { kind: "scheduled"; effectiveAt: string }
+	| { kind: "pending"; waitingFor: "payment" | "update" };
 export type ComputePlanChangeQuoteRequest = Schemas["V2ComputePlanChangeQuoteRequest"];
 export type ComputePlanChangeQuoteResponse = Schemas["V2ComputePlanChangeQuoteResponse"];
 export type ComputeSubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];
 export type ComputeSubscriptionQuoteResponse = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
 export type ComputeSubscriptionResumeRequest = Schemas["V2ComputeSubscriptionResumeRequest"];
-export type DeleteDeploymentResult = Schemas["V2DeploymentDeleteResponse"];
+export type DeploymentCreateRequest = Schemas["V2HostedDeployRequest"];
+export type DeploymentDeleteConvergedResponse = Schemas["V2DeleteDeploymentConvergedResponse"];
+export type DeploymentDeleteRequest = Schemas["V2DeleteDeploymentRequest"];
+export type DeploymentUpdateRequest = Schemas["V2UpdateDeploymentRequest"];
+export type DeploymentDesiredLifecycle = "running" | "stopped";
 export type DeployRequest = Schemas["V2HostedDeployRequest"];
-export type DeploymentDetailsInfo = Schemas["V2HostedDeploymentDetailsInfo"];
-export type HostedDeployment = Schemas["V2HostedDeploymentResponse"];
-export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestStatusResponse"];
-export type HostedFundingEvent = Schemas["V2HostedFundingEventInfo"];
-export type RuntimeUiRedemption = Schemas["V2DeploymentRuntimeUiRedemptionResponse"];
+export type HostedDeploymentSpec = Schemas["HostedDeploymentSpec"];
+export type HostedDeploymentStatus = Schemas["HostedDeploymentStatus"];
+export type DeploymentOperation = Schemas["LongRunningOperation"];
+export type HostedDeployment = Schemas["V2HostedDeploymentReadResponse"];
+export type HostedComputeSubscription = NonNullable<
+	NonNullable<HostedDeployment["commercial_display"]>["compute_subscription"]
+>;
+export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"];
+export type HostedEventStreamSnapshotHandoff = Schemas["EventStreamSnapshotHandoff"];
+export type HostedFundingFact = Schemas["V2HostedCommercialFundingFactInfo"];
+export type HostedUsageSummary = Schemas["V2HostedUsageSummaryResponse"];
+export type HostedRuntimeConfiguration = Schemas["RuntimeConfiguration"];
+export type HostedWorkspaceSkillDesiredItem = Schemas["V2WorkspaceSkillDesiredItem"];
+export type HostedWorkspaceSkillInstallRequest = Schemas["V2WorkspaceSkillInstallRequest"];
+export type HostedWorkspaceSkillListResponse = Schemas["V2WorkspaceSkillListResponse"];
+export type HostedWorkspaceSkillMutationResponse = Schemas["V2WorkspaceSkillMutationResponse"];
+export type ManagedModelCatalogItem = Schemas["V2ManagedModelCatalogItem"];
 export type HostedUser = Schemas["V1UserResponse"];
 export type HostedConfigRequest = Schemas["V2HostedConfigRequest"];
 export type Plan = Schemas["V2PlanResponse"];
 export type PortalRequest = Schemas["V2ComputePortalRequest"];
-export type PortalResult = Schemas["V2PortalResponse"];
-export type RebindAgentAiProviderRequest = Schemas["V2RebindAgentAiProviderRequest"];
-export type RuntimeAgentType =
-	DeployPaths["/v2/deployments/{deployment_id}/agents/{agent_type}"]["patch"]["parameters"]["path"]["agent_type"];
-export type SetAgentEnabledRequest = Schemas["V2SetAgentEnabledRequest"];
-export type TerminalSessionResponse = Schemas["V2DeploymentTerminalSessionResponse"];
-export type UsageDay = Schemas["V2HostedUsageDay"];
-export type UsageModelBreakdown = Schemas["V2HostedUsageModelBreakdown"];
-export type UsageSummary = Schemas["V2HostedUsageSummaryResponse"];
 export type WalletAutoReloadAction = Schemas["V2WalletAutoReloadActionResponse"];
 export type WalletAutoReloadRequest = Schemas["V2WalletAutoReloadRequest"];
 export type WalletLedgerEntry = Schemas["V2WalletLedgerItemResponse"];
-export type WalletLedgerPage = Schemas["V2WalletLedgerResponse"];
 export type WalletLedgerStatus = WalletLedgerEntry["status"];
-export type WalletPaymentMode = WalletState["payment_mode"];
 export type WalletState = Schemas["V2WalletResponse"];
 export type WalletTopupRequest = Schemas["V2WalletTopupRequest"];
 export type WalletTopupResult = Schemas["V2WalletTopupResponse"];

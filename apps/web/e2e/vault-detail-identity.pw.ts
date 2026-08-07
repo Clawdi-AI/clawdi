@@ -85,16 +85,18 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 		return fulfill(route, {});
 	});
 
+	// Legacy bookmarks remain valid but settle on the canonical plural route.
 	await page.goto("/vault");
+	await expect(page).toHaveURL(/\/vaults$/);
 	await page.getByRole("link", { name: "Open vault Shared Collision" }).click();
-	await expect(page).toHaveURL(new RegExp(`/vault/collision\\?vault=${sharedId}$`));
+	await expect(page).toHaveURL(new RegExp(`/vaults/collision\\?vault=${sharedId}$`));
 	await expect(page.getByRole("heading", { name: "Shared Collision" })).toBeVisible();
 	await expect(page.getByText("SHARED_ONLY", { exact: true })).toBeVisible();
 	await expect(page.getByText("OWNED_ONLY", { exact: true })).toHaveCount(0);
 
 	await page.getByLabel("breadcrumb").getByRole("link", { name: "Vaults" }).click();
 	await page.getByRole("link", { name: "Open vault Owned Collision" }).click();
-	await expect(page).toHaveURL(new RegExp(`/vault/collision\\?vault=${ownedId}$`));
+	await expect(page).toHaveURL(new RegExp(`/vaults/collision\\?vault=${ownedId}$`));
 	await expect(page.getByRole("heading", { name: "Owned Collision" })).toBeVisible();
 	await expect(page.getByText("OWNED_ONLY", { exact: true })).toBeVisible();
 	await expect(page.getByText("SHARED_ONLY", { exact: true })).toHaveCount(0);

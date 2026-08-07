@@ -1,48 +1,95 @@
 "use client";
 
-import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
-import type { components } from "@clawdi/shared/api";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useRouter } from "@tanstack/react-router";
+import type { components, RuntimeUiCredentials } from "@clawdi/shared/api";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
+	ArrowRight,
+	Check,
+	Copy,
 	Cpu,
 	ExternalLink,
+	Eye,
+	EyeOff,
+	FolderOpen,
 	Info,
 	Link2,
 	Link2Off,
 	type LucideIcon,
-	Maximize2,
 	MonitorPlay,
 	Plus,
 	QrCode,
 	RefreshCw,
 	Settings,
-	Sparkles,
 	TerminalSquare,
 	Trash2,
+	X,
 	Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
+import {
+	AgentOverviewCapabilities,
+	AgentOverviewStatusCard,
+	OverviewDescriptionSkeleton,
+	OverviewModuleError,
+} from "@/components/dashboard/agent-overview-capabilities";
+import {
+	overviewProjectsModule,
+	overviewWorkspaceSkillsModule,
+	useOverviewConnectorsModule,
+	useOverviewMemoriesModule,
+	useOverviewVaultsModule,
+} from "@/components/dashboard/agent-overview-resource-bodies";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import {
+	linkedAgentProjectCount,
+	resolveAgentWorkspaceProjectId,
+} from "@/components/dashboard/agent-project-scope";
+import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
-import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
-import type { DetailSectionMeta } from "@/components/detail/layout";
+import { DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import {
+	ENTITY_CHOICE_GRID_CLASS,
+	EntityAddCard,
+	EntityCardSkeleton,
+	EntityChoiceCard,
+} from "@/components/entity-card";
+import { IconChip } from "@/components/icon-chip";
+import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { SessionFeed } from "@/components/sessions/session-feed";
+import { SectionLabel } from "@/components/section-label";
+import { OverviewSessionList, SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
-import { Input } from "@/components/ui/input";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+	Popover,
+	PopoverContent,
+	PopoverDescription,
+	PopoverHeader,
+	PopoverTitle,
+	PopoverTrigger,
+} from "@/components/ui/popover";
 import {
 	Select,
 	SelectContent,
@@ -50,55 +97,80 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
+import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import {
-	useCreateRuntimeUiRedemption,
-	useCreateTerminalSession,
-	useDeleteDeployment,
+	UnsavedNavigationBoundary,
+	useUnsavedNavigationState,
+} from "@/components/unsaved-navigation-state";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { isCloudEnvId } from "@/hosted/agent-route";
+import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
+import {
 	useDeploymentLifecycle,
-	useSetAgentAiProvider,
-	useSetAgentLanguageTimezone,
+	useResetRuntimeUiAccess,
+	useUpdateDeployment,
 } from "@/hosted/agents/deployment-hooks";
+import {
+	canQueryHostedAgentSessions,
+	HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE,
+	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
+} from "@/hosted/agents/hosted-agent-session-query";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
-import { openRuntimeUiWithRedemption } from "@/hosted/agents/runtime-ui-redemption";
+import {
+	openSecureRuntimeWindow,
+	resolveRuntimeUiCredentials,
+	runtimeUiLaunchTarget,
+} from "@/hosted/agents/runtime-ui-credentials";
+import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
+import { useBillingClient } from "@/hosted/billing/billing-client";
+import {
+	type CheckoutReturnNavigationTarget,
+	useCheckoutReturnHandler,
+} from "@/hosted/billing/checkout-return";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
+	DeploymentUpdateRequest,
 	HostedDeployment,
-	RebindAgentAiProviderRequest,
 } from "@/hosted/billing/contracts";
+import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import {
+	fallbackTimezones,
 	LANGUAGE_OPTIONS,
 	LANGUAGE_SELECT_ITEMS,
+	mergeTimezoneOptions,
+	normalizeHostedLanguage,
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
-	billingErrorDetail,
 	billingErrorNormalizer,
+	billingQueryRetry,
 	normalizeBillingError,
+	PlanChangePendingError,
+	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
-	checkoutReturnDeploymentId,
-	checkoutReturnMarker,
-	checkoutReturnWasCanceled,
+	billingKeys,
 	useCancelSubscription,
 	useChangePlan,
-	useCheckoutReturnRefresh,
+	useCheckPlanChange,
+	useManagedModelCatalog,
 	usePlans,
 	useQuotePlanChange,
 	useResumeSubscription,
-	useWallet,
 } from "@/hosted/billing/hooks";
 import {
 	type PlanChangeSelection,
+	performanceUpgradeUnavailableReason,
 	planChangeUnavailableReason,
 } from "@/hosted/billing/subscription/plan-change.logic";
 import { PlanChangeDialog } from "@/hosted/billing/subscription/plan-change-dialog";
@@ -116,146 +188,155 @@ import {
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	resolveSubscriptionCreatePlanSlug,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
-import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
+	useWalletTopUpDialog,
+	type WalletFundingErrorCopy,
+} from "@/hosted/billing/wallet/wallet-funding";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
+import {
+	type DeploymentFailurePresentation,
+	deploymentFailurePresentation,
+} from "@/hosted/deployment-failure";
+import {
+	canDelete as canDeleteDeployment,
+	canQueryDeploymentProjection,
 	canRestart as canRestartDeployment,
 	canStart as canStartDeployment,
 	canStop as canStopDeployment,
+	type DeploymentStatus,
+	deploymentRuntimeStatusPresentation,
+	deploymentStatusFromResource,
 	deploymentStatusLabel,
 	isRunningStatus,
-	parseDeploymentStatus,
 } from "@/hosted/deployment-status";
+import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
 import {
-	canOpenHostedRuntimeUi,
 	type HostedProjectionResolution,
 	missingProjectionRefetchInterval,
 	resolveHostedAgentProjection,
 } from "@/hosted/hosted-agent-resolution";
-import { type HostedRuntime, runtimeConsoleUrl, runtimeDisplayName } from "@/hosted/runtimes";
-import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
-import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
-import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import {
+	deploymentFilesUrl,
+	type HostedRuntime,
+	runtimeAiProviderAuthKind,
+	runtimeConsoleUrl,
+	runtimeDisplayName,
+} from "@/hosted/runtimes";
+import {
+	aiBindingBuildErrorCopy,
+	buildAiBindingFields,
+	isUnresolvedProviderChoice,
+	unresolvedProviderChoice,
+	unresolvedProviderRef,
+	updateProviderChoiceFromRef,
+} from "@/hosted/v2/ai-providers/ai-provider-binding";
+import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
-	dedupeProviderIds,
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
-	MANAGED_PRIMARY_MODEL_FALLBACK,
 	MANAGED_PROVIDER_ID,
-	modelIdsForProvider,
-	normalizeSelectedProviderIds,
+	MANAGED_PROVIDER_LABEL,
+	modelBindingDisplayName,
+	modelOptionsForProvider,
 	primaryModelProviderId,
-	primaryModelRef,
 	primaryModelValue,
+	providerAvailabilityIssue,
+	providerCatalogDescription,
 	providerChoiceFromRef,
-	providerRefFromChoice,
+	providerDisplayLabel,
 } from "@/hosted/v2/ai-providers/model-binding";
+import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
+import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
+import type { ChannelAccountSummary } from "@/hosted/v2/channels/agent-channel-bindings.logic";
 import {
-	aiProviderRuntimeId,
-	buildAiProviderPoolBootstrap,
-} from "@/hosted/v2/ai-providers/runtime-bootstrap";
-import type { AiProvider } from "@/hosted/v2/ai-providers/types";
-import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
-import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
+	type AgentChannelCardItem,
+	activeAgentLinkForAccount,
+	buildAgentChannelCardGroups,
+	canonicalAgentChannelLinks,
+} from "@/hosted/v2/channels/agent-channel-cards.logic";
+import { CHANNEL_CARD_GRID_CLASS, ChannelCard } from "@/hosted/v2/channels/channel-card";
+import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
+import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
 import {
+	agentProviderLinkReplacementRequired,
+	agentProviderLinkStatusUnknown,
+} from "@/hosted/v2/channels/channel-linking.logic";
+import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
+import {
+	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
+	ChannelStatusBadge,
+	CopyInline,
+	isNormalChannelStatus,
+} from "@/hosted/v2/channels/channel-ui";
+import {
+	agentChannelLinksQueryOptions,
 	useAgentChannelLinks,
 	useBotPool,
 	useChannels,
 	useCreatePairCode,
+	useDeleteChannel,
 	useUnlinkAgentChannel,
 } from "@/hosted/v2/channels/channels-hooks";
+import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
+import { DiscordPairDialog } from "@/hosted/v2/channels/discord-pair-dialog";
+import { PairedChatsDialog } from "@/hosted/v2/channels/paired-chats-dialog";
+import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
+import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
+import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
+import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
 import {
+	type AgentRouteSearch,
 	type AgentSectionId,
+	agentProjectResourceLink,
 	agentSectionHref,
 	agentSectionLabel,
+	agentSectionLink,
+	agentSessionDetailLink,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
-import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { formatModelLabel, formatShortDate } from "@/lib/format";
+import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
-type AiBindingMode = "unmanaged" | "configured";
-type DeploymentStatus = ReturnType<typeof parseDeploymentStatus>;
 type HostedAgentTab =
 	| "overview"
 	| "console"
+	| "files"
 	| "terminal"
 	| "sessions"
-	| "skills"
+	| "memories"
+	| "connectors"
+	| "projects"
 	| "ai"
 	| "channels"
 	| "settings";
-const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
-	"overview",
-	"console",
-	"terminal",
-	"sessions",
-	"skills",
-	"ai",
-	"channels",
-	"settings",
-]);
-const CUSTOM_MODEL_CHOICE = "__custom__";
-const UNRESOLVED_PROVIDER_PREFIX = "unresolved:";
-const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
-	overview: {
-		description: "Status, model, resources, and recent sessions.",
-		icon: Info,
-	},
-	console: {
-		description: "Open the runtime's live browser UI.",
-		icon: MonitorPlay,
-	},
-	terminal: {
-		description: "Start a browser terminal in this deployment.",
-		icon: TerminalSquare,
-	},
-	sessions: {
-		description: "History synced by this hosted runtime.",
-		icon: RefreshCw,
-	},
-	skills: {
-		description: "Installed in this agent's Agent Project.",
-		icon: Sparkles,
-	},
-	ai: {
-		description: "Runtime-scoped provider and model binding.",
-		icon: Zap,
-	},
-	channels: {
-		description: "Messaging links for this hosted agent.",
-		icon: Link2,
-	},
-	settings: {
-		description: "Profile, compute, and lifecycle controls.",
-		icon: Settings,
-	},
-};
-/** Map an AI provider's auth type to the deploy `ai_provider_auth_kind`. */
-function aiAuthKind(provider: { auth: { type: string } }): "api_key" | "codex_oauth" {
-	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
-		? "codex_oauth"
-		: "api_key";
-}
-
 function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgentTab | null {
 	if (!value) return null;
-	return HOSTED_AGENT_SECTION_IDS.includes(value as HostedAgentTab) &&
-		HOSTED_AGENT_TABS.has(value as HostedAgentTab)
+	return HOSTED_AGENT_SECTION_IDS.includes(value as HostedAgentTab)
 		? (value as HostedAgentTab)
 		: null;
+}
+
+/** Only surfaces whose primary content needs the cloud-agent projection own its notice. */
+export function shouldShowHostedProjectionNotice(section: AgentSectionId): boolean {
+	return section === "projects";
 }
 
 function LiveNote({ children }: { children: React.ReactNode }) {
@@ -267,77 +348,52 @@ function LiveNote({ children }: { children: React.ReactNode }) {
 	);
 }
 
-function isProvisioningStatus(status: DeploymentStatus): boolean {
+function isStartingStatus(status: DeploymentStatus): boolean {
 	return status.kind === "creating" || status.kind === "starting";
 }
 
-function provisioningTitle(status: DeploymentStatus): string {
-	return status.kind === "starting" ? "Starting your agent…" : "Setting up your agent…";
+function startingTitle(): string {
+	return "Starting your agent…";
 }
 
-function RestartComputeAction({
+function DeleteComputeAction({
 	deployment,
-	label = "Restart compute",
+	onDeleteAccepted,
+	variant = "destructive",
+	className,
+	label = "Delete",
+}: {
+	deployment: HostedDeployment;
+	onDeleteAccepted: (deploymentId: string) => void;
+	variant?: React.ComponentProps<typeof Button>["variant"];
+	className?: string;
+	label?: string;
+}) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	const canDelete = canDeleteDeployment(status);
+	return (
+		<HostedDeploymentDeleteAction
+			deployment={deployment}
+			onAccepted={() => onDeleteAccepted(deployment.resource.id)}
+		>
+			<Button type="button" variant={variant} size="sm" className={className} disabled={!canDelete}>
+				<Trash2 />
+				{label}
+			</Button>
+		</HostedDeploymentDeleteAction>
+	);
+}
+
+function StartComputeAction({
+	deployment,
+	label = "Start agent",
 }: {
 	deployment: HostedDeployment;
 	label?: string;
 }) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
-	const status = parseDeploymentStatus(deployment.status);
-	const canRestart = canRestartDeployment(status);
-	return (
-		<ConfirmAction
-			title="Restart compute?"
-			description={<p>This restarts this hosted agent.</p>}
-			confirmLabel={label}
-			onConfirm={() =>
-				runAction(async () => {
-					await lifecycle.mutateAsync({ id: deployment.id, action: "restart" });
-				})
-			}
-		>
-			<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
-				{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
-					<Spinner className="size-3.5" />
-				) : (
-					<RefreshCw className="size-3.5" />
-				)}
-				{label}
-			</Button>
-		</ConfirmAction>
-	);
-}
-
-function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
-	const router = useRouter();
-	const deleteDeployment = useDeleteDeployment();
-	const runAction = useActionLock();
-	return (
-		<ConfirmAction
-			title={`Delete ${deploymentDisplayName(deployment.name)}?`}
-			description={<p>The hosted agent is torn down. This can’t be undone.</p>}
-			confirmLabel="Delete compute"
-			destructive
-			onConfirm={() =>
-				runAction(async () => {
-					await deleteDeployment.mutateAsync(deployment.id);
-					await router.navigate({ href: "/" });
-				})
-			}
-		>
-			<Button type="button" variant="destructive" size="sm" disabled={deleteDeployment.isPending}>
-				{deleteDeployment.isPending ? <Spinner /> : <Trash2 />}
-				Delete
-			</Button>
-		</ConfirmAction>
-	);
-}
-
-function StartComputeAction({ deployment }: { deployment: HostedDeployment }) {
-	const lifecycle = useDeploymentLifecycle();
-	const runAction = useActionLock();
-	const status = parseDeploymentStatus(deployment.status);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const canStart = canStartDeployment(status);
 	return (
 		<Button
@@ -346,7 +402,7 @@ function StartComputeAction({ deployment }: { deployment: HostedDeployment }) {
 			disabled={lifecycle.isPending || !canStart}
 			onClick={() =>
 				void runAction(async () => {
-					await lifecycle.mutateAsync({ id: deployment.id, action: "start" });
+					await lifecycle.mutateAsync({ id: deployment.resource.id, action: "start" });
 				}).catch(() => undefined)
 			}
 		>
@@ -355,7 +411,7 @@ function StartComputeAction({ deployment }: { deployment: HostedDeployment }) {
 			) : (
 				<RefreshCw className="size-3.5" />
 			)}
-			Start compute
+			{label}
 		</Button>
 	);
 }
@@ -366,11 +422,10 @@ function planChangeBillingTerm(
 	return value === 12 ? 12 : 1;
 }
 
-function decimalCredits(value: unknown): number | null {
-	if (typeof value !== "string" && typeof value !== "number") return null;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
+const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY = {
+	insufficientBalance: "Top up the shortfall, then request a fresh plan-change quote.",
+	refundDebt: "Top up before confirming this wallet-funded plan change.",
+} satisfies WalletFundingErrorCopy;
 
 /**
  * Hosted agent detail. A compute (deployment) hosts one selected execution
@@ -382,181 +437,246 @@ export function HostedAgentDetail({
 	deployment,
 	runtime,
 	section = "overview",
+	routeSearch,
+	onDeleteAccepted,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	section?: AgentSectionId;
+	routeSearch: AgentRouteSearch;
+	onDeleteAccepted: (deploymentId: string) => void;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
 }) {
-	const api = useApi();
-	const router = useRouter();
-	const ci = deployment.config_info;
-	const deploymentStatus = parseDeploymentStatus(deployment.status);
-	const deploymentRunning = isRunningStatus(deploymentStatus);
+	const $api = useOpenApi();
+	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
+	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
+	const hasTerminalDeploymentFailure = deploymentFailurePresentation(deployment) !== null;
+	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
-	const agentQuery = useQuery({
-		queryKey: ["agents", environmentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}", {
-					params: { path: { agent_id: environmentId } },
-				}),
-			),
-		enabled: cloudEnvironmentId,
-		refetchInterval: (query) =>
-			missingProjectionRefetchInterval(
-				query.state.error,
-				deployment.status,
-				query.state.fetchFailureCount,
-			),
-		refetchIntervalInBackground: false,
-	});
+	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
+	const agentQuery = $api.useQuery(
+		"get",
+		"/v1/agents/{agent_id}",
+		{
+			params: { path: { agent_id: environmentId } },
+		},
+		{
+			enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+			refetchInterval: (query) =>
+				missingProjectionRefetchInterval(
+					query.state.error,
+					deploymentStatus,
+					query.state.fetchFailureCount,
+				),
+			refetchIntervalInBackground: false,
+		},
+	);
 	const projection = resolveHostedAgentProjection({
-		enabled: cloudEnvironmentId,
+		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
 		data: agentQuery.data,
 		error: agentQuery.error,
 		isPending: agentQuery.isPending,
 	});
+	const checkProjectionAgain = async () => {
+		if (isCheckingProjection) return;
+		setIsCheckingProjection(true);
+		try {
+			await agentQuery.refetch();
+		} finally {
+			setIsCheckingProjection(false);
+		}
+	};
 	const agent = projection.status === "resolved" ? projection.data : null;
-	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
-	const runtimeLabel = runtimeDisplayName(runtime);
-	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
-	const activeTab = parseHostedAgentTab(section) ?? "overview";
-	useSetAgentBreadcrumbTitle({
-		agentId: environmentId,
-		agentTitle,
-		section: activeTab,
-	});
+	const availableAgentTitle = agent
+		? agentDisplayName(agent)
+		: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
+	const requestedTab = parseHostedAgentTab(section) ?? "overview";
+	const filesUrl = deploymentFilesUrl(deployment);
+	const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;
+	useSetBreadcrumbTitle(
+		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab),
+	);
 
-	const isPerformance = ci?.compute_plan_slug === COMPUTE_PERFORMANCE_SLUG;
-	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
-	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
+	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);
 	const scopedSessionLink = (sessionId: string) => ({
-		to: "/agents/$id/sessions/$sessionId" as const,
-		params: { id: environmentId, sessionId },
+		...agentSessionDetailLink(environmentId, sessionId, routeSearch),
 	});
-
-	useEffect(() => {
-		if (parseHostedAgentTab(section)) return;
-		void router.navigate({
-			href: agentSectionHref(environmentId, "overview", searchStr),
-			replace: true,
-		});
-	}, [environmentId, router, searchStr, section]);
 
 	const sessions = useQuery({
-		...sessionListQueryOptions(api, { environment_id: environmentId, page_size: 20 }),
-		enabled: deploymentRunning && projection.status === "resolved",
+		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 3 }),
+		enabled: activeTab === "overview" && sessionsQueryable,
 	});
 
-	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
+	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
-	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
-	const headerActions =
-		activeTab === "skills" && projection.status === "resolved" ? (
-			<Button
-				render={<Link to="/skills" search={{ target: environmentId }} />}
-				nativeButton={false}
-				variant="outline"
-				size="sm"
-			>
-				<Plus />
-				Install skills
-			</Button>
-		) : canOpenHostedRuntimeUi(deployment.status, consoleUrl) ? (
-			<RuntimeUiOpenButton
-				deployment={deployment}
-				label={runtimeBrowserUiLabel(runtime)}
-				variant="outline"
-				size="sm"
-			>
-				Open {runtimeBrowserUiLabel(runtime)}
-				<ExternalLink className="size-3.5" />
-			</RuntimeUiOpenButton>
-		) : null;
-
+	const resourceScope = agentResourceScope(environmentId, routeSearch);
+	const showInitialStartingPage =
+		activeTab === "overview" &&
+		isStartingStatus(deploymentStatus) &&
+		!hasTerminalDeploymentFailure &&
+		!cloudEnvironmentId;
+	const interfaceAvailable =
+		activeTab === "overview" && !showInitialStartingPage && isRunningStatus(deploymentStatus);
+	const isLiveToolTab =
+		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
 	return (
 		<div
 			data-hosted="true"
+			data-testid={isLiveToolTab ? "hosted-agent-live-surface" : undefined}
 			className={cn(
-				CENTERED_PAGE_WIDTH_CLASS.page,
 				isLiveToolTab
-					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
-					: "flex flex-col gap-6 px-4 lg:px-6",
+					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] w-full flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
+					: cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6"),
 			)}
 		>
-			{isLiveToolTab ? <h1 className="sr-only">{agentTitle}</h1> : null}
-			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4"}>
-				{isLiveToolTab ? null : (
+			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
+			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-6"}>
+				{isLiveToolTab || (activeTab === "projects" && projection.status === "resolved") ? null : (
 					<PageHeader
-						title={activeTabLabel}
+						title={activeTab === "overview" ? availableAgentTitle : activeTabLabel}
+						titleAdornment={
+							activeTab === "overview" ? <AgentSourceBadge source="hosted" compact /> : null
+						}
 						description={activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
-						status={<AgentSourceBadge source="hosted" compact />}
-						actions={headerActions}
+						actions={
+							activeTab === "memories" ? (
+								<MemoriesPageActions />
+							) : interfaceAvailable ? (
+								<Button
+									render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
+									nativeButton={false}
+									variant="outline"
+								>
+									<MonitorPlay />
+									Open Agent Interface
+								</Button>
+							) : null
+						}
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
-				<HostedProjectionNotice
-					projection={projection}
-					isFetching={agentQuery.isFetching}
-					onRetry={() => {
-						void agentQuery.refetch();
-					}}
-				/>
+				{!deploymentStatus.known && activeTab !== "overview" ? (
+					<DeploymentStatusUnavailableState
+						deployment={deployment}
+						isRetrying={isCheckingDeployment}
+						onRetry={onCheckDeploymentAgain}
+					/>
+				) : null}
+				{deploymentStatus.known &&
+				deploymentProjectionQueryable &&
+				!(activeTab === "overview" && isStartingStatus(deploymentStatus)) &&
+				shouldShowHostedProjectionNotice(activeTab) ? (
+					<HostedProjectionNotice
+						projection={projection}
+						isChecking={isCheckingProjection}
+						onRetry={() => {
+							void checkProjectionAgain();
+						}}
+					/>
+				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
-					{activeTab === "overview" ? (
+					{showInitialStartingPage ? (
+						<InitialDeploymentPage
+							deployment={deployment}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							isCheckingDeployment={isCheckingDeployment}
+							onCheckDeploymentAgain={onCheckDeploymentAgain}
+						/>
+					) : activeTab === "overview" ? (
 						<OverviewTab
+							agentId={environmentId}
+							routeSearch={routeSearch}
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
-							runtime={runtime}
+							projectionStatus={projection.status}
 							isPerformance={isPerformance}
-							showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}
-							projectionAvailable={projection.status === "resolved"}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
-							sessionsError={sessions.error}
+							sessionsError={
+								shouldBlockQueryError(sessions.error, sessions.data) ? sessions.error : null
+							}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 						/>
 					) : null}
-					{activeTab === "console" ? (
-						<ConsoleTab deployment={deployment} runtime={runtime} />
+					{deploymentStatus.known && activeTab === "console" ? (
+						<ConsoleTab
+							deployment={deployment}
+							runtime={runtime}
+							terminalHref={terminalHref}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							isCheckingDeployment={isCheckingDeployment}
+							onCheckDeploymentAgain={onCheckDeploymentAgain}
+						/>
 					) : null}
-					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
+					{deploymentStatus.known && activeTab === "terminal" ? (
+						<TerminalTab deployment={deployment} agentName={availableAgentTitle} />
+					) : null}
+					{deploymentStatus.known && activeTab === "files" && filesUrl ? (
+						<FilesTab deployment={deployment} url={filesUrl} />
+					) : null}
 					{activeTab === "sessions" ? (
-						projection.status === "resolved" ? (
-							<HostedAgentSessionsTab environmentId={environmentId} />
-						) : (
-							<ProjectionDependentUnavailable label="Sessions" />
-						)
+						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
 					) : null}
-					{activeTab === "skills" ? (
+					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
+					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
+					{activeTab === "projects" ? (
 						projection.status === "resolved" ? (
-							<AgentSkillsTab
+							<AgentProjectsTab
 								agentId={environmentId}
-								agentProjectId={agent?.default_project_id}
-								isResolvingAgentProject={false}
+								routeSearch={routeSearch}
+								headerAdornment={<AgentSourceBadge source="hosted" compact />}
+								headerIcon={
+									ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
+								}
 							/>
 						) : (
-							<ProjectionDependentUnavailable label="Skills" />
+							<ProjectionDependentUnavailable label="Projects" />
 						)
 					) : null}
-					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
-					{activeTab === "channels" ? (
-						projection.status === "resolved" ? (
-							<ChannelsTab environmentId={environmentId} />
+					{deploymentStatus.known && activeTab === "ai" ? (
+						<AiProviderTab
+							deployment={deployment}
+							runtime={runtime}
+							environmentId={environmentId}
+						/>
+					) : null}
+					{deploymentStatus.known && activeTab === "channels" ? (
+						!deploymentProjectionQueryable ? (
+							<StoppedAgentState deployment={deployment} />
+						) : projection.status === "resolved" ? (
+							<ChannelsTab
+								environmentId={environmentId}
+								agentType={runtime}
+								agentName={availableAgentTitle}
+								routeSearch={routeSearch}
+							/>
 						) : (
-							<ProjectionDependentUnavailable label="Channels" />
+							<ChannelsSyncState
+								isChecking={isCheckingDeployment || isCheckingProjection}
+								onCheckAgain={() => {
+									onCheckDeploymentAgain();
+									if (cloudEnvironmentId) void checkProjectionAgain();
+								}}
+							/>
 						)
 					) : null}
-					{activeTab === "settings" ? (
+					{deploymentStatus.known && activeTab === "settings" ? (
 						<HostedAgentSettingsTab
 							environmentId={environmentId}
 							deployment={deployment}
-							runtime={runtime}
 							projectionAvailable={projection.status === "resolved"}
+							onDeleteAccepted={onDeleteAccepted}
 						/>
 					) : null}
 				</div>
@@ -567,11 +687,11 @@ export function HostedAgentDetail({
 
 function HostedProjectionNotice({
 	projection,
-	isFetching,
+	isChecking,
 	onRetry,
 }: {
 	projection: HostedProjectionResolution<components["schemas"]["AgentResponse"]>;
-	isFetching: boolean;
+	isChecking: boolean;
 	onRetry: () => void;
 }) {
 	if (projection.status === "resolved") return null;
@@ -580,7 +700,7 @@ function HostedProjectionNotice({
 			<ApiErrorPanel
 				error={projection.error}
 				onRetry={onRetry}
-				title="Agent sync service unavailable"
+				title="Couldn’t load all agent details"
 			/>
 		);
 	}
@@ -588,15 +708,14 @@ function HostedProjectionNotice({
 		return (
 			<Alert data-hosted="true">
 				<AlertCircle />
-				<AlertTitle>Agent sync record unavailable</AlertTitle>
+				<AlertTitle>Some agent details are not ready</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						Deployment controls remain available; Runtime UI and Terminal continue to follow
-						deployment status. Sessions, skills, profile, and channels will recover when the cloud
-						projection catches up.
+						Projects, Skills, Vaults, and Channels will appear when this agent is ready. Available
+						actions and tools still work.
 					</span>
-					<Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
-						{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
+					<Button type="button" variant="outline" size="sm" disabled={isChecking} onClick={onRetry}>
+						{isChecking ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
 						Check again
 					</Button>
 				</AlertDescription>
@@ -607,9 +726,9 @@ function HostedProjectionNotice({
 		return (
 			<Alert data-hosted="true">
 				<Spinner className="size-4" />
-				<AlertTitle>Loading synced agent data</AlertTitle>
+				<AlertTitle>Loading agent details</AlertTitle>
 				<AlertDescription>
-					Deployment-owned controls are ready while the cloud projection resolves.
+					Available actions still work while the rest of this agent loads.
 				</AlertDescription>
 			</Alert>
 		);
@@ -617,10 +736,9 @@ function HostedProjectionNotice({
 	return (
 		<Alert data-hosted="true">
 			<AlertCircle />
-			<AlertTitle>Agent sync identity pending</AlertTitle>
+			<AlertTitle>Some agent details are unavailable</AlertTitle>
 			<AlertDescription>
-				This deployment has not published an agent identity yet. Deployment controls remain
-				available while provisioning continues.
+				Clawdi can’t load every part of this agent right now. Available actions still work.
 			</AlertDescription>
 		</Alert>
 	);
@@ -630,24 +748,50 @@ function ProjectionDependentUnavailable({ label }: { label: string }) {
 	return (
 		<EmptyState
 			title={`${label} unavailable`}
-			description="This section depends on the synced agent record. Deployment-owned controls remain available."
+			description="Clawdi can’t load this part of the agent yet. Other available actions still work."
 		/>
 	);
 }
 
-function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
-	const api = useApi();
+function StoppedAgentState({
+	deployment,
+	variant = "page",
+}: {
+	deployment: HostedDeployment;
+	variant?: React.ComponentProps<typeof EmptyState>["variant"];
+}) {
+	return (
+		<EmptyState
+			variant={variant}
+			title="Stopped"
+			description="This agent is stopped. Start it to use its tools again."
+			action={<StartComputeAction deployment={deployment} label="Start" />}
+		/>
+	);
+}
+
+function HostedAgentSessionsTab({
+	environmentId,
+	routeSearch,
+}: {
+	environmentId: string;
+	routeSearch: AgentRouteSearch;
+}) {
+	const $api = useOpenApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
+	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
 
 	useEffect(() => {
 		setPage(1);
 	}, [environmentId]);
 
 	const sessions = useQuery({
-		...sessionListQueryOptions(api, { environment_id: environmentId, page, page_size: pageSize }),
-		enabled: isCloudEnvId(environmentId),
+		...sessionListQueryOptions($api, { environment_id: environmentId, page, page_size: pageSize }),
+		enabled: sessionsQueryable,
 		placeholderData: keepPreviousData,
+		// staleTime only controls freshness; this mounted-tab observer owns visibility refreshes.
+		...HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
 	});
 	const total = sessions.data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -656,7 +800,7 @@ function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 		if (sessions.data && page > pageCount) setPage(pageCount);
 	}, [page, pageCount, sessions.data]);
 
-	if (sessions.error) {
+	if (shouldBlockQueryError(sessions.error, sessions.data)) {
 		return (
 			<ApiErrorPanel
 				error={sessions.error}
@@ -666,22 +810,23 @@ function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 		);
 	}
 
+	if (!sessionsQueryable) {
+		return (
+			<EmptyState
+				title="Sessions unavailable"
+				description="Sessions will appear after this agent is created."
+			/>
+		);
+	}
+
 	return (
-		<div
-			className={cn(
-				"space-y-4 transition-opacity",
-				sessions.isFetching && !sessions.isLoading ? "opacity-60" : "opacity-100",
-			)}
-		>
+		<div className="space-y-4">
 			<SessionFeed
 				sessions={sessions.data?.items ?? []}
 				isLoading={sessions.isLoading && !sessions.data}
-				emptyMessage="No sessions from this agent yet."
+				emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
 				showAgent={false}
-				sessionLink={(session) => ({
-					to: "/agents/$id/sessions/$sessionId" as const,
-					params: { id: environmentId, sessionId: session.id },
-				})}
+				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id, routeSearch)}
 			/>
 			{sessions.data ? (
 				<DataTablePagination
@@ -702,140 +847,253 @@ function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
-	return (
-		<div className="rounded-lg border p-3">
-			<div className="text-sm font-medium">{value}</div>
-			<div className="text-xs text-muted-foreground">{label}</div>
-		</div>
-	);
-}
-
-function RuntimeStatusValue({
+export function OverviewComputeStatus({
 	deployment,
-	agent,
+	failure,
+	deploymentTransitionTimedOut,
 }: {
 	deployment: HostedDeployment;
-	agent: components["schemas"]["AgentResponse"] | null | undefined;
+	failure: DeploymentFailurePresentation | null;
+	deploymentTransitionTimedOut: boolean;
 }) {
-	const status = hostedRuntimeStatusView(deployment, agent);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	return (
-		<div className="flex min-w-0 flex-col gap-1">
-			<span
-				className={cn("inline-flex min-w-0 items-center gap-1.5", status.primary.textClass)}
-				title={`Compute ${status.primary.label}`}
-			>
-				<span
-					aria-hidden
-					className={cn("inline-block size-1.5 shrink-0 rounded-full", status.primary.dotClass)}
-				/>
-				<span className="truncate">{status.primary.label}</span>
-			</span>
-			{status.secondary ? (
-				<span
-					className={cn("truncate text-xs", status.secondary.textClass)}
-					title={status.secondary.tooltip}
-				>
-					{status.secondary.label}
-				</span>
+		<div className="space-y-3 text-xs">
+			{failure?.status.kind === "runtime_unavailable" ? (
+				<p className="text-warning-muted-foreground" role="status">
+					{failure.reason}
+				</p>
+			) : failure ? (
+				<div className="space-y-1 text-destructive-muted-foreground" role="status">
+					<p className="font-medium">{failure.title}</p>
+					<p className="line-clamp-2">{failure.reason}</p>
+				</div>
+			) : status.kind === "failed" ? (
+				<p className="text-destructive-muted-foreground" role="status">
+					The last compute change did not complete.
+				</p>
+			) : status.kind === "restarting" ? (
+				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
+					<Spinner className="size-3.5" /> Restarting
+				</p>
+			) : deploymentTransitionTimedOut ? (
+				<p className="text-warning-muted-foreground" role="status">
+					This compute change is taking longer than expected.
+				</p>
+			) : status.kind === "updating" ? (
+				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
+					<Spinner className="size-3.5" /> Updating compute settings.
+				</p>
+			) : isStartingStatus(status) ? (
+				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
+					<Spinner className="size-3.5" /> Startup is still in progress.
+				</p>
+			) : status.kind === "stopping" ? (
+				<p className="text-muted-foreground" role="status">
+					Compute is stopping.
+				</p>
+			) : status.kind === "stopped" ? (
+				<p className="text-muted-foreground" role="status">
+					Compute is stopped. Channels and the agent interface are unavailable.
+				</p>
+			) : status.kind === "deleting" ? (
+				<p className="text-muted-foreground" role="status">
+					Compute is being removed.
+				</p>
+			) : status.kind === "deleted" ? (
+				<p className="text-muted-foreground" role="status">
+					Compute is no longer available.
+				</p>
+			) : status.kind === "unknown" ? (
+				<p className="text-warning-muted-foreground" role="status">
+					Clawdi cannot confirm the current compute status.
+				</p>
 			) : null}
 		</div>
 	);
 }
 
-function OverviewProvisioningPanel({ status }: { status: DeploymentStatus }) {
+export function OverviewComputeSummary({
+	plan,
+	vcpu,
+	memoryMib,
+	storageGib,
+}: {
+	plan: string;
+	vcpu: number;
+	memoryMib: number;
+	storageGib: number;
+}) {
+	const configuration = [
+		`${vcpu} vCPU`,
+		`${formatMemoryMib(memoryMib)} memory`,
+		`${storageGib} GiB storage`,
+	];
 	return (
-		<div className="rounded-xl border border-info-muted bg-info-muted p-5 text-info-muted-foreground">
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-				<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-info-muted bg-background">
-					<Spinner className="size-5" />
-				</div>
-				<div className="min-w-0">
-					<h2 className="text-sm font-semibold text-foreground">{provisioningTitle(status)}</h2>
-					<p className="mt-1 text-sm">
-						Hosted compute is being prepared. This usually takes a couple of minutes, and this page
-						updates automatically.
-					</p>
-					<p className="mt-2 text-xs">Current status: {deploymentStatusLabel(status)}.</p>
-				</div>
-			</div>
+		<div className="space-y-1.5" data-testid="overview-compute-summary">
+			<p data-overview-compute-plan className="text-sm text-muted-foreground">
+				{plan} plan
+			</p>
+			<ul
+				aria-label={`Configuration: ${configuration.join(", ")}`}
+				className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+			>
+				{configuration.map((item) => (
+					<li key={item}>{item}</li>
+				))}
+			</ul>
 		</div>
 	);
 }
 
-function DeploymentFailureReasonText({ reason }: { reason: string }) {
-	return <p className="mt-2 whitespace-pre-wrap break-words font-mono text-xs">{reason}</p>;
-}
-
-function OverviewFailedPanel({
+export function InitialDeploymentPage({
 	deployment,
-	restartLabel = "Restart compute",
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
-	restartLabel?: string;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
 }) {
-	const status = parseDeploymentStatus(deployment.status);
-	const failureReason = deploymentFailureReason(deployment);
-	if (failureReason) {
-		return (
-			<Alert data-hosted="true" variant="destructive">
-				<AlertCircle className="size-4" />
-				<AlertTitle>Agent setup failed</AlertTitle>
-				<AlertDescription className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-					<div className="min-w-0">
-						<p>
-							Restart the compute to retry startup. Current status: {deploymentStatusLabel(status)}.
-						</p>
-						<DeploymentFailureReasonText reason={failureReason} />
-					</div>
-					<div className="shrink-0">
-						<RestartComputeAction deployment={deployment} label={restartLabel} />
-					</div>
-				</AlertDescription>
-			</Alert>
-		);
-	}
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	const runtimeLabel = runtimeDisplayName(deployment.resource.spec.runtime);
+	const stages = [
+		{ status: "creating", label: "Environment" },
+		{ status: "starting", label: "Install" },
+		{ status: "running", label: "Ready" },
+	] as const;
+	const activeStageIndex = status.kind === "starting" ? 1 : status.kind === "running" ? 2 : 0;
+	const activeStageLabel =
+		activeStageIndex === 0
+			? "Preparing your environment"
+			: activeStageIndex === 1
+				? `Installing ${runtimeLabel}`
+				: "Ready";
 	return (
-		<div className="rounded-xl border border-destructive-muted bg-destructive-muted p-5 text-destructive-muted-foreground">
-			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-				<div className="flex min-w-0 gap-3">
-					<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-destructive-muted bg-background">
-						<RefreshCw className="size-5" />
-					</div>
-					<div className="min-w-0">
-						<h2 className="text-sm font-semibold text-foreground">Agent setup failed</h2>
-						<p className="mt-1 text-sm">
-							Restart the compute to retry startup. Current status: {deploymentStatusLabel(status)}.
+		<DetailPanel
+			className={cn(
+				"p-6 md:p-8",
+				deploymentTransitionTimedOut && "border-warning/30 bg-warning-muted",
+			)}
+		>
+			<div
+				data-testid="hosted-initial-deployment-panel"
+				role={deploymentTransitionTimedOut ? "alert" : undefined}
+				className="space-y-6"
+			>
+				<div>
+					<h2 className="flex items-center gap-2 text-lg font-semibold">
+						{deploymentTransitionTimedOut ? <AlertCircle className="size-5" /> : null}
+						{deploymentTransitionTimedOut
+							? "Setup is taking longer than expected"
+							: `Setting up ${runtimeLabel}`}
+					</h2>
+					<p className="mt-1 text-sm text-muted-foreground">
+						{deploymentTransitionTimedOut
+							? "Your agent may still be starting. We’ll keep checking automatically."
+							: "This page updates automatically as setup progresses."}
+					</p>
+				</div>
+				<div>
+					<div className="flex items-baseline justify-between gap-4">
+						<p
+							className="inline-flex items-center gap-2 text-base font-semibold"
+							role="status"
+							aria-live="polite"
+							aria-atomic="true"
+						>
+							{!deploymentTransitionTimedOut && status.kind !== "running" ? (
+								<span className="inline-flex" aria-hidden="true">
+									<Spinner className="size-3.5 shrink-0 text-primary" />
+								</span>
+							) : null}
+							{activeStageLabel}
+						</p>
+						<p className="shrink-0 text-xs font-medium text-muted-foreground">
+							Step {activeStageIndex + 1} of {stages.length}
 						</p>
 					</div>
+					<ol aria-label="Deployment progress" className="mt-4 grid w-full grid-cols-3 gap-2">
+						{stages.map((stage, index) => {
+							const stageState =
+								status.kind === "running" || index < activeStageIndex
+									? "completed"
+									: index === activeStageIndex
+										? "active"
+										: "pending";
+							return (
+								<li
+									key={stage.status}
+									data-deployment-stage={stage.status}
+									data-stage-state={stageState}
+									aria-current={index === activeStageIndex ? "step" : undefined}
+									aria-label={`${stage.label}, ${stageState}`}
+								>
+									<div
+										aria-hidden="true"
+										className={cn(
+											"h-2 rounded-full",
+											stageState === "active"
+												? "bg-primary"
+												: stageState === "completed"
+													? "bg-primary/50"
+													: "bg-muted",
+										)}
+									/>
+									<p
+										aria-hidden="true"
+										className={cn(
+											"mt-2 text-xs",
+											stageState === "pending"
+												? "text-muted-foreground"
+												: "font-medium text-foreground",
+										)}
+									>
+										{stage.label}
+									</p>
+								</li>
+							);
+						})}
+					</ol>
 				</div>
-				<div className="shrink-0">
-					<RestartComputeAction deployment={deployment} label={restartLabel} />
-				</div>
+				{deploymentTransitionTimedOut ? (
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						disabled={isCheckingDeployment}
+						onClick={onCheckDeploymentAgain}
+					>
+						{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}Check again
+					</Button>
+				) : null}
 			</div>
-		</div>
+		</DetailPanel>
 	);
 }
 
 function OverviewTab({
+	agentId,
+	routeSearch,
 	deployment,
 	agent,
-	runtime,
+	projectionStatus,
 	isPerformance,
-	showDeploymentActions,
-	projectionAvailable,
 	sessions,
 	sessionsLoading,
 	sessionsError,
 	onRetrySessions,
 	sessionLink,
+	deploymentTransitionTimedOut,
 }: {
+	agentId: string;
+	routeSearch: AgentRouteSearch;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
-	runtime: Runtime;
+	projectionStatus: HostedProjectionResolution<unknown>["status"];
 	isPerformance: boolean;
-	showDeploymentActions: boolean;
-	projectionAvailable: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
 	sessionsError: unknown;
@@ -844,201 +1102,289 @@ function OverviewTab({
 		to: "/agents/$id/sessions/$sessionId";
 		params: { id: string; sessionId: string };
 	};
+	deploymentTransitionTimedOut: boolean;
 }) {
-	const ci = deployment.config_info;
-	const binding = ci?.ai_provider_bindings?.[runtime];
-	const model =
-		primaryModelValue(binding?.primary_model) ||
-		primaryModelValue(ci?.primary_model) ||
-		"Managed default";
-	const deploymentStatus = parseDeploymentStatus(deployment.status);
-	const deploymentRunning = isRunningStatus(deploymentStatus);
-	const sessionsEmptyMessage = deploymentRunning
-		? "No sessions from this agent yet."
-		: "Sessions appear once your agent is running.";
-	return (
-		<div className="flex flex-col gap-5">
-			{isProvisioningStatus(deploymentStatus) ? (
-				<OverviewProvisioningPanel status={deploymentStatus} />
-			) : null}
-			{deploymentStatus.kind === "failed" ? (
-				<OverviewFailedPanel deployment={deployment} restartLabel="Retry startup" />
-			) : null}
-			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-				<StatCard
-					label="Status"
-					value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
-				/>
-				<StatCard label="Compute" value={isPerformance ? "Performance" : "Basic"} />
-				<StatCard label="Model" value={model} />
-				<StatCard
-					label="Resources"
-					value={ci ? `${ci.vcpu ?? "—"} vCPU · ${ci.ram_gb ?? "—"} GB` : "—"}
-				/>
-			</div>
-			<div>
-				<div className="mb-2 text-sm font-medium">Recent sessions</div>
-				{!projectionAvailable ? (
-					<EmptyState
-						variant="inset"
-						title="Sessions unavailable"
-						description="Sessions depend on the synced agent record and will recover when it becomes available."
-					/>
-				) : sessionsError ? (
-					<ApiErrorPanel
-						error={sessionsError}
-						onRetry={onRetrySessions}
-						title="Couldn't load sessions"
-					/>
-				) : (
-					<SessionFeed
-						sessions={sessions}
-						isLoading={sessionsLoading}
-						emptyMessage={sessionsEmptyMessage}
-						emptyVariant="inset"
-						showAgent={false}
-						sessionLink={sessionLink}
-					/>
-				)}
-			</div>
-			{showDeploymentActions ? <OverviewDeploymentActions deployment={deployment} /> : null}
-		</div>
+	const spec = deployment.resource.spec;
+	const primaryModel = spec.runtime_configuration.primary_model;
+	const bindingProvider =
+		spec.runtime_configuration.providers.find(
+			(provider) => provider.provider_id === primaryModelProviderId(primaryModel),
+		) ?? spec.runtime_configuration.providers[0];
+	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
+	const managedProvider = !providerId || isManagedProviderId(providerId);
+	const providers = useUserAiProviders({ enabled: !managedProvider });
+	const managedModelCatalog = useManagedModelCatalog({ enabled: managedProvider });
+	const model = modelBindingDisplayName(
+		primaryModel,
+		runtimeAiProviderAuthKind(deployment) ?? bindingProvider?.auth_kind,
+		modelOptionsForProvider(
+			primaryModelProviderId(primaryModel) ?? MANAGED_PROVIDER_ID,
+			providers.data ?? [],
+			managedModelCatalog.data?.models ?? [],
+		),
 	);
-}
-
-function OverviewDeploymentActions({ deployment }: { deployment: HostedDeployment }) {
-	const status = parseDeploymentStatus(deployment.status);
-	const failed = status.kind === "failed";
+	const runtimeStatusPresentation = deploymentRuntimeStatusPresentation(deployment.resource.status);
+	const deploymentStatus = runtimeStatusPresentation.status;
+	const deploymentFailure = deploymentFailurePresentation(deployment);
+	const computeStatusPresentation = deploymentFailure?.status ?? {
+		label: runtimeStatusPresentation.label,
+		tone: runtimeStatusPresentation.tone,
+	};
+	const billingClient = useBillingClient();
+	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
+	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
+	const linkedChannelCount = channelLinks.data?.length ?? 0;
+	const projectionLoading = projectionStatus === "loading";
+	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
+	const workspaceProjectId = agent
+		? resolveAgentWorkspaceProjectId(projectBindings.data ?? [], agent.default_project_id)
+		: null;
+	const workspaceResolution =
+		projectionLoading || projectBindings.isLoading
+			? "loading"
+			: projectionUnavailable || projectBindings.error || !workspaceProjectId
+				? "unavailable"
+				: "ready";
+	const runtimeSkills = useQuery({
+		queryKey: billingKeys.workspaceSkills(deployment.resource.id),
+		queryFn: () => billingClient.listWorkspaceSkills(deployment.resource.id),
+		enabled: isRunningStatus(deploymentStatus),
+		retry: billingQueryRetry,
+	});
+	const skillsModule = runtimeSkills.isLoading
+		? { description: <OverviewDescriptionSkeleton label="skills" /> }
+		: runtimeSkills.error
+			? { description: "Unavailable right now" }
+			: overviewWorkspaceSkillsModule(
+					(runtimeSkills.data?.items ?? []).map((skill) => skill.skill_key),
+				);
+	const vaultsModule = useOverviewVaultsModule({
+		projectIds: workspaceProjectId ? [workspaceProjectId] : [],
+		resolution: workspaceResolution,
+	});
+	const memoriesModule = useOverviewMemoriesModule();
+	const connectorsModule = useOverviewConnectorsModule();
 	return (
-		<SettingsSection
-			title="Deployment actions"
-			description="Manage hosted compute independently of synced agent data."
-		>
-			<div className="flex flex-wrap gap-2.5">
-				{canRestartDeployment(status) && !failed ? (
-					<RestartComputeAction deployment={deployment} />
-				) : null}
-				{canStartDeployment(status) && !failed ? (
-					<StartComputeAction deployment={deployment} />
-				) : null}
-				<DeleteComputeAction deployment={deployment} />
+		<div className="flex flex-col gap-8">
+			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
+				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+					<div className="flex items-center justify-between">
+						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
+							Recent sessions
+						</h2>
+						<Button
+							render={<Link {...agentSectionLink(agentId, "sessions", routeSearch)} />}
+							nativeButton={false}
+							variant="ghost"
+							size="sm"
+							className="text-muted-foreground"
+						>
+							View all
+							<ArrowRight />
+						</Button>
+					</div>
+					<section aria-labelledby="hosted-recent-sessions" className="min-w-0">
+						{sessionsError ? (
+							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+						) : (
+							<OverviewSessionList
+								sessions={sessions}
+								isLoading={sessionsLoading}
+								emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
+								sessionLink={sessionLink}
+							/>
+						)}
+					</section>
+				</div>
+				<div className="@3xl/main:row-start-2">
+					<AgentOverviewStatusCard
+						agentId={agentId}
+						section="settings"
+						routeSearch={routeSearch}
+						title="Compute"
+						icon={Cpu}
+						tint="bg-identity-4-bg text-identity-4-fg"
+						description={
+							<span
+								data-overview-compute-status
+								className="inline-flex items-center gap-2"
+								title={`Agent status: ${computeStatusPresentation.label}`}
+							>
+								<StatusDot status={computeStatusPresentation.tone} />
+								{computeStatusPresentation.label}
+							</span>
+						}
+					>
+						<div className="flex h-full flex-col gap-4">
+							<OverviewComputeSummary
+								plan={isPerformance ? "Performance" : "Basic"}
+								vcpu={spec.resources.vcpu}
+								memoryMib={spec.resources.memory_mib}
+								storageGib={spec.resources.disk_gib}
+							/>
+							{deploymentStatus.kind === "running" && !deploymentFailure ? null : (
+								<div className="mt-auto border-t pt-3">
+									<OverviewComputeStatus
+										deployment={deployment}
+										failure={deploymentFailure}
+										deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+									/>
+								</div>
+							)}
+						</div>
+					</AgentOverviewStatusCard>
+				</div>
 			</div>
-		</SettingsSection>
+			<AgentOverviewCapabilities
+				agentId={agentId}
+				variant="hosted"
+				routeSearch={routeSearch}
+				content={{
+					projects: overviewProjectsModule({
+						bindings: {
+							count:
+								agent && projectBindings.data
+									? linkedAgentProjectCount(projectBindings.data)
+									: null,
+							isLoading: projectionLoading || projectBindings.isLoading,
+							isUnavailable: projectionUnavailable,
+							error: projectBindings.error,
+						},
+					}),
+					skills: {
+						...skillsModule,
+						link: workspaceProjectId
+							? agentProjectResourceLink(agentId, workspaceProjectId, "skills", routeSearch)
+							: null,
+					},
+					memories: memoriesModule,
+					vaults: {
+						...vaultsModule,
+						link: workspaceProjectId
+							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults", routeSearch)
+							: null,
+					},
+					connectors: connectorsModule,
+					"model-provider": {
+						description:
+							providers.isLoading || managedModelCatalog.isLoading ? (
+								<OverviewDescriptionSkeleton label="model and provider" />
+							) : providers.error || managedModelCatalog.error ? (
+								"Unavailable right now"
+							) : (
+								model
+							),
+					},
+					channels: {
+						description:
+							projectionLoading || channelLinks.isLoading ? (
+								<OverviewDescriptionSkeleton label="channels" />
+							) : projectionUnavailable || channelLinks.error ? (
+								"Unavailable right now"
+							) : linkedChannelCount === 0 ? (
+								"No channels connected"
+							) : (
+								`${linkedChannelCount} connected ${linkedChannelCount === 1 ? "channel" : "channels"}`
+							),
+					},
+				}}
+			/>
+		</div>
 	);
 }
 
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
-function RuntimeUiOpenButton({
-	deployment,
-	label,
-	children,
-	className,
-	variant = "outline",
-	size = "sm",
-}: {
-	deployment: HostedDeployment;
-	label: string;
-	children: React.ReactNode;
-	className?: string;
-	variant?: React.ComponentProps<typeof Button>["variant"];
-	size?: React.ComponentProps<typeof Button>["size"];
-}) {
-	const redemption = useCreateRuntimeUiRedemption();
-	const openUi = useCallback(async () => {
-		try {
-			const result = await openRuntimeUiWithRedemption({
-				redeem: () => redemption.mutateAsync({ id: deployment.id }),
-				openPopup: (url, target, features) => window.open(url, target, features),
-			});
-			if (result === "blocked") {
-				toast.error("Couldn't open runtime UI", {
-					description: "Your browser blocked the new window.",
-				});
-			}
-		} catch {
-			// useCreateRuntimeUiRedemption owns the user-facing error toast.
-		}
-	}, [deployment.id, redemption.mutateAsync]);
+const RUNTIME_UI_LAUNCH_TOAST_ID = "runtime-ui-launch";
+const HERMES_ACCESS_HINT_STORAGE_PREFIX = "clawdi.hermes-access-hint.dismissed";
 
-	return (
-		<Button
-			type="button"
-			variant={variant}
-			size={size}
-			className={className}
-			disabled={redemption.isPending}
-			aria-label={`Open ${label}`}
-			onClick={() => void openUi()}
-		>
-			{redemption.isPending ? <Spinner className="size-3.5" /> : null}
-			{children}
-		</Button>
-	);
+function hermesAccessHintStorageKey(deploymentId: string): string {
+	return `${HERMES_ACCESS_HINT_STORAGE_PREFIX}.${deploymentId}`;
 }
 
-/**
- * Live agent browser UI embedded inline. The deployment's selected runtime UI
- * URL points at owner-only exposure. When the runtime
- * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
- * the full-screen link is the alternate path.
- */
-function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
-	const status = parseDeploymentStatus(deployment.status);
+function useRuntimeUiCredentialRequest(
+	deployment: HostedDeployment,
+	endpointUrl: string,
+	runtime: Runtime,
+): () => Promise<RuntimeUiCredentials> {
+	const client = useBillingClient();
+	const deploymentId = deployment.resource.id;
+	const resourceVersion = deployment.resource.metadata.resourceVersion;
+	return useCallback(async () => {
+		const credentials = await client.getRuntimeUiCredentials(deploymentId, resourceVersion);
+		const resolved = resolveRuntimeUiCredentials(credentials, endpointUrl, resourceVersion);
+		if (!resolved || resolved.runtime !== runtime) {
+			throw new Error("Runtime UI credential response was invalid");
+		}
+		return resolved;
+	}, [client, deploymentId, endpointUrl, resourceVersion, runtime]);
+}
+
+function ConsoleTab({
+	deployment,
+	runtime,
+	terminalHref,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
+}: {
+	deployment: HostedDeployment;
+	runtime: Runtime;
+	terminalHref: string;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
+}) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
-	const isProvisioning = isProvisioningStatus(status);
+	const isStarting = isStartingStatus(status);
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
-	const canOpenRuntimeUi = canOpenHostedRuntimeUi(deployment.status, url);
-	const redemption = useCreateRuntimeUiRedemption();
-	const [frameUrl, setFrameUrl] = useState<string | null>(null);
-	const [frameError, setFrameError] = useState<Error | null>(null);
-	const [redemptionAttempt, setRedemptionAttempt] = useState(0);
-	const startedRedemptionRef = useRef<string | null>(null);
+	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
 
-	useEffect(() => {
-		if (!canOpenRuntimeUi || !url) {
-			startedRedemptionRef.current = null;
-			setFrameUrl(null);
-			setFrameError(null);
-			return;
-		}
-		const attemptKey = `${deployment.id}:${url}:${redemptionAttempt}`;
-		if (startedRedemptionRef.current === attemptKey) return;
-		startedRedemptionRef.current = attemptKey;
-		setFrameUrl(null);
-		setFrameError(null);
-		redemption
-			.mutateAsync({ id: deployment.id })
-			.then((result) => {
-				if (startedRedemptionRef.current === attemptKey) setFrameUrl(result.url);
-			})
-			.catch((error: unknown) => {
-				if (startedRedemptionRef.current !== attemptKey) return;
-				setFrameError(error instanceof Error ? error : new Error("Runtime UI redemption failed"));
-			});
-	}, [canOpenRuntimeUi, deployment.id, redemption.mutateAsync, redemptionAttempt, url]);
+	if (status.kind === "stopped") {
+		return <StoppedAgentState deployment={deployment} />;
+	}
 
-	const retryRedemption = () => {
-		redemption.reset();
-		setFrameUrl(null);
-		setFrameError(null);
-		setRedemptionAttempt((attempt) => attempt + 1);
-	};
-
-	// Not running yet — the runtime UI and bridge only exist once the agent boots.
 	if (!isRunning) {
 		return (
 			<EmptyState
-				icon={MonitorPlay}
-				title={isProvisioning ? provisioningTitle(status) : "Compute is not running"}
-				description={
-					isProvisioning
-						? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
-						: `Start the compute to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				icon={deploymentTransitionTimedOut ? AlertCircle : MonitorPlay}
+				title={
+					deploymentTransitionTimedOut
+						? "Your agent is taking longer than expected"
+						: isStarting
+							? startingTitle()
+							: "Agent is not running"
 				}
-				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
+				description={
+					deploymentTransitionTimedOut
+						? "The latest status still shows this change in progress after five minutes. It may still finish. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
+						: isStarting
+							? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
+							: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				}
+				action={
+					deploymentTransitionTimedOut ? (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isCheckingDeployment}
+							onClick={onCheckDeploymentAgain}
+						>
+							{isCheckingDeployment ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<RefreshCw className="size-3.5" />
+							)}
+							Check again
+						</Button>
+					) : canStartDeployment(status) ? (
+						<StartComputeAction deployment={deployment} />
+					) : null
+				}
 			/>
 		);
 	}
@@ -1048,72 +1394,470 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 		return (
 			<EmptyState
 				icon={MonitorPlay}
-				title="No Runtime UI URL yet"
-				description={`This ${label} runtime is running but hasn't published its browser UI endpoint yet. Check the Overview status shortly or use Terminal while it finishes.`}
+				title={`${browserUiLabel} isn’t ready yet`}
+				description={`Your agent is running. Check again in a moment, or use Terminal now while ${label} starts its browser interface.`}
+				action={
+					<div className="flex flex-wrap justify-center gap-2">
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isCheckingDeployment}
+							onClick={onCheckDeploymentAgain}
+						>
+							{isCheckingDeployment ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<RefreshCw className="size-3.5" />
+							)}
+							Check again
+						</Button>
+						<Button
+							render={<Link to={terminalHref} />}
+							nativeButton={false}
+							variant="outline"
+							size="sm"
+						>
+							<TerminalSquare className="size-3.5" />
+							Use Terminal now
+						</Button>
+					</div>
+				}
 			/>
 		);
 	}
+	const iframeUrl =
+		runtime === "openclaw"
+			? credentials?.runtime === "openclaw"
+				? runtimeUiLaunchTarget(credentials)
+				: "about:blank"
+			: url;
 
 	return (
 		<LiveToolFrame
 			icon={MonitorPlay}
 			title={browserUiLabel}
 			action={
-				<RuntimeUiOpenButton
+				<RuntimeUiAccessDialog
 					deployment={deployment}
-					label={browserUiLabel}
-					variant="outline"
-					size="sm"
-					className="hidden sm:inline-flex"
-				>
-					Open full screen
-					<Maximize2 className="size-3.5" />
-				</RuntimeUiOpenButton>
+					endpointUrl={url}
+					runtime={runtime}
+					credentials={credentials}
+					onCredentialsChange={setCredentials}
+				/>
 			}
 		>
-			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
-			    full-screen link instead. */}
-			{frameError ? (
-				<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
-					<div className="w-full max-w-xl">
-						<ApiErrorPanel
-							error={frameError}
-							onRetry={retryRedemption}
-							normalizer={billingErrorNormalizer}
-							title="Couldn't load Runtime UI"
-						/>
-					</div>
-				</div>
-			) : frameUrl ? (
-				<iframe
-					key={`${runtime}:${frameUrl}`}
-					src={frameUrl}
-					title={browserUiLabel}
-					className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
-					allow="clipboard-read; clipboard-write"
-				/>
-			) : (
-				<div className="hidden min-h-0 flex-1 items-center justify-center bg-background sm:flex">
-					<Spinner className="size-4 text-muted-foreground" />
-				</div>
-			)}
-			{frameError ? null : (
-				<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
-					<p className="text-sm text-muted-foreground">
-						This runtime UI is best viewed full screen on a small screen.
-					</p>
-					<RuntimeUiOpenButton
-						deployment={deployment}
-						label={browserUiLabel}
-						variant="outline"
-						size="sm"
-					>
-						Open {browserUiLabel}
-						<Maximize2 className="size-3.5" />
-					</RuntimeUiOpenButton>
-				</div>
-			)}
+			<iframe
+				key={`${runtime}:${iframeUrl}`}
+				src={iframeUrl}
+				title={browserUiLabel}
+				className="min-h-[420px] flex-1 border-0 bg-background"
+				allow="clipboard-read; clipboard-write"
+			/>
 		</LiveToolFrame>
+	);
+}
+
+function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: string }) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	const isRunning = isRunningStatus(status);
+	const isStarting = isStartingStatus(status);
+
+	if (status.kind === "stopped") {
+		return <StoppedAgentState deployment={deployment} />;
+	}
+
+	if (!isRunning) {
+		return (
+			<EmptyState
+				icon={FolderOpen}
+				title={isStarting ? startingTitle() : "Agent is not running"}
+				description={
+					isStarting
+						? "Files opens once your agent and its private Workspace service are ready. This page updates automatically."
+						: `Start the agent to browse its Workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				}
+				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
+			/>
+		);
+	}
+
+	return (
+		<LiveToolFrame
+			icon={FolderOpen}
+			title="Files"
+			action={
+				<Button
+					render={<a href={url} target="_blank" rel="noopener noreferrer" />}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+				>
+					Open in new tab
+					<ExternalLink className="size-3.5" />
+				</Button>
+			}
+		>
+			<iframe
+				src={url}
+				title="Files"
+				className="min-h-[420px] flex-1 border-0 bg-background"
+				allow="clipboard-read; clipboard-write"
+			/>
+		</LiveToolFrame>
+	);
+}
+
+const MASKED_RUNTIME_UI_CREDENTIAL = "••••••••••••";
+
+function RuntimeUiCredentialRow({
+	label,
+	value,
+	secret = false,
+}: {
+	label: string;
+	value: string;
+	secret?: boolean;
+}) {
+	const [revealed, setRevealed] = useState(!secret);
+	const { copied, copy } = useCopyToClipboard({
+		success: `${label} copied`,
+		error: `Couldn't copy ${label.toLowerCase()}`,
+	});
+	const visibleValue = secret && !revealed ? MASKED_RUNTIME_UI_CREDENTIAL : value;
+
+	return (
+		<div className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-2 px-3 py-2.5">
+			<span className="text-xs font-medium text-muted-foreground">{label}</span>
+			<code
+				className="block min-w-0 truncate font-mono text-sm font-medium"
+				title={secret && !revealed ? undefined : value}
+			>
+				{visibleValue}
+			</code>
+			<div className="flex items-center gap-0.5">
+				{secret ? (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon-xs"
+						onClick={() => setRevealed((visible) => !visible)}
+						aria-label={`${revealed ? "Hide" : "Show"} ${label}`}
+						aria-pressed={revealed}
+					>
+						{revealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+					</Button>
+				) : null}
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-xs"
+					onClick={() => copy(value)}
+					aria-label={`Copy ${label}`}
+				>
+					{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+function RuntimeUiAccessDialog({
+	deployment,
+	endpointUrl,
+	runtime,
+	credentials,
+	onCredentialsChange,
+}: {
+	deployment: HostedDeployment;
+	endpointUrl: string;
+	runtime: Runtime;
+	credentials: RuntimeUiCredentials | null;
+	onCredentialsChange: (credentials: RuntimeUiCredentials | null) => void;
+}) {
+	const label = runtimeBrowserUiLabel(runtime);
+	const requestCredentials = useRuntimeUiCredentialRequest(deployment, endpointUrl, runtime);
+	const reset = useResetRuntimeUiAccess();
+	const [open, setOpen] = useState(false);
+	const [credentialError, setCredentialError] = useState<Error | null>(null);
+	const [isLoading, setIsLoading] = useState(false);
+	const requestVersionRef = useRef(0);
+	const loadedIdentityRef = useRef<string | null>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const [accessHintOpen, setAccessHintOpen] = useState(false);
+	const credentialExit = useDialogExitLifecycle({ open, value: credentials, emptyValue: null });
+	const renderedCredentials = credentialExit.renderedValue;
+	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
+	const accessHintStorageKey = hermesAccessHintStorageKey(deployment.resource.id);
+
+	const dismissAccessHint = useCallback(() => {
+		setAccessHintOpen(false);
+		try {
+			window.localStorage.setItem(accessHintStorageKey, "1");
+		} catch {
+			// The hint still stays dismissed for this mount when storage is unavailable.
+		}
+	}, [accessHintStorageKey]);
+
+	const clearSensitiveState = useCallback(() => {
+		requestVersionRef.current += 1;
+		onCredentialsChange(null);
+		setCredentialError(null);
+		setIsLoading(false);
+	}, [onCredentialsChange]);
+
+	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
+		const requestVersion = requestVersionRef.current + 1;
+		requestVersionRef.current = requestVersion;
+		setIsLoading(true);
+		setCredentialError(null);
+		try {
+			const resolved = await requestCredentials();
+			if (requestVersionRef.current !== requestVersion) return null;
+			onCredentialsChange(resolved);
+			return resolved;
+		} catch (error) {
+			if (requestVersionRef.current === requestVersion) {
+				setCredentialError(
+					error instanceof Error ? error : new Error("Runtime UI credential request failed"),
+				);
+			}
+			return null;
+		} finally {
+			if (requestVersionRef.current === requestVersion) setIsLoading(false);
+		}
+	}, [onCredentialsChange, requestCredentials]);
+
+	useEffect(() => {
+		if (loadedIdentityRef.current === identity) return;
+		loadedIdentityRef.current = identity;
+		if (open) credentialExit.beginClose();
+		clearSensitiveState();
+		setOpen(false);
+		if (runtime === "openclaw") void loadCredentials();
+	}, [clearSensitiveState, credentialExit.beginClose, identity, loadCredentials, open, runtime]);
+
+	useEffect(() => {
+		if (runtime !== "hermes") {
+			setAccessHintOpen(false);
+			return;
+		}
+		try {
+			setAccessHintOpen(window.localStorage.getItem(accessHintStorageKey) !== "1");
+		} catch {
+			setAccessHintOpen(true);
+		}
+	}, [accessHintStorageKey, runtime]);
+
+	const handleOpenChange = useCallback(
+		(nextOpen: boolean) => {
+			if (nextOpen) credentialExit.beginOpen();
+			else credentialExit.beginClose();
+			setOpen(nextOpen);
+			if (nextOpen && runtime === "hermes") dismissAccessHint();
+			if (nextOpen && !credentials && !isLoading) void loadCredentials();
+		},
+		[
+			credentialExit.beginClose,
+			credentialExit.beginOpen,
+			credentials,
+			dismissAccessHint,
+			isLoading,
+			loadCredentials,
+			runtime,
+		],
+	);
+
+	const openRuntime = useCallback(async () => {
+		const popup = openSecureRuntimeWindow(window.open.bind(window));
+		if (!popup) {
+			toast.error(`Couldn't open ${label}`, {
+				id: RUNTIME_UI_LAUNCH_TOAST_ID,
+				description:
+					"Your browser blocked the new window. Allow pop-ups for Clawdi, then try again.",
+			});
+			return;
+		}
+
+		const launchCredentials = credentials ?? (await loadCredentials());
+		if (!launchCredentials) {
+			try {
+				popup.close();
+			} catch {
+				// Browser isolation may have severed the WindowProxy.
+			}
+			toast.error(`Couldn't open ${label}`, {
+				id: RUNTIME_UI_LAUNCH_TOAST_ID,
+				description: "Runtime UI access couldn't be loaded. Open Access to retry.",
+			});
+			return;
+		}
+
+		try {
+			popup.location.replace(runtimeUiLaunchTarget(launchCredentials));
+			trackRuntimeWindow(deployment.resource.id, popup);
+		} catch {
+			try {
+				popup.close();
+			} catch {
+				// Browser isolation may have severed the WindowProxy.
+			}
+			toast.error(`Couldn't open ${label}`, {
+				id: RUNTIME_UI_LAUNCH_TOAST_ID,
+				description: "The new window couldn't be connected. Try again.",
+			});
+		}
+	}, [credentials, deployment.resource.id, label, loadCredentials]);
+
+	const acceptReset = useCallback(async () => {
+		await reset.mutateAsync({ id: deployment.resource.id });
+		credentialExit.beginClose();
+		clearSensitiveState();
+		setOpen(false);
+	}, [clearSensitiveState, credentialExit.beginClose, deployment.resource.id, reset]);
+
+	return (
+		<Dialog
+			open={open}
+			onOpenChange={handleOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) credentialExit.completeClose();
+			}}
+		>
+			<div className="flex items-center gap-1.5">
+				<Popover
+					open={runtime === "hermes" && accessHintOpen}
+					onOpenChange={(nextOpen) => {
+						if (!nextOpen) dismissAccessHint();
+					}}
+				>
+					<PopoverTrigger
+						render={
+							<Button
+								ref={triggerRef}
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => handleOpenChange(true)}
+								aria-label={`Access ${label}`}
+							/>
+						}
+					>
+						Access
+					</PopoverTrigger>
+					<PopoverContent side="bottom" align="end" className="w-72 gap-2">
+						<div className="flex items-start justify-between gap-3">
+							<PopoverHeader>
+								<PopoverTitle>Sign in to Hermes</PopoverTitle>
+								<PopoverDescription>
+									Get your Hermes username and password from Access.
+								</PopoverDescription>
+							</PopoverHeader>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-xs"
+								onClick={dismissAccessHint}
+								aria-label="Dismiss Hermes sign-in hint"
+							>
+								<X />
+							</Button>
+						</div>
+					</PopoverContent>
+				</Popover>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					disabled={isLoading}
+					onClick={() => void openRuntime()}
+					aria-label={`Open ${label} in new window`}
+				>
+					{isLoading && !renderedCredentials ? (
+						<Spinner className="size-3.5" />
+					) : (
+						<ExternalLink className="size-3.5" />
+					)}
+					<span className="hidden sm:inline">Open in new window</span>
+					<span className="sm:hidden">Open</span>
+				</Button>
+			</div>
+			<DialogContent
+				data-hosted="true"
+				data-v2="true"
+				className="sm:max-w-md"
+				finalFocus={triggerRef}
+			>
+				<DialogHeader>
+					<DialogTitle>Runtime UI access</DialogTitle>
+					<DialogDescription>
+						View or copy the current {label} access details. Reset rotates the same access material
+						through the normal agent rollout.
+					</DialogDescription>
+				</DialogHeader>
+
+				{isLoading ? (
+					<div
+						role="status"
+						className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"
+					>
+						<Spinner className="size-4" />
+						Loading Runtime UI access…
+					</div>
+				) : null}
+
+				{credentialError ? (
+					<ApiErrorPanel
+						error={credentialError}
+						onRetry={() => void loadCredentials()}
+						normalizer={billingErrorNormalizer}
+						title={`Couldn't load ${label} access`}
+					/>
+				) : null}
+
+				{renderedCredentials?.runtime === "hermes" ? (
+					<div className="overflow-hidden rounded-lg border bg-card/60">
+						<RuntimeUiCredentialRow label="Username" value={renderedCredentials.username} />
+						<Separator />
+						<RuntimeUiCredentialRow label="Password" value={renderedCredentials.password} secret />
+					</div>
+				) : null}
+
+				{renderedCredentials?.runtime === "openclaw" ? (
+					<div className="overflow-hidden rounded-lg border bg-card/60">
+						<RuntimeUiCredentialRow label="Token" value={renderedCredentials.token} secret />
+					</div>
+				) : null}
+
+				<div className="flex flex-wrap justify-end gap-2">
+					<ConfirmAction
+						title="Reset Runtime UI access?"
+						description={
+							<p>
+								This rotates the {runtime === "hermes" ? "Hermes credentials" : "OpenClaw token"}
+								and restarts the agent through its normal rollout.
+							</p>
+						}
+						confirmLabel="Reset access"
+						destructive
+						onConfirm={acceptReset}
+					>
+						<Button type="button" variant="outline" disabled={isLoading || reset.isPending}>
+							{reset.isPending ? <Spinner className="size-3.5" /> : null}
+							Reset access
+						</Button>
+					</ConfirmAction>
+					<Button
+						type="button"
+						disabled={!credentials || isLoading}
+						onClick={() => void openRuntime()}
+					>
+						Open in new window
+						<ExternalLink className="size-3.5" />
+					</Button>
+				</div>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
@@ -1163,71 +1907,77 @@ const TERMINAL_STATUS_LABELS: Record<HostedTerminalStatus, string> = {
 	disconnected: "Disconnected",
 };
 
+const TERMINAL_STATUS_TONES: Record<HostedTerminalStatus, StatusTone> = {
+	connecting: "warning",
+	connected: "success",
+	disconnected: "destructive",
+};
+
 function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 	return (
 		<div className="flex items-center gap-2 text-xs text-muted-foreground">
-			<span
-				className={cn(
-					"size-2 rounded-full",
-					status === "connected"
-						? "bg-success"
-						: status === "connecting"
-							? "bg-warning"
-							: "bg-destructive",
-				)}
-			/>
+			<StatusDot status={TERMINAL_STATUS_TONES[status]} className="size-2" />
 			<span>{TERMINAL_STATUS_LABELS[status]}</span>
 		</div>
 	);
 }
 
-function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
-	const status = parseDeploymentStatus(deployment.status);
+function TerminalTab({
+	deployment,
+	agentName,
+}: {
+	deployment: HostedDeployment;
+	agentName: string;
+}) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
-	const isProvisioning = isProvisioningStatus(status);
-	const label = deploymentDisplayName(deployment.name);
-	const terminal = useCreateTerminalSession();
-	const { isPending: isOpeningTerminal, mutateAsync: createTerminalSession } = terminal;
+	const isStarting = isStartingStatus(status);
+	const label = agentName;
+	const client = useBillingClient();
+	const terminal = useSensitiveAction(({ id }: { id: string }) => client.createTerminalSession(id));
+	const { isPending: isOpeningTerminal, execute: createTerminalSession } = terminal;
 	const [websocketUrl, setWebsocketUrl] = useState<string | null>(null);
 	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("disconnected");
 	const [terminalFailure, setTerminalFailure] = useState<string | null>(null);
 	const autoStartedDeploymentRef = useRef<string | null>(null);
-	const currentDeploymentIdRef = useRef(deployment.id);
+	const currentDeploymentIdRef = useRef(deployment.resource.id);
 	const terminalRequestRef = useRef(0);
 
 	const startTerminal = useCallback(async () => {
 		if (!isRunning || isOpeningTerminal) return;
 		const requestId = terminalRequestRef.current + 1;
 		terminalRequestRef.current = requestId;
+		setWebsocketUrl(null);
 		setTerminalFailure(null);
 		setTerminalStatus("connecting");
 		try {
-			const session = await createTerminalSession({ id: deployment.id });
+			const session = await createTerminalSession({ id: deployment.resource.id });
 			if (terminalRequestRef.current !== requestId) return;
 			if (!session.websocket_url) {
 				setTerminalStatus("disconnected");
-				setTerminalFailure("The deployment did not return a terminal websocket URL.");
+				setTerminalFailure("The secure terminal could not be opened. Try again.");
 				toast.error("Terminal unavailable", {
-					description: "The deployment did not return a terminal websocket URL.",
+					description: "The secure terminal could not be opened. Try again.",
 				});
 				return;
 			}
 			setWebsocketUrl(session.websocket_url);
-		} catch {
+		} catch (error) {
 			if (terminalRequestRef.current !== requestId) return;
 			setTerminalStatus("disconnected");
 			setTerminalFailure("Couldn't open terminal. Try again.");
+			toast.error("Couldn't open terminal", { description: normalizeBillingError(error) });
 		}
-	}, [createTerminalSession, deployment.id, isOpeningTerminal, isRunning]);
+	}, [createTerminalSession, deployment.resource.id, isOpeningTerminal, isRunning]);
 
 	useEffect(() => {
-		if (currentDeploymentIdRef.current === deployment.id) return;
-		currentDeploymentIdRef.current = deployment.id;
+		if (currentDeploymentIdRef.current === deployment.resource.id) return;
+		currentDeploymentIdRef.current = deployment.resource.id;
 		autoStartedDeploymentRef.current = null;
 		setWebsocketUrl(null);
 		setTerminalFailure(null);
 		setTerminalStatus("disconnected");
-	}, [deployment.id]);
+	}, [deployment.resource.id]);
 
 	useEffect(() => {
 		if (isRunning) return;
@@ -1239,24 +1989,39 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 
 	useEffect(() => {
 		if (!isRunning || websocketUrl || isOpeningTerminal || terminalFailure) return;
-		if (autoStartedDeploymentRef.current === deployment.id) return;
-		autoStartedDeploymentRef.current = deployment.id;
+		if (autoStartedDeploymentRef.current === deployment.resource.id) return;
+		autoStartedDeploymentRef.current = deployment.resource.id;
 		void startTerminal();
-	}, [deployment.id, isOpeningTerminal, isRunning, startTerminal, terminalFailure, websocketUrl]);
+	}, [
+		deployment.resource.id,
+		isOpeningTerminal,
+		isRunning,
+		startTerminal,
+		terminalFailure,
+		websocketUrl,
+	]);
 
 	const handleTerminalStatusChange = useCallback((status: HostedTerminalStatus) => {
 		setTerminalStatus(status);
+		if (status === "disconnected") {
+			setWebsocketUrl(null);
+			setTerminalFailure("Terminal connection closed. Reconnect to start a new session.");
+		}
 	}, []);
+
+	if (status.kind === "stopped") {
+		return <StoppedAgentState deployment={deployment} />;
+	}
 
 	if (!isRunning) {
 		return (
 			<EmptyState
 				icon={TerminalSquare}
-				title={isProvisioning ? provisioningTitle(status) : "Compute is not running"}
+				title={isStarting ? startingTitle() : "Agent is not running"}
 				description={
-					isProvisioning
+					isStarting
 						? "The browser terminal opens once your agent is running. This page updates automatically."
-						: `Start the compute to open a deployment shell. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+						: `Start the agent to open a terminal. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
@@ -1299,11 +2064,10 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 						</div>
 						<div>
 							<h2 className="text-base font-semibold">
-								{terminalFailure ? "Terminal unavailable" : "Opening deployment terminal"}
+								{terminalFailure ? "Terminal unavailable" : "Opening secure terminal"}
 							</h2>
 							<p className="mt-1 text-sm text-muted-foreground">
-								{terminalFailure ??
-									"Starting a real shell in the hosted deployment as the default runtime user."}
+								{terminalFailure ?? "Starting a secure shell for your agent."}
 							</p>
 						</div>
 						{terminalFailure ? (
@@ -1333,140 +2097,67 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	);
 }
 
-// ── AI Provider ──────────────────────────────────────────────────────────────
-
-function selectableCard(active: boolean): string {
-	return `w-full rounded-lg border p-4 text-left transition-colors ${
-		active
-			? "border-primary bg-primary/5 ring-1 ring-primary/30"
-			: "border-border hover:bg-muted/50"
-	}`;
-}
-
-function ProviderOptionSkeleton() {
-	return (
-		<div className="flex items-center gap-3 rounded-lg border p-4">
-			<Skeleton className="size-10 shrink-0 rounded-lg" />
-			<div className="min-w-0 flex-1 space-y-2">
-				<div className="flex items-center gap-2">
-					<Skeleton className="h-4 w-32" />
-					<Skeleton className="h-5 w-16 rounded-full" />
-				</div>
-				<Skeleton className="h-3 w-40" />
-			</div>
-			<Skeleton className="h-5 w-14 rounded-full" />
-		</div>
-	);
-}
-
-function unresolvedProviderChoice(providerRef: string): string {
-	return `${UNRESOLVED_PROVIDER_PREFIX}${providerRef}`;
-}
-
-function isUnresolvedProviderChoice(choice: string): boolean {
-	return choice.startsWith(UNRESOLVED_PROVIDER_PREFIX);
-}
-
-function unresolvedProviderRef(choice: string): string {
-	return choice.slice(UNRESOLVED_PROVIDER_PREFIX.length);
-}
-
-function agentChoiceFromProviderRef(
-	providerRef: string | null | undefined,
-	providers: readonly AiProvider[],
-): string | null {
-	if (!providerRef) return null;
-	const choice = providerChoiceFromRef(providerRef, providers);
-	if (!choice) return null;
-	if (
-		choice === MANAGED_AI_CHOICE ||
-		providers.some((provider) => provider.provider_id === choice)
-	) {
-		return choice;
-	}
-	return unresolvedProviderChoice(providerRef);
-}
-
-function agentProviderRefFromChoice(
-	choice: string,
-	providers: readonly AiProvider[],
-): string | null {
-	if (isUnresolvedProviderChoice(choice)) return unresolvedProviderRef(choice);
-	return providerRefFromChoice(choice, providers);
-}
-
-function providerCatalogDescription(provider: AiProvider): string {
-	const count = provider.models?.length ?? 0;
-	if (count === 0) return provider.base_url.replace(/^https?:\/\//, "");
-	if (count === 1) return provider.models?.[0]?.id ?? provider.base_url;
-	return `${count} catalog models`;
-}
+// ── AI Providers ─────────────────────────────────────────────────────────────
 
 function AiProviderTab({
 	deployment,
 	runtime,
+	environmentId,
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
+	environmentId: string;
 }) {
-	const providers = useAiProviders();
-	const setProvider = useSetAgentAiProvider();
-	const ci = deployment.config_info;
-	const list = providers.data?.providers ?? [];
-	const customProviders = useMemo(
-		() => list.filter((provider) => !isFirstPartyManagedAiProvider(provider)),
-		[list],
-	);
+	const providers = useUserAiProviders();
+	const managedModelCatalog = useManagedModelCatalog();
+	const updateDeployment = useUpdateDeployment();
+	const updateInProgress =
+		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
+	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
+	const list = providers.data ?? [];
+	const availabilityContext = { runtime, environmentId };
+	const managedModels = managedModelCatalog.data?.models ?? [];
+	// A provider reference is only unresolved after the catalog has settled. While
+	// it is loading, preserve the server id verbatim so the binding does not briefly
+	// seed the draft with a stale `unresolved:` choice.
+	const providerChoiceFromServerRef = providers.isPending
+		? providerChoiceFromRef
+		: updateProviderChoiceFromRef;
 	// Selected-runtime binding: the deployment owns one runtime in the v2 model.
-	const binding = ci?.ai_provider_bindings?.[runtime];
-	const currentAuthKind = binding?.auth_kind ?? ci?.ai_provider_auth_kind ?? "managed";
-	const initialMode: AiBindingMode = currentAuthKind === "unmanaged" ? "unmanaged" : "configured";
-	const legacyProviderRef =
-		currentAuthKind === "unmanaged" ? null : (binding?.provider_id ?? ci?.ai_provider_id ?? null);
-	const rawProviderRefs =
-		currentAuthKind === "unmanaged"
-			? []
-			: binding?.provider_ids && binding.provider_ids.length > 0
-				? binding.provider_ids
-				: legacyProviderRef
-					? [legacyProviderRef]
-					: [MANAGED_PROVIDER_ID];
+	const configuredProviders = runtimeConfiguration.providers;
+	const configuredPrimaryModel = runtimeConfiguration.primary_model;
+	const primaryConfiguredProvider = configuredPrimaryModel
+		? configuredProviders.find(
+				(provider) => provider.provider_id === configuredPrimaryModel.provider_id,
+			)
+		: undefined;
+	const currentAuthKind = runtimeAiProviderAuthKind(deployment, runtime);
+	const initialMode = currentAuthKind === "unmanaged" ? "unmanaged" : "configured";
 	const primaryProviderRef =
 		currentAuthKind === "unmanaged"
 			? MANAGED_PROVIDER_ID
-			: (primaryModelProviderId(binding?.primary_model) ??
-				legacyProviderRef ??
-				rawProviderRefs[0] ??
+			: (primaryModelProviderId(configuredPrimaryModel) ??
+				primaryConfiguredProvider?.provider_id ??
+				configuredProviders[0]?.provider_id ??
 				MANAGED_PROVIDER_ID);
 	const initialPrimaryChoice =
 		currentAuthKind === "unmanaged"
 			? MANAGED_AI_CHOICE
-			: (agentChoiceFromProviderRef(primaryProviderRef, list) ??
+			: (providerChoiceFromServerRef(primaryProviderRef, list) ??
 				(isManagedProviderId(primaryProviderRef)
 					? MANAGED_AI_CHOICE
 					: unresolvedProviderChoice(primaryProviderRef)));
-	const initialProviderChoices =
+	const bindingModelIdentity =
 		currentAuthKind === "unmanaged"
-			? []
-			: normalizeSelectedProviderIds(
-					rawProviderRefs
-						.map((providerRef) => agentChoiceFromProviderRef(providerRef, list))
-						.filter((choice): choice is string => Boolean(choice)),
-					initialPrimaryChoice,
-				);
+			? ""
+			: primaryModelValue(configuredPrimaryModel) ||
+				(initialPrimaryChoice === MANAGED_AI_CHOICE
+					? ""
+					: firstModelForProvider(initialPrimaryChoice, list));
 	const currentModel =
 		currentAuthKind === "unmanaged"
 			? ""
-			: primaryModelValue(binding?.primary_model) ||
-				primaryModelValue(ci?.primary_model) ||
-				firstModelForProvider(initialPrimaryChoice, list);
-
-	const [selectedProviders, setSelectedProviders] = useState<string[]>(initialProviderChoices);
-	const [bindingMode, setBindingMode] = useState<AiBindingMode>(initialMode);
-	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(initialPrimaryChoice);
-	const [primaryModel, setPrimaryModel] = useState<string>(
-		currentModel || MANAGED_PRIMARY_MODEL_FALLBACK,
-	);
+			: bindingModelIdentity || firstModelForProvider(initialPrimaryChoice, list, managedModels);
 
 	// Re-seed the form only when the server-side binding genuinely changes (the
 	// user's own apply completing, or an out-of-band change) — never on a plain
@@ -1474,680 +2165,1125 @@ function AiProviderTab({
 	// same identity → in-progress edits stay untouched; a real change → reset to
 	// the new truth. This is React's "adjust state during render" idiom, which
 	// replaces an effect that re-ran on every keystroke.
-	const bindingIdentity = JSON.stringify([
-		initialMode,
-		initialProviderChoices,
-		initialPrimaryChoice,
-		currentModel,
-	]);
-	const [syncedIdentity, setSyncedIdentity] = useState(bindingIdentity);
-	if (bindingIdentity !== syncedIdentity) {
-		setSyncedIdentity(bindingIdentity);
-		setBindingMode(initialMode);
-		setSelectedProviders(initialProviderChoices);
-		setPrimaryProviderChoice(initialPrimaryChoice);
-		setPrimaryModel(currentModel || MANAGED_PRIMARY_MODEL_FALLBACK);
-	}
-
-	const selectedIdentity = JSON.stringify(
-		normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice),
-	);
-	const initialSelectedIdentity = JSON.stringify(initialProviderChoices);
+	const bindingIdentity = JSON.stringify([initialMode, initialPrimaryChoice, bindingModelIdentity]);
+	const {
+		draft: aiBindingDraft,
+		managedPrimaryModelReady,
+		selectProvider,
+		setBindingMode,
+		setPrimaryModel,
+	} = useAiProviderBindingDraft({
+		initialDraft: {
+			bindingMode: initialMode,
+			primaryProviderChoice: initialPrimaryChoice,
+			primaryModel: currentModel,
+		},
+		managedCatalogReady: managedModelCatalog.data !== undefined,
+		managedModels,
+		operationMode: "update",
+		providers: list,
+		syncIdentity: bindingIdentity,
+	});
+	const { bindingMode, primaryModel, primaryProviderChoice } = aiBindingDraft;
 	const dirty =
 		bindingMode !== initialMode ||
 		(bindingMode === "configured" &&
-			(selectedIdentity !== initialSelectedIdentity ||
-				primaryProviderChoice !== initialPrimaryChoice ||
-				primaryModel !== (currentModel || MANAGED_PRIMARY_MODEL_FALLBACK)));
-
-	function setPrimaryProvider(choice: string) {
-		setBindingMode("configured");
-		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list);
-		const nextCatalog = modelIdsForProvider(choice, list);
-		const fallback = firstModelForProvider(choice, list);
-		setPrimaryProviderChoice(choice);
-		setSelectedProviders((current) => normalizeSelectedProviderIds(current, choice));
-		setPrimaryModel((current) => {
-			const trimmed = current.trim();
-			if (!trimmed) return fallback || current;
-			if (
-				previousCatalog.includes(trimmed) &&
-				nextCatalog.length > 0 &&
-				!nextCatalog.includes(trimmed)
-			) {
-				return fallback;
-			}
-			return current;
-		});
-	}
-
-	function toggleProvider(choice: string) {
-		setBindingMode("configured");
-		const selected = selectedProviders.includes(choice);
-		let next =
-			choice === MANAGED_AI_CHOICE && selectedProviders.some(isUnresolvedProviderChoice)
-				? [MANAGED_AI_CHOICE]
-				: selected
-					? selectedProviders.filter((item) => item !== choice)
-					: selectedProviders.length === 1 &&
-							selectedProviders[0] === MANAGED_AI_CHOICE &&
-							choice !== MANAGED_AI_CHOICE
-						? [choice]
-						: [...selectedProviders, choice];
-		if (next.length === 0) next = [choice];
-		next = dedupeProviderIds(next);
-		setSelectedProviders(next);
-		if (!next.includes(primaryProviderChoice)) {
-			setPrimaryProvider(next[0] ?? MANAGED_AI_CHOICE);
-		}
-	}
-
-	function apply() {
-		if (bindingMode === "unmanaged") {
-			const body: RebindAgentAiProviderRequest = { ai_provider_auth_kind: "unmanaged" };
-			setProvider.mutate(
-				{ id: deployment.id, agentType: runtime, body },
-				{
-					onSuccess: () =>
-						toast.success("Provider updated", {
-							description: "This runtime now expects provider setup inside the agent.",
-						}),
-				},
-			);
-			return;
-		}
-		const selectedChoices = normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice);
-		const providerRefs = selectedChoices
-			.map((choice) => agentProviderRefFromChoice(choice, customProviders))
-			.filter((providerId): providerId is string => Boolean(providerId));
-		if (providerRefs.length !== selectedChoices.length) {
-			toast.error("Provider unavailable", {
-				description: "Refresh providers or choose Managed by Clawdi.",
+			(primaryProviderChoice !== initialPrimaryChoice || primaryModel !== currentModel));
+	function applyProviderSettings() {
+		let update: DeploymentUpdateRequest;
+		try {
+			update = buildAiBindingFields(aiBindingDraft, {
+				managedModels,
+				mode: "update",
+				providers: list,
 			});
+		} catch (error) {
+			const copy = aiBindingBuildErrorCopy(error, "update");
+			toast.error(copy.title, copy.description ? { description: copy.description } : undefined);
 			return;
 		}
-		const primaryProviderRef =
-			agentProviderRefFromChoice(primaryProviderChoice, customProviders) ?? MANAGED_PROVIDER_ID;
-		const nextPrimaryModel = primaryModelRef(primaryProviderRef, primaryModel);
-		if (!nextPrimaryModel) {
-			toast.error("Primary model required", {
-				description: "Choose a catalog model or enter a model id.",
-			});
-			return;
-		}
-		const primaryProvider = customProviders.find(
-			(provider) => provider.provider_id === primaryProviderChoice,
-		);
-		const customSelectedProviders = selectedChoices
-			.filter((choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice))
-			.map((choice) => customProviders.find((provider) => provider.provider_id === choice))
-			.filter((provider): provider is AiProvider => Boolean(provider));
-		const kind = primaryProvider ? aiAuthKind(primaryProvider) : "managed";
-		const body: RebindAgentAiProviderRequest = {
-			primary_model: nextPrimaryModel,
-			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
-			provider_ids: providerRefs,
-			ai_provider_auth_kind: kind,
-		};
-		if (customSelectedProviders.length > 0) {
-			const bootstrapSelectedProvider = primaryProvider ?? customSelectedProviders[0];
-			try {
-				body.ai_provider_bootstrap = buildAiProviderPoolBootstrap(
-					customSelectedProviders,
-					bootstrapSelectedProvider.provider_id,
-					aiAuthKind(bootstrapSelectedProvider),
-				);
-			} catch (error) {
-				toast.error("Provider unavailable", {
-					description:
-						error instanceof Error
-							? error.message
-							: "Refresh providers or choose Managed by Clawdi.",
-				});
-				return;
-			}
-		}
-		setProvider.mutate(
-			{ id: deployment.id, agentType: runtime, body },
-			{
-				onSuccess: () =>
-					toast.success("Provider updated", { description: "Updating the runtime…" }),
-			},
-		);
+		updateDeployment.mutate({ id: deployment.resource.id, update });
 	}
 
 	return (
 		<div className="flex flex-col gap-4">
-			<LiveNote>Provider changes apply to the running runtime — no restart.</LiveNote>
-
-			<div className="flex flex-col gap-2">
-				<button
-					type="button"
+			<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">
+				<EntityChoiceCard
+					onClick={() => selectProvider(MANAGED_AI_CHOICE)}
+					selected={bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE}
+					icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
+					title={MANAGED_PROVIDER_LABEL}
+					description="No setup required. Usage draws from your Wallet."
+					badge={
+						bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE ? (
+							<Badge variant="secondary">Selected</Badge>
+						) : null
+					}
+				/>
+				<EntityChoiceCard
 					onClick={() => setBindingMode("unmanaged")}
-					className={selectableCard(bindingMode === "unmanaged")}
-				>
-					<div className="flex items-center justify-between gap-2">
-						<span className="text-sm font-medium">{authCardLabel("unmanaged")}</span>
-						{bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
+					selected={bindingMode === "unmanaged"}
+					icon={
+						<IconChip tint="bg-muted text-muted-foreground">
+							<Settings />
+						</IconChip>
+					}
+					title={authCardLabel("unmanaged")}
+					description="Configure model access inside the agent."
+					badge={bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
+				/>
+				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
+				{shouldBlockQueryError(providers.error, providers.data) ? (
+					<div className="@2xl/main:col-span-2">
+						<ApiErrorPanel
+							normalizer={billingErrorNormalizer}
+							error={providers.error}
+							onRetry={() => providers.refetch()}
+							title="Couldn't load providers"
+						/>
 					</div>
-					<p className="mt-0.5 text-sm text-muted-foreground">
-						Remove the hosted provider binding and configure model access inside the runtime.
-					</p>
-				</button>
-				<button
-					type="button"
-					onClick={() => toggleProvider(MANAGED_AI_CHOICE)}
-					className={selectableCard(
-						bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE),
-					)}
-				>
-					<div className="flex items-center justify-between gap-2">
-						<span className="text-sm font-medium">Managed by Clawdi</span>
-						{bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE ? (
-							<Badge variant="secondary">Primary</Badge>
-						) : bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE) ? (
-							<Badge variant="outline">Bound</Badge>
-						) : null}
-					</div>
-					<p className="mt-0.5 text-sm text-muted-foreground">
-						Clawdi-managed models, billed from your wallet.
-					</p>
-				</button>
-				{providers.isLoading ? <ProviderOptionSkeleton /> : null}
-				{providers.error ? (
-					<ApiErrorPanel
-						normalizer={billingErrorNormalizer}
-						error={providers.error}
-						onRetry={() => providers.refetch()}
-						title="Couldn't load providers"
+				) : null}
+				{bindingMode === "configured" && isUnresolvedProviderChoice(primaryProviderChoice) ? (
+					<EntityChoiceCard
+						selected
+						disabled
+						icon={<ProviderIcon provider={unresolvedProviderRef(primaryProviderChoice)} />}
+						title={`Using ${providerDisplayLabel(unresolvedProviderRef(primaryProviderChoice), list)}`}
+						description={`Saved connection details couldn't be loaded. Choose ${MANAGED_PROVIDER_LABEL} to replace it.`}
+						badge={<Badge variant="secondary">In use</Badge>}
 					/>
 				) : null}
-				{bindingMode === "configured"
-					? selectedProviders.filter(isUnresolvedProviderChoice).map((choice) => (
-							<button key={choice} type="button" disabled className={selectableCard(true)}>
-								<div className="flex items-center justify-between gap-2">
-									<span className="text-sm font-medium">Provider unavailable</span>
-									<Badge variant="secondary">In use</Badge>
-								</div>
-								<p className="mt-0.5 text-sm text-muted-foreground">
-									This runtime is bound to {unresolvedProviderRef(choice)}, but that provider could
-									not be loaded. Choose Managed by Clawdi to replace it.
-								</p>
-							</button>
-						))
-					: null}
-				{customProviders.map((p) => {
-					const selected =
-						bindingMode === "configured" && selectedProviders.includes(p.provider_id);
+				{list.map((p) => {
+					const selected = bindingMode === "configured" && primaryProviderChoice === p.provider_id;
+					const issue = providerAvailabilityIssue(p, availabilityContext);
+					const disabled = Boolean(issue) && !selected;
 					return (
-						<button
+						<EntityChoiceCard
 							key={p.provider_id}
-							type="button"
-							onClick={() => toggleProvider(p.provider_id)}
-							className={`flex items-center gap-3 ${selectableCard(selected)}`}
-						>
-							<ProviderTypeChip type={p.type} />
-							<span className="min-w-0 flex-1">
-								<span className="flex items-center gap-2">
-									<span className="truncate text-sm font-medium">{p.label ?? p.provider_id}</span>
+							onClick={() => selectProvider(p.provider_id)}
+							disabled={disabled}
+							selected={selected}
+							icon={<ProviderIcon provider={p} />}
+							title={providerDisplayLabel(p)}
+							description={issue?.message ?? providerCatalogDescription(p)}
+							badge={
+								selected ? (
+									<Badge variant="secondary">Selected</Badge>
+								) : issue ? (
+									<Badge variant="secondary">Unavailable</Badge>
+								) : (
 									<AuthBadge auth={p.auth} />
-								</span>
-								<span className="block text-xs text-muted-foreground">
-									{providerCatalogDescription(p)}
-								</span>
-							</span>
-							{bindingMode === "configured" && primaryProviderChoice === p.provider_id ? (
-								<Badge variant="secondary">Primary</Badge>
-							) : selected ? (
-								<Badge variant="outline">Bound</Badge>
-							) : null}
-						</button>
+								)
+							}
+						/>
 					);
 				})}
-				<Button
-					render={<Link to="/ai-providers" />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="justify-start text-muted-foreground"
-				>
-					<Plus className="size-3.5" />
-					Add a provider
-				</Button>
+				<EntityAddCard
+					title="Add a provider"
+					description="Connect OpenAI, Anthropic, or another endpoint."
+					href="/ai-providers"
+				/>
 			</div>
 
 			{bindingMode === "unmanaged" ? (
 				<p className="text-sm text-muted-foreground">
-					This runtime now carries no hosted provider binding. Configure models inside the agent
-					after it starts.
+					This agent has no Clawdi provider connection. Configure models inside the agent after it
+					starts.
 				</p>
 			) : (
-				<AgentPrimaryModelPicker
+				<ModelBindingPicker
+					idPrefix="agent"
 					providers={list}
-					customProviders={customProviders}
-					selectedProviderChoices={normalizeSelectedProviderIds(
-						selectedProviders,
-						primaryProviderChoice,
-					)}
+					managedModels={managedModels}
+					managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
+					managedModelsError={managedModelCatalog.error}
+					managedModelsErrorNormalizer={billingErrorNormalizer}
+					onManagedModelsRetry={() => void managedModelCatalog.refetch()}
 					primaryProviderChoice={primaryProviderChoice}
 					primaryModel={primaryModel}
-					onPrimaryProviderChange={setPrimaryProvider}
 					onPrimaryModelChange={setPrimaryModel}
 				/>
 			)}
 
 			<div className="flex items-center gap-2">
 				<Button
-					onClick={apply}
 					disabled={
-						!dirty ||
-						setProvider.isPending ||
-						(bindingMode === "configured" &&
-							providers.isLoading &&
-							selectedProviders.some((choice) => choice !== MANAGED_AI_CHOICE)) ||
-						(bindingMode === "configured" &&
-							!!providers.error &&
-							selectedProviders.some(
-								(choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice),
-							))
+						!dirty || !managedPrimaryModelReady || updateDeployment.isPending || updateInProgress
 					}
+					onClick={applyProviderSettings}
 				>
-					{setProvider.isPending ? <Spinner className="size-3.5" /> : null}
-					{setProvider.isPending ? "Applying live…" : "Apply changes"}
+					{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
+					Save changes
 				</Button>
-				{setProvider.isPending ? (
-					<span className="text-xs text-muted-foreground">Updating the runtime…</span>
-				) : null}
 			</div>
 
 			<p className="text-xs text-muted-foreground">
 				Add, validate, or remove providers on{" "}
 				<Link to="/ai-providers" className="underline">
-					Model Providers
+					AI Providers
 				</Link>
 				.
 			</p>
-		</div>
-	);
-}
-
-function AgentPrimaryModelPicker({
-	providers,
-	customProviders,
-	selectedProviderChoices,
-	primaryProviderChoice,
-	primaryModel,
-	onPrimaryProviderChange,
-	onPrimaryModelChange,
-}: {
-	providers: readonly AiProvider[];
-	customProviders: readonly AiProvider[];
-	selectedProviderChoices: readonly string[];
-	primaryProviderChoice: string;
-	primaryModel: string;
-	onPrimaryProviderChange: (choice: string) => void;
-	onPrimaryModelChange: (model: string) => void;
-}) {
-	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
-	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
-	const primaryProviderItems = [
-		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
-			: []),
-		...selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => ({
-			value: choice,
-			label: unresolvedProviderRef(choice),
-		})),
-		...customProviders
-			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
-			.map((provider) => ({
-				value: provider.provider_id,
-				label: provider.label ?? provider.provider_id,
-			})),
-	];
-	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({ value: model, label: formatModelLabel(model) })),
-		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
-	];
-	return (
-		<div className="flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
-			<div className="grid gap-3 sm:grid-cols-2">
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="agent-primary-provider">Primary provider</Label>
-					<Select
-						items={primaryProviderItems}
-						value={primaryProviderChoice}
-						onValueChange={(value) => {
-							if (value) onPrimaryProviderChange(value);
-						}}
-					>
-						<SelectTrigger id="agent-primary-provider" className="w-full">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
-								<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
-							) : null}
-							{selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => (
-								<SelectItem key={choice} value={choice}>
-									{unresolvedProviderRef(choice)}
-								</SelectItem>
-							))}
-							{customProviders
-								.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
-								.map((provider) => (
-									<SelectItem key={provider.provider_id} value={provider.provider_id}>
-										{provider.label ?? provider.provider_id}
-									</SelectItem>
-								))}
-						</SelectContent>
-					</Select>
-				</div>
-				{catalogModelIds.length > 0 ? (
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="agent-catalog-model">Catalog model</Label>
-						<Select
-							items={catalogModelItems}
-							value={modelChoice}
-							onValueChange={(value) => {
-								if (!value) return;
-								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value);
-							}}
-						>
-							<SelectTrigger id="agent-catalog-model" className="w-full">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{catalogModelIds.map((model) => (
-									<SelectItem key={model} value={model}>
-										{formatModelLabel(model)}
-									</SelectItem>
-								))}
-								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
-							</SelectContent>
-						</Select>
-					</div>
-				) : null}
-			</div>
-			{/* Free-text model id only when the catalog dropdown is on "Custom
-			    model" (or the provider has no catalog); otherwise it just
-			    duplicates the dropdown selection, so hide it. */}
-			{modelChoice === CUSTOM_MODEL_CHOICE ? (
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="agent-primary-model">
-						{catalogModelIds.length > 0 ? "Custom model" : "Primary model"}
-					</Label>
-					<Input
-						id="agent-primary-model"
-						value={primaryModel}
-						onChange={(event) => onPrimaryModelChange(event.target.value)}
-						placeholder={
-							primaryProviderChoice === MANAGED_AI_CHOICE
-								? MANAGED_PRIMARY_MODEL_FALLBACK
-								: "model id"
-						}
-						autoComplete="off"
-						spellCheck={false}
-					/>
-				</div>
-			) : null}
 		</div>
 	);
 }
 
 // ── Channels ─────────────────────────────────────────────────────────────────
 
-function ChannelsTab({ environmentId }: { environmentId: string }) {
+function ChannelsSyncState({
+	isChecking,
+	onCheckAgain,
+}: {
+	isChecking: boolean;
+	onCheckAgain: () => void;
+}) {
+	return (
+		<EmptyState
+			icon={isChecking ? <Spinner className="size-5" /> : Link2}
+			title="Getting channels ready"
+			description="Your agent is finishing setup. This usually takes a few minutes, and this page checks automatically."
+			action={
+				<div className="flex flex-wrap justify-center gap-2">
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						disabled={isChecking}
+						onClick={onCheckAgain}
+					>
+						{isChecking ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
+						{isChecking ? "Checking…" : "Check now"}
+					</Button>
+					<Button render={<Link to="/channels" />} nativeButton={false} size="sm" variant="outline">
+						Choose a channel while you wait
+					</Button>
+				</div>
+			}
+		/>
+	);
+}
+
+const AGENT_CHANNEL_PAIR_ACTIONS_CLASS = "flex min-h-8 w-auto items-center gap-1.5 xl:gap-2";
+
+const AGENT_CHANNEL_CARD_HEADER_CLASS =
+	"h-[7.5rem] flex-none grid-rows-[2.75rem_2rem] xl:h-20 xl:grid-rows-1";
+
+type AgentChannelCardProps = ComponentProps<typeof ChannelCard>;
+
+function AgentChannelCard({ headerClassName, ...props }: AgentChannelCardProps) {
+	return (
+		<ChannelCard
+			{...props}
+			headerClassName={cn(AGENT_CHANNEL_CARD_HEADER_CLASS, headerClassName)}
+		/>
+	);
+}
+
+function agentChannelLinkUnavailableReason({
+	bot,
+	agentType,
+	linkedProviders,
+}: {
+	bot: AgentChannelCardItem;
+	agentType: HostedRuntime;
+	linkedProviders: ReadonlySet<string> | undefined;
+}): string | null {
+	if (!bot.available || !bot.canLink || bot.status.toLowerCase() !== "active") {
+		return bot.maxLinks !== null ? "At capacity" : "Unavailable";
+	}
+	if (agentProviderLinkStatusUnknown(agentType, bot.provider, linkedProviders)) {
+		return "Agent link status unavailable";
+	}
+	return null;
+}
+
+function ChannelsTab({
+	environmentId,
+	agentType,
+	agentName,
+	routeSearch,
+}: {
+	environmentId: string;
+	agentType: HostedRuntime;
+	agentName: string;
+	routeSearch: AgentRouteSearch;
+}) {
 	const api = useApi();
+	const openApi = useOpenApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const hasEnvironmentId = isCloudEnvId(environmentId);
-	const linked = useAgentChannelLinks(environmentId, hasEnvironmentId);
+	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId), true);
+	const agentLinksQueryKey = agentChannelLinksQueryOptions(openApi, environmentId).queryKey;
 	const unlink = useUnlinkAgentChannel(environmentId);
-	// "" = no channel selected. Sentinel keeps the Select controlled (no
-	// undefined↔string flip) while staying falsy for the gated Link button.
-	const [accountId, setAccountId] = useState("");
-	const [token, setToken] = useState<string | null>(null);
-	const linkInFlightRef = useRef(false);
-
-	const linkedIds = useMemo(
-		() => new Set((linked.data ?? []).map((l) => l.account_id)),
-		[linked.data],
+	const deleteChannel = useDeleteChannel();
+	const [recentLinks, setRecentLinks] = useState<ReadonlyMap<string, AgentChannelLink>>(
+		() => new Map(),
 	);
-	const linkable = useMemo(() => {
-		const mine = (channels.data ?? []).map((c) => ({
-			id: c.id,
-			provider: c.provider,
-			name: c.name,
-		}));
-		const shared = Object.values(botPool.data?.providers ?? {})
-			.flat()
-			.filter((b) => b.access === "public" && b.available)
-			.map((b) => ({ id: b.id, provider: b.provider, name: b.name }));
-		return [...mine, ...shared].filter((c) => !linkedIds.has(c.id));
-	}, [channels.data, botPool.data, linkedIds]);
-	const linkableItems = linkable.map((channel) => ({
-		value: channel.id,
-		label: `${providerMeta(channel.provider).label} · ${channel.name}`,
-	}));
+	const [telegramPair, setTelegramPair] = useState<{
+		accountId: string;
+		agentLinkId: string;
+		channelName: string;
+		open: boolean;
+	} | null>(null);
+	const [discordPair, setDiscordPair] = useState<{
+		accountId: string;
+		agentLinkId: string;
+		channelName: string;
+		open: boolean;
+	} | null>(null);
+	const [whatsappPair, setWhatsappPair] = useState<{
+		accountId: string;
+		agentLinkId: string;
+		channelName: string;
+		open: boolean;
+	} | null>(null);
+	const [whatsappRepair, setWhatsappRepair] = useState<{
+		accountId: string;
+		channelName: string;
+		replaceExistingProviderLink: boolean;
+		started: boolean;
+	} | null>(null);
+	const [customBotDialogOpen, setCustomBotDialogOpen] = useState(false);
+	const linkingAccountIdsRef = useRef<Set<string>>(new Set());
+	const [linkingAccountIds, setLinkingAccountIds] = useState<ReadonlySet<string>>(() => new Set());
+	const unlinkingLinkIdsRef = useRef<Set<string>>(new Set());
+	const [unlinkingLinkIds, setUnlinkingLinkIds] = useState<ReadonlySet<string>>(() => new Set());
+	const deletingAccountIdsRef = useRef<Set<string>>(new Set());
+	const [deletingAccountIds, setDeletingAccountIds] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
+	useEffect(() => {
+		if (!linked.data) return;
+		setRecentLinks((current) => {
+			const next = new Map(current);
+			for (const [accountId, recentLink] of current) {
+				if (
+					linked.data.some((link) => link.account_id === accountId && link.id === recentLink.id)
+				) {
+					next.delete(accountId);
+				}
+			}
+			return next.size === current.size ? current : next;
+		});
+	}, [linked.data]);
 
-	// Provider/name labels for linked rows whose API payload omits the nested
-	// `account` (the list-by-agent endpoint isn't guaranteed to embed it).
-	// Resolved from the already-loaded channels + shared bot-pool by account id.
+	const visibleActiveLinks = useMemo(
+		() =>
+			canonicalAgentChannelLinks({
+				links: linked.data ?? [],
+				agentId: environmentId,
+				recentLinks: Array.from(recentLinks.values()),
+			}),
+		[environmentId, linked.data, recentLinks],
+	);
+	const cardGroups = useMemo(
+		() =>
+			buildAgentChannelCardGroups({
+				channels: channels.data ?? [],
+				poolProviders: botPool.data?.providers,
+				links: visibleActiveLinks,
+			}),
+		[botPool.data, channels.data, visibleActiveLinks],
+	);
 	const accountSummaries = useMemo(() => {
-		const map = new Map<string, { provider: string; name: string }>();
-		for (const c of channels.data ?? []) map.set(c.id, { provider: c.provider, name: c.name });
-		for (const list of Object.values(botPool.data?.providers ?? {}))
-			for (const b of list) map.set(b.id, { provider: b.provider, name: b.name });
+		const map = new Map<string, ChannelAccountSummary>();
+		for (const bots of [cardGroups.clawdiBots, cardGroups.customBots]) {
+			for (const bot of bots) {
+				map.set(bot.id, {
+					provider: bot.provider,
+					name: bot.name,
+					visibility: bot.visibility,
+				});
+			}
+		}
 		return map;
-	}, [channels.data, botPool.data]);
-
-	const link = useMutation({
-		mutationFn: async (channelId: string) =>
+	}, [cardGroups]);
+	const bindingCountForLink = (linkId: string) =>
+		visibleActiveLinks.find((link) => link.id === linkId)?.binding_count ?? 0;
+	const linkedProviders = useMemo<ReadonlySet<string> | undefined>(() => {
+		if (!linked.data) return undefined;
+		const providers = new Set<string>();
+		for (const link of visibleActiveLinks) {
+			const provider = link.account?.provider ?? accountSummaries.get(link.account_id)?.provider;
+			if (provider) providers.add(provider);
+		}
+		return providers;
+	}, [accountSummaries, visibleActiveLinks]);
+	const link = useSensitiveAction(
+		async ({
+			channelId,
+			replaceExistingProviderLink,
+		}: {
+			channelId: string;
+			replaceExistingProviderLink: boolean;
+		}) =>
 			unwrap(
 				await api.POST("/v1/channels/{account_id}/agent-links", {
 					params: { path: { account_id: channelId } },
-					body: { agent_id: environmentId },
+					body: {
+						agent_id: environmentId,
+						...(replaceExistingProviderLink ? { replace_existing_provider_link: true } : {}),
+					},
 				}),
 			),
-		onSuccess: (data) => {
-			if (data.agent_token != null) setToken(data.agent_token);
-			setAccountId("");
-			qc.invalidateQueries({ queryKey: ["agent-channel-links", environmentId] });
-			qc.invalidateQueries({ queryKey: ["channel-agent-links", data.account_id] });
-			qc.invalidateQueries({ queryKey: ["channel-bot-pool"] });
-			qc.invalidateQueries({ queryKey: ["channels"] });
-			toast.success("Channel linked");
-		},
-		onError: toastApiError("Couldn't link channel"),
-	});
+	);
 
-	function submitLink() {
-		if (!accountId || linkInFlightRef.current) return;
-		linkInFlightRef.current = true;
-		link.mutate(accountId, {
-			onSettled: () => {
-				linkInFlightRef.current = false;
-			},
-		});
+	function showPairingForLink(nextLink: AgentChannelLink) {
+		const account = accountSummaries.get(nextLink.account_id);
+		if (account?.provider === "telegram") {
+			setTelegramPair({
+				accountId: nextLink.account_id,
+				agentLinkId: nextLink.id,
+				channelName: account.name,
+				open: true,
+			});
+		} else if (account?.provider === "discord") {
+			setDiscordPair({
+				accountId: nextLink.account_id,
+				agentLinkId: nextLink.id,
+				channelName: account.name,
+				open: true,
+			});
+		} else if (account?.provider === "whatsapp") {
+			setWhatsappPair({
+				accountId: nextLink.account_id,
+				agentLinkId: nextLink.id,
+				channelName: account.name,
+				open: true,
+			});
+		} else {
+			toast.success("Channel linked", {
+				description: "Pair a chat from this bot's card.",
+			});
+		}
 	}
 
-	if (!hasEnvironmentId) {
+	function acceptLinkedChannel(nextLink: AgentChannelLink) {
+		setRecentLinks((current) => new Map(current).set(nextLink.account_id, nextLink));
+		void qc.invalidateQueries({ queryKey: agentLinksQueryKey, exact: true });
+		void qc.invalidateQueries({ queryKey: channelKeys.agentLinks(nextLink.account_id) });
+		void qc.invalidateQueries({ queryKey: channelKeys.pool });
+		void qc.invalidateQueries({ queryKey: channelKeys.list });
+		showPairingForLink(nextLink);
+	}
+
+	async function submitLink(
+		channelId: string,
+		replaceExistingProviderLink: boolean,
+	): Promise<void> {
+		if (!channelId || linkingAccountIdsRef.current.has(channelId)) return;
+		linkingAccountIdsRef.current.add(channelId);
+		setLinkingAccountIds((current) => new Set(current).add(channelId));
+		try {
+			const data = await link.execute({ channelId, replaceExistingProviderLink });
+			acceptLinkedChannel({
+				id: data.id,
+				account_id: data.account_id,
+				agent_id: data.agent_id,
+				status: data.status,
+				created_at: data.created_at,
+				binding_count: 0,
+			});
+			return;
+		} catch (error) {
+			if (
+				error instanceof ApiError &&
+				error.status === 409 &&
+				error.detail === "whatsapp_repair_required"
+			) {
+				setWhatsappRepair({
+					accountId: channelId,
+					channelName: accountSummaries.get(channelId)?.name ?? "Custom WhatsApp",
+					replaceExistingProviderLink,
+					started: false,
+				});
+				return;
+			}
+			if (error instanceof ApiError && error.status === 409) {
+				const refreshed = await linked.refetch();
+				const existing = activeAgentLinkForAccount({
+					links: refreshed.data ?? [],
+					agentId: environmentId,
+					accountId: channelId,
+				});
+				if (existing) {
+					link.reset();
+					acceptLinkedChannel(existing);
+					toast.info("Bot already linked", {
+						description: "Using the existing link for this Agent.",
+					});
+					return;
+				}
+			}
+			toastApiError("Couldn't link bot")(error);
+			throw error;
+		} finally {
+			linkingAccountIdsRef.current.delete(channelId);
+			setLinkingAccountIds((current) => {
+				const next = new Set(current);
+				next.delete(channelId);
+				return next;
+			});
+		}
+	}
+
+	function startUnlink(accountIdToUnlink: string, linkId: string) {
+		if (unlinkingLinkIdsRef.current.has(linkId)) return;
+		unlinkingLinkIdsRef.current.add(linkId);
+		setUnlinkingLinkIds((prev) => new Set(prev).add(linkId));
+		void (async () => {
+			try {
+				await unlink.mutateAsync({
+					params: { path: { account_id: accountIdToUnlink, link_id: linkId } },
+				});
+				setRecentLinks((current) => {
+					if (current.get(accountIdToUnlink)?.id !== linkId) return current;
+					const next = new Map(current);
+					next.delete(accountIdToUnlink);
+					return next;
+				});
+			} catch {
+				// useUnlinkAgentChannel already surfaces the API error.
+			} finally {
+				unlinkingLinkIdsRef.current.delete(linkId);
+				setUnlinkingLinkIds((prev) => {
+					const next = new Set(prev);
+					next.delete(linkId);
+					return next;
+				});
+			}
+		})();
+	}
+	async function submitDeleteChannel(accountId: string): Promise<void> {
+		if (deletingAccountIdsRef.current.has(accountId)) return;
+		deletingAccountIdsRef.current.add(accountId);
+		setDeletingAccountIds((current) => new Set(current).add(accountId));
+		try {
+			await deleteChannel.mutateAsync({ params: { path: { account_id: accountId } } });
+			setRecentLinks((current) => {
+				if (!current.has(accountId)) return current;
+				const next = new Map(current);
+				next.delete(accountId);
+				return next;
+			});
+		} finally {
+			deletingAccountIdsRef.current.delete(accountId);
+			setDeletingAccountIds((current) => {
+				const next = new Set(current);
+				next.delete(accountId);
+				return next;
+			});
+		}
+	}
+	function renderBot(bot: AgentChannelCardItem) {
+		const linkForBot = bot.link;
 		return (
-			<EmptyState
-				icon={Link2}
-				title="Channels available once provisioning finishes"
-				description="The deployment is still minting its cloud agent id. When the agent is ready, link channels here."
+			<AgentChannelBotCard
+				bot={bot}
+				agentId={environmentId}
+				agentName={agentName}
+				agentType={agentType}
+				linkedProviders={linkedProviders}
+				linking={linkingAccountIds.has(bot.id)}
+				unlinking={Boolean(linkForBot && unlinkingLinkIds.has(linkForBot.id))}
+				deleting={deletingAccountIds.has(bot.id)}
+				onLink={(replaceExistingProviderLink) => submitLink(bot.id, replaceExistingProviderLink)}
+				onUnlink={() => {
+					if (linkForBot) startUnlink(bot.id, linkForBot.id);
+				}}
+				onDelete={() => submitDeleteChannel(bot.id)}
 			/>
 		);
 	}
-
 	return (
-		<div className="space-y-4">
-			<LiveNote>Linking a channel applies its token live — no restart.</LiveNote>
+		<div data-agent-channels className="flex flex-col gap-8">
+			<AgentChannelBotsSection
+				kind="clawdi"
+				title="Clawdi bots"
+				description="Clawdi-managed bots available to your account."
+				bots={cardGroups.clawdiBots}
+				isLoading={botPool.isLoading}
+				error={shouldBlockQueryError(botPool.error, botPool.data) ? botPool.error : null}
+				onRetry={() => void botPool.refetch()}
+				emptyTitle="No Clawdi bots available"
+				renderBot={renderBot}
+			/>
 
-			{/* Linked channels */}
-			<div className="space-y-2">
-				<div className="text-sm font-medium">Linked channels</div>
-				{linked.isLoading ? (
-					<Skeleton className="h-16 w-full rounded-lg" />
-				) : linked.error ? (
-					<ApiErrorPanel
-						error={linked.error}
-						onRetry={() => linked.refetch()}
-						title="Couldn't load linked channels"
-					/>
-				) : (linked.data ?? []).length === 0 ? (
-					<EmptyState
-						variant="inset"
-						title="No channels linked"
-						description="Link a channel below so this agent can send and receive messages."
-					/>
-				) : (
-					(linked.data ?? []).map((l) => (
-						<LinkedChannelRow
-							key={l.id}
-							link={l}
-							fallbackAccount={accountSummaries.get(l.account_id)}
-							unlinking={unlink.isPending}
-							onUnlink={() => unlink.mutate({ accountId: l.account_id, linkId: l.id })}
-						/>
-					))
-				)}
-			</div>
-
-			{/* Link a channel */}
-			<div className="space-y-2 rounded-lg border p-4">
-				<div className="text-sm font-medium">Link a channel</div>
-				<p className="text-xs text-muted-foreground">
-					Connect this agent to one of your channels or a shared-pool bot.
-				</p>
-				<div className="flex flex-col gap-2 sm:flex-row">
-					<Select
-						items={linkableItems}
-						value={accountId}
-						onValueChange={(value) => {
-							if (value !== null) setAccountId(value);
-						}}
-					>
-						<SelectTrigger aria-label="Link a channel" className="flex-1">
-							<SelectValue placeholder="Choose a channel…" />
-						</SelectTrigger>
-						<SelectContent>
-							{linkable.map((c) => (
-								<SelectItem key={c.id} value={c.id}>
-									{providerMeta(c.provider).label} · {c.name}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
+			<AgentChannelBotsSection
+				kind="custom"
+				title="Custom bots"
+				description="Bots and WhatsApp accounts whose connection you manage."
+				bots={cardGroups.customBots}
+				isLoading={channels.isLoading}
+				error={shouldBlockQueryError(channels.error, channels.data) ? channels.error : null}
+				onRetry={() => void channels.refetch()}
+				emptyTitle="No custom bots yet"
+				action={
 					<Button
-						onClick={submitLink}
-						disabled={!accountId || link.isPending || channels.isLoading || botPool.isLoading}
+						data-agent-add-custom-bot
+						type="button"
+						variant="outline"
+						size="sm"
+						className="min-w-0 whitespace-normal"
+						onClick={() => setCustomBotDialogOpen(true)}
 					>
-						{link.isPending ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
-						Link
+						<Plus className="size-3.5 shrink-0" />
+						Add channel
 					</Button>
-				</div>
-				{channels.error || botPool.error ? (
-					<ApiErrorPanel
-						error={channels.error ?? botPool.error}
-						onRetry={() => {
-							channels.refetch();
-							botPool.refetch();
-						}}
-						title="Couldn't load available channels"
-					/>
-				) : null}
-				{token ? (
-					<TokenReveal
-						label="Agent token"
-						value={token}
-						note="Copy it now — used by the runtime to send and receive on this channel."
-					/>
-				) : null}
-			</div>
+				}
+				renderBot={renderBot}
+			/>
 
-			<p className="text-xs text-muted-foreground">
-				Health, activity, and command sync for each channel live on{" "}
-				<Link to="/channels" className="underline">
-					Channels
-				</Link>
-				.
-			</p>
+			{shouldBlockQueryError(linked.error, linked.data) ? (
+				<ApiErrorPanel
+					error={linked.error}
+					onRetry={() => linked.refetch()}
+					title="Couldn't refresh every linked bot"
+				/>
+			) : null}
+			<ConnectBotDialog
+				open={customBotDialogOpen}
+				onOpenChange={setCustomBotDialogOpen}
+				agentId={environmentId}
+				agentType={agentType}
+				linkedProviders={linked.data ? linkedProviders : undefined}
+				agentRouteQuery={routeSearch}
+				onAgentConnected={(bot) => {
+					setRecentLinks((current) =>
+						new Map(current).set(bot.id, {
+							id: bot.agentLinkId,
+							account_id: bot.id,
+							agent_id: environmentId,
+							status: "active",
+							created_at: new Date().toISOString(),
+							binding_count: 0,
+						}),
+					);
+					if (bot.provider === "telegram") {
+						setTelegramPair({
+							accountId: bot.id,
+							agentLinkId: bot.agentLinkId,
+							channelName: bot.name,
+							open: true,
+						});
+						return;
+					}
+					if (bot.provider === "discord") {
+						setDiscordPair({
+							accountId: bot.id,
+							agentLinkId: bot.agentLinkId,
+							channelName: bot.name,
+							open: true,
+						});
+						return;
+					}
+					if (bot.provider === "whatsapp") {
+						setWhatsappPair({
+							accountId: bot.id,
+							agentLinkId: bot.agentLinkId,
+							channelName: bot.name,
+							open: true,
+						});
+					}
+				}}
+			/>
+			{telegramPair ? (
+				<TelegramPairDialog
+					open={telegramPair.open}
+					onOpenChange={(open) => {
+						setTelegramPair((current) => (current ? { ...current, open } : current));
+					}}
+					onCloseComplete={() => {
+						setTelegramPair((current) => (current?.open === false ? null : current));
+					}}
+					agentId={environmentId}
+					accountId={telegramPair.accountId}
+					agentLinkId={telegramPair.agentLinkId}
+					channelName={telegramPair.channelName}
+					bindingCount={bindingCountForLink(telegramPair.agentLinkId)}
+				/>
+			) : null}
+			{discordPair ? (
+				<DiscordPairDialog
+					open={discordPair.open}
+					onOpenChange={(open) => {
+						setDiscordPair((current) => (current ? { ...current, open } : current));
+					}}
+					onCloseComplete={() => {
+						setDiscordPair((current) => (current?.open === false ? null : current));
+					}}
+					agentId={environmentId}
+					accountId={discordPair.accountId}
+					agentLinkId={discordPair.agentLinkId}
+					channelName={discordPair.channelName}
+					bindingCount={bindingCountForLink(discordPair.agentLinkId)}
+				/>
+			) : null}
+			{whatsappPair ? (
+				<WhatsAppPairDialog
+					open={whatsappPair.open}
+					onOpenChange={(open) => {
+						setWhatsappPair((current) => (current ? { ...current, open } : current));
+					}}
+					onCloseComplete={() => {
+						setWhatsappPair((current) => (current?.open === false ? null : current));
+					}}
+					agentId={environmentId}
+					accountId={whatsappPair.accountId}
+					agentLinkId={whatsappPair.agentLinkId}
+					channelName={whatsappPair.channelName}
+					bindingCount={bindingCountForLink(whatsappPair.agentLinkId)}
+				/>
+			) : null}
+			{whatsappRepair ? (
+				<Dialog
+					open
+					onOpenChange={(open) => {
+						if (!open) setWhatsappRepair(null);
+					}}
+				>
+					<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
+						<DialogHeader>
+							<DialogTitle>Repair WhatsApp before linking</DialogTitle>
+							<DialogDescription>
+								<span className="font-medium text-foreground">{whatsappRepair.channelName}</span>{" "}
+								needs a fresh linked-device connection. The Custom bot, existing Agent Links, paired
+								chats, and history stay unchanged.
+							</DialogDescription>
+						</DialogHeader>
+						{whatsappRepair.started ? (
+							<WhatsAppDeviceOnboarding
+								repairAccountId={whatsappRepair.accountId}
+								onDone={() => {
+									const repaired = whatsappRepair;
+									setWhatsappRepair(null);
+									void submitLink(repaired.accountId, repaired.replaceExistingProviderLink).catch(
+										() => undefined,
+									);
+								}}
+							/>
+						) : (
+							<>
+								<Alert className="border-warning/30 bg-warning-muted">
+									<AlertCircle aria-hidden />
+									<AlertTitle>WhatsApp needs to be reconnected</AlertTitle>
+									<AlertDescription>
+										Repair clears only the invalid linked-device login, then asks you to scan a
+										fresh QR. It does not replace this Custom bot.
+									</AlertDescription>
+								</Alert>
+								<DialogFooter>
+									<Button variant="outline" onClick={() => setWhatsappRepair(null)}>
+										Cancel
+									</Button>
+									<Button
+										onClick={() =>
+											setWhatsappRepair((current) =>
+												current ? { ...current, started: true } : current,
+											)
+										}
+									>
+										Repair WhatsApp
+									</Button>
+								</DialogFooter>
+							</>
+						)}
+					</DialogContent>
+				</Dialog>
+			) : null}
 		</div>
 	);
 }
 
-function LinkedChannelRow({
+function AgentChannelBotsSection({
+	kind,
+	title,
+	description,
+	bots,
+	isLoading,
+	error,
+	onRetry,
+	emptyTitle,
+	action,
+	renderBot,
+}: {
+	kind: "clawdi" | "custom";
+	title: string;
+	description: string;
+	bots: AgentChannelCardItem[];
+	isLoading: boolean;
+	error: Error | null;
+	onRetry: () => void;
+	emptyTitle: string;
+	action?: React.ReactNode;
+	renderBot: (bot: AgentChannelCardItem) => React.ReactNode;
+}) {
+	return (
+		<section
+			data-agent-channel-section={kind}
+			tabIndex={-1}
+			className="flex min-w-0 scroll-mt-6 flex-col gap-3 outline-none"
+		>
+			<div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+				<div className="min-w-0 flex-1">
+					<SectionLabel count={bots.length}>{title}</SectionLabel>
+					<p className="mt-1 min-w-0 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
+						{description}
+					</p>
+				</div>
+				{action ? <div className="flex min-w-0 flex-wrap">{action}</div> : null}
+			</div>
+			{error ? (
+				<ApiErrorPanel error={error} title={`Couldn't load ${title}`} onRetry={onRetry} />
+			) : null}
+			{isLoading && bots.length === 0 ? (
+				<div role="status" className={CHANNEL_CARD_GRID_CLASS}>
+					<span className="sr-only">Loading {title}</span>
+					<EntityCardSkeleton actions />
+					<EntityCardSkeleton actions />
+				</div>
+			) : bots.length > 0 ? (
+				<div className={CHANNEL_CARD_GRID_CLASS}>
+					{bots.map((bot) => (
+						<div key={bot.id} className="h-full min-w-0">
+							{renderBot(bot)}
+						</div>
+					))}
+				</div>
+			) : !isLoading && !error ? (
+				<div className="min-w-0 rounded-lg border border-dashed px-4 py-5 text-sm text-muted-foreground">
+					{emptyTitle}
+				</div>
+			) : null}
+		</section>
+	);
+}
+
+function AgentChannelBotCard({
+	bot,
+	agentId,
+	agentName,
+	agentType,
+	linkedProviders,
+	linking,
+	unlinking,
+	deleting,
+	onLink,
+	onUnlink,
+	onDelete,
+}: {
+	bot: AgentChannelCardItem;
+	agentId: string;
+	agentName: string;
+	agentType: HostedRuntime;
+	linkedProviders: ReadonlySet<string> | undefined;
+	linking: boolean;
+	unlinking: boolean;
+	deleting: boolean;
+	onLink: (replaceExistingProviderLink: boolean) => Promise<void>;
+	onUnlink: () => void;
+	onDelete: () => Promise<void>;
+}) {
+	const unavailableReason = agentChannelLinkUnavailableReason({ bot, agentType, linkedProviders });
+	const replacementRequired = agentProviderLinkReplacementRequired(
+		agentType,
+		bot.provider,
+		linkedProviders,
+	);
+	const linkButton = (
+		<Button
+			type="button"
+			size="sm"
+			className="min-w-20"
+			disabled={Boolean(unavailableReason) || linking}
+			onClick={replacementRequired ? undefined : () => void onLink(false).catch(() => undefined)}
+		>
+			{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
+			{linking ? "Linking…" : "Link"}
+		</Button>
+	);
+	const deleteAction =
+		bot.visibility === "private" && !bot.link ? (
+			<ConfirmAction
+				title={`Delete ${bot.name}?`}
+				description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+				confirmLabel="Delete custom bot"
+				destructive
+				onConfirm={onDelete}
+			>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					className={cn(CHANNEL_DESTRUCTIVE_ACTION_CLASS, "min-w-20")}
+					disabled={deleting}
+					aria-label={`Delete ${bot.name}`}
+				>
+					{deleting ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
+					{deleting ? "Deleting…" : "Delete"}
+				</Button>
+			</ConfirmAction>
+		) : null;
+	return (
+		<div data-agent-channel-account-id={bot.id} className="h-full min-w-0">
+			{bot.link ? (
+				<ConnectedChannelGroup
+					link={bot.link}
+					agentId={agentId}
+					fallbackAccount={{
+						provider: bot.provider,
+						name: bot.name,
+						visibility: bot.visibility,
+					}}
+					agentName={agentName}
+					unlinking={unlinking}
+					onUnlink={onUnlink}
+				/>
+			) : (
+				<AgentChannelCard
+					provider={bot.provider}
+					title={bot.name}
+					state={unavailableReason ?? "Available"}
+					actions={
+						<div className="flex min-w-0 items-center gap-2">
+							{deleteAction}
+							{replacementRequired ? (
+								<ProviderLinkReplacementConfirm
+									provider={bot.provider}
+									targetName={bot.name}
+									onConfirm={() => onLink(true)}
+								>
+									{linkButton}
+								</ProviderLinkReplacementConfirm>
+							) : (
+								linkButton
+							)}
+						</div>
+					}
+				/>
+			)}
+		</div>
+	);
+}
+
+function ConnectedChannelGroup({
 	link,
+	agentId,
 	onUnlink,
 	unlinking,
 	fallbackAccount,
+	agentName,
 }: {
 	link: AgentChannelLink;
+	agentId: string;
 	onUnlink: () => void;
 	unlinking: boolean;
-	fallbackAccount?: { provider: string; name: string };
+	fallbackAccount?: ChannelAccountSummary;
+	agentName: string;
 }) {
-	const pair = useCreatePairCode(link.account_id);
-	const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
+	const provider = link.account?.provider ?? fallbackAccount?.provider ?? "";
+	const channelName = link.account?.name ?? fallbackAccount?.name ?? "Unnamed channel";
+
+	return (
+		<div data-agent-channel-group-id={link.id} className="h-full min-w-0">
+			<LinkedChannelRow
+				link={link}
+				agentId={agentId}
+				fallbackAccount={fallbackAccount}
+				agentName={agentName}
+				unlinking={unlinking}
+				onUnlink={onUnlink}
+				pairedChatsControl={
+					<PairedChatsDialog
+						agentId={agentId}
+						accountId={link.account_id}
+						linkId={link.id}
+						channelName={channelName}
+						provider={provider}
+						bindingCount={link.binding_count}
+					/>
+				}
+			/>
+		</div>
+	);
+}
+
+type AgentPairCodeResult = {
+	code: string;
+	expires_at: string;
+	pairing_command: string;
+};
+
+function LinkedChannelRow({
+	link,
+	agentId,
+	onUnlink,
+	unlinking,
+	fallbackAccount,
+	agentName,
+	pairedChatsControl,
+}: {
+	link: AgentChannelLink;
+	agentId: string;
+	onUnlink: () => void;
+	unlinking: boolean;
+	fallbackAccount?: ChannelAccountSummary;
+	agentName: string;
+	pairedChatsControl: React.ReactNode;
+}) {
+	const pair = useCreatePairCode(link.account_id, { agentId });
+	const [code, setCode] = useState<AgentPairCodeResult | null>(null);
+	const [telegramPairOpen, setTelegramPairOpen] = useState(false);
+	const [discordPairOpen, setDiscordPairOpen] = useState(false);
+	const [whatsappPairOpen, setWhatsappPairOpen] = useState(false);
+	const [nowMs, setNowMs] = useState(() => Date.now());
+	const [creatingPairCode, setCreatingPairCode] = useState(false);
+	const pairInFlightRef = useRef(false);
 	// The list-by-agent payload may omit the nested `account`. Fall back to the
 	// loaded channels/bot-pool summary, then to the raw account id, so a missing
 	// account NEVER white-screens (apps/web/src has no ErrorBoundary).
 	const account = link.account ?? fallbackAccount ?? null;
 	const provider = account?.provider ?? "";
-	const name = account?.name ?? `Channel ${link.account_id.slice(0, 8)}`;
+	const isDiscord = provider === "discord";
+	const isWhatsApp = provider === "whatsapp";
+	const usesPairDialog = provider === "telegram" || isDiscord || isWhatsApp;
+	const name = account?.name ?? "Unnamed channel";
+	useEffect(() => {
+		if (!code) return;
+		setNowMs(Date.now());
+		const interval = window.setInterval(() => setNowMs(Date.now()), 1_000);
+		return () => window.clearInterval(interval);
+	}, [code]);
+	async function createPairCode() {
+		if (pairInFlightRef.current) return;
+		pairInFlightRef.current = true;
+		setCreatingPairCode(true);
+		try {
+			const data = await pair.execute({ agent_link_id: link.id });
+			setCode({
+				code: data.code,
+				expires_at: data.expires_at,
+				pairing_command: data.pairing_command,
+			});
+		} catch {
+			// useCreatePairCode already surfaces the API error.
+		} finally {
+			pairInFlightRef.current = false;
+			setCreatingPairCode(false);
+		}
+	}
+	const relationshipState = [
+		pairedChatsControl,
+		!isNormalChannelStatus(link.status) ? (
+			<ChannelStatusBadge key="status" status={link.status} />
+		) : null,
+		!usesPairDialog && pair.error ? (
+			<span key="pair-error" className="font-medium text-destructive">
+				Pair failed · Try again
+			</span>
+		) : null,
+		code && !usesPairDialog ? (
+			<span key="pair-code" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+				<CopyInline value={code.pairing_command} label="pairing command" />
+				<span className="text-muted-foreground">{pairCodeExpiryLabel(code.expires_at, nowMs)}</span>
+			</span>
+		) : null,
+	];
 	return (
-		<div className="rounded-lg border p-3">
-			<div className="flex items-center gap-3">
-				<ProviderChip provider={provider} />
-				<div className="min-w-0 flex-1">
-					<div className="truncate text-sm font-medium">{name}</div>
-					<div className="text-xs capitalize text-muted-foreground">
-						{provider ? `${providerMeta(provider).label} · ${link.status}` : link.status}
-					</div>
-				</div>
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={pair.isPending}
-					onClick={() =>
-						pair.mutate(
-							{ agent_link_id: link.id },
-							{ onSuccess: (d) => setCode({ code: d.code, expires_at: d.expires_at }) },
-						)
+		<>
+			<div data-agent-channel-link-id={link.id} className="h-full min-w-0">
+				<AgentChannelCard
+					provider={provider}
+					title={name}
+					state={relationshipState}
+					actions={
+						<div className={AGENT_CHANNEL_PAIR_ACTIONS_CLASS}>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="min-w-20"
+								disabled={!usesPairDialog && creatingPairCode}
+								onClick={() => {
+									if (provider === "telegram") setTelegramPairOpen(true);
+									else if (isDiscord) setDiscordPairOpen(true);
+									else if (isWhatsApp) setWhatsappPairOpen(true);
+									else void createPairCode();
+								}}
+							>
+								{creatingPairCode ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<QrCode className="size-3.5" />
+								)}
+								{creatingPairCode ? "Generating…" : "Pair"}
+							</Button>
+							<ConfirmAction
+								title={`Unlink ${name}?`}
+								description={<p>{agentName} will stop answering through this bot.</p>}
+								confirmLabel="Unlink"
+								destructive
+								onConfirm={onUnlink}
+							>
+								<Button
+									variant="ghost"
+									size="sm"
+									className={cn(CHANNEL_DESTRUCTIVE_ACTION_CLASS, "min-w-20")}
+									disabled={unlinking}
+									aria-label={`${unlinking ? "Unlinking" : "Unlink"} ${name} from ${agentName}`}
+								>
+									{unlinking ? (
+										<>
+											<Spinner className="size-3.5" />
+											Unlinking…
+										</>
+									) : (
+										<>
+											<Link2Off className="size-3.5" />
+											<span>Unlink</span>
+										</>
+									)}
+								</Button>
+							</ConfirmAction>
+						</div>
 					}
-				>
-					<QrCode className="size-3.5" />
-					Pair code
-				</Button>
-				<ConfirmAction
-					title="Unlink this channel?"
-					description={<p>The agent stops sending and receiving on this channel.</p>}
-					confirmLabel="Unlink"
-					destructive
-					onConfirm={onUnlink}
-				>
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						className="text-muted-foreground hover:text-destructive"
-						disabled={unlinking}
-						aria-label="Unlink channel"
-					>
-						<Link2Off className="size-4" />
-					</Button>
-				</ConfirmAction>
+				/>
 			</div>
-			{code ? (
-				<div className="mt-2 rounded-md border border-primary/30 bg-primary/5 p-2 text-sm">
-					Send <span className="font-mono font-semibold tracking-wider">{code.code}</span> from the
-					chat to pair it.
-				</div>
+			{provider === "telegram" ? (
+				<TelegramPairDialog
+					open={telegramPairOpen}
+					onOpenChange={setTelegramPairOpen}
+					agentId={agentId}
+					accountId={link.account_id}
+					agentLinkId={link.id}
+					channelName={name}
+					bindingCount={link.binding_count}
+				/>
 			) : null}
-		</div>
+			{isDiscord ? (
+				<DiscordPairDialog
+					open={discordPairOpen}
+					onOpenChange={setDiscordPairOpen}
+					agentId={agentId}
+					accountId={link.account_id}
+					agentLinkId={link.id}
+					channelName={name}
+					bindingCount={link.binding_count}
+				/>
+			) : null}
+			{isWhatsApp ? (
+				<WhatsAppPairDialog
+					open={whatsappPairOpen}
+					onOpenChange={setWhatsappPairOpen}
+					agentId={agentId}
+					accountId={link.account_id}
+					agentLinkId={link.id}
+					channelName={name}
+					bindingCount={link.binding_count}
+				/>
+			) : null}
+		</>
 	);
 }
 
@@ -2156,100 +3292,78 @@ function LinkedChannelRow({
 function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
-	runtime,
 	projectionAvailable,
+	onDeleteAccepted,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
-	runtime: Runtime;
 	projectionAvailable: boolean;
+	onDeleteAccepted: (deploymentId: string) => void;
 }) {
 	return (
-		<div className="flex flex-col gap-10">
-			{projectionAvailable ? (
-				<AgentSettingsPanel environmentId={environmentId} />
-			) : (
-				<ProjectionDependentUnavailable label="Profile settings" />
-			)}
-			<LanguageTimezoneSettingsSection deployment={deployment} runtime={runtime} />
-			<ComputeSettingsSections deployment={deployment} />
-		</div>
+		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
+			<div className="flex flex-col gap-8">
+				{projectionAvailable ? (
+					<AgentSettingsPanel environmentId={environmentId} />
+				) : (
+					<ProjectionDependentUnavailable label="Profile settings" />
+				)}
+				<LanguageTimezoneSettingsSection deployment={deployment} />
+				<ComputeSettingsSections deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
+			</div>
+		</UnsavedNavigationBoundary>
 	);
 }
 
-function LanguageTimezoneSettingsSection({
-	deployment,
-	runtime,
-}: {
-	deployment: HostedDeployment;
-	runtime: Runtime;
-}) {
-	const setLanguageTimezone = useSetAgentLanguageTimezone();
-	const runAction = useActionLock();
-	// Generated V2HostedDeploymentDetailsInfo currently exposes no language/timezone fields.
-	const configLanguage = "";
-	const configTimezone = "";
-	const configIdentity = JSON.stringify([deployment.id, configLanguage, configTimezone]);
-	const [syncedIdentity, setSyncedIdentity] = useState(configIdentity);
-	const [savedLanguage, setSavedLanguage] = useState(configLanguage);
-	const [savedTimezone, setSavedTimezone] = useState(configTimezone);
+function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDeployment }) {
+	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
+	const configLanguage = runtimeConfiguration.language ?? "";
+	const configTimezone = runtimeConfiguration.timezone ?? "";
+	const updateDeployment = useUpdateDeployment();
+	const updateInProgress =
+		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
+	const localeIdentity = `${configLanguage}\0${configTimezone}`;
+	const [syncedLocaleIdentity, setSyncedLocaleIdentity] = useState(localeIdentity);
 	const [language, setLanguage] = useState(configLanguage);
 	const [timezone, setTimezone] = useState(configTimezone);
-	if (configIdentity !== syncedIdentity) {
-		setSyncedIdentity(configIdentity);
-		setSavedLanguage(configLanguage);
-		setSavedTimezone(configTimezone);
+	const [runtimeTimezoneOptions, setRuntimeTimezoneOptions] = useState(() =>
+		fallbackTimezones(configTimezone ? [configTimezone] : []),
+	);
+	if (syncedLocaleIdentity !== localeIdentity) {
+		setSyncedLocaleIdentity(localeIdentity);
 		setLanguage(configLanguage);
 		setTimezone(configTimezone);
 	}
-	const tzOptions = useMemo(() => {
-		const all = supportedTimezones();
-		if (timezone && !all.includes(timezone)) return [timezone, ...all];
-		return all;
-	}, [timezone]);
-	const runtimeLabel = runtimeDisplayName(runtime);
-	const dirty = language !== savedLanguage || timezone !== savedTimezone;
-	const canSave = dirty && !setLanguageTimezone.isPending;
-
-	async function saveLanguageTimezone() {
-		if (!canSave) return;
-		await setLanguageTimezone.mutateAsync({
-			id: deployment.id,
-			agentType: runtime,
-			language,
-			timezone,
-		});
-		setSavedLanguage(language);
-		setSavedTimezone(timezone);
-	}
-
-	function resetLanguageTimezone() {
-		setLanguage(savedLanguage);
-		setTimezone(savedTimezone);
-	}
+	useEffect(() => {
+		setRuntimeTimezoneOptions(supportedTimezones(configTimezone ? [configTimezone] : []));
+	}, [configTimezone]);
+	const timezoneOptions = useMemo(
+		() => mergeTimezoneOptions(runtimeTimezoneOptions, [configTimezone, timezone].filter(Boolean)),
+		[configTimezone, runtimeTimezoneOptions, timezone],
+	);
+	const dirty = language !== configLanguage || timezone !== configTimezone;
+	useUnsavedNavigationState({ dirty, busy: updateDeployment.isPending });
 
 	return (
 		<SettingsSection
 			title="Language & timezone"
-			description="Set locale context for this hosted agent."
+			description="Language and time zone used by this agent."
 		>
 			<div className="flex max-w-2xl flex-col gap-4">
-				<LiveNote>{`Changes apply live to ${runtimeLabel}.`}</LiveNote>
+				<LiveNote>Changes apply to this agent.</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
 					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="settings-agent-language">Language</Label>
+						<Label htmlFor="hosted-agent-language">Language</Label>
 						<Select
 							items={LANGUAGE_SELECT_ITEMS}
 							value={language || "default"}
-							onValueChange={(value) => {
-								setLanguage(value === null || value === "default" ? "" : value);
-							}}
+							onValueChange={(value) => setLanguage(value === "default" ? "" : (value ?? ""))}
 						>
-							<SelectTrigger id="settings-agent-language">
+							<SelectTrigger id="hosted-agent-language" className="w-full">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="default">Default</SelectItem>
+								<SelectItem value="default">Agent default</SelectItem>
 								{LANGUAGE_OPTIONS.map((option) => (
 									<SelectItem key={option.code} value={option.code}>
 										{option.label}
@@ -2258,86 +3372,129 @@ function LanguageTimezoneSettingsSection({
 							</SelectContent>
 						</Select>
 					</div>
-					{tzOptions.length > 0 ? (
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="settings-agent-timezone">Timezone</Label>
-							<TimezoneCombobox
-								id="settings-agent-timezone"
-								value={timezone}
-								onValueChange={setTimezone}
-								options={tzOptions}
-							/>
-						</div>
-					) : null}
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="hosted-agent-timezone">Timezone</Label>
+						<TimezoneCombobox
+							id="hosted-agent-timezone"
+							value={timezone}
+							onValueChange={setTimezone}
+							options={timezoneOptions}
+						/>
+					</div>
 				</div>
-				<div className="flex flex-wrap items-center gap-2">
+				<div>
 					<Button
-						type="button"
-						size="sm"
-						disabled={!canSave}
-						onClick={() => void runAction(saveLanguageTimezone).catch(() => undefined)}
+						disabled={!dirty || updateDeployment.isPending || updateInProgress}
+						onClick={() =>
+							updateDeployment.mutate({
+								id: deployment.resource.id,
+								update: {
+									language: normalizeHostedLanguage(language),
+									timezone: timezone.trim() || null,
+								},
+							})
+						}
 					>
-						{setLanguageTimezone.isPending ? <Spinner className="size-3.5" /> : null}
+						{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
 						Save changes
 					</Button>
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						disabled={!dirty || setLanguageTimezone.isPending}
-						onClick={resetLanguageTimezone}
-					>
-						Reset
-					</Button>
-					{setLanguageTimezone.isPending ? (
-						<span className="text-xs text-muted-foreground">Updating runtime settings…</span>
-					) : null}
 				</div>
 			</div>
 		</SettingsSection>
 	);
 }
 
-function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment }) {
+function ComputeSettingsSections({
+	deployment,
+	onDeleteAccepted,
+}: {
+	deployment: HostedDeployment;
+	onDeleteAccepted: (deploymentId: string) => void;
+}) {
 	const router = useRouter();
-	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const queryClient = useQueryClient();
+	const billingClient = useBillingClient();
+	const navigateCheckoutReturn = useCallback(
+		async (target: CheckoutReturnNavigationTarget): Promise<boolean> => {
+			if (target.kind !== "deployment") return false;
+			const checkoutDeploymentId = target.deploymentId;
+			if (checkoutDeploymentId === deployment.resource.id) return false;
+			const hydrateAndNavigate = async () => {
+				try {
+					await navigateToAcceptedDeployment({
+						deploymentId: checkoutDeploymentId,
+						getDeployment: billingClient.getDeployment,
+						navigate: (options) => router.navigate(options),
+						queryClient,
+						replace: true,
+					});
+					toast.dismiss(`checkout-deployment-${checkoutDeploymentId}`);
+				} catch {
+					toast.error("Deployment accepted; details couldn’t load", {
+						id: `checkout-deployment-${checkoutDeploymentId}`,
+						description: "Retrying only loads the accepted deployment. It won’t repeat checkout.",
+						duration: Number.POSITIVE_INFINITY,
+						action: {
+							label: "Retry",
+							onClick: () => void hydrateAndNavigate(),
+						},
+					});
+				}
+			};
+			await hydrateAndNavigate();
+			return true;
+		},
+		[billingClient.getDeployment, deployment.resource.id, queryClient, router],
+	);
+	useCheckoutReturnHandler({
+		onCancelCopy: "You were not charged. Your compute plan is unchanged.",
+		onNavigate: navigateCheckoutReturn,
+	});
 	const hostedAccess = useHostedProductAccess();
 	const lifecycle = useDeploymentLifecycle();
-	const del = useDeleteDeployment();
 	const plans = usePlans();
-	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const quotePlanChange = useQuotePlanChange();
-	const changePlan = useChangePlan();
+	const [pendingPlanChangeName, setPendingPlanChangeName] = useState<string | null>(null);
+	const changePlan = useChangePlan(setPendingPlanChangeName);
+	const checkPlanChange = useCheckPlanChange();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled:
-			deployment.compute_subscription?.funding_source === "wallet" ||
-			(hostedAccess.canUsePlanCBilling && planChangeOpen),
+			deployment.commercial_display?.compute_subscription?.funding_source === "wallet" ||
+			(hostedAccess.canCreateCloudAgents && planChangeOpen),
 	});
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
-	const checkoutReturnRef = useRef<string | null>(null);
-	const deploymentStatus = parseDeploymentStatus(deployment.status);
+	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const canStop = canStopDeployment(deploymentStatus);
 	const canStart = canStartDeployment(deploymentStatus);
 	const canRestart = canRestartDeployment(deploymentStatus);
-	const primaryLifecycleAction: "stop" | "start" = canStop ? "stop" : "start";
-	const canRunPrimaryLifecycleAction = canStop || canStart;
-	const computePlanSlug = deployment.config_info?.compute_plan_slug;
-	const currentSubscription = deployment.compute_subscription;
+	const primaryLifecycleAction: "stop" | "start" =
+		canStop ||
+		deploymentStatus.kind === "stopping" ||
+		deploymentStatus.kind === "restarting" ||
+		deploymentStatus.kind === "updating"
+			? "stop"
+			: "start";
+	const canRunPrimaryLifecycleAction = primaryLifecycleAction === "stop" ? canStop : canStart;
+	const fundingFact = deployment.commercial_display?.latest_funding_fact;
+	const rawComputePlanSlug = deployment.current_plan_slug;
+	const computePlanSlug =
+		rawComputePlanSlug === COMPUTE_BASIC_SLUG || rawComputePlanSlug === COMPUTE_PERFORMANCE_SLUG
+			? rawComputePlanSlug
+			: undefined;
+	const currentSubscription = deployment.commercial_display?.compute_subscription;
 	const fundingMode = computeFundingMode(computePlanSlug, currentSubscription);
 	const fundingSource = computeFundingSource(computePlanSlug, currentSubscription);
 	const isIncludedBasic = fundingMode === "included_basic";
 	const isPaidCompute = fundingMode === "subscription";
 	const isWalletFunded = fundingSource === "wallet";
-	const terminalFundingEvent =
-		isIncludedBasic && deployment.last_funding_event?.type === "compute_subscription_fallback"
-			? deployment.last_funding_event
-			: null;
-	const hasWalletFallback = terminalFundingEvent?.funding_source === "wallet";
-	const hasTerminalFallback = terminalFundingEvent !== null;
+	const terminalFundingFact =
+		isIncludedBasic && fundingFact?.fact_kind === "funding_revoked" ? fundingFact : null;
+	const hasWalletFallback = terminalFundingFact?.funding_source === "wallet";
+	const hasTerminalFallback = terminalFundingFact !== null;
 	const subscriptionId = computeSubscriptionId(currentSubscription);
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);
@@ -2345,10 +3502,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const [planChangeQuote, setPlanChangeQuote] = useState<ComputePlanChangeQuoteResponse | null>(
 		null,
 	);
-	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
-	const [walletTopUpAmountCents, setWalletTopUpAmountCents] = useState<number | null>(null);
+	const walletTopUp = useWalletTopUpDialog(PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
+	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
 	const currentPaidPlan =
 		computePlanSlug === COMPUTE_BASIC_SLUG
 			? basicPlan
@@ -2390,43 +3547,37 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
 	const planChangeUnavailable = currentSubscription
 		? planChangeUnavailableReason({
-				canUsePlanCBilling: hostedAccess.canUsePlanCBilling,
+				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
 				cancelAtPeriodEnd: subscriptionCancelPending,
 				status: currentSubscription.status,
 				subscriptionId,
 			})
-		: "Start a new subscription to change this deployment’s paid compute.";
-	const canUpgrade =
-		hostedAccess.canUsePlanCBilling &&
-		isIncludedBasic &&
-		deployment.upgrade_available &&
-		planChangeUnavailable === null;
+		: "Start a new subscription to change this agent’s paid compute.";
+	const upgradeUnavailableMessage = performanceUpgradeUnavailableReason({
+		plansLoading: plans.isLoading,
+		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
+		isIncludedBasic,
+		performancePlanAvailable: Boolean(perfPlan),
+		pendingPlanSlug,
+		planChangeUnavailable,
+		deploymentStatusSupportsUpgrade:
+			isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped",
+		upgradeAvailable: deployment.upgrade_available,
+		upgradeEligibilityReason: deployment.upgrade_eligibility.reason,
+	});
+	const canUpgrade = deployment.upgrade_available && upgradeUnavailableMessage === null;
 	const canStartNewSubscription =
-		hostedAccess.canUsePlanCBilling && hasTerminalFallback && !!(basicPlan || perfPlan);
-	const preferredSubscriptionCreatePlanSlug =
-		hasTerminalFallback &&
-		(deployment.last_funding_event?.prior_plan_slug === COMPUTE_BASIC_SLUG ||
-			deployment.last_funding_event?.prior_plan_slug === COMPUTE_PERFORMANCE_SLUG)
-			? deployment.last_funding_event.prior_plan_slug
-			: COMPUTE_PERFORMANCE_SLUG;
-	const subscriptionCreatePlanSlug =
-		preferredSubscriptionCreatePlanSlug === COMPUTE_PERFORMANCE_SLUG && !perfPlan && basicPlan
-			? COMPUTE_BASIC_SLUG
-			: preferredSubscriptionCreatePlanSlug === COMPUTE_BASIC_SLUG && !basicPlan && perfPlan
-				? COMPUTE_PERFORMANCE_SLUG
-				: preferredSubscriptionCreatePlanSlug;
-	const upgradeUnavailableMessage = plans.isLoading
-		? "Checking Performance availability…"
-		: !hostedAccess.canUsePlanCBilling
-			? "Upgrades are temporarily unavailable."
-			: !perfPlan
-				? "Performance compute is unavailable right now."
-				: isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped"
-					? "An upgrade may already be pending for this Basic agent."
-					: "Upgrade is available once this Basic agent is running or stopped.";
+		hostedAccess.canCreateCloudAgents && hasTerminalFallback && !!(basicPlan || perfPlan);
+	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
+		terminalFundingFact?.prior_plan_slug,
+		{
+			basicAvailable: !!basicPlan,
+			performanceAvailable: !!perfPlan,
+		},
+	);
 	const createUnavailableMessage = plans.isLoading
 		? "Checking paid compute availability…"
-		: !hostedAccess.canUsePlanCBilling
+		: !hostedAccess.canCreateCloudAgents
 			? hasTerminalFallback
 				? "New subscriptions are temporarily unavailable."
 				: "Upgrades are temporarily unavailable."
@@ -2436,55 +3587,23 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 					? planChangeUnavailable
 					: upgradeUnavailableMessage;
 	useEffect(() => {
-		const marker = checkoutReturnMarker(searchStr);
-		if (!marker || checkoutReturnRef.current === marker) return;
-		checkoutReturnRef.current = marker;
-		void refreshCheckoutReturn().then(() => {
-			if (checkoutReturnWasCanceled(searchStr)) {
-				toast.message("Checkout canceled", {
-					description: "You were not charged. Your compute plan is unchanged.",
-				});
-				return;
-			}
-			const deploymentId = checkoutReturnDeploymentId(searchStr);
-			if (deploymentId && deploymentId !== deployment.id) {
-				void router.navigate({
-					href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
-					replace: true,
-				});
-				return;
-			}
-			toast.message("Checkout status refreshed", {
-				description: "We checked your deployments, subscription, and wallet.",
-			});
-		});
-	}, [deployment.id, refreshCheckoutReturn, router, searchStr]);
-	useEffect(() => {
-		if (hostedAccess.isLoading || hostedAccess.canUsePlanCBilling) return;
+		if (hostedAccess.isLoading || hostedAccess.canCreateCloudAgents) return;
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
-		setPlanChangeQuote(null);
-		setWalletTopUpOpen(false);
-	}, [hostedAccess.canUsePlanCBilling, hostedAccess.isLoading]);
+		setPendingPlanChangeName(null);
+		walletTopUp.reset();
+	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, walletTopUp.reset]);
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
-		if (!open) setPlanChangeQuote(null);
-	}
-
-	function openPlanChangeTopUp(shortfallCredits: number | null = null) {
-		setWalletTopUpAmountCents(
-			topUpAmountCentsForCreditShortfall(shortfallCredits, wallet.data?.points_per_usd ?? 0),
-		);
-		setWalletTopUpOpen(true);
 	}
 
 	async function requestPlanChangeQuote(selection: PlanChangeSelection) {
-		if (!hostedAccess.canUsePlanCBilling || !subscriptionId || planChangeUnavailable !== null) {
+		if (!hostedAccess.canCreateCloudAgents || !subscriptionId || planChangeUnavailable !== null) {
 			return;
 		}
 		try {
-			if (!(await hostedAccess.recheckPlanCBilling())) {
+			if (pendingPlanChangeName === null && !(await hostedAccess.recheckCanCreateCloudAgents())) {
 				setPlanChangeDialogOpen(false);
 				return;
 			}
@@ -2492,6 +3611,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				subscription_id: subscriptionId,
 				...selection,
 			});
+			setPendingPlanChangeName(null);
 			setPlanChangeQuote(quote);
 		} catch (error) {
 			toast.error("Couldn’t quote plan change", {
@@ -2503,43 +3623,44 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	async function confirmPlanChange(operationId: string) {
 		if (!planChangeQuote) return;
 		try {
-			if (!(await hostedAccess.recheckPlanCBilling())) {
+			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
 				setPlanChangeDialogOpen(false);
 				return;
 			}
-			const result = await changePlan.mutateAsync({ operation_id: operationId });
-			if (result.status === "scheduled") {
+			const result = pendingPlanChangeName
+				? await checkPlanChange.mutateAsync(pendingPlanChangeName)
+				: await changePlan.mutateAsync({ operation_id: operationId });
+			if (result.kind === "scheduled") {
 				toast.success("Downgrade scheduled", {
-					description: `Your current compute remains active until ${formatShortDate(result.effective_at)}.`,
+					description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
+				});
+			} else if (result.kind === "complete") {
+				toast.success("Plan changed", {
+					description: "Your compute subscription has been updated.",
 				});
 			} else {
-				toast.success("Plan change started", {
+				toast.info("Plan change in progress", {
 					description:
-						result.status === "complete"
-							? "Your compute subscription has been updated."
-							: "Compute updates after Stripe confirms the invoice payment.",
+						result.waitingFor === "payment"
+							? "We’re still waiting for payment confirmation. Your compute plan has not changed yet."
+							: "Your request was received, but the compute plan has not updated yet. You can watch its status here.",
 				});
 			}
+			setPendingPlanChangeName(null);
 			setPlanChangeDialogOpen(false);
 		} catch (error) {
-			const detail = billingErrorDetail(error);
-			if (
-				detail?.code === "insufficient_wallet_balance" ||
-				detail?.code === "insufficient_balance"
-			) {
-				openPlanChangeTopUp(decimalCredits(detail.shortfall_credits));
-				toast.error("Not enough AI Credits", {
-					description: "Top up the shortfall, then request a fresh plan-change quote.",
+			if (error instanceof PlanChangePendingError) {
+				setPendingPlanChangeName(error.operationName);
+				toast.info("Still waiting for confirmation", {
+					description:
+						"We don’t have a final result yet. Don’t submit another plan change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another charge.",
 				});
 				return;
 			}
-			if (detail?.code === "open_refund_debt") {
-				openPlanChangeTopUp(decimalCredits(detail.outstanding_debt_credits));
-				toast.error("Refund debt must be repaid", {
-					description: "Top up before confirming this wallet-funded plan change.",
-				});
-				return;
+			if (error instanceof PlanChangeTerminalError) {
+				setPendingPlanChangeName(null);
 			}
+			if (walletTopUp.handleFundingError(error)) return;
 			toast.error("Couldn’t change plan", {
 				description: normalizeBillingError(error),
 			});
@@ -2551,13 +3672,13 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			return;
 		}
 		try {
-			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.id });
+			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.resource.id });
 			toast.success("Subscription cancellation scheduled", {
 				description: res.current_period_end
 					? `Cancellation takes effect ${formatShortDate(
 							res.current_period_end,
-						)}. The deployment then falls back to included Basic funding if available; otherwise, it stops.`
-					: "The deployment falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
+						)}. The agent then falls back to included Basic funding if available; otherwise, it stops.`
+					: "The agent falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
 			});
 		} catch (error) {
 			toast.error("Couldn’t cancel subscription", { description: normalizeBillingError(error) });
@@ -2570,7 +3691,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			return;
 		}
 		try {
-			await resumeSubscription.mutateAsync({ deployment_id: deployment.id });
+			await resumeSubscription.mutateAsync({ deployment_id: deployment.resource.id });
 			toast.success("Subscription resumed");
 		} catch (error) {
 			toast.error("Couldn’t resume subscription", { description: normalizeBillingError(error) });
@@ -2578,34 +3699,20 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	}
 
 	async function runLifecycleAction(action: "restart" | "stop" | "start") {
-		await lifecycle.mutateAsync({ id: deployment.id, action });
-	}
-
-	async function deleteCompute() {
-		await del.mutateAsync(deployment.id);
-		await router.navigate({ href: "/" });
+		await lifecycle.mutateAsync({ id: deployment.resource.id, action });
 	}
 
 	return (
-		<div className="flex flex-col gap-9">
+		<div className="flex flex-col gap-8">
 			{wallet.data ? (
-				<TopUpDialog
-					open={walletTopUpOpen}
-					onOpenChange={(open) => {
-						setWalletTopUpOpen(open);
-						if (!open) setWalletTopUpAmountCents(null);
-					}}
-					wallet={wallet.data}
-					initialAmountCents={walletTopUpAmountCents}
-					onComplete={() => setPlanChangeQuote(null)}
-				/>
+				<TopUpDialog {...walletTopUp.dialogProps} onComplete={() => setPlanChangeQuote(null)} />
 			) : null}
 			{hasTerminalFallback && (basicPlan || perfPlan) ? (
 				<SubscriptionCreateDialog
 					open={subscriptionCreateOpen}
 					onOpenChange={setSubscriptionCreateOpen}
 					plans={plans.data ?? []}
-					deploymentId={deployment.id}
+					deploymentId={deployment.resource.id}
 					initialPlanSlug={subscriptionCreatePlanSlug}
 					initialBillingTermMonths={currentBillingTerm}
 				/>
@@ -2621,12 +3728,16 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 					defaultFundingSource={isWalletFunded ? "wallet" : "stripe"}
 					fundingSourceSelectable={isIncludedBasic}
 					quote={planChangeQuote}
-					walletBalanceCredits={wallet.data?.balance_credits ?? null}
+					walletBalanceUsd={wallet.data?.balance_usd ?? null}
 					isQuoting={quotePlanChange.isPending}
-					isConfirming={changePlan.isPending}
+					isConfirming={changePlan.isPending || checkPlanChange.isPending}
+					hasAcceptedChange={pendingPlanChangeName !== null}
 					onQuote={requestPlanChangeQuote}
 					onConfirm={confirmPlanChange}
-					onTopUp={() => openPlanChangeTopUp()}
+					onTopUp={() => walletTopUp.show()}
+					onExitComplete={() => {
+						if (pendingPlanChangeName === null) setPlanChangeQuote(null);
+					}}
 				/>
 			) : null}
 
@@ -2657,7 +3768,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 						</div>
 						<p className="mt-1 text-xs text-muted-foreground">
 							Basic includes one free active slot per user. Paid Basic and Performance each use one
-							subscription per deployment.
+							subscription per agent.
 						</p>
 						{isPaidCompute && currentSubscription ? (
 							<div className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
@@ -2666,7 +3777,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 									{currentPriceCents !== null ? (
 										<>
 											{" "}
-											· {formatCentsCompact(currentPriceCents)}
+											· {formatCents(currentPriceCents)}
 											{billingTermSuffix(currentBillingTerm)}
 										</>
 									) : null}
@@ -2687,11 +3798,11 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 						id="compute-plan-controls"
 						className="flex w-full scroll-mt-6 flex-col gap-2 lg:w-auto lg:min-w-64 lg:items-end"
 					>
-						{(hasTerminalFallback || isIncludedBasic) && plans.error ? (
+						{(hasTerminalFallback || isIncludedBasic) && blockingPlansError ? (
 							<div className="w-full lg:w-72">
 								<ApiErrorPanel
 									normalizer={billingErrorNormalizer}
-									error={plans.error}
+									error={blockingPlansError}
 									onRetry={() => void plans.refetch()}
 									title="Couldn’t check paid compute availability"
 								/>
@@ -2701,8 +3812,9 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 								<Button
 									size="sm"
 									disabled={
-										plans.isLoading ||
-										(hasTerminalFallback ? !canStartNewSubscription : !canUpgrade || !perfPlan)
+										pendingPlanChangeName === null &&
+										(plans.isLoading ||
+											(hasTerminalFallback ? !canStartNewSubscription : !canUpgrade || !perfPlan))
 									}
 									onClick={() =>
 										hasTerminalFallback
@@ -2715,14 +3827,18 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 									) : (
 										<Zap data-icon="inline-start" />
 									)}
-									{hasTerminalFallback ? "Start a new subscription" : "Upgrade to Performance"}
+									{pendingPlanChangeName
+										? "Check plan change status"
+										: hasTerminalFallback
+											? "Start a new subscription"
+											: "Upgrade to Performance"}
 								</Button>
 								{hasTerminalFallback ? (
 									canStartNewSubscription ? null : (
 										<p className="text-xs text-muted-foreground">{createUnavailableMessage}</p>
 									)
 								) : canUpgrade ? null : (
-									<p className="text-xs text-muted-foreground">{createUnavailableMessage}</p>
+									<p className="text-xs text-muted-foreground">{upgradeUnavailableMessage}</p>
 								)}
 							</div>
 						) : isPaidCompute && currentSubscription ? (
@@ -2753,17 +3869,22 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 											type="button"
 											variant="outline"
 											size="sm"
-											disabled={planChangeUnavailable !== null || !!pendingPlanSlug}
+											disabled={
+												pendingPlanChangeName === null &&
+												(planChangeUnavailable !== null || !!pendingPlanSlug)
+											}
 											onClick={() => setPlanChangeDialogOpen(true)}
 										>
-											Change plan or billing term
+											{pendingPlanChangeName
+												? "Check plan change status"
+												: "Change plan or billing term"}
 										</Button>
 										<ConfirmAction
 											title={`Cancel ${tierLabel} subscription?`}
 											description={
 												<p>
-													Cancellation takes effect {subscriptionPeriodLabel}. The deployment then
-													falls back to included Basic funding if available; otherwise, it stops.
+													Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls
+													back to included Basic funding if available; otherwise, it stops.
 												</p>
 											}
 											confirmLabel="Cancel at period end"
@@ -2800,15 +3921,12 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				</div>
 			</SettingsSection>
 
-			<SettingsSection
-				title="Lifecycle"
-				description="Restart, stop, or start the whole hosted compute."
-			>
+			<SettingsSection title="Lifecycle" description="Restart, stop, or start this agent.">
 				<div className="flex flex-wrap gap-2.5">
 					<ConfirmAction
-						title="Restart compute?"
-						description={<p>This restarts this hosted agent.</p>}
-						confirmLabel="Restart compute"
+						title="Restart agent?"
+						description={<p>This restarts the whole agent.</p>}
+						confirmLabel="Restart agent"
 						onConfirm={() => runAction(() => runLifecycleAction("restart"))}
 					>
 						<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
@@ -2820,16 +3938,16 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 							Restart
 						</Button>
 					</ConfirmAction>
-					{canStop ? (
+					{primaryLifecycleAction === "stop" ? (
 						<ConfirmAction
-							title="Stop compute?"
+							title="Stop agent?"
 							description={
 								<p>
-									This stops the hosted agent. Runtime UI, terminal access, sessions, and channels
-									pause until you start it again.
+									This pauses its browser tools, terminal, sessions, and channels until you start it
+									again.
 								</p>
 							}
-							confirmLabel="Stop compute"
+							confirmLabel="Stop agent"
 							onConfirm={() => runAction(() => runLifecycleAction("stop"))}
 						>
 							<Button
@@ -2865,33 +3983,22 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 
 			<SettingsSection
 				title="Danger zone"
-				description="Tear down this hosted compute and its agent runtime."
+				description="Permanently delete this agent."
 				variant="destructive"
 			>
 				<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 					<div>
-						<div className="text-sm font-medium">Delete this compute</div>
+						<div className="text-sm font-medium">Delete this agent</div>
 						<p className="text-xs text-muted-foreground">
-							Tears down this deployment and its agent runtime. This can’t be undone.
+							Deletes this agent and releases its resources. This can’t be undone.
 						</p>
 					</div>
-					<ConfirmAction
-						title={`Delete ${deploymentDisplayName(deployment.name)}?`}
-						description={<p>The hosted agent is torn down. This can’t be undone.</p>}
-						confirmLabel="Delete compute"
-						destructive
-						onConfirm={() => runAction(deleteCompute)}
-					>
-						<Button
-							variant="outline"
-							size="sm"
-							className="text-destructive"
-							disabled={del.isPending}
-						>
-							<Trash2 className="size-3.5" />
-							Delete
-						</Button>
-					</ConfirmAction>
+					<DeleteComputeAction
+						deployment={deployment}
+						onDeleteAccepted={onDeleteAccepted}
+						variant="outline"
+						className="text-destructive"
+					/>
 				</div>
 			</SettingsSection>
 		</div>

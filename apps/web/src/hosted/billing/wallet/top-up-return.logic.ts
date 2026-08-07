@@ -1,3 +1,7 @@
+import {
+	type PaymentIntentClientSecret,
+	stripeReturnPaymentIntentClientSecret,
+} from "@/hosted/billing/stripe-client-secret";
 import { SETTINGS_QUERY_KEY } from "@/lib/settings-routes";
 
 export const WALLET_TOPUP_RETURN_PARAM = "topup_return";
@@ -5,10 +9,10 @@ export const STRIPE_PAYMENT_INTENT_PARAM = "payment_intent";
 export const STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM = "payment_intent_client_secret";
 export const STRIPE_REDIRECT_STATUS_PARAM = "redirect_status";
 
-export type WalletTopupReturnToastKind = "success" | "info" | "error";
+export type WalletTopupReturnToastKind = "info" | "error";
 
 export interface WalletTopupReturnState {
-	clientSecret: string;
+	clientSecret: PaymentIntentClientSecret;
 }
 
 export interface WalletTopupReturnToast {
@@ -16,6 +20,11 @@ export interface WalletTopupReturnToast {
 	title: string;
 	description: string;
 }
+
+export const WALLET_TOPUP_ACCEPTED_TOAST = {
+	title: "Payment accepted",
+	description: "We're confirming your Wallet credit now.",
+} as const;
 
 export function buildWalletTopupReturnUrl(currentHref: string): string {
 	const url = new URL(currentHref);
@@ -27,7 +36,9 @@ export function buildWalletTopupReturnUrl(currentHref: string): string {
 export function readWalletTopupReturn(search: string): WalletTopupReturnState | null {
 	const params = new URLSearchParams(search);
 	if (params.get(WALLET_TOPUP_RETURN_PARAM) !== "1") return null;
-	const clientSecret = params.get(STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM);
+	const clientSecret = stripeReturnPaymentIntentClientSecret(
+		params.get(STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM),
+	);
 	if (!clientSecret) return null;
 	return { clientSecret };
 }
@@ -44,9 +55,8 @@ export function cleanWalletTopupReturnUrl(currentHref: string): string {
 export function walletTopupReturnToast(status: string | null | undefined): WalletTopupReturnToast {
 	if (status === "succeeded") {
 		return {
-			kind: "success",
-			title: "Top-up complete",
-			description: "Your AI Credits will appear in a moment.",
+			kind: "info",
+			...WALLET_TOPUP_ACCEPTED_TOAST,
 		};
 	}
 	if (status === "processing") {
@@ -65,7 +75,8 @@ export function walletTopupReturnToast(status: string | null | undefined): Walle
 	}
 	return {
 		kind: "info",
-		title: "Top-up status refreshed",
-		description: "We'll update your wallet when Stripe reports the final status.",
+		title: "Top-up status unknown",
+		description:
+			"We couldn't confirm whether Stripe finished the payment. We won't charge it again.",
 	};
 }

@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
-from typing import Any
 
+from pydantic import JsonValue
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -19,22 +20,36 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.session import AgentEnvironment  # noqa: F401 - register table for FK resolution
-from app.models.user import User  # noqa: F401 - register table for FK resolution
+from app.models.session import AgentEnvironment
+from app.models.user import User
 
 CHANNEL_PROVIDER_TELEGRAM = "telegram"
 CHANNEL_PROVIDER_DISCORD = "discord"
 CHANNEL_PROVIDER_WHATSAPP = "whatsapp"
-CHANNEL_PROVIDER_IMESSAGE = "imessage"
 CHANNEL_PROVIDERS = (
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_WHATSAPP,
-    CHANNEL_PROVIDER_IMESSAGE,
 )
 
 CHANNEL_STATUS_ACTIVE = "active"
 CHANNEL_STATUS_DISABLED = "disabled"
+
+WHATSAPP_ONBOARDING_STATE_GENERATING = "generating"
+WHATSAPP_ONBOARDING_STATE_READY = "ready"
+WHATSAPP_ONBOARDING_STATE_SCANNED = "scanned"
+WHATSAPP_ONBOARDING_STATE_CONNECTED = "connected"
+WHATSAPP_ONBOARDING_STATE_EXPIRED = "expired"
+WHATSAPP_ONBOARDING_STATE_CANCELED = "canceled"
+WHATSAPP_ONBOARDING_STATE_ERROR = "error"
+WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM = "custom"
+WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM = "platform"
+WHATSAPP_ONBOARDING_ACTIVE_STATES = (
+    WHATSAPP_ONBOARDING_STATE_GENERATING,
+    WHATSAPP_ONBOARDING_STATE_READY,
+    WHATSAPP_ONBOARDING_STATE_SCANNED,
+    WHATSAPP_ONBOARDING_STATE_CONNECTED,
+)
 
 CHANNEL_VISIBILITY_PRIVATE = "private"
 CHANNEL_VISIBILITY_PUBLIC = "public"
@@ -51,6 +66,8 @@ PAIR_CODE_STATUS_REVOKED = "revoked"
 
 MESSAGE_DIRECTION_INBOUND = "inbound"
 MESSAGE_DIRECTION_OUTBOUND = "outbound"
+PROVIDER_EVENT_SCOPE_ACCOUNT = "account"
+PROVIDER_EVENT_SCOPE_CHAT = "chat"
 
 DELIVERY_STATUS_PENDING = "pending"
 DELIVERY_STATUS_IN_PROGRESS = "in_progress"
@@ -62,10 +79,10 @@ class ChannelAccount(Base, TimestampMixin):
     __tablename__ = "channel_accounts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey(User.id, ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -87,17 +104,147 @@ class ChannelAccount(Base, TimestampMixin):
     encrypted_provider_token: Mapped[bytes | None] = mapped_column(LargeBinary)
     provider_token_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)
     webhook_secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    config: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    config: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        CheckConstraint(
+            "(visibility = 'private' AND user_id IS NOT NULL) OR "
+            "(visibility = 'public' AND user_id IS NULL)",
+            name="ck_channel_accounts_visibility_owner",
+        ),
         Index(
             "uq_channel_accounts_user_provider_name_active",
             "user_id",
             "provider",
             "name",
             unique=True,
-            postgresql_where=sql_text("archived_at IS NULL"),
+            postgresql_where=sql_text("visibility = 'private' AND archived_at IS NULL"),
+        ),
+        Index(
+            "uq_channel_accounts_platform_provider_name_active",
+            "provider",
+            "name",
+            unique=True,
+            postgresql_where=sql_text(
+                "visibility = 'public' AND user_id IS NULL AND archived_at IS NULL"
+            ),
+        ),
+    )
+
+
+class ChannelAccountRuntimeMarker(Base, TimestampMixin):
+    """Account-scoped provider runtime state that carries no tenant authority."""
+
+    __tablename__ = "channel_account_runtime_markers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("channel_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(400), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id",
+            "kind",
+            "scope",
+            name="uq_channel_account_runtime_markers_account_kind_scope",
+        ),
+    )
+
+
+class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
+    """Non-secret ownership and lifecycle metadata for a physical device login.
+
+    ``sidecar_account_id`` is the legacy column name for an opaque provider
+    session UUID. A separate ChannelAccount is created only after Baileys reports
+    an authenticated socket, so pending/failed device sessions never appear in
+    bot inventory. Session UUIDs are not reused. QR values, pairing codes, phone
+    numbers, and provider auth state never enter this row. Custom sessions belong
+    to a tenant; platform sessions have no tenant owner.
+    """
+
+    __tablename__ = "channel_whatsapp_onboarding_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ownership_kind: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+        server_default=WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+    )
+    sidecar_account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    sidecar_config_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    channel_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("channel_accounts.id", ondelete="SET NULL"),
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(16), nullable=False, default="qr")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "(ownership_kind = 'custom' AND user_id IS NOT NULL) OR "
+            "(ownership_kind = 'platform' AND user_id IS NULL)",
+            name="ck_channel_whatsapp_onboarding_owner",
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_custom_user_request",
+            "user_id",
+            "request_id",
+            unique=True,
+            postgresql_where=sql_text("ownership_kind = 'custom'"),
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_platform_request",
+            "request_id",
+            unique=True,
+            postgresql_where=sql_text("ownership_kind = 'platform'"),
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_active_sidecar_account",
+            "sidecar_account_id",
+            unique=True,
+            postgresql_where=sql_text("state IN ('generating', 'ready', 'scanned', 'error')"),
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_active_custom_user_name",
+            "user_id",
+            "name",
+            unique=True,
+            postgresql_where=sql_text(
+                "ownership_kind = 'custom' AND state IN ('generating', 'ready', 'scanned', 'error')"
+            ),
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_active_platform_name",
+            "name",
+            unique=True,
+            postgresql_where=sql_text(
+                "ownership_kind = 'platform' AND "
+                "state IN ('generating', 'ready', 'scanned', 'error')"
+            ),
         ),
     )
 
@@ -120,7 +267,7 @@ class ChannelBotAgentLink(Base, TimestampMixin):
     )
     agent_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("agent_environments.id", ondelete="CASCADE"),
+        ForeignKey(AgentEnvironment.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -133,7 +280,7 @@ class ChannelBotAgentLink(Base, TimestampMixin):
         default=BOT_AGENT_LINK_STATUS_ACTIVE,
         server_default=BOT_AGENT_LINK_STATUS_ACTIVE,
     )
-    config: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    config: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
@@ -143,6 +290,11 @@ class ChannelBotAgentLink(Base, TimestampMixin):
             "agent_id",
             unique=True,
             postgresql_where=sql_text("archived_at IS NULL"),
+        ),
+        Index(
+            "ix_channel_bot_agent_links_retention_inactive",
+            "id",
+            postgresql_where=sql_text("status <> 'active' OR archived_at IS NOT NULL"),
         ),
     )
 
@@ -157,10 +309,10 @@ class ChannelSecret(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     name: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -299,6 +451,23 @@ class ChannelPairCode(Base, TimestampMixin):
     claimed_external_chat_id: Mapped[str | None] = mapped_column(String(300))
     claimed_external_user_id: Mapped[str | None] = mapped_column(String(300))
 
+    __table_args__ = (
+        Index(
+            "ix_channel_pair_codes_retention_terminal",
+            "updated_at",
+            "id",
+            postgresql_include=("account_id",),
+            postgresql_where=sql_text("status IN ('claimed', 'revoked')"),
+        ),
+        Index(
+            "ix_channel_pair_codes_retention_expired",
+            "expires_at",
+            "id",
+            postgresql_include=("account_id",),
+            postgresql_where=sql_text("status = 'pending'"),
+        ),
+    )
+
 
 class ChannelMessage(Base, TimestampMixin):
     __tablename__ = "channel_messages"
@@ -335,8 +504,15 @@ class ChannelMessage(Base, TimestampMixin):
     )
     external_chat_id: Mapped[str] = mapped_column(String(300), nullable=False, index=True)
     provider_message_id: Mapped[str | None] = mapped_column(String(300))
+    provider_event_id: Mapped[str | None] = mapped_column(String(300))
+    provider_event_scope: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=PROVIDER_EVENT_SCOPE_CHAT,
+        server_default=PROVIDER_EVENT_SCOPE_CHAT,
+    )
     text: Mapped[str | None] = mapped_column(String(4096))
-    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    payload: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (
@@ -348,28 +524,45 @@ class ChannelMessage(Base, TimestampMixin):
             "inbox_sequence",
         ),
         Index(
-            "ux_channel_messages_inbound_provider_message_bound",
-            "account_id",
-            "external_chat_id",
-            "provider_message_id",
-            "bot_agent_link_id",
-            unique=True,
+            "ix_channel_messages_retention_delivered",
+            "delivered_at",
+            "id",
+            postgresql_where=sql_text("delivered_at IS NOT NULL"),
+        ),
+        Index(
+            "ix_channel_messages_retention_unbound",
+            "created_at",
+            "id",
+            postgresql_where=sql_text("direction = 'inbound' AND binding_id IS NULL"),
+        ),
+        Index(
+            "ix_channel_messages_discord_interaction_token",
+            "created_at",
+            "id",
             postgresql_where=sql_text(
-                "direction = 'inbound' "
-                "AND provider_message_id IS NOT NULL "
-                "AND bot_agent_link_id IS NOT NULL"
+                "(payload ? 'token' AND payload ? 'application_id') OR "
+                "(payload ->> 't' = 'INTERACTION_CREATE' AND (payload -> 'd') ? 'token')"
             ),
         ),
         Index(
-            "ux_channel_messages_inbound_provider_message_unbound",
+            "ux_channel_messages_inbound_provider_event_account",
             "account_id",
-            "external_chat_id",
-            "provider_message_id",
+            "provider_event_id",
             unique=True,
             postgresql_where=sql_text(
-                "direction = 'inbound' "
-                "AND provider_message_id IS NOT NULL "
-                "AND bot_agent_link_id IS NULL"
+                "direction = 'inbound' AND provider_event_id IS NOT NULL "
+                "AND provider_event_scope = 'account'"
+            ),
+        ),
+        Index(
+            "ux_channel_messages_inbound_provider_event_chat",
+            "account_id",
+            "external_chat_id",
+            "provider_event_id",
+            unique=True,
+            postgresql_where=sql_text(
+                "direction = 'inbound' AND provider_event_id IS NOT NULL "
+                "AND provider_event_scope = 'chat'"
             ),
         ),
     )
@@ -398,7 +591,16 @@ class ChannelDebugEvent(Base, TimestampMixin):
     request_id: Mapped[str | None] = mapped_column(String(120), index=True)
     status_code: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(String(500))
-    details: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    details: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
+
+    __table_args__ = (
+        Index(
+            "ix_channel_debug_events_retention_created",
+            "created_at",
+            "id",
+            postgresql_where=sql_text("provider IN ('telegram', 'discord')"),
+        ),
+    )
 
 
 class ChannelAttachmentUpload(Base, TimestampMixin):
@@ -473,7 +675,7 @@ class ChannelScheduledMessage(Base, TimestampMixin):
         index=True,
     )
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    payload: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
 
 
 class ChannelAgentReference(Base, TimestampMixin):
@@ -510,7 +712,9 @@ class ChannelAgentReference(Base, TimestampMixin):
     provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     ref_kind: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     ref_value: Mapped[str] = mapped_column(String(800), nullable=False)
-    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB(none_as_null=True))
+    metadata_: Mapped[dict[str, JsonValue] | None] = mapped_column(
+        "metadata", JSONB(none_as_null=True)
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -519,6 +723,32 @@ class ChannelAgentReference(Base, TimestampMixin):
             "ref_kind",
             "ref_value",
             name="uq_channel_agent_references_account_link_kind_value",
+        ),
+        Index(
+            "ix_channel_agent_references_retention_orphaned",
+            "updated_at",
+            "id",
+            postgresql_where=sql_text(
+                "provider IN ('telegram', 'discord') AND bot_agent_link_id IS NULL"
+            ),
+        ),
+        Index(
+            "ix_channel_agent_references_link_retention",
+            "bot_agent_link_id",
+            "updated_at",
+            "id",
+            postgresql_where=sql_text(
+                "provider IN ('telegram', 'discord') AND bot_agent_link_id IS NOT NULL"
+            ),
+        ),
+        Index(
+            "ix_channel_agent_references_discord_interaction",
+            "created_at",
+            "id",
+            postgresql_where=sql_text(
+                "provider = 'discord' AND ref_kind IN "
+                "('discord_interaction_id_token', 'discord_interaction_token')"
+            ),
         ),
     )
 
@@ -568,7 +798,7 @@ class ChannelDelivery(Base, TimestampMixin):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     locked_by: Mapped[str | None] = mapped_column(String(120))
     last_error: Mapped[str | None] = mapped_column(String(1000))
-    provider_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    provider_response: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
 
     __table_args__ = (
         Index(
@@ -576,6 +806,13 @@ class ChannelDelivery(Base, TimestampMixin):
             "status",
             "next_attempt_at",
             "created_at",
+        ),
+        Index(
+            "ix_channel_deliveries_retention_terminal",
+            "updated_at",
+            "id",
+            postgresql_include=("message_id", "account_id"),
+            postgresql_where=sql_text("status IN ('succeeded', 'failed')"),
         ),
     )
 
@@ -608,7 +845,7 @@ class ChannelAgentCredential(Base, TimestampMixin):
     synthetic_jid: Mapped[str] = mapped_column(String(300), nullable=False)
     encrypted_credentials: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     credential_nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    config: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    config: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (
@@ -631,10 +868,10 @@ class ChannelWhatsAppAuthCert(Base, TimestampMixin):
         unique=True,
         index=True,
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     root_public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

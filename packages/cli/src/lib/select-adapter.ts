@@ -42,7 +42,8 @@ export async function fetchDefaultProjectId(
 ): Promise<string> {
 	const baseUrl = api.baseUrl;
 	const headers: Record<string, string> = {};
-	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
+	const accessToken = await api.getAccessToken();
+	if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
 	const projectRes = await fetch(`${baseUrl}/v1/projects/default`, { headers });
 	const body: { project_id?: string } = await readJson<{ project_id?: string }>(
@@ -82,7 +83,7 @@ export async function fetchProjectIdForEnv(
 	const legacy = env as { default_project_id?: string };
 	const projectId = env.default_project_id ?? legacy.default_project_id;
 	if (!projectId) {
-		throw new Error(`environment ${envId} has no default project id`);
+		throw new Error(`Agent ${envId} has no Workspace`);
 	}
 	return projectId;
 }

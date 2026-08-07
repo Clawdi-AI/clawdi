@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -15,8 +16,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { useAuthFields, useConnectCredentials } from "@/lib/connectors-data";
-import { errorMessage } from "@/lib/utils";
+import { unwrap, useApi } from "@/lib/api";
+import { useAuthFields } from "@/lib/connectors-data";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { buildCredentialPayload, getVisibleCredentialFields } from "./credentials-dialog.logic";
 
 /**
@@ -26,8 +29,8 @@ import { buildCredentialPayload, getVisibleCredentialFields } from "./credential
  * detail page's existing `window.open(connect_url)`) and credentials
  * (this dialog). The dialog fetches the field schema lazily on open
  * so the user pays no cost for OAuth-only deployments. All hosted vs
- * OSS branching is encapsulated in `useAuthFields` /
- * `useConnectCredentials` from `@/lib/connectors-data`.
+ * OSS branching is encapsulated in `useAuthFields`; credential submission is
+ * an imperative sensitive action so plaintext never enters MutationCache.
  */
 export function ConnectorCredentialsDialog({
 	open,
@@ -41,7 +44,17 @@ export function ConnectorCredentialsDialog({
 	displayName: string;
 }) {
 	const fields = useAuthFields(appName, { enabled: open });
-	const submit = useConnectCredentials();
+	const api = useApi();
+	const queryClient = useQueryClient();
+	const submit = useSensitiveAction(async (credentials: Record<string, string>): Promise<void> => {
+		unwrap(
+			await api.POST("/v1/connectors/{app_name}/connect-credentials", {
+				params: { path: { app_name: appName } },
+				body: { credentials },
+			}),
+		);
+		queryClient.invalidateQueries({ queryKey: ["get", "/v1/connectors"] });
+	});
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -64,8 +77,8 @@ export function ConnectorCredentialsDialog({
 	// pattern as the OAuth/disconnect handlers in the detail page.
 	const inflightSubmitRef = useRef(false);
 	useEffect(() => {
-		openGenRef.current += 1;
 		if (!open) return;
+		openGenRef.current += 1;
 		setValues({});
 		setSubmitError(null);
 	}, [open]);
@@ -83,23 +96,36 @@ export function ConnectorCredentialsDialog({
 		setSubmitError(null);
 		try {
 			const credentials = buildCredentialPayload(allFields, values);
-			await submit.mutateAsync({ appName, credentials });
+			await submit.execute(credentials);
 			// Drop the result if the dialog has been reopened — toasts
 			// and `onOpenChange(false)` should target the session that
 			// initiated the mutation, not whatever the user is doing now.
 			if (gen !== openGenRef.current) return;
+			setValues({});
 			toast.success(`${displayName} connected`);
 			onOpenChange(false);
-		} catch (e) {
+		} catch {
 			if (gen !== openGenRef.current) return;
-			setSubmitError(errorMessage(e));
+			setSubmitError("The credentials couldn’t be saved. Check the values and try again.");
 		} finally {
 			inflightSubmitRef.current = false;
 		}
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog
+			open={open}
+			onOpenChange={(nextOpen) => {
+				if (!nextOpen) openGenRef.current += 1;
+				onOpenChange(nextOpen);
+			}}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) {
+					setValues({});
+					setSubmitError(null);
+				}
+			}}
+		>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Connect {displayName}</DialogTitle>
@@ -114,7 +140,7 @@ export function ConnectorCredentialsDialog({
 						<div className="flex items-center justify-center py-6">
 							<Spinner className="size-5 text-muted-foreground" />
 						</div>
-					) : fields.error ? (
+					) : shouldBlockQueryError(fields.error, fields.data) ? (
 						<ApiErrorPanel
 							error={fields.error}
 							onRetry={() => {

@@ -10,8 +10,9 @@ import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
-import { DetailTitle } from "@/components/detail/layout";
+import { DetailBackLink } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,16 +21,23 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { ConnectorTool } from "@/lib/api-schemas";
 import {
 	isActiveConnection,
 	useAvailableApp,
-	useConnect,
 	useConnections,
 	useConnectorTools,
 	useDisconnect,
 } from "@/lib/connectors-data";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+	resourceCollectionTarget,
+} from "@/lib/resource-navigation";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage } from "@/lib/utils";
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
@@ -45,10 +53,16 @@ function formatName(raw: string): string {
  * `useQueryStates` reads URL state under the hood. Wrapping the body keeps
  * the shell renderable and defers only the URL-state-dependent code.
  */
-export default function ConnectorDetailPage({ name }: { name: string }) {
+export default function ConnectorDetailPage({
+	name,
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	name: string;
+	scope?: ResourceNavigationScope;
+}) {
 	return (
 		<Suspense fallback={<DetailSkeletonShell />}>
-			<ConnectorDetail name={name} />
+			<ConnectorDetail name={name} scope={scope} />
 		</Suspense>
 	);
 }
@@ -61,7 +75,8 @@ function DetailSkeletonShell() {
 	);
 }
 
-function ConnectorDetail({ name }: { name: string }) {
+function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigationScope }) {
+	const collectionTarget = resourceCollectionTarget(scope, "connectors");
 	// OAuth from hosted mode redirects directly back to this page (no
 	// intermediary callback route). Composio sometimes signals failure
 	// via `?error=…` and sometimes via `?status=error|failed` with no
@@ -75,7 +90,7 @@ function ConnectorDetail({ name }: { name: string }) {
 		const failed =
 			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
 		if (!failed) return;
-		toast.error("Connection Failed", {
+		toast.error("Connection failed", {
 			description: oauthState.error || "OAuth did not complete. Try again from this page.",
 		});
 		void setOauthState({ error: null, status: null }, { history: "replace" });
@@ -102,7 +117,15 @@ function ConnectorDetail({ name }: { name: string }) {
 	// Query's per-connection window-focus refetch always checks for the
 	// new ACTIVE connection when the user returns to this tab. No polling
 	// loop needed.
-	const connectMutation = useConnect();
+	const api = useApi();
+	const connectAction = useSensitiveAction(async (redirectUrl: string) =>
+		unwrap(
+			await api.POST("/v1/connectors/{app_name}/connect", {
+				params: { path: { app_name: name } },
+				body: { redirect_url: redirectUrl },
+			}),
+		),
+	);
 
 	// Per-row disconnect single-flight guard.
 	//
@@ -122,7 +145,7 @@ function ConnectorDetail({ name }: { name: string }) {
 		inflightDisconnectsRef.current.add(connectionId);
 		setDisconnectingIds((s) => new Set(s).add(connectionId));
 		disconnectMutation.mutate(
-			{ connectionId },
+			{ params: { path: { connection_id: connectionId } } },
 			{
 				onSettled: () => {
 					inflightDisconnectsRef.current.delete(connectionId);
@@ -219,23 +242,20 @@ function ConnectorDetail({ name }: { name: string }) {
 		// back to our origin and the connections query force-refetches on
 		// window focus to reflect the new ACTIVE connection.
 		const redirectUrl = window.location.href;
-		connectMutation.mutate(
-			{ appName: name, redirectUrl },
-			{
-				onSuccess: (result) => {
-					if (!popup.closed) popup.location.href = result.connect_url;
-				},
-				onError: (e) => {
-					popup.close();
-					toast.error("Couldn't start connection", { description: errorMessage(e) });
-				},
-				onSettled: () => {
-					inflightConnectRef.current = false;
-				},
-			},
-		);
+		void connectAction
+			.execute(redirectUrl)
+			.then((result) => {
+				if (!popup.closed) popup.location.href = result.connect_url;
+			})
+			.catch((error) => {
+				popup.close();
+				toast.error("Couldn't start connection", { description: errorMessage(error) });
+			})
+			.finally(() => {
+				inflightConnectRef.current = false;
+			});
 	};
-	const isStarting = connectMutation.isPending;
+	const isStarting = connectAction.isPending;
 	const isConnectDisabled = isStarting || hasUnsupportedAuthType || isSetupBlocked;
 	const isReady = isConnected || usesNoAuth;
 	useSetBreadcrumbTitle(displayName);
@@ -243,6 +263,7 @@ function ConnectorDetail({ name }: { name: string }) {
 	if (isLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+				<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
 				<DetailSkeleton />
 			</div>
 		);
@@ -252,9 +273,10 @@ function ConnectorDetail({ name }: { name: string }) {
 	// thrown 404 from the hosted catalog adapter) and outright network
 	// failures. Surface it so the user sees what's wrong instead of a
 	// silently-broken connect page.
-	if (appQ.error) {
+	if (isApiNotFoundError(appQ.error) || shouldBlockQueryError(appQ.error, appQ.data)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+				<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
 				{isApiNotFoundError(appQ.error) ? (
 					<EmptyState
 						icon={Plug}
@@ -276,24 +298,29 @@ function ConnectorDetail({ name }: { name: string }) {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
-			{/* Header — matches clawdi ConnectorHeader */}
-			<div className="flex items-start gap-5">
-				<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<DetailTitle>{displayName}</DetailTitle>
-						{isReady && (
-							<Badge variant="secondary">
-								<Check />
-								{usesNoAuth ? "Ready" : "Connected"}
-							</Badge>
-						)}
-					</div>
-					<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-						{app?.description || name}
-					</p>
-				</div>
-			</div>
+			<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
+			{scope.kind === "agent" ? (
+				<Alert>
+					<Plug />
+					<AlertTitle>Shared across all agents</AlertTitle>
+					<AlertDescription>
+						Connections belong to this account. Connecting or disconnecting here affects all agents.
+					</AlertDescription>
+				</Alert>
+			) : null}
+			<PageHeader
+				title={displayName}
+				icon={<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />}
+				titleAdornment={
+					isReady ? (
+						<Badge variant="secondary">
+							<Check />
+							{usesNoAuth ? "Ready" : "Connected"}
+						</Badge>
+					) : undefined
+				}
+				description={app?.description || name}
+			/>
 
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
@@ -323,13 +350,13 @@ function ConnectorDetail({ name }: { name: string }) {
 								disabled={isConnectDisabled}
 							>
 								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-								Connect Account
+								Connect account
 							</Button>
 						) : null
 					}
 				/>
 				<div className="p-4">
-					{!usesNoAuth && connectionsQ.error ? (
+					{!usesNoAuth && shouldBlockQueryError(connectionsQ.error, connectionsQ.data) ? (
 						// Without this, a failed connections fetch silently renders
 						// the "No connected accounts yet" empty state — the user
 						// would think they have nothing connected when really we
@@ -375,7 +402,7 @@ function ConnectorDetail({ name }: { name: string }) {
 								action={
 									<Button onClick={startConnect} disabled={isConnectDisabled}>
 										{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-										{isStarting ? "Connecting…" : "Connect Account"}
+										{isStarting ? "Connecting…" : "Connect account"}
 									</Button>
 								}
 							/>
@@ -400,7 +427,9 @@ function ConnectorDetail({ name }: { name: string }) {
 									<ConfirmAction
 										title={`Disconnect ${c.account_display || "this account"}?`}
 										description={
-											<p>Your AI will lose access immediately. To get it back, sign in again.</p>
+											<p>
+												All agents will lose access immediately. To restore access, sign in again.
+											</p>
 										}
 										confirmLabel="Disconnect"
 										destructive
@@ -431,7 +460,7 @@ function ConnectorDetail({ name }: { name: string }) {
 			<ConnectorToolsList
 				tools={tools ?? []}
 				isLoading={isToolsLoading}
-				error={toolsQ.error}
+				error={shouldBlockQueryError(toolsQ.error, toolsQ.data) ? toolsQ.error : null}
 				onRetry={() => {
 					void toolsQ.refetch();
 				}}
@@ -455,14 +484,7 @@ function ConnectorDetail({ name }: { name: string }) {
 function DetailSkeleton() {
 	return (
 		<div className="flex flex-col gap-4">
-			{/* Header */}
-			<div className="flex items-start gap-5">
-				<Skeleton className="size-14 rounded-2xl" />
-				<div className="flex-1 space-y-2">
-					<Skeleton className="h-5 w-36" />
-					<Skeleton className="h-4 w-64" />
-				</div>
-			</div>
+			<PageHeaderSkeleton icon iconClassName="size-14 rounded-xl" />
 			{/* Connection section */}
 			<div className="space-y-3">
 				<Skeleton className="h-3.5 w-32" />

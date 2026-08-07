@@ -1,4 +1,23 @@
 export type { components, paths } from "./api.generated";
-export type { DeployComponents, Deployment, DeployPaths } from "./deploy";
+export type {
+	DeployComponents,
+	Deployment,
+	DeploymentEventStreamSnapshotHandoff,
+	DeploymentRead,
+	DeployPaths,
+	DeployRequestRead,
+	RuntimeUiAuthMode,
+	RuntimeUiCredentials,
+	RuntimeUiEndpointInfo,
+} from "./deploy";
+export {
+	isDeploymentEventStreamSnapshotHandoff,
+	isRuntimeUiCredentials,
+	isRuntimeUiEndpointInfo,
+	unwrapDeploymentEventStreamSnapshotHandoff,
+	unwrapDeploymentList,
+} from "./deploy";
+export * from "./deploy-wizard";
 export { extractApiDetail } from "./error-detail";
+export * from "./hosted-ai-binding";
 export * from "./schemas";

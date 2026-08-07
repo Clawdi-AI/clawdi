@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project_share_link import ProjectShareLink  # noqa: F401
+from app.models.project_share_link import ProjectShareLink
 
 
 class ShareRedeemAttempt(Base, TimestampMixin):
@@ -16,7 +16,7 @@ class ShareRedeemAttempt(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     link_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("project_share_links.id", ondelete="CASCADE"),
+        ForeignKey(ProjectShareLink.id, ondelete="CASCADE"),
         nullable=False,
     )
     client_key: Mapped[str] = mapped_column(String(128), nullable=False)

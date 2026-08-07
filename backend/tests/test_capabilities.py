@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-import app.services.memory_provider as mp
+import app.services.memory_provider_mem0 as mem0_adapter
 
 
 @pytest.mark.asyncio
@@ -26,8 +26,7 @@ def _patch_mem0_available(monkeypatch, *, available: bool) -> None:
     import app.routes.capabilities as cap
     import app.routes.settings as st
 
-    monkeypatch.setattr(mp, "_mem0_available_cached", None)
-    for mod in (mp, cap, st):
+    for mod in (mem0_adapter, cap, st):
         monkeypatch.setattr(mod, "mem0_available", lambda: available)
 
 

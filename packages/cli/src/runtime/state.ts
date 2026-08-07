@@ -1,9 +1,17 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { writePrivateFileAtomic } from "../lib/private-file";
+import { assertTrustedDirectory, ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import type { HostPolicyReadResult } from "./host-policy";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
-import type { RuntimePaths } from "./paths";
-import { getRuntimePaths } from "./paths";
+import {
+	DEFAULT_CACHE_ROOT,
+	DEFAULT_CONFIGURATION_ROOT,
+	DEFAULT_RUN_ROOT,
+	DEFAULT_SERVICE_STATE_ROOT,
+	getRuntimePaths,
+	type RuntimePaths,
+} from "./paths";
 
 export type RuntimeBootMode = "normal" | "degraded-offline" | "manifest-rejected" | "repair";
 export type RuntimeBootStage = "detect" | "local" | "network" | "auth" | "config" | "final";
@@ -21,7 +29,7 @@ export interface RuntimeBootStatus {
 	instanceId?: string | null;
 	enabledRuntimes: string[];
 	manifestSource?: {
-		type: "fixture-file" | "remote-datasource" | "last-good-cache";
+		type: "remote-datasource" | "last-good-cache";
 		path: string;
 		offline: boolean;
 	};
@@ -66,7 +74,6 @@ export interface RuntimeBootStatus {
 	};
 	paths: {
 		hostPolicy: string;
-		runtimeSource: string;
 		serviceStateRoot: string;
 		managedConfig: string;
 		syncState: string;
@@ -89,8 +96,6 @@ export interface RuntimeBootStatus {
 		cloudResult: string;
 		runRoot: string;
 		managedSecretRoot: string;
-		managedSecretFile: string;
-		runtimeSecretFileRoot: string;
 		daemonAuthToken: string;
 		instanceData: string;
 		sensitiveInstanceData: string;
@@ -112,7 +117,6 @@ export interface RuntimeStatusRead {
 function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 	return {
 		hostPolicy: paths.hostPolicy,
-		runtimeSource: paths.runtimeSource,
 		serviceStateRoot: paths.serviceStateRoot,
 		managedConfig: paths.managedConfig,
 		syncState: paths.syncState,
@@ -135,8 +139,6 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		cloudResult: paths.cloudResult,
 		runRoot: paths.runRoot,
 		managedSecretRoot: paths.managedSecretRoot,
-		managedSecretFile: paths.managedSecretFile,
-		runtimeSecretFileRoot: paths.runtimeSecretFileRoot,
 		daemonAuthToken: paths.daemonAuthToken,
 		instanceData: paths.instanceData,
 		sensitiveInstanceData: paths.sensitiveInstanceData,
@@ -173,41 +175,108 @@ export function hostPolicySummary(policy: HostPolicyReadResult): RuntimeBootStat
 	};
 }
 
-function writeJson(path: string, data: unknown, mode = 0o600): void {
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode });
-	try {
-		chmodSync(path, mode);
-	} catch {
-		// Best effort on filesystems without POSIX mode support.
+function writeJson(paths: RuntimePaths, path: string, data: unknown, mode = 0o600): void {
+	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(data, null, 2)}\n`, {
+		mode,
+		dirMode: 0o755,
+	});
+}
+
+export function runtimePlatformRoots(paths: RuntimePaths): string[] {
+	return [paths.configurationRoot, paths.serviceStateRoot, paths.cacheRoot, paths.runRoot];
+}
+
+export function runtimePlatformRootForPath(paths: RuntimePaths, path: string): string | null {
+	const resolvedPath = resolve(path);
+	return (
+		runtimePlatformRoots(paths)
+			.map((root) => resolve(root))
+			.filter((root) => {
+				const candidate = relative(root, resolvedPath);
+				return candidate === "" || (!candidate.startsWith("..") && !isAbsolute(candidate));
+			})
+			.sort((left, right) => right.length - left.length)[0] ?? null
+	);
+}
+
+export function assertRuntimePlatformRoots(paths: RuntimePaths): void {
+	for (const path of runtimePlatformRoots(paths)) {
+		assertTrustedDirectory(path, "platform directory");
 	}
+}
+
+export function ensureRuntimePlatformDirectory(
+	paths: RuntimePaths,
+	path: string,
+	options: { mode?: number } = {},
+): void {
+	const root = runtimePlatformRootForPath(paths, path);
+	if (!root) {
+		throw new Error(`runtime platform directory is outside platform roots: ${path}`);
+	}
+	ensureDirectoryWithinTrustedRoot(root, path, options);
+}
+
+export function writeRuntimePlatformFileAtomic(
+	paths: RuntimePaths,
+	path: string,
+	content: string | Uint8Array,
+	options: { mode?: number; dirMode?: number } = {},
+): void {
+	const trustedRoot = runtimePlatformRootForPath(paths, path);
+	if (!trustedRoot) {
+		throw new Error(`runtime platform file is outside platform roots: ${path}`);
+	}
+	writePrivateFileAtomic(path, content, { ...options, trustedRoot });
 }
 
 export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
-	for (const dir of [
-		paths.cacheRoot,
-		paths.bootRoot,
-		paths.instanceRoot,
-		paths.installInventory,
-		paths.projectionRoot,
-		paths.runConfigRoot,
-		paths.egressProfileRoot,
-		paths.systemdSystemRoot,
-		paths.systemdUserRoot,
-		paths.systemdEnvRoot,
-		dirname(paths.managedConfig),
-		dirname(paths.syncState),
-		paths.runRoot,
-		paths.managedSecretRoot,
-		paths.runtimeSecretFileRoot,
-	]) {
-		mkdirSync(dir, { recursive: true });
+	for (const [path, systemdPath, mode] of [
+		[paths.configurationRoot, DEFAULT_CONFIGURATION_ROOT, 0o700],
+		[paths.serviceStateRoot, DEFAULT_SERVICE_STATE_ROOT, 0o700],
+		[paths.cacheRoot, DEFAULT_CACHE_ROOT, 0o700],
+		// 0711 is deliberate: only named tenant handoff files below this root
+		// are readable; private subtrees retain their narrower modes.
+		[paths.runRoot, DEFAULT_RUN_ROOT, 0o711],
+	] as const) {
+		const created = !existsSync(path);
+		if (created) {
+			if (path === systemdPath) {
+				throw new Error(`platform directory must be created by systemd: ${path}`);
+			}
+			mkdirSync(path, { recursive: true, mode });
+		}
+		assertTrustedDirectory(path, "platform directory");
+		if (created) {
+			// mkdir modes are filtered by umask, but these platform roots have an
+			// exact access contract (including search access on the runtime root).
+			chmodSync(path, mode);
+		}
 	}
+	for (const [dir, mode] of [
+		[paths.statusRoot, 0o755],
+		[paths.instanceRoot, 0o755],
+		[paths.installInventory, 0o755],
+		[paths.projectionRoot, 0o755],
+		[paths.runConfigRoot, 0o755],
+		[paths.egressProfileRoot, 0o755],
+		[paths.systemdSystemRoot, 0o755],
+		[paths.systemdEnvRoot, 0o711],
+		[dirname(paths.syncState), 0o755],
+		[paths.managedSecretRoot, 0o711],
+	] as const) {
+		const platformRoot = runtimePlatformRootForPath(paths, dir);
+		if (platformRoot) ensureDirectoryWithinTrustedRoot(platformRoot, dir, { mode });
+		else assertTrustedDirectory(dir, "systemd platform directory");
+	}
+	mkdirSync(paths.systemdUserRoot, { recursive: true });
+	assertRuntimePlatformRoots(paths);
 }
 
 export function writeRuntimeBootStatus(status: RuntimeBootStatus, paths = getRuntimePaths()): void {
-	writeJson(paths.bootStatus, status, 0o644);
+	writeJson(paths, paths.bootStatus, status, 0o644);
 	writeJson(
+		paths,
 		paths.cloudStatus,
 		{
 			v1: {
@@ -223,6 +292,7 @@ export function writeRuntimeBootStatus(status: RuntimeBootStatus, paths = getRun
 		0o644,
 	);
 	writeJson(
+		paths,
 		paths.cloudResult,
 		{
 			v1: {
@@ -247,6 +317,7 @@ export function writeRuntimeWatchStatus(
 	paths = getRuntimePaths(),
 ): void {
 	writeJson(
+		paths,
 		paths.runtimeWatchStatus,
 		{
 			schemaVersion: "clawdi.runtimeWatchStatus.v1",

@@ -22,27 +22,226 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import AsyncGenerator, Awaitable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Literal, TypedDict
 
-import httpx
+import composio_client
+import httpx2
 import jwt
+from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import MCPError
+from mcp.types import CallToolResult, ListToolsResult
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
 from app.core.config import settings
+from app.schemas.connector import (
+    ConnectorAuthFieldResponse,
+    ConnectorAuthFieldsResponse,
+    ConnectorAvailableAppResponse,
+    ConnectorConnectionResponse,
+    ConnectorConnectResponse,
+    ConnectorCredentialsConnectResponse,
+    ConnectorToolResponse,
+)
 
 if TYPE_CHECKING:
+    from composio import Composio
+    from composio.core.provider._openai import OpenAITool, OpenAIToolCollection
+    from composio.exceptions import ComposioError as HighLevelComposioError
     from composio_client import AsyncComposio
+    from composio_client.types import AuthConfigCreateParams, ConnectedAccountCreateParams
 
 logger = logging.getLogger(__name__)
+type JsonObject = dict[str, JsonValue]
+_JSON_OBJECT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(dict[str, JsonValue])
+_COMPOSIO_STATUSES = {
+    "INITIALIZING",
+    "INITIATED",
+    "ACTIVE",
+    "FAILED",
+    "EXPIRED",
+    "INACTIVE",
+    "REVOKED",
+}
+type ComposioStatus = Literal[
+    "INITIALIZING",
+    "INITIATED",
+    "ACTIVE",
+    "FAILED",
+    "EXPIRED",
+    "INACTIVE",
+    "REVOKED",
+]
 
-_client: Any = None
+
+class _ComposioWireModel(BaseModel):
+    """Strict first-party subset of one pinned SDK response model."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+
+class _PageCursor(_ComposioWireModel):
+    next_cursor: str | None = None
+
+
+class _ToolkitMeta(_ComposioWireModel):
+    logo: str
+    description: str
+
+
+class _AuthField(_ComposioWireModel):
+    name: str = Field(min_length=1)
+    display_name: str = ""
+    description: str = ""
+    type: str = "string"
+    required: bool = False
+    is_secret: bool = False
+    expected_from_customer: bool = True
+    default: str | None = None
+
+
+class _AuthFieldGroup(_ComposioWireModel):
+    required: list[_AuthField] = Field(default_factory=list)
+    optional: list[_AuthField] = Field(default_factory=list)
+
+
+class _AuthFieldCollections(_ComposioWireModel):
+    connected_account_initiation: _AuthFieldGroup
+
+
+class _AuthConfigDetail(_ComposioWireModel):
+    mode: str = Field(min_length=1)
+    fields: _AuthFieldCollections
+
+
+class _Toolkit(_ComposioWireModel):
+    slug: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    meta: _ToolkitMeta
+    auth_schemes: list[str] | None = None
+    composio_managed_auth_schemes: list[str] | None = None
+    no_auth: bool | None = None
+    auth_config_details: list[_AuthConfigDetail] | None = None
+
+
+class _ToolkitPage(_PageCursor):
+    items: list[_Toolkit]
+
+
+class _ConnectedAccountToolkit(_ComposioWireModel):
+    slug: str = Field(min_length=1)
+
+
+class _ConnectedAccount(_ComposioWireModel):
+    id: str = Field(min_length=1)
+    created_at: str = Field(min_length=1)
+    status: ComposioStatus
+    toolkit: _ConnectedAccountToolkit
+    alias: str | None = None
+    word_id: str | None = None
+    data: JsonObject = Field(default_factory=dict)
+    state: JsonObject = Field(default_factory=dict)
+
+
+class _ConnectedAccountPage(_PageCursor):
+    items: list[_ConnectedAccount]
+
+
+class _ConnectedAccountCreateResponse(_ComposioWireModel):
+    id: str = Field(min_length=1)
+    status: ComposioStatus
+
+
+class _ConnectedAccountStatusResponse(_ComposioWireModel):
+    status: ComposioStatus
+
+
+class _ConnectedAccountDeleteResponse(_ComposioWireModel):
+    success: bool
+
+
+class _ConnectLinkResponse(_ComposioWireModel):
+    redirect_url: str = Field(min_length=1)
+    connected_account_id: str = Field(min_length=1)
+
+
+class _AuthConfigToolkit(_ComposioWireModel):
+    slug: str = Field(min_length=1)
+
+
+class _AuthConfig(_ComposioWireModel):
+    id: str = Field(min_length=1)
+    auth_scheme: str | None = None
+    is_composio_managed: bool | None = None
+    status: Literal["ENABLED", "DISABLED"] = "ENABLED"
+    toolkit: _AuthConfigToolkit | None = None
+
+
+class _AuthConfigPage(_PageCursor):
+    items: list[_AuthConfig]
+
+
+class _AuthConfigCreateResponse(_ComposioWireModel):
+    auth_config: _AuthConfig
+
+
+class _AuthConfigRetrieveResponse(_ComposioWireModel):
+    auth_scheme: str | None = None
+    expected_input_fields: list[_AuthField] | None = None
+
+
+class _Tool(_ComposioWireModel):
+    slug: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str
+    is_deprecated: bool
+
+
+class _ToolPage(_PageCursor):
+    items: list[_Tool]
+
+
+class _ToolRouterMcpConfig(_ComposioWireModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True, strict=True)
+
+    type: Literal["http"]
+    url: str = Field(min_length=1, pattern=r".*\S.*")
+    headers: dict[str, str] = Field(min_length=1)
+
+
+def _normalize_sdk_response[WireModelT: _ComposioWireModel](
+    response: object,
+    model: type[WireModelT],
+) -> WireModelT:
+    """Validate a generated Pydantic response before it enters Clawdi domain code."""
+
+    if not isinstance(response, BaseModel):
+        raise ComposioProtocolError("Composio returned an invalid response")
+    try:
+        return model.model_validate(response.model_dump(mode="python"))
+    except ValidationError:
+        raise ComposioProtocolError("Composio returned an invalid response") from None
+
+
+class ConnectorAppPage(TypedDict):
+    items: list[ConnectorAvailableAppResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+_client: AsyncComposio | None = None
+_sdk_client: Composio[OpenAITool, OpenAIToolCollection] | None = None
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
 
 _REDIRECT_AUTH_TYPES = {"oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"}
 _INSTANT_AUTH_TYPES = {"none", "no_auth"}
 _ACTIVE_OR_PENDING_STATUSES = {"INITIALIZING", "INITIATED"}
-_TERMINAL_STATUSES = {"ACTIVE", "FAILED", "EXPIRED", "INACTIVE", "REVOKED"}
+_TERMINAL_STATUSES = _COMPOSIO_STATUSES - _ACTIVE_OR_PENDING_STATUSES
 _COMPOSIO_METADATA_CACHE_TTL = timedelta(minutes=5)
 CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE = (
     "Connector requires a custom OAuth auth config in Composio before it can be "
@@ -50,17 +249,169 @@ CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE = (
 )
 
 
-class ConnectorAuthMetadataError(RuntimeError):
+class ComposioRouteError(RuntimeError):
+    """Base class for sanitized connector failures that routes may map."""
+
+
+class ConnectorAuthMetadataError(ComposioRouteError):
     """Raised when Composio does not return enough metadata to choose an auth flow."""
 
 
-class ConnectorCustomAuthConfigRequired(RuntimeError):
+class ComposioConfigurationError(ComposioRouteError):
+    """Raised when the server-side Composio integration is not configured."""
+
+
+class ComposioMcpUpstreamError(RuntimeError):
+    """Sanitized failure from the server-side Composio MCP client."""
+
+
+class ComposioProtocolError(ComposioRouteError):
+    """Raised when a pinned Composio SDK response violates its public contract."""
+
+
+class ConnectorCustomAuthConfigRequired(ComposioRouteError):
     """Raised when an OAuth toolkit requires a preconfigured custom auth config."""
 
     def __init__(self, app_name: str, auth_scheme: str) -> None:
         super().__init__(CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE)
         self.app_name = app_name
         self.auth_scheme = auth_scheme
+
+
+type ComposioFailureKind = Literal[
+    "authentication",
+    "configuration",
+    "not_found",
+    "timeout",
+    "connection",
+    "invalid_request",
+    "metadata",
+    "protocol",
+    "validation",
+    "status",
+    "unknown",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ComposioFailure:
+    """Sanitized first-party view of both pinned Composio SDK error families."""
+
+    kind: ComposioFailureKind
+    status_code: int | None = None
+    message: str | None = None
+
+
+class ComposioProviderError(ComposioRouteError):
+    """Sanitized error translated at a pinned Composio SDK call boundary."""
+
+    def __init__(self, failure: ComposioFailure) -> None:
+        super().__init__("Composio request failed")
+        self.failure = failure
+
+
+class ComposioInvalidRequestError(ComposioRouteError):
+    """First-party invalid connector operation, safe to expose as a 400."""
+
+
+class ComposioActivationTimeoutError(ComposioRouteError):
+    """Composio did not leave its pending activation states before the deadline."""
+
+
+def normalize_composio_failure(
+    exc: ComposioRouteError,
+) -> ComposioFailure:
+    """Return the sanitized failure carried by a first-party adapter error."""
+
+    if isinstance(exc, ConnectorAuthMetadataError):
+        return ComposioFailure("metadata", message="Connector auth metadata unavailable")
+    if isinstance(exc, ComposioConfigurationError):
+        return ComposioFailure("configuration")
+    if isinstance(exc, ComposioProtocolError):
+        return ComposioFailure("protocol")
+    if isinstance(exc, ConnectorCustomAuthConfigRequired):
+        return ComposioFailure("invalid_request", message=CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE)
+    if isinstance(exc, ComposioInvalidRequestError):
+        return ComposioFailure("invalid_request", message=str(exc))
+    if isinstance(exc, ComposioActivationTimeoutError):
+        return ComposioFailure("timeout")
+    if isinstance(exc, ComposioProviderError):
+        return exc.failure
+    raise RuntimeError(f"Unregistered Composio route error: {type(exc).__name__}")
+
+
+async def _call_generated_sdk[ResponseT](
+    operation: Awaitable[ResponseT],
+    *,
+    credentials: dict[str, str] | None = None,
+) -> ResponseT:
+    """Translate only the generated SDK's documented base error family."""
+
+    try:
+        return await operation
+    except composio_client.ComposioError as exc:
+        raise ComposioProviderError(_generated_sdk_failure(exc, credentials=credentials)) from exc
+
+
+def _generated_sdk_failure(
+    exc: composio_client.ComposioError,
+    *,
+    credentials: dict[str, str] | None,
+) -> ComposioFailure:
+    if isinstance(exc, composio_client.AuthenticationError):
+        return ComposioFailure("authentication")
+    if isinstance(exc, composio_client.NotFoundError):
+        return ComposioFailure("not_found")
+    if isinstance(exc, composio_client.APITimeoutError):
+        return ComposioFailure("timeout")
+    if isinstance(exc, composio_client.APIConnectionError):
+        return ComposioFailure("connection")
+    if isinstance(exc, composio_client.APIStatusError):
+        kind: ComposioFailureKind = (
+            "validation" if credentials is not None and exc.status_code in {400, 422} else "status"
+        )
+        return ComposioFailure(
+            kind,
+            status_code=exc.status_code,
+            message=_safe_composio_message(
+                body=exc.body,
+                fallback="",
+                credentials=credentials,
+            ),
+        )
+    return ComposioFailure("protocol")
+
+
+def _safe_composio_message(
+    *,
+    body: object,
+    fallback: str,
+    credentials: dict[str, str] | None,
+) -> str:
+    try:
+        body_object = _JSON_OBJECT_ADAPTER.validate_python(body)
+    except ValidationError:
+        return fallback
+    error = body_object.get("error")
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("detail")
+    elif isinstance(error, str):
+        message = error
+    else:
+        message = body_object.get("message") or body_object.get("detail")
+    return _bounded_scrubbed_message(message, credentials) if isinstance(message, str) else fallback
+
+
+def _bounded_scrubbed_message(
+    message: str,
+    credentials: dict[str, str] | None,
+) -> str:
+    safe = message
+    for value in (credentials or {}).values():
+        secret = value.strip()
+        if len(secret) >= 4:
+            safe = safe.replace(secret, "***")
+    return " ".join(safe.split())[:500]
 
 
 @dataclass(frozen=True)
@@ -71,43 +422,70 @@ class ComposioMcpSession:
 
 
 def get_composio_client() -> AsyncComposio:
-    """Return the shared Composio SDK client."""
+    """Return the shared generated async Composio client."""
     global _client
     if _client is None:
         if not settings.composio_api_key:
-            raise RuntimeError("COMPOSIO_API_KEY not configured")
+            raise ComposioConfigurationError("Composio is not configured")
         from composio_client import AsyncComposio
 
-        kwargs: dict[str, Any] = {"api_key": settings.composio_api_key}
         if settings.composio_api_base_url:
-            kwargs["base_url"] = settings.composio_api_base_url.rstrip("/")
-        _client = AsyncComposio(**kwargs)
+            _client = AsyncComposio(
+                api_key=settings.composio_api_key,
+                base_url=settings.composio_api_base_url.rstrip("/"),
+            )
+        else:
+            _client = AsyncComposio(api_key=settings.composio_api_key)
     return _client
 
 
+def get_composio_sdk() -> Composio[OpenAITool, OpenAIToolCollection]:
+    """Return the shared high-level Composio SDK client."""
+    global _sdk_client
+    if _sdk_client is None:
+        if not settings.composio_api_key:
+            raise ComposioConfigurationError("Composio is not configured")
+        from composio import Composio
+
+        if settings.composio_api_base_url:
+            _sdk_client = Composio(
+                api_key=settings.composio_api_key,
+                base_url=settings.composio_api_base_url.rstrip("/"),
+            )
+        else:
+            _sdk_client = Composio(api_key=settings.composio_api_key)
+    return _sdk_client
+
+
 async def close_composio_client() -> None:
-    """Close the shared Composio HTTP client on ASGI shutdown."""
-    global _client
+    """Close the shared Composio HTTP clients on ASGI shutdown."""
+    global _client, _sdk_client
+    _tool_router_session_cache.clear()
     if _client is not None:
-        close = getattr(_client, "close", None)
-        if callable(close):
-            await close()
+        await _call_generated_sdk(_client.close())
         _client = None
+    if _sdk_client is not None:
+        from composio import exceptions as composio_exceptions
+
+        try:
+            await asyncio.to_thread(_sdk_client.client.close)
+        except composio_exceptions.ComposioError as exc:
+            raise ComposioProviderError(_high_level_sdk_failure(exc)) from exc
+        _sdk_client = None
 
 
 def _jwt_signing_key() -> str:
-    """Return the MCP bridge JWT signing key."""
     key = settings.encryption_key
     if not key:
         raise RuntimeError(
             "ENCRYPTION_KEY is not configured. Generate a 32-byte hex value and "
-            "set it in backend/.env — it must be distinct from VAULT_ENCRYPTION_KEY."
+            "set it in backend/.env; it must be distinct from VAULT_ENCRYPTION_KEY."
         )
     return key
 
 
 def create_mcp_bridge_token(user_id: str) -> str:
-    """Create a JWT for MCP bridge authentication."""
+    """Create the short-lived credential used by legacy CLI MCP config."""
     payload = {
         "sub": "mcp",
         "user_id": user_id,
@@ -117,17 +495,19 @@ def create_mcp_bridge_token(user_id: str) -> str:
 
 
 def verify_mcp_bridge_token(token: str) -> str:
-    """Verify MCP bridge JWT, return user_id."""
+    """Verify a legacy MCP bridge credential and return its user id."""
     payload = jwt.decode(token, _jwt_signing_key(), algorithms=["HS256"])
+    if payload.get("sub") != "mcp" or not isinstance(payload.get("user_id"), str):
+        raise ValueError("Invalid MCP bridge token")
     return payload["user_id"]
 
 
 async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
     """Return a user-scoped Composio Tool Router MCP session.
 
-    The CLI must never receive the Composio project API key. We create the
-    Composio session server-side, cache its MCP URL briefly, and let the
-    authenticated Clawdi MCP bridge forward JSON-RPC to that URL.
+    The agent must never receive the Composio project API key. We create the
+    Composio session server-side, cache its MCP URL briefly, and forward
+    JSON-RPC through the authenticated Clawdi MCP endpoint.
     """
     now = datetime.now(UTC)
     cached = _tool_router_session_cache.get(user_id)
@@ -144,116 +524,191 @@ def invalidate_tool_router_mcp_session(user_id: str) -> None:
     _tool_router_session_cache.pop(user_id, None)
 
 
+async def list_tool_router_mcp_tools(session: ComposioMcpSession) -> ListToolsResult:
+    """List tools through a fully initialized, operation-scoped MCP client."""
+    try:
+        async with _tool_router_mcp_client(session) as client:
+            response = await client.list_tools()
+            return _normalize_mcp_response(response, ListToolsResult)
+    except (MCPError, httpx2.HTTPError, OSError, TimeoutError, ValidationError) as exc:
+        logger.warning(
+            "Composio MCP operation failed: operation=list_tools error_type=%s",
+            type(exc).__name__,
+        )
+        raise ComposioMcpUpstreamError("Composio MCP operation failed") from None
+
+
+async def call_tool_router_mcp_tool(
+    session: ComposioMcpSession, name: str, arguments: JsonObject
+) -> CallToolResult:
+    """Call a tool through a fully initialized, operation-scoped MCP client."""
+    try:
+        async with _tool_router_mcp_client(session) as client:
+            response = await client.call_tool(name, arguments)
+            return _normalize_mcp_response(response, CallToolResult)
+    except (MCPError, httpx2.HTTPError, OSError, TimeoutError, ValidationError) as exc:
+        logger.warning(
+            "Composio MCP operation failed: operation=call_tool error_type=%s",
+            type(exc).__name__,
+        )
+        raise ComposioMcpUpstreamError("Composio MCP operation failed") from None
+
+
+def _normalize_mcp_response[WireModelT: BaseModel](
+    response: object,
+    model: type[WireModelT],
+) -> WireModelT:
+    if not isinstance(response, BaseModel):
+        raise ComposioMcpUpstreamError("Composio MCP returned an invalid response")
+    try:
+        return model.model_validate(response.model_dump(mode="python"))
+    except ValidationError:
+        raise ComposioMcpUpstreamError("Composio MCP returned an invalid response") from None
+
+
+@asynccontextmanager
+async def _tool_router_mcp_client(
+    session: ComposioMcpSession,
+) -> AsyncGenerator[Client, None]:
+    # Keep Composio credentials on this server-owned HTTP client. These are
+    # the MCP SDK's documented settings for a caller-provided HTTP client.
+    http_client = httpx2.AsyncClient(
+        headers=session.headers,
+        timeout=httpx2.Timeout(30.0, read=300.0),
+        follow_redirects=True,
+    )
+    async with http_client:
+        transport = streamable_http_client(session.url, http_client=http_client)
+        async with Client(transport) as client:
+            yield client
+
+
 async def _create_tool_router_mcp_session(
     user_id: str, *, now: datetime | None = None
 ) -> ComposioMcpSession:
-    if not settings.composio_api_key:
-        raise RuntimeError("COMPOSIO_API_KEY not configured")
+    from composio import exceptions as composio_exceptions
 
-    base_url = settings.composio_api_base_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            f"{base_url}/api/v3.1/tool_router/session",
-            headers={"x-api-key": settings.composio_api_key},
-            json={"user_id": user_id},
-        )
-    resp.raise_for_status()
-    data = resp.json()
-    mcp = data.get("mcp") if isinstance(data, dict) else None
-    if not isinstance(mcp, dict) or not isinstance(mcp.get("url"), str):
-        raise RuntimeError("Composio tool router session response did not include mcp.url")
+    sdk = get_composio_sdk()
+    try:
+        session = await asyncio.to_thread(sdk.sessions.create, user_id=user_id, mcp=True)
+    except composio_exceptions.ComposioError as exc:
+        raise ComposioProviderError(_high_level_sdk_failure(exc)) from exc
+    try:
+        mcp = _ToolRouterMcpConfig.model_validate(session.mcp)
+    except ValidationError:
+        raise ComposioMcpUpstreamError(
+            "Composio session returned invalid MCP configuration"
+        ) from None
 
-    raw_headers = mcp.get("headers")
-    headers = (
-        {str(k): str(v) for k, v in raw_headers.items()} if isinstance(raw_headers, dict) else {}
-    )
     issued_at = now or datetime.now(UTC)
     return ComposioMcpSession(
-        url=mcp["url"],
-        headers=headers,
+        url=mcp.url,
+        headers=mcp.headers,
         expires_at=issued_at + timedelta(minutes=30),
     )
 
 
-async def get_connected_accounts(user_id: str) -> list[dict]:
+def _high_level_sdk_failure(exc: HighLevelComposioError) -> ComposioFailure:
+    from composio import exceptions as composio_exceptions
+
+    if isinstance(exc, composio_exceptions.NotFoundError):
+        return ComposioFailure("not_found")
+    if isinstance(exc, composio_exceptions.ComposioSDKTimeoutError):
+        return ComposioFailure("timeout")
+    if isinstance(exc, composio_exceptions.ValidationError):
+        return ComposioFailure(
+            "validation",
+            message=_bounded_scrubbed_message(exc.message, None),
+        )
+    if isinstance(exc, composio_exceptions.HTTPError):
+        return ComposioFailure(
+            "status",
+            status_code=exc.status_code,
+            message=_bounded_scrubbed_message(exc.message, None),
+        )
+    return ComposioFailure("protocol")
+
+
+async def get_connected_accounts(user_id: str) -> list[ConnectorConnectionResponse]:
     """List active connected accounts for a Composio user."""
     client = get_composio_client()
-    accounts: list[Any] = []
+    accounts: list[_ConnectedAccount] = []
     cursor: str | None = None
 
     while True:
-        kwargs: dict[str, Any] = {
-            "user_ids": [user_id],
-            "statuses": ["ACTIVE"],
-            "limit": 100,
-        }
         if cursor:
-            kwargs["cursor"] = cursor
-        resp = await client.connected_accounts.list(**kwargs)
-        accounts.extend(_items(resp))
-        cursor = _str_or_none(_value(resp, "next_cursor"))
+            raw_response = await _call_generated_sdk(
+                client.connected_accounts.list(
+                    user_ids=[user_id],
+                    statuses=["ACTIVE"],
+                    limit=100,
+                    cursor=cursor,
+                )
+            )
+        else:
+            raw_response = await _call_generated_sdk(
+                client.connected_accounts.list(
+                    user_ids=[user_id],
+                    statuses=["ACTIVE"],
+                    limit=100,
+                )
+            )
+        response = _normalize_sdk_response(raw_response, _ConnectedAccountPage)
+        accounts.extend(response.items)
+        cursor = response.next_cursor
         if not cursor:
             break
 
     return [_serialize_connected_account(account) for account in accounts]
 
 
-def _serialize_connected_account(account: Any) -> dict:
-    toolkit = _value(account, "toolkit", default={})
-    return {
-        "id": str(_value(account, "id", default="")),
-        "app_name": _str_or_none(_value(toolkit, "slug"))
-        or _str_or_none(_value(account, "appName", "app_name"))
-        or "",
-        "status": _str_or_none(_value(account, "status")) or "",
-        "created_at": _str_or_none(_value(account, "created_at", "createdAt")) or "",
-        "account_display": _account_display_label(account),
-    }
-
-
-def _account_display_label(account: Any) -> str | None:
-    """Best-effort user-facing label for a Composio connected account."""
-    candidates = (
-        _value(_value(account, "connectionParams", "connection_params"), "connectionLabel"),
-        _value(_value(account, "meta"), "label"),
-        _value(account, "connectionLabel", "connection_label"),
-        _value(account, "alias"),
-        _value(account, "word_id"),
+def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnectionResponse:
+    return ConnectorConnectionResponse(
+        id=account.id,
+        app_name=account.toolkit.slug,
+        status=account.status,
+        created_at=account.created_at,
+        account_display=_account_display_label(account),
     )
-    for value in candidates:
-        if isinstance(value, str) and value.strip():
+
+
+def _account_display_label(account: _ConnectedAccount) -> str | None:
+    """Best-effort user-facing label for a Composio connected account."""
+    for value in (account.alias, account.word_id):
+        if value is not None and value.strip():
             return value.strip()
 
-    containers = (
-        _value(account, "data"),
-        _value(account, "params"),
-        _value(_value(account, "state"), "val"),
-        _value(_value(_value(account, "state"), "val"), "authed_user", "authedUser"),
-    )
+    state_value = _json_object(account.state.get("val"))
+    authed_user = _json_object(state_value.get("authed_user") or state_value.get("authedUser"))
+    containers = (account.data, state_value, authed_user)
     for container in containers:
         for key in ("connectionLabel", "connection_label", "label", "email", "username"):
-            value = _value(container, key)
+            value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return None
 
 
+def _json_object(value: JsonValue | None) -> JsonObject:
+    return value if isinstance(value, dict) else {}
+
+
 async def create_connect_link(
     entity_id: str, app_name: str, redirect_url: str | None = None
-) -> dict:
+) -> ConnectorConnectResponse:
     """Create a Composio Connect Link for an OAuth connector."""
     client = get_composio_client()
     toolkit = await _get_toolkit_detail(app_name)
     auth_type = _primary_auth_type(toolkit)
 
     if auth_type in _INSTANT_AUTH_TYPES:
-        return {
-            "connect_url": redirect_url or settings.web_origin or "/connectors",
-            "id": "",
-        }
+        return ConnectorConnectResponse(
+            connect_url=redirect_url or settings.web_origin or "/connectors",
+            id="",
+        )
 
     if auth_type not in _REDIRECT_AUTH_TYPES:
-        raise ValueError("Connector requires credentials")
+        raise ComposioInvalidRequestError("Connector requires credentials")
 
     auth_config = await _get_redirect_auth_config(
         client=client,
@@ -261,37 +716,46 @@ async def create_connect_link(
         app_name=app_name,
         auth_type=auth_type,
     )
-    kwargs: dict[str, Any] = {
-        "auth_config_id": auth_config["id"],
-        "user_id": entity_id,
-    }
     if redirect_url:
-        kwargs["callback_url"] = redirect_url
-    result = await client.link.create(**kwargs)
+        raw_result = await _call_generated_sdk(
+            client.link.create(
+                auth_config_id=auth_config.id,
+                user_id=entity_id,
+                callback_url=redirect_url,
+            )
+        )
+    else:
+        raw_result = await _call_generated_sdk(
+            client.link.create(
+                auth_config_id=auth_config.id,
+                user_id=entity_id,
+            )
+        )
+    result = _normalize_sdk_response(raw_result, _ConnectLinkResponse)
     invalidate_tool_router_mcp_session(entity_id)
-    return {
-        "connect_url": _value(result, "redirect_url", "redirectUrl", default=""),
-        "id": str(_value(result, "connected_account_id", "connectedAccountId", default="")),
-    }
+    return ConnectorConnectResponse(
+        connect_url=result.redirect_url,
+        id=result.connected_account_id,
+    )
 
 
-async def get_auth_fields(app_name: str) -> dict:
+async def get_auth_fields(app_name: str) -> ConnectorAuthFieldsResponse:
     """Return credential fields for a non-OAuth connector."""
     toolkit = await _get_toolkit_detail(app_name)
     auth_type = _primary_auth_type(toolkit)
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
     if auth_type in _INSTANT_AUTH_TYPES:
-        return {
-            "auth_scheme": auth_scheme,
-            "expected_input_fields": [],
-        }
+        return ConnectorAuthFieldsResponse(
+            auth_scheme=auth_scheme,
+            expected_input_fields=[],
+        )
 
     detail_fields = _auth_fields_from_toolkit_detail(toolkit, auth_scheme)
     if detail_fields:
-        return {
-            "auth_scheme": auth_scheme,
-            "expected_input_fields": detail_fields,
-        }
+        return ConnectorAuthFieldsResponse(
+            auth_scheme=auth_scheme,
+            expected_input_fields=detail_fields,
+        )
 
     client = get_composio_client()
     auth_config = await _get_or_create_auth_config(
@@ -300,28 +764,26 @@ async def get_auth_fields(app_name: str) -> dict:
         auth_type=auth_type,
         managed=False,
     )
-    retrieved = await client.auth_configs.retrieve(auth_config["id"])
-    fields = [
-        _serialize_auth_field(field)
-        for field in _value(retrieved, "expected_input_fields", default=[]) or []
-    ]
-    return {
-        "auth_scheme": _str_or_none(_value(retrieved, "auth_scheme")) or auth_scheme,
-        "expected_input_fields": fields,
-    }
+    retrieved = await _call_generated_sdk(client.auth_configs.retrieve(auth_config.id))
+    response = _normalize_sdk_response(retrieved, _AuthConfigRetrieveResponse)
+    fields = [_serialize_auth_field(field) for field in response.expected_input_fields or []]
+    return ConnectorAuthFieldsResponse(
+        auth_scheme=_str_or_none(response.auth_scheme) or auth_scheme,
+        expected_input_fields=fields,
+    )
 
 
 async def connect_with_credentials(
     user_id: str, app_name: str, credentials: dict[str, str]
-) -> dict:
+) -> ConnectorCredentialsConnectResponse:
     """Create a connected account with user-supplied credentials."""
     client = get_composio_client()
     toolkit = await _get_toolkit_detail(app_name)
     auth_type = _primary_auth_type(toolkit)
     if auth_type in _REDIRECT_AUTH_TYPES:
-        raise ValueError("Connector uses redirect auth")
+        raise ComposioInvalidRequestError("Connector uses redirect auth")
     if auth_type in _INSTANT_AUTH_TYPES:
-        raise ValueError("Connector does not require credentials")
+        raise ComposioInvalidRequestError("Connector does not require credentials")
     return await _create_non_oauth_connection(
         client=client,
         user_id=user_id,
@@ -338,7 +800,7 @@ async def _create_non_oauth_connection(
     app_name: str,
     auth_type: str,
     credentials: dict[str, str],
-) -> dict:
+) -> ConnectorCredentialsConnectResponse:
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
     auth_config = await _get_or_create_auth_config(
         client=client,
@@ -346,33 +808,31 @@ async def _create_non_oauth_connection(
         auth_type=auth_type,
         managed=False,
     )
-    result = await client.connected_accounts.create(
-        auth_config={"id": auth_config["id"]},
-        connection={
-            "user_id": user_id,
-            "state": {
-                "auth_scheme": auth_scheme,
-                "val": {
-                    "status": "ACTIVE",
-                    **credentials,
-                },
-            },
-        },
+    request = _connected_account_create_request(
+        auth_config_id=auth_config.id,
+        user_id=user_id,
+        auth_scheme=auth_scheme,
+        credentials=credentials,
     )
-    account_id = str(_value(result, "id", default=""))
-    status = _normalize_status(_value(result, "status"))
+    raw_result = await _call_generated_sdk(
+        client.connected_accounts.create(**request),
+        credentials=credentials,
+    )
+    result = _normalize_sdk_response(raw_result, _ConnectedAccountCreateResponse)
+    account_id = result.id
+    status = result.status
     try:
         if status in _ACTIVE_OR_PENDING_STATUSES:
             status = await _wait_for_connection_status(client, account_id, status)
     finally:
         invalidate_tool_router_mcp_session(user_id)
     if status in _ACTIVE_OR_PENDING_STATUSES:
-        raise TimeoutError("Composio did not activate the connection in time")
-    return {
-        "id": account_id,
-        "status": status.lower(),
-        "ok": status == "ACTIVE",
-    }
+        raise ComposioActivationTimeoutError("Composio did not activate the connection in time")
+    return ConnectorCredentialsConnectResponse(
+        id=account_id,
+        status=status.lower(),
+        ok=status == "ACTIVE",
+    )
 
 
 async def _wait_for_connection_status(
@@ -384,55 +844,62 @@ async def _wait_for_connection_status(
     deadline = asyncio.get_running_loop().time() + 15.0
     while status in _ACTIVE_OR_PENDING_STATUSES and asyncio.get_running_loop().time() < deadline:
         await asyncio.sleep(1.0)
-        account = await client.connected_accounts.retrieve(connected_account_id)
-        status = _normalize_status(_value(account, "status"))
+        raw_account = await _call_generated_sdk(
+            client.connected_accounts.retrieve(connected_account_id)
+        )
+        account = _normalize_sdk_response(raw_account, _ConnectedAccountStatusResponse)
+        status = account.status
     return status
 
 
 async def disconnect_account(connected_account_id: str) -> bool:
     """Disconnect/revoke a connected account."""
     client = get_composio_client()
-    try:
-        resp = await client.connected_accounts.delete(connected_account_id)
-        success = _value(resp, "success")
-        return bool(success) if success is not None else True
-    except Exception as e:
-        logger.warning("Failed to disconnect account %s: %s", connected_account_id, e)
-        return False
+    raw_response = await _call_generated_sdk(client.connected_accounts.delete(connected_account_id))
+    response = _normalize_sdk_response(raw_response, _ConnectedAccountDeleteResponse)
+    return response.success
 
 
-async def get_app_tools(app_name: str) -> list[dict]:
+async def get_app_tools(app_name: str) -> list[ConnectorToolResponse]:
     """List available tools/actions for a specific Composio toolkit."""
     client = get_composio_client()
-    tools: list[Any] = []
+    tools: list[_Tool] = []
     cursor: str | None = None
 
     while True:
-        kwargs: dict[str, Any] = {
-            "toolkit_slug": app_name,
-            "include_deprecated": False,
-            "limit": 100,
-        }
         if cursor:
-            kwargs["cursor"] = cursor
-        resp = await client.tools.list(**kwargs)
-        tools.extend(_items(resp))
-        cursor = _str_or_none(_value(resp, "next_cursor"))
+            raw_response = await _call_generated_sdk(
+                client.tools.list(
+                    toolkit_slug=app_name,
+                    include_deprecated=False,
+                    limit=100,
+                    cursor=cursor,
+                )
+            )
+        else:
+            raw_response = await _call_generated_sdk(
+                client.tools.list(
+                    toolkit_slug=app_name,
+                    include_deprecated=False,
+                    limit=100,
+                )
+            )
+        response = _normalize_sdk_response(raw_response, _ToolPage)
+        tools.extend(response.items)
+        cursor = response.next_cursor
         if not cursor or len(tools) >= 500:
             break
 
     return [_serialize_tool(tool) for tool in tools]
 
 
-def _serialize_tool(tool: Any) -> dict:
-    name = _str_or_none(_value(tool, "slug", "name")) or ""
-    display = _str_or_none(_value(tool, "display_name", "displayName", "name")) or name
-    return {
-        "name": name,
-        "display_name": display,
-        "description": (_str_or_none(_value(tool, "description")) or "")[:300],
-        "is_deprecated": bool(_value(tool, "is_deprecated", "isDeprecated", default=False)),
-    }
+def _serialize_tool(tool: _Tool) -> ConnectorToolResponse:
+    return ConnectorToolResponse(
+        name=tool.slug,
+        display_name=tool.name,
+        description=tool.description[:300],
+        is_deprecated=tool.is_deprecated,
+    )
 
 
 async def _get_or_create_auth_config(
@@ -441,14 +908,56 @@ async def _get_or_create_auth_config(
     app_name: str,
     auth_type: str,
     managed: bool,
-) -> dict:
+) -> _AuthConfig:
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
     existing = await _find_auth_config(client, app_name, auth_scheme, managed=managed)
     if existing is not None:
         return existing
 
+    request = _auth_config_create_request(
+        app_name=app_name,
+        auth_scheme=auth_scheme,
+        managed=managed,
+    )
+    raw_created = await _call_generated_sdk(client.auth_configs.create(**request))
+    created = _normalize_sdk_response(raw_created, _AuthConfigCreateResponse)
+    return created.auth_config
+
+
+def _connected_account_create_request(
+    *,
+    auth_config_id: str,
+    user_id: str,
+    auth_scheme: str,
+    credentials: dict[str, str],
+) -> ConnectedAccountCreateParams:
+    """Validate a complete request against the SDK's public generated type."""
+    from composio_client.types import ConnectedAccountCreateParams
+    from pydantic import TypeAdapter
+
+    return TypeAdapter(ConnectedAccountCreateParams).validate_python(
+        {
+            "auth_config": {"id": auth_config_id},
+            "connection": {
+                "user_id": user_id,
+                "state": {
+                    "auth_scheme": auth_scheme,
+                    "val": {"status": "ACTIVE", **credentials},
+                },
+            },
+        }
+    )
+
+
+def _auth_config_create_request(
+    *, app_name: str, auth_scheme: str, managed: bool
+) -> AuthConfigCreateParams:
+    """Validate a complete request against the SDK's public generated type."""
+    from composio_client.types import AuthConfigCreateParams
+    from pydantic import TypeAdapter
+
     if managed:
-        auth_config: dict[str, Any] = {
+        auth_config: object = {
             "type": "use_composio_managed_auth",
             "name": _auth_config_name(app_name, "managed"),
         }
@@ -459,21 +968,18 @@ async def _get_or_create_auth_config(
             "credentials": {},
             "name": _auth_config_name(app_name, auth_scheme.lower()),
         }
-    created = await client.auth_configs.create(
-        toolkit={"slug": app_name},
-        auth_config=auth_config,
+    return TypeAdapter(AuthConfigCreateParams).validate_python(
+        {"toolkit": {"slug": app_name}, "auth_config": auth_config}
     )
-    created_config = _value(created, "auth_config", default=created)
-    return _serialize_auth_config(created_config)
 
 
 async def _get_redirect_auth_config(
     *,
     client: AsyncComposio,
-    toolkit: Any,
+    toolkit: _Toolkit,
     app_name: str,
     auth_type: str,
-) -> dict:
+) -> _AuthConfig:
     managed_schemes = _composio_managed_auth_schemes(toolkit)
     if managed_schemes is None or _has_composio_managed_auth_scheme(toolkit, auth_type):
         return await _get_or_create_auth_config(
@@ -496,53 +1002,54 @@ async def _find_auth_config(
     auth_scheme: str,
     *,
     managed: bool,
-) -> dict | None:
+) -> _AuthConfig | None:
     cursor: str | None = None
     while True:
-        kwargs: dict[str, Any] = {
-            "toolkit_slug": app_name,
-            "is_composio_managed": managed,
-            "show_disabled": False,
-            "limit": 100,
-        }
         if cursor:
-            kwargs["cursor"] = cursor
-        resp = await client.auth_configs.list(**kwargs)
-        for item in _items(resp):
-            status = (_str_or_none(_value(item, "status")) or "ENABLED").upper()
-            if status != "ENABLED":
+            raw_response = await _call_generated_sdk(
+                client.auth_configs.list(
+                    toolkit_slug=app_name,
+                    is_composio_managed=managed,
+                    show_disabled=False,
+                    limit=100,
+                    cursor=cursor,
+                )
+            )
+        else:
+            raw_response = await _call_generated_sdk(
+                client.auth_configs.list(
+                    toolkit_slug=app_name,
+                    is_composio_managed=managed,
+                    show_disabled=False,
+                    limit=100,
+                )
+            )
+        response = _normalize_sdk_response(raw_response, _AuthConfigPage)
+        for item in response.items:
+            if item.status != "ENABLED":
                 continue
-            item_managed = _value(item, "is_composio_managed")
-            if item_managed is not None and bool(item_managed) != managed:
+            if item.is_composio_managed is not None and item.is_composio_managed != managed:
                 continue
-            item_scheme = _str_or_none(_value(item, "auth_scheme"))
+            item_scheme = _str_or_none(item.auth_scheme)
             if managed and item_scheme and _normalize_composio_scheme(item_scheme) != auth_scheme:
                 continue
             if not managed and (
                 not item_scheme or _normalize_composio_scheme(item_scheme) != auth_scheme
             ):
                 continue
-            return _serialize_auth_config(item)
-        cursor = _str_or_none(_value(resp, "next_cursor"))
+            return item
+        cursor = response.next_cursor
         if not cursor:
             return None
 
 
-def _serialize_auth_config(auth_config: Any) -> dict:
-    return {
-        "id": str(_value(auth_config, "id", default="")),
-        "auth_scheme": _normalize_composio_scheme(_value(auth_config, "auth_scheme")),
-        "is_composio_managed": bool(_value(auth_config, "is_composio_managed", default=False)),
-    }
-
-
 async def _connect_disabled_reason(
     client: AsyncComposio,
-    toolkit: Any,
+    toolkit: _Toolkit,
     app_name: str,
     auth_type: str,
     *,
-    custom_auth_config_index: dict[tuple[str, str], dict] | None = None,
+    custom_auth_config_index: frozenset[tuple[str, str]] | None = None,
 ) -> str | None:
     if not _requires_preconfigured_custom_oauth(toolkit, auth_type):
         return None
@@ -550,41 +1057,44 @@ async def _connect_disabled_reason(
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
     toolkit_slug = _normalize_toolkit_slug(app_name)
     existing = (
-        custom_auth_config_index.get((toolkit_slug, auth_scheme))
+        (toolkit_slug, auth_scheme) in custom_auth_config_index
         if custom_auth_config_index is not None and toolkit_slug is not None
-        else await _find_auth_config(client, app_name, auth_scheme, managed=False)
+        else (await _find_auth_config(client, app_name, auth_scheme, managed=False)) is not None
     )
-    if existing is not None:
+    if existing:
         return None
     return CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE
 
 
 async def _annotate_connect_status(
     client: AsyncComposio,
-    toolkit: Any,
-    app: dict,
+    toolkit: _Toolkit,
+    app: ConnectorAvailableAppResponse,
     *,
-    custom_auth_config_index: dict[tuple[str, str], dict] | None = None,
-) -> dict:
+    custom_auth_config_index: frozenset[tuple[str, str]] | None = None,
+) -> ConnectorAvailableAppResponse:
     reason = await _connect_disabled_reason(
         client,
         toolkit,
-        str(app.get("name", "")),
-        str(app.get("auth_type", "")),
+        app.name,
+        app.auth_type,
         custom_auth_config_index=custom_auth_config_index,
     )
-    return {
-        **app,
-        "connect_disabled": reason is not None,
-        "connect_disabled_reason": reason,
-    }
+    return app.model_copy(
+        update={
+            "connect_disabled": reason is not None,
+            "connect_disabled_reason": reason,
+        }
+    )
 
 
-_custom_auth_config_index: dict[tuple[str, str], dict] | None = None
+_custom_auth_config_index: frozenset[tuple[str, str]] | None = None
 _custom_auth_config_index_at: datetime | None = None
 
 
-async def _get_custom_auth_config_index(client: AsyncComposio) -> dict[tuple[str, str], dict]:
+async def _get_custom_auth_config_index(
+    client: AsyncComposio,
+) -> frozenset[tuple[str, str]]:
     """Return enabled custom auth configs keyed by (toolkit slug, auth scheme)."""
     global _custom_auth_config_index, _custom_auth_config_index_at
     now = datetime.now(UTC)
@@ -592,47 +1102,54 @@ async def _get_custom_auth_config_index(client: AsyncComposio) -> dict[tuple[str
         if (now - _custom_auth_config_index_at) < _COMPOSIO_METADATA_CACHE_TTL:
             return _custom_auth_config_index
 
-    index: dict[tuple[str, str], dict] = {}
+    index: set[tuple[str, str]] = set()
     cursor: str | None = None
     while True:
-        kwargs: dict[str, Any] = {
-            "is_composio_managed": False,
-            "show_disabled": False,
-            "limit": 100,
-        }
         if cursor:
-            kwargs["cursor"] = cursor
-        resp = await client.auth_configs.list(**kwargs)
-        for item in _items(resp):
-            status = (_str_or_none(_value(item, "status")) or "ENABLED").upper()
-            if status != "ENABLED":
+            raw_response = await _call_generated_sdk(
+                client.auth_configs.list(
+                    is_composio_managed=False,
+                    show_disabled=False,
+                    limit=100,
+                    cursor=cursor,
+                )
+            )
+        else:
+            raw_response = await _call_generated_sdk(
+                client.auth_configs.list(
+                    is_composio_managed=False,
+                    show_disabled=False,
+                    limit=100,
+                )
+            )
+        response = _normalize_sdk_response(raw_response, _AuthConfigPage)
+        for item in response.items:
+            if item.status != "ENABLED":
                 continue
-            item_managed = _value(item, "is_composio_managed")
-            if item_managed is not None and bool(item_managed):
+            if item.is_composio_managed:
                 continue
             toolkit_slug = _auth_config_toolkit_slug(item)
-            auth_scheme = _normalize_composio_scheme(_value(item, "auth_scheme"))
+            auth_scheme = _normalize_composio_scheme(item.auth_scheme)
             if toolkit_slug and auth_scheme:
-                index[(toolkit_slug, auth_scheme)] = _serialize_auth_config(item)
-        cursor = _str_or_none(_value(resp, "next_cursor"))
+                index.add((toolkit_slug, auth_scheme))
+        cursor = response.next_cursor
         if not cursor:
             break
 
-    _custom_auth_config_index = index
+    _custom_auth_config_index = frozenset(index)
     _custom_auth_config_index_at = now
-    return index
+    return _custom_auth_config_index
 
 
-def _auth_config_toolkit_slug(auth_config: Any) -> str | None:
-    toolkit = _value(auth_config, "toolkit")
-    if isinstance(toolkit, str) and toolkit.strip():
-        return toolkit.strip().lower()
-    return _normalize_toolkit_slug(
-        _value(auth_config, "toolkit_slug", "toolkitSlug", "app_name", "appName")
-    ) or _normalize_toolkit_slug(_value(toolkit, "slug", "key", "name"))
+def _auth_config_toolkit_slug(auth_config: _AuthConfig) -> str | None:
+    return (
+        _normalize_toolkit_slug(auth_config.toolkit.slug)
+        if auth_config.toolkit is not None
+        else None
+    )
 
 
-def _normalize_toolkit_slug(value: Any) -> str | None:
+def _normalize_toolkit_slug(value: str | None) -> str | None:
     text = _str_or_none(value)
     return text.lower() if text else None
 
@@ -657,8 +1174,8 @@ def _auth_type_to_composio_scheme(auth_type: str) -> str:
     return normalized.upper()
 
 
-def _normalize_composio_scheme(value: Any) -> str:
-    text = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+def _normalize_composio_scheme(value: str | None) -> str:
+    text = (value or "").strip().upper().replace("-", "_").replace(" ", "_")
     if text == "BEARER":
         return "BEARER_TOKEN"
     if text == "APIKEY":
@@ -668,8 +1185,8 @@ def _normalize_composio_scheme(value: Any) -> str:
     return text
 
 
-def _normalize_auth_type(value: Any) -> str:
-    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+def _normalize_auth_type(value: str) -> str:
+    text = value.strip().lower().replace("-", "_").replace(" ", "_")
     if text == "oauth":
         return "oauth2"
     if text == "apikey":
@@ -683,12 +1200,7 @@ def _normalize_auth_type(value: Any) -> str:
     return text
 
 
-def _normalize_status(value: Any) -> str:
-    status = str(value or "").strip().upper()
-    return status if status in (_ACTIVE_OR_PENDING_STATUSES | _TERMINAL_STATUSES) else "UNKNOWN"
-
-
-def _has_composio_managed_auth_scheme(toolkit: Any, auth_type: str) -> bool:
+def _has_composio_managed_auth_scheme(toolkit: _Toolkit, auth_type: str) -> bool:
     managed_schemes = _composio_managed_auth_schemes(toolkit)
     if managed_schemes is None:
         return False
@@ -696,7 +1208,7 @@ def _has_composio_managed_auth_scheme(toolkit: Any, auth_type: str) -> bool:
     return any(_auth_type_to_composio_scheme(scheme) == auth_scheme for scheme in managed_schemes)
 
 
-def _requires_preconfigured_custom_oauth(toolkit: Any, auth_type: str) -> bool:
+def _requires_preconfigured_custom_oauth(toolkit: _Toolkit, auth_type: str) -> bool:
     if auth_type not in _REDIRECT_AUTH_TYPES:
         return False
     managed_schemes = _composio_managed_auth_schemes(toolkit)
@@ -710,29 +1222,28 @@ def _requires_preconfigured_custom_oauth(toolkit: Any, auth_type: str) -> bool:
     return not _has_composio_managed_auth_scheme(toolkit, auth_type)
 
 
-def _composio_managed_auth_schemes(toolkit: Any) -> list[str] | None:
-    raw = _value(toolkit, "composio_managed_auth_schemes", default=None)
-    if raw is None:
-        return None
-    return _string_list(raw)
+def _composio_managed_auth_schemes(toolkit: _Toolkit) -> list[str] | None:
+    return toolkit.composio_managed_auth_schemes
 
 
-def _serialize_auth_field(field: Any, *, required: bool | None = None) -> dict:
-    name = _str_or_none(_value(field, "name")) or ""
-    field_type = _str_or_none(_value(field, "type")) or "string"
-    is_secret = bool(_value(field, "is_secret", "isSecret", default=False)) or _looks_secret_field(
-        name, field_type
+def _serialize_auth_field(
+    field: _AuthField,
+    *,
+    required: bool | None = None,
+) -> ConnectorAuthFieldResponse:
+    display_name = field.display_name.strip() or field.name
+    field_type = field.type.strip() or "string"
+    is_secret = field.is_secret or _looks_secret_field(field.name, field_type)
+    return ConnectorAuthFieldResponse(
+        name=field.name,
+        display_name=display_name,
+        description=field.description,
+        type=field_type,
+        required=required if required is not None else field.required,
+        is_secret=is_secret,
+        expected_from_customer=field.expected_from_customer,
+        default=_str_or_none(field.default),
     )
-    return {
-        "name": name,
-        "display_name": _str_or_none(_value(field, "display_name", "displayName")) or name,
-        "description": _str_or_none(_value(field, "description")) or "",
-        "type": field_type,
-        "required": bool(required) if required is not None else bool(_value(field, "required")),
-        "is_secret": is_secret,
-        "expected_from_customer": bool(_value(field, "expected_from_customer", default=True)),
-        "default": _str_or_none(_value(field, "default")),
-    }
 
 
 def _looks_secret_field(name: str, field_type: str) -> bool:
@@ -740,43 +1251,42 @@ def _looks_secret_field(name: str, field_type: str) -> bool:
     return any(token in text for token in ("password", "secret", "token", "api_key", "apikey"))
 
 
-def _auth_fields_from_toolkit_detail(toolkit: Any, auth_scheme: str) -> list[dict]:
-    details = _value(toolkit, "auth_config_details", default=[]) or []
-    selected = None
-    for detail in details:
-        mode = _auth_type_to_composio_scheme(_value(detail, "mode", "name"))
-        if mode == auth_scheme:
-            selected = detail
-            break
+def _auth_fields_from_toolkit_detail(
+    toolkit: _Toolkit,
+    auth_scheme: str,
+) -> list[ConnectorAuthFieldResponse]:
+    selected = next(
+        (
+            detail
+            for detail in toolkit.auth_config_details or []
+            if _auth_type_to_composio_scheme(detail.mode) == auth_scheme
+        ),
+        None,
+    )
     if selected is None:
         return []
 
-    fields = _value(selected, "fields")
-    initiation = _value(fields, "connected_account_initiation")
-    required_fields = _value(initiation, "required", default=[]) or []
-    optional_fields = _value(initiation, "optional", default=[]) or []
+    initiation = selected.fields.connected_account_initiation
     return [
-        *[_serialize_auth_field(field, required=True) for field in required_fields],
-        *[_serialize_auth_field(field, required=False) for field in optional_fields],
+        *[_serialize_auth_field(field, required=True) for field in initiation.required],
+        *[_serialize_auth_field(field, required=False) for field in initiation.optional],
     ]
 
 
-def _primary_auth_type(toolkit: Any) -> str:
+def _primary_auth_type(toolkit: _Toolkit) -> str:
     """Lowercase auth scheme for connector routing."""
-    if bool(_value(toolkit, "no_auth", default=False)):
+    if toolkit.no_auth:
         return "none"
 
     managed_schemes = [
-        _normalize_auth_type(v)
-        for v in _string_list(_value(toolkit, "composio_managed_auth_schemes"))
+        _normalize_auth_type(value) for value in toolkit.composio_managed_auth_schemes or []
     ]
     all_schemes = [
         *managed_schemes,
-        *[_normalize_auth_type(v) for v in _string_list(_value(toolkit, "auth_schemes"))],
+        *[_normalize_auth_type(value) for value in toolkit.auth_schemes or []],
     ]
     detail_schemes = [
-        _normalize_auth_type(_value(detail, "mode", "name"))
-        for detail in (_value(toolkit, "auth_config_details", default=[]) or [])
+        _normalize_auth_type(detail.mode) for detail in toolkit.auth_config_details or []
     ]
     all_schemes.extend(scheme for scheme in detail_schemes if scheme)
 
@@ -786,33 +1296,29 @@ def _primary_auth_type(toolkit: Any) -> str:
     for scheme in all_schemes:
         if scheme:
             return scheme
-    slug = _str_or_none(_value(toolkit, "slug", "key", "name")) or "unknown"
-    raise ConnectorAuthMetadataError(f"Connector auth metadata unavailable for {slug}")
+    raise ConnectorAuthMetadataError(f"Connector auth metadata unavailable for {toolkit.slug}")
 
 
-def _serialize_app(toolkit: Any, *, allow_unknown_auth_type: bool = False) -> dict:
-    meta = _value(toolkit, "meta", default={})
-    key = _str_or_none(_value(toolkit, "slug", "key", "name")) or ""
-    display = _str_or_none(_value(toolkit, "name", "display_name", "displayName"))
-    display = display or _titleize_slug(key)
-    logo = _str_or_none(_value(meta, "logo")) or _str_or_none(_value(toolkit, "logo")) or ""
-    desc = _str_or_none(_value(meta, "description"))
-    desc = desc or _str_or_none(_value(toolkit, "description")) or ""
+def _serialize_app(
+    toolkit: _Toolkit,
+    *,
+    allow_unknown_auth_type: bool = False,
+) -> ConnectorAvailableAppResponse:
     try:
         auth_type = _primary_auth_type(toolkit)
     except ConnectorAuthMetadataError:
         if not allow_unknown_auth_type:
             raise
         auth_type = "unknown"
-    return {
-        "name": key,
-        "display_name": display,
-        "logo": logo,
-        "description": desc[:200],
-        "auth_type": auth_type,
-        "connect_disabled": False,
-        "connect_disabled_reason": None,
-    }
+    return ConnectorAvailableAppResponse(
+        name=toolkit.slug,
+        display_name=toolkit.name or _titleize_slug(toolkit.slug),
+        logo=toolkit.meta.logo,
+        description=toolkit.meta.description[:200],
+        auth_type=auth_type,
+        connect_disabled=False,
+        connect_disabled_reason=None,
+    )
 
 
 def _titleize_slug(slug: str) -> str:
@@ -822,11 +1328,11 @@ def _titleize_slug(slug: str) -> str:
     return spaced.title()
 
 
-_toolkits_cache: list[Any] | None = None
+_toolkits_cache: list[_Toolkit] | None = None
 _toolkits_cache_at: datetime | None = None
 
 
-async def _get_all_toolkits() -> list[Any]:
+async def _get_all_toolkits() -> list[_Toolkit]:
     """Fetch and cache the Composio toolkit catalog."""
     global _toolkits_cache, _toolkits_cache_at
     now = datetime.now(UTC)
@@ -835,19 +1341,29 @@ async def _get_all_toolkits() -> list[Any]:
             return _toolkits_cache
 
     client = get_composio_client()
-    toolkits: list[Any] = []
+    toolkits: list[_Toolkit] = []
     cursor: str | None = None
     while True:
-        kwargs: dict[str, Any] = {
-            "managed_by": "composio",
-            "sort_by": "usage",
-            "limit": 1000,
-        }
         if cursor:
-            kwargs["cursor"] = cursor
-        resp = await client.toolkits.list(**kwargs)
-        toolkits.extend(_items(resp))
-        cursor = _str_or_none(_value(resp, "next_cursor"))
+            raw_response = await _call_generated_sdk(
+                client.toolkits.list(
+                    managed_by="composio",
+                    sort_by="usage",
+                    limit=1000,
+                    cursor=cursor,
+                )
+            )
+        else:
+            raw_response = await _call_generated_sdk(
+                client.toolkits.list(
+                    managed_by="composio",
+                    sort_by="usage",
+                    limit=1000,
+                )
+            )
+        response = _normalize_sdk_response(raw_response, _ToolkitPage)
+        toolkits.extend(response.items)
+        cursor = response.next_cursor
         if not cursor:
             break
 
@@ -856,28 +1372,29 @@ async def _get_all_toolkits() -> list[Any]:
     return toolkits
 
 
-async def get_app_by_name(name: str) -> dict | None:
+async def get_app_by_name(name: str) -> ConnectorAvailableAppResponse | None:
     """Look up one toolkit by Composio slug."""
     client = get_composio_client()
     toolkits = await _get_all_toolkits()
     for toolkit in toolkits:
         app = _serialize_app(toolkit, allow_unknown_auth_type=True)
-        if app["name"] == name:
+        if app.name == name:
             detail = await _get_toolkit_detail(name)
             return await _annotate_connect_status(client, detail, _serialize_app(detail))
     return None
 
 
-async def _get_toolkit_detail(name: str) -> Any:
+async def _get_toolkit_detail(name: str) -> _Toolkit:
     client = get_composio_client()
-    return await client.toolkits.retrieve(name)
+    response = await _call_generated_sdk(client.toolkits.retrieve(name))
+    return _normalize_sdk_response(response, _Toolkit)
 
 
 async def get_available_apps(
     search: str | None = None,
     page: int = 1,
     page_size: int = 24,
-) -> dict:
+) -> ConnectorAppPage:
     """Paginated catalog query.
 
     The catalog is a user-facing list of connectors they can actually
@@ -895,17 +1412,21 @@ async def get_available_apps(
         items = [
             (toolkit, app)
             for toolkit, app in items
-            if q in app["name"].lower()
-            or q in app["display_name"].lower()
-            or q in app["description"].lower()
+            if q in app.name.lower()
+            or q in app.display_name.lower()
+            or q in app.description.lower()
         ]
     needs_custom_oauth = any(
-        _requires_preconfigured_custom_oauth(toolkit, app["auth_type"]) for toolkit, app in items
+        _requires_preconfigured_custom_oauth(
+            toolkit,
+            app.auth_type,
+        )
+        for toolkit, app in items
     )
-    custom_auth_config_index = (
-        await _get_custom_auth_config_index(client) if needs_custom_oauth else {}
+    custom_auth_config_index: frozenset[tuple[str, str]] = (
+        await _get_custom_auth_config_index(client) if needs_custom_oauth else frozenset()
     )
-    visible_items: list[dict] = []
+    visible_items: list[ConnectorAvailableAppResponse] = []
     for toolkit, app in items:
         annotated = await _annotate_connect_status(
             client,
@@ -913,7 +1434,7 @@ async def get_available_apps(
             app,
             custom_auth_config_index=custom_auth_config_index,
         )
-        if not annotated["connect_disabled"]:
+        if not annotated.connect_disabled:
             visible_items.append(annotated)
 
     total = len(visible_items)
@@ -927,32 +1448,8 @@ async def get_available_apps(
     }
 
 
-def _items(response: Any) -> list[Any]:
-    if isinstance(response, list):
-        return response
-    items = _value(response, "items", default=[])
-    return list(items or [])
-
-
-def _string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
-
-
-def _value(obj: Any, *names: str, default: Any = None) -> Any:
-    if obj is None:
-        return default
-    for name in names:
-        if isinstance(obj, dict) and name in obj:
-            return obj[name]
-        if hasattr(obj, name):
-            return getattr(obj, name)
-    return default
-
-
-def _str_or_none(value: Any) -> str | None:
+def _str_or_none(value: str | None) -> str | None:
     if value is None:
         return None
-    text = str(value).strip()
+    text = value.strip()
     return text or None

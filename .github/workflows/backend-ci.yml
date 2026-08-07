@@ -4,7 +4,12 @@ on:
   pull_request:
     paths:
       - "backend/**"
-      - "infra/deploy/coolify/**"
+      - "packages/whatsapp-baileys-sidecar/**"
+      - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
+      - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
+      - "config/deploy.yml"
+      - "config/postgres-image.txt"
+      - "docker-compose.test.yml"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
       - ".dockerignore"
@@ -12,6 +17,11 @@ on:
       - "package.json"
       - "bun.lock"
       - "scripts/openapi-typescript.sh"
+      - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+      - "scripts/deploy-whatsapp-sidecar.sh"
+      - "scripts/whatsapp-sidecar-deployment-revision.ts"
+      - "scripts/test-deploy-whatsapp-sidecar.sh"
+      - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
@@ -20,7 +30,12 @@ on:
     branches: [main]
     paths:
       - "backend/**"
-      - "infra/deploy/coolify/**"
+      - "packages/whatsapp-baileys-sidecar/**"
+      - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
+      - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
+      - "config/deploy.yml"
+      - "config/postgres-image.txt"
+      - "docker-compose.test.yml"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
       - ".dockerignore"
@@ -28,6 +43,11 @@ on:
       - "package.json"
       - "bun.lock"
       - "scripts/openapi-typescript.sh"
+      - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+      - "scripts/deploy-whatsapp-sidecar.sh"
+      - "scripts/whatsapp-sidecar-deployment-revision.ts"
+      - "scripts/test-deploy-whatsapp-sidecar.sh"
+      - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
@@ -47,8 +67,9 @@ jobs:
     outputs:
       any: ${{ steps.filter.outputs.any }}
       test: ${{ steps.filter.outputs.test }}
+      sidecar: ${{ steps.filter.outputs.sidecar }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: filter
         uses: dorny/paths-filter@v4
         with:
@@ -59,7 +80,6 @@ jobs:
               - "backend/uv.lock"
               - "backend/alembic.ini"
               - "backend/Dockerfile"
-              - "infra/deploy/coolify/**"
               - "deploy/self-host/**"
               - "apps/web/Dockerfile"
               - ".dockerignore"
@@ -71,34 +91,73 @@ jobs:
               - ".github/actions/setup-bun-ci/**"
               - ".github/workflows/backend-ci.yml"
               - ".github/workflows/clawdi-image-release.yml"
+              - "packages/whatsapp-baileys-sidecar/**"
+              - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
+              - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
+              - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+              - "scripts/deploy-whatsapp-sidecar.sh"
+              - "scripts/whatsapp-sidecar-deployment-revision.ts"
+              - "scripts/test-deploy-whatsapp-sidecar.sh"
+              - "scripts/check_postgres_image_parity.py"
+              - "config/deploy.yml"
+              - "config/postgres-image.txt"
+              - "docker-compose.test.yml"
             test:
               - "backend/app/**"
               - "backend/tests/**"
               - "backend/alembic/**"
+              - "backend/scripts/check_postgres_runtime.py"
               - "backend/pyproject.toml"
               - "backend/uv.lock"
               - "backend/Dockerfile"
+              - "config/postgres-image.txt"
+              - "docker-compose.test.yml"
+              - "scripts/check_postgres_image_parity.py"
               - ".github/workflows/backend-ci.yml"
+            sidecar:
+              - "packages/whatsapp-baileys-sidecar/**"
+              - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
+              - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
+              - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+              - "scripts/deploy-whatsapp-sidecar.sh"
+              - "scripts/whatsapp-sidecar-deployment-revision.ts"
+              - "scripts/test-deploy-whatsapp-sidecar.sh"
+              - "config/deploy.yml"
+              - "package.json"
+              - "bun.lock"
+              - ".dockerignore"
+              - ".github/actions/setup-bun-ci/**"
+              - ".github/workflows/backend-ci.yml"
+              - ".github/workflows/clawdi-image-release.yml"
 
   lint-and-typecheck:
     needs: changes
     if: needs.changes.outputs.any == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@v7
         with:
-          python-version: "3.12"
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.14"
           enable-cache: true
+          prune-cache: true
           cache-dependency-glob: backend/uv.lock
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: "1.3.14"
       - run: uv sync --frozen --no-install-project
+      - name: PostgreSQL image parity
+        run: uv run python ../scripts/check_postgres_image_parity.py
+      - name: uv lock is current
+        run: uv lock --check
+      - name: Dependency authority
+        run: uv run python scripts/check_dependency_authority.py
       - name: Ruff lint
         run: uv run ruff check app scripts
       - name: Ruff format (check-only)
@@ -114,13 +173,27 @@ jobs:
       # and flags drift. Config in `pyproject.toml [tool.deptry]`.
       - name: Dependency drift check
         run: uv run deptry app
+      - name: External API import ownership
+        run: uv run python scripts/outbound_api_governance.py
+      # Keep Mem0 out of the default dev/test environment while loading the
+      # locked optional SDK for its direct-import typing boundary.
+      - name: Install optional SDK type-audit lane
+        run: uv sync --frozen --no-install-project --extra mem0
+      - name: Pinned Mem0 public-client contract
+        run: uv run pytest -q tests/test_memory_provider_mem0_contract.py
+      - name: Owned-path type ratchet
+        run: uv run python scripts/type_governance.py owned
+      - name: Strict typing exception audit
+        run: uv run python scripts/type_governance.py exceptions
+      - name: Changed-production type gate
+        env:
+          TYPE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TYPE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: uv run python scripts/type_governance.py changed-from "$TYPE_BASE_SHA" "$TYPE_HEAD_SHA"
+      - name: Complete BasedPyright inventory (non-gating diagnostics)
+        run: uv run python scripts/type_governance.py inventory
       - name: Generated OpenAPI client is current
         run: uv run python scripts/check_generated_api.py
-      - name: Coolify deploy contract sanity
-        run: |
-          python3 -m py_compile ../infra/deploy/coolify/*.py
-          python3 -m json.tool ../infra/deploy/coolify/production-stack.json >/dev/null
-
   test:
     needs: changes
     if: needs.changes.outputs.test == 'true'
@@ -131,18 +204,19 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        # pgvector image ships PG 16 + pgvector + pg_trgm preinstalled as extensions.
-        image: pgvector/pgvector:pg16
+        # Workflow services require a literal; the parity contract guards it.
+        image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:a1fdff3df831a4cd165795cc4c78d5e8d99ed7d279438e59fc30d75b8d10dd67
         env:
           POSTGRES_DB: clawdi_test
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U test -d clawdi_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+          --tmpfs /var/lib/postgresql:rw,nosuid,nodev,noexec,size=1g
     env:
       DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/clawdi_test
       ENCRYPTION_KEY: test-encryption-key-32-chars-xxxx
@@ -150,23 +224,62 @@ jobs:
       CLERK_PEM_PUBLIC_KEY: ""
       CORS_ORIGINS: '["http://localhost:3000"]'
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           enable-cache: true
+          prune-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --frozen --no-install-project
-      - name: Enable Postgres extensions
-        run: |
-          PGPASSWORD=test psql -h localhost -U test -d clawdi_test \
-            -c 'CREATE EXTENSION IF NOT EXISTS vector;' \
-            -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+      - name: Verify PostgreSQL runtime contract
+        run: uv run python scripts/check_postgres_runtime.py
       - name: Run migrations
         run: uv run alembic upgrade head
       - name: Project-sharing migration downgrade/upgrade round trip
         run: |
           uv run alembic downgrade 62bdb2921f5f
           uv run alembic upgrade head
-      - name: Pytest
+      - name: Pytest (ephemeral internal suite)
         run: uv run pytest -q
+
+  sidecar:
+    needs: changes
+    if: needs.changes.outputs.sidecar == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: "1.3.14"
+      - name: Sidecar typecheck and tests
+        run: |
+          bun run --cwd packages/whatsapp-baileys-sidecar typecheck
+          bun run --cwd packages/whatsapp-baileys-sidecar test:internal
+      - name: Deployment contract tests
+        run: >-
+          bun run --cwd packages/cli test:internal
+          tests/whatsapp-sidecar-deploy-contract.test.ts
+          tests/clawdi-image-release-workflow.test.ts
+      - name: Kamal 2.12 render contract
+        run: |
+          contract_image="clawdi-kamal-contract:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() { docker image rm "$contract_image" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker build --tag "$contract_image" --file - . <<'DOCKERFILE'
+          FROM ruby:3.4.10-bookworm@sha256:8ff02c55f0467a3d03bc6c41b7500f9f0b30086a1861c601cd4e9dc5b8536a66
+          WORKDIR /repo
+          COPY config/deploy.yml config/deploy.yml
+          COPY scripts/deploy-whatsapp-sidecar.sh scripts/deploy-whatsapp-sidecar.sh
+          COPY scripts/test-deploy-whatsapp-sidecar.sh scripts/test-deploy-whatsapp-sidecar.sh
+          COPY scripts/test-kamal-whatsapp-sidecar-render.sh scripts/test-kamal-whatsapp-sidecar-render.sh
+          RUN gem install kamal -v '2.12.0' --no-document
+          RUN scripts/test-kamal-whatsapp-sidecar-render.sh && scripts/test-deploy-whatsapp-sidecar.sh
+          DOCKERFILE
+      - name: Build production sidecar image
+        run: >-
+          docker build
+          --file packages/whatsapp-baileys-sidecar/Dockerfile
+          --tag clawdi-whatsapp-baileys-sidecar:ci
+          .

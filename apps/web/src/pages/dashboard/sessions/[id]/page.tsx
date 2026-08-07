@@ -1,6 +1,6 @@
 "use client";
 
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import {
 	ArrowDown,
 	ArrowDownNarrowWide,
@@ -12,18 +12,14 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentInline, agentDisplayName } from "@/components/dashboard/agent-label";
-import {
-	DetailMeta,
-	DetailNotFound,
-	DetailPanel,
-	DetailStats,
-	DetailTitle,
-} from "@/components/detail/layout";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { AgentInline } from "@/components/dashboard/agent-label";
+import { DetailBackLink } from "@/components/detail/back-link";
+import { DetailMeta, DetailNotFound, DetailPanel, DetailStats } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { MessageList } from "@/components/sessions/message-list";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
@@ -33,17 +29,21 @@ import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError, unwrap, useApi } from "@/lib/api";
+import { agentDeploymentRouteQuery, agentSectionHref } from "@/lib/agent-routes";
+import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	SESSION_DETAIL_GC_MS,
 	SESSION_DETAIL_STALE_MS,
 	SESSION_MESSAGES_GC_MS,
 	SESSION_MESSAGES_STALE_MS,
 } from "@/lib/session-queries";
+import { useCommittedLocation } from "@/lib/use-committed-location";
+import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function SessionDetailPage({ sessionId }: { sessionId: string }) {
@@ -58,42 +58,50 @@ export function SessionDetailContent({
 	agentId?: string | null;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const { user } = useCurrentUser();
+	// Committed-match search, not the pending target: this page stays mounted
+	// while an outgoing navigation loads, and its links must keep pointing at
+	// the context the user is still looking at.
+	const { search: routeSearch } = useCommittedLocation();
+	const sessionsHref = agentId
+		? agentSectionHref(agentId, "sessions", agentDeploymentRouteQuery(routeSearch))
+		: "/sessions";
 
 	const {
 		data: session,
 		isLoading: isSessionLoading,
 		error: sessionError,
 		refetch: refetchSession,
-	} = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/sessions/{session_id}", {
-					params: { path: { session_id: sessionId } },
-				}),
-			),
-		// Don't retry 4xx (malformed UUID, not-found, unauthorized) — they won't
-		// recover on retry and the default 3× retry makes the page hang in
-		// "Loading..." for seconds before the user learns the URL is bogus.
-		retry: (failureCount, err) => {
-			const status = err instanceof ApiError ? err.status : 0;
-			if (status >= 400 && status < 500) return false;
-			return failureCount < 2;
+	} = $api.useQuery(
+		"get",
+		"/v1/sessions/{session_id}",
+		{
+			params: { path: { session_id: sessionId } },
 		},
-		staleTime: SESSION_DETAIL_STALE_MS,
-		gcTime: SESSION_DETAIL_GC_MS,
-	});
-	const { data: scopedAgent } = useQuery({
-		queryKey: ["agents", agentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}", {
-					params: { path: { agent_id: agentId ?? "" } },
-				}),
-			),
-		enabled: !!agentId,
-	});
+		{
+			// Don't retry 4xx (malformed UUID, not-found, unauthorized) — they won't
+			// recover on retry and the default 3× retry makes the page hang in
+			// "Loading..." for seconds before the user learns the URL is bogus.
+			retry: (failureCount, err) => {
+				const status = err instanceof ApiError ? err.status : 0;
+				if (status >= 400 && status < 500) return false;
+				return failureCount < 2;
+			},
+			staleTime: SESSION_DETAIL_STALE_MS,
+			gcTime: SESSION_DETAIL_GC_MS,
+		},
+	);
+	const { data: scopedAgent } = $api.useQuery(
+		"get",
+		"/v1/agents/{agent_id}",
+		{
+			params: { path: { agent_id: agentId ?? "" } },
+		},
+		{
+			enabled: !!agentId,
+		},
+	);
 
 	// Direction toggle: "desc" (newest-first, default) is the most
 	// common review case for clawdi — users open a session to see
@@ -104,11 +112,15 @@ export function SessionDetailContent({
 	// scroll-to-bottom on open) without requiring a scroll gesture
 	// to find the latest reply.
 	type Direction = "asc" | "desc";
-	const [direction, setDirection] = useState<Direction>(() => {
-		if (typeof window === "undefined") return "desc";
+	// SSR and hydration must agree on the first render, so the stored
+	// preference syncs in a layout effect instead of the state initializer.
+	// Layout effects run before the messages query subscribes, so a stored
+	// "asc" swaps the query key without a wasted "desc" fetch.
+	const [direction, setDirection] = useState<Direction>("desc");
+	useIsomorphicLayoutEffect(() => {
 		const stored = localStorage.getItem("clawdi.session.message-direction");
-		return stored === "asc" ? "asc" : "desc";
-	});
+		if (stored === "asc") setDirection("asc");
+	}, []);
 	const persistDirection = (d: Direction) => {
 		setDirection(d);
 		try {
@@ -238,31 +250,21 @@ export function SessionDetailContent({
 		: null;
 	const sessionAgentIdentity = session ? sessionAgentIdentityInput(session) : null;
 	const detailAgentIdentity = scopedAgent ?? sessionAgentIdentity;
-	const agentBreadcrumbTitle = session
-		? scopedAgent
-			? agentDisplayName(scopedAgent)
-			: sessionAgentIdentity
-				? agentDisplayName(sessionAgentIdentity)
-				: null
-		: null;
-	useSetAgentBreadcrumbTitle({
-		agentId,
-		agentTitle: agentBreadcrumbTitle,
-		section: "sessions",
-		title: summaryText,
-	});
+	useSetBreadcrumbTitle(summaryText);
 
 	if (isSessionLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<DetailBackLink href={sessionsHref} label="Sessions" />
 				<DetailSkeleton />
 			</div>
 		);
 	}
 
-	if (sessionError) {
+	if (isApiNotFoundError(sessionError) || shouldBlockQueryError(sessionError, session)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<DetailBackLink href={sessionsHref} label="Sessions" />
 				{isApiNotFoundError(sessionError) ? (
 					<DetailNotFound title="Session not found" message="This session doesn't exist." />
 				) : (
@@ -281,6 +283,7 @@ export function SessionDetailContent({
 	if (!session || !summaryText) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<DetailBackLink href={sessionsHref} label="Sessions" />
 				<DetailNotFound title="Session not found" message="This session doesn't exist." />
 			</div>
 		);
@@ -290,9 +293,10 @@ export function SessionDetailContent({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0 flex-1 space-y-2">
-					<DetailTitle>{summaryText}</DetailTitle>
+			<DetailBackLink href={sessionsHref} label="Sessions" />
+			<PageHeader
+				title={summaryText}
+				status={
 					<DetailMeta>
 						<AgentInline
 							name={detailAgentIdentity?.name ?? null}
@@ -331,9 +335,11 @@ export function SessionDetailContent({
 							</>
 						) : null}
 					</DetailMeta>
-				</div>
-				<SessionShareControls sessionId={session.id} isShared={session.is_shared ?? false} />
-			</div>
+				}
+				actions={
+					<SessionShareControls sessionId={session.id} isShared={session.is_shared ?? false} />
+				}
+			/>
 
 			<SessionSidebar relatedRefs={session.related_refs} />
 
@@ -386,7 +392,7 @@ export function SessionDetailContent({
 			{session.has_content ? (
 				isContentLoading ? (
 					<MessagesSkeleton />
-				) : isContentError ? (
+				) : isContentError && shouldBlockQueryError(contentError, pagesData) ? (
 					<ApiErrorPanel
 						error={contentError}
 						onRetry={() => {
@@ -581,8 +587,7 @@ function LoadMoreSentinel({
 function DetailSkeleton() {
 	return (
 		<div className="space-y-5">
-			<Skeleton className="h-5 w-64" />
-			<Skeleton className="h-3.5 w-48" />
+			<PageHeaderSkeleton actions description={false} />
 			<div className="flex gap-3">
 				<Skeleton className="h-6 w-20 rounded-full" />
 				<Skeleton className="h-4 w-24" />

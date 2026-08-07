@@ -40,10 +40,16 @@ hidden from public OpenAPI.
 
 Legacy `/api/*` mounts are hidden aliases for clients built before the `/v1`
 prefix migration. `backend/app/main.py` mounts every versioned router once under
-`/v1` and once under `/api` with `include_in_schema=False`.
+`/v1` and, where compatibility requires it, once under `/api` with
+`include_in_schema=False`.
 `backend/tests/test_api_version_alias.py` enforces that every `/v1` route has
-the `/api` alias and that public OpenAPI advertises only `/v1/*` plus
-`/health`.
+the expected `/api` alias.
+
+The declarative runtime observation companion is the one direct clean-v2
+surface. Its provisioning, ingestion, retirement, and consumer operations are
+mounted only under `/v2/runtime/*`; they have no `/v1` or `/api` alias. Public
+OpenAPI therefore advertises `/v1/*`, the explicit `/v2/runtime/*` companion,
+and `/health`.
 
 ## Additive-only contract
 
@@ -58,9 +64,11 @@ Compatibility surfaces are additive-only:
 - New canonical agent routes may expose agent-shaped responses, but legacy
   environment aliases must preserve their environment-shaped response fields.
 
-Released CLIs from `v0.7.0` onward must keep working against supported servers.
-When in doubt, add a regression test that exercises the old path and payload
-before changing the handler.
+Released wire surfaces must keep working against supported servers. Compatibility
+is defined by the route and payload schema, plus an explicit capability when
+behavior must be negotiated; a CLI product version is not a compatibility
+selector. When in doubt, add a regression test that exercises the old path and
+payload before changing the handler.
 
 ## Generated clients
 
@@ -75,7 +83,8 @@ workflow in [`backend-development.md`](backend-development.md#generated-api-clie
 and commit the generated file with the schema change.
 
 Because `/api/*` aliases and admin routes are hidden from public OpenAPI, the
-generated client should use `/v1/*` paths only.
+generated client should use `/v1/*` paths for legacy contracts and direct
+`/v2/runtime/*` paths for the runtime observation companion.
 
 ## API change playbook
 
@@ -125,7 +134,6 @@ or test fixtures. They are not Clawdi's legacy route prefix and must not be
 rewritten mechanically. Examples in this repository include:
 
 - Discord REST paths such as `/api/v10/*`.
-- BlueBubbles-compatible paths such as `/api/v1/*`.
 - OpenAI-compatible base URLs ending in `/api/v1`.
 - Composio API URLs.
 - Captured provider fixtures under `backend/tests/fixtures/`.

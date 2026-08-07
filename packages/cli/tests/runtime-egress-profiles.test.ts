@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { egressProfileSchema } from "../src/runtime/egress-profiles";
+import { egressProfileSchema, secretRefSchema } from "../src/runtime/egress-profiles";
 import {
 	hostedManifestEgressProfiles,
 	runtimeInstallerEgressProfiles,
@@ -9,6 +9,22 @@ const providerProfiles = (profiles: ReturnType<typeof hostedManifestEgressProfil
 	profiles.filter((profile) => profile.owner === "provider-projection");
 
 describe("runtime egress profile schema", () => {
+	it("shares canonical secretRef semantics with hosted MCP resources", () => {
+		for (const value of ["secret://provider.default.apiKey", "secret://runtime/auth-token"]) {
+			expect(secretRefSchema.safeParse(value).success).toBe(true);
+		}
+		for (const value of [
+			"secret://",
+			"env://CLAWDI_AUTH_TOKEN",
+			"provider.default.apiKey",
+			"secret://provider key",
+			"secret://provider\tkey",
+			"secret://provider\nkey",
+		]) {
+			expect(secretRefSchema.safeParse(value).success).toBe(false);
+		}
+	});
+
 	it("accepts HTTP and websocket upstream base URLs", () => {
 		const base = {
 			id: "discord-rest",
@@ -51,6 +67,56 @@ describe("runtime egress profile schema", () => {
 							prefix: "Bearer ",
 						},
 					},
+				},
+			}).success,
+		).toBe(true);
+	});
+
+	it("accepts generic secretRef prefix matchers for headers and query values", () => {
+		expect(
+			egressProfileSchema.safeParse({
+				id: "managed-upgrade-identity",
+				enabled: true,
+				kind: "websocket",
+				match: {
+					scheme: "wss",
+					host: "socket.example.test",
+					headers: {
+						"x-managed-identity": {
+							type: "secretRefPrefix",
+							secretRef: "secret://runtime/placeholder",
+							prefix: "Managed ",
+						},
+					},
+					query: {
+						identity: {
+							type: "secretRefPrefix",
+							secretRef: "secret://runtime/placeholder",
+							suffix: ".",
+						},
+					},
+				},
+				rewrite: { upstreamBaseUrl: "wss://relay.example.test/session" },
+			}).success,
+		).toBe(true);
+	});
+
+	it("accepts narrowly scoped removal of internal routing headers", () => {
+		expect(
+			egressProfileSchema.safeParse({
+				id: "whatsapp-managed-upgrade",
+				enabled: true,
+				kind: "websocket",
+				match: {
+					scheme: "wss",
+					host: "web.whatsapp.com",
+					path: { type: "equals", value: "/ws/chat" },
+					headers: { "x-clawdi-whatsapp-link-capability": { type: "exists" } },
+				},
+				rewrite: {
+					upstreamBaseUrl: "wss://cloud-api.test/v1/channels/whatsapp/baileys",
+					preservePath: false,
+					removeHeaders: ["x-clawdi-whatsapp-link-capability"],
 				},
 			}).success,
 		).toBe(true);
@@ -136,7 +202,7 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://ai-gateway.example.test/v1",
 					apiMode: "openai_chat",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.default.apiKey",
+					apiKeySecretRef: "secret://provider.default.apiKey",
 				},
 			},
 		});
@@ -150,6 +216,7 @@ describe("runtime egress profile schema", () => {
 				match: {
 					scheme: "https",
 					host: "ai-gateway.example.test",
+					pathPrefix: "/v1/",
 					headers: {
 						authorization: {
 							type: "equals",
@@ -174,6 +241,26 @@ describe("runtime egress profile schema", () => {
 				owner: "provider-projection",
 			},
 		]);
+	});
+
+	it("uses the stable managed id for deployment-scoped rewrite profile names", () => {
+		const bundle = hostedManifestEgressProfiles({
+			providers: {
+				"clawdi-v2-deployment-42": {
+					baseUrl: "https://ai-gateway.example.test/v1",
+					apiMode: "openai_chat",
+					managed_by: "clawdi",
+					apiKeySecretRef: "secret://provider.clawdi-v2-deployment-42.apiKey",
+				},
+			},
+		});
+
+		expect(providerProfiles(bundle.profiles).map((profile) => profile.id)).toEqual([
+			"managed-provider-clawdi",
+		]);
+		expect(JSON.stringify(bundle.profiles)).not.toContain(
+			"managed-provider-clawdi-v2-deployment-42",
+		);
 	});
 
 	it("adds explicit runtime installer passthrough allowlist profiles", () => {
@@ -267,13 +354,13 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://openclaw-provider.example.test/v1",
 					apiMode: "openai_chat",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.openclaw.apiKey",
+					apiKeySecretRef: "secret://provider.openclaw.apiKey",
 				},
 				hermes: {
 					baseUrl: "https://hermes-provider.example.test/v1",
 					apiMode: "openai_responses",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.hermes.apiKey",
+					apiKeySecretRef: "secret://provider.hermes.apiKey",
 				},
 			},
 		});
@@ -285,6 +372,10 @@ describe("runtime egress profile schema", () => {
 		expect(providerProfiles(bundle.profiles).map((profile) => profile.match.host)).toEqual([
 			"hermes-provider.example.test",
 			"openclaw-provider.example.test",
+		]);
+		expect(providerProfiles(bundle.profiles).map((profile) => profile.match.pathPrefix)).toEqual([
+			"/v1/",
+			"/v1/",
 		]);
 	});
 
@@ -299,7 +390,7 @@ describe("runtime egress profile schema", () => {
 						baseUrl: "https://ai-gateway.example.test/v1",
 						apiMode: "openai_responses",
 						managed_by: "clawdi",
-						apiKeySecretRef: "tool.codex.apiKey",
+						apiKeySecretRef: "secret://tool.codex.apiKey",
 					},
 				},
 			},
@@ -311,6 +402,7 @@ describe("runtime egress profile schema", () => {
 			match: {
 				scheme: "https",
 				host: "ai-gateway.example.test",
+				pathPrefix: "/v1/",
 				headers: {
 					authorization: {
 						type: "equals",
@@ -334,7 +426,7 @@ describe("runtime egress profile schema", () => {
 			baseUrl: "https://ai-gateway.example.test/v1",
 			apiMode: "openai_responses",
 			managed_by: "clawdi",
-			apiKeySecretRef: "tool.codex.apiKey",
+			apiKeySecretRef: "secret://tool.codex.apiKey",
 		};
 		const bundle = hostedManifestEgressProfiles({
 			providers: { shared: sharedProvider },
@@ -349,6 +441,30 @@ describe("runtime egress profile schema", () => {
 
 		expect(providerProfiles(bundle.profiles)).toHaveLength(1);
 		expect(providerProfiles(bundle.profiles)[0]?.id).toBe("managed-provider-shared");
+	});
+
+	it("keeps separate managed provider profiles for distinct paths on one origin", () => {
+		const bundle = hostedManifestEgressProfiles({
+			providers: {
+				chat: {
+					baseUrl: "https://ai-gateway.example.test/chat/v1",
+					apiMode: "openai_chat",
+					managed_by: "clawdi",
+					apiKeySecretRef: "secret://provider.shared.apiKey",
+				},
+				responses: {
+					baseUrl: "https://ai-gateway.example.test/responses/v1",
+					apiMode: "openai_responses",
+					managed_by: "clawdi",
+					apiKeySecretRef: "secret://provider.shared.apiKey",
+				},
+			},
+		});
+
+		expect(providerProfiles(bundle.profiles).map((profile) => profile.match.pathPrefix)).toEqual([
+			"/chat/v1/",
+			"/responses/v1/",
+		]);
 	});
 
 	it("does not derive provider egress profiles without a managed provider secret ref", () => {
@@ -374,7 +490,7 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://byok-provider.example.test/v1",
 					apiMode: "openai_chat",
 					managed_by: "user",
-					apiKeySecretRef: "provider.default.apiKey",
+					apiKeySecretRef: "secret://provider.default.apiKey",
 				},
 			},
 		});
@@ -390,7 +506,7 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://anthropic.example.test/v1",
 					apiMode: "anthropic_messages",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.default.apiKey",
+					apiKeySecretRef: "secret://provider.default.apiKey",
 				},
 			},
 		});

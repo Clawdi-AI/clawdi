@@ -1,15 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type AiProviderAuth,
+	aiProviderRuntimeCompatibility,
+	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_PROVIDER_IDS,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	CODEX_OAUTH_MODEL_CATALOG,
 	defaultAiProviderModels,
 	defaultAiProviderRuntimeEnvName,
+	isClawdiManagedV2ProviderId,
 	isFirstPartyManagedAiProvider,
 	isProviderAuthProfileId,
+	projectUserSelectableAiProviders,
 	validateAiProviderCatalog,
 } from "./ai-provider";
 import type { components } from "./api/api.generated";
@@ -160,6 +166,56 @@ describe("validateAiProviderCatalog", () => {
 		expect(result.valid).toBe(true);
 	});
 
+	test("rejects runtime env collisions across a provider pool", () => {
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "openai-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "api_key", source: "managed" },
+					runtime_env_name: "SHARED_PROVIDER_KEY",
+				},
+				{
+					id: "openai-alt",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "secret_ref", ref: "env:SHARED_PROVIDER_KEY" },
+				},
+			],
+		});
+
+		expect(result.valid).toBe(false);
+		expect(result.errors).toContain(
+			"Provider openai-alt runtime env SHARED_PROVIDER_KEY collides with provider openai-main.",
+		);
+	});
+
+	test("ignores stale runtime env metadata for native agent profiles", () => {
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "codex-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "agent_profile", tool: "codex", profile: "default" },
+					runtime_env_name: "OPENAI_API_KEY",
+				},
+				{
+					id: "openai-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "api_key", source: "managed" },
+					runtime_env_name: "OPENAI_API_KEY",
+				},
+			],
+		});
+
+		expect(result.valid).toBe(true);
+	});
+
 	test("rejects malformed auth profile metadata", () => {
 		expect(isProviderAuthProfileId("default")).toBe(true);
 		expect(isProviderAuthProfileId("team/default")).toBe(false);
@@ -289,8 +345,11 @@ describe("validateAiProviderCatalog", () => {
 	});
 
 	test.each([
+		CLAWDI_MANAGED_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_PROVIDER_ID,
+		CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+		`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
 	])("accepts v2 Clawdi-managed provider %s in OpenAI chat mode", (providerId) => {
 		const result = validateAiProviderCatalog({
 			schema_version: 1,
@@ -311,6 +370,21 @@ describe("validateAiProviderCatalog", () => {
 
 		expect(result.valid).toBe(true);
 		expect(result.errors).toEqual([]);
+	});
+
+	test("uses clawdi as the exact public id while accepting the legacy public id", () => {
+		expect(CLAWDI_MANAGED_V2_PROVIDER_ID).toBe("clawdi");
+		expect(isClawdiManagedV2ProviderId("clawdi-v2")).toBe(true);
+	});
+
+	test.each([
+		"clawdi-v2-deployment-",
+		"clawdi-v2-deployment-0",
+		"clawdi-v2-deployment-01",
+		"clawdi-v2-deployment-invalid",
+		`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}${"9".repeat(43)}`,
+	])("rejects invalid deployment-scoped managed provider id %s", (providerId) => {
+		expect(isClawdiManagedV2ProviderId(providerId)).toBe(false);
 	});
 
 	test("accepts v1 Clawdi-managed providers in OpenAI responses mode", () => {
@@ -355,13 +429,39 @@ describe("validateAiProviderCatalog", () => {
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toContain(
-			"Provider clawdi-managed-v2 managed_by clawdi must use api_mode openai_chat.",
+			"Provider clawdi managed_by clawdi must use api_mode openai_chat.",
 		);
+	});
+});
+
+describe("aiProviderRuntimeCompatibility", () => {
+	test("keeps Gemini selectable only for OpenClaw", () => {
+		expect(
+			aiProviderRuntimeCompatibility({
+				type: "gemini",
+				base_url: "https://generativelanguage.googleapis.com/v1beta",
+				api_mode: "google_generate_content",
+				auth: { type: "api_key", source: "managed" },
+				runtime_env_name: "GEMINI_API_KEY",
+			}),
+		).toEqual({ openclaw: true, hermes: false, codex: false });
+	});
+
+	test("marks managed auth without runtime material binding incompatible", () => {
+		expect(
+			aiProviderRuntimeCompatibility({
+				type: "openai",
+				base_url: "https://api.openai.com/v1",
+				api_mode: "openai_responses",
+				auth: { type: "api_key", source: "managed" },
+			}),
+		).toEqual({ openclaw: false, hermes: false, codex: false });
 	});
 });
 
 describe("isFirstPartyManagedAiProvider", () => {
 	test("matches every first-party managed id even when old rows are missing managed_by", () => {
+		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_PROVIDER_ID })).toBe(true);
 		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID })).toBe(
 			true,
 		);
@@ -370,10 +470,22 @@ describe("isFirstPartyManagedAiProvider", () => {
 		);
 		expect(
 			isFirstPartyManagedAiProvider({
+				provider_id: CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
+			}),
+		).toBe(true);
+		expect(
+			isFirstPartyManagedAiProvider({
 				provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 			}),
 		).toBe(true);
+		expect(
+			isFirstPartyManagedAiProvider({
+				provider_id: `${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
+			}),
+		).toBe(true);
+		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_PROVIDER_ID)).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_PROVIDER_ID)).toBe(true);
+		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID)).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID)).toBe(true);
 	});
 
@@ -387,6 +499,22 @@ describe("isFirstPartyManagedAiProvider", () => {
 		expect(isFirstPartyManagedAiProvider({ provider_id: "openai-prod", managed_by: "user" })).toBe(
 			false,
 		);
+	});
+
+	test("projects only user-selectable providers without changing the inventory", () => {
+		const userProvider = { provider_id: "openai-prod", managed_by: "user" };
+		const providers = [
+			userProvider,
+			{ provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID },
+			{ provider_id: CLAWDI_MANAGED_PROVIDER_ID },
+			{ provider_id: CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID },
+			{ provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID },
+			{ provider_id: `${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42` },
+			{ provider_id: "managed-with-custom-id", managed_by: "clawdi" },
+		];
+
+		expect(projectUserSelectableAiProviders(providers)).toEqual([userProvider]);
+		expect(providers).toHaveLength(7);
 	});
 });
 
@@ -402,21 +530,73 @@ describe("known AI provider defaults", () => {
 
 	test("provides a non-empty model catalog for built-in providers and Codex OAuth", () => {
 		expect(defaultAiProviderModels("openai").map((model) => model.id)).toEqual([
+			"gpt-5.6-sol",
+			"gpt-5.6-terra",
+			"gpt-5.6-luna",
 			"gpt-5.5",
 			"gpt-5.4",
 			"gpt-5.4-mini",
 		]);
 		expect(defaultAiProviderModels("anthropic").map((model) => model.id)).toEqual([
 			"claude-sonnet-5",
+			"claude-opus-5",
 			"claude-opus-4-6",
 			"claude-haiku-4-5",
 		]);
+		expect(defaultAiProviderModels("openrouter").map((model) => model.id)).toEqual([
+			"openrouter/auto-beta",
+			"~openai/gpt-latest",
+			"anthropic/claude-sonnet-5",
+			"anthropic/claude-opus-4.6",
+			"openai/gpt-5.5",
+		]);
+		expect(defaultAiProviderModels("gemini").map((model) => model.id)).toEqual([
+			"gemini-3.6-flash",
+			"gemini-3.5-flash",
+			"gemini-3.5-flash-lite",
+		]);
+		expect(defaultAiProviderModels("mistral").map((model) => model.id)).toEqual([
+			"mistral-medium-latest",
+			"mistral-small-latest",
+			"mistral-large-latest",
+			"codestral-latest",
+		]);
 		expect(defaultAiProviderModels("custom_openai_compatible")).toEqual([]);
 		expect(CODEX_OAUTH_MODEL_CATALOG.map((model) => model.id)).toEqual([
+			"gpt-5.6-sol",
+			"gpt-5.6-terra",
+			"gpt-5.6-luna",
 			"gpt-5.5",
-			"gpt-5.4",
-			"gpt-5.3-codex",
-			"gpt-5.4-mini",
 		]);
+	});
+
+	test("keeps context metadata only when an exact durable value is documented", () => {
+		expect(defaultAiProviderModels("openai").map((model) => model.context_window)).toEqual([
+			1_050_000,
+			1_050_000,
+			1_050_000,
+			undefined,
+			undefined,
+			undefined,
+		]);
+		expect(
+			defaultAiProviderModels("anthropic").every((model) => model.context_window === undefined),
+		).toBe(true);
+		expect(defaultAiProviderModels("openrouter").map((model) => model.context_window)).toEqual([
+			undefined,
+			undefined,
+			1_000_000,
+			undefined,
+			undefined,
+		]);
+		expect(defaultAiProviderModels("gemini").map((model) => model.context_window)).toEqual([
+			1_048_576, 1_048_576, 1_048_576,
+		]);
+		expect(
+			defaultAiProviderModels("mistral").every((model) => model.context_window === undefined),
+		).toBe(true);
+		expect(CODEX_OAUTH_MODEL_CATALOG.every((model) => model.context_window === undefined)).toBe(
+			true,
+		);
 	});
 });

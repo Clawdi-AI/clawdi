@@ -1,0 +1,335 @@
+# Kamal deployment for the clawdi backend (cloud-api.clawdi.ai).
+#
+# Images are built and pushed to GHCR by CI; Kamal never builds.
+# Deploy a released image with:
+#
+#   kamal deploy -P --version=<full-git-sha>
+#
+# Secrets live in .kamal/secrets (gitignored, operator-local). Non-secret
+# runtime shape lives here. The image entrypoint (app.runtime_entrypoint)
+# selects the process via CLAWDI_PROCESS_ROLE, runs migrations for the api
+# role, and drains on SIGTERM — no command overrides needed.
+
+service: clawdi
+image: clawdi-ai/clawdi-backend
+
+minimum_version: 2.12.0
+
+# Persist Kamal-managed container logs outside the container lifecycle. The host
+# journal must be persistent and bounded before these containers are recreated;
+# see docs/runbooks/kamal-service-logs.md.
+logging:
+  driver: journald
+
+# Operator shorthands: `kamal console`, `kamal watch`, `kamal psql`.
+aliases:
+  console: app exec -i --reuse "bash"
+  watch: app logs -f
+  psql: accessory exec postgres -i "psql -U clawdi clawdi"
+
+ssh:
+  user: phala
+  # Self-hosters connect directly unless they provide a proxy command.
+<% if ENV["DEPLOY_SSH_PROXY_COMMAND"].to_s.strip != "" %>
+  proxy_command: <%= ENV["DEPLOY_SSH_PROXY_COMMAND"] %>
+<% end %>
+  keys:
+    - ~/.ssh/clawdi_access_ed25519
+
+registry:
+  server: ghcr.io
+  username:
+    - KAMAL_REGISTRY_USERNAME
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+
+servers:
+  web:
+    hosts:
+      - <%= ENV.fetch("DEPLOY_HOST") %>
+    options:
+      memory: 4g # embedding model (~1.6G resident) + launch-load headroom
+      ulimit: nofile=65536:65536 # long-lived SSE/WebSocket connections
+      # tini as PID 1 reaps orphaned subprocesses (zombie prevention).
+      init: true
+  channels-worker:
+    hosts:
+      - <%= ENV.fetch("DEPLOY_HOST") %>
+    proxy: false
+    options:
+      memory: 2g # grows with connected channel accounts
+      init: true
+      ulimit: nofile=65536:65536 # connected channel sessions and ingress streams
+    env:
+      clear:
+        CLAWDI_PROCESS_ROLE: channels-worker
+
+proxy:
+  hosts:
+    - cloud-api.clawdi.ai
+  app_port: 8000
+  # All traffic stays behind Cloudflare (orange cloud). TLS between Cloudflare
+  # and this origin uses a Cloudflare Origin CA wildcard cert — no ACME.
+  ssl:
+    certificate_pem: CLOUDFLARE_ORIGIN_CERT
+    private_key_pem: CLOUDFLARE_ORIGIN_KEY
+  forward_headers: true # preserve Cloudflare's X-Forwarded-* chain
+  # SSE surfaces (sync, channel streams, MCP bridge): response buffering
+  # delays or breaks event streams through kamal-proxy.
+  buffering:
+    responses: false
+  healthcheck:
+    path: /health
+    interval: 5
+    timeout: 5
+
+  # Kamal's proxy log_max_size controls the json-file driver and is separate
+  # from top-level logging. Disable it before selecting journald explicitly.
+  run:
+    log_max_size: ""
+    options:
+      log-driver: journald
+
+deploy_timeout: 120 # api entrypoint runs alembic before listening
+
+volumes:
+  - clawdi-fastembed:/tmp/fastembed_cache # fastembed default cache; persists the ~1.1GB ONNX model across deploys
+  - /home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro
+
+accessories:
+<% if ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" %>
+  whatsapp-netns:
+    service: clawdi-whatsapp-netns
+    # Kubernetes' official, immutable pause image owns the pod-style network
+    # namespace. Workloads join it with Docker's container network mode.
+    image: registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: kamal
+    labels:
+      io.clawdi.whatsapp-netns.config-revision: <%= ENV.fetch("WHATSAPP_TAILSCALE_CONFIG_REVISION") %>
+    options:
+      read-only: true
+      cap-drop: ALL
+      security-opt: no-new-privileges:true
+
+  whatsapp-tailscale:
+    service: clawdi-whatsapp-tailscale
+    # Official image and immutable multi-architecture manifest for v1.98.10.
+    # https://hub.docker.com/r/tailscale/tailscale/tags?name=v1.98.10
+    image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: container:clawdi-whatsapp-netns
+    labels:
+      io.clawdi.whatsapp-egress.config-revision: <%= ENV.fetch("WHATSAPP_TAILSCALE_CONFIG_REVISION") %>
+    directories:
+      - local: /home/phala/clawdi-whatsapp/tailscale-state
+        remote: /var/lib/tailscale
+        mode: "700"
+    options:
+      cap-drop: ALL
+      cap-add:
+        # Kamal creates the private bind mount as the SSH UID; container root
+        # needs the dropped DAC capability to traverse and persist state.
+        - DAC_OVERRIDE
+        - NET_ADMIN
+        - NET_RAW
+      # iptables-legacy opens a raw control socket; dropping Docker defaults
+      # therefore also requires restoring NET_RAW (verified with this image).
+      device: /dev/net/tun:/dev/net/tun
+      # Tailscale's direct DNS manager updates /etc/resolv.conf and keeps its
+      # backup beside it. Leave only this disposable container layer writable.
+      security-opt: no-new-privileges:true
+      tmpfs:
+        - /tmp:rw,noexec,nosuid,nodev,size=16m
+        - /run:rw,noexec,nosuid,nodev,size=8m
+    env:
+      clear:
+        TS_STATE_DIR: /var/lib/tailscale
+        TS_USERSPACE: "false"
+        TS_AUTH_ONCE: "true"
+        # Quad100 only receives exit-node/default resolvers when CorpDNS is on.
+        TS_ACCEPT_DNS: "true"
+        TS_EXTRA_ARGS: "--exit-node=<%= ENV.fetch('WHATSAPP_TAILSCALE_EXIT_NODE') %> --exit-node-allow-lan-access=false"
+        TS_HOSTNAME: clawdi-whatsapp-egress
+      secret:
+        - TS_AUTHKEY
+
+  whatsapp-egress-guard:
+    service: clawdi-whatsapp-egress-guard
+    image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: container:clawdi-whatsapp-netns
+    labels:
+      io.clawdi.whatsapp-egress.config-revision: <%= ENV.fetch("WHATSAPP_TAILSCALE_CONFIG_REVISION") %>
+    cmd: >-
+      -ceu 'chain=CLAWDI_WA_EGRESS;
+      iptables -N "$chain" 2>/dev/null || true;
+      iptables -C "$chain" -o lo -d 127.0.0.1/32 -j ACCEPT 2>/dev/null || iptables -A "$chain" -o lo -d 127.0.0.1/32 -j ACCEPT;
+      iptables -C "$chain" -o tailscale0 -j ACCEPT 2>/dev/null || iptables -A "$chain" -o tailscale0 -j ACCEPT;
+      iptables -C "$chain" -j REJECT 2>/dev/null || iptables -A "$chain" -j REJECT;
+      iptables -C OUTPUT -m owner --uid-owner 1000 -j "$chain" 2>/dev/null || iptables -I OUTPUT 1 -m owner --uid-owner 1000 -j "$chain";
+      marker="$(cat /proc/sys/kernel/random/boot_id) $(stat -Lc %i /proc/self/ns/net)";
+      marker_tmp="$(mktemp /guard/.network-namespace.ready.XXXXXX)";
+      { printf "%s\n" "$marker" > "$marker_tmp" &&
+      chmod 644 "$marker_tmp" &&
+      mv -T "$marker_tmp" /guard/network-namespace.ready; } ||
+      { rm -f -- "$marker_tmp"; exit 1; };
+      exec sleep infinity'
+    directories:
+      - local: /home/phala/clawdi-whatsapp/egress-guard
+        remote: /guard
+        mode: "700"
+    options:
+      entrypoint: /bin/sh
+      cap-drop: ALL
+      cap-add:
+        # Required to publish the marker inside Kamal's private bind mount.
+        - DAC_OVERRIDE
+        - NET_ADMIN
+        - NET_RAW
+      read-only: true
+      security-opt: no-new-privileges:true
+      tmpfs:
+        - /tmp:rw,noexec,nosuid,nodev,size=4m
+        - /run:rw,noexec,nosuid,nodev,size=4m
+<% end %>
+
+  whatsapp-baileys:
+    service: clawdi-whatsapp-baileys
+    image: ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:<%= ENV.fetch("DEPLOY_IMAGE_VERSION") %>
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: <%= ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" ? "container:clawdi-whatsapp-netns" : "bridge" %>
+    directories:
+      - local: /home/phala/clawdi-whatsapp/state
+        remote: /data
+        mode: "700"
+      - local: /home/phala/clawdi-whatsapp/run
+        remote: /run/clawdi-whatsapp
+        mode: "770"
+<% if ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" %>
+    volumes:
+      - /home/phala/clawdi-whatsapp/tailscale-resolv.conf:/etc/resolv.conf:ro
+      - /home/phala/clawdi-whatsapp/egress-guard:/run/clawdi-egress-guard:ro
+<% end %>
+    options:
+      memory: 2g # bounded headroom for multiple isolated provider sessions
+      pids-limit: 128
+      ulimit: nofile=65536:65536
+      read-only: true
+      cap-drop: ALL
+      security-opt: no-new-privileges:true
+      tmpfs: /tmp:rw,noexec,nosuid,nodev,size=16m
+    env:
+      clear:
+        CLAWDI_WA_SIDECAR_STATE_ROOT: /data
+        CLAWDI_WA_SIDECAR_SOCKET_PATH: /run/clawdi-whatsapp/sidecar.sock
+        CLAWDI_WA_SIDECAR_LOG_LEVEL: info
+<% if ENV["WHATSAPP_TAILSCALE_EGRESS_ENABLED"] == "true" %>
+        CLAWDI_WA_NETWORK_NAMESPACE_MARKER: /run/clawdi-egress-guard/network-namespace.ready
+<% end %>
+      secret:
+        - CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN
+
+  postgres:
+    # Immutable authority: config/postgres-image.txt. The parity contract keeps
+    # this literal copy aligned because Kamal cannot import that plain-text file.
+    image: &postgres-image ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:a1fdff3df831a4cd165795cc4c78d5e8d99ed7d279438e59fc30d75b8d10dd67 # pgvector pg18 + pgBackRest (WAL archiving to R2)
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    options:
+      ulimit: nofile=65536:65536
+    # 512MB buffers (default 128MB is tiny for 16G host); idle-in-transaction
+    # timeout guards against the connection-pile-up-behind-locks failure mode.
+    cmd: >-
+      postgres -c shared_buffers=512MB -c idle_in_transaction_session_timeout=300s
+      -c archive_mode=on
+      -c 'archive_command=pgbackrest --stanza=$STANZA archive-push %p'
+      -c archive_timeout=60
+    directories:
+      - data:/var/lib/postgresql # pg18 image layout: PGDATA lives under a version subdir
+      - socket:/var/run/postgresql # shared with the backup scheduler sidecar
+    env:
+      clear:
+        <<: &pgbackrest-env
+          STANZA: clawdi
+          PGBACKREST_STANZA: clawdi
+          PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
+          PGBACKREST_PG1_SOCKET_PATH: /var/run/postgresql
+          PGBACKREST_REPO1_TYPE: s3
+          PGBACKREST_REPO1_S3_REGION: auto
+          PGBACKREST_REPO1_S3_URI_STYLE: path
+          PGBACKREST_REPO1_RETENTION_FULL: "2"
+          PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+          PGBACKREST_COMPRESS_TYPE: zst
+        POSTGRES_DB: clawdi
+        POSTGRES_USER: clawdi
+      secret:
+        - POSTGRES_PASSWORD
+        - PGBACKREST_REPO1_PATH
+        - PGBACKREST_REPO1_S3_BUCKET
+        - PGBACKREST_REPO1_S3_ENDPOINT
+        - PGBACKREST_REPO1_S3_KEY
+        - PGBACKREST_REPO1_S3_KEY_SECRET
+        - PGBACKREST_REPO1_CIPHER_PASS
+
+  postgres-backup:
+    # Scheduled pgBackRest runs (Sunday full, daily diff) against the server's
+    # shared data and socket volumes. See docs/ops/postgres-backup-restore.md.
+    image: *postgres-image
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    cmd: gosu postgres supercronic /etc/pgbackrest/backup-cron
+    volumes:
+      - /home/phala/clawdi-postgres/data:/var/lib/postgresql
+      - /home/phala/clawdi-postgres/socket:/var/run/postgresql
+    env:
+      clear:
+        <<: *pgbackrest-env
+        PGBACKREST_LOG_LEVEL_CONSOLE: info
+      secret:
+        - PGBACKREST_REPO1_PATH
+        - PGBACKREST_REPO1_S3_BUCKET
+        - PGBACKREST_REPO1_S3_ENDPOINT
+        - PGBACKREST_REPO1_S3_KEY
+        - PGBACKREST_REPO1_S3_KEY_SECRET
+        - PGBACKREST_REPO1_CIPHER_PASS
+
+env:
+  clear:
+    ENVIRONMENT: production
+    DEBUG: "false"
+    # CI exports GITHUB_SHA; operator deploys without it simply go untagged.
+    SENTRY_RELEASE: "<%= ENV.fetch('GITHUB_SHA', '') %>"
+    PUBLIC_API_URL: https://cloud-api.clawdi.ai
+    WEB_ORIGIN: https://cloud.clawdi.ai
+    CORS_ORIGINS: '["https://www.clawdi.ai","https://clawdi.ai","https://api.clawdi.ai","https://cloud.clawdi.ai"]'
+    TRUST_FORWARDED_FOR: "true"
+    FILE_STORE_TYPE: s3
+    MEMORY_EMBEDDING_MODE: local
+    DB_POOL_SIZE: 20
+    DB_MAX_OVERFLOW: 20
+    DB_POOL_TIMEOUT: 45
+    FILE_STORE_S3_BUCKET: clawdi
+    FILE_STORE_S3_REGION: auto
+    FILE_STORE_S3_FORCE_PATH_STYLE: true
+    LLM_BASE_URL: 'https://api.redpill.ai/v1'
+    LLM_MODEL: gpt-4o-mini
+    MEMORY_EMBEDDING_MODEL: text-embedding-3-small
+  secret:
+    - ADMIN_API_KEY
+    - CLERK_JWT_ISSUER
+    - SENTRY_DSN
+    - CLERK_SECRET_KEY
+    - CLERK_WEBHOOK_SIGNING_SECRET
+    - COMPOSIO_API_KEY
+    - DATABASE_URL
+    - ENCRYPTION_KEY
+    - FILE_STORE_S3_ACCESS_KEY_ID
+    - FILE_STORE_S3_ENDPOINT_URL
+    - FILE_STORE_S3_SECRET_ACCESS_KEY
+    - LLM_API_KEY
+    - MEMORY_EMBEDDING_API_KEY
+    - MEMORY_EMBEDDING_BASE_URL
+    - VAULT_ENCRYPTION_KEY
+    - CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN

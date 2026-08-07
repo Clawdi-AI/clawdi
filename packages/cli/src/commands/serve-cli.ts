@@ -10,6 +10,7 @@
  */
 
 import { type Command, Option } from "commander";
+import { getRuntimePaths } from "../runtime/paths";
 
 /**
  * Handlers that the daemon command tree dispatches to. Production
@@ -57,6 +58,7 @@ async function defaultHandlers(): Promise<ServeHandlers> {
 
 export function registerServeCommand(program: Command, handlers?: ServeHandlers): Command {
 	const get = handlers ? () => Promise.resolve(handlers) : defaultHandlers;
+	const hostedDaemonAuthToken = getRuntimePaths({ mode: "hosted" }).daemonAuthToken;
 	const serveCmd = program
 		.command("daemon")
 		.alias("serve")
@@ -64,13 +66,14 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 		.option("--port <port>", "Control HTTP RPC port")
 		.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host")
 		.description(
-			"Manage the background sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE",
+			"Manage the background sync daemon — projects local Agent Skills to Cloud and mirrors sessions",
 		)
 		.addHelpText(
 			"after",
 			`
 Environment:
   CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)
+  CLAWDI_AUTH_TOKEN_ORIGIN Explicit Cloud origin binding for the bearer token
   CLAWDI_SERVE_MODE       "container" forces polling watcher + graceful SIGTERM
   CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)
   CLAWDI_DAEMON_RPC_HOST         HTTP RPC host (default 127.0.0.1)
@@ -81,7 +84,7 @@ Environment:
 
 Examples:
   $ clawdi daemon run
-  $ clawdi daemon run --auth-token-file /run/clawdi/secrets/auth-token
+  $ clawdi daemon run --auth-token-file ${hostedDaemonAuthToken}
   $ clawdi daemon run --host 127.0.0.1 --port 17654
   $ clawdi daemon ping
   $ CLAWDI_SERVE_MODE=container clawdi daemon run

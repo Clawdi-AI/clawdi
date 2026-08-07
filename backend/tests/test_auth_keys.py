@@ -9,12 +9,42 @@ hash is never round-trippable, a revoked key authenticates with 401, and
 from __future__ import annotations
 
 import hashlib
+import uuid
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport
 
+from app.core.auth import AuthContext, require_auth_scopes
 from app.main import app
+from app.models.api_key import ApiKey
+
+
+def test_scope_enforcement_preserves_legacy_access_and_fails_closed_for_strict_runtime(
+    seed_user,
+):
+    legacy_auth = AuthContext(
+        user=seed_user,
+        api_key=ApiKey(user_id=seed_user.id, scopes=None),
+    )
+    require_auth_scopes(legacy_auth, "vault:read")
+
+    strict_runtime_auth = AuthContext(
+        user=seed_user,
+        api_key=ApiKey(
+            user_id=seed_user.id,
+            scopes=None,
+            managed=True,
+            environment_id=uuid.uuid4(),
+            runtime_deployment_id="deployment-test",
+        ),
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        require_auth_scopes(strict_runtime_auth, "vault:read")
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "missing scope: vault:read"
 
 
 @pytest.mark.asyncio
@@ -83,6 +113,53 @@ async def test_revoked_api_key_is_rejected(db_session, seed_user):
 
 
 @pytest.mark.asyncio
+async def test_agent_key_is_not_cached_and_disconnect_revokes_after_commit(
+    client: httpx.AsyncClient, db_session, seed_user
+):
+    import hashlib
+    import uuid
+
+    from fastapi import HTTPException
+
+    from app.core.auth import _api_key_auth_cache, _auth_via_api_key
+    from app.services.agent_environments import (
+        local_machine_registration_key,
+        register_agent_environment,
+    )
+    from app.services.api_key import mint_api_key
+
+    machine_id = f"cached-key-{uuid.uuid4().hex}"
+    registered = await register_agent_environment(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=machine_id,
+        machine_name="Cached key Agent",
+        agent_type="codex",
+        agent_version="1.0.0",
+        os_name="linux",
+        sort_order=0,
+        registration_key=local_machine_registration_key(machine_id, "codex"),
+    )
+    minted = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="cached Agent key",
+        environment_id=registered.env.id,
+    )
+    assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+    assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+    key_hash = hashlib.sha256(minted.raw_key.encode()).hexdigest()
+    assert key_hash not in _api_key_auth_cache
+
+    disconnected = await client.delete(f"/v1/agents/{registered.env.id}")
+    assert disconnected.status_code == 204, disconnected.text
+    with pytest.raises(HTTPException) as exc_info:
+        await _auth_via_api_key(minted.raw_key, db_session)
+    assert exc_info.value.status_code == 401
+    assert "revoked" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
 async def test_me_reflects_clerk_auth(client: httpx.AsyncClient):
     body = (await client.get("/v1/auth/me")).json()
     assert body["auth_type"] == "clerk"
@@ -95,16 +172,26 @@ async def test_me_reflects_cli_auth(cli_client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_revoke_api_key_marks_row(client: httpx.AsyncClient):
+async def test_revoke_api_key_hides_row_but_preserves_audit_record(
+    client: httpx.AsyncClient, db_session
+):
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
     created = (await client.post("/v1/auth/keys", json={"label": "to-revoke"})).json()
     r = await client.delete(f"/v1/auth/keys/{created['id']}")
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "revoked"}
 
-    # After revoke, the key still shows in the list but with ``revoked_at`` set.
+    # The user-facing list is active-only, but soft revocation keeps the row for audit.
     listing = (await client.get("/v1/auth/keys")).json()
-    match = next(k for k in listing if k["id"] == created["id"])
-    assert match["revoked_at"] is not None
+    assert created["id"] not in {key["id"] for key in listing}
+
+    revoked_at = await db_session.scalar(
+        select(ApiKey.revoked_at).where(ApiKey.id == created["id"])
+    )
+    assert revoked_at is not None
 
 
 @pytest.mark.asyncio

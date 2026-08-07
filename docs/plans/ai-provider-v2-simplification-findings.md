@@ -1,5 +1,10 @@
 # AI Provider V2 Simplification Findings
 
+> HISTORICAL - This findings note references the retired unpublished local AI
+> Provider apply path and a removed Web runtime bootstrap. See
+> [`../ai-providers.md`](../ai-providers.md) for the current Core Hosted
+> manifest/controller path.
+
 ## Scope
 
 This note records the runtime-facing evidence behind the hosted v2 AI Provider

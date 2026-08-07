@@ -26,6 +26,7 @@ from app.models.user import User
 from app.models.vault import Vault, VaultProjectAttachment
 from app.schemas.sharing import ShareRedeemResponse, ShareUpgradeResponse, UpgradeBody
 from app.services.agent_bindings import attach_project_to_owned_agents
+from app.services.project_runtime_skills import lock_project_change
 from app.services.sharing import ensure_viewer_membership, safe_owner_display
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ async def _resolve_owner_for_link(
             status.HTTP_410_GONE,
             "share no longer available (project removed)",
         )
-    if project.kind != PROJECT_KIND_WORKSPACE:
+    if project.kind != PROJECT_KIND_WORKSPACE or project.archived_at is not None:
         raise HTTPException(
             status.HTTP_410_GONE,
             "share no longer available",
@@ -252,7 +253,7 @@ async def upgrade(
     ctx: ShareTokenContext = Depends(require_share_token),
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict:
+) -> ShareUpgradeResponse:
     return await upgrade_share_token(ctx=ctx, body=body, auth=auth, db=db)
 
 
@@ -262,14 +263,15 @@ async def upgrade_share_token(
     body: UpgradeBody | None,
     auth: AuthContext,
     db: AsyncSession,
-) -> dict:
+) -> ShareUpgradeResponse:
     body = body or UpgradeBody()
+    await lock_project_change(db, ctx.project_id)
     project = (
-        await db.execute(select(Project).where(Project.id == ctx.project_id).with_for_update())
+        await db.execute(select(Project).where(Project.id == ctx.project_id))
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_410_GONE, "project no longer available")
-    if project.kind != PROJECT_KIND_WORKSPACE:
+    if project.kind != PROJECT_KIND_WORKSPACE or project.archived_at is not None:
         raise HTTPException(status.HTTP_410_GONE, "share no longer available")
     if project.user_id == auth.user_id:
         raise HTTPException(
@@ -308,12 +310,12 @@ async def upgrade_share_token(
         ctx.project_id,
         bound_agent_ids,
     )
-    return {
-        "membership_id": str(membership.id),
-        "project_id": str(membership.project_id),
-        "role": membership.role,
-        "joined_via": membership.joined_via,
-        "joined_at": membership.joined_at.isoformat(),
-        "resolved_owner_handle": membership.resolved_owner_handle,
-        "bound_agent_ids": bound_agent_ids,
-    }
+    return ShareUpgradeResponse(
+        membership_id=str(membership.id),
+        project_id=str(membership.project_id),
+        role=membership.role,
+        joined_via=membership.joined_via,
+        joined_at=membership.joined_at,
+        resolved_owner_handle=membership.resolved_owner_handle,
+        bound_agent_ids=bound_agent_ids,
+    )

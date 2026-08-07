@@ -2,9 +2,10 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
-import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useCommittedRouteIsLatestTarget } from "@/lib/use-committed-location";
 
 export function HostedProductGate({
 	children,
@@ -15,14 +16,27 @@ export function HostedProductGate({
 }) {
 	const router = useRouter();
 	const access = useHostedProductAccess();
-	const allowed = IS_HOSTED && access.canCreateCloudAgents;
-	const denied = !access.isLoading && !allowed;
+	const isLatestTarget = useCommittedRouteIsLatestTarget();
 
 	useEffect(() => {
-		if (denied) void router.navigate({ href: fallbackHref, replace: true });
-	}, [denied, fallbackHref, router]);
+		if (access.isDenied && isLatestTarget)
+			void router.navigate({ href: fallbackHref, replace: true });
+	}, [access.isDenied, fallbackHref, isLatestTarget, router]);
 
 	if (access.isLoading) return <HostedRouteSkeleton />;
-	if (!allowed) return null;
+	if (access.isError) {
+		return (
+			<div className="mx-auto flex min-h-[50vh] w-full max-w-2xl items-center p-6">
+				<ApiErrorPanel
+					error={access.error}
+					onRetry={() => {
+						void access.refetch();
+					}}
+					title="Couldn't verify access"
+				/>
+			</div>
+		);
+	}
+	if (!access.isAllowed) return null;
 	return <>{children}</>;
 }

@@ -3,14 +3,14 @@
 iCloud for AI Agents: CLI, FastAPI backend, TanStack dashboard, shared types,
 agent adapters, memory, vault, skills, channels, and sync.
 
-## Start Here
+Maintain agent-facing repository docs with
+[`docs/agent-docs-guide.md`](docs/agent-docs-guide.md).
 
-1. Keep code, comments, docs, file names, and identifiers in English.
-2. Keep OSS boundaries clean. Hosted infrastructure is owned outside this repo
-   by first-party hosted control planes; this repo must not contain hosted
-   service runbooks, private addresses, or internal deployment details.
-3. Maintain agent docs with [`docs/agent-docs-guide.md`](docs/agent-docs-guide.md).
-4. Prefer repo-local conventions over new abstractions.
+## OSS Boundary
+
+Hosted infrastructure is owned outside this repo by first-party hosted control
+planes. Do not add hosted service runbooks, private addresses, or internal
+deployment details here.
 
 ## Repository Map
 
@@ -107,7 +107,7 @@ bun run packages/cli/src/index.ts doctor
 ```
 
 Done: `doctor` shows green `Auth`, `API reachability`, `Environments`, `Vault
-metadata`, and `MCP connectors`; unavailable local agents may show `not
+metadata`, and `Clawdi MCP`; unavailable local agents may show `not
 installed`.
 
 Cleanup:
@@ -162,15 +162,18 @@ CLI checks:
 ```bash
 bun run --cwd packages/cli typecheck
 bun run --cwd packages/cli test
-bun test packages/shared/src
+bun run --cwd packages/shared test
 bun run --cwd packages/whatsapp-baileys-sidecar typecheck
 bun run --cwd packages/whatsapp-baileys-sidecar test
 ```
 
-Done: command output reports passing tests/typechecks.
+Package `test` commands use the Docker-backed clean runner. `test:internal` is
+reserved for that runner and CI; use `test:local` only for an explicit
+host-local workspace loop. Done: command output reports passing tests/typechecks.
 
 ## Owner Docs
 
+- Agent documentation: [`docs/agent-docs-guide.md`](docs/agent-docs-guide.md)
 - Backend: [`docs/backend-development.md`](docs/backend-development.md)
 - Frontend: [`docs/frontend-development.md`](docs/frontend-development.md)
 - CLI: [`docs/cli-development.md`](docs/cli-development.md)
@@ -181,6 +184,7 @@ Done: command output reports passing tests/typechecks.
 - Managed runtime: [`docs/managed-runtime.md`](docs/managed-runtime.md)
 - Daemon testing: [`docs/clawdi-daemon-test-guide.md`](docs/clawdi-daemon-test-guide.md)
 - Releases: [`docs/runbooks/release.md`](docs/runbooks/release.md)
+- Managed WhatsApp sidecars: [`docs/runbooks/whatsapp-baileys-sidecars.md`](docs/runbooks/whatsapp-baileys-sidecars.md)
 
 ## Compatibility Rules
 
@@ -197,20 +201,15 @@ Done: command output reports passing tests/typechecks.
 Done: compatibility changes include focused backend tests for canonical and
 legacy paths.
 
-## Package Managers
+## Toolchain
 
-- Use Bun for JavaScript/TypeScript; the repo declares `packageManager:
-  bun@1.3.14`.
-- Do not introduce Yarn/Corepack globally.
-- Use `uv` and PDM scripts for backend workflows.
+- JavaScript and TypeScript commands use the declared `bun@1.3.14` toolchain.
+- JavaScript and TypeScript formatting and linting use Biome.
+- Backend dependency management uses `uv`; operational commands use the PDM
+  scripts in `backend/pyproject.toml`.
+- Python formatting and linting use Ruff.
 
-## Conventions
+## Directory Ownership
 
-- Use Biome for JS/TS formatting and linting.
-- Use Ruff for Python linting and formatting.
 - Keep UI primitives under `apps/web/src/components/ui/`.
 - Keep shared public types under `packages/shared/src/types/`.
-- Store local MCP launch wrappers in `~/.agents/mcp`; Codex and Claude Code
-  registrations should point at those wrappers.
-- Do not store plaintext tokens or private keys in shell startup files,
-  dotfiles, or repo files.

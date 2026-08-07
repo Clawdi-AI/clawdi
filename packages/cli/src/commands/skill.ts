@@ -15,11 +15,14 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
-import { getClawdiDir, isLoggedIn } from "../lib/config";
+import { getClawdiAccessToken } from "../lib/clerk-oauth";
+import { getConfig, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
+import { fetchGithubSkillArchive, readBoundedResponseBytes } from "../lib/github-skill-archive";
+import { resolveProjectId } from "../lib/project-resolver";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
 	fetchDefaultProjectId,
@@ -27,9 +30,15 @@ import {
 	getEnvIdByAgent,
 } from "../lib/select-adapter";
 import { sanitizeSkillKey } from "../lib/skill-key";
-import { computeSkillFolderHash } from "../lib/skills-lock";
+import {
+	readProjectSkillMaterialization,
+	readSkillProjectionState,
+	recordSkillProjectionClaim,
+	removeProjectSkillMaterialization,
+	removeSkillProjectionClaim,
+} from "../lib/skills-lock";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
-import { tarSingleFile, tarSkillDir } from "../lib/tar";
+import { snapshotSkillArchive, tarSingleFile } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
 
 function requireAuth() {
@@ -61,16 +70,85 @@ async function fetchAllSkills(api: ApiClient, projectId?: string): Promise<Skill
 	return items;
 }
 
-function getRegisteredAdapters(): AgentAdapter[] {
-	const envDir = join(getClawdiDir(), "environments");
-	if (!existsSync(envDir)) return [];
+interface SkillMutationTarget {
+	projectId: string;
+	agentId?: string;
+	adapter?: AgentAdapter;
+}
 
-	const files = new Set(readdirSync(envDir));
-	const adapters: AgentAdapter[] = [];
-	for (const entry of Object.values(adapterRegistry)) {
-		if (files.has(entry.envFileName)) adapters.push(entry.create());
+async function resolveAgentProjectTarget(
+	api: ApiClient,
+	projectId: string,
+): Promise<SkillMutationTarget> {
+	const project = unwrap(
+		await api.GET("/v1/projects/{project_id}", {
+			params: { path: { project_id: projectId } },
+		}),
+	);
+	if (project.kind !== "environment") return { projectId };
+
+	const agentId = project.origin_environment_id;
+	if (!agentId) {
+		throw new Error(
+			"This Workspace no longer has a live Agent identity. Skill mutation is disabled.",
+		);
 	}
-	return adapters;
+	const agent = unwrap(
+		await api.GET("/v1/agents/{agent_id}", {
+			params: { path: { agent_id: agentId } },
+		}),
+	);
+	if (agent.default_project_id !== projectId) {
+		throw new Error("The Workspace identity changed; refusing an unfenced Skill mutation.");
+	}
+	if (getEnvIdByAgent(agent.agent_type) !== agentId) {
+		const machineName = agent.machine_name || "another machine";
+		throw new Error(
+			`This Workspace belongs to ${machineName}'s ${agent.agent_type} Agent. Run the command on that machine.`,
+		);
+	}
+	const entry = adapterRegistry[agent.agent_type as keyof typeof adapterRegistry];
+	if (!entry) throw new Error(`Unknown agent "${agent.agent_type}".`);
+	return { projectId, agentId, adapter: entry.create() };
+}
+
+async function resolveSkillMutationTarget(
+	api: ApiClient,
+	opts: { agent?: string; project?: string },
+): Promise<SkillMutationTarget> {
+	if (opts.agent && opts.project) {
+		throw new Error("Pass either --project or --agent, not both.");
+	}
+	if (opts.agent) {
+		const agentId = getEnvIdByAgent(opts.agent);
+		if (!agentId) {
+			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
+			const label = entry ? entry.displayName : opts.agent;
+			throw new Error(
+				`No environment registered for ${label}. Run \`clawdi setup --agent ${opts.agent}\` first.`,
+			);
+		}
+		const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
+		if (!entry) throw new Error(`Unknown agent "${opts.agent}".`);
+		return {
+			projectId: await fetchProjectIdForEnv(api, agentId),
+			agentId,
+			adapter: entry.create(),
+		};
+	}
+
+	let projectId: string;
+	if (opts.project) {
+		const cfg = getConfig();
+		projectId = await resolveProjectId(
+			cfg.apiUrl,
+			await getClawdiAccessToken(cfg.apiUrl),
+			opts.project,
+		);
+	} else {
+		projectId = await fetchDefaultProjectId(api);
+	}
+	return await resolveAgentProjectTarget(api, projectId);
 }
 
 function countFiles(dir: string): number {
@@ -83,20 +161,71 @@ function countFiles(dir: string): number {
 	return count;
 }
 
+export { readBoundedResponseBytes };
+
+async function installGithubSkillForAgent(
+	api: ApiClient,
+	source: Extract<ParsedSource, { type: "github" }>,
+	target: SkillMutationTarget & { agentId: string; adapter: AgentAdapter },
+): Promise<void> {
+	const downloaded = await fetchGithubSkillArchive(source);
+
+	// Local activation is authoritative and guarded by the adapter's managed
+	// reservation boundary. No Cloud mutation occurs if this commit fails.
+	await target.adapter.writeSkillArchive(downloaded.skillKey, downloaded.tarBytes);
+	removeProjectSkillMaterialization({
+		agentType: target.adapter.agentType,
+		localSkillKey: downloaded.skillKey,
+	});
+	const committedDir = dirname(target.adapter.getSkillPath(downloaded.skillKey));
+	const committedSnapshot = await snapshotSkillArchive(
+		committedDir,
+		undefined,
+		downloaded.skillKey,
+	);
+	let result: Awaited<ReturnType<ApiClient["uploadAgentSkill"]>>;
+	try {
+		result = await api.uploadAgentSkill(
+			target.agentId,
+			target.projectId,
+			downloaded.skillKey,
+			committedSnapshot.archive,
+			`${downloaded.skillKey}.tar.gz`,
+			committedSnapshot.hash,
+		);
+	} catch (error) {
+		console.log(
+			chalk.yellow(
+				`Installed ${sanitizeMetadata(downloaded.skillKey)} locally; the dashboard will retry the update the next time the daemon syncs.`,
+			),
+		);
+		throw error;
+	}
+	recordSkillProjectionClaim({
+		agentType: target.adapter.agentType,
+		agentId: target.agentId,
+		projectId: target.projectId,
+		skillKey: downloaded.skillKey,
+		hash: committedSnapshot.hash,
+	});
+	console.log(
+		chalk.green(
+			`✓ Installed ${sanitizeMetadata(result.name)} for ${adapterRegistry[target.adapter.agentType].displayName} (v${result.version}, ${result.file_count} files)`,
+		),
+	);
+}
+
 export async function skillList(opts: { json?: boolean; project?: string } = {}) {
 	requireAuth();
 	const api = new ApiClient();
 	let projectId: string | undefined;
 	if (opts.project) {
-		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+		projectId = await resolveProjectId(
+			cfg.apiUrl,
+			await getClawdiAccessToken(cfg.apiUrl),
+			opts.project,
+		);
 	}
 	const skills = await fetchAllSkills(api, projectId);
 
@@ -187,8 +316,13 @@ export async function skillAdd(
 			// original parent). Passing both roots accepts both
 			// shapes; an out-of-tree leak (e.g. `→ /etc/passwd`)
 			// still fails because /etc/passwd is in neither root.
-			tarBytes = await tarSkillDir(stagedDir, [dirname(resolved), stagingRoot], skillKey);
-			contentHash = await computeSkillFolderHash(stagedDir);
+			const snapshot = await snapshotSkillArchive(
+				stagedDir,
+				[dirname(resolved), stagingRoot],
+				skillKey,
+			);
+			tarBytes = snapshot.archive;
+			contentHash = snapshot.hash;
 		} finally {
 			rmSync(stagingRoot, { recursive: true, force: true });
 		}
@@ -228,70 +362,52 @@ export async function skillAdd(
 		}
 	}
 
-	// Phase-2 project resolution. Mirrors `skill install --agent X`:
-	//   --agent X → env-X's project on THIS machine
-	//   no --agent → default project, but only if its owning env
-	//                lives on THIS machine (else refuse so the
-	//                user doesn't ship a local skill into a
-	//                sibling machine's cloud inventory)
-	let projectId: string;
-	if (opts.project && opts.agent) {
-		console.log(
-			chalk.red("Pass either --project or --agent, not both. They target the same thing."),
-		);
-		process.exit(1);
-	}
-	if (opts.project) {
-		// Explicit project by UUID, slug, or name. The shared project
-		// resolver handles disambiguation + default fallback.
-		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
-		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
-	} else if (opts.agent) {
-		const envId = getEnvIdByAgent(opts.agent);
-		if (!envId) {
-			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
-			const label = entry ? entry.displayName : opts.agent;
+	const target = await resolveSkillMutationTarget(api, opts);
+	let result: Awaited<ReturnType<ApiClient["uploadSkill"]>>;
+	if (target.agentId && target.adapter) {
+		// The real adapter target is the commit point. An arbitrary source
+		// directory is only input; it cannot become an Agent projection until
+		// its validated archive has atomically activated under the skills root.
+		await target.adapter.writeSkillArchive(skillKey, tarBytes);
+		removeProjectSkillMaterialization({
+			agentType: target.adapter.agentType,
+			localSkillKey: skillKey,
+		});
+		const committedDir = dirname(target.adapter.getSkillPath(skillKey));
+		const committedSnapshot = await snapshotSkillArchive(committedDir, undefined, skillKey);
+		try {
+			result = await api.uploadAgentSkill(
+				target.agentId,
+				target.projectId,
+				skillKey,
+				committedSnapshot.archive,
+				`${skillKey}.tar.gz`,
+				committedSnapshot.hash,
+			);
+		} catch (error) {
 			console.log(
-				chalk.red(
-					`No environment registered for ${label}. Run \`clawdi setup --agent ${opts.agent}\` first.`,
+				chalk.yellow(
+					`Saved ${sanitizeMetadata(skillKey)} in the Agent filesystem; the dashboard will retry the update the next time the daemon syncs.`,
 				),
 			);
-			process.exit(1);
+			throw error;
 		}
-		projectId = await fetchProjectIdForEnv(api, envId);
+		recordSkillProjectionClaim({
+			agentType: target.adapter.agentType,
+			agentId: target.agentId,
+			projectId: target.projectId,
+			skillKey,
+			hash: committedSnapshot.hash,
+		});
 	} else {
-		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/v1/agents"));
-		const owning = envs.find((e) => e.default_project_id === projectId);
-		if (owning) {
-			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);
-			if (localEnvIdForAgent !== owning.id) {
-				const machineName = (owning as { machine_name?: string }).machine_name ?? "another machine";
-				console.log(
-					chalk.red(
-						`Account default project belongs to ${machineName}'s ${owning.agent_type} env. ` +
-							`Pass \`--agent <type>\` to install for an env on this machine, or run ` +
-							`\`clawdi skill add\` from that machine.`,
-					),
-				);
-				process.exit(1);
-			}
-		}
+		result = await api.uploadSkill(
+			target.projectId,
+			skillKey,
+			tarBytes,
+			`${skillKey}.tar.gz`,
+			contentHash,
+		);
 	}
-	const result = await api.uploadSkill(
-		projectId,
-		skillKey,
-		tarBytes,
-		`${skillKey}.tar.gz`,
-		contentHash,
-	);
 
 	console.log(
 		chalk.green(
@@ -320,265 +436,97 @@ export async function skillInstall(
 		);
 		process.exit(1);
 	}
+	if (opts.agent && opts.project) {
+		console.log(chalk.red("Pass either --project or --agent, not both."));
+		process.exit(1);
+	}
+
+	const api = new ApiClient();
+	const target = await resolveSkillMutationTarget(api, opts);
+	if (target.agentId && target.adapter) {
+		console.log(
+			chalk.cyan(
+				`Fetching from ${parsed.owner}/${parsed.repo}${parsed.path ? `/${parsed.path}` : ""}...`,
+			),
+		);
+		await installGithubSkillForAgent(api, parsed, {
+			projectId: target.projectId,
+			agentId: target.agentId,
+			adapter: target.adapter,
+		});
+		return;
+	}
 
 	const repo = `${parsed.owner}/${parsed.repo}`;
 	const path = parsed.path;
 
 	console.log(chalk.cyan(`Fetching from ${repo}${path ? `/${path}` : ""}...`));
 
-	const api = new ApiClient();
-
-	// Resolve the install project BEFORE the adapter filter so
-	// `--agent X` lands the cloud install in env-X's project. Without
-	// this, the install hit the account's default project (typically
-	// the most-recently-active env) while local writes went to
-	// agent X's adapter — dashboard / daemon for X never saw the
-	// skill, and the user's default-env home picked up rows it
-	// didn't want.
-	let projectId: string;
-	// `targetAgent` is the agent we'll write the local archive
-	// for. With --agent it's explicit; without --agent we must
-	// infer it from the default project so the cloud install and
-	// the local archive land in the same place. Pre-fix the
-	// no-flag path installed to ONE cloud project but wrote to
-	// EVERY registered adapter — siblings ended up with a local
-	// SKILL.md file and no cloud row in their own project, so
-	// their dashboard / daemon state diverged.
-	let targetAgent: string | undefined = opts.agent;
-	if (opts.agent && opts.project) {
-		console.log(chalk.red("Pass either --project or --agent, not both."));
-		process.exit(1);
-	}
-	if (opts.project) {
-		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
-		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
-		targetAgent = "__skip_local__";
-	} else if (opts.agent) {
-		const envId = getEnvIdByAgent(opts.agent);
-		if (!envId) {
-			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
-			const label = entry ? entry.displayName : opts.agent;
-			console.log(
-				chalk.red(
-					`No environment registered for ${label}. Run \`clawdi setup --agent ${opts.agent}\` first.`,
-				),
-			);
-			process.exit(1);
-		}
-		projectId = await fetchProjectIdForEnv(api, envId);
-	} else {
-		// No --agent flag: install to the account's default project
-		// and ONLY write the local archive to the agent that owns
-		// that project. Mirrors the dashboard's "Install" semantics
-		// when no env is selected.
-		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/v1/agents"));
-		const owning = envs.find((e) => e.default_project_id === projectId);
-		// Match the owning env to a LOCAL env on THIS machine. The
-		// account's default project can belong to a sibling machine
-		// running the same agent type — in that case writing the
-		// archive into this machine's adapter directory leaves a
-		// local file with no cloud row in this machine's env project
-		// (the cloud row is under the sibling's env). Filtering by
-		// `agent_type` alone hit that exact case for multi-machine
-		// users. The proper match is `local env id == owning env id`.
-		if (owning) {
-			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);
-			if (localEnvIdForAgent === owning.id) {
-				targetAgent = owning.agent_type;
-			} else {
-				// Default project belongs to a sibling machine. Tell the
-				// user explicitly so they can re-run with --agent or
-				// `clawdi pull` later from the right machine.
-				const machineName = (owning as { machine_name?: string }).machine_name ?? "another machine";
-				console.log(
-					chalk.yellow(
-						`Note: account default points at ${machineName}'s ${owning.agent_type} env. ` +
-							`Cloud install will land there; not writing a local copy on this machine. ` +
-							`Pass --agent <type> to install for an env on this machine.`,
-					),
-				);
-				targetAgent = "__skip_local__";
-			}
-		}
-	}
 	const installResult = unwrap(
 		await api.POST("/v1/projects/{project_id}/skills/install", {
-			params: { path: { project_id: projectId } },
+			params: { path: { project_id: target.projectId } },
 			body: { repo, path },
 		}),
 	);
-
-	// Select adapters to install to.
-	let adapters = getRegisteredAdapters();
-	if (targetAgent === "__skip_local__") {
-		// Cloud install landed in a sibling machine's project; don't
-		// write a local copy on this machine.
-		adapters = [];
-	} else if (targetAgent) {
-		const adapterAgent = targetAgent;
-		adapters = adapters.filter((a) => a.agentType === adapterAgent);
-		if (adapters.length === 0) {
-			const entry = adapterRegistry[adapterAgent as keyof typeof adapterRegistry];
-			if (!entry) {
-				console.log(
-					chalk.red(
-						`Unknown agent "${adapterAgent}". Valid: ${Object.keys(adapterRegistry).join(", ")}`,
-					),
-				);
-			} else {
-				console.log(
-					chalk.yellow(
-						`Agent ${entry.displayName} is not registered. Run \`clawdi setup --agent ${adapterAgent}\` first.`,
-					),
-				);
-			}
-			console.log(
-				chalk.gray(
-					`  The skill was installed in the cloud as ${sanitizeMetadata(installResult.skill_key)} — run \`clawdi pull\` later to fetch it.`,
-				),
-			);
-			process.exit(1);
-		}
-	}
-
-	const failed: Array<{ agent: string; error: string }> = [];
-	if (adapters.length > 0) {
-		let tarBytes: Buffer;
-		try {
-			// Project-explicit download keyed off the project we just
-			// installed into. The legacy account-wide endpoint resolves
-			// duplicate skill keys by "most recently updated across
-			// visible projects" — a multi-agent account where another
-			// project has a newer copy of the same skill_key would
-			// land that other agent's bytes locally.
-			tarBytes = await api.getBytes(
-				`/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(installResult.skill_key)}/download`,
-			);
-		} catch (e) {
-			console.log(
-				chalk.red(`✗ Download failed: ${e instanceof ApiError ? e.message : errMessage(e)}`),
-			);
-			console.log(
-				chalk.gray(
-					`  Cloud install succeeded as ${sanitizeMetadata(installResult.skill_key)}; retry with \`clawdi pull\`.`,
-				),
-			);
-			process.exit(1);
-		}
-
-		for (const adapter of adapters) {
-			const label = adapterRegistry[adapter.agentType].displayName;
-			try {
-				await adapter.writeSkillArchive(installResult.skill_key, tarBytes);
-				const skillDir = dirname(adapter.getSkillPath(installResult.skill_key));
-				console.log(chalk.green(`  ✓ ${label} → ${skillDir}/ (${installResult.file_count} files)`));
-			} catch (e) {
-				failed.push({ agent: adapter.agentType, error: errMessage(e) });
-				console.log(chalk.red(`  ✗ ${label} failed: ${errMessage(e)}`));
-			}
-		}
-	}
 
 	console.log(
 		chalk.green(
 			`\n✓ Installed ${sanitizeMetadata(installResult.name)} in cloud (v${installResult.version}, ${installResult.file_count} files)`,
 		),
 	);
-
-	if (failed.length > 0) {
-		console.log();
-		console.log(
-			chalk.yellow(
-				`  ${failed.length} agent${failed.length === 1 ? "" : "s"} did not receive the skill locally.`,
-			),
-		);
-		for (const f of failed) {
-			console.log(
-				chalk.gray(
-					`    • ${adapterRegistry[f.agent as keyof typeof adapterRegistry]?.displayName ?? f.agent}: ${f.error}`,
-				),
-			);
-		}
-		console.log(chalk.gray(`  Retry those with: clawdi pull --agent <type>`));
-		// If ALL targeted adapters failed, exit non-zero so scripts notice.
-		if (adapters.length > 0 && failed.length === adapters.length) {
-			process.exit(1);
-		}
-	}
 }
 
 export async function skillRm(key: string, opts: { agent?: string; project?: string } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	// Phase-2 project-explicit delete: only the targeted project's
-	// copy is removed. Mirrors `skill add`/`install`: --agent X
-	// pins env-X's project on this machine; without --agent we
-	// require the default project's owning env to be a LOCAL env on
-	// THIS machine, otherwise we'd silently uninstall from a
-	// sibling machine's agent. (Pre-fix the no-flag path used
-	// `fetchDefaultProjectId` blindly — the heuristic resolves to
-	// "most-recently-active env" which on multi-machine accounts
-	// is often someone else's env.)
-	let projectId: string;
-	if (opts.agent && opts.project) {
-		console.log(chalk.red("Pass either --project or --agent, not both."));
-		process.exit(1);
-	}
-	if (opts.project) {
-		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
-		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
+	const target = await resolveSkillMutationTarget(api, opts);
+	if (target.agentId && target.adapter) {
+		const materialization = readProjectSkillMaterialization({
+			agentType: target.adapter.agentType,
+			localSkillKey: key,
+		});
+		const hasAgentProjection = readSkillProjectionState(
+			target.adapter.agentType,
+			target.agentId,
+			target.projectId,
+		).claims.has(key);
+		// Filesystem absence is authoritative. The adapter mutation is guarded
+		// by managed-Skill reservations, so a reserved target fails before any
+		// Cloud delete can be reported.
+		await target.adapter.removeLocalSkill(key);
+		if (materialization) {
+			removeProjectSkillMaterialization({
+				agentType: target.adapter.agentType,
+				localSkillKey: key,
+			});
 		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
-	} else if (opts.agent) {
-		const envId = getEnvIdByAgent(opts.agent);
-		if (!envId) {
-			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
-			const label = entry ? entry.displayName : opts.agent;
+		if (materialization && !hasAgentProjection) {
+			console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)} from Agent`));
+			return;
+		}
+		try {
+			await api.deleteAgentSkill(target.agentId, key, target.projectId);
+		} catch (error) {
 			console.log(
-				chalk.red(
-					`No environment registered for ${label}. Run \`clawdi setup --agent ${opts.agent}\` first.`,
+				chalk.yellow(
+					`Removed ${sanitizeMetadata(key)} locally; the dashboard will retry the update the next time the daemon syncs.`,
 				),
 			);
-			process.exit(1);
+			throw error;
 		}
-		projectId = await fetchProjectIdForEnv(api, envId);
+		removeSkillProjectionClaim({
+			agentType: target.adapter.agentType,
+			agentId: target.agentId,
+			projectId: target.projectId,
+			skillKey: key,
+		});
 	} else {
-		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/v1/agents"));
-		const owning = envs.find((e) => e.default_project_id === projectId);
-		if (owning) {
-			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);
-			if (localEnvIdForAgent !== owning.id) {
-				const machineName = (owning as { machine_name?: string }).machine_name ?? "another machine";
-				console.log(
-					chalk.red(
-						`Account default project belongs to ${machineName}'s ${owning.agent_type} env. ` +
-							`Pass \`--agent <type>\` to remove from an env on this machine, or run ` +
-							`\`clawdi skill rm\` from that machine.`,
-					),
-				);
-				process.exit(1);
-			}
-		}
+		unwrap(
+			await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
+				params: { path: { project_id: target.projectId, skill_key: key } },
+			}),
+		);
 	}
-	unwrap(
-		await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-			params: { path: { project_id: projectId, skill_key: key } },
-		}),
-	);
 	console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)}`));
 }
 

@@ -13,6 +13,10 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import {
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "../lib/skill-sync-protocol";
 import { classifySseReconnect, consumeSse, parseRecord } from "./sse-client";
 
 const originalFetch = globalThis.fetch;
@@ -20,6 +24,36 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
 	globalThis.fetch = originalFetch;
 });
+
+function responseFromChunks(chunks: string[]): Response {
+	const encoder = new TextEncoder();
+	return new Response(
+		new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+				controller.close();
+			},
+		}),
+	);
+}
+
+async function consumeChunks(chunks: string[]): Promise<unknown[]> {
+	globalThis.fetch = Object.assign(async () => responseFromChunks(chunks), {
+		preconnect: originalFetch.preconnect,
+	});
+	const abort = new AbortController();
+	const events: unknown[] = [];
+	await consumeSse({
+		apiUrl: "https://cloud.example",
+		apiKey: "test-key",
+		abort: abort.signal,
+		onEvent: (event) => {
+			events.push(event);
+		},
+		onDisconnect: () => abort.abort(),
+	});
+	return events;
+}
 
 describe("classifySseReconnect", () => {
 	it("treats the first few reconnects as transient churn", () => {
@@ -34,6 +68,118 @@ describe("classifySseReconnect", () => {
 });
 
 describe("consumeSse reconnect metadata", () => {
+	it.each([
+		["LF", "\n"],
+		["CRLF", "\r\n"],
+		["CR", "\r"],
+	])("parses %s framing across arbitrary chunk boundaries", async (_name, newline) => {
+		const body = [
+			"event: skill_changed",
+			'data: {"type":"skill_changed",',
+			'data: "skill_key":"chunked","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":3}',
+			"",
+			"",
+		].join(newline);
+		const bytes = new TextEncoder().encode(body);
+		globalThis.fetch = Object.assign(
+			async () =>
+				new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							for (let index = 0; index < bytes.length; index += 3) {
+								controller.enqueue(bytes.slice(index, index + 3));
+							}
+							controller.close();
+						},
+					}),
+				),
+			{ preconnect: originalFetch.preconnect },
+		);
+		const abort = new AbortController();
+		const events: unknown[] = [];
+		await consumeSse({
+			apiUrl: "https://cloud.example",
+			apiKey: "test-key",
+			abort: abort.signal,
+			onEvent: (event) => {
+				events.push(event);
+			},
+			onDisconnect: () => abort.abort(),
+		});
+		expect(events).toEqual([expect.objectContaining({ skill_key: "chunked" })]);
+	});
+
+	it.each([
+		["no final line terminator", "\n", ""],
+		["a single final LF", "\n", "\n"],
+		["a final CRLF without a blank line", "\r\n", "\r\n"],
+		["a final bare CR without a blank line", "\r", "\r"],
+	])("discards an incomplete event at EOF with %s", async (_name, newline, suffix) => {
+		const body = [
+			"event: skill_changed",
+			'data: {"type":"skill_changed","skill_key":"incomplete","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":3}',
+		].join(newline);
+		expect(await consumeChunks([body + suffix])).toEqual([]);
+	});
+
+	it.each([
+		["LF", "\n"],
+		["CRLF", "\r\n"],
+		["bare CR", "\r"],
+	])("dispatches a complete %s-framed event at EOF", async (_name, newline) => {
+		const body =
+			[
+				"event: skill_changed",
+				'data: {"type":"skill_changed","skill_key":"complete","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":4}',
+			].join(newline) +
+			newline +
+			newline;
+		// One-character chunks force every CRLF pair across a chunk boundary.
+		expect(await consumeChunks([...body])).toEqual([
+			expect.objectContaining({ skill_key: "complete" }),
+		]);
+	});
+
+	it("ignores comments and malformed records while continuing the stream", async () => {
+		const body =
+			': ping\nmalformed-field\n\nevent: skill_changed\ndata: not-json\n\nevent: skill_deleted\ndata: {"type":"skill_deleted","skill_key":"valid","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":4}\n\n';
+		globalThis.fetch = Object.assign(async () => new Response(body), {
+			preconnect: originalFetch.preconnect,
+		});
+		const abort = new AbortController();
+		const events: unknown[] = [];
+		await consumeSse({
+			apiUrl: "https://cloud.example",
+			apiKey: "test-key",
+			abort: abort.signal,
+			onEvent: (event) => {
+				events.push(event);
+			},
+			onDisconnect: () => abort.abort(),
+		});
+		expect(events).toEqual([expect.objectContaining({ skill_key: "valid" })]);
+	});
+
+	it("declares the Agent-authoritative protocol on every stream", async () => {
+		const protocols: Array<string | null> = [];
+		globalThis.fetch = Object.assign(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				protocols.push(new Request(input, init).headers.get(SKILL_SYNC_PROTOCOL_HEADER));
+				return new Response(null, { status: 502 });
+			},
+			{ preconnect: originalFetch.preconnect },
+		);
+		const abort = new AbortController();
+		await consumeSse({
+			apiUrl: "https://cloud.example",
+			apiKey: "test-key",
+			abort: abort.signal,
+			onEvent: () => {},
+			onDisconnect: () => abort.abort(),
+		});
+		expect(protocols).toEqual([SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1]);
+	});
+
 	it("reports request ids and transient classification for HTTP reconnects", async () => {
 		const fakeFetch: typeof fetch = Object.assign(
 			async () =>
@@ -71,6 +217,32 @@ describe("consumeSse reconnect metadata", () => {
 				request_id: "req-sse-502",
 			},
 		]);
+	});
+
+	it.each([
+		["zero", "0", 0],
+		["a value above the SSE policy", "600", 300_000],
+		["an arbitrarily large value", "9".repeat(1_000), 300_000],
+	])("applies the explicit five-minute SSE cap to %s Retry-After", async (_name, value, waitMs) => {
+		globalThis.fetch = Object.assign(
+			async () => new Response(null, { status: 429, headers: { "retry-after": value } }),
+			{ preconnect: originalFetch.preconnect },
+		);
+		const abort = new AbortController();
+		const disconnects: Array<{ wait_ms: number }> = [];
+
+		await consumeSse({
+			apiUrl: "https://cloud.example",
+			apiKey: "test-key",
+			abort: abort.signal,
+			onEvent: () => {},
+			onDisconnect: (info) => {
+				disconnects.push(info);
+				abort.abort();
+			},
+		});
+
+		expect(disconnects).toEqual([expect.objectContaining({ wait_ms: waitMs })]);
 	});
 
 	it("starts unstable close failure counts at one", async () => {
@@ -117,6 +289,30 @@ describe("consumeSse reconnect metadata", () => {
 });
 
 describe("parseRecord", () => {
+	it("parses additive Agent projection events as invalidations", () => {
+		for (const type of ["agent_skill_changed", "agent_skill_deleted"] as const) {
+			const parsed = parseRecord(
+				`event: ${type}\ndata: {"type":"${type}","skill_key":"hello","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":8}`,
+			);
+			expect(parsed).toMatchObject({
+				type,
+				skill_key: "hello",
+				project_id: "00000000-0000-0000-0000-000000000001",
+				skills_revision: 8,
+			});
+		}
+	});
+
+	it("uses event names that the released live-only parser ignores during rolling deploys", () => {
+		// origin/main's released parser accepts exactly these two Skill event
+		// names. Keeping Agent projection invalidations additive prevents an
+		// already-open old SSE stream from writing/deleting local files when a
+		// new backend worker broadcasts through PostgreSQL NOTIFY.
+		const releasedSkillEventTypes = new Set(["skill_changed", "skill_deleted"]);
+		expect(releasedSkillEventTypes.has("agent_skill_changed")).toBe(false);
+		expect(releasedSkillEventTypes.has("agent_skill_deleted")).toBe(false);
+	});
+
 	it("parses a well-formed skill_changed record", () => {
 		const record =
 			'event: skill_changed\ndata: {"type":"skill_changed","skill_key":"hello","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":7}';

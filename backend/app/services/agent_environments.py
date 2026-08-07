@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
+from app.services.agent_lifecycle import reactivate_agent_and_project
+from app.services.principal_lifecycle import assert_user_authority_active
 
 _AGENT_TYPE_LABELS = {
     "openclaw": "OpenClaw",
@@ -44,6 +46,14 @@ def local_machine_registration_key(machine_id: str, agent_type: str) -> str:
     return f"machine:{machine_id}:agent:{agent_type}"
 
 
+def clear_connected_agent_registration(agent: AgentEnvironment) -> None:
+    """Clear Connected-only origin and lease evidence during hosted registration."""
+
+    agent.connected_agent_registered_at = None
+    agent.project_skill_reconcile_version = None
+    agent.project_skill_reconcile_observed_at = None
+
+
 async def register_agent_environment(
     db: AsyncSession,
     *,
@@ -56,6 +66,7 @@ async def register_agent_environment(
     sort_order: int,
     environment_id: UUID | None = None,
     registration_key: str | None = None,
+    default_name: str | None = None,
     commit: bool = True,
 ) -> AgentEnvironmentRegistration:
     """Create or refresh an agent row.
@@ -71,6 +82,8 @@ async def register_agent_environment(
     if environment_id is None and registration_key is None:
         raise ValueError("register_agent_environment requires environment_id or registration_key")
 
+    await assert_user_authority_active(db, user_id)
+
     if environment_id is not None:
         existing = (
             await db.execute(
@@ -83,6 +96,8 @@ async def register_agent_environment(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.archived_at is not None:
+                await reactivate_agent_and_project(db, agent=existing)
             await _refresh_agent_environment(
                 db,
                 existing,
@@ -93,6 +108,7 @@ async def register_agent_environment(
                 agent_version=agent_version,
                 os_name=os_name,
                 registration_key=registration_key,
+                default_name=default_name,
             )
             if commit:
                 await db.commit()
@@ -118,6 +134,8 @@ async def register_agent_environment(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.archived_at is not None:
+                await reactivate_agent_and_project(db, agent=existing)
             await _refresh_agent_environment(
                 db,
                 existing,
@@ -128,6 +146,7 @@ async def register_agent_environment(
                 agent_version=agent_version,
                 os_name=os_name,
                 registration_key=registration_key,
+                default_name=default_name,
             )
             if commit:
                 await db.commit()
@@ -135,8 +154,8 @@ async def register_agent_environment(
                 await db.flush()
             return AgentEnvironmentRegistration(env=existing, created=False)
 
-    assigned_default_name = None
-    if registration_key is None:
+    assigned_default_name = default_name.strip() if default_name else None
+    if registration_key is None and assigned_default_name is None:
         assigned_default_name = await _next_explicit_default_name(db, user_id, agent_type)
 
     project_name = assigned_default_name or _agent_project_label(machine_name, agent_type)
@@ -174,6 +193,11 @@ async def register_agent_environment(
         return AgentEnvironmentRegistration(env=env, created=True)
     except IntegrityError:
         await db.rollback()
+        # The rollback releases transaction-scoped advisory locks. Reacquire
+        # the shared authority fence before inspecting or mutating the winner.
+        # A termination queued behind the failed create therefore fences the
+        # user before this retry can refresh or reactivate authority.
+        await assert_user_authority_active(db, user_id)
         if environment_id is not None:
             winner = (
                 await db.execute(
@@ -204,7 +228,10 @@ async def register_agent_environment(
                 agent_version=agent_version,
                 os_name=os_name,
                 registration_key=registration_key,
+                default_name=default_name,
             )
+            if winner.archived_at is not None:
+                await reactivate_agent_and_project(db, agent=winner)
             if commit:
                 await db.commit()
             else:
@@ -222,6 +249,24 @@ async def register_agent_environment(
         ).scalar_one_or_none()
         if winner is None:
             raise
+        if winner.archived_at is not None:
+            await reactivate_agent_and_project(db, agent=winner)
+            await _refresh_agent_environment(
+                db,
+                winner,
+                user_id=user_id,
+                machine_id=machine_id,
+                machine_name=machine_name,
+                agent_type=agent_type,
+                agent_version=agent_version,
+                os_name=os_name,
+                registration_key=registration_key,
+                default_name=default_name,
+            )
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
         return AgentEnvironmentRegistration(env=winner, created=False)
 
 
@@ -236,6 +281,7 @@ async def _refresh_agent_environment(
     agent_version: str | None,
     os_name: str,
     registration_key: str | None,
+    default_name: str | None,
 ) -> None:
     env.machine_id = machine_id
     env.machine_name = machine_name
@@ -244,7 +290,13 @@ async def _refresh_agent_environment(
     env.os = os_name
     env.last_seen_at = datetime.now(UTC)
     env.registration_key = registration_key
-    if env.default_project_id is None:
+    if registration_key is None:
+        # Explicit identities are hosted control-plane identities. A conversion
+        # from a Connected row must not retain its Connected capability lease.
+        clear_connected_agent_registration(env)
+        if default_name and default_name.strip():
+            env.default_name = default_name.strip()
+    if not env.default_project_id:
         project_name = env.default_name or _agent_project_label(machine_name, agent_type)
         healing_project = Project(
             user_id=user_id,
@@ -285,7 +337,11 @@ async def _next_explicit_default_name(db: AsyncSession, user_id: UUID, agent_typ
     )
     next_index = (
         max(
-            (_agent_default_name_index(name, base) or 0 for name in existing_names),
+            (
+                _agent_default_name_index(name, base) or 0
+                for name in existing_names
+                if name is not None
+            ),
             default=0,
         )
         + 1

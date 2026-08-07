@@ -1,7 +1,10 @@
 import hashlib
 import io
+import json
 import logging
+import re
 import tarfile
+from typing import TypedDict
 from uuid import UUID
 
 from fastapi import (
@@ -37,10 +40,26 @@ from app.core.skill_key import (
     has_reserved_skill_key_suffix,
     validate_derived_skill_key,
 )
-from app.models.skill import Skill
+from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_HEADER,
+    SkillSyncProtocol,
+    resolve_skill_sync_protocol,
+)
+from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
+from app.models.project_membership import ProjectMembership
+from app.models.session import AgentEnvironment
+from app.models.skill import (
+    SKILL_AUTHORITY_AGENT_SYNC,
+    SKILL_AUTHORITY_CLOUD,
+    Skill,
+)
+from app.models.user import User
 from app.schemas.common import Paginated
 from app.schemas.skill import (
+    PersistedProjectKind,
+    PersistedSkillAuthority,
     SkillContentUpdateRequest,
+    SkillCreateRequest,
     SkillDeleteResponse,
     SkillDetailResponse,
     SkillInstallRequest,
@@ -49,11 +68,28 @@ from app.schemas.skill import (
     SkillUploadResponse,
 )
 from app.services.file_store import get_file_store
-from app.services.sync_events import bump_skills_revision
+from app.services.http_cache import if_none_match_contains
+from app.services.project_runtime_skills import (
+    assert_agent_workspace_skill_write_compatible,
+    assert_project_skill_write_compatible,
+)
+from app.services.runtime_manifest_resources import (
+    assert_project_skill_not_runtime_managed,
+    project_skill_advisory_lock_key,
+)
+from app.services.sync_events import (
+    AGENT_SKILL_CHANGED_EVENT,
+    AGENT_SKILL_DELETED_EVENT,
+    bump_skills_revision,
+    get_skills_revision,
+)
 from app.services.tar_utils import (
+    SkillTextValidationError,
     TarValidationError,
     extract_skill_md,
     parse_frontmatter,
+    replace_skill_md,
+    skill_document,
     tar_from_content,
     validate_tar,
 )
@@ -68,6 +104,14 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 # of phase 2).
 project_router = APIRouter(prefix="/projects/{project_id}/skills", tags=["skills"])
 
+# Agent-authoritative filesystem projection. Unlike project routes, these
+# endpoints derive current project authority from the authenticated Agent
+# identity. Deletes may carry a previously stamped project fence so a durable
+# queue can remove that Agent's exact old projection after reassignment; the
+# server never accepts caller-supplied authority. Bound keys must match the
+# path, and user-level CLI identities must own the Agent.
+agent_router = APIRouter(prefix="/agents/{agent_id}/skills", tags=["skills"])
+
 # Back-compat for binaries built during the Scope -> Project migration.
 # The table row id was preserved, so old `/api/scopes/{id}/skills/...`
 # read URLs can be served by the project-explicit handlers.
@@ -80,15 +124,38 @@ scope_router = APIRouter(
 log = logging.getLogger(__name__)
 
 file_store = get_file_store()
+_SKILLS_LIST_CACHE_CONTROL = "no-transform"
+_SKILLS_ETAG_VERSION = "skills-v2"
 
 
-def _file_key(user_id, project_id, skill_key: str) -> str:
-    """Storage path for a skill tarball. Includes project_id so
-    different projects' same-named skills don't clobber each other
-    in object storage. Migration 8a3e5f7b2c1d rewrote pre-existing
-    paths to this shape; new uploads use it directly.
-    """
-    return f"skills/{user_id}/{project_id}/{skill_key}.tar.gz"
+class _ProjectSkillMetadata(TypedDict):
+    name: str
+    kind: PersistedProjectKind
+    environment_id: UUID | None
+    machine_name: str | None
+
+
+def _persisted_skill_authority(value: str) -> PersistedSkillAuthority:
+    if value == SKILL_AUTHORITY_AGENT_SYNC:
+        return "agent_sync"
+    if value == SKILL_AUTHORITY_CLOUD:
+        return "cloud"
+    raise ValueError(f"Unsupported persisted Skill authority: {value}")
+
+
+def _persisted_project_kind(value: str) -> PersistedProjectKind:
+    if value == "environment":
+        return "environment"
+    if value == "personal":
+        return "personal"
+    if value == "workspace":
+        return "workspace"
+    raise ValueError(f"Unsupported persisted Project kind: {value}")
+
+
+def _file_key(user_id: UUID, project_id: UUID, skill_key: str, content_hash: str) -> str:
+    """Immutable object identity for new writes; historical keys remain readable."""
+    return f"skills/{user_id}/{project_id}/{skill_key}/{content_hash}.tar.gz"
 
 
 def _sanitize_log(value: object) -> str:
@@ -144,26 +211,6 @@ _SKILL_HASH_EXCLUDE = {
 }
 
 
-def _advisory_lock_key(user_id, project_id, skill_key: str) -> int:
-    """Stable 64-bit signed int derived from (user_id, project_id,
-    skill_key) for `pg_advisory_xact_lock`. Postgres takes a
-    bigint (signed int64) so we mask the SHA digest into that
-    range.
-
-    Lock identity matches the partial unique constraint
-    (`uq_skills_active_user_project_skill_key`) so the lock
-    serializes exactly the same logical resource the constraint
-    enforces.
-    """
-    h = hashlib.sha256(f"skill:{user_id}:{project_id}:{skill_key}".encode()).digest()
-    n = int.from_bytes(h[:8], "big", signed=False)
-    # Map to signed int64 via two's-complement wrap. PG accepts
-    # any int64; this keeps the cast deterministic.
-    if n >= 1 << 63:
-        n -= 1 << 64
-    return n
-
-
 def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> str:
     """File-tree content hash of a skill tar.gz.
 
@@ -181,15 +228,14 @@ def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> s
     otherwise the relative path is ``foo/SKILL.md`` while the CLI's
     `computeSkillFolderHash` reports ``SKILL.md`` (it walks files
     inside the skill dir), and the two hashes never match. Pre-fix
-    this divergence broke nested-key dashboard edits: the stored
+    this divergence broke nested-key projection claims: the stored
     `content_hash` never matched the CLI's local hash, so every
-    reconcile re-pulled the same bytes and echo suppression on SSE
-    failed. Passing `skill_key=None` (legacy callers / marketplace
+    reconciliation re-uploaded the same bytes and SSE invalidations caused
+    redundant rescans. Passing `skill_key=None` (legacy callers / marketplace
     install on flat keys) keeps the strip-one behavior.
 
     Used in two places:
-    - `upload_skill` fallback when the client (CLI <= 0.3.3) doesn't send
-      `content_hash`.
+    - `upload_skill` fallback when a legacy client doesn't send `content_hash`.
     - `install_skill` for marketplace tars fetched from GitHub.
     """
     strip_count = len(skill_key.split("/")) if skill_key else 1
@@ -226,7 +272,7 @@ def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> s
 # ---------------------------------------------------------------------------
 
 
-@router.get("")
+@router.get("", response_model=Paginated[SkillSummaryResponse])
 async def list_skills(
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     q: str | None = Query(default=None, description="Search name / description / skill_key"),
@@ -240,20 +286,19 @@ async def list_skills(
             "project the caller can read (Agent API keys see only "
             "their Agent Project, everyone else sees all projects). The serve "
             "daemon passes its Agent Project id when it boots with an unbound "
-            "CLI key + an explicit --environment-id, so reconcile pulls the "
-            "right Project instead of the most-recently-active one."
+            "CLI key + an explicit --environment-id, so projection catch-up "
+            "lists the right Project instead of the most-recently-active one."
         ),
     ),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
-) -> Paginated[SkillSummaryResponse]:
-    fast_response = _bound_api_key_skills_304_response(
-        auth=auth,
-        selected_project_id=project_id,
-        if_none_match=if_none_match,
-    )
-    if fast_response is not None:
-        return fast_response
-
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
+) -> Paginated[SkillSummaryResponse] | Response:
+    if (
+        (auth.is_cli or auth.oauth_cli)
+        and auth.api_key is not None
+        and auth.api_key.environment_id is not None
+    ):
+        resolve_skill_sync_protocol(skill_sync_protocol)
     async with async_session_factory() as db:
         return await _list_skills_with_db(
             auth=auth,
@@ -264,6 +309,7 @@ async def list_skills(
             include_content=include_content,
             project_id=project_id,
             if_none_match=if_none_match,
+            skill_sync_protocol=skill_sync_protocol,
         )
 
 
@@ -277,10 +323,22 @@ async def _list_skills_with_db(
     include_content: bool,
     project_id: UUID | None,
     if_none_match: str | None,
-) -> Paginated[SkillSummaryResponse]:
-    # Collection-level ETag short-circuit: when the daemon's
-    # last-seen revision matches current, return 304 with no body
-    # so the 60s poll cycle costs nothing on quiet accounts.
+    skill_sync_protocol: str | None,
+) -> Paginated[SkillSummaryResponse] | Response:
+    # Keep every query that contributes to the strong collection ETag and its
+    # response body in one snapshot. Cross-page consistency remains fenced by
+    # the shared collection revision because released CLI 0.13.13 performs a
+    # separate request for each page.
+    await db.connection(
+        execution_options={
+            "isolation_level": "REPEATABLE READ",
+            "postgresql_readonly": True,
+        }
+    )
+
+    # Collection-level ETag short-circuit: when the daemon's last-seen
+    # revision matches current, return 304 with no body so periodic complete
+    # Agent-Project inventory catch-up costs nothing on quiet accounts.
     #
     # ETag binds (caller revision, project filter, EFFECTIVE
     # visible project set, and visible owners' revisions) so a
@@ -301,33 +359,19 @@ async def _list_skills_with_db(
     # it can't write to). When the caller pins `project_id`,
     # intersect with what they're allowed to see — an ID
     # outside that set yields a deliberately-empty listing.
-    revision = auth.skills_revision
     selected_project_id = project_id
     if selected_project_id is not None:
         if auth.api_key_project_id is not None:
             visible_project_ids = (
                 [selected_project_id] if selected_project_id == auth.api_key_project_id else []
             )
-            visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
-                db,
-                auth,
-                visible_project_ids,
-            )
         elif auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
             bound_project_id = await resolve_default_write_project(db, auth)
             visible_project_ids = (
                 [selected_project_id] if selected_project_id == bound_project_id else []
             )
-            visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
-                db,
-                auth,
-                visible_project_ids,
-            )
         else:
-            (
-                visible_project_ids,
-                visible_revision_fingerprint,
-            ) = await _selected_project_visibility_and_revision_fingerprint(
+            visible_project_ids = await _selected_project_visibility(
                 db,
                 auth,
                 selected_project_id,
@@ -335,20 +379,43 @@ async def _list_skills_with_db(
     else:
         # Unscoped read: full inventory across owned + shared projects.
         visible_project_ids = await project_ids_visible_to(db, auth)
-        visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
-            db,
-            auth,
-            visible_project_ids,
+
+    # Do not trust `auth.skills_revision` here. API-key authentication caches
+    # that snapshot for longer than the daemon polling interval, so it can lag
+    # a committed Skill mutation. Both the caller revision (kept as the first
+    # ETag segment for CLI 0.13.13) and every visible owner's revision come
+    # from this database snapshot before a 304 is considered.
+    revision = await get_skills_revision(db, auth.user_id)
+    (
+        visible_revision_fingerprint,
+        metadata_fingerprint,
+        project_meta,
+    ) = await _visible_skills_etag_state(db, visible_project_ids)
+    if (auth.is_cli or auth.oauth_cli) and visible_project_ids:
+        has_agent_project = any(
+            meta["kind"] == PROJECT_KIND_ENVIRONMENT for meta in project_meta.values()
         )
+        if has_agent_project:
+            resolve_skill_sync_protocol(skill_sync_protocol)
     etag = _skills_collection_etag(
         revision=revision,
         selected_project_id=selected_project_id,
         visible_project_ids=visible_project_ids,
         visible_revision_fingerprint=visible_revision_fingerprint,
+        metadata_fingerprint=metadata_fingerprint,
+        q=q,
+        page_size=page_size,
+        include_content=include_content,
     )
-    if if_none_match is not None and if_none_match.strip() == etag:
+    # Inline content depends on object storage after the DB snapshot closes.
+    # Always render that shape so a transient prior failure cannot turn its
+    # partial `content=None` body into a reusable 304 validator.
+    if page == 1 and not include_content and if_none_match_contains(if_none_match, etag):
         await db.commit()
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers={"ETag": etag, "Cache-Control": _SKILLS_LIST_CACHE_CONTROL},
+        )
 
     # Drop the `Skill.user_id == auth.user_id` filter that was here
     # pre-sharing: that would have blocked viewer members from seeing
@@ -361,7 +428,7 @@ async def _list_skills_with_db(
             Skill.is_active,
             Skill.project_id.in_(visible_project_ids),
         )
-        .order_by(Skill.skill_key)
+        .order_by(Skill.skill_key, Skill.project_id, Skill.id)
     )
     if q:
         needle = like_needle(q)
@@ -379,44 +446,6 @@ async def _list_skills_with_db(
         (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).scalars().all()
     )
 
-    # Bulk-fetch the project + machine metadata for the visible
-    # skills in one query each (vs N+1). Two indexed lookups
-    # against `projects.id` and `agent_environments.id`.
-    from app.models.project import Project
-    from app.models.session import AgentEnvironment
-
-    project_ids_in_listing = {s.project_id for s in skills if s.project_id is not None}
-    project_meta: dict = {}
-    if project_ids_in_listing:
-        project_rows = (
-            await db.execute(
-                select(Project.id, Project.name, Project.origin_environment_id).where(
-                    Project.id.in_(project_ids_in_listing)
-                )
-            )
-        ).all()
-        env_ids_in_listing = {
-            sid_row.origin_environment_id
-            for sid_row in project_rows
-            if sid_row.origin_environment_id is not None
-        }
-        env_meta: dict = {}
-        if env_ids_in_listing:
-            env_rows = (
-                await db.execute(
-                    select(AgentEnvironment.id, AgentEnvironment.machine_name).where(
-                        AgentEnvironment.id.in_(env_ids_in_listing)
-                    )
-                )
-            ).all()
-            env_meta = {row.id: row.machine_name for row in env_rows}
-        for sid_row in project_rows:
-            project_meta[sid_row.id] = {
-                "name": sid_row.name,
-                "environment_id": sid_row.origin_environment_id,
-                "machine_name": env_meta.get(sid_row.origin_environment_id),
-            }
-
     items: list[SkillSummaryResponse] = []
     content_fetches: list[tuple[int, UUID, str]] = []
     for s in skills:
@@ -429,6 +458,7 @@ async def _list_skills_with_db(
                 description=s.description,
                 version=s.version,
                 source=s.source,
+                authority=_persisted_skill_authority(s.authority),
                 source_repo=s.source_repo,
                 agent_types=s.agent_types,
                 file_count=s.file_count,
@@ -439,6 +469,7 @@ async def _list_skills_with_db(
                 content=None,
                 project_id=str(s.project_id) if s.project_id else None,
                 project_name=meta["name"] if meta else None,
+                project_kind=meta["kind"] if meta else None,
                 machine_name=meta["machine_name"] if meta else None,
                 environment_id=str(meta["environment_id"])
                 if meta and meta["environment_id"]
@@ -475,55 +506,17 @@ async def _list_skills_with_db(
     response = Paginated[SkillSummaryResponse](
         items=items, total=total, page=page, page_size=page_size
     )
-    # Attach the same project-bound ETag the 304 path would have
-    # echoed; daemons cache the full string and replay it on the
-    # next request.
+    headers = {"Cache-Control": _SKILLS_LIST_CACHE_CONTROL}
+    if not include_content:
+        # Metadata-only pages expose one shared collection fence. Inline
+        # content depends on fallible object storage and deliberately has no
+        # reusable strong validator, whether every fetch succeeded or not.
+        headers["ETag"] = etag
     return Response(
         content=response.model_dump_json(),
         media_type="application/json",
-        headers={"ETag": etag},
+        headers=headers,
     )
-
-
-def _bound_api_key_skills_304_response(
-    *,
-    auth: AuthContext,
-    selected_project_id: UUID | None,
-    if_none_match: str | None,
-) -> Response | None:
-    """Serve the hot daemon conditional-GET path without opening a DB session.
-
-    Env-bound API keys are already narrowed by the auth snapshot to exactly one
-    Agent Project (`auth.api_key_project_id`) and never see shared projects.
-    Their visible-owner revision is therefore the authenticated user's cached
-    `skills_revision`. That makes the 304 ETag fully derivable from the auth
-    context and query parameters.
-
-    Dashboard JWTs and unbound CLI keys still go through the DB-backed path so
-    shared-project owner revisions stay part of the ETag.
-    """
-    if if_none_match is None or auth.api_key_project_id is None:
-        return None
-
-    if selected_project_id is not None:
-        visible_project_ids = (
-            [selected_project_id] if selected_project_id == auth.api_key_project_id else []
-        )
-    else:
-        visible_project_ids = [auth.api_key_project_id]
-
-    visible_revision_fingerprint = (
-        _auth_user_skills_revision_fingerprint(auth) if visible_project_ids else "none"
-    )
-    etag = _skills_collection_etag(
-        revision=auth.skills_revision,
-        selected_project_id=selected_project_id,
-        visible_project_ids=visible_project_ids,
-        visible_revision_fingerprint=visible_revision_fingerprint,
-    )
-    if if_none_match.strip() != etag:
-        return None
-    return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
 
 
 def _skills_collection_etag(
@@ -532,10 +525,42 @@ def _skills_collection_etag(
     selected_project_id: UUID | None,
     visible_project_ids: list[UUID],
     visible_revision_fingerprint: str,
+    metadata_fingerprint: str,
+    q: str | None,
+    page_size: int,
+    include_content: bool,
 ) -> str:
     project_tag = str(selected_project_id) if selected_project_id is not None else "all"
     visible_fingerprint = _visible_project_fingerprint(visible_project_ids)
-    return f'"{revision}:{project_tag}:{visible_fingerprint}:{visible_revision_fingerprint}"'
+    representation_fingerprint = _skills_representation_fingerprint(
+        q=q,
+        page_size=page_size,
+        include_content=include_content,
+    )
+    return (
+        f'"{revision}:{_SKILLS_ETAG_VERSION}:{project_tag}:{visible_fingerprint}:'
+        f"{visible_revision_fingerprint}:{metadata_fingerprint}:"
+        f'{representation_fingerprint}"'
+    )
+
+
+def _skills_representation_fingerprint(
+    *,
+    q: str | None,
+    page_size: int,
+    include_content: bool,
+) -> str:
+    """Bind representation-changing list options without breaking page fences.
+
+    CLI 0.13.13 requires every page in one complete inventory read to expose
+    the same strong collection ETag. Keep `page` out of this fingerprint until
+    that released cross-page contract can be versioned; conditional requests
+    are limited to page 1 separately so a page-1 validator cannot suppress a
+    page-2 body.
+    """
+    normalized_q = q or ""
+    value = f"{normalized_q}\0{page_size}\0{int(include_content)}"
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
 def _visible_project_fingerprint(visible_project_ids: list[UUID]) -> str:
@@ -547,32 +572,21 @@ def _visible_project_fingerprint(visible_project_ids: list[UUID]) -> str:
     ).hexdigest()[:16]
 
 
-def _auth_user_skills_revision_fingerprint(auth: AuthContext) -> str:
-    return hashlib.sha256(f"{auth.user_id}:{auth.skills_revision}".encode()).hexdigest()[:16]
-
-
-async def _selected_project_visibility_and_revision_fingerprint(
+async def _selected_project_visibility(
     db: AsyncSession,
     auth: AuthContext,
     selected_project_id: UUID,
-) -> tuple[list[UUID], str]:
-    """Validate one selected project and fetch its owner revision in one query.
+) -> list[UUID]:
+    """Validate one selected project without loading the full visible set.
 
     The daemon always calls `/v1/skills?project_id=<env-project>`. For unbound
-    CLI keys and dashboard JWTs, the old path loaded the caller's full visible
-    project set and then ran a second owner-revision query even though the
-    representation is scoped to one project. This keeps the same read policy
-    (owned OR shared membership) but collapses the hot conditional-GET path to
-    one indexed lookup.
+    CLI keys and dashboard JWTs this keeps the same read policy (owned OR
+    shared membership) with one indexed lookup. Current owner revisions and
+    response-visible metadata are loaded separately for every caller shape.
     """
-    from app.models.project import Project
-    from app.models.project_membership import ProjectMembership
-    from app.models.user import User
-
-    row = (
+    project = (
         await db.execute(
-            select(Project.user_id, User.skills_revision)
-            .join(User, User.id == Project.user_id)
+            select(Project.id)
             .outerjoin(
                 ProjectMembership,
                 and_(
@@ -582,29 +596,21 @@ async def _selected_project_visibility_and_revision_fingerprint(
             )
             .where(
                 Project.id == selected_project_id,
+                Project.archived_at.is_(None),
                 or_(
                     Project.user_id == auth.user_id,
                     ProjectMembership.member_user_id.is_not(None),
                 ),
             )
         )
-    ).first()
-    if row is None:
-        return [], "none"
-    return [selected_project_id], _owner_skills_revision_fingerprint(
-        row.user_id,
-        row.skills_revision,
-    )
-
-
-def _owner_skills_revision_fingerprint(owner_id: UUID, skills_revision: int | None) -> str:
-    return hashlib.sha256(f"{owner_id}:{int(skills_revision or 0)}".encode()).hexdigest()[:16]
+    ).scalar_one_or_none()
+    return [project] if project is not None else []
 
 
 async def _resolve_legacy_skill(
     db: AsyncSession,
     auth: AuthContext,
-    visible_project_ids: list,
+    visible_project_ids: list[UUID],
     skill_key: str,
 ) -> Skill:
     """Phase-1 multi-project disambiguation: pick the most-recently-
@@ -627,41 +633,76 @@ async def _resolve_legacy_skill(
     return skill
 
 
-async def _visible_skills_revision_fingerprint(
+async def _visible_skills_etag_state(
     db: AsyncSession,
-    auth: AuthContext,
-    visible_project_ids: list,
-) -> str:
-    """Fingerprint skill revisions for every owner represented in
-    the caller's visible project set.
+    visible_project_ids: list[UUID],
+) -> tuple[str, str, dict[UUID, _ProjectSkillMetadata]]:
+    """Load current owner revisions and all response-visible metadata.
 
     `users.skills_revision` is bumped on the owner account when a skill
     changes. For shared projects, the recipient's own revision does not
-    move, so an ETag based only on `auth.user_id` would incorrectly 304
-    after the owner updated shared content. Hashing the visible projects'
-    owner revisions keeps conditional GETs correct without adding a new
-    project-level revision table in this PR.
+    move. Project and Agent metadata have no shared revision counter, so hash
+    their actual projected values. Both fingerprints cover the full visible
+    set and therefore remain identical across pages.
     """
     if not visible_project_ids:
-        return "none"
-
-    if auth.api_key_project_id is not None and set(visible_project_ids) == {
-        auth.api_key_project_id
-    }:
-        return _auth_user_skills_revision_fingerprint(auth)
-
-    from app.models.project import Project
-    from app.models.user import User
+        return "none", "none", {}
 
     rows = (
         await db.execute(
-            select(Project.user_id, User.skills_revision)
+            select(
+                Project.id,
+                Project.user_id,
+                User.skills_revision,
+                Project.name,
+                Project.kind,
+                Project.origin_environment_id,
+                AgentEnvironment.machine_name,
+            )
             .join(User, User.id == Project.user_id)
+            .outerjoin(
+                AgentEnvironment,
+                AgentEnvironment.id == Project.origin_environment_id,
+            )
             .where(Project.id.in_(visible_project_ids))
         )
     ).all()
-    parts = sorted(f"{owner_id}:{int(revision or 0)}" for owner_id, revision in rows)
-    return hashlib.sha256(":".join(parts).encode()).hexdigest()[:16]
+    owner_revisions = {row.user_id: int(row.skills_revision or 0) for row in rows}
+    owner_parts = sorted(f"{owner_id}:{revision}" for owner_id, revision in owner_revisions.items())
+    visible_revision_fingerprint = hashlib.sha256(":".join(owner_parts).encode()).hexdigest()[:16]
+
+    rows_by_project_id = {row.id: row for row in rows}
+    metadata_values: list[list[str | None]] = []
+    project_meta: dict[UUID, _ProjectSkillMetadata] = {}
+    for project_id in sorted(set(visible_project_ids), key=str):
+        row = rows_by_project_id.get(project_id)
+        if row is None:
+            metadata_values.append([str(project_id), None, None, None, None])
+            continue
+        environment_id = row.origin_environment_id
+        metadata_values.append(
+            [
+                str(project_id),
+                row.name,
+                row.kind,
+                str(environment_id) if environment_id is not None else None,
+                row.machine_name,
+            ]
+        )
+        project_meta[project_id] = {
+            "name": row.name,
+            "kind": _persisted_project_kind(row.kind),
+            "environment_id": environment_id,
+            "machine_name": row.machine_name,
+        }
+    metadata_fingerprint = hashlib.sha256(
+        json.dumps(
+            metadata_values,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()[:16]
+    return visible_revision_fingerprint, metadata_fingerprint, project_meta
 
 
 async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> SkillDetailResponse:
@@ -671,6 +712,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
     description = skill.description
     version = skill.version
     source = skill.source
+    authority = _persisted_skill_authority(skill.authority)
     source_repo = skill.source_repo
     file_count = skill.file_count
     agent_types = skill.agent_types
@@ -685,21 +727,22 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
     # to build the upload URL; multi-machine users see machine_name
     # in the page caption ("on my-mac") so they're sure which copy
     # they're editing.
-    project_id_str: str | None = str(project_id) if project_id else None
+    project_id_str = str(project_id)
     project_name: str | None = None
+    project_kind: str | None = None
     machine_name: str | None = None
     environment_id: str | None = None
-    if db is not None and project_id is not None:
-        from app.models.project import Project
-        from app.models.session import AgentEnvironment
-
+    if db is not None:
         project_row = (
             await db.execute(
-                select(Project.name, Project.origin_environment_id).where(Project.id == project_id)
+                select(Project.name, Project.kind, Project.origin_environment_id).where(
+                    Project.id == project_id
+                )
             )
         ).first()
         if project_row is not None:
             project_name = project_row.name
+            project_kind = _persisted_project_kind(project_row.kind)
             if project_row.origin_environment_id is not None:
                 environment_id = str(project_row.origin_environment_id)
                 env_row = (
@@ -741,6 +784,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
         description=description,
         version=version,
         source=source,
+        authority=authority,
         source_repo=source_repo,
         file_count=file_count,
         content=content,
@@ -750,6 +794,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
         updated_at=updated_at,
         project_id=project_id_str,
         project_name=project_name,
+        project_kind=project_kind,
         machine_name=machine_name,
         environment_id=environment_id,
     )
@@ -771,6 +816,7 @@ async def upload_skill_legacy(
         max_length=64,
         pattern=r"^[a-f0-9]{64}$",
     ),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
@@ -783,12 +829,20 @@ async def upload_skill_legacy(
     route. New CLIs and the dashboard call
     `POST /v1/projects/{project_id}/skills/upload` directly.
 
-    Asymmetric with `delete_skill_legacy` (which 410s) by design:
+    Asymmetric with `delete_skill_legacy` (which only accepts an env-bound
+    API key) by design:
     a wrong-project upload creates a stray row visible in the
     dashboard listing, recoverable in 30s by re-uploading to the
     correct project. A wrong-project DELETE is permanent data loss.
     """
     project_id = await resolve_default_write_project(db, auth)
+    authority, authority_agent_id = await _project_upload_authority(
+        db,
+        auth,
+        project_id,
+        allow_agent_alias=True,
+        skill_sync_protocol=skill_sync_protocol,
+    )
     response.headers["Deprecation"] = "true"
     response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
     response.headers["Link"] = '</v1/projects/{project_id}/skills/upload>; rel="successor-version"'
@@ -820,6 +874,8 @@ async def upload_skill_legacy(
         skill_key=skill_key,
         data=data,
         content_hash=content_hash,
+        authority=authority,
+        authority_agent_id=authority_agent_id,
     )
 
 
@@ -832,9 +888,126 @@ async def upload_skill_legacy(
 _MAX_SKILL_TAR_BYTES = 25 * 1024 * 1024
 
 
-@project_router.post("/upload")
-async def upload_skill_project(
-    project_id: UUID = Path(...),
+async def _read_bounded_skill_upload(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    chunk_size = 1024 * 1024
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _MAX_SKILL_TAR_BYTES:
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                f"Skill tarball exceeds {_MAX_SKILL_TAR_BYTES} bytes",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _agent_sync_project(
+    db: AsyncSession,
+    auth: AuthContext,
+    agent_id: UUID,
+    *,
+    lock_agent: bool = False,
+) -> UUID:
+    """Resolve Agent Project from a CLI principal and owned Agent identity."""
+    key = auth.api_key
+    if not auth.is_cli and not auth.oauth_cli:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "agent_sync_auth_required",
+                "message": "Agent Skill sync requires CLI authentication.",
+            },
+        )
+    if key is not None and key.environment_id is not None and key.environment_id != agent_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    statement = (
+        select(AgentEnvironment.default_project_id)
+        .join(Project, Project.id == AgentEnvironment.default_project_id)
+        .where(
+            AgentEnvironment.id == agent_id,
+            AgentEnvironment.user_id == auth.user_id,
+            AgentEnvironment.archived_at.is_(None),
+            Project.user_id == auth.user_id,
+            Project.kind == PROJECT_KIND_ENVIRONMENT,
+            Project.origin_environment_id == agent_id,
+        )
+    )
+    if lock_agent:
+        statement = statement.with_for_update(of=AgentEnvironment)
+    project_id = (await db.execute(statement)).scalar_one_or_none()
+    if project_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    return project_id
+
+
+async def _project_upload_authority(
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID,
+    *,
+    allow_agent_alias: bool,
+    skill_sync_protocol: str | None = None,
+) -> tuple[str, UUID | None]:
+    """Resolve a Project write to Cloud or a proven Agent-sync alias."""
+    await validate_project_for_caller(db, auth, project_id)
+    project = (
+        await db.execute(
+            select(Project.kind, Project.origin_environment_id).where(Project.id == project_id)
+        )
+    ).first()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    if project.kind != PROJECT_KIND_ENVIRONMENT:
+        return SKILL_AUTHORITY_CLOUD, None
+    if not auth.is_cli and not auth.oauth_cli:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_project_skills_read_only",
+                "message": (
+                    "Agent Project Skills are filesystem projections and cannot be changed "
+                    "from the dashboard."
+                ),
+            },
+        )
+    if not allow_agent_alias:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_project_filesystem_required",
+                "message": "Change this Skill in the Agent filesystem and sync it.",
+            },
+        )
+    resolve_skill_sync_protocol(skill_sync_protocol)
+    agent_id = project.origin_environment_id
+    if agent_id is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_project_orphaned",
+                "message": "The Agent Project has no live Agent identity.",
+            },
+        )
+    resolved_project_id = await _agent_sync_project(db, auth, agent_id)
+    if resolved_project_id != project_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_project_identity_mismatch",
+                "message": "The Agent no longer owns this Project.",
+            },
+        )
+    return SKILL_AUTHORITY_AGENT_SYNC, agent_id
+
+
+@agent_router.post("/sync/upload")
+async def upload_agent_synced_skill(
+    agent_id: UUID,
     skill_key: str = Form(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
     file: UploadFile = File(...),
     content_hash: str | None = Form(
@@ -846,17 +1019,58 @@ async def upload_skill_project(
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
+    project_id = await _agent_sync_project(db, auth, agent_id)
+    # Do not hold an idle transaction while reading a bounded multipart body.
+    # The authority and project fence are re-validated under the per-Skill
+    # advisory lock inside `_do_upload_skill` before any row mutation.
+    await db.commit()
+    data = await _read_bounded_skill_upload(file)
+    return await _do_upload_skill(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+        data=data,
+        content_hash=content_hash,
+        authority=SKILL_AUTHORITY_AGENT_SYNC,
+        authority_agent_id=agent_id,
+    )
+
+
+@project_router.post("/upload")
+async def upload_skill_project(
+    project_id: UUID = Path(...),
+    skill_key: str = Form(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    file: UploadFile = File(...),
+    create_only: bool = Form(
+        False,
+        description="Reject the upload if this Project already has an active Skill with this key.",
+    ),
+    content_hash: str | None = Form(
+        None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+    ),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    db: AsyncSession = Depends(get_session),
+) -> SkillUploadResponse:
     """Project-explicit tar.gz skill upload.
 
-    The URL carries the target Project; one Agent writes to one Agent Project,
-    so daemon writes always land in the expected Project. The
-    dashboard's content editor uses `PUT /skills/{key}/content`
-    instead (raw markdown, server-side tar). Both converge on
-    `_do_upload_skill`, which serializes via a Postgres advisory
-    lock keyed on (user, project, skill_key); concurrent writes are
-    last-write-wins. SSE then fans out to subscribed daemons.
+    The URL carries the target Project. Workspace and Personal Projects remain
+    Cloud-owned; a released CLI targeting a live Agent Project is treated as a
+    compatibility alias for the authenticated filesystem projection. Both use
+    `_do_upload_skill`, which serializes mutations with a per-Skill advisory
+    lock. SSE is an invalidation hint only for Agent projections.
     """
-    await validate_project_for_caller(db, auth, project_id)
+    authority, authority_agent_id = await _project_upload_authority(
+        db,
+        auth,
+        project_id,
+        allow_agent_alias=True,
+        skill_sync_protocol=skill_sync_protocol,
+    )
     await db.commit()
     # Stream the upload in bounded chunks, refusing once we cross
     # the cap. `await file.read()` would otherwise pull the whole
@@ -886,15 +1100,57 @@ async def upload_skill_project(
         skill_key=skill_key,
         data=data,
         content_hash=content_hash,
+        create_only=create_only,
+        authority=authority,
+        authority_agent_id=authority_agent_id,
     )
 
 
-# Dashboard editor entry point. Takes raw SKILL.md text (the editor
-# shows the full file including frontmatter), tars it server-side,
-# then runs the same upload pipeline as a daemon push. Sharing
-# `_do_upload_skill` means: same advisory lock, same hash short-
-# circuit, same SSE fan-out — daemons can't tell whether a push
-# came from another machine or from the dashboard.
+# Cloud-owned Skill editor entry point. The browser sends user-facing fields;
+# the backend renders SKILL.md and runs the shared integrity/persistence path.
+# Agent Workspace projections are rejected because their filesystem is
+# authoritative.
+def _native_skill_key(name: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")[:64].rstrip("-")
+    if not key:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Use a Skill name containing letters or numbers.",
+        )
+    try:
+        return validate_derived_skill_key(key)
+    except SkillKeyValidationError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Use a shorter Skill name with letters or numbers.",
+        ) from exc
+
+
+@project_router.post("")
+async def create_skill(
+    payload: SkillCreateRequest,
+    project_id: UUID = Path(...),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    db: AsyncSession = Depends(get_session),
+) -> SkillUploadResponse:
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+    await db.commit()
+    skill_key = _native_skill_key(payload.name)
+    data, _ = tar_from_content(
+        skill_key,
+        skill_document(payload.name, payload.description, payload.instructions),
+    )
+    return await _do_upload_skill(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+        data=data,
+        content_hash=None,
+        create_only=True,
+    )
+
+
 @project_router.put("/{skill_key:path}/content")
 async def update_skill_content(
     payload: SkillContentUpdateRequest,
@@ -903,13 +1159,11 @@ async def update_skill_content(
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
-    """Edit a skill's SKILL.md from the dashboard.
+    """Edit a Skill's user-facing fields while preserving its support files.
 
-    Body is JSON `{content, content_hash?}`. The server wraps the
-    text into a one-file tar.gz and dispatches through the same
-    `_do_upload_skill` path as `POST /skills/upload`, so daemons
-    receiving the resulting SSE event can't distinguish dashboard
-    edits from CLI pushes.
+    The server renders SKILL.md and dispatches the resulting archive through
+    the shared `_do_upload_skill` integrity path. Agent Workspace projections
+    remain read-only here.
 
     `content_hash` is interpreted as an If-Match precondition (the
     hash the editor saw when it loaded the skill, NOT the hash of
@@ -922,9 +1176,50 @@ async def update_skill_content(
     the upload short-circuit as `unchanged` (silent edit drop) or
     persist a hash that didn't match the bytes.
     """
-    await validate_project_for_caller(db, auth, project_id)
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+    existing = (
+        await db.execute(
+            select(Skill).where(
+                Skill.user_id == auth.user_id,
+                Skill.project_id == project_id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+                Skill.authority == SKILL_AUTHORITY_CLOUD,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None or not existing.file_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
+    file_key = existing.file_key
     await db.commit()
-    data, _ = tar_from_content(skill_key, payload.content)
+    try:
+        previous = await file_store.get(file_key)
+    except Exception:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill's files are unavailable. Retry before editing it.",
+        ) from None
+    try:
+        if file_key.endswith(".md"):
+            previous, _ = tar_from_content(skill_key, previous.decode("utf-8"))
+        existing_skill_md = extract_skill_md(previous, skill_key)
+        if existing_skill_md is None:
+            raise TarValidationError("Archive is missing its exact root SKILL.md")
+        data, _ = replace_skill_md(
+            previous,
+            skill_key,
+            skill_document(
+                payload.name,
+                payload.description,
+                payload.instructions,
+                existing_content=existing_skill_md,
+            ),
+        )
+    except (SkillTextValidationError, TarValidationError, UnicodeDecodeError):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill's files could not be preserved. Retry or import it again.",
+        ) from None
     if len(data) > _MAX_SKILL_TAR_BYTES:
         # `content` is already capped at 200 KB by the schema, so the
         # post-tar size is effectively bounded. The check stays as a
@@ -954,19 +1249,21 @@ async def _do_upload_skill(
     *,
     db: AsyncSession,
     auth: AuthContext,
-    project_id,
+    project_id: UUID,
     skill_key: str,
     data: bytes,
     content_hash: str | None,
     expected_content_hash: str | None = None,
+    create_only: bool = False,
+    authority: str = SKILL_AUTHORITY_CLOUD,
+    authority_agent_id: UUID | None = None,
 ) -> SkillUploadResponse:
-    """Core upload logic for `POST /v1/projects/{project_id}/skills/upload`.
+    """Validate and persist a Cloud row or Agent filesystem projection.
 
-    One Agent writes to one Agent Project, so daemon writes always land
-    in the expected Project. Single writer means no cross-machine race; no If-Match,
-    no conflict stash. The pre-fetch / hash short-circuit below
-    still saves an R2/S3 PUT and avoids cosmetic version+1 bumps
-    on byte-identical re-uploads.
+    Authority and Agent/Project identity are revalidated inside the write
+    transaction. A hash short-circuit avoids cosmetic version bumps on
+    byte-identical re-uploads, while an authenticated same-byte Agent claim
+    still updates durable provenance.
     """
     # Reserved-suffix guard: refuse keys whose last segment
     # collides with a routing suffix (`download`, `content`,
@@ -1028,30 +1325,98 @@ async def _do_upload_skill(
     if not skill_md:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Archive must contain a SKILL.md")
 
-    fm = parse_frontmatter(skill_md)
+    try:
+        fm = parse_frontmatter(skill_md)
+    except SkillTextValidationError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "invalid_skill_text",
+                "message": "SKILL.md must not contain NUL characters.",
+            },
+        ) from None
     name = fm.get("name", skill_key)
     description = fm.get("description", "")
 
-    if content_hash is None:
-        # Pass skill_key so the hash strips the right number of
-        # leading segments — nested Hermes keys (`category/foo`)
-        # need TWO segments stripped to land on the CLI-side
-        # `SKILL.md` relative path. Without this the dashboard
-        # edit's recomputed hash drifts from the CLI's local hash
-        # and reconcile loops re-pull forever.
-        content_hash = _compute_file_tree_hash(data, skill_key)
+    # The server is the integrity boundary. A caller-supplied hash is useful
+    # for catching client bugs but never becomes evidence by itself: an Agent
+    # claim must prove that the validated archive bytes equal the claimed
+    # content or a forged existing hash could claim without storing new bytes.
+    computed_content_hash = _compute_file_tree_hash(data, skill_key)
+    if content_hash is not None and content_hash != computed_content_hash:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "skill_content_hash_mismatch",
+                "message": "content_hash does not match the uploaded Skill archive.",
+            },
+        )
+    content_hash = computed_content_hash
+
+    async def assert_write_boundary() -> None:
+        if authority == SKILL_AUTHORITY_AGENT_SYNC:
+            if authority_agent_id is None:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    "Agent sync authority is missing",
+                )
+            current_project_id = await _agent_sync_project(
+                db,
+                auth,
+                authority_agent_id,
+                lock_agent=True,
+            )
+            if current_project_id != project_id:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "agent_project_changed",
+                        "message": (
+                            "The Agent Project changed while this Skill was uploading; retry."
+                        ),
+                    },
+                )
+            await assert_agent_workspace_skill_write_compatible(
+                db,
+                agent_id=authority_agent_id,
+                skill_keys={skill_key},
+            )
+            return
+        await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+        await assert_project_skill_write_compatible(
+            db,
+            project_id=project_id,
+            skill_key=skill_key,
+        )
+        # Project archive can cross the initial authorization read while the
+        # archive is being validated. Re-check after the Project graph lock.
+        await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+
+    # Reject known authority/collision failures before creating even an
+    # unreachable object, then release Project/Agent/row locks before storage
+    # I/O. The immutable key makes a race-loser orphan safe and reusable.
+    await assert_write_boundary()
+    await db.commit()
+    fk = _file_key(auth.user_id, project_id, skill_key, content_hash)
+    await file_store.put(fk, data)
+
+    # The graph may change while object storage is in flight. Re-acquire the
+    # canonical Project -> Agent lock order and fail before any row mutation.
+    await assert_write_boundary()
 
     # Serialize concurrent writes for this (user, project, skill_key)
     # via a Postgres advisory lock keyed on the same identity as
     # the partial unique index. Two projects can hold the same
     # skill_key in parallel; the lock is per-(user,project,key) so
     # they don't block each other.
-    lock_key = _advisory_lock_key(auth.user_id, project_id, skill_key)
+    lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+    await assert_project_skill_not_runtime_managed(
+        db, user_id=auth.user_id, project_id=project_id, skill_key=skill_key
+    )
 
-    # Pre-fetch existing row so we can skip both file_store.put AND the
-    # upsert when the bytes are identical to what's already stored. Saves
-    # an R2/S3 PUT and prevents the cosmetic version+1 bump.
+    # Pre-fetch the existing row so we can skip the upsert when the immutable
+    # object identity is unchanged and prevent a cosmetic version+1 bump.
     #
     # `is_active` filter is load-bearing: the duplicate-cleanup
     # migration soft-deletes legacy rows for the same
@@ -1073,6 +1438,40 @@ async def _do_upload_skill(
         .limit(1)
     )
     existing = existing_result.scalar_one_or_none()
+
+    if create_only and existing is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "skill_name_conflict",
+                "message": f'A Skill named "{skill_key}" already exists in this Project.',
+            },
+        )
+
+    if existing is not None:
+        if authority == SKILL_AUTHORITY_CLOUD and existing.authority != SKILL_AUTHORITY_CLOUD:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "agent_synced_skill_read_only",
+                    "message": (
+                        "This Skill is owned by an Agent filesystem and cannot be changed "
+                        "through Cloud mutation routes."
+                    ),
+                },
+            )
+        if (
+            authority == SKILL_AUTHORITY_AGENT_SYNC
+            and existing.authority == SKILL_AUTHORITY_AGENT_SYNC
+            and existing.authority_agent_id != authority_agent_id
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "agent_sync_owner_conflict",
+                    "message": "Another Agent owns this Skill projection.",
+                },
+            )
 
     # If-Match precondition (dashboard editor passes the hash it
     # saw when it loaded the skill). Done HERE under the advisory
@@ -1105,6 +1504,46 @@ async def _do_upload_skill(
         # forever — silent reactivation failure. The full upsert
         # path below correctly flips is_active back on, but only
         # if we let it run.
+        projection_changed = (
+            existing.authority != authority
+            or existing.authority_agent_id != authority_agent_id
+            or (
+                authority == SKILL_AUTHORITY_AGENT_SYNC
+                and (
+                    existing.name != name
+                    or existing.description != description
+                    or existing.file_count != file_count
+                    or existing.source != SKILL_AUTHORITY_AGENT_SYNC
+                    or existing.source_repo is not None
+                )
+            )
+        )
+        if projection_changed:
+            # An authenticated Agent report is ownership evidence even when
+            # the bytes did not change. Persist the claim and revision under
+            # the same advisory lock; otherwise legacy cloud rows could never
+            # transition to the fail-closed agent-authoritative model.
+            existing.authority = authority
+            existing.authority_agent_id = authority_agent_id
+            if authority == SKILL_AUTHORITY_AGENT_SYNC:
+                existing.name = name
+                existing.description = description
+                existing.file_count = file_count
+                existing.source = SKILL_AUTHORITY_AGENT_SYNC
+                existing.source_repo = None
+            await bump_skills_revision(
+                db,
+                auth.user_id,
+                skill_key=skill_key,
+                project_id=project_id,
+                event_type=(
+                    AGENT_SKILL_CHANGED_EVENT
+                    if authority == SKILL_AUTHORITY_AGENT_SYNC
+                    else "skill_changed"
+                ),
+                content_hash=content_hash,
+            )
+            await db.commit()
         return SkillUploadResponse(
             skill_key=existing.skill_key,
             name=existing.name,
@@ -1112,9 +1551,6 @@ async def _do_upload_skill(
             file_count=file_count,
             content_hash=existing.content_hash,
         )
-
-    fk = _file_key(auth.user_id, project_id, skill_key)
-    await file_store.put(fk, data)
 
     skill = await _upsert_skill(
         db,
@@ -1126,8 +1562,10 @@ async def _do_upload_skill(
         content_hash=content_hash,
         file_key=fk,
         file_count=file_count,
-        source="local",
+        source=(SKILL_AUTHORITY_AGENT_SYNC if authority == SKILL_AUTHORITY_AGENT_SYNC else "local"),
         source_repo=None,
+        authority=authority,
+        authority_agent_id=authority_agent_id,
     )
     # Single commit at the route boundary — _upsert_skill now
     # only flushes, so the advisory lock acquired at line 317
@@ -1152,6 +1590,7 @@ async def _do_upload_skill(
 @router.get("/{skill_key:path}/download")
 async def download_skill_legacy(
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
@@ -1160,6 +1599,12 @@ async def download_skill_legacy(
     `/v1/projects/{project_id}/skills/{skill_key}/download`."""
     visible_project_ids = await project_ids_visible_to(db, auth)
     skill = await _resolve_legacy_skill(db, auth, visible_project_ids, skill_key)
+    await _enforce_agent_project_download_protocol(
+        db,
+        auth,
+        skill.project_id,
+        skill_sync_protocol,
+    )
     return await _build_skill_download(skill, skill_key, db)
 
 
@@ -1167,6 +1612,7 @@ async def download_skill_legacy(
 async def download_skill_project(
     project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
@@ -1186,6 +1632,7 @@ async def download_skill_project(
         auth=auth,
         project_id=project_id,
         skill_key=skill_key,
+        skill_sync_protocol=skill_sync_protocol,
     )
 
 
@@ -1193,6 +1640,7 @@ async def download_skill_project(
 async def download_skill_scope_compat(
     scope_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
@@ -1201,6 +1649,7 @@ async def download_skill_scope_compat(
         auth=auth,
         project_id=scope_id,
         skill_key=skill_key,
+        skill_sync_protocol=skill_sync_protocol,
     )
 
 
@@ -1270,7 +1719,14 @@ async def _get_project_skill_download(
     auth: AuthContext,
     project_id: UUID,
     skill_key: str,
+    skill_sync_protocol: str | None,
 ) -> Response:
+    await _enforce_agent_project_download_protocol(
+        db,
+        auth,
+        project_id,
+        skill_sync_protocol,
+    )
     skill = await _get_project_skill(
         db=db,
         auth=auth,
@@ -1278,6 +1734,34 @@ async def _get_project_skill_download(
         skill_key=skill_key,
     )
     return await _build_skill_download(skill, skill_key, db)
+
+
+async def _enforce_agent_project_download_protocol(
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID,
+    skill_sync_protocol: str | None,
+) -> None:
+    if not auth.is_cli and not auth.oauth_cli:
+        return
+    project_kind = (
+        await db.execute(select(Project.kind).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if (
+        project_kind == PROJECT_KIND_ENVIRONMENT
+        and resolve_skill_sync_protocol(skill_sync_protocol)
+        == SkillSyncProtocol.AGENT_AUTHORITATIVE_V1
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_project_download_forbidden",
+                "message": (
+                    "Agent Project Skills are filesystem-authoritative and cannot be "
+                    "downloaded into an Agent by Cloud sync."
+                ),
+            },
+        )
 
 
 async def _get_project_skill_detail(
@@ -1349,39 +1833,150 @@ async def _build_skill_download(
 # ---------------------------------------------------------------------------
 
 
+@agent_router.delete(
+    "/sync/{skill_key:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_agent_synced_skill(
+    agent_id: UUID,
+    skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    project_id: UUID | None = Query(
+        default=None,
+        description=(
+            "Project fence recorded when the Agent projection was claimed. "
+            "Omit only for legacy clients deleting from the current Agent Project."
+        ),
+    ),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    await _do_delete_agent_synced_skill(
+        db=db,
+        auth=auth,
+        agent_id=agent_id,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
+    # The desired projection is absence. Both the first successful delete and
+    # a replay after a lost response use the same bodyless success contract;
+    # identity failures remain fail-closed 404/409 responses above.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _do_delete_agent_synced_skill(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    agent_id: UUID,
+    project_id: UUID | None,
+    skill_key: str,
+    expected_content_hash: str | None = None,
+) -> SkillDeleteResponse:
+    current_project_id = await _agent_sync_project(db, auth, agent_id, lock_agent=True)
+    target_project_id = project_id or current_project_id
+    lock_key = project_skill_advisory_lock_key(auth.user_id, target_project_id, skill_key)
+    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+    skill = (
+        await db.execute(
+            select(Skill)
+            .where(
+                Skill.user_id == auth.user_id,
+                Skill.project_id == target_project_id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+            .order_by(Skill.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if skill is None:
+        # Durable delete queues retry after reconnect and may replay an item
+        # whose earlier response was lost. Absence is the desired projection.
+        await db.commit()
+        return SkillDeleteResponse(status="deleted")
+    if skill.authority == SKILL_AUTHORITY_AGENT_SYNC:
+        if skill.authority_agent_id != agent_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "agent_sync_owner_conflict",
+                    "message": "Another Agent owns this Skill projection.",
+                },
+            )
+    elif target_project_id != current_project_id:
+        # Reporting local absence is migration evidence for a legacy Cloud row
+        # only while the target remains this Agent's current Project. A stamped
+        # old Project fence may clean up rows already claimed by this Agent, but
+        # must not become authority to delete arbitrary historical Cloud rows.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_sync_old_project_unclaimed",
+                "message": (
+                    "The old Project row was not claimed by this Agent and cannot be deleted "
+                    "through Agent sync."
+                ),
+            },
+        )
+    if expected_content_hash is not None and skill.content_hash != expected_content_hash:
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "stale_content",
+                "message": (
+                    "Skill content changed since it was loaded. Reload it, then try again."
+                ),
+                "current_content_hash": skill.content_hash,
+            },
+        )
+    skill.is_active = False
+    await bump_skills_revision(
+        db,
+        auth.user_id,
+        skill_key=skill_key,
+        project_id=target_project_id,
+        event_type=AGENT_SKILL_DELETED_EVENT,
+    )
+    await db.commit()
+    return SkillDeleteResponse(status="deleted")
+
+
 @router.delete("/{skill_key:path}")
 async def delete_skill_legacy(
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDeleteResponse:
-    """Legacy delete by slug-only is gone in phase 2. Resolving
-    via `resolve_default_write_project` would silently delete
-    the wrong project's copy when the caller's account holds the
-    same `skill_key` in multiple projects (which the cross-project
-    listing now exposes), or 404 with no useful hint when
-    their default project doesn't have that key. The CLI and
-    dashboard both migrated to
-    `DELETE /v1/projects/{project_id}/skills/{skill_key}` and
-    pass the row's own project_id; force any stale client onto
-    that path with 410 instead of guessing.
+    """Safely serve released slug-only clients with an Agent-bound identity.
 
-    Argument unused — kept so FastAPI still parses the path
-    param uniformly with sibling routes.
+    Only an env-bound API key identifies exactly one Agent and its current
+    Agent Project. User-level API keys, OAuth CLI sessions, and browser sessions
+    remain ambiguous and receive the historical 410 instead of resolving a
+    most-recently-active Project.
     """
-    del skill_key
-    del auth
-    del db
-    raise HTTPException(
-        status.HTTP_410_GONE,
-        detail={
-            "code": "project_explicit_route_required",
-            "message": (
-                "Use DELETE /v1/projects/{project_id}/skills/{skill_key} — "
-                "call GET /v1/skills to find the project_id of the row "
-                "you want to delete."
-            ),
-        },
+    key = auth.api_key
+    if not auth.is_cli or key is None or key.environment_id is None:
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail={
+                "code": "project_explicit_route_required",
+                "message": (
+                    "Use DELETE /v1/projects/{project_id}/skills/{skill_key} — "
+                    "call GET /v1/skills to find the project_id of the row "
+                    "you want to delete."
+                ),
+            },
+        )
+    resolve_skill_sync_protocol(skill_sync_protocol)
+    return await _do_delete_agent_synced_skill(
+        db=db,
+        auth=auth,
+        agent_id=key.environment_id,
+        project_id=None,
+        skill_key=skill_key,
     )
 
 
@@ -1389,27 +1984,66 @@ async def delete_skill_legacy(
 async def delete_skill_project(
     project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    expected_content_hash: str | None = Query(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+        description="Delete only if the active Skill still has this content hash.",
+    ),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDeleteResponse:
     """Phase-2 project-explicit delete — only the named project's copy
     is deleted; the same skill_key in other projects is unaffected."""
-    await validate_project_for_caller(db, auth, project_id)
-    return await _do_delete_skill(db=db, auth=auth, project_id=project_id, skill_key=skill_key)
+    authority, authority_agent_id = await _project_upload_authority(
+        db,
+        auth,
+        project_id,
+        allow_agent_alias=True,
+        skill_sync_protocol=skill_sync_protocol,
+    )
+    if authority == SKILL_AUTHORITY_AGENT_SYNC:
+        if authority_agent_id is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Agent identity is unavailable")
+        return await _do_delete_agent_synced_skill(
+            db=db,
+            auth=auth,
+            agent_id=authority_agent_id,
+            project_id=project_id,
+            skill_key=skill_key,
+            expected_content_hash=expected_content_hash,
+        )
+    return await _do_delete_skill(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+        expected_content_hash=expected_content_hash,
+    )
 
 
 async def _do_delete_skill(
     *,
     db: AsyncSession,
     auth: AuthContext,
-    project_id,
+    project_id: UUID,
     skill_key: str,
+    expected_content_hash: str | None = None,
 ) -> SkillDeleteResponse:
     # Advisory lock matches the partial unique index identity, so
     # this delete serializes with any concurrent write to the
     # same (user, project, skill_key).
-    lock_key = _advisory_lock_key(auth.user_id, project_id, skill_key)
+    await assert_project_skill_write_compatible(
+        db,
+        project_id=project_id,
+        skill_key=skill_key,
+        enforce_total_limit=False,
+    )
+    lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
 
     # `is_active` filter + ORDER BY + LIMIT 1: third call site of
     # the same migration-survivor pattern. Accounts that came
@@ -1431,14 +2065,35 @@ async def _do_delete_skill(
     skill = result.scalar_one_or_none()
     if not skill:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
+    if skill.authority != SKILL_AUTHORITY_CLOUD:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_synced_skill_read_only",
+                "message": (
+                    "This Skill is owned by an Agent filesystem and cannot be deleted "
+                    "through Cloud mutation routes."
+                ),
+            },
+        )
+
+    if expected_content_hash is not None and skill.content_hash != expected_content_hash:
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "stale_content",
+                "message": (
+                    "Skill content changed since it was loaded. Reload it, then try again."
+                ),
+                "current_content_hash": skill.content_hash,
+            },
+        )
 
     if skill.is_active:
         skill.is_active = False
-        # SSE fan-out + ETag bump in one shot. Daemons holding the
-        # bound project receive `skill_deleted` immediately and
-        # remove the local directory; the 60s reconcile loop is
-        # the safety net for daemons that missed the event
-        # (network blip, mid-reconnect).
+        # Advance the collection ETag and publish invalidation after commit.
+        # Agent Project rows never reach this Cloud-owned path; Agent daemons
+        # do not delete filesystem content in response to Cloud events.
         await bump_skills_revision(
             db,
             auth.user_id,
@@ -1469,6 +2124,7 @@ async def install_skill_legacy(
     listing — recoverable, not destructive — so this stays
     soft-deprecated rather than 410'd."""
     project_id = await resolve_default_write_project(db, auth)
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
     response.headers["Deprecation"] = "true"
     response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
     response.headers["Link"] = '</v1/projects/{project_id}/skills/install>; rel="successor-version"'
@@ -1485,7 +2141,7 @@ async def install_skill_project(
     """Phase-2 project-explicit install — install lands in the
     URL-named project. Used by the dashboard install picker
     (phase 3) and any caller that knows which project it wants."""
-    await validate_project_for_caller(db, auth, project_id)
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
     return await _do_install_skill(db=db, auth=auth, project_id=project_id, body=body)
 
 
@@ -1493,7 +2149,7 @@ async def _do_install_skill(
     *,
     db: AsyncSession,
     auth: AuthContext,
-    project_id,
+    project_id: UUID,
     body: SkillInstallRequest,
 ) -> SkillInstallResponse:
     from app.services.skill_installer import fetch_skill_from_github
@@ -1516,6 +2172,17 @@ async def _do_install_skill(
         )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "skill not found in repository") from None
 
+    try:
+        validate_tar(fetched.tar_bytes)
+    except TarValidationError as e:
+        log.warning(
+            "skill_install_validation_failed repo=%s path=%s error=%s",
+            _sanitize_log(body.repo),
+            _sanitize_log(body.path),
+            _sanitize_log(e),
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "archive validation failed") from None
+
     content_hash = _compute_file_tree_hash(fetched.tar_bytes)
     # The `name` comes from the marketplace SKILL.md frontmatter
     # which the user controls. A malicious `name: "../etc/passwd"`
@@ -1525,16 +2192,63 @@ async def _do_install_skill(
         skill_key = validate_derived_skill_key(fetched.name.lower().replace(" ", "-"))
     except SkillKeyValidationError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
-    fk = _file_key(auth.user_id, project_id, skill_key)
+    fk = _file_key(auth.user_id, project_id, skill_key, content_hash)
+
+    # Fail predictable graph conflicts before object I/O, then release the
+    # Project/Agent locks. The second check below closes races after the
+    # immutable object has been written.
+    await assert_project_skill_write_compatible(
+        db,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+    await db.commit()
+    await file_store.put(fk, fetched.tar_bytes)
 
     # Same advisory lock pattern as upload_skill. Lock identity
     # (user, project, key) matches the partial unique index, so the
     # serialization is precisely scoped — different projects don't
     # block each other.
-    lock_key = _advisory_lock_key(auth.user_id, project_id, skill_key)
+    await assert_project_skill_write_compatible(
+        db,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
+    lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+    # Project ownership/kind can change while GitHub is fetched. Re-check at
+    # the write boundary under the same per-Skill lock used by uploads.
+    await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
+    await assert_project_skill_not_runtime_managed(
+        db, user_id=auth.user_id, project_id=project_id, skill_key=skill_key
+    )
 
-    await file_store.put(fk, fetched.tar_bytes)
+    existing = (
+        await db.execute(
+            select(Skill)
+            .where(
+                Skill.user_id == auth.user_id,
+                Skill.project_id == project_id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+            .order_by(Skill.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if existing is not None and existing.authority != SKILL_AUTHORITY_CLOUD:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_synced_skill_read_only",
+                "message": (
+                    "This Skill is owned by an Agent filesystem and cannot be changed "
+                    "through Cloud mutation routes."
+                ),
+            },
+        )
 
     skill = await _upsert_skill(
         db,
@@ -1570,8 +2284,8 @@ async def _do_install_skill(
 async def _upsert_skill(
     db: AsyncSession,
     *,
-    user_id,
-    project_id,
+    user_id: UUID,
+    project_id: UUID,
     skill_key: str,
     name: str,
     description: str,
@@ -1580,6 +2294,8 @@ async def _upsert_skill(
     file_count: int,
     source: str,
     source_repo: str | None,
+    authority: str = SKILL_AUTHORITY_CLOUD,
+    authority_agent_id: UUID | None = None,
 ) -> Skill:
     """Upsert the Skill row + bump revision. Caller commits.
 
@@ -1618,7 +2334,12 @@ async def _upsert_skill(
     skill = result.scalar_one_or_none()
 
     if skill:
-        if skill.content_hash == content_hash and skill.is_active:
+        if (
+            skill.content_hash == content_hash
+            and skill.is_active
+            and skill.authority == authority
+            and skill.authority_agent_id == authority_agent_id
+        ):
             # Defense in depth — even if the upload endpoint's pre-fetch
             # gets bypassed by a future caller, the upsert won't bump
             # `version + 1` or refresh fields when nothing changed.
@@ -1627,11 +2348,10 @@ async def _upsert_skill(
             # the original timestamp too.
             #
             # The `is_active` guard catches re-uploads of byte-identical
-            # content into a soft-deleted row — without it, a user who
-            # deleted a skill from the dashboard, then a daemon push
-            # arrived with the same bytes, would silently keep the row
-            # in deleted state and the listing would still hide the
-            # skill. Treat that as a true reactivation.
+            # content into a soft-deleted row. For Agent projections this
+            # is the local delete-then-recreate lifecycle; Cloud-owned rows
+            # can likewise be explicitly re-uploaded. Treat either as a true
+            # reactivation instead of leaving the listing stale.
             return skill
         skill.name = name
         skill.description = description
@@ -1639,8 +2359,9 @@ async def _upsert_skill(
         skill.file_key = file_key
         skill.file_count = file_count
         skill.source = source
-        if source_repo is not None:
-            skill.source_repo = source_repo
+        skill.source_repo = source_repo
+        skill.authority = authority
+        skill.authority_agent_id = authority_agent_id
         skill.is_active = True
         skill.version = skill.version + 1
     else:
@@ -1655,6 +2376,8 @@ async def _upsert_skill(
             file_count=file_count,
             source=source,
             source_repo=source_repo,
+            authority=authority,
+            authority_agent_id=authority_agent_id,
         )
         db.add(skill)
 
@@ -1662,17 +2385,19 @@ async def _upsert_skill(
     # transaction so a rollback unwinds both. Caller commits.
     # `project_id` rides on the event so the broker can filter
     # subscribers to only those with read access to this project.
-    # `content_hash` rides on the event so the daemon can echo-
-    # suppress: a skill_changed whose hash matches the daemon's
-    # last-pushed hash for that key is the daemon's own upload
-    # bouncing back, NOT a peer change. Pulling it would race
-    # the daemon's own next watcher tick.
+    # `content_hash` remains on the event for released-client diagnostics.
+    # Agent-authoritative daemons treat the event only as an invalidation,
+    # rescan local bytes, and update the Cloud projection if needed.
     await bump_skills_revision(
         db,
         user_id,
         skill_key=skill_key,
         project_id=project_id,
-        event_type="skill_changed",
+        event_type=(
+            AGENT_SKILL_CHANGED_EVENT
+            if authority == SKILL_AUTHORITY_AGENT_SYNC
+            else "skill_changed"
+        ),
         content_hash=content_hash,
     )
     await db.flush()

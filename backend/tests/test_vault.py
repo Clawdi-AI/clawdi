@@ -373,6 +373,12 @@ async def test_vault_canonical_alias_collision_fails_closed_for_writes_and_exact
     assert ambiguous_read.json()["detail"]["code"] == "ambiguous_vault_slug"
     assert "value" not in ambiguous_read.json()["detail"]
 
+    ambiguous_detail = await cli_client.get(
+        f"/v1/vault/detail?slug=prod&project_id={seed_project.id}"
+    )
+    assert ambiguous_detail.status_code == 409, ambiguous_detail.text
+    assert ambiguous_detail.json()["detail"]["code"] == "ambiguous_vault_slug"
+
     ambiguous_resolve = await cli_client.post(
         f"/v1/vault/resolve?project_id={seed_project.id}&vault_slug=prod&field=TOKEN"
     )
@@ -479,6 +485,16 @@ async def test_vault_detail_and_items_select_exact_authorized_identity(
     assert detail.status_code == 200, detail.text
     assert detail.json()["id"] == str(second.id)
     assert detail.json()["name"] == "Second collision"
+
+    legacy_detail = await client.get("/v1/vault/detail?slug=collision-second")
+    assert legacy_detail.status_code == 200, legacy_detail.text
+    assert legacy_detail.json()["id"] == str(second.id)
+
+    scoped_legacy_detail = await client.get(
+        f"/v1/vault/detail?slug=collision-second&project_id={seed_project.id}"
+    )
+    assert scoped_legacy_detail.status_code == 200, scoped_legacy_detail.text
+    assert scoped_legacy_detail.json()["id"] == str(second.id)
 
     written = await client.put(
         f"/v1/vault/collision-second/items?project_id={seed_project.id}&vault_id={second.id}",
@@ -1112,7 +1128,7 @@ async def test_vault_attaches_one_vault_to_multiple_projects(client, db_session,
 
 @pytest.mark.asyncio
 async def test_vault_create_only_rejects_existing_slug(client, db_session, seed_user):
-    """Dashboard "New vault" flows must not hit the create-or-attach path.
+    """Dashboard "Create vault" flows must not hit the create-or-attach path.
 
     Plain POST stays idempotent attach for CLI/back-compat, while
     `create_only=true` gives UI callers a real create semantics.
@@ -1127,6 +1143,18 @@ async def test_vault_create_only_rejects_existing_slug(client, db_session, seed_
     )
     db_session.add_all([project_a, project_b])
     await db_session.commit()
+
+    unattached = await client.post(
+        "/v1/vault?create_only=true",
+        json={"slug": "account-only", "name": "Account only"},
+    )
+    assert unattached.status_code == 200, unattached.text
+    unattached_detail = await client.get(
+        f"/v1/vault/detail?slug=account-only&vault_id={unattached.json()['id']}"
+    )
+    assert unattached_detail.status_code == 200, unattached_detail.text
+    assert unattached_detail.json()["project_id"] is None
+    assert unattached_detail.json()["project_ids"] == []
 
     first = await client.post(
         f"/v1/vault?project_id={project_a.id}",

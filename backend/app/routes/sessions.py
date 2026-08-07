@@ -4,7 +4,7 @@ import logging
 import mimetypes
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal, cast, overload
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -25,9 +25,18 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
+from app.core.auth import (
+    AuthContext,
+    get_auth,
+    invalidate_api_key_auth_cache,
+    is_connected_agent_principal,
+    require_scope,
+    require_web_auth,
+)
 from app.core.config import settings
 from app.core.database import get_session, runtime_snapshot_session
+from app.models.agent_project_binding import AgentProjectBinding
+from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
@@ -36,9 +45,14 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.schemas.common import Paginated
-from app.schemas.runtime import validate_hosted_runtime_desired_state
+from app.schemas.runtime import (
+    HostedRuntimeStdioMcpServer,
+    PersistedHostedRuntimeBundledSkillEntry,
+    PersistedHostedRuntimeMcp,
+    PersistedHostedRuntimeSkills,
+    validate_hosted_runtime_desired_state,
+)
 from app.schemas.runtime_observed import (
-    RUNTIME_OBSERVATION_COMPANION_FIELDS,
     HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
     HostedRuntimeObservedV2,
@@ -46,13 +60,17 @@ from app.schemas.runtime_observed import (
     RuntimeObservedConfigSummaryResponse,
 )
 from app.schemas.session import (
+    AgentMcpInventoryResponse,
     AgentReorderRequest,
     AgentResponse,
+    AgentRuntimeObservedDesiredResponse,
+    AgentRuntimeObservedResponse,
     EnvironmentCreate,
     EnvironmentCreatedResponse,
     EnvironmentReorderRequest,
     EnvironmentResponse,
     EnvironmentUpdate,
+    RuntimeManagedSkillSummary,
     RuntimeObservedDesiredResponse,
     RuntimeObservedHealthResponse,
     RuntimeObservedProviderHealthResponse,
@@ -72,18 +90,21 @@ from app.schemas.session import (
     SessionPermissionsResponse,
     SessionUploadResponse,
 )
+from app.services import memory_extraction
 from app.services.agent_environments import (
+    clear_connected_agent_registration,
     local_machine_registration_key,
     register_agent_environment,
 )
+from app.services.agent_lifecycle import (
+    AgentLifecycleBoundaryError,
+    active_agent_filter,
+    archive_agent_and_project,
+)
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
-from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
-from app.services.runtime_observation import (
-    RuntimeObservationProtocolError,
-    ingest_runtime_observation,
-)
+from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.runtime_source import (
     RuntimeSourceError,
     expected_runtime_bundle_v2_etag,
@@ -110,7 +131,12 @@ _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
+_AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected"
 _RUNTIME_OBSERVED_ADAPTER = TypeAdapter(HostedRuntimeObserved)
+_RELATED_REFS_ADAPTER: TypeAdapter[dict[str, list[str]]] = TypeAdapter(dict[str, list[str]])
+_SESSION_MESSAGE_VALUES_ADAPTER: TypeAdapter[list[dict[str, JsonValue]]] = TypeAdapter(
+    list[dict[str, JsonValue]]
+)
 _MANUAL_SESSION_SUMMARY_FILTER = text(
     "(sessions.summary IS NULL OR "
     "(sessions.summary NOT LIKE 'Cron:%' AND sessions.summary NOT LIKE '[%'))"
@@ -231,12 +257,32 @@ async def _register_agent_identity(
             os_name=body.os,
             sort_order=await _next_environment_sort_order(db, auth.user_id),
             registration_key=registration_key,
+            commit=False,
         )
     except IntegrityError:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "concurrent registration race; retry the request",
         ) from None
+    connected_registration = False
+    if is_connected_agent_principal(auth):
+        hosted_state = await db.get(HostedRuntimeState, registered.env.id)
+        environment_bound_key_id = await db.scalar(
+            select(ApiKey.id).where(ApiKey.environment_id == registered.env.id).limit(1)
+        )
+        connected_registration = hosted_state is None and environment_bound_key_id is None
+    if connected_registration:
+        # This is origin evidence, not capability evidence. A current Connected
+        # Agent must still renew its separate short-lived Project Skill lease.
+        # Existing Hosted V2 state or a Legacy V1 environment-bound key is
+        # positive deployment evidence and prevents an account-level CLI token
+        # from reclassifying that durable Agent identity.
+        registered.env.connected_agent_registered_at = datetime.now(UTC)
+    else:
+        # A managed or environment-bound registration is positive evidence
+        # against the Connected runtime shape; do not retain an earlier lease.
+        clear_connected_agent_registration(registered.env)
+    await db.commit()
     return EnvironmentCreatedResponse(id=str(registered.env.id))
 
 
@@ -263,6 +309,30 @@ async def register_environment(
     return await _register_agent_identity(body, auth, db)
 
 
+@overload
+async def _list_agent_identities(
+    request: Request,
+    response: Response,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[True],
+    project_id: UUID | None = None,
+) -> list[AgentResponse] | Response: ...
+
+
+@overload
+async def _list_agent_identities(
+    request: Request,
+    response: Response,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+    project_id: UUID | None = None,
+) -> list[EnvironmentResponse] | Response: ...
+
+
 async def _list_agent_identities(
     request: Request,
     response: Response,
@@ -270,6 +340,7 @@ async def _list_agent_identities(
     db: AsyncSession,
     *,
     agent_response: bool,
+    project_id: UUID | None = None,
 ) -> list[AgentResponse] | list[EnvironmentResponse] | Response:
     # Bound api_keys (deploy keys) only see their own env.
     # Returning every env of the user would let a leaked deploy
@@ -280,7 +351,7 @@ async def _list_agent_identities(
     bound_env = _bound_env_id(auth)
     stmt = (
         select(AgentEnvironment)
-        .where(AgentEnvironment.user_id == auth.user_id)
+        .where(AgentEnvironment.user_id == auth.user_id, active_agent_filter())
         .order_by(
             AgentEnvironment.sort_order.asc(),
             AgentEnvironment.created_at.asc(),
@@ -289,11 +360,16 @@ async def _list_agent_identities(
     )
     if bound_env is not None:
         stmt = stmt.where(AgentEnvironment.id == bound_env)
+    if project_id is not None:
+        stmt = stmt.join(
+            AgentProjectBinding,
+            AgentProjectBinding.agent_id == AgentEnvironment.id,
+        ).where(AgentProjectBinding.project_id == project_id)
     result = await db.execute(stmt)
     envs = result.scalars().all()
     states_by_env: dict[UUID, HostedRuntimeState] = {}
     env_ids = [env.id for env in envs]
-    if env_ids:
+    if not agent_response and env_ids:
         states = (
             (
                 await db.execute(
@@ -323,10 +399,21 @@ async def _list_agent_identities(
 async def list_agents(
     request: Request,
     response: Response,
+    project_id: UUID | None = Query(
+        default=None,
+        description="Return only the caller's Agents linked to this exact Project.",
+    ),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentResponse] | Response:
-    return await _list_agent_identities(request, response, auth, db, agent_response=True)
+    return await _list_agent_identities(
+        request,
+        response,
+        auth,
+        db,
+        agent_response=True,
+        project_id=project_id,
+    )
 
 
 @router.get(
@@ -349,6 +436,30 @@ async def list_environments(
     db: AsyncSession = Depends(get_session),
 ) -> list[EnvironmentResponse] | Response:
     return await _list_agent_identities(request, response, auth, db, agent_response=False)
+
+
+@overload
+async def _get_agent_identity(
+    agent_id: UUID,
+    request: Request,
+    response: Response,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[True],
+) -> AgentResponse | Response: ...
+
+
+@overload
+async def _get_agent_identity(
+    agent_id: UUID,
+    request: Request,
+    response: Response,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> EnvironmentResponse | Response: ...
 
 
 async def _get_agent_identity(
@@ -379,6 +490,18 @@ async def _get_agent_identity(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     env, state = row
+    if env.archived_at is not None:
+        # The owner may distinguish their retained, disconnected identity from
+        # a random id. The user_id predicate above and bound-id fence before the
+        # query keep nonexistent, cross-owner, and mismatched bound ids at 404.
+        # Released daemons already treat 403 as a no-restart supervisor stop.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": _AGENT_DISCONNECTED_ERROR_CODE,
+                "message": "Agent is disconnected",
+            },
+        )
     payload = _identity_response(env, state, agent_response=agent_response)
     etag = strong_json_etag(payload.model_dump(mode="json"))
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
@@ -399,7 +522,7 @@ async def list_environment_runtime_observed(
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedSummaryResponse:
     bound_env = _bound_env_id(auth)
-    filters = [AgentEnvironment.user_id == auth.user_id]
+    filters = [AgentEnvironment.user_id == auth.user_id, active_agent_filter()]
     if bound_env is not None:
         filters.append(AgentEnvironment.id == bound_env)
 
@@ -433,7 +556,9 @@ async def list_environment_runtime_observed(
                 owner_user_id=auth.user_id,
             )
             states_by_env = {
-                environment_id: row.state for environment_id, row in source_batch.rows.items()
+                environment_id: row.state
+                for environment_id, row in source_batch.rows.items()
+                if row.state is not None
             }
             key_identity = vault_key_identity(settings.vault_encryption_key)
             for environment_id in source_batch.rows:
@@ -497,6 +622,22 @@ async def list_environment_runtime_observed(
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
 
 
+@overload
+async def _reorder_agent_identities(
+    requested_ids: list[UUID], auth: AuthContext, db: AsyncSession, *, agent_response: Literal[True]
+) -> list[AgentResponse]: ...
+
+
+@overload
+async def _reorder_agent_identities(
+    requested_ids: list[UUID],
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> list[EnvironmentResponse]: ...
+
+
 async def _reorder_agent_identities(
     requested_ids: list[UUID],
     auth: AuthContext,
@@ -513,6 +654,7 @@ async def _reorder_agent_identities(
             await db.execute(
                 select(AgentEnvironment)
                 .where(AgentEnvironment.user_id == auth.user_id)
+                .where(active_agent_filter())
                 .order_by(
                     AgentEnvironment.sort_order.asc(),
                     AgentEnvironment.created_at.asc(),
@@ -621,6 +763,28 @@ async def get_environment(
     )
 
 
+@overload
+async def _update_agent_identity(
+    agent_id: UUID,
+    body: EnvironmentUpdate,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[True],
+) -> AgentResponse: ...
+
+
+@overload
+async def _update_agent_identity(
+    agent_id: UUID,
+    body: EnvironmentUpdate,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> EnvironmentResponse: ...
+
+
 async def _update_agent_identity(
     agent_id: UUID,
     body: EnvironmentUpdate,
@@ -634,6 +798,7 @@ async def _update_agent_identity(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -677,6 +842,18 @@ async def update_environment(
     return await _update_agent_identity(environment_id, body, auth, db, agent_response=False)
 
 
+@overload
+async def _clear_agent_avatar(
+    agent_id: UUID, auth: AuthContext, db: AsyncSession, *, agent_response: Literal[True]
+) -> AgentResponse: ...
+
+
+@overload
+async def _clear_agent_avatar(
+    agent_id: UUID, auth: AuthContext, db: AsyncSession, *, agent_response: Literal[False]
+) -> EnvironmentResponse: ...
+
+
 async def _clear_agent_avatar(
     agent_id: UUID,
     auth: AuthContext,
@@ -689,6 +866,7 @@ async def _clear_agent_avatar(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -731,6 +909,28 @@ async def clear_environment_avatar(
     return await _clear_agent_avatar(environment_id, auth, db, agent_response=False)
 
 
+@overload
+async def _upload_agent_avatar(
+    agent_id: UUID,
+    file: UploadFile,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[True],
+) -> AgentResponse: ...
+
+
+@overload
+async def _upload_agent_avatar(
+    agent_id: UUID,
+    file: UploadFile,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> EnvironmentResponse: ...
+
+
 async def _upload_agent_avatar(
     agent_id: UUID,
     file: UploadFile,
@@ -744,6 +944,7 @@ async def _upload_agent_avatar(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -824,6 +1025,7 @@ async def get_environment_runtime_observed(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -879,6 +1081,129 @@ async def get_environment_runtime_observed(
             desired_cli_package_spec=desired_cli_package_spec,
         ),
         provider_health=_runtime_observed_provider_health(state, observation),
+    )
+
+
+@router.get(
+    "/agents/{agent_id}/runtime-observed",
+    response_model=AgentRuntimeObservedResponse,
+)
+async def get_agent_runtime_observed(
+    agent_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> AgentRuntimeObservedResponse:
+    """Canonical Agent-identity route for runtime desired/observed summaries."""
+    response = await get_environment_runtime_observed(agent_id, auth, db)
+    state = await db.get(HostedRuntimeState, agent_id)
+    observation = await db.get(HostedRuntimeConfigObservation, agent_id)
+    desired = response.desired
+    if desired is None and state is None:
+        return AgentRuntimeObservedResponse(
+            environment=response.environment,
+            desired=None,
+            observed=response.observed,
+            health=response.health,
+            provider_health=response.provider_health,
+        )
+    if (
+        desired is None
+        or state is None
+        or desired.deployment_id != state.deployment_id
+        or desired.instance_id != state.instance_id
+        or desired.desired_config_generation != state.generation
+    ):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Runtime desired state changed while it was being read; retry the request.",
+        )
+    agent_desired = AgentRuntimeObservedDesiredResponse.model_validate(desired.model_dump())
+    return AgentRuntimeObservedResponse(
+        environment=response.environment,
+        desired=agent_desired.model_copy(
+            update={"managed_skills": _runtime_managed_skill_summaries(state)}
+        ),
+        observed=response.observed,
+        health=_agent_runtime_observed_health(response.health, state, observation),
+        provider_health=response.provider_health,
+    )
+
+
+@router.get(
+    "/agents/{agent_id}/mcp",
+    response_model=AgentMcpInventoryResponse,
+)
+async def get_agent_mcp_inventory(
+    agent_id: UUID,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> AgentMcpInventoryResponse:
+    """Return only MCP inventory with proven user-declaration provenance."""
+    state = (
+        await db.execute(
+            select(HostedRuntimeState)
+            .join(
+                AgentEnvironment,
+                AgentEnvironment.id == HostedRuntimeState.environment_id,
+            )
+            .where(
+                HostedRuntimeState.environment_id == agent_id,
+                AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
+            )
+        )
+    ).scalar_one_or_none()
+    if state is None:
+        return AgentMcpInventoryResponse(
+            agent_id=str(agent_id),
+            availability="unavailable",
+        )
+
+    if state.mcp is None:
+        # Legacy producers can persist a canonical null before they support
+        # MCP desired-state projection. Only an explicit {"servers": {}}
+        # proves that the configured inventory is empty.
+        return AgentMcpInventoryResponse(
+            agent_id=str(agent_id),
+            deployment_id=state.deployment_id,
+            availability="unavailable",
+        )
+    try:
+        persisted = PersistedHostedRuntimeMcp.model_validate(state.mcp)
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Managed MCP inventory is temporarily unavailable.",
+        ) from None
+
+    # The current runtime MCP wire does not identify who declared a server or
+    # whether the user can manage it. The exact built-in registration is
+    # platform-owned, while an empty map proves there is no user inventory.
+    # Anything else is valid runtime state but unproven inventory, so fail
+    # closed instead of turning arbitrary desired-state rows into user rows.
+    if persisted.servers and not _is_platform_only_mcp(persisted):
+        return AgentMcpInventoryResponse(
+            agent_id=str(agent_id),
+            deployment_id=state.deployment_id,
+            availability="unavailable",
+        )
+
+    return AgentMcpInventoryResponse(
+        agent_id=str(agent_id),
+        deployment_id=state.deployment_id,
+        availability="available",
+    )
+
+
+def _is_platform_only_mcp(persisted: PersistedHostedRuntimeMcp) -> bool:
+    """Recognize the complete canonical built-in declaration, not its id alone."""
+    if set(persisted.servers) != {"clawdi"}:
+        return False
+    server = persisted.servers["clawdi"]
+    return (
+        isinstance(server, HostedRuntimeStdioMcpServer)
+        and server.command == "clawdi"
+        and server.args == ["mcp"]
     )
 
 
@@ -942,6 +1267,21 @@ def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
         # response is built, so we always have a value here.
         default_project_id=str(env.default_project_id),
     )
+
+
+@overload
+def _identity_response(
+    env: AgentEnvironment, hosted_state: HostedRuntimeState | None, *, agent_response: Literal[True]
+) -> AgentResponse: ...
+
+
+@overload
+def _identity_response(
+    env: AgentEnvironment,
+    hosted_state: HostedRuntimeState | None,
+    *,
+    agent_response: Literal[False],
+) -> EnvironmentResponse: ...
 
 
 def _identity_response(
@@ -1020,6 +1360,77 @@ def _runtime_observed_desired(
         has_mcp=state.mcp is not None,
         has_tools=state.tools is not None,
         updated_at=state.updated_at,
+    )
+
+
+def _runtime_managed_skill_summaries(
+    state: HostedRuntimeState,
+) -> list[RuntimeManagedSkillSummary]:
+    managed_skills: list[RuntimeManagedSkillSummary] = []
+    if state.skills is not None:
+        try:
+            skills = PersistedHostedRuntimeSkills.model_validate(state.skills)
+        except ValueError:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Managed Skill inventory is temporarily unavailable.",
+            ) from None
+        managed_skills.extend(
+            RuntimeManagedSkillSummary(
+                id=skill_id,
+                enabled=entry.enabled,
+                version=(
+                    entry.version or 1
+                    if isinstance(entry, PersistedHostedRuntimeBundledSkillEntry)
+                    else 1
+                ),
+            )
+            for skill_id, entry in sorted(skills.entries.items())
+        )
+    return managed_skills
+
+
+def _agent_runtime_observed_health(
+    health: RuntimeObservedHealthResponse,
+    state: HostedRuntimeState,
+    observation: HostedRuntimeConfigObservation | None,
+) -> RuntimeObservedHealthResponse:
+    """Add v2 identity evidence without changing the frozen v1 health contract."""
+    diagnostics = _validated_runtime_observed_diagnostics(observation)
+    if diagnostics is None:
+        return health
+
+    reasons = list(health.reasons)
+    if diagnostics.applied is None:
+        reasons.append("runtime_applied_missing")
+    elif diagnostics.applied.instance_id != state.instance_id:
+        reasons.append("applied_instance_id_mismatch")
+
+    observed_generation = (
+        observation.observed_config_generation if observation is not None else None
+    )
+    if observed_generation is not None:
+        generation_matches = observed_generation == resolve_runtime_apply_generation(
+            generation=state.generation,
+            apply_generation=state.apply_generation,
+        )
+        if generation_matches:
+            reasons = [reason for reason in reasons if reason != "config_generation_mismatch"]
+        elif "config_generation_mismatch" not in reasons:
+            reasons.append("config_generation_mismatch")
+    if reasons == health.reasons:
+        return health
+
+    status_value = health.status
+    if reasons and status_value == "ok":
+        status_value = "unknown"
+    elif not reasons and status_value == "unknown" and diagnostics.status == "ok":
+        status_value = "ok"
+    return health.model_copy(
+        update={
+            "status": status_value,
+            "reasons": reasons,
+        }
     )
 
 
@@ -1215,7 +1626,7 @@ def _runtime_desired_provider_binding(
 
 def _runtime_observed_provider_status(
     observed: HostedRuntimeObservedProviderPayload | None,
-) -> str:
+) -> Literal["ok", "error", "unknown", "not_configured"]:
     if observed is None:
         return "unknown"
     payload = observed.root
@@ -1315,13 +1726,12 @@ async def _delete_agent_identity(
     auth: AuthContext,
     db: AsyncSession,
 ) -> None:
-    """Delete an agent environment. Existing sessions remain (orphaned)
-    so users don't lose history when removing a machine. The session
-    list query uses an outer-join so orphaned rows still render."""
+    """Archive an Agent and its exclusive Project without breaking identity."""
     result = await db.execute(
         select(AgentEnvironment).where(
             AgentEnvironment.id == agent_id,
             AgentEnvironment.user_id == auth.user_id,
+            active_agent_filter(),
         )
     )
     env = result.scalar_one_or_none()
@@ -1333,8 +1743,17 @@ async def _delete_agent_identity(
             "This agent uses an explicit identity and cannot be disconnected here",
         )
     await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
-    await db.delete(env)
+    try:
+        revoked_key_ids = await archive_agent_and_project(db, agent=env)
+    except AgentLifecycleBoundaryError:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Agent Project ownership could not be proven; no resources were archived.",
+        ) from None
     await db.commit()
+    for key_id in revoked_key_ids:
+        invalidate_api_key_auth_cache(key_id)
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1401,8 +1820,6 @@ def _bounded_runtime_observed(value: object) -> object:
         raise ValueError("runtime_observed must be valid UTF-8 JSON") from exc
     if encoded_size <= _MAX_RUNTIME_OBSERVED_BYTES:
         return value
-    if RUNTIME_OBSERVATION_COMPANION_FIELDS.intersection(value):
-        raise ValueError("companion runtime_observed payload exceeded size limit")
     return {
         "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
         "reportedAt": datetime.now(UTC).isoformat(),
@@ -1479,41 +1896,18 @@ async def sync_heartbeat(
     """Daemon writes its liveness state here every cycle. Extreme-
     light endpoint: validate ownership / env-id binding, update a
     handful of columns, commit. No heavy queries.
-
-    Strict-v2 companion identity is an authenticated guest report from the
-    per-deployment runtime credential. It is readiness authority for this
-    protocol, but it is not attestation-bound instance identity.
     """
     env = (
         await db.execute(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
-
-    runtime_observed = body.runtime_observed
-    is_companion_event = runtime_observed is not None and runtime_observed.is_companion_event
-    if is_companion_event and (
-        not auth.is_cli
-        or auth.api_key is None
-        or not auth.api_key.managed
-        or auth.api_key.environment_id != agent_id
-        or auth.api_key.runtime_deployment_id is None
-    ):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "runtime_observation_credential_mismatch",
-                "message": (
-                    "companion runtime observations require the managed "
-                    "environment-bound runtime credential"
-                ),
-            },
-        )
 
     # If the deploy-key is bound to a specific env, refuse calls
     # for any other env. Resource-level project alone wasn't enough
@@ -1545,25 +1939,12 @@ async def sync_heartbeat(
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
+    runtime_observed = body.runtime_observed
     hosted_state = None
     observation = None
     runtime_observed_values = None
     observed_changed = False
-    if is_companion_event:
-        if auth.api_key is None or auth.api_key.runtime_deployment_id is None:
-            raise AssertionError("strict-v2 credential validation must precede ingestion")
-        try:
-            await ingest_runtime_observation(
-                db,
-                environment_id=agent_id,
-                credential_deployment_id=auth.api_key.runtime_deployment_id,
-                value=runtime_observed,
-                received_at=now,
-            )
-        except RuntimeObservationProtocolError as exc:
-            await db.rollback()
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
-    elif runtime_observed is not None:
+    if runtime_observed is not None:
         runtime_observed_values = _runtime_observed_columns(
             runtime_observed,
             observed_at=now,
@@ -1598,15 +1979,12 @@ async def sync_heartbeat(
     # 60s clients live while preventing old 30s clients from writing
     # on every heartbeat.
     last = env.last_sync_at
-    needs_freshness_refresh = not is_companion_event and (
+    needs_freshness_refresh = (
         last is None or now - _as_utc(last) > _HEARTBEAT_FRESHNESS_WRITE_INTERVAL
     )
     if not has_state_change and not needs_freshness_refresh:
-        if is_companion_event:
-            await db.commit()
         return
-    if not is_companion_event:
-        env.last_sync_at = now
+    env.last_sync_at = now
     env.last_sync_error = new_error
     if new_revision is not None:
         env.last_revision_seen = new_revision
@@ -1716,6 +2094,7 @@ async def batch_create_sessions(
                 select(AgentEnvironment.id).where(
                     AgentEnvironment.id.in_(requested_env_ids),
                     AgentEnvironment.user_id == auth.user_id,
+                    active_agent_filter(),
                 )
             )
         )
@@ -2151,13 +2530,14 @@ async def list_sessions(
     # ANY of summary / project / id wins, and the strongest match
     # drives the rank. NULL-safe via COALESCE — sessions with NULL
     # summary still match if their project_path or id does.
+    relevance_expr: Any | None
     if q:
         sim_summary = func.similarity(func.coalesce(Session.summary, ""), q)
         sim_project = func.similarity(func.coalesce(Session.project_path, ""), q)
         sim_local = func.similarity(Session.local_session_id, q)
         relevance_expr = func.greatest(sim_summary, sim_project, sim_local)
     else:
-        relevance_expr = None  # type: ignore[assignment]
+        relevance_expr = None
 
     base = select(
         Session,
@@ -2167,7 +2547,7 @@ async def list_sessions(
         AgentEnvironment.machine_name,
         is_shared_subq,
     ).outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-    session_filters = [Session.user_id == auth.user_id]
+    session_filters: list[Any] = [Session.user_id == auth.user_id]
     agent_filter = AgentEnvironment.agent_type == agent if agent else None
     if bound_env is not None:
         session_filters.append(Session.environment_id == bound_env)
@@ -2234,6 +2614,7 @@ async def list_sessions(
         # for the typical few-thousand-rows-per-user. If a power user
         # ever hits real latency here, swap to `WHERE summary % :q`
         # plus a GIN index. Threshold tuned for "type to filter" UX.
+        assert relevance_expr is not None
         session_filters.append(relevance_expr >= _TRGM_THRESHOLD)
 
     base = base.where(*session_filters)
@@ -2410,10 +2791,9 @@ async def upload_session_content(
     # we'd rather have a session with NULL related_refs than a
     # half-committed upload).
     try:
-        parsed = json.loads(data)
-        if isinstance(parsed, list):
-            session.related_refs = extract_related_refs(parsed) or None
-    except (json.JSONDecodeError, ValueError, TypeError):
+        parsed = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
+        session.related_refs = _related_refs_json(extract_related_refs(parsed)) or None
+    except (ValidationError, ValueError, TypeError):
         # log.exception (not warning) so the traceback lands in logs —
         # without it, debugging "why did this session land NULL refs"
         # means re-uploading and watching events live.
@@ -2471,13 +2851,9 @@ async def get_session_content(
     # server error to the client and log the detail server-side so we don't
     # leak stored-data shape assumptions.
     try:
-        raw = json.loads(data)
-    except json.JSONDecodeError:
+        raw = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
+    except ValidationError:
         log.exception("session %s content is not valid JSON", session_id)
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
-
-    if not isinstance(raw, list):
-        log.error("session %s content is not a JSON array (got %s)", session_id, type(raw).__name__)
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
 
     return [SessionMessageResponse.model_validate(m) for m in raw]
@@ -2600,32 +2976,29 @@ async def extract_session_memories(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
 
     try:
-        messages = json.loads(data)
-    except json.JSONDecodeError:
+        messages = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
+    except ValidationError:
         log.exception("session %s content is not valid JSON", session.id)
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
-    if not isinstance(messages, list):
-        log.error(
-            "session %s content is not a JSON array (got %s)",
-            session.id,
-            type(messages).__name__,
-        )
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
 
-    # Local import keeps the openai SDK off the cold-start critical path
-    # for routes that don't need it.
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(
+    client = memory_extraction.create_memory_extraction_client(
         base_url=settings.llm_base_url or None,
         api_key=settings.llm_api_key,
     )
-    extracted = await extract_memories_from_session(
-        messages,
-        project_path=session.project_path,
-        client=client,
-        model=settings.llm_model,
-    )
+    try:
+        extracted = await memory_extraction.extract_memories_from_session(
+            messages,
+            project_path=session.project_path,
+            client=client,
+            model=settings.llm_model,
+        )
+    except memory_extraction.MemoryExtractionUpstreamError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE if exc.unavailable else status.HTTP_502_BAD_GATEWAY,
+            "Memory extraction provider is unavailable"
+            if exc.unavailable
+            else "Memory extraction provider returned an invalid response",
+        ) from exc
 
     provider = await get_memory_provider(str(auth.user_id), db)
     for m in extracted:
@@ -2928,8 +3301,24 @@ def _session_to_response(
         status=s.status,
         content_hash=s.content_hash,
         is_shared=is_shared,
-        related_refs=s.related_refs,
+        related_refs=_related_refs_response(s.related_refs),
     )
+
+
+def _related_refs_json(value: dict[str, list[str]]) -> dict[str, JsonValue]:
+    result: dict[str, JsonValue] = {}
+    for key, refs in value.items():
+        json_refs: list[JsonValue] = [ref for ref in refs]
+        result[key] = json_refs
+    return result
+
+
+def _related_refs_response(
+    value: dict[str, JsonValue] | None,
+) -> dict[str, list[str]] | None:
+    if value is None:
+        return None
+    return _RELATED_REFS_ADAPTER.validate_python(value)
 
 
 # --- Permission helpers ----------------------------------------------------
@@ -2958,10 +3347,10 @@ def _link_is_shared_subq():
 def _permission_to_response(p: SessionPermission) -> SessionPermissionResponse:
     return SessionPermissionResponse(
         id=str(p.id),
-        kind=p.kind,
+        kind=cast(Literal["link", "user", "email"], p.kind),
         user_id=str(p.user_id) if p.user_id else None,
         email=p.email,
-        role=p.role,
+        role=cast(Literal["viewer"], p.role),
         invited_by=str(p.invited_by) if p.invited_by else None,
         accepted_at=p.accepted_at,
         expires_at=p.expires_at,

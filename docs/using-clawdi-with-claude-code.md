@@ -189,18 +189,21 @@ Secrets live encrypted in the backend; the web dashboard can list keys but canno
 # List skills in your Clawdi account
 $ clawdi skill list
 
-# Upload a local directory as a skill (must contain SKILL.md)
-$ clawdi skill add ./skills/my-review-flow
+# Commit a local directory into Claude Code's guarded Skills root, then project it
+$ clawdi skill add ./skills/my-review-flow --agent claude_code
 
 # Install a public skill from GitHub (owner/repo or owner/repo/path)
-$ clawdi skill install anthropics/skills
-$ clawdi skill install anthropics/skills/artifacts-builder
+$ clawdi skill install anthropics/skills --agent claude_code
+$ clawdi skill install anthropics/skills/artifacts-builder --agent claude_code
 
-# Remove from cloud
-$ clawdi skill rm artifacts-builder
+# Remove from the authoritative local root, then remove its projection
+$ clawdi skill rm artifacts-builder --agent claude_code
 ```
 
-When you `install` a skill, it's fetched by the backend, stored in the cloud, AND extracted to every registered agent's local skills directory — so for Claude Code it lands at `~/.claude/skills/<skill-key>/SKILL.md` automatically. No separate `sync down` needed.
+For an Agent target, `add` and `install` commit validated bytes under
+`~/.claude/skills/<skill-key>/` before uploading the read-only Cloud
+projection. A failed local activation creates no projection. Cloud events never
+write or delete these files.
 
 Inside Claude Code, skills become available via `/skill` or when Claude decides the skill's `description` matches the task.
 
@@ -245,10 +248,11 @@ $ clawdi push --all --project ~/foo   # every module / every agent, but only thi
 $ clawdi push --dry-run               # preview, no uploads
 ```
 
-Pull skills the other direction:
+To intentionally import a Cloud-owned workspace/personal Project Skill into an
+Agent, name that source Project explicitly:
 
 ```bash
-$ clawdi pull
+$ clawdi pull --modules skills --project <project> --agent claude_code
 ```
 
 After sync, open <http://localhost:3000/sessions> in the web dashboard to browse the conversations, see tokens consumed per session, re-read Claude's responses rendered as markdown, etc.
@@ -321,7 +325,7 @@ $ clawdi push --agent codex
 | `clawdi config set apiUrl <url>` | Point CLI at a non-default backend (env: `CLAWDI_API_URL`) |
 | `clawdi setup --agent claude_code` | One-time: register Claude Code + MCP + skill |
 | `clawdi push` | Push sessions + skills to the cloud |
-| `clawdi pull` | Pull skills from the cloud into Claude Code's skills dir |
+| `clawdi pull` | Mirror sessions, or explicitly import Skills from a workspace/personal Project |
 | `clawdi memory list / search / add / rm` | Inspect or edit cross-agent memory (alias: `mem`) |
 | `clawdi vault set / list / import / attach / detach / rm` | Manage runtime secrets and Project access |
 | `clawdi run -- <cmd>` | Run a command with vault secrets injected |

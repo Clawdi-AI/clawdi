@@ -1,17 +1,21 @@
 import { describe, expect, it } from "bun:test";
 import {
 	chmodSync,
+	chownSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { request } from "node:http";
+import { createServer as createTcpServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+	assertControlPathOwnershipAndMode,
 	type ControlRpcHandlers,
 	type ControlRpcListenConfig,
 	callControlRpc,
@@ -55,6 +59,43 @@ if (process.platform !== "win32") {
 				const result = await callControlRpc("echo", { via: "http" }, rpcClient(server));
 
 				expect(result).toEqual({ params: { via: "http" } });
+			});
+		});
+
+		it("returns the in-flight server close promise to every shutdown caller", async () => {
+			await withRpcFixture(async ({ start }) => {
+				const server = await start({});
+
+				const firstClose = server.close();
+				expect(server.close()).toBe(firstClose);
+				await firstClose;
+			});
+		});
+
+		it("times out when a socket accepts the request but never finishes a response", async () => {
+			await withHangingTcpServer(async (port) => {
+				await expect(
+					callControlRpc("ping", {}, { port, token: "test-token", timeoutMs: 50 }),
+				).rejects.toThrow("Control RPC timed out after 50ms");
+			});
+		});
+
+		it("aborts an in-flight request with the caller's AbortSignal reason", async () => {
+			await withHangingTcpServer(async (port) => {
+				const abort = new AbortController();
+				const call = callControlRpc(
+					"ping",
+					{},
+					{
+						port,
+						token: "test-token",
+						timeoutMs: 5_000,
+						signal: abort.signal,
+					},
+				);
+				setTimeout(() => abort.abort(new Error("caller cancelled RPC")), 25);
+
+				await expect(call).rejects.toThrow("caller cancelled RPC");
 			});
 		});
 
@@ -106,16 +147,74 @@ if (process.platform !== "win32") {
 			});
 		});
 
-		it("repairs existing token file permissions on startup", async () => {
+		for (const mode of [0o666, 0o640]) {
+			it(`rejects an existing token with mode 0${mode.toString(8)}`, async () => {
+				await withRpcFixture(async ({ controlDir, start }) => {
+					const tokenPath = join(controlDir, "control-token");
+					mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+					writeFileSync(tokenPath, "insecure-token\n", { mode });
+					chmodSync(tokenPath, mode);
+
+					await expect(start({})).rejects.toThrow(
+						`daemon control token ${tokenPath} must have mode 0600`,
+					);
+					expect(statSync(tokenPath).mode & 0o777).toBe(mode);
+				});
+			});
+		}
+
+		it("rejects a token owned by another uid", async () => {
+			const effectiveUid = process.geteuid?.() ?? 0;
+			expect(() =>
+				assertControlPathOwnershipAndMode(
+					"daemon control token",
+					"/secure/control-token",
+					effectiveUid + 1,
+					0o600,
+					effectiveUid,
+					0o600,
+				),
+			).toThrow(
+				`daemon control token /secure/control-token must be owned by effective uid ${effectiveUid}; found uid ${effectiveUid + 1}`,
+			);
+
+			if (effectiveUid !== 0) return;
 			await withRpcFixture(async ({ controlDir, start }) => {
 				const tokenPath = join(controlDir, "control-token");
-				mkdirSync(dirname(tokenPath), { recursive: true });
-				writeFileSync(tokenPath, "fixed-token\n", { mode: 0o644 });
-				chmodSync(tokenPath, 0o644);
+				mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+				writeFileSync(tokenPath, "foreign-token\n", { mode: 0o600 });
+				chownSync(tokenPath, 10001, 10001);
 
-				await start({});
+				await expect(start({})).rejects.toThrow(
+					`daemon control token ${tokenPath} must be owned by effective uid 0; found uid 10001`,
+				);
+			});
+		});
 
-				expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
+		it("rejects a control directory writable by another uid", async () => {
+			await withRpcFixture(async ({ controlDir, start }) => {
+				const tokenPath = join(controlDir, "control-token");
+				mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+				writeFileSync(tokenPath, "insecure-parent-token\n", { mode: 0o600 });
+				chmodSync(controlDir, 0o770);
+
+				await expect(start({})).rejects.toThrow(
+					`daemon control directory ${controlDir} must have mode 0700`,
+				);
+			});
+		});
+
+		it("rejects a token symlink pointing outside the control directory", async () => {
+			await withRpcFixture(async ({ controlDir, start }) => {
+				const outsideToken = join(dirname(controlDir), "outside-token");
+				const tokenPath = join(controlDir, "control-token");
+				mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+				writeFileSync(outsideToken, "outside-token\n", { mode: 0o600 });
+				symlinkSync(outsideToken, tokenPath);
+
+				await expect(start({})).rejects.toThrow(
+					`daemon control token at ${tokenPath} must not be a symbolic link`,
+				);
 			});
 		});
 
@@ -226,6 +325,26 @@ function rpcClient(server: RpcServer): { host: string; port: number; token: stri
 
 function readServerToken(server: RpcServer): string {
 	return readFileSync(server.tokenPath, "utf-8").trim();
+}
+
+async function withHangingTcpServer<T>(run: (port: number) => Promise<T>): Promise<T> {
+	const sockets = new Set<Socket>();
+	const server = createTcpServer((socket) => {
+		sockets.add(socket);
+		socket.on("close", () => sockets.delete(socket));
+	});
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => resolve());
+	});
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("expected TCP test port");
+	try {
+		return await run(address.port);
+	} finally {
+		for (const socket of sockets) socket.destroy();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
 }
 
 function postWithoutToken(

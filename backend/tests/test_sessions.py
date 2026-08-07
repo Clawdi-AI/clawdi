@@ -4,14 +4,37 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import httpx
 import pytest
+from openai import AsyncOpenAI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.file_store import FileStore
+
 _TEST_SYSTEM = {}
+
+
+class _CountingGetFileStore:
+    def __init__(self, delegate: FileStore) -> None:
+        self._delegate = delegate
+        self.get_calls = 0
+
+    async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+        await self._delegate.put(key, data, content_type)
+
+    async def get(self, key: str) -> bytes:
+        self.get_calls += 1
+        return await self._delegate.get(key)
+
+    async def delete(self, key: str) -> None:
+        await self._delegate.delete(key)
+
+    async def exists(self, key: str) -> bool:
+        return await self._delegate.exists(key)
 
 
 async def _register_env(client: httpx.AsyncClient, machine_id: str = "test-machine-1") -> str:
@@ -252,7 +275,7 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
             deployment_id="hdep_test",
             instance_id="instance-test",
             generation=1,
-            cli_package_spec="clawdi@0.12.10-beta.55",
+            cli_package_spec="clawdi@1.2.3-test",
             locale={"language": "en", "timezone": "UTC"},
             system=_TEST_SYSTEM,
             live_sync={"enabled": False, "agents": []},
@@ -412,7 +435,7 @@ async def test_session_batch_clamps_negative_duration_and_logs_user_agent(
     r = await client.post(
         "/v1/sessions/batch",
         json=payload,
-        headers={"user-agent": "clawdi-cli/0.12.9"},
+        headers={"user-agent": "clawdi-cli/1.2.3-test"},
     )
 
     assert r.status_code == 200, r.text
@@ -432,7 +455,7 @@ async def test_session_batch_clamps_negative_duration_and_logs_user_agent(
         and record.getMessage().startswith("session_batch_duration_clamped")
     ]
     assert len(clamp_logs) == 1
-    assert "user_agent='clawdi-cli/0.12.9'" in clamp_logs[0]
+    assert "user_agent='clawdi-cli/1.2.3-test'" in clamp_logs[0]
     assert "count=1" in clamp_logs[0]
     assert "sess-clock-skew" in clamp_logs[0]
 
@@ -975,6 +998,7 @@ import json  # noqa: E402
 @pytest.mark.asyncio
 async def test_session_messages_endpoint_caches_parsed_blob(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """Round-57 P2: paginating through a long session must NOT
     re-download + re-parse the full JSON blob on every page.
@@ -1019,25 +1043,14 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     # routes); the route handler is now a thin wrapper.
     session_content._messages_cache.clear()
 
-    # Wrap file_store.get so we can count blob reads.
-    orig_get = sessions_route.file_store.get
-    call_count = 0
-
-    async def counting_get(file_key: str) -> bytes:
-        nonlocal call_count
-        call_count += 1
-        return await orig_get(file_key)
-
-    sessions_route.file_store.get = counting_get  # type: ignore[assignment]
-    try:
-        for offset in (0, 10, 20):
-            r = await client.get(f"/v1/sessions/{sid}/messages?offset={offset}&limit=10")
-            assert r.status_code == 200, r.text
-    finally:
-        sessions_route.file_store.get = orig_get  # type: ignore[assignment]
+    counting_store = _CountingGetFileStore(sessions_route.file_store)
+    monkeypatch.setattr(sessions_route, "file_store", counting_store)
+    for offset in (0, 10, 20):
+        r = await client.get(f"/v1/sessions/{sid}/messages?offset={offset}&limit=10")
+        assert r.status_code == 200, r.text
 
     # Three pages, ONE blob read — cache absorbed pages 2 + 3.
-    assert call_count == 1, f"expected 1 file_store.get, saw {call_count}"
+    assert counting_store.get_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1503,22 +1516,46 @@ async def test_session_batch_rejects_malformed_uuid_with_422_not_500(client: htt
 
 
 @pytest.mark.asyncio
-async def test_delete_environment_orphans_sessions_via_fk(
-    client: httpx.AsyncClient, db_session: AsyncSession
+async def test_disconnect_archives_identity_and_preserves_session_link(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
-    """Deleting an environment must keep historical sessions but null out
-    the FK so the list query renders them as unlabeled — never 500.
-    The FK + ON DELETE SET NULL is what makes this safe under concurrent
-    deletion (the previous SELECT-then-INSERT race could create orphans
-    that violated invariants the codebase implicitly relied on).
+    """Disconnect keeps the stable Agent identity attached to history."""
+    machine_id = f"disconnect-oauth-claim-{uuid.uuid4().hex}"
+    env_id = await _register_env_named(client, machine_id, agent_type="codex")
 
-    This test asserts at *both* layers:
-      1. HTTP — the dashboard list endpoint returns the row with null
-         agent label (could pass without an FK, just via outerjoin).
-      2. Raw SQL — `sessions.environment_id IS NULL` after delete. This
-         is what proves `ON DELETE SET NULL` actually fired; without the
-         FK the column would still hold the deleted UUID."""
-    env_id = await _register_env(client)
+    from app.models.ai_provider import AiProviderAuthPayload
+    from app.models.project import Project
+    from app.models.session import AgentEnvironment
+    from app.services.ai_provider_credentials import environment_matches_runtime
+    from app.services.runtime_source import load_runtime_source_batch
+    from app.services.vault_crypto import encrypt
+
+    agent = await db_session.get(AgentEnvironment, uuid.UUID(env_id))
+    assert agent is not None
+    project_id = agent.default_project_id
+    project = await db_session.get(Project, project_id)
+    assert project is not None
+
+    encrypted, nonce = encrypt('{"kind":"oauth-test"}')
+    claimed_payload = AiProviderAuthPayload(
+        owner_user_id=seed_user.id,
+        provider_id=f"delete-session-{uuid.uuid4().hex}",
+        auth_profile="default",
+        kind="agent_profile",
+        source="test",
+        encrypted_payload=encrypted,
+        nonce=nonce,
+        consumer_environment_id=uuid.UUID(env_id),
+        consumer_runtime="codex",
+    )
+    db_session.add(claimed_payload)
+    await db_session.commit()
+    assert await environment_matches_runtime(
+        db_session,
+        owner_user_id=seed_user.id,
+        environment_id=uuid.UUID(env_id),
+        runtime="codex",
+    )
     started = datetime.now(UTC).isoformat()
     await client.post(
         "/v1/sessions/batch",
@@ -1529,7 +1566,7 @@ async def test_delete_environment_orphans_sessions_via_fk(
                     "local_session_id": "keep-me",
                     "started_at": started,
                     "message_count": 1,
-                    "summary": "should survive deletion",
+                    "summary": "should survive disconnect",
                 }
             ]
         },
@@ -1542,18 +1579,14 @@ async def test_delete_environment_orphans_sessions_via_fk(
     assert listing["total"] == 1
     item = listing["items"][0]
     assert item["local_session_id"] == "keep-me"
-    assert item["agent_name"] is None
+    assert item["agent_name"] == f"mac-{machine_id}"
     assert item["agent_display_name"] is None
     assert item["agent_default_name"] is None
-    assert item["agent_type"] is None
-    assert item["machine_name"] is None
+    assert item["agent_type"] == "codex"
+    assert item["machine_name"] == f"mac-{machine_id}"
 
-    # The decisive check: after the DELETE, the session's environment_id
-    # column is NULL (not the deleted UUID). This only happens because the
-    # FK has ON DELETE SET NULL — without the constraint, the column would
-    # still hold the now-dangling reference. Filter by the deleted env_id
-    # so prior test runs (the test DB doesn't fully clean between runs)
-    # don't pollute the count.
+    # The decisive check: Disconnect archives in place, so the Session keeps
+    # its stable environment_id. No hard delete or FK cascade runs here.
     row = (
         await db_session.execute(
             text(
@@ -1564,7 +1597,61 @@ async def test_delete_environment_orphans_sessions_via_fk(
             {"sid": "keep-me"},
         )
     ).one()
-    assert row.environment_id is None
+    assert str(row.environment_id) == env_id
+    await db_session.refresh(agent)
+    await db_session.refresh(project)
+    assert agent.archived_at is not None
+    assert project.archived_at is not None
+    await db_session.refresh(claimed_payload)
+    assert str(claimed_payload.consumer_environment_id) == env_id
+    assert claimed_payload.consumer_runtime == "codex"
+    assert not await environment_matches_runtime(
+        db_session,
+        owner_user_id=seed_user.id,
+        environment_id=uuid.UUID(env_id),
+        runtime="codex",
+    )
+    archived_source = await load_runtime_source_batch(
+        db_session,
+        environment_ids=[uuid.UUID(env_id)],
+        owner_user_id=seed_user.id,
+    )
+    assert uuid.UUID(env_id) not in archived_source.rows
+
+    assert (await client.get("/v1/agents")).json() == []
+    archived_detail = await client.get(f"/v1/agents/{env_id}")
+    assert archived_detail.status_code == 403
+    assert archived_detail.json()["detail"]["code"] == "agent_disconnected"
+
+    reconnected = await _register_env_named(
+        client,
+        machine_id,
+        agent_type="codex",
+    )
+    # This helper uses the machine id as registration identity; the original
+    # registration above already used the same generated value.
+    assert reconnected == env_id
+    assert (await client.get(f"/v1/agents/{env_id}")).status_code == 200
+    await db_session.refresh(agent)
+    await db_session.refresh(project)
+    assert agent.default_project_id == project_id
+    assert agent.archived_at is None
+    assert project.id == project_id
+    assert project.archived_at is None
+    assert await environment_matches_runtime(
+        db_session,
+        owner_user_id=seed_user.id,
+        environment_id=uuid.UUID(env_id),
+        runtime="codex",
+    )
+    restored_source = await load_runtime_source_batch(
+        db_session,
+        environment_ids=[uuid.UUID(env_id)],
+        owner_user_id=seed_user.id,
+    )
+    assert uuid.UUID(env_id) in restored_source.rows
+    await db_session.refresh(claimed_payload)
+    assert claimed_payload.consumer_environment_id == uuid.UUID(env_id)
 
 
 @pytest.mark.asyncio
@@ -1612,6 +1699,42 @@ async def test_delete_environment_rejects_explicit_agent_identity(
 async def test_delete_environment_404_for_unknown(client: httpx.AsyncClient):
     r = await client.delete(f"/v1/environments/{uuid.uuid4()}")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_disconnect_fails_atomically_when_agent_project_is_shared(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed_user
+):
+    from sqlalchemy import select
+
+    from app.models.project import Project
+    from app.models.session import AgentEnvironment
+
+    env_id = uuid.UUID(await _register_env(client, f"shared-project-{uuid.uuid4().hex}"))
+    agent = await db_session.scalar(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
+    assert agent is not None
+    project = await db_session.get(Project, agent.default_project_id)
+    assert project is not None
+    sibling = AgentEnvironment(
+        id=uuid.uuid4(),
+        user_id=seed_user.id,
+        machine_id=f"corrupt-sibling-{uuid.uuid4().hex}",
+        machine_name="Corrupt sibling",
+        agent_type="codex",
+        os="linux",
+        registration_key=f"machine:corrupt-{uuid.uuid4().hex}:agent:codex",
+        default_project_id=project.id,
+    )
+    db_session.add(sibling)
+    await db_session.commit()
+
+    response = await client.delete(f"/v1/agents/{env_id}")
+    assert response.status_code == 409, response.text
+    assert "could not be proven" in response.text
+    await db_session.refresh(agent)
+    await db_session.refresh(project)
+    assert agent.archived_at is None
+    assert project.archived_at is None
 
 
 # ---------------------------------------------------------------------------
@@ -1663,7 +1786,17 @@ async def test_extract_creates_memories_linked_to_session(
 
     monkeypatch.setattr(app_settings, "llm_api_key", "test-key")
 
-    async def fake_extract(messages, *, project_path, client, model):
+    async def fake_extract(
+        messages: Sequence[object],
+        *,
+        project_path: str | None,
+        client: AsyncOpenAI,
+        model: str,
+    ) -> list[memory_extraction.ExtractedMemory]:
+        assert messages
+        assert model
+        _ = project_path
+        await client.close()
         return [
             memory_extraction.ExtractedMemory(
                 content="User prefers bun over npm", category="preference", tags=["tooling"]
@@ -1673,7 +1806,7 @@ async def test_extract_creates_memories_linked_to_session(
             ),
         ]
 
-    monkeypatch.setattr("app.routes.sessions.extract_memories_from_session", fake_extract)
+    monkeypatch.setattr(memory_extraction, "extract_memories_from_session", fake_extract)
 
     local_id = "sess-extract-1"
     await _seed_session_with_content(client, local_id)
@@ -1697,6 +1830,49 @@ async def test_extract_creates_memories_linked_to_session(
     assert all(m.source_session_id is not None for m in rows)
     contents = {m.content for m in rows}
     assert "User prefers bun over npm" in contents
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("unavailable", "expected_status"),
+    [(False, 502), (True, 503)],
+)
+async def test_extract_maps_sanitized_provider_failure(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    unavailable: bool,
+    expected_status: int,
+) -> None:
+    from app.core.config import settings as app_settings
+    from app.services import memory_extraction
+
+    monkeypatch.setattr(app_settings, "llm_api_key", "test-key")
+
+    async def fail_extract(
+        messages: Sequence[object],
+        *,
+        project_path: str | None,
+        client: AsyncOpenAI,
+        model: str,
+    ) -> list[memory_extraction.ExtractedMemory]:
+        assert messages
+        assert model
+        _ = project_path
+        await client.close()
+        raise memory_extraction.MemoryExtractionUpstreamError(
+            "provider-secret-detail",
+            unavailable=unavailable,
+        )
+
+    monkeypatch.setattr(memory_extraction, "extract_memories_from_session", fail_extract)
+    local_id = f"sess-extract-provider-failure-{expected_status}"
+    await _seed_session_with_content(client, local_id)
+
+    response = await client.post(f"/v1/sessions/{local_id}/extract")
+
+    assert response.status_code == expected_status
+    assert "provider-secret-detail" not in response.text
 
 
 @pytest.mark.asyncio

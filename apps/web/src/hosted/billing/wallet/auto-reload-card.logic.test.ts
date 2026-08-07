@@ -7,14 +7,13 @@ import {
 	autoReloadFormState,
 	autoReloadRequest,
 	autoReloadSaveError,
-	autoReloadThresholdMinimumCents,
+	autoReloadStatusSummary,
 } from "./auto-reload-card.logic";
 
 const validForm = {
 	amount: "25",
 	threshold: "1",
 	cap: "100",
-	pointsPerUsd: 1000,
 };
 
 describe("autoReloadFormState", () => {
@@ -26,27 +25,23 @@ describe("autoReloadFormState", () => {
 		expect(state.formValid).toBe(false);
 	});
 
-	test("keeps an explicit 0 monthly cap as the no-cap value", () => {
-		const state = autoReloadFormState({ ...validForm, cap: "0" });
+	test("requires a finite limit to cover one reload and supports an explicit no-limit choice", () => {
+		const tooSmall = autoReloadFormState({ ...validForm, cap: "20" });
+		const unlimited = autoReloadFormState({
+			...validForm,
+			cap: "",
+			monthlyLimitEnabled: false,
+		});
 
-		expect(state.capCents).toBe(0);
-		expect(state.capValid).toBe(true);
-		expect(state.formValid).toBe(true);
+		expect(tooSmall.capValid).toBe(false);
+		expect(unlimited.capCents).toBe(0);
+		expect(unlimited.capValid).toBe(true);
+		expect(unlimited.formValid).toBe(true);
 	});
 
-	test("preserves the $1 threshold floor at 1000 points per USD", () => {
+	test("preserves the direct $1 threshold floor", () => {
 		expect(autoReloadFormState({ ...validForm, threshold: "0.99" }).thresholdValid).toBe(false);
 		expect(autoReloadFormState({ ...validForm, threshold: "1" }).thresholdValid).toBe(true);
-	});
-
-	test("converts the 1000-credit threshold floor at other wallet rates", () => {
-		expect(autoReloadThresholdMinimumCents(100)).toBe(1_000);
-		expect(
-			autoReloadFormState({ ...validForm, pointsPerUsd: 100, threshold: "9.99" }).thresholdValid,
-		).toBe(false);
-		expect(
-			autoReloadFormState({ ...validForm, pointsPerUsd: 100, threshold: "10" }).thresholdValid,
-		).toBe(true);
 	});
 
 	test("rejects values with more than two decimal places instead of rounding them", () => {
@@ -57,17 +52,16 @@ describe("autoReloadFormState", () => {
 });
 
 const wallet: WalletState = {
-	balance_credits: 25_000,
-	overdraft_credits: 0,
-	balance_snapshot_at: "2026-07-15T00:00:00Z",
-	payment_mode: "card",
+	balance_usd: "25",
 	x402_enabled: false,
 	auto_reload_enabled: false,
-	auto_reload_threshold_credits: 5_000,
+	auto_reload_threshold_usd: "5",
 	auto_reload_amount_cents: 2_500,
 	auto_reload_monthly_cap_cents: 10_000,
+	auto_reload_monthly_spent_cents: 2_500,
+	auto_reload_period_end: "2026-09-01T00:00:00Z",
+	auto_reload_status: "off",
 	auto_reload_action: null,
-	points_per_usd: 1_000,
 };
 
 describe("auto-reload explicit-save state", () => {
@@ -80,9 +74,9 @@ describe("auto-reload explicit-save state", () => {
 			cap: "125",
 		};
 
-		expect(autoReloadRequest(draft, wallet.points_per_usd)).toEqual({
+		expect(autoReloadRequest(draft)).toEqual({
 			auto_reload_enabled: true,
-			auto_reload_threshold_credits: 7_500,
+			auto_reload_threshold_usd: 7.5,
 			auto_reload_amount_cents: 3_000,
 			auto_reload_monthly_cap_cents: 12_500,
 		});
@@ -91,9 +85,9 @@ describe("auto-reload explicit-save state", () => {
 	test("includes all parameters when disabling auto-reload", () => {
 		const draft = autoReloadDraftFromWallet({ ...wallet, auto_reload_enabled: true });
 
-		expect(autoReloadRequest({ ...draft, enabled: false }, wallet.points_per_usd)).toEqual({
+		expect(autoReloadRequest({ ...draft, enabled: false })).toEqual({
 			auto_reload_enabled: false,
-			auto_reload_threshold_credits: 5_000,
+			auto_reload_threshold_usd: 5,
 			auto_reload_amount_cents: 2_500,
 			auto_reload_monthly_cap_cents: 10_000,
 		});
@@ -102,15 +96,25 @@ describe("auto-reload explicit-save state", () => {
 	test("tracks semantic changes without treating equivalent dollar formatting as dirty", () => {
 		const baseline = autoReloadDraftFromWallet(wallet);
 
+		expect(autoReloadDraftIsDirty({ ...baseline, amount: "25.00" }, baseline)).toBe(false);
+		expect(autoReloadDraftIsDirty({ ...baseline, amount: "26" }, baseline)).toBe(true);
+		expect(autoReloadDraftIsDirty({ ...baseline, amount: "" }, baseline)).toBe(true);
+	});
+});
+
+describe("autoReloadStatusSummary", () => {
+	test("explains a monthly-limit pause without implying auto-reload was turned off", () => {
 		expect(
-			autoReloadDraftIsDirty({ ...baseline, amount: "25.00" }, baseline, wallet.points_per_usd),
-		).toBe(false);
-		expect(
-			autoReloadDraftIsDirty({ ...baseline, amount: "26" }, baseline, wallet.points_per_usd),
-		).toBe(true);
-		expect(
-			autoReloadDraftIsDirty({ ...baseline, amount: "" }, baseline, wallet.points_per_usd),
-		).toBe(true);
+			autoReloadStatusSummary({
+				...wallet,
+				auto_reload_enabled: true,
+				auto_reload_status: "paused_monthly_limit",
+			}),
+		).toEqual({
+			label: "Paused",
+			tone: "warning",
+			description: "Monthly limit reached. Auto-reload resumes Sep 1.",
+		});
 	});
 });
 

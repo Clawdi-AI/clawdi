@@ -4,6 +4,7 @@ import { ClaudeCodeAdapter } from "./claude-code";
 import { CodexAdapter } from "./codex";
 import { HermesAdapter } from "./hermes";
 import { OpenClawAdapter } from "./openclaw";
+import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
 import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome } from "./paths";
 
 // Agent identity is declared as a literal tuple so `AgentType` doesn't depend
@@ -73,15 +74,22 @@ export function getAdapterEntry(type: AgentType): AdapterRegistryEntry | null {
  * Both `setup` (write) and `teardown` (delete) use this so the two
  * commands can never disagree about the path.
  */
-export function builtinSkillTargetDir(agentType: AgentType): string | null {
-	const home = adapterRegistry[agentType]?.home();
+export function builtinSkillTargetDir(agentType: AgentType, homeOverride?: string): string | null {
+	return agentSkillTargetDir(agentType, "clawdi", homeOverride);
+}
+
+export function agentSkillTargetDir(
+	agentType: AgentType,
+	skillName: string,
+	homeOverride?: string,
+): string | null {
+	const home = homeOverride ?? adapterRegistry[agentType]?.home();
 	if (!home) return null;
 	if (agentType === "openclaw") {
-		const openclawAgentId = process.env.OPENCLAW_AGENT_ID || "main";
-		return join(home, "agents", openclawAgentId, "skills", "clawdi");
+		return join(resolveOpenClawAgentWorkspace(), "skills", skillName);
 	}
 	if (agentType === "claude_code" || agentType === "codex" || agentType === "hermes") {
-		return join(home, "skills", "clawdi");
+		return join(home, "skills", skillName);
 	}
 	return null;
 }

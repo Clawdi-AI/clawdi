@@ -5,6 +5,7 @@ from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKe
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.api_scopes import RUNTIME_DEPLOYMENT_KEY_SCOPES as RUNTIME_DEPLOYMENT_KEY_SCOPES
 from app.models.base import Base, TimestampMixin
 
 
@@ -62,7 +63,7 @@ class ApiKey(Base, TimestampMixin):
         index=True,
     )
 
-    # Immutable strict-v2 authority minted only after the matching runtime
+    # Immutable strict-v2 hosted runtime authority minted only after the matching runtime
     # environment fence exists. Legacy managed keys keep this NULL and can
     # never gain companion-ingestion authority merely because a fence appears
     # later for their environment.

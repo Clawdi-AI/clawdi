@@ -1,8 +1,15 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import type { HostedDeployment } from "@/hosted/billing/contracts";
+import type {
+	DeploymentOperation,
+	HostedComputeSubscription,
+	HostedDeployment,
+	HostedDeploymentStatus,
+} from "@/hosted/billing/contracts";
+import { deploymentFailurePresentation } from "@/hosted/deployment-failure";
+import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
-type HostedAgentTileStatus = typeof import("@/hosted/use-hosted-agent-tiles").hostedAgentTileStatus;
 type DeploymentToTiles = typeof import("@/hosted/use-hosted-agent-tiles").deploymentToTiles;
 type HostedRuntimeStatusView =
 	typeof import("@/hosted/use-hosted-agent-tiles").hostedRuntimeStatusView;
@@ -10,7 +17,6 @@ type ResolveAgentDeployment =
 	typeof import("@/hosted/agents/deployment-hooks").resolveAgentDeployment;
 type Env = components["schemas"]["AgentResponse"];
 
-let getTileStatus: HostedAgentTileStatus | null = null;
 let getDeploymentToTiles: DeploymentToTiles | null = null;
 let getRuntimeStatusView: HostedRuntimeStatusView | null = null;
 let getAgentDeploymentResolution: ResolveAgentDeployment | null = null;
@@ -20,25 +26,27 @@ beforeAll(async () => {
 	process.env.VITE_CLAWDI_DEPLOY_API_URL = "http://localhost:50021";
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/use-hosted-agent-tiles");
-	getTileStatus = module.hostedAgentTileStatus;
 	getDeploymentToTiles = module.deploymentToTiles;
 	getRuntimeStatusView = module.hostedRuntimeStatusView;
 	const deploymentHooks = await import("@/hosted/agents/deployment-hooks");
 	getAgentDeploymentResolution = deploymentHooks.resolveAgentDeployment;
 });
 
-function hostedAgentTileStatus(rawStatus: string) {
-	if (!getTileStatus) throw new Error("hostedAgentTileStatus was not loaded");
-	return getTileStatus(rawStatus);
-}
-
 function hostedRuntimeStatusView(
-	rawStatus: string,
+	rawStatus: HostedDeploymentStatus["summary_state"],
 	environment: Env | null | undefined,
 	failureReason?: string | null,
 ) {
 	if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
-	return getRuntimeStatusView({ status: rawStatus, failure_reason: failureReason }, environment);
+	const deployment = hostedDeploymentFixture({
+		status: rawStatus,
+		failure: failureReason ? deploymentFailure(failureReason) : null,
+	});
+	return getRuntimeStatusView(
+		deployment.resource.status,
+		environment,
+		deploymentFailurePresentation(deployment),
+	);
 }
 
 function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = []) {
@@ -47,6 +55,16 @@ function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = [])
 		deployment,
 		new Map(envs.map((item) => [item.id.toLowerCase(), item])),
 	);
+}
+
+function expectHostedTileStatus(
+	tile: ReturnType<DeploymentToTiles>[number] | undefined,
+	label: string,
+) {
+	expect(tile).toBeDefined();
+	expect(tile?.cardStatus?.visual.label).toBe(label);
+	expect(tile?.cardStatus?.labels[0]).toBe(label);
+	expect((tile as { action?: unknown } | undefined)?.action).toBeUndefined();
 }
 
 function resolveAgentDeployment(
@@ -81,81 +99,137 @@ function env(overrides: Partial<Env> = {}): Env {
 	};
 }
 
-function deployment(
-	overrides: Partial<HostedDeployment> = {},
-	configInfoOverrides: Partial<NonNullable<HostedDeployment["config_info"]>> = {},
-): HostedDeployment {
+function deploymentFailure(reason: string): NonNullable<HostedDeploymentStatus["failure"]> {
 	return {
-		id: "dep_123",
-		user_id: "user_123",
-		name: "hosted-test",
-		app_id: "app_123",
-		backend: null,
-		status: "running",
-		endpoints: [],
-		openclaw_control_ui_url: null,
-		hermes_control_ui_url: null,
-		config_info: {
-			compute_plan_slug: "compute_basic",
-			mux_enabled: true,
-			telegram_mux_enabled: false,
-			discord_mux_enabled: false,
-			whatsapp_mux_enabled: false,
-			imessage_mux_enabled: false,
-			kobb_available: false,
-			primary_model: null,
-			ai_provider_id: null,
-			ai_provider_auth_kind: "managed",
-			public_ports: [],
-			runtime: "openclaw",
-			clawdi_cloud_environments: {},
-			vcpu: null,
-			ram_gb: null,
-			disk_gb: null,
-			...configInfoOverrides,
-		},
-		created_at: "2026-06-22T00:00:00Z",
-		upgrade_available: false,
-		...overrides,
+		type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+		title: reason,
+		status: 504,
+		detail: "The runtime did not report ready before the startup deadline.",
+		instance: "dep_123",
+		code: "runtime_readiness_timeout",
+		conditionReason: "RuntimeReadinessTimeout",
+		conditionMessage: reason,
+		observedGeneration: 1,
 	};
 }
 
+function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
+	return {
+		name: `operations/${verb}-failed`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "dep_123",
+			verb: verb as DeploymentOperation["metadata"]["verb"],
+			targetGeneration: 2,
+			manifestETag: "manifest-failed",
+			createTime: "2026-07-25T00:00:00Z",
+			updateTime: "2026-07-25T00:01:00Z",
+		},
+		done: false,
+		response: null,
+	};
+}
+
+function failedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
+	return {
+		...acceptedOperation(verb),
+		done: true,
+		error: {
+			code: 13,
+			message: "operation failed",
+			details: [
+				{
+					"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+					type: "https://api.clawdi.ai/problems/operation-failed",
+					title: "Operation failed",
+					status: 500,
+					detail: "Internal operation failure",
+					code: "operation_failed",
+					retryable: true,
+					conditionReason: "OperationFailed",
+					conditionMessage: "Internal operation failure",
+					observedGeneration: 2,
+				},
+			],
+		},
+		response: null,
+	};
+}
+
+function deployment(
+	overrides: {
+		id?: string;
+		name?: string;
+		status?: HostedDeploymentStatus["summary_state"] | null;
+		createdAt?: string;
+		runtime?: "openclaw" | "hermes";
+		computeSubscription?: HostedComputeSubscription;
+		computePlanSlug?: "compute_basic" | "compute_performance";
+		failureReason?: string;
+		failedVerb?: DeploymentOperationVerb;
+		environmentId?: string | null;
+		filesEndpoint?: HostedDeployment["files_endpoint"];
+	} = {},
+): HostedDeployment {
+	const id = overrides.id ?? "dep_123";
+	const runtime = overrides.runtime ?? "openclaw";
+	const environmentId = overrides.environmentId ?? `env_${id}_${runtime}`;
+	return hostedDeploymentFixture({
+		id,
+		name: overrides.name ?? "hosted-test",
+		status: overrides.status,
+		createdAt: overrides.createdAt ?? "2026-06-22T00:00:00Z",
+		runtime,
+		cloudEnvironments: overrides.environmentId === null ? {} : { [runtime]: environmentId },
+		computeSubscription: overrides.computeSubscription,
+		currentPlanSlug: overrides.computePlanSlug,
+		failure: overrides.failureReason ? deploymentFailure(overrides.failureReason) : undefined,
+		acceptedOperation: overrides.failedVerb ? acceptedOperation(overrides.failedVerb) : undefined,
+		filesEndpoint: overrides.filesEndpoint,
+	});
+}
+
 describe("deploymentToTiles", () => {
-	test("renders only the selected runtime even when stale environment mappings remain", () => {
+	test("renders the runtime selected by the deployment spec", () => {
+		const environmentId = "env-openclaw";
+		const hostedDeployment = deployment({ runtime: "openclaw", environmentId });
 		const openclawEnv = env({
-			id: "33333333-3333-4333-8333-333333333333",
+			id: environmentId,
 			name: "hosted-openclaw",
+			display_name: "Research Agent",
 			default_name: "hosted-openclaw",
 			machine_name: "hosted-openclaw",
 			agent_type: "openclaw",
 			last_seen_at: new Date().toISOString(),
 		});
-		const tiles = hostedDeploymentToTiles(
-			deployment(
-				{},
-				{
-					runtime: "openclaw",
-					clawdi_cloud_environments: {
-						openclaw: openclawEnv.id,
-						hermes: "44444444-4444-4444-8444-444444444444",
-					},
-				},
-			),
-			[openclawEnv],
-		);
+		const tiles = hostedDeploymentToTiles(hostedDeployment, [openclawEnv]);
 
 		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
 		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
+		expect(tiles.map((tile) => tile.name)).toEqual(["Research Agent"]);
 		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
-		expect(tiles[0]?.manageHref).toBe(
-			`/agents/${openclawEnv.id}/settings?source=on-clawdi&d=dep_123`,
-		);
+		expect(tiles[0]?.env).toBe(openclawEnv);
+		expect(tiles[0]?.filesAvailable).toBe(false);
+		expectHostedTileStatus(tiles[0], "Running");
 	});
 
-	test("projects dunning state as the hosted tile secondary status", () => {
+	test("projects Files eligibility only from the authoritative endpoint", () => {
+		const [eligible] = hostedDeploymentToTiles(
+			deployment({ filesEndpoint: { url: "https://agent-9120.node.clawdi.ai/" } }),
+		);
+		const [malformed] = hostedDeploymentToTiles(
+			deployment({ filesEndpoint: { url: "http://agent-9120.node.clawdi.ai/" } }),
+		);
+
+		expect(eligible?.filesAvailable).toBe(true);
+		expect(malformed?.filesAvailable).toBe(false);
+	});
+
+	test("keeps dunning state off the hosted tile", () => {
 		const [tile] = hostedDeploymentToTiles(
 			deployment({
-				compute_subscription: {
+				computePlanSlug: "compute_basic",
+				computeSubscription: {
 					status: "past_due",
 					funding_source: "stripe",
 					payment_state: "requires_action",
@@ -173,19 +247,15 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expect(tile?.secondaryStatus).toEqual({
-			label: "Payment action required",
-			title: "Complete payment authentication to keep Basic compute active.",
-			textClass: "text-warning-muted-foreground",
-		});
+		expectHostedTileStatus(tile, "Running");
 	});
 
-	test("projects failed deployment reasons ahead of dunning state", () => {
+	test("keeps backend failure detail off the hosted tile", () => {
 		const [tile] = hostedDeploymentToTiles(
 			deployment({
 				status: "failed",
-				failure_reason: "startup_probe_failing; restart_count=2; container failed readiness probe",
-				compute_subscription: {
+				failureReason: "startup_probe_failing; restart_count=2; container failed readiness probe",
+				computeSubscription: {
 					status: "past_due",
 					funding_source: "stripe",
 					payment_state: "requires_action",
@@ -203,98 +273,170 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expect(tile?.secondaryStatus).toEqual({
-			label: "Failure: startup_probe_failing; restart_count=2; container failed readiness probe",
-			title: "startup_probe_failing; restart_count=2; container failed readiness probe",
-			textClass: "text-destructive-muted-foreground font-medium",
-		});
+		expectHostedTileStatus(tile, "Temporarily unavailable");
+		expect(tile?.cardStatus?.visual.dotClass).toContain("bg-warning");
+		expect(tile?.cardStatus?.labels).toEqual(["Temporarily unavailable"]);
 	});
 
 	test("links by deployment env identity when the cloud-api projection is missing", () => {
 		const failureReason = "startup_probe_failing; restart_count=2";
-		const environmentId = "55555555-5555-4555-8555-555555555555";
-		const [tile] = hostedDeploymentToTiles(
-			deployment(
-				{
-					status: "failed",
-					failure_reason: failureReason,
-				},
-				{
-					clawdi_cloud_environments: { openclaw: environmentId },
-				},
-			),
-		);
+		const environmentId = "env-failed-openclaw";
+		const hostedDeployment = deployment({ status: "failed", failureReason, environmentId });
+		const [tile] = hostedDeploymentToTiles(hostedDeployment);
 
 		expect(tile).toMatchObject({
 			id: "dep_123",
 			source: "on-clawdi",
+			name: "hosted-test",
 			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 			env: null,
-			contextLabel: "hosted-test",
-			secondaryStatus: {
-				label: "Failure: startup_probe_failing; restart_count=2",
-				title: failureReason,
-				textClass: "text-destructive-muted-foreground font-medium",
-			},
 		});
-		expect(tile?.manageHref).toBe(`/agents/${environmentId}/settings?source=on-clawdi&d=dep_123`);
-		expect(tile?.action).toBeUndefined();
+		expect(tile?.env).toBeNull();
+		expectHostedTileStatus(tile, "Temporarily unavailable");
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 
-	test("removes deleted deployments from tiles and detail membership", () => {
-		const environmentId = "55555555-5555-4555-8555-555555555555";
-		const deleted = deployment(
-			{ status: "deleted" },
-			{ clawdi_cloud_environments: { openclaw: environmentId } },
+	test("does not flash pending sync while the environment join is unresolved", () => {
+		const [tile] = hostedDeploymentToTiles(
+			deployment({ status: "running", environmentId: "env-lagging-join" }),
 		);
+
+		expect(tile?.env).toBeNull();
+		expect(tile?.cardStatus?.labels).toEqual(["Running"]);
+	});
+
+	test("keeps a failed plan change on a summary-only tile", () => {
+		const environmentId = "env-failed-plan-change";
+		const reason = "Top up your Wallet and retry the plan change.";
+		const planFailure = deployment({ status: "failed", environmentId });
+		if (!planFailure.resource.status) throw new Error("Expected deployment status");
+		planFailure.resource.status.failure = {
+			...deploymentFailure(reason),
+			code: "operation_aborted",
+			phase: "plan_change",
+		};
+		const [tile] = hostedDeploymentToTiles(planFailure);
+
+		expectHostedTileStatus(tile, "Failed");
+		expect(tile?.href).toBe(`/agents/${environmentId}?source=on-clawdi&d=dep_123`);
+	});
+
+	test("keeps the exact name, stopped status, and navigation on a summary-only tile", () => {
+		const environmentId = "env-stopped-openclaw";
+		const [tile] = hostedDeploymentToTiles(
+			deployment({
+				name: "deployment-create-generated-id",
+				status: "stopped",
+				environmentId,
+			}),
+		);
+
+		expect(tile).toMatchObject({
+			name: "deployment-create-generated-id",
+			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
+		});
+		expectHostedTileStatus(tile, "Stopped");
+	});
+
+	test("never projects card actions for any deployment lifecycle state", () => {
+		const lifecycleStates = [
+			"creating",
+			"starting",
+			"running",
+			"stopping",
+			"stopped",
+			"restarting",
+			"updating",
+			"deleting",
+			"deleted",
+			"failed",
+			null,
+		] satisfies readonly (HostedDeploymentStatus["summary_state"] | null)[];
+
+		for (const status of lifecycleStates) {
+			const tiles = hostedDeploymentToTiles(deployment({ status }));
+			if (status === "deleting" || status === "deleted") {
+				expect(tiles).toEqual([]);
+				continue;
+			}
+			expect((tiles[0] as { action?: unknown } | undefined)?.action).toBeUndefined();
+		}
+	});
+
+	test("keeps non-running compute primary when the joined environment has fresh sync", () => {
+		for (const [status, label] of [
+			["stopped", "Stopped"],
+			["failed", "Failed"],
+			[null, "Status unavailable"],
+		] as const) {
+			const environmentId = `env-${status ?? "unknown"}-with-fresh-sync`;
+			const joinedEnv = env({
+				id: environmentId,
+				last_seen_at: new Date().toISOString(),
+				last_sync_at: new Date().toISOString(),
+			});
+			const [tile] = hostedDeploymentToTiles(deployment({ status, environmentId }), [joinedEnv]);
+
+			expectHostedTileStatus(tile, label);
+			expect(tile?.cardStatus?.labels).not.toContain("Live");
+			expect(tile?.cardStatus?.visual.dotClass).not.toContain("bg-success");
+		}
+	});
+
+	test("removes deleted deployments from tiles and detail membership", () => {
+		const environmentId = "env-deleted-openclaw";
+		const deleted = deployment({ status: "deleted", environmentId });
 
 		expect(hostedDeploymentToTiles(deleted)).toEqual([]);
 		expect(resolveAgentDeployment([deleted], environmentId).match).toBeNull();
 	});
 
-	test("keeps a deployment without an env identity non-navigable but exposes delete", () => {
-		const [tile] = hostedDeploymentToTiles(
-			deployment(
-				{
-					status: "failed",
-					failure_reason: "creation_interrupted",
-				},
-				{
-					clawdi_cloud_environments: {},
-				},
-			),
-		);
+	test("removes an accepted delete from tiles before teardown completes", () => {
+		const environmentId = "env-deleting-openclaw";
+		const deleting = deployment({ status: "deleting", failedVerb: "delete", environmentId });
+
+		expect(hostedDeploymentToTiles(deleting)).toEqual([]);
+		expect(resolveAgentDeployment([deleting], environmentId).match).toBeNull();
+	});
+
+	test("keeps a deployment without an env identity non-navigable and summary-only", () => {
+		const hostedDeployment = deployment({
+			status: "failed",
+			failureReason: "creation_interrupted",
+			environmentId: null,
+		});
+		const [tile] = hostedDeploymentToTiles(hostedDeployment);
 
 		expect(tile).toMatchObject({
 			id: "dep_123",
+			name: "hosted-test",
 			href: null,
 			env: null,
-			secondaryStatus: {
-				label: "Failure: creation_interrupted",
-				title: "creation_interrupted",
-			},
 		});
-		expect(tile?.action).toBeDefined();
+		expectHostedTileStatus(tile, "Temporarily unavailable");
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 });
 
 describe("resolveAgentDeployment", () => {
-	const sharedEnvironmentId = "66666666-6666-4666-8666-666666666666";
-	const newer = deployment(
-		{ id: "dep_newer", name: "Newer twin", created_at: "2026-07-15T00:00:00Z" },
-		{ clawdi_cloud_environments: { openclaw: sharedEnvironmentId } },
-	);
-	const older = deployment(
-		{ id: "dep_older", name: "Older twin", created_at: "2026-07-14T00:00:00Z" },
-		{ clawdi_cloud_environments: { openclaw: sharedEnvironmentId } },
-	);
+	const sharedEnvironmentId = "env-shared-openclaw";
+	const newer = deployment({
+		id: "dep_newer",
+		name: "Newer twin",
+		createdAt: "2026-07-15T00:00:00Z",
+		environmentId: sharedEnvironmentId,
+	});
+	const older = deployment({
+		id: "dep_older",
+		name: "Older twin",
+		createdAt: "2026-07-14T00:00:00Z",
+		environmentId: sharedEnvironmentId,
+	});
 
-	test("keeps the common unambiguous environment join behavior", () => {
+	test("resolves a deployment from its stored environment identity", () => {
 		const resolution = resolveAgentDeployment([newer], sharedEnvironmentId);
 
-		expect(resolution.match?.deployment.id).toBe("dep_newer");
+		expect(resolution.match?.deployment.resource.id).toBe("dep_newer");
 		expect(resolution.match?.runtime).toBe("openclaw");
 		expect(resolution.ambiguousMatches).toEqual([]);
 	});
@@ -303,7 +445,7 @@ describe("resolveAgentDeployment", () => {
 		const resolution = resolveAgentDeployment([newer, older], sharedEnvironmentId);
 
 		expect(resolution.match).toBeNull();
-		expect(resolution.ambiguousMatches.map((match) => match.deployment.id)).toEqual([
+		expect(resolution.ambiguousMatches.map((match) => match.deployment.resource.id)).toEqual([
 			"dep_newer",
 			"dep_older",
 		]);
@@ -312,39 +454,31 @@ describe("resolveAgentDeployment", () => {
 	test("prefers an explicit deployment selector within the environment matches", () => {
 		const resolution = resolveAgentDeployment([newer, older], sharedEnvironmentId, "dep_older");
 
-		expect(resolution.match?.deployment.id).toBe("dep_older");
+		expect(resolution.match?.deployment.resource.id).toBe("dep_older");
 		expect(resolution.match?.runtime).toBe("openclaw");
+		expect(resolution.ambiguousMatches).toEqual([]);
+	});
+
+	test("continues to resolve direct deployment-id routes", () => {
+		const resolution = resolveAgentDeployment([newer, older], "dep_older", "dep_older");
+
+		expect(resolution.match?.deployment.resource.id).toBe("dep_older");
+		expect(resolution.match?.runtime).toBeNull();
 		expect(resolution.ambiguousMatches).toEqual([]);
 	});
 });
 
-describe("hostedAgentTileStatus", () => {
-	test("marks running deployments active and normalizes the ready alias", () => {
-		expect(hostedAgentTileStatus("running")).toEqual({ label: "Running", active: true });
-		expect(hostedAgentTileStatus("ready")).toEqual({ label: "Running", active: true });
-	});
-
-	test("keeps transitional and failed deployments inactive with readable labels", () => {
-		expect(hostedAgentTileStatus("creating")).toEqual({
-			label: "Provisioning",
-			active: false,
-		});
-		expect(hostedAgentTileStatus("starting")).toEqual({
-			label: "Starting",
-			active: false,
-		});
-		expect(hostedAgentTileStatus("failed")).toEqual({ label: "Failed", active: false });
-	});
-
-	test("passes unknown deploy-api statuses through as readable labels", () => {
-		expect(hostedAgentTileStatus("queued_for_drain")).toEqual({
-			label: "Queued For Drain",
-			active: false,
-		});
-	});
-});
-
 describe("hostedRuntimeStatusView", () => {
+	test("renders unavailable status without treating fresh sync as healthy", () => {
+		if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
+		const view = getRuntimeStatusView(null, env({ last_seen_at: new Date().toISOString() }));
+
+		expect(view.primary).toMatchObject({ label: "Status unavailable", tone: "warning" });
+		expect(view.active).toBe(false);
+		expect(view.sync?.kind).toBe("live");
+		expect(view.secondary).toBeNull();
+	});
+
 	test("keeps compute primary and sync paused secondary while running", () => {
 		const view = hostedRuntimeStatusView(
 			"running",
@@ -355,6 +489,32 @@ describe("hostedRuntimeStatusView", () => {
 		expect(view.active).toBe(true);
 		expect(view.sync?.kind).toBe("paused");
 		expect(view.secondary?.label).toBe("Sync paused");
+	});
+
+	test("shows current runtime health degradation as a warning while staying active", () => {
+		if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
+		const deployment = hostedDeploymentFixture({ status: "running" });
+		const status = deployment.resource.status;
+		if (!status) throw new Error("Expected fixture status");
+		const view = getRuntimeStatusView(
+			{
+				...status,
+				conditions: [
+					{
+						type: "Degraded",
+						status: "True",
+						observedGeneration: status.observedGeneration,
+						lastTransitionTime: "2026-08-02T12:00:00Z",
+						reason: "RuntimeHealthDegraded",
+						message: "Fresh runtime health is temporarily unavailable",
+					},
+				],
+			},
+			env(),
+		);
+
+		expect(view.primary).toMatchObject({ label: "Temporarily unavailable", tone: "warning" });
+		expect(view.active).toBe(true);
 	});
 
 	test("suppresses reassuring live sync when compute is stopped", () => {
@@ -397,23 +557,34 @@ describe("hostedRuntimeStatusView", () => {
 		const creating = hostedRuntimeStatusView("creating", null);
 
 		expect(running.secondary?.label).toBe("Sync pending");
-		expect(creating.primary.label).toBe("Provisioning");
+		expect(creating.primary.label).toBe("Starting");
 		expect(creating.secondary).toBeNull();
 	});
 
-	test("shows failed deployment reason as secondary status", () => {
+	test("shows a safe runtime failure summary without exposing internal details", () => {
 		const view = hostedRuntimeStatusView(
 			"failed",
 			null,
 			" startup_probe_failing;   restart_count=2 ",
 		);
 
-		expect(view.primary.label).toBe("Failed");
-		expect(view.secondary).toEqual({
-			kind: "failure_reason",
-			label: "Failure: startup_probe_failing; restart_count=2",
-			tooltip: "startup_probe_failing; restart_count=2",
-			textClass: "text-destructive-muted-foreground font-medium",
+		expect(view.primary).toMatchObject({ label: "Temporarily unavailable", tone: "warning" });
+		expect(view.secondary).toBeNull();
+	});
+
+	test("keeps a terminal operation failure destructive", () => {
+		if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			acceptedOperation: failedOperation("restart"),
 		});
+		const view = getRuntimeStatusView(
+			deployment.resource.status,
+			null,
+			deploymentFailurePresentation(deployment),
+		);
+
+		expect(view.primary).toMatchObject({ label: "Failed", tone: "destructive" });
+		expect(view.secondary?.label).toBe("Agent restart failed");
 	});
 });

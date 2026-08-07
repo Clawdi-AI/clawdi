@@ -4,15 +4,15 @@ import { AlertTriangle, CreditCard, Repeat } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { lowBalanceBannerState } from "@/hosted/billing/components/low-balance-banner.logic";
-import type { WalletState } from "@/hosted/billing/contracts";
-import { creditsToUsd } from "@/hosted/billing/format";
+import { formatUsdExact } from "@/hosted/billing/format";
+import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 
 /**
  * Low-balance / payment-attention banner.
  *
  * Shows when the managed-AI balance is low, or an auto-reload attempt needs
  * action (SCA) or was declined. Copy accounts for the shared balance funding
- * both managed AI and wallet compute, and offers top-up / auto-reload links.
+ * both Clawdi AI and wallet compute, and offers top-up / auto-reload links.
  *
  * Returns null when there's nothing to surface, so callers can render it
  * unconditionally at the top of any page.
@@ -23,7 +23,7 @@ export function LowBalanceBanner({
 	onTopUp,
 	onAutoReload,
 }: {
-	wallet: WalletState | undefined;
+	wallet: WalletCacheSnapshot | undefined;
 	hasWalletCompute?: boolean;
 	onTopUp?: () => void;
 	onAutoReload?: () => void;
@@ -35,16 +35,16 @@ export function LowBalanceBanner({
 		? "Auto-reload was declined"
 		: needsAction
 			? "Your bank needs to confirm a top-up"
-			: "Your AI Credits are running low";
+			: "Your Wallet balance is running low";
 
 	const consequence = hasWalletCompute
-		? "Managed AI and wallet-funded compute can be interrupted if the balance stays low."
-		: "Managed AI can pause if the balance stays low.";
+		? "Clawdi AI and wallet-funded compute can be interrupted if the balance stays low."
+		: "Clawdi AI can pause if the balance stays low.";
 	const body = declined
 		? `We couldn’t charge your saved card. Top up manually or update your payment method. ${consequence}`
 		: needsAction
 			? `A top-up is waiting on confirmation from your bank. ${consequence}`
-			: `You have about ${creditsToUsd(wallet.balance_credits, wallet.points_per_usd)} left. Top up or turn on auto-reload. ${consequence}`;
+			: `You have about ${formatUsdExact(wallet.balance_usd)} left. Top up or turn on auto-reload. ${consequence}`;
 
 	return (
 		<Alert data-hosted="true" variant={declined ? "destructive" : "default"}>

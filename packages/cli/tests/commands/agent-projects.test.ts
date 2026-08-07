@@ -21,9 +21,15 @@ beforeEach(() => {
 	origApiUrl = process.env.CLAWDI_API_URL;
 	tmpHome = join(tmpdir(), `clawdi-agent-projects-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
-	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
+	writeFileSync(
+		join(tmpHome, ".clawdi", "auth.json"),
+		JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		}),
+	);
 	process.env.HOME = tmpHome;
-	process.env.CLAWDI_API_URL = "http://api.test";
+	process.env.CLAWDI_API_URL = "https://api.test";
 });
 
 afterEach(() => {
@@ -50,6 +56,8 @@ describe("agent project commands", () => {
 		const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 
 		expect(code).toBe(0);
+		expect(stdout).toContain("link");
+		expect(stdout).toContain("unlink");
 		expect(stdout).toContain("attach");
 		expect(stdout).toContain("detach");
 		expect(stdout).toContain("move");
@@ -60,7 +68,7 @@ describe("agent project commands", () => {
 		expect(stdout).not.toContain("reorder");
 	});
 
-	it("shows order wording for attach help without visible priority copy", async () => {
+	it("keeps the released attach alias while showing Vault resolution priority", async () => {
 		const proc = Bun.spawn([bunExe, srcEntry, "agent", "projects", "attach", "--help"], {
 			stdout: "pipe",
 			stderr: "pipe",
@@ -75,13 +83,13 @@ describe("agent project commands", () => {
 
 		expect(code).toBe(0);
 		expect(stdout).toContain("--order <n>");
-		expect(stdout).toContain("Read order");
+		expect(stdout).toContain("Vault resolution priority");
 		expect(stdout).toContain("UUID, slug, name, or @owner/slug");
 		expect(stdout).not.toContain("--priority");
 		expect(stdout).not.toContain("context");
 	});
 
-	it("prints Agent Project and attached Project sections with order copy", async () => {
+	it("prints Workspace and linked Project sections with Vault resolution copy", async () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
@@ -145,12 +153,12 @@ describe("agent project commands", () => {
 		}
 
 		const out = lines.join("\n");
-		expect(out).toContain("Projects used by agent-1");
-		expect(out).toContain("Agent Project");
-		expect(out).toContain("Attached Projects (1)");
+		expect(out).toContain("Projects for agent-1");
+		expect(out).toContain("Workspace");
+		expect(out).toContain("Linked Projects (1)");
 		expect(out).toContain("@alice-a3b4/shared-toolkit");
 		expect(out).toContain("viewer");
-		expect(out).toContain("Reads: Agent Project, then attachments.");
+		expect(out).toContain("Vault resolution: Workspace, then linked Projects.");
 		expect(out).toContain("id=attach-shared");
 		expect(out).toContain("Move:   clawdi agent projects move agent-1 --item attach-shared:1");
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);

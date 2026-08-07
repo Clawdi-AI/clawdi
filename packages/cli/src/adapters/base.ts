@@ -112,7 +112,7 @@ export interface AgentAdapter {
 	getSharedSkillPath(skillKey: string, ownerHandle: string): string;
 	/** Path(s) `clawdi daemon` should watch for session changes. May
 	 * be directories (Claude Code, Codex, OpenClaw all dump JSONL
-	 * files there) or a single file (Hermes uses a SQLite DB). The
+	 * files there) or database/sidecar files (Hermes uses SQLite). The
 	 * daemon walks each path on a change event, then runs
 	 * `collectSessions` to enumerate what's actually there.
 	 *
@@ -129,15 +129,13 @@ export interface AgentAdapter {
 	 * shared); implementations extract into a temp dir and rename
 	 * the top entry to `<key>__<ownerHandle>`.
 	 *
-	 * Called by `clawdi inbox accept` after a successful upgrade or
-	 * redeem so the recipient's agent immediately sees the shared
-	 * skill folder without waiting for a daemon reconcile cycle. */
+	 * Called by explicit pull flows so the recipient's agent sees the
+	 * shared skill folder only after content download is requested. */
 	writeSharedSkillArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
-	/** Remove a skill from the agent's local skills directory.
-	 * Called by the daemon's reconcile sweep when a previously-
-	 * observed cloud skill is no longer in the listing (dashboard
-	 * uninstall, or a CLI delete on another machine). Idempotent
-	 * — silently ignores a skill that's already gone. */
+	/** Remove a Skill from the Agent's local skills directory. Callers must
+	 * prove exact local ownership before invoking this method; Project desired-
+	 * inventory reconciliation does so with its durable materialization receipt.
+	 * An already absent target is handled idempotently. */
 	removeLocalSkill(key: string): Promise<void>;
 
 	buildRunCommand(args: string[], env: Record<string, string>): string[];

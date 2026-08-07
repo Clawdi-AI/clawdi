@@ -2,21 +2,16 @@
 
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
-import { CheckCircle2 } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
-import { ProjectResourcePath } from "@/components/project-resource-path";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DashboardStats } from "@/lib/api-schemas";
 import {
 	getProjectResourceDefinition,
-	PROJECT_CANONICAL_DEFINITION,
 	PROJECT_RESOURCE_GROUPS,
 	PROJECT_RESOURCE_NAV_IDS,
 	type ProjectResourceDefinition,
-	type ProjectResourceId,
 	projectResourceCount,
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
@@ -30,36 +25,13 @@ type Resource = {
 	count: number | null;
 };
 
-export type ProjectTypeCounts = {
-	custom: number;
-	global: number;
-	agent: number;
-};
-
-const FIRST_PATH_STEPS = ["Create Project", "Add Skills or Vaults"];
-const RESOURCE_ROUTES = {
-	projects: "/projects",
-	skills: "/skills",
-	vaults: "/vault",
-	sessions: "/sessions",
-	memories: "/memories",
-	connectors: "/connectors",
-} as const satisfies Record<ProjectResourceId, string>;
-
-function formatProjectTypeCounts(counts: ProjectTypeCounts) {
-	return `${formatNumber(counts.custom)} Custom · ${formatNumber(counts.global)} Global · ${formatNumber(counts.agent)} Agent`;
-}
-
-function buildResources(stats: DashboardStats, projectCount: number | null): Resource[] {
+function buildResources(stats: DashboardStats): Resource[] {
 	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
 		const definition = getProjectResourceDefinition(id);
 		return {
 			icon: PROJECT_RESOURCE_ICONS[id],
 			definition,
-			count:
-				id === "projects" && projectCount === null
-					? null
-					: projectResourceCount(definition, stats, projectCount ?? 0),
+			count: projectResourceCount(definition, stats, stats.projects_count),
 		};
 	});
 }
@@ -68,43 +40,16 @@ export function ResourcesCard({
 	stats,
 	statsError,
 	onRetryStats,
-	projectCount,
-	projectTypeCounts,
-	projectCountLoading = false,
-	projectCountError,
-	onRetryProjectCount,
-	hasConnectedAgent,
 }: {
 	stats: DashboardStats | undefined;
 	statsError?: unknown;
 	onRetryStats?: () => void;
-	projectCount: number | undefined;
-	projectTypeCounts?: ProjectTypeCounts;
-	projectCountLoading?: boolean;
-	projectCountError?: unknown;
-	onRetryProjectCount?: () => void;
-	hasConnectedAgent?: boolean;
 }) {
-	const projectCountUnavailable = Boolean(projectCountError && projectCount === undefined);
-	const ready =
-		stats &&
-		!statsError &&
-		(!projectCountLoading || projectCount !== undefined || projectCountUnavailable);
-	const waitingForAgent = hasConnectedAgent === false;
-	const finalStep = waitingForAgent ? "Ready to Add to agent" : "Add to agent";
-	// The "First path" walkthrough is onboarding — once the user has
-	// created a custom Project they've walked the path, and the banner
-	// is just permanent noise above their real counts. Hide it then.
-	const established = (projectTypeCounts?.custom ?? 0) > 0;
-	const showFirstPath = !projectCountUnavailable && !established;
+	const ready = stats && !statsError;
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">
-				<CardTitle>Resources</CardTitle>
-				<CardDescription>
-					{PROJECT_CANONICAL_DEFINITION} Agents run on your machines. Account resources (Sessions,
-					Memories, Connectors) apply across all Projects.
-				</CardDescription>
+				<CardTitle>Library</CardTitle>
 			</CardHeader>
 			<CardContent className="p-0">
 				{statsError ? (
@@ -116,91 +61,48 @@ export function ResourcesCard({
 						/>
 					</div>
 				) : (
-					<>
-						{projectCountError ? (
-							<div className="border-b px-6 py-4">
-								<ApiErrorPanel
-									error={projectCountError}
-									onRetry={onRetryProjectCount}
-									title="Couldn't load project count"
-								/>
-							</div>
-						) : null}
-						{showFirstPath ? (
-							<div className="grid gap-3 border-b bg-muted/15 px-6 py-4 text-xs">
-								<div className="flex flex-wrap items-center gap-2">
-									<span className="font-medium text-foreground">
-										{waitingForAgent ? "After connecting an agent" : "First path"}
-									</span>
-									{[...FIRST_PATH_STEPS, finalStep].map((step, index) => (
-										<span
-											key={step}
-											className={cn(
-												"inline-flex items-center gap-1 rounded-sm border bg-background px-2 py-1 text-muted-foreground",
-												waitingForAgent && index === 2 && "border-dashed opacity-60",
-											)}
-										>
-											<span className="font-medium tabular-nums text-foreground">{index + 1}.</span>
-											{step}
-										</span>
+					<div className="divide-y">
+						{ready ? (
+							<ProjectResourceGroups resources={buildResources(stats)} />
+						) : (
+							PROJECT_RESOURCE_GROUPS.map((group) => (
+								<div key={group.id}>
+									{group.resourceIds.length > 1 ? <ResourceGroupLabel label={group.label} /> : null}
+									{group.resourceIds.map((id) => (
+										<ResourceRowSkeleton key={id} />
 									))}
 								</div>
-								<p className="text-muted-foreground">
-									Create Projects to share with teammates. Use the Global Project for defaults.
-									Agent Projects stay private to one agent. Skills and Vaults live in Projects;
-									Sessions, Memories, and Connectors apply account-wide.
-								</p>
-							</div>
-						) : null}
-						<div className="divide-y">
-							{ready ? (
-								<ProjectResourceGroups
-									resources={buildResources(
-										stats,
-										projectCountUnavailable ? null : (projectCount ?? 0),
-									)}
-									projectTypeCounts={projectCountUnavailable ? undefined : projectTypeCounts}
-								/>
-							) : (
-								PROJECT_RESOURCE_GROUPS.map((group) => (
-									<div key={group.id}>
-										<ResourceGroupLabel label={group.label} />
-										{group.resourceIds.map((id) => (
-											<ResourceRowSkeleton key={id} />
-										))}
-									</div>
-								))
-							)}
-						</div>
-					</>
+							))
+						)}
+					</div>
 				)}
+				{ready && stats.projects_count === 0 ? (
+					<div className="border-t px-6 py-3 text-xs text-muted-foreground">
+						Next:{" "}
+						<Link
+							to="/projects"
+							className="font-medium text-foreground underline-offset-4 hover:underline"
+						>
+							create your first Project
+						</Link>{" "}
+						to organize reusable skills and credentials for your agents.
+					</div>
+				) : null}
 			</CardContent>
 		</Card>
 	);
 }
 
-function ProjectResourceGroups({
-	resources,
-	projectTypeCounts,
-}: {
-	resources: Resource[];
-	projectTypeCounts?: ProjectTypeCounts;
-}) {
+function ProjectResourceGroups({ resources }: { resources: Resource[] }) {
 	const byId = new Map(resources.map((resource) => [resource.definition.id, resource]));
 	return (
 		<>
 			{PROJECT_RESOURCE_GROUPS.map((group) => (
 				<div key={group.id}>
-					<ResourceGroupLabel label={group.label} />
+					{group.resourceIds.length > 1 ? <ResourceGroupLabel label={group.label} /> : null}
 					{projectResourceDefinitionsForGroup(group.id).map((definition) => {
 						const resource = byId.get(definition.id);
-						return resource ? (
-							<ResourceRow
-								key={definition.id}
-								resource={resource}
-								projectTypeCounts={projectTypeCounts}
-							/>
-						) : null;
+						return resource ? <ResourceRow key={definition.id} resource={resource} /> : null;
 					})}
 				</div>
 			))}
@@ -224,21 +126,12 @@ function ResourceRowSkeleton() {
 	);
 }
 
-function ResourceRow({
-	resource,
-	projectTypeCounts,
-}: {
-	resource: Resource;
-	projectTypeCounts?: ProjectTypeCounts;
-}) {
+function ResourceRow({ resource }: { resource: Resource }) {
 	const countUnavailable = resource.count === null;
 	const empty = resource.count === 0;
 	const Icon = resource.icon;
 	const { definition } = resource;
-	const scopeLabel =
-		definition.id === "projects" && projectTypeCounts
-			? formatProjectTypeCounts(projectTypeCounts)
-			: projectResourceScopeLabel(definition.projectScope);
+	const scopeLabel = projectResourceScopeLabel(definition.projectScope);
 	const isProjectRow = definition.id === "projects";
 	const count = (
 		<span
@@ -256,7 +149,7 @@ function ResourceRow({
 			<span className="flex shrink-0 items-center gap-2" title={scopeLabel}>
 				{count}
 				<span className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground">
-					1. Create Project
+					1. Create project
 				</span>
 			</span>
 		) : (
@@ -264,7 +157,7 @@ function ResourceRow({
 		);
 	return (
 		<Link
-			to={RESOURCE_ROUTES[definition.id]}
+			to={definition.href}
 			className="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/50"
 		>
 			{/* Same identity hue as this resource's sidebar chip — the rail
@@ -279,54 +172,8 @@ function ResourceRow({
 			</span>
 			<div className="min-w-0 flex-1">
 				<div className="text-sm font-medium">{definition.label}</div>
-				<div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-					<ProjectResourcePath resource={definition} />
-					{isProjectRow && projectTypeCounts ? (
-						<ProjectTypeBreakdown counts={projectTypeCounts} />
-					) : null}
-					{empty ? (
-						<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
-							{isProjectRow ? "Start here" : `Start: ${definition.emptyCta}`}
-						</span>
-					) : (
-						<span className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-muted/60 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
-							<CheckCircle2 className="size-3" />
-							Active
-						</span>
-					)}
-				</div>
 			</div>
-			{isProjectRow && projectTypeCounts ? (
-				<Tooltip>
-					<TooltipTrigger render={countCluster} />
-					<TooltipContent side="left">{scopeLabel}</TooltipContent>
-				</Tooltip>
-			) : (
-				countCluster
-			)}
+			{countCluster}
 		</Link>
-	);
-}
-
-function ProjectTypeBreakdown({ counts }: { counts: ProjectTypeCounts }) {
-	const items = [
-		{ label: "Custom", count: counts.custom },
-		{ label: "Global", count: counts.global },
-		{ label: "Agent", count: counts.agent },
-	];
-	return (
-		<span
-			className="inline-flex min-w-0 flex-wrap items-center gap-1"
-			title={`Project types: ${formatProjectTypeCounts(counts)}`}
-		>
-			{items.map((item) => (
-				<span
-					key={item.label}
-					className="rounded-sm border bg-background px-1.5 py-0.5 text-2xs font-medium text-muted-foreground"
-				>
-					<span className="tabular-nums">{formatNumber(item.count)}</span> {item.label}
-				</span>
-			))}
-		</span>
 	);
 }

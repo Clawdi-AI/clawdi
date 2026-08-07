@@ -1,9 +1,12 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
+import { ExternalLink, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -16,40 +19,67 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-	CHANNEL_PROVIDERS,
-	type ChannelProviderId,
-	PROVIDER_META,
-} from "@/hosted/v2/channels/channel-providers";
+	agentProviderLinkReplacementRequired,
+	agentProviderLinkStatusUnknown,
+	autoLinkAgentIdForNewCustomBot,
+	CONNECTABLE_BOT_PROVIDERS,
+	type ConnectableBotProvider,
+} from "@/hosted/v2/channels/channel-linking.logic";
+import { PROVIDER_META } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
-import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
-import { discordPublicKeyError } from "@/hosted/v2/channels/connect-bot-dialog.logic";
-import { WHATSAPP_COMING_SOON_MESSAGE } from "@/hosted/v2/channels/link-agent-dialog.logic";
+import {
+	discordApplicationIdError,
+	discordBotTokenError,
+	discordPublicKeyError,
+	type NewCustomBotLinkMode,
+	newCustomBotAgentLinkFields,
+} from "@/hosted/v2/channels/connect-bot-dialog.logic";
+import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
+import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
+import { type AgentRouteQuery, agentSectionLink } from "@/lib/agent-routes";
 
-/**
- * Connect a channel. Each provider takes its OWN real inputs (grounded in
- * cloud-api): Telegram = bot token; Discord = bot token + application_id +
- * public_key (+ guild_id); WhatsApp = no token (agent/device linking is
- * gated during the beta). On success the
- * scoped agent token may be revealed once when an agent is auto-linked.
- */
+type CreatedCustomBot = Pick<
+	ChannelCreated,
+	"id" | "name" | "provider" | "agent_link_id" | "agent_id"
+> & {
+	linkOutcome: "linked" | "inventory-only";
+};
+
 export function ConnectBotDialog({
 	open,
 	onOpenChange,
+	agentId,
+	agentType,
+	linkedProviders,
+	agentRouteQuery,
+	onAgentConnected,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	agentId?: string;
+	agentType?: string;
+	linkedProviders?: ReadonlySet<string>;
+	agentRouteQuery?: AgentRouteQuery;
+	onAgentConnected?: (bot: {
+		id: string;
+		name: string;
+		provider: string;
+		agentLinkId: string;
+	}) => void;
 }) {
 	const create = useCreateChannel();
-	const [provider, setProvider] = useState<ChannelProviderId>("telegram");
+	const [provider, setProvider] = useState<ConnectableBotProvider>("telegram");
 	const [name, setName] = useState("");
-	const [token, setToken] = useState(""); // Telegram / Discord bot token
-	// Discord
+	const [token, setToken] = useState("");
 	const [applicationId, setApplicationId] = useState("");
 	const [publicKey, setPublicKey] = useState("");
-	const [guildId, setGuildId] = useState("");
-	const [created, setCreated] = useState<ChannelCreated | null>(null);
+	const [created, setCreated] = useState<CreatedCustomBot | null>(null);
+	const [submitting, setSubmitting] = useState(false);
 	const submitLocked = useRef(false);
+	const openRef = useRef(open);
+	const dialogSessionRef = useRef(0);
+	openRef.current = open;
 
 	useEffect(() => {
 		if (!open) return;
@@ -58,226 +88,410 @@ export function ConnectBotDialog({
 		setToken("");
 		setApplicationId("");
 		setPublicKey("");
-		setGuildId("");
 		setCreated(null);
 	}, [open]);
 
 	const meta = PROVIDER_META[provider];
-	const publicKeyError = meta.connect === "discord" ? discordPublicKeyError(publicKey) : null;
+	const discordSelected = provider === "discord";
+	const whatsappSelected = provider === "whatsapp";
+	const providerLinkConflict = Boolean(
+		agentId &&
+			!whatsappSelected &&
+			agentProviderLinkReplacementRequired(agentType, provider, linkedProviders),
+	);
+	const agentLinkStatusUnknown = Boolean(
+		agentId &&
+			!whatsappSelected &&
+			agentProviderLinkStatusUnknown(agentType, provider, linkedProviders),
+	);
+	const autoLinkAgentId = autoLinkAgentIdForNewCustomBot(
+		agentId,
+		agentType,
+		provider,
+		linkedProviders,
+	);
+	const tokenError = discordSelected ? discordBotTokenError(token) : null;
+	const applicationIdError = discordSelected ? discordApplicationIdError(applicationId) : null;
+	const publicKeyError = discordSelected ? discordPublicKeyError(publicKey) : null;
+	const isSubmitting = submitting || create.isPending;
+	const agentLinkWarning = agentLinkStatusUnknown
+		? {
+				title: "Agent link status unavailable",
+				description:
+					"Clawdi can’t confirm this Agent’s existing links right now. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+			}
+		: null;
 
-	function changeProvider(next: ChannelProviderId) {
+	function changeProvider(next: ConnectableBotProvider) {
+		if (isSubmitting) return;
 		setProvider(next);
+		setName("");
 		setToken("");
 		setApplicationId("");
 		setPublicKey("");
-		setGuildId("");
 	}
 
 	const canSubmit =
+		!whatsappSelected &&
 		name.trim().length > 0 &&
-		(meta.connect === "whatsapp"
-			? true
-			: meta.connect === "token"
-				? token.trim().length > 0
-				: meta.connect === "discord"
-					? token.trim().length > 0 && applicationId.trim().length > 0 && !publicKeyError
-					: false);
+		token.trim().length > 0 &&
+		(!discordSelected ||
+			(applicationId.trim().length > 0 &&
+				publicKey.trim().length > 0 &&
+				!tokenError &&
+				!applicationIdError &&
+				!publicKeyError));
 
-	function buildBody(): ChannelCreate {
-		const trimmedName = name.trim();
-		if (meta.connect === "discord") {
-			const config: Record<string, unknown> = { application_id: applicationId.trim() };
-			if (publicKey.trim()) config.public_key = publicKey.trim();
-			if (guildId.trim()) config.guild_id = guildId.trim();
-			return { provider, name: trimmedName, provider_token: token.trim(), config };
-		}
-		if (meta.connect === "token") {
-			return { provider, name: trimmedName, provider_token: token.trim() };
-		}
-		// whatsapp — no token; device linking is gated during the beta
-		return { provider, name: trimmedName };
+	function buildBody(linkMode: NewCustomBotLinkMode): ChannelCreate {
+		const base: ChannelCreate = {
+			provider,
+			name: name.trim(),
+			provider_token: token.trim(),
+			...newCustomBotAgentLinkFields({ mode: linkMode, agentId, autoLinkAgentId }),
+		};
+		if (!discordSelected) return base;
+		return {
+			...base,
+			config: {
+				application_id: applicationId.trim(),
+				public_key: publicKey.trim(),
+			},
+		};
 	}
 
-	function submit() {
+	async function submit(linkMode: NewCustomBotLinkMode = "auto-link"): Promise<void> {
 		if (!canSubmit || submitLocked.current) return;
 		submitLocked.current = true;
-		create.mutate(buildBody(), {
-			onSuccess: (data) => setCreated(data),
-			onSettled: () => {
-				submitLocked.current = false;
-			},
-		});
+		setSubmitting(true);
+		const dialogSession = dialogSessionRef.current;
+		const body = buildBody(linkMode);
+		try {
+			const data = await create.execute(body);
+			const result: CreatedCustomBot = {
+				...data,
+				linkOutcome: data.agent_link_id ? "linked" : "inventory-only",
+			};
+			setToken("");
+			if (openRef.current && dialogSessionRef.current === dialogSession) {
+				if (agentId && data.agent_link_id && onAgentConnected) {
+					handleOpenChange(false);
+					onAgentConnected({
+						id: data.id,
+						name: data.name,
+						provider: data.provider,
+						agentLinkId: data.agent_link_id,
+					});
+					return;
+				}
+				setCreated(result);
+			} else {
+				toast.success(result.linkOutcome === "linked" ? "Custom bot linked" : "Custom bot added", {
+					description:
+						result.linkOutcome === "linked"
+							? `${data.name} was added and linked to this Agent.`
+							: agentId
+								? `${data.name} was added to Custom bots without linking to this Agent.`
+								: `${data.name} was added to Custom bots.`,
+				});
+			}
+		} finally {
+			submitLocked.current = false;
+			setSubmitting(false);
+		}
 	}
 
+	function handleOpenChange(nextOpen: boolean) {
+		if (!nextOpen) {
+			dialogSessionRef.current += 1;
+			setToken("");
+		}
+		onOpenChange(nextOpen);
+	}
+
+	function handleOpenChangeComplete(nextOpen: boolean) {
+		if (!nextOpen) setCreated(null);
+	}
+
+	const otherProviderHint = (
+		<p
+			data-other-provider-hint
+			className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]"
+		>
+			Need a provider that Clawdi Channels doesn&apos;t support?{" "}
+			{agentId ? (
+				<>
+					Configure it in this Agent&apos;s{" "}
+					<Link
+						{...agentSectionLink(agentId, "console", agentRouteQuery)}
+						className="font-medium text-foreground underline underline-offset-4"
+						onClick={() => handleOpenChange(false)}
+					>
+						Agent Interface
+					</Link>
+					.
+				</>
+			) : (
+				"Open the relevant Agent's Agent Interface to configure it."
+			)}
+		</p>
+	);
+	const providerChoices = (
+		<fieldset className="min-w-0 space-y-2 border-0 p-0" data-provider-chooser>
+			<legend className="mb-2 text-sm font-medium">Choose provider</legend>
+			<div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+				{CONNECTABLE_BOT_PROVIDERS.map((item) => (
+					<EntityChoiceCard
+						key={item}
+						variant="compact"
+						className="gap-2 p-2"
+						icon={
+							<EntityIcon kind="channel" id={item} label={PROVIDER_META[item].label} size="sm" />
+						}
+						title={PROVIDER_META[item].label}
+						selected={provider === item}
+						disabled={isSubmitting}
+						onClick={() => changeProvider(item)}
+					/>
+				))}
+			</div>
+			{otherProviderHint}
+		</fieldset>
+	);
+	const addCustomBotButton = (
+		<Button
+			className="min-w-0 whitespace-normal"
+			onClick={
+				providerLinkConflict ? undefined : () => void submit("auto-link").catch(() => undefined)
+			}
+			disabled={!canSubmit || isSubmitting}
+		>
+			{isSubmitting ? "Adding…" : "Add custom bot"}
+		</Button>
+	);
+
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
+		<Dialog
+			open={open}
+			onOpenChange={handleOpenChange}
+			onOpenChangeComplete={handleOpenChangeComplete}
+		>
+			<DialogContent
+				data-hosted="true"
+				data-v2="true"
+				className="max-h-[calc(100dvh-2rem)] min-w-0 overflow-x-hidden overflow-y-auto sm:max-w-lg [&>*]:min-w-0"
+			>
 				{created ? (
 					<>
 						<DialogHeader>
-							<DialogTitle>Channel connected</DialogTitle>
+							<DialogTitle>
+								{created.linkOutcome === "linked" ? "Custom bot linked" : "Custom bot added"}
+							</DialogTitle>
 							<DialogDescription>
-								<span className="font-medium">{created.name}</span> is connected. Clawdi handles
-								message delivery automatically. There is nothing else to configure.
+								<span className="font-medium [overflow-wrap:anywhere]" title={created.name}>
+									{created.name}
+								</span>{" "}
+								{created.linkOutcome === "linked"
+									? "was added to Custom bots and linked to this Agent."
+									: agentId
+										? "was added to Custom bots without linking to this Agent."
+										: "was added to Custom bots. Link it from an Agent when you’re ready."}
 							</DialogDescription>
 						</DialogHeader>
-						{created.agent_token ? (
-							<TokenReveal
-								label="Agent token"
-								value={created.agent_token}
-								note="An agent was auto-linked. This token lets it send and receive on the channel."
-							/>
-						) : null}
-						{provider === "whatsapp" ? (
-							<p className="text-sm text-muted-foreground">{WHATSAPP_COMING_SOON_MESSAGE}</p>
-						) : null}
 						<DialogFooter>
-							<Button variant="outline" onClick={() => onOpenChange(false)}>
-								Close
+							<Button
+								variant="outline"
+								className="min-w-0 whitespace-normal"
+								onClick={() => handleOpenChange(false)}
+							>
+								Done
 							</Button>
 							<Button
 								render={<Link to="/channels/$id" params={{ id: created.id }} />}
 								nativeButton={false}
+								className="min-w-0 whitespace-normal"
 							>
-								Open channel
+								View Custom bot
 							</Button>
 						</DialogFooter>
 					</>
 				) : (
 					<>
 						<DialogHeader>
-							<DialogTitle>Connect a channel</DialogTitle>
+							<DialogTitle>Add channel</DialogTitle>
 							<DialogDescription>
-								Each provider needs its own setup — pick one to see what it requires.
+								{agentId
+									? "Add a Custom bot you manage. When possible, it will be linked to this Agent automatically."
+									: "Add a Custom bot you manage to your inventory."}
 							</DialogDescription>
 						</DialogHeader>
 
-						<div className="flex flex-col gap-4">
-							<div className="flex flex-col gap-1.5">
-								<Label>Provider</Label>
-								<div className="grid grid-cols-2 gap-2">
-									{CHANNEL_PROVIDERS.map((p) => (
-										<EntityChoiceCard
-											key={p}
-											selected={provider === p}
-											onClick={() => changeProvider(p)}
-											icon={
-												<EntityIcon
-													kind="channel"
-													id={p}
-													label={PROVIDER_META[p].label}
-													size="sm"
-												/>
-											}
-											title={PROVIDER_META[p].label}
-										/>
-									))}
-								</div>
-							</div>
-
-							<div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3">
-								<ProviderChip provider={provider} />
-								<p className="text-xs text-muted-foreground">{meta.hint}</p>
-							</div>
-
-							<div className="flex flex-col gap-1.5">
-								<Label htmlFor="connect-name">Name</Label>
-								<Input
-									id="connect-name"
-									value={name}
-									onChange={(e) => setName(e.target.value)}
-									placeholder="Support Bot"
-									autoComplete="off"
-								/>
-							</div>
-
-							{/* Telegram / Discord bot token. */}
-							{meta.connect !== "whatsapp" ? (
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="connect-token">{meta.tokenLabel}</Label>
-									<Input
-										id="connect-token"
-										type="password"
-										value={token}
-										onChange={(e) => setToken(e.target.value)}
-										placeholder={meta.tokenPlaceholder}
-										autoComplete="off"
-										spellCheck={false}
-									/>
-								</div>
-							) : null}
-
-							{/* Discord: application_id (+ public_key, guild_id). */}
-							{meta.connect === "discord" ? (
-								<>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-app-id">Application ID</Label>
-										<Input
-											id="connect-app-id"
-											value={applicationId}
-											onChange={(e) => setApplicationId(e.target.value)}
-											placeholder="Application (client) ID"
-											autoComplete="off"
-											spellCheck={false}
-										/>
-										<p className="text-xs text-muted-foreground">
-											Required to publish slash commands.
-										</p>
-									</div>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-public-key">
-											Public key <span className="text-muted-foreground">· recommended</span>
-										</Label>
-										<Input
-											id="connect-public-key"
-											value={publicKey}
-											onChange={(e) => setPublicKey(e.target.value)}
-											placeholder="Ed25519 public key (hex)"
-											autoComplete="off"
-											spellCheck={false}
-											aria-invalid={Boolean(publicKeyError)}
-											aria-describedby={
-												publicKeyError ? "connect-public-key-err" : "connect-public-key-help"
-											}
-										/>
-										{publicKeyError ? (
-											<p id="connect-public-key-err" className="text-xs text-destructive">
-												{publicKeyError}
-											</p>
-										) : (
-											<p id="connect-public-key-help" className="text-xs text-muted-foreground">
-												Stored with the Discord application metadata.
-											</p>
-										)}
-									</div>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-guild-id">
-											Guild ID <span className="text-muted-foreground">· optional</span>
-										</Label>
-										<Input
-											id="connect-guild-id"
-											value={guildId}
-											onChange={(e) => setGuildId(e.target.value)}
-											placeholder="Default command scope"
-											autoComplete="off"
-											spellCheck={false}
-										/>
-									</div>
-								</>
-							) : null}
-						</div>
-
-						<DialogFooter>
-							<Button variant="outline" onClick={() => onOpenChange(false)}>
-								Cancel
-							</Button>
-							<Button
-								onClick={submit}
-								disabled={!canSubmit || create.isPending || submitLocked.current}
+						<div className="flex min-w-0 flex-col gap-4">
+							{providerChoices}
+							<section
+								className="min-w-0 border-t pt-4"
+								aria-labelledby="provider-configuration-title"
+								data-provider-configuration
 							>
-								{create.isPending ? "Connecting…" : "Connect"}
-							</Button>
-						</DialogFooter>
+								<h3 id="provider-configuration-title" className="mb-3 text-sm font-medium">
+									Configure {meta.label}
+								</h3>
+								<div className="flex min-w-0 flex-col gap-3">
+									{agentLinkWarning ? (
+										<Alert
+											data-agent-link-warning
+											className="border-warning/30 bg-warning-muted py-2.5"
+										>
+											<TriangleAlert aria-hidden />
+											<AlertTitle>{agentLinkWarning.title}</AlertTitle>
+											<AlertDescription className="text-xs">
+												{agentLinkWarning.description}
+											</AlertDescription>
+										</Alert>
+									) : providerLinkConflict ? (
+										<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
+											Adding this bot will ask you to replace this Agent&apos;s existing{" "}
+											{meta.label} link.
+										</p>
+									) : autoLinkAgentId ? (
+										<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
+											The new Custom bot will be linked to this Agent automatically.
+										</p>
+									) : null}
+									{whatsappSelected ? (
+										<WhatsAppDeviceOnboarding onDone={() => handleOpenChange(false)} />
+									) : (
+										<>
+											<p className="min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
+												{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
+												<a
+													href={meta.setupUrl}
+													target="_blank"
+													rel="noreferrer"
+													className="inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4"
+												>
+													{provider === "telegram"
+														? "Create a bot with @BotFather"
+														: "Open Discord Developer Portal"}
+													<ExternalLink className="size-3" />
+												</a>
+											</p>
+
+											<div className="flex flex-col gap-1.5">
+												<Label htmlFor="connect-name">Name</Label>
+												<Input
+													id="connect-name"
+													value={name}
+													onChange={(event) => setName(event.target.value)}
+													placeholder="Support Bot"
+													autoComplete="off"
+												/>
+											</div>
+
+											<div className="flex flex-col gap-1.5">
+												<Label htmlFor="connect-token">Bot token</Label>
+												<Input
+													id="connect-token"
+													type="password"
+													value={token}
+													onChange={(event) => setToken(event.target.value)}
+													placeholder={meta.tokenPlaceholder}
+													autoComplete="off"
+													spellCheck={false}
+													required
+													aria-invalid={Boolean(tokenError)}
+													aria-describedby={tokenError ? "connect-token-error" : undefined}
+												/>
+												{tokenError ? (
+													<p
+														id="connect-token-error"
+														className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+													>
+														{tokenError}
+													</p>
+												) : null}
+											</div>
+
+											{discordSelected ? (
+												<>
+													<div className="flex flex-col gap-1.5">
+														<Label htmlFor="connect-app-id">Application ID</Label>
+														<Input
+															id="connect-app-id"
+															value={applicationId}
+															onChange={(event) => setApplicationId(event.target.value)}
+															placeholder="Application ID"
+															autoComplete="off"
+															spellCheck={false}
+															required
+															aria-invalid={Boolean(applicationIdError)}
+															aria-describedby={
+																applicationIdError ? "connect-app-id-error" : undefined
+															}
+														/>
+														{applicationIdError ? (
+															<p
+																id="connect-app-id-error"
+																className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+															>
+																{applicationIdError}
+															</p>
+														) : null}
+													</div>
+													<div className="flex flex-col gap-1.5">
+														<Label htmlFor="connect-public-key">Public key</Label>
+														<Input
+															id="connect-public-key"
+															value={publicKey}
+															onChange={(event) => setPublicKey(event.target.value)}
+															placeholder="64-character hex public key"
+															autoComplete="off"
+															spellCheck={false}
+															required
+															aria-invalid={Boolean(publicKeyError)}
+															aria-describedby={
+																publicKeyError ? "connect-public-key-error" : undefined
+															}
+														/>
+														{publicKeyError ? (
+															<p
+																id="connect-public-key-error"
+																className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+															>
+																{publicKeyError}
+															</p>
+														) : null}
+													</div>
+												</>
+											) : null}
+										</>
+									)}
+
+									{!whatsappSelected ? (
+										<DialogFooter>
+											<Button
+												variant="outline"
+												className="min-w-0 whitespace-normal"
+												onClick={() => handleOpenChange(false)}
+											>
+												{isSubmitting ? "Close" : "Cancel"}
+											</Button>
+											{providerLinkConflict ? (
+												<ProviderLinkReplacementConfirm
+													provider={provider}
+													targetName={name.trim()}
+													onAddWithoutLinking={() => submit("inventory-only")}
+													onConfirm={() => submit("replace")}
+												>
+													{addCustomBotButton}
+												</ProviderLinkReplacementConfirm>
+											) : (
+												addCustomBotButton
+											)}
+										</DialogFooter>
+									) : null}
+								</div>
+							</section>
+						</div>
 					</>
 				)}
 			</DialogContent>

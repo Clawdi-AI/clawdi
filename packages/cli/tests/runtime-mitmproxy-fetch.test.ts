@@ -8,10 +8,11 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ensureRuntimeMitmproxy } from "../src/runtime/mitmproxy-fetch";
 import { getRuntimePaths } from "../src/runtime/paths";
@@ -35,6 +36,7 @@ describe("runtime egress engine maintained fetch", () => {
 	it("verifies and caches a pinned mitmdump archive", () => {
 		const { archive, sha256 } = makeMitmproxyArchive();
 		const paths = runtimePaths();
+		const previousUmask = process.umask(0o077);
 		const pin = {
 			type: "mitmproxy" as const,
 			version: "12.2.3-test",
@@ -42,11 +44,17 @@ describe("runtime egress engine maintained fetch", () => {
 			sha256,
 		};
 
-		const first = ensureRuntimeMitmproxy(pin, paths, { allowFileUrls: true });
-		const second = ensureRuntimeMitmproxy(pin, paths, {
-			allowFileUrls: true,
-			downloadCommand: "missing-curl-for-cache-hit",
-		});
+		let first: ReturnType<typeof ensureRuntimeMitmproxy>;
+		let second: ReturnType<typeof ensureRuntimeMitmproxy>;
+		try {
+			first = ensureRuntimeMitmproxy(pin, paths, { allowFileUrls: true });
+			second = ensureRuntimeMitmproxy(pin, paths, {
+				allowFileUrls: true,
+				downloadCommand: "missing-curl-for-cache-hit",
+			});
+		} finally {
+			process.umask(previousUmask);
+		}
 
 		expect(first.status).toBe("ready");
 		if (first.status !== "ready") throw new Error(first.error);
@@ -55,9 +63,49 @@ describe("runtime egress engine maintained fetch", () => {
 		);
 		expect(existsSync(first.binaryPath)).toBe(true);
 		expect(readFileSync(first.binaryPath, "utf-8")).toContain("fake mitmdump");
+		expect(statSync(dirname(paths.egressEngineMaintainedRoot)).mode & 0o777).toBe(0o700);
+		expect(statSync(paths.egressEngineMaintainedRoot).mode & 0o777).toBe(0o700);
 		expect(second.status).toBe("ready");
 		if (second.status !== "ready") throw new Error(second.error);
 		expect(second.binaryPath).toBe(first.binaryPath);
+	});
+
+	it("does not rewrite a private maintained boundary on a cache hit", () => {
+		const paths = runtimePaths();
+		const pin = {
+			type: "mitmproxy" as const,
+			version: "12.2.3",
+			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			sha256: "a".repeat(64),
+		};
+		const egressEngineRoot = dirname(paths.egressEngineMaintainedRoot);
+		const versionRoot = join(paths.egressEngineMaintainedRoot, pin.version);
+		const cacheDir = join(versionRoot, pin.sha256);
+		const binaryPath = join(cacheDir, "mitmdump");
+		const unrelatedPrivateDir = join(paths.maintainedRoot, "private");
+		const unrelatedPrivateFile = join(unrelatedPrivateDir, "secret");
+
+		mkdirSync(cacheDir, { recursive: true, mode: 0o755 });
+		writeFileSync(binaryPath, "cached mitmdump", { mode: 0o755 });
+		chmodSync(binaryPath, 0o755);
+		mkdirSync(unrelatedPrivateDir, { mode: 0o700 });
+		writeFileSync(unrelatedPrivateFile, "private", { mode: 0o600 });
+		chmodSync(unrelatedPrivateDir, 0o700);
+		chmodSync(unrelatedPrivateFile, 0o600);
+		chmodSync(egressEngineRoot, 0o700);
+		expect(statSync(egressEngineRoot).mode & 0o777).toBe(0o700);
+
+		const result = ensureRuntimeMitmproxy(pin, paths, {
+			downloadCommand: "missing-curl-for-cache-hit",
+		});
+
+		expect(result.status).toBe("ready");
+		if (result.status !== "ready") throw new Error(result.error);
+		expect(result.binaryPath).toBe(binaryPath);
+		expect(statSync(egressEngineRoot).mode & 0o777).toBe(0o700);
+		expect(statSync(binaryPath).mode & 0o005).toBe(0o005);
+		expect(statSync(unrelatedPrivateDir).mode & 0o777).toBe(0o700);
+		expect(statSync(unrelatedPrivateFile).mode & 0o777).toBe(0o600);
 	});
 
 	it("degrades instead of installing on checksum mismatch", () => {
@@ -113,6 +161,23 @@ describe("runtime egress engine maintained fetch", () => {
 		expect(result.status).toBe("degraded");
 		if (result.status !== "degraded") throw new Error("expected degraded");
 		expect(result.error).toContain("pinned linux x86_64 release archive");
+	});
+
+	it("redacts unexpected engine preparation diagnostics", () => {
+		const result = ensureRuntimeMitmproxy(
+			{
+				type: "mitmproxy" as const,
+				version: "12.2.3",
+				url: "not-a-url-test-token",
+				sha256: "a".repeat(64),
+			},
+			runtimePaths(),
+		);
+
+		expect(result.status).toBe("degraded");
+		if (result.status !== "degraded") throw new Error("expected degraded");
+		expect(result.error).toBe("mitmproxy preparation failed");
+		expect(result.error).not.toContain("test-token");
 	});
 
 	it("degrades cleanly when the manifest has no pin", () => {

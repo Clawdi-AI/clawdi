@@ -1,11 +1,10 @@
 "use client";
 
 import type { DeviceLookupResponse } from "@clawdi/shared/api";
-import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, CheckCircle2, Clock, Terminal, XCircle } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 const CLI_AUTHORIZE_ERROR_NORMALIZER: ApiErrorNormalizer = {
 	isAuthError: isApiAuthError,
@@ -53,32 +53,52 @@ function CliAuthorizeContent() {
 	const code = rawCode.toUpperCase().trim();
 	const api = useApi();
 	const [terminalState, setTerminalState] = useState<"approved" | "denied" | null>(null);
+	const lookupRequestRef = useRef(0);
+	const [lookup, setLookup] = useState<{
+		data: DeviceLookupResponse | null;
+		error: unknown;
+		isLoading: boolean;
+	}>({ data: null, error: null, isLoading: code.length > 0 });
 
-	const lookup = useQuery({
-		enabled: code.length > 0,
-		queryKey: ["cli-authorize", code],
-		queryFn: async (): Promise<DeviceLookupResponse> =>
-			unwrap(
-				await api.GET("/v1/cli/auth/lookup", {
-					params: { query: { code } },
-				}),
-			),
+	useEffect(() => {
+		if (!code) {
+			setLookup({ data: null, error: null, isLoading: false });
+			return;
+		}
+		const requestId = lookupRequestRef.current + 1;
+		lookupRequestRef.current = requestId;
+		setLookup({ data: null, error: null, isLoading: true });
+		void (async () => {
+			try {
+				const data = unwrap(
+					await api.GET("/v1/cli/auth/lookup", {
+						params: { query: { code } },
+					}),
+				);
+				if (lookupRequestRef.current === requestId) {
+					setLookup({ data, error: null, isLoading: false });
+				}
+			} catch (error) {
+				if (lookupRequestRef.current === requestId) {
+					setLookup({ data: null, error, isLoading: false });
+				}
+			}
+		})();
+		return () => {
+			lookupRequestRef.current += 1;
+		};
+	}, [api, code]);
+
+	const approve = useSensitiveAction(async () => {
+		const res = await api.POST("/v1/cli/auth/approve", { body: { user_code: code } });
+		unwrap(res);
+		setTerminalState("approved");
 	});
 
-	const approve = useMutation({
-		mutationFn: async () => {
-			const res = await api.POST("/v1/cli/auth/approve", { body: { user_code: code } });
-			unwrap(res);
-		},
-		onSuccess: () => setTerminalState("approved"),
-	});
-
-	const deny = useMutation({
-		mutationFn: async () => {
-			const res = await api.POST("/v1/cli/auth/deny", { body: { user_code: code } });
-			unwrap(res);
-		},
-		onSuccess: () => setTerminalState("denied"),
+	const deny = useSensitiveAction(async () => {
+		const res = await api.POST("/v1/cli/auth/deny", { body: { user_code: code } });
+		unwrap(res);
+		setTerminalState("denied");
 	});
 
 	if (!code) {
@@ -195,19 +215,22 @@ function CliAuthorizeContent() {
 					<div className="flex items-center justify-end gap-2">
 						<Button
 							variant="ghost"
-							onClick={() => deny.mutate()}
+							onClick={() => void deny.execute().catch(() => undefined)}
 							disabled={deny.isPending || approve.isPending}
 						>
 							{deny.isPending ? "Denying…" : "Deny"}
 						</Button>
-						<Button onClick={() => approve.mutate()} disabled={approve.isPending || deny.isPending}>
+						<Button
+							onClick={() => void approve.execute().catch(() => undefined)}
+							disabled={approve.isPending || deny.isPending}
+						>
 							{approve.isPending ? "Authorizing…" : "Authorize"}
 						</Button>
 					</div>
 
-					{(approve.error || deny.error) && (
+					{approve.error || deny.error ? (
 						<ApiErrorPanel error={approve.error || deny.error} title="Action failed" />
-					)}
+					) : null}
 				</CardContent>
 			</Card>
 		</Shell>

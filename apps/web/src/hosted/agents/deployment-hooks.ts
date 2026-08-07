@@ -3,60 +3,117 @@
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
-import { deleteDeploymentToastDecision } from "@/hosted/agents/delete-deployment-toast.logic";
-import { useBillingClient } from "@/hosted/billing/billing-client";
+import { retireRuntimeWindows } from "@/hosted/agents/runtime-window-lifecycle";
+import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
-	RebindAgentAiProviderRequest,
-	SetAgentEnabledRequest,
+	DeploymentDeleteRequest,
+	DeploymentUpdateRequest,
+	HostedDeployment,
+	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
-import { normalizeHostedLanguage } from "@/hosted/billing/deploy/language-timezone-controls";
-import { BillingApiError, normalizeBillingError, toastBillingError } from "@/hosted/billing/errors";
+import { DeploymentConflictError, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
+import {
+	forgetIdempotencyAttempt,
+	idempotencyAttemptFor,
+	idempotencyFingerprint,
+	newIdempotencyKey,
+} from "@/hosted/billing/idempotency";
+import { deploymentMutationErrorMessage } from "@/hosted/deployment-failure";
+import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 
 const SETTLING_REFRESH_DELAYS_MS = [2_000, 10_000, 20_000, 30_000] as const;
+const ACCEPTED_OPERATION_TRANSITIONS = {
+	create: "creating",
+	start: "starting",
+	stop: "stopping",
+	restart: "restarting",
+	reset_runtime_ui_access: "restarting",
+	update: "updating",
+	plan_change: "updating",
+	runtime_switch: "updating",
+	migrate_image: "updating",
+	rollback_image: "updating",
+	rename: "updating",
+	delete: "deleting",
+} satisfies Record<DeploymentOperationVerb, HostedDeploymentStatus["summary_state"]>;
 
 export function invalidateDeploymentSnapshots(qc: QueryClient) {
 	void qc.invalidateQueries({ queryKey: billingKeys.deployments });
-	void qc.invalidateQueries({ queryKey: ["agents"] });
+	void qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 }
 
 function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
 	for (const delay of SETTLING_REFRESH_DELAYS_MS) {
 		globalThis.setTimeout(() => {
 			void qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			void qc.invalidateQueries({ queryKey: ["agents"] });
+			void qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 		}, delay);
 	}
 }
 
-function isLifecycleStateConflict(error: unknown): boolean {
-	if (!(error instanceof BillingApiError)) return false;
-	return (
-		error.status === 409 ||
-		/invalid[_\s-]?state|state conflict|conflict|not (running|stopped|ready)|already/i.test(
-			error.detail,
-		)
+export function projectAcceptedDeploymentTransition(
+	qc: QueryClient,
+	accepted: AcceptedOperation,
+	scheduleRefresh = scheduleDeploymentSettlingRefresh,
+) {
+	const status = ACCEPTED_OPERATION_TRANSITIONS[accepted.operation.metadata.verb];
+	qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
+		deployments?.map((deployment) =>
+			deployment.resource.id === accepted.deploymentId
+				? {
+						...deployment,
+						accepted_operation: accepted.operation,
+						resource: {
+							...deployment.resource,
+							status:
+								deployment.resource.status === null
+									? null
+									: {
+											...deployment.resource.status,
+											summary_state: status,
+											failure: null,
+										},
+						},
+					}
+				: deployment,
+		),
 	);
+	scheduleRefresh(qc);
 }
 
-function toastAiProviderRebindError(error: unknown) {
-	toast.error("Couldn't update provider", { description: normalizeBillingError(error) });
+async function runStableDeploymentIntent<T>(
+	prefix: string,
+	value: unknown,
+	run: (idempotencyKey: string) => Promise<T>,
+): Promise<T> {
+	const fingerprint = idempotencyFingerprint(value);
+	const attempt = idempotencyAttemptFor(null, prefix, fingerprint, newIdempotencyKey);
+	try {
+		const result = await run(attempt.key);
+		forgetIdempotencyAttempt(prefix, fingerprint);
+		return result;
+	} catch (error) {
+		// A transport timeout may have happened after acceptance. Preserve the
+		// intent key so a retry resumes the same LRO instead of issuing a new one.
+		if (!isNetworkError(error)) forgetIdempotencyAttempt(prefix, fingerprint);
+		throw error;
+	}
 }
 
-function toastAgentLanguageTimezoneError(error: unknown) {
-	toast.error("Couldn't update language and timezone", {
-		description: normalizeBillingError(error),
-	});
+function toastDeploymentConflict(error: unknown): boolean {
+	if (!(error instanceof DeploymentConflictError)) return false;
+	toast.error("Agent state changed", { description: deploymentMutationErrorMessage(error) });
+	return true;
 }
 
 /**
- * Resolve the hosted deployment that backs a cloud-api environment, joined via
- * `config_info.clawdi_cloud_environments[runtime] === environmentId` (same join
- * the agent tiles use). Duplicate joins remain unresolved until an explicit
- * deployment selector is present.
+ * Resolve the hosted deployment that backs a cloud-api environment using the
+ * stored environment id projected by the deploy API. An explicit deployment
+ * selector disambiguates duplicate inventory rows.
  */
 export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
 	const inventory = useHostedDeploymentInventory({
@@ -67,20 +124,27 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		[inventory.deployments, environmentId, deploymentSelector],
 	);
 	const match = resolution.match;
+	const deploymentId = match?.deployment.resource.id;
+	const deploymentTransition = deploymentId
+		? (inventory.deploymentTransitions.get(deploymentId) ?? null)
+		: null;
+	const deploymentFailure = deploymentId
+		? (inventory.deploymentFailures.get(deploymentId) ?? null)
+		: null;
 
 	// The env id to drive per-env queries (sessions, channel links). For an
 	// env-id route it's the route param itself; for a deployment-id route
-	// (post-deploy redirect) resolve to a real cloud-api env id from the
-	// deployment, falling back to the route param while provisioning hasn't
-	// minted env ids yet.
+	// (post-deploy redirect) resolve to the stored cloud-api env id, falling back
+	// to the route param while deployment creation has not projected an env id yet.
 	const resolvedEnvId = useMemo(() => {
 		if (!match || match.runtime) return environmentId;
 		const runtime = deploymentRuntime(match.deployment);
-		return runtimeEnvironmentId(match.deployment.config_info, runtime) || environmentId;
+		return runtimeEnvironmentId(match.deployment, runtime) || environmentId;
 	}, [match, environmentId]);
 
 	return {
 		deployment: match?.deployment ?? null,
+		inventoryDeployments: inventory.deployments,
 		matchedRuntime: match?.runtime ?? null,
 		ambiguousMatches: resolution.ambiguousMatches,
 		environmentId: resolvedEnvId,
@@ -88,8 +152,12 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		membershipResolved: inventory.status === "resolved",
 		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
 		isFetching: inventory.isFetching,
+		deploymentTransition,
+		deploymentTransitionTimedOut: deploymentTransition?.kind === "timed_out",
+		deploymentFailure,
 		error: inventory.error,
 		refetch: inventory.refetch,
+		retryDeploymentTransition: inventory.refetch,
 	};
 }
 
@@ -99,93 +167,62 @@ export type {
 } from "@/hosted/hosted-agent-resolution";
 export { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 
-export function useSetAgentLanguageTimezone() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: {
-			id: string;
-			agentType: string;
-			language: string;
-			timezone: string;
-		}) => {
-			const body: SetAgentEnabledRequest = {
-				enabled: true,
-				language: normalizeHostedLanguage(vars.language),
-				timezone: vars.timezone.trim() || null,
-			};
-			return client.setAgentLanguageTimezone(vars.id, vars.agentType, body);
-		},
-		onSuccess: () => {
-			scheduleDeploymentSettlingRefresh(qc);
-			toast.success("Language and timezone updated");
-		},
-		onError: toastAgentLanguageTimezoneError,
-		onSettled: () => invalidateDeploymentSnapshots(qc),
-	});
-}
-
-/** Re-bind the AI provider pool and primary model for deployment runtimes (live). */
-export function useSetAgentAiProvider() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: {
-			id: string;
-			agentType: string;
-			body: RebindAgentAiProviderRequest;
-		}) => {
-			return client.setAgentAiProvider(vars.id, vars.agentType, vars.body);
-		},
-		onError: toastAiProviderRebindError,
-		onSettled: () => invalidateDeploymentSnapshots(qc),
-	});
-}
-
-export function useCreateTerminalSession() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (vars: { id: string }) => client.createTerminalSession(vars.id),
-		onError: toastBillingError("Couldn't open terminal"),
-	});
-}
-
-export function useCreateRuntimeUiRedemption() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (vars: { id: string }) => client.createRuntimeUiRedemption(vars.id),
-		onError: toastBillingError("Couldn't open runtime UI"),
-	});
-}
-
 export function useDeploymentLifecycle() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (vars: { id: string; action: "restart" | "stop" | "start" }) => {
-			if (vars.action === "restart") return client.restartDeployment(vars.id);
-			if (vars.action === "stop") return client.stopDeployment(vars.id);
-			return client.startDeployment(vars.id);
-		},
-		onSuccess: (_d, vars) => {
-			scheduleDeploymentSettlingRefresh(qc);
+		mutationFn: (vars: { id: string; action: "restart" | "stop" | "start" }) =>
+			runStableDeploymentIntent("deployment-lifecycle", vars, (idempotencyKey) => {
+				if (vars.action === "restart") {
+					return client.restartDeployment(vars.id, idempotencyKey);
+				}
+				return client.setDeploymentDesiredState(
+					vars.id,
+					vars.action === "start" ? "running" : "stopped",
+					idempotencyKey,
+				);
+			}),
+		onSuccess: (accepted, vars) => {
+			projectAcceptedDeploymentTransition(qc, accepted);
+			if (vars.action === "restart") {
+				retireRuntimeWindows(accepted.deploymentId);
+			}
 			const msg =
 				vars.action === "restart"
-					? "Restarting agent…"
+					? "Restarting…"
 					: vars.action === "stop"
-						? "Stopping agent…"
-						: "Starting agent…";
-			toast.success(msg);
+						? "Stopping…"
+						: "Starting…";
+			toast.message(msg);
 		},
 		onError: (error) => {
-			if (isLifecycleStateConflict(error)) {
-				toast.error("Agent state changed", {
-					description:
-						"The deployment state changed before the action ran. We refreshed the controls.",
-				});
-				return;
-			}
-			toast.error("Couldn't update lifecycle", { description: normalizeBillingError(error) });
+			if (toastDeploymentConflict(error)) return;
+			toast.error("Couldn't update lifecycle", {
+				description: deploymentMutationErrorMessage(error),
+			});
+		},
+		onSettled: () => invalidateDeploymentSnapshots(qc),
+	});
+}
+
+export function useResetRuntimeUiAccess() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (vars: { id: string }) =>
+			runStableDeploymentIntent("runtime-ui-access-reset", vars, (idempotencyKey) =>
+				client.resetRuntimeUiAccess(vars.id, idempotencyKey),
+			),
+		onSuccess: (accepted) => {
+			projectAcceptedDeploymentTransition(qc, accepted);
+			retireRuntimeWindows(accepted.deploymentId);
+			toast.message("Resetting Runtime UI access…");
+		},
+		onError: (error) => {
+			if (toastDeploymentConflict(error)) return;
+			toast.error("Couldn't reset Runtime UI access", {
+				description: deploymentMutationErrorMessage(error),
+			});
 		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
@@ -195,17 +232,47 @@ export function useDeleteDeployment() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (id: string) => client.deleteDeployment(id),
-		onSuccess: (result) => {
-			scheduleDeploymentSettlingRefresh(qc);
-			const decision = deleteDeploymentToastDecision(result);
-			if (decision.tone === "warning") {
-				toast.warning(decision.title, { description: decision.description });
-				return;
-			}
-			toast.success(decision.title, { description: decision.description });
+		mutationFn: (vars: { id: string; request: DeploymentDeleteRequest; resourceVersion: string }) =>
+			runStableDeploymentIntent(
+				"deployment-delete",
+				{ action: "delete", id: vars.id, request: vars.request },
+				(key) => client.deleteDeployment(vars.id, vars.request, key, vars.resourceVersion),
+			),
+		onSuccess: (accepted) => {
+			if (accepted.operation) projectAcceptedDeploymentTransition(qc, accepted);
+			retireRuntimeWindows(accepted.deploymentId);
+			toast.message("Agent removed", {
+				description: "Cleanup continues in the background.",
+			});
 		},
-		onError: toastBillingError("Couldn't delete agent"),
+		onError: (error) => {
+			if (toastDeploymentConflict(error)) return;
+			toast.error("Couldn't delete agent", {
+				description: deploymentMutationErrorMessage(error),
+			});
+		},
+		onSettled: () => invalidateDeploymentSnapshots(qc),
+	});
+}
+
+export function useUpdateDeployment() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (vars: { id: string; update: DeploymentUpdateRequest }) =>
+			runStableDeploymentIntent("deployment-update", vars, (key) =>
+				client.updateDeployment(vars.id, vars.update, key),
+			),
+		onSuccess: (accepted) => {
+			projectAcceptedDeploymentTransition(qc, accepted);
+			toast.message("Applying agent settings…");
+		},
+		onError: (error) => {
+			if (toastDeploymentConflict(error)) return;
+			toast.error("Couldn't update agent settings", {
+				description: deploymentMutationErrorMessage(error),
+			});
+		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
 }

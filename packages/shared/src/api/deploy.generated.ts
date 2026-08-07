@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/ai-providers/managed/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Managed Model Catalog */
+        get: operations["get_v2_managed_model_catalog_v2_ai_providers_managed_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments": {
         parameters: {
             query?: never;
@@ -92,40 +109,6 @@ export interface paths {
         patch: operations["update_v2_deployment_v2_deployments__deployment_id__patch"];
         trace?: never;
     };
-    "/v2/deployments/{deployment_id}/agents/{agent_type}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Set V2 Agent Enabled */
-        patch: operations["set_v2_agent_enabled_v2_deployments__deployment_id__agents__agent_type__patch"];
-        trace?: never;
-    };
-    "/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Rebind V2 Agent Ai Provider */
-        patch: operations["rebind_v2_agent_ai_provider_v2_deployments__deployment_id__agents__agent_type__ai_provider_patch"];
-        trace?: never;
-    };
     "/v2/deployments/{deployment_id}/terminal": {
         parameters: {
             query?: never;
@@ -143,7 +126,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/deployments/{deployment_id}/runtime-ui/redemption": {
+    "/v2/deployments/{deployment_id}/runtime-ui/access/reset": {
         parameters: {
             query?: never;
             header?: never;
@@ -152,8 +135,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create V2 Deployment Runtime Ui Redemption */
-        post: operations["create_v2_deployment_runtime_ui_redemption_v2_deployments__deployment_id__runtime_ui_redemption_post"];
+        /** Reset V2 Runtime Ui Access */
+        post: operations["reset_v2_runtime_ui_access_v2_deployments__deployment_id__runtime_ui_access_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/runtime-ui/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create V2 Runtime Ui Credentials */
+        post: operations["create_v2_runtime_ui_credentials_v2_deployments__deployment_id__runtime_ui_credentials_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -205,6 +205,58 @@ export interface paths {
         put?: never;
         /** Stop V2 Deployment */
         post: operations["stop_v2_deployment_v2_deployments__deployment_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/workspace-skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Workspace Skills */
+        get: operations["list_v2_workspace_skills_v2_deployments__deployment_id__workspace_skills_get"];
+        put?: never;
+        /** Install V2 Workspace Skill */
+        post: operations["install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/workspace-skills/{skill_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Uninstall V2 Workspace Skill */
+        delete: operations["uninstall_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Operation */
+        get: operations["get_v2_operation_v2_operations__operation_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -470,10 +522,496 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentSpec */
+        AgentSpec: {
+            /** Agent Id */
+            agent_id: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            primary_model?: components["schemas"]["ProviderModelReference"] | null;
+            /**
+             * Secret References
+             * @default []
+             */
+            secret_references: components["schemas"]["SecretReference"][];
+        };
+        /** ComputePlanChangeProgress */
+        ComputePlanChangeProgress: {
+            /**
+             * @Type
+             * @constant
+             */
+            "@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress";
+            /** Operationid */
+            operationId: string;
+            /** Subscriptionid */
+            subscriptionId: number;
+            /**
+             * Fundingsource
+             * @enum {string}
+             */
+            fundingSource: "stripe" | "wallet";
+            /** Sourceplanslug */
+            sourcePlanSlug: string;
+            /** Targetplanslug */
+            targetPlanSlug: string;
+            /**
+             * Targetbillingtermmonths
+             * @enum {integer}
+             */
+            targetBillingTermMonths: 1 | 12;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "quoted" | "wallet_debit_pending" | "wallet_debit_applied" | "stripe_update_pending" | "invoice_pending" | "settlement_pending" | "awaiting_payment" | "awaiting_projection" | "compensation_pending" | "reversal_pending" | "reconciliation_required" | "scheduled" | "complete" | "compensated" | "failed" | "terminated_paid_unapplied";
+            /**
+             * Effectiveat
+             * Format: date-time
+             */
+            effectiveAt: string;
+            /** Fundinginvoiceid */
+            fundingInvoiceId?: string | null;
+        };
+        /** DeploymentCondition */
+        DeploymentCondition: {
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "Ready" | "Progressing" | "Degraded" | "FundingReady";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "True" | "False" | "Unknown";
+            /** Observedgeneration */
+            observedGeneration: number;
+            /**
+             * Lasttransitiontime
+             * Format: date-time
+             */
+            lastTransitionTime: string;
+            /** Reason */
+            reason: string;
+            /** Message */
+            message: string;
+        };
+        /** DeploymentEndpoint */
+        DeploymentEndpoint: {
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+        };
+        /** DeploymentMetadata */
+        DeploymentMetadata: {
+            /** Generation */
+            generation: number;
+            /** Manifestetag */
+            manifestETag: string;
+            /** Resourceversion */
+            resourceVersion: string;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** DeploymentOperationMetadata */
+        DeploymentOperationMetadata: {
+            /**
+             * @Type
+             * @constant
+             */
+            "@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata";
+            /**
+             * Deploymentid
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            deploymentId: string;
+            /**
+             * Verb
+             * @enum {string}
+             */
+            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "rename" | "delete" | "reset_runtime_ui_access" | "migrate_image" | "rollback_image";
+            /** Targetgeneration */
+            targetGeneration: number;
+            /** Manifestetag */
+            manifestETag: string;
+            /**
+             * Createtime
+             * Format: date-time
+             */
+            createTime: string;
+            /**
+             * Updatetime
+             * Format: date-time
+             */
+            updateTime: string;
+            /** @description Acceptance-time deployment snapshot for create operations so clients can render the resource without a follow-up read. */
+            initialDeployment?: components["schemas"]["HostedDeploymentResource"] | null;
+            planChange?: components["schemas"]["ComputePlanChangeProgress"] | null;
+        };
+        /** DeploymentOperationResponse */
+        DeploymentOperationResponse: {
+            /**
+             * @Type
+             * @constant
+             */
+            "@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse";
+            deployment: components["schemas"]["HostedDeploymentResource"];
+        };
+        /** DeploymentResources */
+        DeploymentResources: {
+            /** Vcpu */
+            vcpu: number;
+            /** Memory Mib */
+            memory_mib: number;
+            /** Disk Gib */
+            disk_gib: number;
+        };
+        /** EmptyResponse */
+        EmptyResponse: {
+            /**
+             * @Type
+             * @constant
+             */
+            "@type": "type.googleapis.com/google.protobuf.Empty";
+        };
+        /**
+         * EventStreamSnapshotHandoff
+         * @description Atomic deployment/LRO snapshot plus the owner-stream resume cursor.
+         */
+        EventStreamSnapshotHandoff: {
+            /**
+             * Snapshot Isolation
+             * @default REPEATABLE READ
+             * @constant
+             */
+            snapshot_isolation: "REPEATABLE READ";
+            /**
+             * Read Only
+             * @default true
+             * @constant
+             */
+            read_only: true;
+            /** Deployments */
+            deployments: components["schemas"]["V2HostedDeploymentReadResponse"][];
+            /** Operations */
+            operations: components["schemas"]["LongRunningOperation"][];
+            /** Event Stream Cursor */
+            event_stream_cursor: string;
+        };
+        /**
+         * GoogleRpcCode
+         * @enum {integer}
+         */
+        GoogleRpcCode: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16;
+        /** GoogleRpcStatus */
+        GoogleRpcStatus: {
+            code: components["schemas"]["GoogleRpcCode"];
+            /** Message */
+            message: string;
+            /** Details */
+            details: components["schemas"]["LifecycleProblemAny"][];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HostedDeploymentResource */
+        HostedDeploymentResource: {
+            /**
+             * Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Owner User Id
+             * Format: sqid
+             * @example usr_K8fJ3pQm
+             */
+            owner_user_id: string;
+            /** Commercial Reference */
+            commercial_reference?: string | null;
+            /** Commercial Event Id */
+            commercial_event_id?: string | null;
+            /**
+             * Commercial Revision
+             * @default 0
+             */
+            commercial_revision: number;
+            /** Deploy Request Id */
+            deploy_request_id?: string | null;
+            /** Deployment Target */
+            deployment_target: string;
+            metadata: components["schemas"]["DeploymentMetadata"];
+            spec: components["schemas"]["HostedDeploymentSpec"];
+            status: components["schemas"]["HostedDeploymentStatus"] | null;
+        };
+        /** HostedDeploymentSpec */
+        HostedDeploymentSpec: {
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /**
+             * Desired Lifecycle
+             * @enum {string}
+             */
+            desired_lifecycle: "running" | "stopped" | "deleted";
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "openclaw" | "hermes";
+            /** Runtime Version */
+            runtime_version: string;
+            resources: components["schemas"]["DeploymentResources"];
+            /**
+             * Agents
+             * @default []
+             */
+            agents: components["schemas"]["AgentSpec"][];
+            /**
+             * Ports
+             * @default []
+             */
+            ports: components["schemas"]["PortSpec"][];
+            runtime_configuration: components["schemas"]["RuntimeConfiguration"];
+            /**
+             * Rollout Nonce
+             * @default 0
+             */
+            rollout_nonce: number;
+            /**
+             * Secret References
+             * @default []
+             */
+            secret_references: components["schemas"]["SecretReference"][];
+        };
+        /** HostedDeploymentStatus */
+        HostedDeploymentStatus: {
+            /**
+             * Summary State
+             * @enum {string}
+             */
+            summary_state: "creating" | "starting" | "running" | "stopping" | "stopped" | "restarting" | "updating" | "deleting" | "deleted" | "failed";
+            /** Observedgeneration */
+            observedGeneration: number;
+            /**
+             * Conditions
+             * @default []
+             */
+            conditions: components["schemas"]["DeploymentCondition"][];
+            failure?: components["schemas"]["LifecycleFailureOccurrence"] | null;
+            /**
+             * Backing Infrastructure
+             * @default unknown
+             * @enum {string}
+             */
+            backing_infrastructure: "present" | "absent" | "unknown";
+            /** Driver Acknowledged Generation */
+            driver_acknowledged_generation: number;
+            /** Driver Applied Generation */
+            driver_applied_generation: number;
+            /** Driver Observation Sequence */
+            driver_observation_sequence: number;
+            /**
+             * Endpoints
+             * @default []
+             */
+            endpoints: components["schemas"]["DeploymentEndpoint"][];
+            /** Observed At */
+            observed_at?: string | null;
+            /** Deleted At */
+            deleted_at?: string | null;
+        };
+        /**
+         * LifecycleFailureOccurrence
+         * @description One registered failure occurrence projected across every surface.
+         */
+        LifecycleFailureOccurrence: {
+            /** Type */
+            type: string;
+            /** Title */
+            title: string;
+            /** Status */
+            status: number;
+            /** Detail */
+            detail: string;
+            /** Instance */
+            instance?: string | null;
+            /** Code */
+            code: string;
+            /** Phase */
+            phase?: string | null;
+            /** Retryable */
+            retryable?: boolean | null;
+            /** Conditionreason */
+            conditionReason: string;
+            /** Conditionmessage */
+            conditionMessage: string;
+            /** Observedgeneration */
+            observedGeneration: number;
+        };
+        /**
+         * LifecycleProblemAny
+         * @description Typed ``google.protobuf.Any`` JSON encoding for LRO Status details.
+         */
+        LifecycleProblemAny: {
+            /** Type */
+            type: string;
+            /** Title */
+            title: string;
+            /** Status */
+            status: number;
+            /** Detail */
+            detail: string;
+            /** Instance */
+            instance?: string | null;
+            /** Code */
+            code: string;
+            /** Phase */
+            phase?: string | null;
+            /** Retryable */
+            retryable?: boolean | null;
+            /** Conditionreason */
+            conditionReason: string;
+            /** Conditionmessage */
+            conditionMessage: string;
+            /** Observedgeneration */
+            observedGeneration: number;
+            /**
+             * @Type
+             * @constant
+             */
+            "@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails";
+        };
+        /**
+         * LifecycleProblemDetails
+         * @description RFC 7807 occurrence. ``code`` stays open for additive registry entries.
+         */
+        LifecycleProblemDetails: {
+            /** Type */
+            type: string;
+            /** Title */
+            title: string;
+            /** Status */
+            status: number;
+            /** Detail */
+            detail: string;
+            /** Instance */
+            instance?: string | null;
+            /** Code */
+            code: string;
+            /** Phase */
+            phase?: string | null;
+            /** Retryable */
+            retryable?: boolean | null;
+        };
+        /** LongRunningOperation */
+        LongRunningOperation: {
+            /** Name */
+            name: string;
+            metadata: components["schemas"]["DeploymentOperationMetadata"];
+            /**
+             * Done
+             * @default false
+             */
+            done: boolean;
+            error?: components["schemas"]["GoogleRpcStatus"] | null;
+            /** Response */
+            response?: components["schemas"]["DeploymentOperationResponse"] | components["schemas"]["EmptyResponse"] | null;
+        };
+        /** PortSpec */
+        PortSpec: {
+            /** Name */
+            name: string;
+            /** Port */
+            port: number;
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "http" | "https" | "tcp";
+            /**
+             * Visibility
+             * @default private
+             * @enum {string}
+             */
+            visibility: "private" | "public";
+        };
+        /** ProviderModelReference */
+        ProviderModelReference: {
+            /** Provider Id */
+            provider_id: string;
+            /** Model */
+            model: string;
+        };
+        /** RuntimeConfiguration */
+        RuntimeConfiguration: {
+            /** Language */
+            language?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            primary_model?: components["schemas"]["ProviderModelReference"] | null;
+            /**
+             * Providers
+             * @default []
+             */
+            providers: components["schemas"]["RuntimeProviderConfiguration"][];
+            /**
+             * Features
+             * @default []
+             */
+            features: string[];
+        };
+        /** RuntimeProviderConfiguration */
+        RuntimeProviderConfiguration: {
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Auth Kind
+             * @enum {string}
+             */
+            auth_kind: "unmanaged" | "managed" | "secret_reference";
+            /** Base Url */
+            base_url?: string | null;
+            secret_reference?: components["schemas"]["SecretReference"] | null;
+            /**
+             * Models
+             * @default []
+             */
+            models: string[];
+        };
+        /** SecretReference */
+        SecretReference: {
+            /**
+             * Store
+             * @enum {string}
+             */
+            store: "clawdi" | "cloud" | "external";
+            /** Name */
+            name: string;
+            /** Version */
+            version?: string | null;
         };
         /**
          * V1AgentEnvironmentsResponse
@@ -506,11 +1044,6 @@ export interface components {
              * @default false
              */
             can_use_v2: boolean;
-            /**
-             * Can Use Plan C Billing
-             * @default false
-             */
-            can_use_plan_c_billing: boolean;
         };
         /** V1UserResponse */
         V1UserResponse: {
@@ -544,19 +1077,6 @@ export interface components {
             evm_wallet_address?: string | null;
             capabilities: components["schemas"]["V1UserProductCapabilities"];
         };
-        /** V2AiProviderBindingInfo */
-        V2AiProviderBindingInfo: {
-            /** Provider Id */
-            provider_id?: string | null;
-            /** Provider Ids */
-            provider_ids?: string[];
-            /**
-             * Auth Kind
-             * @enum {string}
-             */
-            auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
-            primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
-        };
         /** V2AiProviderPrimaryModelRef */
         V2AiProviderPrimaryModelRef: {
             /** Provider Id */
@@ -575,47 +1095,47 @@ export interface components {
             /** Discount Percent */
             discount_percent: number;
         };
-        /** V2CheckoutResponse */
-        V2CheckoutResponse: {
+        V2CheckoutResponse: components["schemas"]["V2CheckoutSessionResponse"] | components["schemas"]["V2SubscriptionActivationResponse"];
+        /** V2CheckoutSessionResponse */
+        V2CheckoutSessionResponse: {
             /**
-             * Flow Type
-             * @default checkout_session
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            flow_type: "checkout_session" | "subscription_activation";
+            flow_type: "checkout_session";
             /**
              * Funding Source
-             * @default stripe
-             * @enum {string}
+             * @constant
              */
-            funding_source: "stripe" | "wallet";
+            funding_source: "stripe";
             /** Action Url */
-            action_url?: string | null;
-            /**
-             * Checkout Url
-             * @default
-             */
+            action_url: string | null;
+            /** Checkout Url */
             checkout_url: string;
             /** Client Secret */
-            client_secret?: string | null;
+            client_secret: string | null;
             /** Subscription Id */
-            subscription_id?: number | null;
+            subscription_id: null;
             /** Invoice Id */
-            invoice_id?: string | null;
+            invoice_id: null;
             /** Deployment Id */
-            deployment_id?: string | null;
+            deployment_id: null;
+            /** Deployment Name */
+            deployment_name: null;
+            /** Metadata Generation */
+            metadata_generation: null;
             /** Deploy Request Id */
-            deploy_request_id?: string | null;
-            /** Debited Credits */
-            debited_credits?: string | null;
-            /** Balance After Credits */
-            balance_after_credits?: string | null;
+            deploy_request_id: null;
+            /** Debited Usd */
+            debited_usd: null;
+            /** Balance After Usd */
+            balance_after_usd: null;
             /** Current Period Start */
-            current_period_start?: string | null;
+            current_period_start: null;
             /** Current Period End */
-            current_period_end?: string | null;
+            current_period_end: null;
             /** Entitled Until */
-            entitled_until?: string | null;
+            entitled_until: null;
         };
         /** V2ComputeBillingHistoryItem */
         V2ComputeBillingHistoryItem: {
@@ -639,10 +1159,8 @@ export interface components {
              * @default usd
              */
             currency: string;
-            /** Credits */
-            credits?: string | null;
-            /** Points Per Usd */
-            points_per_usd?: number | null;
+            /** Amount Usd */
+            amount_usd?: string | null;
             /** Period Start */
             period_start?: string | null;
             /** Period End */
@@ -695,8 +1213,9 @@ export interface components {
             /**
              * Ui Mode
              * @default custom
+             * @enum {string}
              */
-            ui_mode: string;
+            ui_mode: "custom" | "hosted";
             /** Locale */
             locale?: string | null;
             quote?: components["schemas"]["V2ComputeSubscriptionQuoteResponse-Input"] | null;
@@ -775,10 +1294,8 @@ export interface components {
             expires_at: string;
             /** Amount Cents */
             amount_cents: number;
-            /** Amount Credits */
-            amount_credits?: string | null;
-            /** Points Per Usd */
-            points_per_usd?: number | null;
+            /** Amount Usd */
+            amount_usd?: string | null;
             /**
              * Currency
              * @default usd
@@ -791,36 +1308,6 @@ export interface components {
         V2ComputePlanChangeRequest: {
             /** Operation Id */
             operation_id: string;
-        };
-        /** V2ComputePlanChangeResponse */
-        V2ComputePlanChangeResponse: {
-            /** Operation Id */
-            operation_id: string;
-            /** Subscription Id */
-            subscription_id: number;
-            /** Funding Source */
-            funding_source?: ("stripe" | "wallet") | null;
-            /** Current Plan Slug */
-            current_plan_slug: string;
-            /** Target Plan Slug */
-            target_plan_slug: string;
-            /**
-             * Target Billing Term Months
-             * @enum {integer}
-             */
-            target_billing_term_months: 1 | 12;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "awaiting_payment" | "awaiting_projection" | "scheduled" | "complete";
-            /**
-             * Effective At
-             * Format: date-time
-             */
-            effective_at: string;
-            /** Funding Invoice Id */
-            funding_invoice_id?: string | null;
         };
         /** V2ComputePortalRequest */
         V2ComputePortalRequest: {
@@ -907,14 +1394,12 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
-            /** Debit Credits */
-            debit_credits?: number | string | null;
-            /** Points Per Usd */
-            points_per_usd?: number | null;
-            /** Balance Before Credits */
-            balance_before_credits?: number | string | null;
-            /** Balance After Credits */
-            balance_after_credits?: number | string | null;
+            /** Debit Amount Usd */
+            debit_amount_usd?: number | string | null;
+            /** Balance Before Usd */
+            balance_before_usd?: number | string | null;
+            /** Balance After Usd */
+            balance_after_usd?: number | string | null;
         };
         /** V2ComputeSubscriptionQuoteResponse */
         "V2ComputeSubscriptionQuoteResponse-Output": {
@@ -947,14 +1432,12 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
-            /** Debit Credits */
-            debit_credits?: string | null;
-            /** Points Per Usd */
-            points_per_usd?: number | null;
-            /** Balance Before Credits */
-            balance_before_credits?: string | null;
-            /** Balance After Credits */
-            balance_after_credits?: string | null;
+            /** Debit Amount Usd */
+            debit_amount_usd?: string | null;
+            /** Balance Before Usd */
+            balance_before_usd?: string | null;
+            /** Balance After Usd */
+            balance_after_usd?: string | null;
         };
         /** V2ComputeSubscriptionResumeRequest */
         V2ComputeSubscriptionResumeRequest: {
@@ -965,44 +1448,25 @@ export interface components {
              */
             deployment_id: string;
         };
-        /** V2DeploymentDeleteResponse */
-        V2DeploymentDeleteResponse: {
-            /** Status */
-            status: string;
-            /** Cvm Deleted */
-            cvm_deleted: boolean;
+        /** V2DeleteDeploymentConvergedResponse */
+        V2DeleteDeploymentConvergedResponse: {
+            /** Deployment Id */
+            deployment_id: string;
             /**
-             * Subscription Cancel Failed
-             * @default false
+             * Status
+             * @constant
              */
-            subscription_cancel_failed: boolean;
-            subscription?: components["schemas"]["V2DeploymentDeleteSubscriptionInfo"] | null;
+            status: "absent";
         };
-        /** V2DeploymentDeleteSubscriptionInfo */
-        V2DeploymentDeleteSubscriptionInfo: {
-            /** Cancel At Period End */
-            cancel_at_period_end: boolean;
-            /** Current Period End */
-            current_period_end?: string | null;
-        };
-        /** V2DeploymentLifecycleResponse */
-        V2DeploymentLifecycleResponse: {
-            /** Status */
-            status: string;
-            /** Upgrade Task Id */
-            upgrade_task_id?: string | null;
-            /** Upgrade Status */
-            upgrade_status?: string | null;
-        };
-        /** V2DeploymentRuntimeUiRedemptionResponse */
-        V2DeploymentRuntimeUiRedemptionResponse: {
-            /** Url */
-            url: string;
+        /** V2DeleteDeploymentRequest */
+        V2DeleteDeploymentRequest: {
             /**
-             * Expires At
-             * Format: date-time
+             * Subscription Choice
+             * @description Whether deletion keeps the paid subscription available for reuse or cancels it at the provider. Omission safely keeps the subscription.
+             * @default keep_subscription
+             * @enum {string}
              */
-            expires_at: string;
+            subscription_choice: "keep_subscription" | "cancel_subscription";
         };
         /** V2DeploymentTerminalSessionResponse */
         V2DeploymentTerminalSessionResponse: {
@@ -1019,6 +1483,105 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+        };
+        /** V2HermesRuntimeUiCredentials */
+        V2HermesRuntimeUiCredentials: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            runtime: "hermes";
+            /** Url */
+            url: string;
+            /** Deployment Resource Version */
+            deployment_resource_version: string;
+            /**
+             * Auth Mode
+             * @default password
+             * @constant
+             */
+            auth_mode: "password";
+            /** Username */
+            username: string;
+            /** Password */
+            password: string;
+        };
+        /** V2HermesRuntimeUiEndpointInfo */
+        V2HermesRuntimeUiEndpointInfo: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            runtime: "hermes";
+            /**
+             * Role
+             * @default control_ui
+             * @constant
+             */
+            role: "control_ui";
+            /** Url */
+            url: string;
+            /**
+             * Auth Mode
+             * @default password
+             * @constant
+             */
+            auth_mode: "password";
+            /**
+             * Browser Mode
+             * @default embedded_and_top_level
+             * @constant
+             */
+            browser_mode: "embedded_and_top_level";
+        };
+        /** V2HostedCommercialFundingFactInfo */
+        V2HostedCommercialFundingFactInfo: {
+            /**
+             * Fact Kind
+             * @enum {string}
+             */
+            fact_kind: "funding_ready" | "funding_revoked";
+            /** Commercial Revision */
+            commercial_revision: number;
+            /** Compute Subscription Id */
+            compute_subscription_id?: number | null;
+            /** Compute Plan Slug */
+            compute_plan_slug?: string | null;
+            /** Funding Source */
+            funding_source?: ("stripe" | "wallet") | null;
+            /** Reason */
+            reason?: ("payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced") | null;
+            /** Prior Plan Slug */
+            prior_plan_slug?: string | null;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Spec Resources */
+            spec_resources?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Emitted At
+             * Format: date-time
+             */
+            emitted_at: string;
+        };
+        /** V2HostedComputeSlotOccupancy */
+        V2HostedComputeSlotOccupancy: {
+            /** Occupies Slot */
+            occupies_slot: boolean;
+            /**
+             * Backing Infra
+             * @enum {string}
+             */
+            backing_infra: "present" | "absent" | "unknown";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "backing_infra_present" | "backing_infra_unknown" | "observed_stopped" | "observed_deleted" | "authoritative_absence" | "delete_accepted";
         };
         /** V2HostedComputeSubscriptionInfo */
         V2HostedComputeSubscriptionInfo: {
@@ -1065,6 +1628,13 @@ export interface components {
             /** Pending Plan Slug */
             pending_plan_slug?: string | null;
         };
+        /** V2HostedComputeUpgradeEligibility */
+        V2HostedComputeUpgradeEligibility: {
+            /** Eligible */
+            eligible: boolean;
+            /** Reason */
+            reason: ("deployment_deleted" | "compute_basic_required" | "compute_subscription_unavailable" | "included_basic_required" | "compute_subscription_not_active" | "compute_subscription_canceling" | "deployment_state_unknown" | "deployment_must_be_running_or_stopped" | "upgrade_already_in_progress") | null;
+        };
         /** V2HostedConfigRequest */
         V2HostedConfigRequest: {
             /** Primary Model */
@@ -1083,8 +1653,6 @@ export interface components {
             slack_bot_token?: string | null;
             /** Slack App Token */
             slack_app_token?: string | null;
-            /** Assistant Name */
-            assistant_name?: string | null;
             /** Language */
             language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
@@ -1119,8 +1687,8 @@ export interface components {
             slack_app_token?: string | null;
             /** Model */
             model?: string | null;
-            /** Assistant Name */
-            assistant_name?: string | null;
+            /** Name */
+            name?: string | null;
             /** Language */
             language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
@@ -1149,8 +1717,30 @@ export interface components {
             } | null;
             config?: components["schemas"]["V2HostedConfigRequest"] | null;
         };
-        /** V2HostedDeployRequestStatusResponse */
-        V2HostedDeployRequestStatusResponse: {
+        /** V2HostedDeployRequestLineageTail */
+        V2HostedDeployRequestLineageTail: {
+            /** Deployment Id */
+            deployment_id?: string | null;
+            deployment_status?: components["schemas"]["HostedDeploymentStatus"] | null;
+            /** Operation Name */
+            operation_name?: string | null;
+            /** Accepted Generation */
+            accepted_generation?: number | null;
+            /** Lineage Version */
+            lineage_version: number;
+            /**
+             * Lineage State
+             * @enum {string}
+             */
+            lineage_state: "unaccepted" | "processing" | "succeeded" | "failed" | "terminated";
+            /** Termination Reason */
+            termination_reason?: {
+                [key: string]: unknown;
+            } | null;
+            operation?: components["schemas"]["LongRunningOperation"] | null;
+        };
+        /** V2HostedDeployRequestReadResponse */
+        V2HostedDeployRequestReadResponse: {
             /** Deploy Request Id */
             deploy_request_id: string;
             /**
@@ -1158,171 +1748,73 @@ export interface components {
              * @enum {string}
              */
             request_status: "pending" | "ready" | "processing" | "succeeded" | "failed" | "expired" | "superseded";
-            /** Deployment Id */
-            deployment_id?: string | null;
-            /** Deployment Status */
-            deployment_status?: string | null;
+            lineage_tail?: components["schemas"]["V2HostedDeployRequestLineageTail"] | null;
         };
-        /** V2HostedDeploymentDetailsInfo */
-        V2HostedDeploymentDetailsInfo: {
-            /**
-             * Compute Plan Slug
-             * @enum {string}
-             */
-            compute_plan_slug: "compute_basic" | "compute_performance";
-            /**
-             * Mux Enabled
-             * @default false
-             */
-            mux_enabled: boolean;
-            /**
-             * Telegram Mux Enabled
-             * @default false
-             */
-            telegram_mux_enabled: boolean;
-            /**
-             * Discord Mux Enabled
-             * @default false
-             */
-            discord_mux_enabled: boolean;
-            /**
-             * Whatsapp Mux Enabled
-             * @default false
-             */
-            whatsapp_mux_enabled: boolean;
-            /**
-             * Imessage Mux Enabled
-             * @default false
-             */
-            imessage_mux_enabled: boolean;
-            /**
-             * Kobb Available
-             * @default false
-             */
-            kobb_available: boolean;
-            /** Primary Model */
-            primary_model?: string | null;
-            /** Ai Provider Id */
-            ai_provider_id?: string | null;
-            /**
-             * Ai Provider Auth Kind
-             * @enum {string}
-             */
-            ai_provider_auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
-            /** Ai Provider Bindings */
-            ai_provider_bindings?: {
-                [key: string]: components["schemas"]["V2AiProviderBindingInfo"];
-            };
-            /** Telegram Bot Username */
-            telegram_bot_username?: string | null;
-            /** Telegram Entry Url */
-            telegram_entry_url?: string | null;
-            /** Telegram Provider */
-            telegram_provider?: string | null;
-            /** Discord Guild Id */
-            discord_guild_id?: string | null;
-            /** Public Ports */
-            public_ports?: number[];
-            /**
-             * Runtime
-             * @enum {string}
-             */
-            runtime: "openclaw" | "hermes";
+        /** V2HostedDeploymentCommercialDisplay */
+        V2HostedDeploymentCommercialDisplay: {
+            compute_subscription?: components["schemas"]["V2HostedComputeSubscriptionInfo"] | null;
+            latest_funding_fact?: components["schemas"]["V2HostedCommercialFundingFactInfo"] | null;
+        };
+        /** V2HostedDeploymentReadResponse */
+        V2HostedDeploymentReadResponse: {
+            resource: components["schemas"]["HostedDeploymentResource"];
             /** Clawdi Cloud Environments */
             clawdi_cloud_environments?: {
                 [key: string]: string;
             };
-            /** Vcpu */
-            vcpu?: number | null;
-            /** Ram Gb */
-            ram_gb?: number | null;
-            /** Disk Gb */
-            disk_gb?: number | null;
-        };
-        /** V2HostedDeploymentResponse */
-        V2HostedDeploymentResponse: {
             /**
-             * Id
-             * Format: sqid
-             * @example hdep_K8fJ3pQm
+             * Ai Provider Auth Kinds
+             * @description Authoritative per-runtime AI provider authentication modes from the persisted provider binding.
              */
-            id: string;
+            ai_provider_auth_kinds: {
+                [key: string]: "unmanaged" | "managed" | "api_key" | "codex_oauth";
+            };
+            /** Runtime Ui Endpoint */
+            runtime_ui_endpoint?: (components["schemas"]["V2HermesRuntimeUiEndpointInfo"] | components["schemas"]["V2OpenClawRuntimeUiEndpointInfo"]) | null;
+            files_endpoint?: components["schemas"]["V2HostedFilesEndpointInfo"] | null;
+            accepted_operation?: components["schemas"]["LongRunningOperation"] | null;
+            commercial_display?: components["schemas"]["V2HostedDeploymentCommercialDisplay"];
             /**
-             * User Id
-             * Format: sqid
-             * @example usr_K8fJ3pQm
+             * Current Plan Slug
+             * @description Authoritative current effective compute plan stored on the deployment; present even when no commercial funding fact exists.
              */
-            user_id: string;
-            /** Deploy Request Id */
-            deploy_request_id?: string | null;
-            /** Name */
-            name: string;
-            /** App Id */
-            app_id: string;
-            /** Backend */
-            backend?: string | null;
-            /**
-             * Status
-             * @default unknown
-             */
-            status: string;
-            /** Failure Reason */
-            failure_reason?: string | null;
-            /** Endpoints */
-            endpoints?: string[];
-            /** Native Url */
-            native_url?: string | null;
-            /** Openclaw Control Ui Url */
-            openclaw_control_ui_url?: string | null;
-            /** Hermes Control Ui Url */
-            hermes_control_ui_url?: string | null;
-            config_info?: components["schemas"]["V2HostedDeploymentDetailsInfo"] | null;
-            compute_subscription?: components["schemas"]["V2HostedComputeSubscriptionInfo"] | null;
-            last_funding_event?: components["schemas"]["V2HostedFundingEventInfo"] | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
+            current_plan_slug: string;
             /**
              * Upgrade Available
              * @default false
              */
             upgrade_available: boolean;
+            upgrade_eligibility: components["schemas"]["V2HostedComputeUpgradeEligibility"];
+            compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"] | null;
         };
-        /** V2HostedFundingEventInfo */
-        V2HostedFundingEventInfo: {
-            /**
-             * Type
-             * @constant
-             */
-            type: "compute_subscription_fallback";
-            /**
-             * Funding Source
-             * @enum {string}
-             */
-            funding_source: "stripe" | "wallet";
-            /**
-             * Reason
-             * @enum {string}
-             */
-            reason: "payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced";
-            /**
-             * Occurred At
-             * Format: date-time
-             */
-            occurred_at: string;
-            /** Prior Plan Slug */
-            prior_plan_slug: string;
-            /** Subscription Id */
-            subscription_id: number;
+        /** V2HostedFilesEndpointInfo */
+        V2HostedFilesEndpointInfo: {
+            /** Url */
+            url: string;
+        };
+        /** V2HostedUsageAgentBreakdown */
+        V2HostedUsageAgentBreakdown: {
+            /** Agent Id */
+            agent_id: string | null;
+            /** Agent Name */
+            agent_name: string | null;
+            /** Agent Type */
+            agent_type?: ("openclaw" | "hermes") | null;
+            /** Agent Deleted */
+            agent_deleted?: boolean | null;
+            /** Amount Usd */
+            amount_usd: string;
+            /** Requests */
+            requests: number;
+            /** By Model */
+            by_model?: components["schemas"]["V2HostedUsageModelBreakdown"][] | null;
         };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {
             /** Date */
             date: string;
-            /** Credits */
-            credits: number;
+            /** Amount Usd */
+            amount_usd: string;
         };
         /** V2HostedUsageModelBreakdown */
         V2HostedUsageModelBreakdown: {
@@ -1330,8 +1822,8 @@ export interface components {
             model: string;
             /** Provider */
             provider?: string | null;
-            /** Credits */
-            credits: number;
+            /** Amount Usd */
+            amount_usd: string;
             /** Requests */
             requests: number;
         };
@@ -1341,14 +1833,129 @@ export interface components {
             period_start: string;
             /** Period End */
             period_end: string;
-            /** Total Credits */
-            total_credits: number;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "complete" | "partial" | "unavailable";
+            /** Unavailable Sections */
+            unavailable_sections: ("totals" | "by_agent" | "by_model" | "by_day")[];
+            /** Total Usd */
+            total_usd: string | null;
             /** Total Requests */
-            total_requests: number;
+            total_requests: number | null;
+            /** By Agent */
+            by_agent?: components["schemas"]["V2HostedUsageAgentBreakdown"][];
             /** By Model */
             by_model: components["schemas"]["V2HostedUsageModelBreakdown"][];
             /** By Day */
             by_day: components["schemas"]["V2HostedUsageDay"][];
+        };
+        /** V2ManagedModelCapabilities */
+        V2ManagedModelCapabilities: {
+            /**
+             * Context Window
+             * @description Baseline context window available on the managed surface.
+             */
+            context_window: number;
+            /**
+             * Max Context Window
+             * @description Optional conditional upper bound. Clients must qualify this value instead of presenting it as guaranteed capacity.
+             */
+            max_context_window: number | null;
+            /** Max Input Tokens */
+            max_input_tokens: number;
+            /** Max Output Tokens */
+            max_output_tokens: number | null;
+            /** Input Modalities */
+            input_modalities: ("text" | "image")[];
+            /** Supports Vision */
+            supports_vision: boolean | null;
+            /** Supports Reasoning */
+            supports_reasoning: boolean | null;
+            /** Supports Tools */
+            supports_tools: boolean | null;
+        };
+        /** V2ManagedModelCatalogItem */
+        V2ManagedModelCatalogItem: {
+            /** Id */
+            id: string;
+            /**
+             * Display Name
+             * @description Authoritative full display name copied verbatim from the bundled Hosted model catalog.
+             */
+            display_name: string;
+            /**
+             * Provider Id
+             * @description Canonical provider identifier from the bundled Hosted model catalog.
+             */
+            provider_id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Is Featured */
+            is_featured: boolean;
+            /**
+             * Description
+             * @description Authoritative single-sentence choice guidance from the atomic Hosted setting.
+             */
+            description: string | null;
+            /** @description Factual metadata from the bundled Hosted model catalog. */
+            capabilities: components["schemas"]["V2ManagedModelCapabilities"];
+        };
+        /** V2ManagedModelCatalogResponse */
+        V2ManagedModelCatalogResponse: {
+            /** Models */
+            models: components["schemas"]["V2ManagedModelCatalogItem"][];
+        };
+        /** V2OpenClawRuntimeUiCredentials */
+        V2OpenClawRuntimeUiCredentials: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            runtime: "openclaw";
+            /** Url */
+            url: string;
+            /** Deployment Resource Version */
+            deployment_resource_version: string;
+            /**
+             * Auth Mode
+             * @default openclaw_token
+             * @constant
+             */
+            auth_mode: "openclaw_token";
+            /** Token */
+            token: string;
+            /** Handoff Url */
+            handoff_url: string;
+        };
+        /** V2OpenClawRuntimeUiEndpointInfo */
+        V2OpenClawRuntimeUiEndpointInfo: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            runtime: "openclaw";
+            /**
+             * Role
+             * @default control_ui
+             * @constant
+             */
+            role: "control_ui";
+            /** Url */
+            url: string;
+            /**
+             * Auth Mode
+             * @default openclaw_token
+             * @constant
+             */
+            auth_mode: "openclaw_token";
+            /**
+             * Browser Mode
+             * @default embedded_and_top_level
+             * @constant
+             */
+            browser_mode: "embedded_and_top_level";
         };
         /** V2PlanResponse */
         V2PlanResponse: {
@@ -1358,23 +1965,21 @@ export interface components {
             name: string;
             /** Price Cents */
             price_cents: number;
-            /** Points Per Usd */
-            points_per_usd: number;
-            /**
-             * Signup Grant Credits
-             * @default 0
-             */
-            signup_grant_credits: number;
             /** Vcpu */
             vcpu: number;
             /** Ram Gb */
             ram_gb: number;
             /** Disk Size */
             disk_size: number;
-            /** Instance Type */
-            instance_type?: string | null;
             /** Offers */
             offers?: components["schemas"]["V2BillingOfferResponse"][];
+            /**
+             * Signup Grant Usd
+             * @default 0
+             */
+            signup_grant_usd: string;
+            /** Instance Type */
+            instance_type?: string | null;
         };
         /** V2PortalResponse */
         V2PortalResponse: {
@@ -1395,41 +2000,73 @@ export interface components {
             /** Amount Due Usd */
             amount_due_usd?: number | null;
         };
-        /** V2RebindAgentAiProviderRequest */
-        V2RebindAgentAiProviderRequest: {
-            /** Primary Model */
-            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
-            /** Ai Provider Id */
-            ai_provider_id?: string | null;
-            /** Provider Ids */
-            provider_ids?: string[];
+        /** V2SubscriptionActivationResponse */
+        V2SubscriptionActivationResponse: {
             /**
-             * Ai Provider Auth Kind
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            ai_provider_auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
-            /** Ai Provider Bootstrap */
-            ai_provider_bootstrap?: {
-                [key: string]: unknown;
-            } | null;
+            flow_type: "subscription_activation";
+            /**
+             * Funding Source
+             * @enum {string}
+             */
+            funding_source: "stripe" | "wallet";
+            /** Action Url */
+            action_url: null;
+            /**
+             * Checkout Url
+             * @constant
+             */
+            checkout_url: "";
+            /** Client Secret */
+            client_secret: null;
+            /**
+             * Subscription Id
+             * Format: sqid
+             * @example csub_K8fJ3pQm
+             */
+            subscription_id: string;
+            /** Invoice Id */
+            invoice_id: string | null;
+            /** Deployment Id */
+            deployment_id: string | null;
+            /** Deployment Name */
+            deployment_name: string | null;
+            /** Metadata Generation */
+            metadata_generation: number | null;
+            /** Deploy Request Id */
+            deploy_request_id: string | null;
+            /** Debited Usd */
+            debited_usd: string | null;
+            /** Balance After Usd */
+            balance_after_usd: string | null;
+            /** Current Period Start */
+            current_period_start: string | null;
+            /** Current Period End */
+            current_period_end: string | null;
+            /** Entitled Until */
+            entitled_until: string | null;
         };
-        /** V2SetAgentEnabledRequest */
-        V2SetAgentEnabledRequest: {
-            /** Enabled */
-            enabled: boolean;
+        /** V2UpdateDeploymentRequest */
+        V2UpdateDeploymentRequest: {
+            /** Runtime */
+            runtime?: ("openclaw" | "hermes") | null;
             /** Language */
             language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
             timezone?: string | null;
-        };
-        /** V2UpdateDeploymentRequest */
-        V2UpdateDeploymentRequest: {
-            /** Assistant Name */
-            assistant_name?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Runtime */
-            runtime?: ("openclaw" | "hermes") | null;
+            primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
+            /** Ai Provider Id */
+            ai_provider_id?: string | null;
+            /** Provider Ids */
+            provider_ids?: string[] | null;
+            /** Ai Provider Auth Kind */
+            ai_provider_auth_kind?: ("unmanaged" | "managed" | "api_key" | "codex_oauth") | null;
+            /** Ai Provider Bootstrap */
+            ai_provider_bootstrap?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** V2WalletAutoReloadActionResponse */
         V2WalletAutoReloadActionResponse: {
@@ -1444,12 +2081,10 @@ export interface components {
         };
         /** V2WalletAutoReloadRequest */
         V2WalletAutoReloadRequest: {
-            /** Payment Mode */
-            payment_mode?: "card" | null;
             /** Auto Reload Enabled */
             auto_reload_enabled?: boolean | null;
-            /** Auto Reload Threshold Credits */
-            auto_reload_threshold_credits?: number | string | null;
+            /** Auto Reload Threshold Usd */
+            auto_reload_threshold_usd?: number | string | null;
             /** Auto Reload Amount Cents */
             auto_reload_amount_cents?: number | null;
             /** Auto Reload Monthly Cap Cents */
@@ -1457,18 +2092,21 @@ export interface components {
         };
         /** V2WalletLedgerItemResponse */
         V2WalletLedgerItemResponse: {
-            /** Id */
-            id: string;
             /** Operation */
             operation: string;
-            /** Request Id */
-            request_id: string;
-            /** Credits Amount */
-            credits_amount: number;
+            /** Description */
+            description: string;
+            /** Amount Usd */
+            amount_usd: string;
             /** Status */
             status: string;
-            /** Notes */
-            notes?: string | null;
+            /**
+             * Payment Reference
+             * @description Reference for matching a card payment to this wallet entry
+             */
+            payment_reference: string | null;
+            /** Receipt Url */
+            receipt_url?: string | null;
             /** Created At */
             created_at: string;
             /** Applied At */
@@ -1480,33 +2118,36 @@ export interface components {
             items: components["schemas"]["V2WalletLedgerItemResponse"][];
             /** Has More */
             has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** V2WalletResponse */
         V2WalletResponse: {
-            /** Balance Credits */
-            balance_credits: number;
-            /** Overdraft Credits */
-            overdraft_credits: number;
-            /** Balance Snapshot At */
-            balance_snapshot_at?: string | null;
-            /**
-             * Payment Mode
-             * @constant
-             */
-            payment_mode: "card";
+            /** Balance Usd */
+            balance_usd: string;
             /** X402 Enabled */
             x402_enabled: boolean;
             /** Auto Reload Enabled */
             auto_reload_enabled: boolean;
-            /** Auto Reload Threshold Credits */
-            auto_reload_threshold_credits: number;
+            /** Auto Reload Threshold Usd */
+            auto_reload_threshold_usd: string;
             /** Auto Reload Amount Cents */
             auto_reload_amount_cents: number;
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents: number;
+            /** Auto Reload Monthly Spent Cents */
+            auto_reload_monthly_spent_cents: number;
+            /**
+             * Auto Reload Period End
+             * Format: date-time
+             */
+            auto_reload_period_end: string;
+            /**
+             * Auto Reload Status
+             * @enum {string}
+             */
+            auto_reload_status: "off" | "active" | "paused_monthly_limit" | "payment_action_required" | "payment_failed" | "blocked_refund";
             auto_reload_action?: components["schemas"]["V2WalletAutoReloadActionResponse"] | null;
-            /** Points Per Usd */
-            points_per_usd: number;
         };
         /** V2WalletTopupRequest */
         V2WalletTopupRequest: {
@@ -1525,8 +2166,97 @@ export interface components {
             payment_intent_id?: string | null;
             /** Client Secret */
             client_secret?: string | null;
-            /** Credits Added */
-            credits_added?: number | null;
+            /** Amount Usd */
+            amount_usd?: string | null;
+        };
+        /** V2WorkspaceSkillCapability */
+        V2WorkspaceSkillCapability: {
+            /** Available */
+            available: boolean;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "available" | "rollout_not_enabled" | "upgrade_not_observed";
+        };
+        /** V2WorkspaceSkillDesiredItem */
+        V2WorkspaceSkillDesiredItem: {
+            /** Skill Key */
+            skill_key: string;
+            source: components["schemas"]["V2WorkspaceSkillSource"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "managed" | "requested" | "failed";
+            /** Failure Message */
+            failure_message?: string | null;
+        };
+        /** V2WorkspaceSkillInstallRequest */
+        V2WorkspaceSkillInstallRequest: {
+            /** Repo */
+            repo: string;
+            /** Path */
+            path?: string | null;
+        };
+        /** V2WorkspaceSkillListResponse */
+        V2WorkspaceSkillListResponse: {
+            /**
+             * Deployment Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            deployment_id: string;
+            /** Deployment Resource Version */
+            deployment_resource_version: string;
+            /** Manifest Generation */
+            manifest_generation: number;
+            capability: components["schemas"]["V2WorkspaceSkillCapability"];
+            /** Items */
+            items?: components["schemas"]["V2WorkspaceSkillDesiredItem"][];
+        };
+        /** V2WorkspaceSkillMutationResponse */
+        V2WorkspaceSkillMutationResponse: {
+            /**
+             * Deployment Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            deployment_id: string;
+            /** Deployment Resource Version */
+            deployment_resource_version: string;
+            /** Manifest Generation */
+            manifest_generation: number;
+            /** Skill Key */
+            skill_key: string;
+            /**
+             * Desired State
+             * @enum {string}
+             */
+            desired_state: "present" | "absent";
+            source?: components["schemas"]["V2WorkspaceSkillSource"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "managed" | "requested" | "failed";
+            /** Failure Message */
+            failure_message?: string | null;
+        };
+        /** V2WorkspaceSkillSource */
+        V2WorkspaceSkillSource: {
+            /**
+             * Type
+             * @default github
+             * @constant
+             */
+            type: "github";
+            /** Url */
+            url: string;
+            /** Path */
+            path: string;
+            /** Commit */
+            commit: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1590,7 +2320,7 @@ export interface operations {
             };
         };
     };
-    list_v2_deployments_v2_deployments_get: {
+    get_v2_managed_model_catalog_v2_ai_providers_managed_models_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1605,7 +2335,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2HostedDeploymentResponse"][];
+                    "application/json": components["schemas"]["V2ManagedModelCatalogResponse"];
+                };
+            };
+        };
+    };
+    list_v2_deployments_v2_deployments_get: {
+        parameters: {
+            query?: {
+                eventStreamHandoff?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2HostedDeploymentReadResponse"][] | components["schemas"]["EventStreamSnapshotHandoff"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1613,8 +2374,8 @@ export interface operations {
     create_v2_deployment_v2_deployments_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
+            header: {
+                "Idempotency-Key": string;
             };
             path?: never;
             cookie?: never;
@@ -1625,13 +2386,39 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Successful Response */
-            200: {
+            /** @description The declarative deployment creation was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    /** @description Owner-scoped status URL for the deployment request. */
+                    "Content-Location"?: string;
+                    /** @description Minimum seconds before polling the operation. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
             /** @description Validation Error */
@@ -1662,7 +2449,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2HostedDeployRequestStatusResponse"];
+                    "application/json": components["schemas"]["V2HostedDeployRequestReadResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1693,7 +2480,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
+                    "application/json": components["schemas"]["V2HostedDeploymentReadResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1710,21 +2497,68 @@ export interface operations {
     delete_v2_deployment_v2_deployments__deployment_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
             path: {
                 deployment_id: string;
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["V2DeleteDeploymentRequest"];
+            };
+        };
         responses: {
-            /** @description Successful Response */
+            /** @description The deployment is definitively absent for the caller in both Hosted and Cloud. Repeating the delete returns the same response. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2DeploymentDeleteResponse"];
+                    "application/json": components["schemas"]["V2DeleteDeploymentConvergedResponse"];
+                };
+            };
+            /** @description The declarative spec change was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
             /** @description Validation Error */
@@ -1736,12 +2570,35 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description Cloud ownership or cleanup could not be confirmed; no converged absence is claimed. */
+            503: {
+                headers: {
+                    /** @description Seconds before retrying Cloud convergence. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
         };
     };
     update_v2_deployment_v2_deployments__deployment_id__patch: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
             path: {
                 deployment_id: string;
             };
@@ -1753,13 +2610,44 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Successful Response */
-            200: {
+            /** @description The declarative spec change was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
             /** @description Validation Error */
@@ -1771,76 +2659,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-        };
-    };
-    set_v2_agent_enabled_v2_deployments__deployment_id__agents__agent_type__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                agent_type: "openclaw" | "hermes";
-                deployment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["V2SetAgentEnabledRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
+            /** @description A strong If-Match header is required. */
+            428: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rebind_v2_agent_ai_provider_v2_deployments__deployment_id__agents__agent_type__ai_provider_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                agent_type: "openclaw" | "hermes";
-                deployment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["V2RebindAgentAiProviderRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
         };
@@ -1876,10 +2701,86 @@ export interface operations {
             };
         };
     };
-    create_v2_deployment_runtime_ui_redemption_v2_deployments__deployment_id__runtime_ui_redemption_post: {
+    reset_v2_runtime_ui_access_v2_deployments__deployment_id__runtime_ui_access_reset_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The declarative spec change was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+        };
+    };
+    create_v2_runtime_ui_credentials_v2_deployments__deployment_id__runtime_ui_credentials_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
             path: {
                 deployment_id: string;
             };
@@ -1893,7 +2794,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2DeploymentRuntimeUiRedemptionResponse"];
+                    "application/json": components["schemas"]["V2HermesRuntimeUiCredentials"] | components["schemas"]["V2OpenClawRuntimeUiCredentials"];
                 };
             };
             /** @description Validation Error */
@@ -1910,7 +2811,10 @@ export interface operations {
     restart_v2_deployment_v2_deployments__deployment_id__restart_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
             path: {
                 deployment_id: string;
             };
@@ -1918,13 +2822,44 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
-            200: {
+            /** @description The declarative spec change was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2DeploymentLifecycleResponse"];
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
             /** @description Validation Error */
@@ -1934,6 +2869,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
         };
@@ -1941,7 +2885,10 @@ export interface operations {
     start_v2_deployment_v2_deployments__deployment_id__start_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
             path: {
                 deployment_id: string;
             };
@@ -1949,13 +2896,44 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
-            200: {
+            /** @description The declarative spec change was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2DeploymentLifecycleResponse"];
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
             /** @description Validation Error */
@@ -1967,9 +2945,92 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
         };
     };
     stop_v2_deployment_v2_deployments__deployment_id__stop_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The declarative spec change was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+        };
+    };
+    list_v2_workspace_skills_v2_deployments__deployment_id__workspace_skills_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1986,7 +3047,111 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2DeploymentLifecycleResponse"];
+                    "application/json": components["schemas"]["V2WorkspaceSkillListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WorkspaceSkillInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WorkspaceSkillMutationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uninstall_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__delete: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
+            path: {
+                deployment_id: string;
+                skill_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WorkspaceSkillMutationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_operation_v2_operations__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
                 };
             };
             /** @description Validation Error */
@@ -2003,7 +3168,9 @@ export interface operations {
     checkout_v2_subscription_v2_subscription_checkout_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2015,6 +3182,15 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2CheckoutResponse"];
+                };
+            };
+            /** @description Deployment desired state accepted */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2134,7 +3310,9 @@ export interface operations {
     change_v2_subscription_plan_v2_subscription_plan_change_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2145,12 +3323,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2ComputePlanChangeResponse"];
+                    "application/json": components["schemas"]["LongRunningOperation"];
                 };
             };
             /** @description Validation Error */
@@ -2318,7 +3496,10 @@ export interface operations {
     };
     hosted_v2_usage_summary_v2_usage_get: {
         parameters: {
-            query?: never;
+            query?: {
+                days?: number | null;
+                agent_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2332,6 +3513,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedUsageSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2393,6 +3583,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -2423,8 +3614,8 @@ export interface operations {
     create_wallet_topup_v2_wallet_topup_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
+            header: {
+                "Idempotency-Key": string;
             };
             path?: never;
             cookie?: never;

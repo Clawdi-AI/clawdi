@@ -13,3 +13,17 @@ export const MEMORY_CATEGORY_COLORS: Record<string, string> = {
 	decision: "border-transparent bg-warning-muted text-warning-muted-foreground",
 	context: "border-transparent bg-primary/10 text-primary",
 };
+
+/**
+ * Content is a Memory's user-facing identity. Keep the same concise label in
+ * cards, breadcrumbs, and assistive text instead of falling back to an
+ * internal database id.
+ */
+export function memoryDisplayName(content: string, maxLength = 80): string {
+	const trimmed = content.trim();
+	if (!trimmed) return "Memory";
+	const firstThought = trimmed.split(/[.!?\n]/, 1)[0]?.trim() || trimmed;
+	const compact = firstThought.replace(/\s+/g, " ");
+	if (compact.length <= maxLength) return compact;
+	return `${compact.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+}

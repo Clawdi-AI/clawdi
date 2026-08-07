@@ -1,11 +1,13 @@
 import { describe, expect, mock, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
-import type { WalletTopupResult } from "@/hosted/billing/contracts";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import type { WalletLedgerEntry, WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	handleTopupStartResult,
-	topUpAmountCentsForCreditShortfall,
+	topUpAmountCentsForUsdShortfall,
 	validTopUpAmountCents,
+	waitForWalletTopupCredit,
+	walletTopupCreditIsApplied,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
 
 function result(overrides: Partial<WalletTopupResult>): WalletTopupResult {
@@ -14,7 +16,7 @@ function result(overrides: Partial<WalletTopupResult>): WalletTopupResult {
 		flow_type: null,
 		payment_intent_id: null,
 		client_secret: null,
-		credits_added: null,
+		amount_usd: null,
 		...overrides,
 	};
 }
@@ -28,34 +30,42 @@ function queryClientWithWalletActivity(): QueryClient {
 	});
 	qc.setQueryData(billingKeys.deployments, []);
 	qc.setQueryData(billingKeys.billingHistory(20), { pages: [] });
-	qc.setQueryData(["agents"], []);
+	qc.setQueryData(["get", "/v1/agents"], []);
 	return qc;
+}
+
+function setupControls(queryClient: QueryClient) {
+	const resetAttempt = mock(() => {});
+	const closeDialog = mock(() => {});
+	const startPayment = mock((_clientSecret: string) => {});
+	const toastInfo = mock((_message: string, _options: { description: string }) => {});
+	const toastError = mock((_message: string, _options: { description: string }) => {});
+	const onComplete = mock((_status: "succeeded" | "processing") => {});
+	return {
+		queryClient,
+		resetAttempt,
+		closeDialog,
+		startPayment,
+		toastInfo,
+		toastError,
+		onComplete,
+	};
 }
 
 describe("handleTopupStartResult", () => {
 	test("treats synchronous success as terminal success and refreshes wallet activity", () => {
 		const qc = queryClientWithWalletActivity();
-		const resetAttempt = mock(() => {});
-		const closeDialog = mock(() => {});
-		const startPayment = mock((_clientSecret: string) => {});
-		const toastSuccess = mock((_message: string, _options: { description: string }) => {});
-		const toastError = mock((_message: string, _options: { description: string }) => {});
+		const setup = setupControls(qc);
 
 		handleTopupStartResult(
 			result({
 				status: "succeeded",
 				flow_type: "mock",
+				payment_intent_id: "pi_sync_success",
 				client_secret: null,
-				credits_added: 2500,
+				amount_usd: "2.50",
 			}),
-			{
-				queryClient: qc,
-				resetAttempt,
-				closeDialog,
-				startPayment,
-				toastSuccess,
-				toastError,
-			},
+			setup,
 		);
 
 		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(true);
@@ -66,23 +76,30 @@ describe("handleTopupStartResult", () => {
 		).toBe(true);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(true);
-		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
-		expect(resetAttempt).toHaveBeenCalledTimes(1);
-		expect(closeDialog).toHaveBeenCalledTimes(1);
-		expect(toastSuccess).toHaveBeenCalledWith("Top-up complete", {
-			description: "Your balance and any open wallet invoice will update automatically.",
+		expect(qc.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
+		expect(setup.resetAttempt).toHaveBeenCalledTimes(1);
+		expect(setup.closeDialog).toHaveBeenCalledTimes(1);
+		expect(setup.toastInfo).toHaveBeenCalledWith("Payment accepted", {
+			description: "We're confirming your Wallet credit now.",
 		});
-		expect(toastError).not.toHaveBeenCalled();
-		expect(startPayment).not.toHaveBeenCalled();
+		expect(setup.toastError).not.toHaveBeenCalled();
+		expect(setup.startPayment).not.toHaveBeenCalled();
+		expect(setup.onComplete).toHaveBeenCalledWith("succeeded");
 	});
 
-	test("keeps payment intent responses on the card payment step", () => {
+	test("keeps payment intents on the card step and refreshes only a visible ledger", async () => {
 		const qc = queryClientWithWalletActivity();
-		const resetAttempt = mock(() => {});
-		const closeDialog = mock(() => {});
-		const startPayment = mock((_clientSecret: string) => {});
-		const toastSuccess = mock((_message: string, _options: { description: string }) => {});
-		const toastError = mock((_message: string, _options: { description: string }) => {});
+		const setup = setupControls(qc);
+		let ledgerCalls = 0;
+		const ledgerObserver = new QueryObserver(qc, {
+			queryKey: billingKeys.ledger(50),
+			queryFn: async () => {
+				ledgerCalls += 1;
+				return { items: [{ id: "pending_topup" }] };
+			},
+			staleTime: Number.POSITIVE_INFINITY,
+		});
+		const unsubscribe = ledgerObserver.subscribe(() => {});
 
 		handleTopupStartResult(
 			result({
@@ -90,42 +107,88 @@ describe("handleTopupStartResult", () => {
 				flow_type: "payment_intent",
 				payment_intent_id: "pi_123",
 				client_secret: "pi_123_secret_456",
-				// The real backend response ALWAYS carries credits_added (the
-				// credits this top-up will add once paid). Regression guard: this
-				// used to be misread as "already succeeded", closing the dialog
-				// before the card form ever showed.
-				credits_added: 25_000,
+				// The quoted USD amount does not mean the PaymentIntent settled.
+				amount_usd: "25",
 			}),
-			{
-				queryClient: qc,
-				resetAttempt,
-				closeDialog,
-				startPayment,
-				toastSuccess,
-				toastError,
-			},
+			setup,
 		);
+		await Promise.resolve();
 
-		expect(startPayment).toHaveBeenCalledWith("pi_123_secret_456");
-		expect(closeDialog).not.toHaveBeenCalled();
-		expect(resetAttempt).not.toHaveBeenCalled();
-		expect(toastSuccess).not.toHaveBeenCalled();
-		expect(toastError).not.toHaveBeenCalled();
+		expect(setup.startPayment).toHaveBeenCalledWith("pi_123_secret_456");
+		expect(ledgerCalls).toBe(1);
+		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(false);
+		expect(qc.getQueryState(billingKeys.ledger(50))?.isInvalidated).toBe(false);
+		expect(
+			qc.getQueryState(billingKeys.subscriptionCreateQuote("compute_basic", 1, "wallet"))
+				?.isInvalidated,
+		).toBe(false);
+		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
+		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(false);
+		expect(setup.closeDialog).not.toHaveBeenCalled();
+		expect(setup.resetAttempt).not.toHaveBeenCalled();
+		expect(setup.toastInfo).not.toHaveBeenCalled();
+		expect(setup.toastError).not.toHaveBeenCalled();
+		unsubscribe();
 	});
 });
 
-describe("topUpAmountCentsForCreditShortfall", () => {
-	test("rounds up to whole dollars and clamps to the allowed top-up range", () => {
-		expect(topUpAmountCentsForCreditShortfall(4_000, 1_000)).toBe(1_000);
-		expect(topUpAmountCentsForCreditShortfall(14_000, 1_000)).toBe(1_400);
-		expect(topUpAmountCentsForCreditShortfall(25_001, 1_000)).toBe(2_600);
-		expect(topUpAmountCentsForCreditShortfall(2_500_000, 1_000)).toBe(200_000);
+describe("walletTopupCreditIsApplied", () => {
+	const entry: WalletLedgerEntry = {
+		operation: "topup",
+		description: "Card top-up",
+		amount_usd: "25.00",
+		status: "applied",
+		payment_reference: "pi_previous",
+		receipt_url: null,
+		created_at: "2026-07-27T12:00:00Z",
+		applied_at: "2026-07-27T12:00:01Z",
+	};
+
+	test("confirms only the exact applied top-up payment reference", () => {
+		expect(walletTopupCreditIsApplied("pi_current", [entry])).toBe(false);
+		expect(walletTopupCreditIsApplied(null, [{ ...entry, payment_reference: null }])).toBe(false);
+		expect(
+			walletTopupCreditIsApplied("pi_current", [
+				{ ...entry, payment_reference: "pi_current", status: "pending" },
+			]),
+		).toBe(false);
+		expect(
+			walletTopupCreditIsApplied("pi_current", [
+				{ ...entry, payment_reference: "pi_current", operation: "x402" },
+			]),
+		).toBe(false);
+		expect(
+			walletTopupCreditIsApplied("pi_current", [
+				{ ...entry, payment_reference: "pi_current", operation: "invoice" },
+			]),
+		).toBe(false);
+		expect(
+			walletTopupCreditIsApplied("pi_current", [{ ...entry, payment_reference: "pi_current" }]),
+		).toBe(true);
 	});
 
-	test("ignores missing or invalid conversion inputs", () => {
-		expect(topUpAmountCentsForCreditShortfall(null, 1_000)).toBeNull();
-		expect(topUpAmountCentsForCreditShortfall(14_000, 0)).toBeNull();
-		expect(topUpAmountCentsForCreditShortfall(Number.NaN, 1_000)).toBeNull();
+	test("reads the paginated Activity cache used by Wallet", async () => {
+		const qc = new QueryClient();
+		qc.setQueryData(billingKeys.ledgerPages(50), {
+			pages: [{ items: [{ ...entry, payment_reference: "pi_current" }] }],
+			pageParams: [null],
+		});
+
+		expect(await waitForWalletTopupCredit(qc, "pi_current")).toBe(true);
+	});
+});
+
+describe("topUpAmountCentsForUsdShortfall", () => {
+	test("rounds up to whole dollars and clamps to the allowed top-up range", () => {
+		expect(topUpAmountCentsForUsdShortfall(4)).toBe(1_000);
+		expect(topUpAmountCentsForUsdShortfall(14)).toBe(1_400);
+		expect(topUpAmountCentsForUsdShortfall(25.001)).toBe(2_600);
+		expect(topUpAmountCentsForUsdShortfall(2_500)).toBe(200_000);
+	});
+
+	test("ignores missing or invalid USD inputs", () => {
+		expect(topUpAmountCentsForUsdShortfall(null)).toBeNull();
+		expect(topUpAmountCentsForUsdShortfall(Number.NaN)).toBeNull();
 	});
 });
 

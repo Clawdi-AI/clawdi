@@ -3,84 +3,47 @@
 import {
 	keepPreviousData,
 	type QueryClient,
+	replaceEqualDeep,
 	type UseQueryOptions,
 	useInfiniteQuery,
 	useMutation,
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
-	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
-	ComputePlanChangeResponse,
+	ComputePlanChangeResult,
 	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
-	DeployRequest,
+	HostedComputeSubscription,
 	HostedDeployment,
-	PortalRequest,
-	WalletAutoReloadRequest,
-	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
-	type SubscriptionCreateOutcomeView,
 	type SubscriptionCreateQuoteView,
-	type SubscriptionCreateRequestView,
 	type SubscriptionCreateSelection,
-	subscriptionCreateOutcome,
 	subscriptionCreateQuoteRequest,
 	subscriptionCreateQuoteView,
-	subscriptionCreateRequest,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
-import { deploymentRefetchInterval } from "@/hosted/deployment-status";
+import {
+	deploymentPollingState,
+	deploymentStatusFromResource,
+	isTransitionalStatus,
+	type SettlingTracker,
+} from "@/hosted/deployment-status";
+import { runtimeEnvironmentId } from "@/hosted/runtimes";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
 
-type CreateDeploymentMutationVariables = {
-	body: DeployRequest;
-	idempotencyKey: string;
-};
-
-const CHECKOUT_RETURN_DEPLOYMENT_PARAMS = ["deployment_id", "upgrade_deployment_id"] as const;
-const CHECKOUT_RETURN_MARKER_PARAMS = [
-	"session_id",
-	"checkout_session_id",
-	...CHECKOUT_RETURN_DEPLOYMENT_PARAMS,
-	"mockCheckout",
-] as const;
-
-export function checkoutReturnMarker(searchStr: string): string | null {
-	const params = new URLSearchParams(searchStr);
-	const values = CHECKOUT_RETURN_MARKER_PARAMS.flatMap((key) => {
-		const value = params.get(key);
-		return value ? [`${key}=${value}`] : [];
-	});
-	if (checkoutReturnWasCanceled(searchStr)) values.push("checkout=cancel");
-	return values.length > 0 ? values.join("&") : null;
-}
-
-export function checkoutReturnWasCanceled(searchStr: string): boolean {
-	return new URLSearchParams(searchStr).get("checkout") === "cancel";
-}
-
-export function checkoutReturnDeploymentId(searchStr: string): string | null {
-	const params = new URLSearchParams(searchStr);
-	for (const key of CHECKOUT_RETURN_DEPLOYMENT_PARAMS) {
-		const value = params.get(key);
-		if (value) return value;
-	}
-	return null;
-}
-
 function subscriptionFromAction(
-	previous: HostedDeployment["compute_subscription"] | null | undefined,
+	previous: HostedComputeSubscription | null | undefined,
 	next: ComputeSubscriptionActionResult,
-): NonNullable<HostedDeployment["compute_subscription"]> {
+): HostedComputeSubscription {
 	const paymentState =
 		next.status === "past_due"
 			? (previous?.payment_state ?? "past_due")
@@ -114,11 +77,17 @@ function patchDeploymentSubscription(
 	if (!deployments) return deployments;
 	let patched = false;
 	const updated = deployments.map((deployment) => {
-		if (deployment.id !== deploymentId) return deployment;
+		if (deployment.resource.id !== deploymentId) return deployment;
 		patched = true;
 		return {
 			...deployment,
-			compute_subscription: subscriptionFromAction(deployment.compute_subscription, next),
+			commercial_display: {
+				...(deployment.commercial_display ?? {}),
+				compute_subscription: subscriptionFromAction(
+					deployment.commercial_display?.compute_subscription,
+					next,
+				),
+			},
 		};
 	});
 	return patched ? updated : deployments;
@@ -155,24 +124,17 @@ export function useHostedUser() {
 	});
 }
 
-// ── Wallet ───────────────────────────────────────────────────────────────────
-
-/**
- * Wallet balance + auto-reload config. The balance is a sub2api snapshot, so
- * it can lag a few seconds — poll every 30s to keep it reasonably fresh while
- * the page is open. `billingQueryRetry` keeps deterministic 4xx failures
- * surfacing immediately while still absorbing transient 5xx / network blips
- * with up to two retries.
- */
-export function useWallet({ enabled = true }: { enabled?: boolean } = {}) {
+export function useManagedModelCatalog({ enabled = true }: { enabled?: boolean } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
-		queryKey: billingKeys.wallet,
-		queryFn: () => client.getWallet(),
-		enabled: isDeployApiConfigured() && enabled,
-		refetchInterval: 30_000,
+		queryKey: billingKeys.managedModelCatalog,
+		queryFn: () => client.getManagedModelCatalog(),
+		staleTime: 5 * 60_000,
+		enabled,
 	});
 }
+
+// ── Wallet ───────────────────────────────────────────────────────────────────
 
 export function useWalletLedger(limit = 50) {
 	const client = useBillingClient();
@@ -185,30 +147,16 @@ export function useWalletLedger(limit = 50) {
 	});
 }
 
-export function useTopUp() {
+export function useWalletLedgerPages(limit = 50) {
 	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ body, idempotencyKey }: { body: WalletTopupRequest; idempotencyKey: string }) =>
-			client.topUp(body, idempotencyKey),
-		onSuccess: () => {
-			// Refetch both balance and activity so a fresh top-up never shows a
-			// stale balance or an empty ledger.
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: ["billing", "ledger"] });
-		},
-	});
-}
-
-export function useSetAutoReload() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (body: WalletAutoReloadRequest) => client.setAutoReload(body),
-		onSuccess: (next) => {
-			qc.setQueryData(billingKeys.wallet, next);
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-		},
+	return useInfiniteQuery({
+		queryKey: billingKeys.ledgerPages(limit),
+		queryFn: ({ pageParam }) => client.getLedger(limit, pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: (lastPage) =>
+			lastPage.has_more && lastPage.next_cursor ? lastPage.next_cursor : undefined,
+		enabled: isDeployApiConfigured(),
+		retry: billingQueryRetry,
 	});
 }
 
@@ -220,25 +168,6 @@ export function usePlans() {
 		queryKey: billingKeys.plans,
 		queryFn: () => client.getPlans(),
 		staleTime: 5 * 60_000,
-	});
-}
-
-export function useCreateSubscription() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation<SubscriptionCreateOutcomeView, Error, SubscriptionCreateRequestView>({
-		mutationFn: async (request) => {
-			const apiRequest = subscriptionCreateRequest(request);
-			return subscriptionCreateOutcome(
-				await client.checkout(apiRequest.body, apiRequest.idempotencyKey),
-			);
-		},
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: ["billing", "history"] });
-			qc.invalidateQueries({ queryKey: ["agents"] });
-		},
 	});
 }
 
@@ -274,15 +203,28 @@ export function useQuotePlanChange() {
 	});
 }
 
-export function useChangePlan() {
+export function useChangePlan(onAccepted?: (operationName: string) => void) {
 	const client = useBillingClient();
 	const qc = useQueryClient();
-	return useMutation<ComputePlanChangeResponse, Error, ComputePlanChangeRequest>({
-		mutationFn: (body) => client.changePlan(body),
+	return useMutation<ComputePlanChangeResult, Error, ComputePlanChangeRequest>({
+		mutationFn: (body) => client.changePlan(body, onAccepted),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: ["billing", "history"] });
+			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
+		},
+	});
+}
+
+export function useCheckPlanChange() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation<ComputePlanChangeResult, Error, string>({
+		mutationFn: (operationName) => client.checkPlanChange(operationName),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: billingKeys.wallet });
+			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
 		},
 	});
 }
@@ -295,20 +237,6 @@ export function useCancelSubscription() {
 		onSuccess: (next, body) => {
 			applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
 		},
-	});
-}
-
-export function usePortal() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (body: PortalRequest) => client.portal(body),
-	});
-}
-
-export function useFixPayment() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (body: ComputeFixPaymentRequest) => client.fixPayment(body),
 	});
 }
 
@@ -338,57 +266,111 @@ export function useResumeSubscription() {
 }
 
 export function useCheckoutReturnRefresh() {
-	const qc = useQueryClient();
-	return useCallback(() => refreshCheckoutReturnQueries(qc), [qc]);
+	const queryClient = useQueryClient();
+	return useCallback(
+		(options?: CheckoutReturnRefreshOptions) => refreshCheckoutReturnQueries(queryClient, options),
+		[queryClient],
+	);
+}
+
+type CheckoutReturnRefreshOptions = {
+	includeDeployments?: boolean;
+};
+
+async function refetchExactCheckoutQuery(qc: QueryClient, queryKey: readonly unknown[]) {
+	await qc.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
+	await qc.refetchQueries({ queryKey, exact: true, type: "all" }, { throwOnError: true });
 }
 
 export async function refreshCheckoutReturnQueries(
 	qc: QueryClient,
+	{ includeDeployments = true }: CheckoutReturnRefreshOptions = {},
 ): Promise<HostedDeployment[] | undefined> {
-	const [deploymentsResult] = await Promise.allSettled([
-		(async () => {
-			await qc.invalidateQueries({
-				queryKey: billingKeys.deployments,
-				exact: true,
-				refetchType: "none",
-			});
-			await qc.refetchQueries(
-				{ queryKey: billingKeys.deployments, exact: true, type: "all" },
-				{ throwOnError: true },
-			);
-		})(),
-		(async () => {
-			await qc.invalidateQueries({
-				queryKey: billingKeys.wallet,
-				exact: true,
-				refetchType: "none",
-			});
-			await qc.refetchQueries(
-				{ queryKey: billingKeys.wallet, exact: true, type: "all" },
-				{ throwOnError: true },
-			);
-		})(),
+	const requiredRefreshes = [refetchExactCheckoutQuery(qc, billingKeys.wallet)];
+	if (includeDeployments) {
+		requiredRefreshes.push(refetchExactCheckoutQuery(qc, billingKeys.deployments));
+	}
+	const results = await Promise.allSettled([
+		...requiredRefreshes,
 		qc.invalidateQueries({ queryKey: billingKeys.plans }),
-		qc.invalidateQueries({ queryKey: ["agents"] }),
+		qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
 	]);
-	return deploymentsResult.status === "fulfilled"
-		? qc.getQueryData<HostedDeployment[]>(billingKeys.deployments)
-		: undefined;
+	const requiredRefreshFailures = results
+		.slice(0, requiredRefreshes.length)
+		.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+	if (requiredRefreshFailures.length > 0) {
+		throw new AggregateError(
+			requiredRefreshFailures,
+			"Couldn’t refresh required checkout return data.",
+		);
+	}
+	return qc.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 }
 
 // ── Usage ────────────────────────────────────────────────────────────────────
 
-export function useUsage() {
+export function useUsage(
+	days: number | null,
+	agentId: string | null = null,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
 	const client = useBillingClient();
 	return useBillingQuery({
-		queryKey: billingKeys.usage,
-		queryFn: () => client.getUsage(),
+		queryKey: billingKeys.usage(days, agentId),
+		queryFn: () => client.getUsage(days, agentId),
+		enabled,
 	});
 }
 
 // ── Deployments ────────────────────────────────────────────────────────────────
 
 const BILLING_RECOVERY_POLL_INTERVAL_MS = 30_000;
+
+/** Foreground polling is a bridge until deployment SSE is wired into this client. */
+export const HOSTED_DEPLOYMENTS_REFRESH_POLICY = {
+	refetchIntervalInBackground: false,
+	refetchOnWindowFocus: true,
+} as const;
+
+export function reconcileDeploymentSnapshots(
+	previous: readonly HostedDeployment[] | undefined,
+	incoming: HostedDeployment[],
+): HostedDeployment[] {
+	const previousById = new Map(
+		(previous ?? []).map((deployment) => [deployment.resource.id, deployment]),
+	);
+	const reconciled = incoming.map((deployment) => {
+		const acceptedOperation = previousById.get(deployment.resource.id)?.accepted_operation;
+		if (acceptedOperation?.metadata.verb === "delete" && !acceptedOperation.done) {
+			if (
+				deployment.accepted_operation?.name === acceptedOperation.name ||
+				deployment.resource.metadata.generation > acceptedOperation.metadata.targetGeneration
+			) {
+				return deployment;
+			}
+			return { ...deployment, accepted_operation: acceptedOperation };
+		}
+		if (deployment.accepted_operation) return deployment;
+		if (!acceptedOperation) return deployment;
+
+		const resourceStatus = deployment.resource.status;
+		const status = deploymentStatusFromResource(resourceStatus);
+		const failure = resourceStatus === null ? null : resourceStatus.failure;
+		const operationApplies = isTransitionalStatus(status)
+			? true
+			: status.kind === "failed" &&
+				failure !== null &&
+				failure !== undefined &&
+				failure.observedGeneration >= acceptedOperation.metadata.targetGeneration;
+		return operationApplies ? { ...deployment, accepted_operation: acceptedOperation } : deployment;
+	});
+	return replaceEqualDeep(previous, reconciled) as HostedDeployment[];
+}
+
+function reconcileDeploymentQueryData(previous: unknown, incoming: unknown): unknown {
+	if (!Array.isArray(incoming)) return incoming;
+	return reconcileDeploymentSnapshots(Array.isArray(previous) ? previous : undefined, incoming);
+}
 
 export function billingRecoveryRefetchIntervalFor(
 	deployments: readonly HostedDeployment[] | undefined,
@@ -398,27 +380,16 @@ export function billingRecoveryRefetchIntervalFor(
 	if (!target) return false;
 	const deployment = (deployments ?? []).find((candidate) => {
 		const matchesTarget =
-			candidate.id.toLowerCase() === target ||
-			Object.values(candidate.config_info?.clawdi_cloud_environments ?? {}).some(
-				(environmentId) => environmentId?.toLowerCase() === target,
-			);
+			candidate.resource.id.toLowerCase() === target ||
+			runtimeEnvironmentId(candidate)?.toLowerCase() === target;
 		return matchesTarget;
 	});
-	const subscription = deployment?.compute_subscription;
+	const subscription = deployment?.commercial_display?.compute_subscription;
 	if (!subscription) return false;
 	return subscription.payment_state === "past_due" ||
 		subscription.payment_state === "requires_action"
 		? BILLING_RECOVERY_POLL_INTERVAL_MS
 		: false;
-}
-
-export function shouldPollBillingRecoveryFor(
-	deployments: readonly HostedDeployment[] | undefined,
-	targetId: string | null | undefined,
-): boolean {
-	return (
-		billingRecoveryRefetchIntervalFor(deployments, targetId) === BILLING_RECOVERY_POLL_INTERVAL_MS
-	);
 }
 
 export function useHostedDeployments({
@@ -429,40 +400,51 @@ export function useHostedDeployments({
 	pollBillingRecoveryFor?: string | null;
 } = {}) {
 	const client = useBillingClient();
-	return useBillingQuery({
+	const transitionTrackersRef = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
+	const deriveDeploymentPollingState = useCallback(
+		(deployments: readonly HostedDeployment[] | undefined, nowMs: number) =>
+			deploymentPollingState(deployments, transitionTrackersRef.current, nowMs),
+		[],
+	);
+	const query = useBillingQuery({
 		queryKey: billingKeys.deployments,
 		enabled: isDeployApiConfigured() && enabled,
 		queryFn: () => client.listDeployments(),
+		structuralSharing: reconcileDeploymentQueryData,
 		refetchInterval: (q) => {
-			const inventoryInterval = deploymentRefetchInterval(q.state.data);
+			const inventoryInterval = deriveDeploymentPollingState(
+				q.state.data,
+				Date.now(),
+			).refetchInterval;
 			const billingInterval = billingRecoveryRefetchIntervalFor(
 				q.state.data,
 				pollBillingRecoveryFor,
 			);
-			return typeof billingInterval === "number"
-				? Math.min(inventoryInterval, billingInterval)
-				: inventoryInterval;
+			return shortestRefetchInterval(inventoryInterval, billingInterval);
 		},
-		refetchIntervalInBackground: false,
+		...HOSTED_DEPLOYMENTS_REFRESH_POLICY,
 	});
+	const deploymentPolling = deriveDeploymentPollingState(query.data, Date.now());
+
+	useEffect(() => {
+		transitionTrackersRef.current = deploymentPolling.trackers;
+	}, [deploymentPolling.trackers]);
+
+	return { ...query, deploymentTransitions: deploymentPolling.transitions };
+}
+
+function shortestRefetchInterval(...intervals: readonly (number | false)[]): number | false {
+	let shortest: number | false = false;
+	for (const interval of intervals) {
+		if (typeof interval !== "number") continue;
+		shortest = typeof shortest === "number" ? Math.min(shortest, interval) : interval;
+	}
+	return shortest;
 }
 
 export function useResolveDeploymentRequest() {
 	const client = useBillingClient();
 	return useMutation({
-		mutationFn: (deployRequestId: string) => client.getDeploymentByRequest(deployRequestId),
-	});
-}
-
-export function useCreateDeployment() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ body, idempotencyKey }: CreateDeploymentMutationVariables) =>
-			client.createDeployment(body, idempotencyKey),
-		onSettled: () => {
-			void qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			void qc.invalidateQueries({ queryKey: ["agents"] });
-		},
+		mutationFn: (deployRequestId: string) => client.waitForDeploymentRequest(deployRequestId),
 	});
 }

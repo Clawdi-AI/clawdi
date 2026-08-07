@@ -1,9 +1,10 @@
 /**
  * `clawdi daemon` entry.
  *
- * Long-lived process. Watches local skill directories, mirrors
- * cloud changes back to the local agent, posts heartbeats, and
- * keeps a bounded retry queue to survive transient outages.
+ * Long-lived process. Watches local skill directories, projects their
+ * Agent-authoritative state to Cloud, posts heartbeats, and keeps a bounded
+ * retry queue to survive transient outages. Cloud Skill events only wake a
+ * local re-scan; they never mutate the Agent filesystem.
  *
  * Three deploy contexts share this same code:
  *   - laptop: started by the user via `clawdi daemon install`
@@ -24,28 +25,40 @@
 
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
 import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
 import { loadAuthTokenFile } from "../lib/auth-token-file";
 import {
-	clearAuth,
-	clearPendingAuth,
-	getAuth,
-	getClawdiDir,
-	getConfig,
-	getPendingAuth,
-	isLoggedIn,
-	setAuth,
-	setPendingAuth,
-} from "../lib/config";
+	captureStoredCredentialIdentity,
+	clearPendingClerkOAuthLogin,
+	commitClawdiCredential,
+	createClerkOAuthAuthorization,
+	createCredentialEndpointBinding,
+	exchangeClerkOAuthCode,
+	fetchClerkOAuthClientConfig,
+	fetchClerkOAuthDiscovery,
+	isClerkOAuthAuth,
+	logoutClawdiCredentials,
+	persistPendingClerkOAuthLogin,
+	type StoredCredentialIdentity,
+	verifyAndPersistClerkOAuthLogin,
+} from "../lib/clerk-oauth";
+import { getAuth, getClawdiDir, getConfig, getPendingAuth, isLoggedIn } from "../lib/config";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
-import { startAutoRestart } from "../serve/auto-restart";
+import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
+import { runRuntimeObservationProducer } from "../runtime/observation-producer";
+import { detectRuntimeMode } from "../runtime/paths";
+import {
+	createRestartCoordination,
+	type RestartCoordination,
+	startAutoRestart,
+} from "../serve/auto-restart";
 import {
 	type ControlRpcClientConfig,
 	type ControlRpcHandlers,
 	type ControlRpcListenConfig,
+	type ControlRpcServer,
 	callControlRpc,
 	DEFAULT_CONTROL_RPC_HOST,
 	DEFAULT_CONTROL_RPC_PORT,
@@ -203,7 +216,10 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		process.exit(1);
 	}
 
-	const targets = legacyRun ? [pickLegacyDaemonRunTarget(legacyRun)] : pickDaemonRunTargets();
+	const hostedRuntime = detectRuntimeMode() === "hosted";
+	const targets = legacyRun
+		? [pickLegacyDaemonRunTarget(legacyRun)]
+		: pickDaemonRunTargets({ allowEmpty: hostedRuntime });
 
 	log.info("serve.boot", {
 		mode,
@@ -215,6 +231,7 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 	});
 
 	const abort = new AbortController();
+	const restartCoordination = createRestartCoordination(abort);
 	const triggerShutdown = (signal: string) => {
 		log.info("serve.signal", { signal });
 		abort.abort();
@@ -239,50 +256,68 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 	// Skip in container mode — k8s rolls pods on its own schedule
 	// and self-restart inside a pod fights the orchestrator.
 	if (!isContainer) {
-		const watching = await startAutoRestart({ abort });
+		const watching = await startAutoRestart({ abort, restart: restartCoordination });
 		if (watching) {
 			log.info("serve.auto_restart_armed", { entry: watching });
 		}
-		if (startDaemonAutoUpdate({ abort })) {
+		if (startDaemonAutoUpdate({ abort, restart: restartCoordination })) {
 			log.info("serve.auto_update_armed", {});
 		}
 	}
 
-	const rpc = await startControlRpcServer(
-		createControlRpcHandlers({ abortController: abort }),
+	const rpc = await startDaemonControlRpc(
+		createControlRpcHandlers({ abortController: abort, restartCoordination }),
 		abort.signal,
 		rpcListen,
 	);
-	activeControlRpcHttp = { ...rpc.http, allow_remote: rpcListen.allowRemote === true };
-	log.info("serve.rpc_listening", {
-		token_path: rpc.tokenPath,
-		http: rpc.http,
-	});
-
-	try {
-		await Promise.all(
-			targets.map((target) =>
-				runSyncEngine({
-					environmentId: target.environmentId,
-					adapter: target.adapter,
-					abort: abort.signal,
-					abortController: abort,
-					forcePollWatcher: isContainer,
-				}),
-			),
-		);
-	} catch (e) {
-		log.error("serve.fatal", { error: toErrorMessage(e) });
-		process.exit(1);
+	if (rpc) {
+		activeControlRpcHttp = { ...rpc.http, allow_remote: rpcListen.allowRemote === true };
+		log.info("serve.rpc_listening", {
+			token_path: rpc.tokenPath,
+			http: rpc.http,
+		});
+	} else {
+		activeControlRpcHttp = null;
+		log.info("serve.rpc_disabled", { runtime_mode: "hosted" });
 	}
 
-	// Preserve any non-zero exitCode the engine set (e.g. auth
-	// failure → 1). A naked `process.exit(0)` would otherwise mask
-	// the failure and supervisors would stop restarting on a
-	// revoked deploy-key.
+	try {
+		await runDaemonWorkers({
+			targets,
+			abortController: abort,
+			forcePollWatcher: isContainer,
+		});
+	} catch (e) {
+		log.error("serve.fatal", { error: toErrorMessage(e) });
+		process.exitCode = 1;
+	} finally {
+		abort.abort();
+		const cleanupTasks: Promise<unknown>[] = [operationManager.shutdownAll()];
+		if (rpc) cleanupTasks.push(rpc.close());
+		const cleanup = await Promise.allSettled(cleanupTasks);
+		activeControlRpcHttp = null;
+		for (const result of cleanup) {
+			if (result.status === "fulfilled") continue;
+			log.error("serve.shutdown_failed", { error: toErrorMessage(result.reason) });
+			process.exitCode = 1;
+		}
+	}
+
+	// Preserve any supervisor control outcome the engine set (for example,
+	// auth/disconnect no-restart → 2). A naked `process.exit(0)` would mask it
+	// and defeat the supervisor contract; status 2 does not imply a crash.
 	const code = process.exitCode ?? 0;
 	log.info("serve.exit", { code });
 	process.exit(code);
+}
+
+export async function startDaemonControlRpc(
+	handlers: ControlRpcHandlers,
+	abort: AbortSignal,
+	config: ControlRpcListenConfig,
+): Promise<ControlRpcServer | null> {
+	if (detectRuntimeMode() === "hosted") return null;
+	return startControlRpcServer(handlers, abort, config);
 }
 
 type ServeInstallOpts = Record<string, unknown>;
@@ -601,6 +636,7 @@ function rpcMethodCommandName(method: string): string {
 
 interface ControlRpcHandlerOptions {
 	abortController?: AbortController;
+	restartCoordination?: RestartCoordination;
 }
 
 export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): ControlRpcHandlers {
@@ -638,21 +674,15 @@ export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): C
 	handlers["sync.pull"] = (params) => syncPullRpc(params);
 	handlers["sync.push_dry_run"] = (params) => syncPushDryRunRpc(params);
 	handlers["sync.pull_dry_run"] = (params) => syncPullDryRunRpc(params);
-	handlers["vault.set"] = (params) => vaultSetRpc(params);
-	handlers["vault.list"] = (params) => vaultListRpc(params);
-	handlers["vault.import"] = (params) => vaultImportRpc(params);
-	handlers["vault.attach"] = (params) => vaultAttachRpc(params);
-	handlers["vault.detach"] = (params) => vaultDetachRpc(params);
-	handlers["vault.rm"] = (params) => vaultRmRpc(params);
-	handlers["vault.resolve"] = (params) => vaultResolveRpc(params);
-	handlers["vault.read"] = (params) => vaultReadRpc(params);
-	handlers["vault.inject"] = (params) => vaultInjectRpc(params);
 	handlers["auth.status"] = (params) => authStatusRpc(params);
 	handlers["auth.login"] = (params) => authLoginRpc(params);
 	handlers["auth.complete"] = (params) => authCompleteRpc(params);
 	handlers["auth.logout"] = (params) => authLogoutRpc(params);
-	handlers["update.check"] = (params) => updateCheckRpc(params);
-	handlers["update.install"] = (params) => updateInstallRpc(params, opts.abortController);
+	if (evaluateHostPolicyForCommand("update").allowed) {
+		handlers["update.check"] = (params) => updateCheckRpc(params);
+		handlers["update.install"] = (params) =>
+			updateInstallRpc(params, opts.abortController, opts.restartCoordination);
+	}
 	return handlers;
 }
 
@@ -756,222 +786,6 @@ async function syncCommandRpc(
 	});
 }
 
-function vaultSetRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["key", "value", "project", "allow_empty", "cwd", "wait"]));
-	const key = requiredStringParam(record, "key");
-	const value = requiredStringParam(record, "value");
-	const args = ["vault", "set", key, "--stdin"];
-	appendOptionalStringFlag(args, "--project", record.project);
-	if (optionalBooleanParam(record.allow_empty, "allow_empty")) args.push("--allow-empty");
-	return runCommandRpc({
-		name: "vault.set",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		stdin: value,
-		wait: optionalBooleanParam(record.wait, "wait") ?? true,
-	});
-}
-
-function vaultListRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["project", "cwd", "wait"]));
-	const args = ["vault", "list", "--json"];
-	appendOptionalStringFlag(args, "--project", record.project);
-	return runCommandRpc({
-		name: "vault.list",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		wait: optionalBooleanParam(record.wait, "wait") ?? true,
-		parseJson: true,
-	});
-}
-
-function vaultImportRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["file", "project", "vault", "section", "yes", "cwd", "wait"]));
-	if (!optionalBooleanParam(record.yes, "yes")) {
-		throw new Error("vault.import RPC requires yes=true to avoid an interactive confirmation.");
-	}
-	const args = ["vault", "import", requiredStringParam(record, "file"), "--yes"];
-	appendOptionalStringFlag(args, "--project", record.project);
-	appendOptionalStringFlag(args, "--vault", record.vault);
-	appendOptionalStringFlag(args, "--section", record.section);
-	return runCommandRpc({
-		name: "vault.import",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		wait: optionalBooleanParam(record.wait, "wait") ?? true,
-	});
-}
-
-function vaultAttachRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["vault", "project", "cwd", "wait"]));
-	const args = ["vault", "attach", requiredStringParam(record, "vault")];
-	args.push("--project", requiredStringParam(record, "project"));
-	return runCommandRpc({
-		name: "vault.attach",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		wait: optionalBooleanParam(record.wait, "wait") ?? true,
-	});
-}
-
-function vaultDetachRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["vault", "project", "cwd", "wait"]));
-	const args = ["vault", "detach", requiredStringParam(record, "vault")];
-	args.push("--project", requiredStringParam(record, "project"));
-	return runCommandRpc({
-		name: "vault.detach",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		wait: optionalBooleanParam(record.wait, "wait") ?? true,
-	});
-}
-
-function vaultRmRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["key", "project", "yes", "global", "cwd", "wait"]));
-	if (!optionalBooleanParam(record.yes, "yes")) {
-		throw new Error("vault.rm RPC requires yes=true to avoid an interactive confirmation.");
-	}
-	const args = ["vault", "rm", requiredStringParam(record, "key"), "--yes"];
-	appendOptionalStringFlag(args, "--project", record.project);
-	if (optionalBooleanParam(record.global, "global")) args.push("--global");
-	return runCommandRpc({
-		name: "vault.rm",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		wait: optionalBooleanParam(record.wait, "wait") ?? true,
-	});
-}
-
-function vaultResolveRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(
-		record,
-		new Set([
-			"key",
-			"project",
-			"agent",
-			"allow_conflicts",
-			"debug",
-			"dry_run",
-			"include_value",
-			"confirm_secret_access",
-			"json",
-			"cwd",
-			"wait",
-		]),
-	);
-	const includeValue = optionalBooleanParam(record.include_value, "include_value") ?? false;
-	const wait = optionalBooleanParam(record.wait, "wait") ?? true;
-	if (includeValue) {
-		requireBooleanConfirmation(record, "confirm_secret_access", "vault.resolve plaintext access");
-		if (!wait)
-			throw new Error(
-				"vault.resolve with include_value=true cannot run as a background operation.",
-			);
-	}
-	const args = ["vault", "resolve", requiredStringParam(record, "key")];
-	appendVaultResolveFlags(args, record);
-	if (!includeValue || optionalBooleanParam(record.dry_run, "dry_run")) args.push("--dry-run");
-	if (optionalBooleanParam(record.json, "json")) args.push("--json");
-	return runCommandRpc({
-		name: "vault.resolve",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		wait,
-		parseJson: optionalBooleanParam(record.json, "json") ?? false,
-	});
-}
-
-function vaultReadRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(
-		record,
-		new Set([
-			"reference",
-			"project",
-			"agent",
-			"allow_conflicts",
-			"debug",
-			"dry_run",
-			"confirm_secret_access",
-			"json",
-			"cwd",
-			"wait",
-		]),
-	);
-	const dryRun = optionalBooleanParam(record.dry_run, "dry_run") ?? false;
-	const wait = optionalBooleanParam(record.wait, "wait") ?? true;
-	if (!dryRun) {
-		requireBooleanConfirmation(record, "confirm_secret_access", "vault.read plaintext access");
-		if (!wait) throw new Error("vault.read plaintext access cannot run as a background operation.");
-	}
-	const args = ["read", requiredStringParam(record, "reference")];
-	appendVaultResolveFlags(args, record);
-	if (dryRun) args.push("--dry-run");
-	if (optionalBooleanParam(record.json, "json")) args.push("--json");
-	return runCommandRpc({
-		name: "vault.read",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		wait,
-		parseJson: optionalBooleanParam(record.json, "json") ?? false,
-	});
-}
-
-function vaultInjectRpc(params: unknown): Promise<unknown> {
-	const record = rpcParamsRecord(params);
-	rejectRpcParams(
-		record,
-		new Set([
-			"in",
-			"out",
-			"input",
-			"project",
-			"agent",
-			"allow_conflicts",
-			"no_project_folder",
-			"force",
-			"dry_run",
-			"confirm_secret_access",
-			"cwd",
-			"wait",
-		]),
-	);
-	const dryRun = optionalBooleanParam(record.dry_run, "dry_run") ?? false;
-	const wait = optionalBooleanParam(record.wait, "wait") ?? true;
-	if (!dryRun) {
-		requireBooleanConfirmation(record, "confirm_secret_access", "vault.inject secret rendering");
-		if (!wait)
-			throw new Error("vault.inject secret rendering cannot run as a background operation.");
-	}
-	const args = ["inject"];
-	const stdin = optionalStringParam(record.input, "input");
-	const inPath = optionalStringParam(record.in, "in") ?? (stdin !== undefined ? "-" : undefined);
-	appendOptionalStringFlag(args, "--in", inPath);
-	appendOptionalStringFlag(args, "--out", record.out);
-	appendOptionalStringFlag(args, "--project", record.project);
-	appendOptionalStringFlag(args, "--agent", record.agent);
-	if (optionalBooleanParam(record.allow_conflicts, "allow_conflicts"))
-		args.push("--allow-conflicts");
-	if (optionalBooleanParam(record.no_project_folder, "no_project_folder"))
-		args.push("--no-project-folder");
-	if (optionalBooleanParam(record.force, "force")) args.push("--force");
-	if (dryRun) args.push("--dry-run");
-	return runCommandRpc({
-		name: "vault.inject",
-		args,
-		cwd: optionalStringParam(record.cwd, "cwd"),
-		stdin,
-		wait,
-	});
-}
-
 function authStatusRpc(params: unknown): unknown {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set());
@@ -980,13 +794,13 @@ function authStatusRpc(params: unknown): unknown {
 	return {
 		logged_in: auth !== null,
 		user: auth ? { email: auth.email, id: auth.userId } : null,
+		credential_type: isClerkOAuthAuth(auth) ? "clerk-oauth" : auth ? "legacy-api-key" : null,
 		api_url: getConfig().apiUrl,
 		pending_auth: pending
 			? {
-					user_code: pending.userCode,
-					verification_uri: pending.verificationUri,
+					authorization_url: pending.authorizationUrl,
+					redirect_uri: pending.redirectUri,
 					expires_at: pending.expiresAt,
-					interval_ms: pending.intervalMs,
 					api_url: pending.apiUrl,
 				}
 			: null,
@@ -997,6 +811,7 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set(["api_key", "api_url", "replace", "confirm_secret_access"]));
 	const existing = getAuth();
+	const expectedCredential = captureStoredCredentialIdentity();
 	const replace = optionalBooleanParam(record.replace, "replace") ?? false;
 	if (existing && !replace) {
 		return { status: "already_logged_in", user: { email: existing.email, id: existing.userId } };
@@ -1004,45 +819,62 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	if (existing && replace) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login replace existing auth");
 	}
-	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? getConfig().apiUrl;
+	const endpointConfig = getConfig();
+	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? endpointConfig.apiUrl;
 	const apiKey = optionalStringParam(record.api_key, "api_key");
 	if (existing && replace && !apiKey) {
-		throw new Error(
-			"auth.login replace requires api_key, or call auth.logout before device login.",
-		);
+		throw new Error("auth.login replace requires api_key, or call auth.logout before OAuth login.");
 	}
 	if (apiKey) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login API key import");
-		const me = await verifyAndSaveRpcAuth(apiUrl, apiKey);
+		const me = await verifyAndSaveRpcAuth(apiUrl, apiKey, expectedCredential);
 		return { status: "logged_in", user: me, api_url: apiUrl };
 	}
-	return startDeviceAuthRpc(apiUrl);
+	return startOAuthAuthRpc(apiUrl, endpointConfig.deployApiUrl, expectedCredential);
 }
 
 async function authCompleteRpc(params: unknown): Promise<unknown> {
 	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["wait_ms"]));
+	rejectRpcParams(record, new Set(["callback_url", "confirm_secret_access"]));
 	if (getAuth()) return { status: "already_logged_in" };
 	const pending = getPendingAuth();
 	if (!pending) return { status: "no_pending_auth" };
-	if (Date.now() / 1000 >= pending.expiresAt) {
-		clearPendingAuth();
+	if (Date.parse(pending.expiresAt) <= Date.now()) {
+		await clearPendingClerkOAuthLogin(pending);
 		return { status: "expired" };
 	}
-	return pollPendingAuthRpc(
-		pending,
-		optionalLimitParam(record.wait_ms, "wait_ms", 0, 600_000, 30_000),
+	requireBooleanConfirmation(
+		record,
+		"confirm_secret_access",
+		"auth.complete OAuth callback import",
 	);
+	const callbackUrl = requiredStringParam(record, "callback_url");
+	const auth = await exchangeClerkOAuthCode(pending, callbackUrl);
+	const verification = await verifyAndPersistClerkOAuthLogin(pending.apiUrl, auth, {
+		expectedCredential: { kind: "none" },
+		pending,
+	});
+	if (verification.kind === "cloud_unverified") {
+		return {
+			status: "cloud_unverified",
+			cloud_verified: false,
+			reason: verification.reason,
+			...(verification.httpStatus ? { http_status: verification.httpStatus } : {}),
+		};
+	}
+	return { status: "logged_in", cloud_verified: true, user: verification.user };
 }
 
-function authLogoutRpc(params: unknown): unknown {
+async function authLogoutRpc(params: unknown): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set(["confirm"]));
 	requireBooleanConfirmation(record, "confirm", "auth.logout");
-	const wasLoggedIn = isLoggedIn();
-	clearAuth();
-	clearPendingAuth();
-	return { logged_out: wasLoggedIn };
+	const result = await logoutClawdiCredentials(getConfig().apiUrl);
+	return {
+		logged_out: result.loggedOut,
+		remote_revoked: result.remoteRevoked,
+		environment_credential: result.environmentCredential,
+	};
 }
 
 function updateCheckRpc(params: unknown): Promise<unknown> {
@@ -1060,6 +892,7 @@ function updateCheckRpc(params: unknown): Promise<unknown> {
 async function updateInstallRpc(
 	params: unknown,
 	abortController: AbortController | undefined,
+	restartCoordination: RestartCoordination | undefined,
 ): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set(["confirm"]));
@@ -1067,12 +900,14 @@ async function updateInstallRpc(
 	const result = await daemonAutoUpdateOnce({
 		currentVersion: getCliVersion(),
 		ignoreDisabled: true,
+		restartCoordination,
 	});
 	const restartScheduled = result === "installed" && abortController !== undefined;
 	if (restartScheduled) {
 		setTimeout(() => {
 			log.info("daemon.update_install_restart_scheduled", {});
-			abortController.abort();
+			if (restartCoordination) restartCoordination.requestRestart();
+			else abortController.abort();
 		}, CONTROL_ACTION_DELAY_MS);
 	}
 	return {
@@ -1109,121 +944,57 @@ async function runCommandRpc(options: RpcCommandOptions): Promise<unknown> {
 	return response;
 }
 
-function appendVaultResolveFlags(args: string[], record: Record<string, unknown>): void {
-	appendOptionalStringFlag(args, "--project", record.project);
-	appendOptionalStringFlag(args, "--agent", record.agent);
-	if (optionalBooleanParam(record.allow_conflicts, "allow_conflicts"))
-		args.push("--allow-conflicts");
-	if (optionalBooleanParam(record.debug, "debug")) args.push("--debug");
-}
-
-function appendOptionalStringFlag(args: string[], flag: string, value: unknown): void {
-	const parsed = optionalStringParam(value, flag);
-	if (parsed !== undefined) args.push(flag, parsed);
-}
-
 interface AuthMeResponse {
 	id: string;
 	email?: string;
 	name?: string;
 }
 
-interface DeviceStartResponse {
-	device_code: string;
-	user_code: string;
-	verification_uri: string;
-	expires_in: number;
-	interval: number;
-}
-
-interface AuthPollResponse {
-	status: string;
-	api_key?: string | null;
-}
-
-async function verifyAndSaveRpcAuth(apiUrl: string, apiKey: string): Promise<AuthMeResponse> {
-	const response = await fetch(`${apiUrl}/v1/auth/me`, {
+async function verifyAndSaveRpcAuth(
+	apiUrl: string,
+	apiKey: string,
+	expectedCredential: StoredCredentialIdentity,
+): Promise<AuthMeResponse> {
+	const endpointBinding = createCredentialEndpointBinding(apiUrl);
+	const response = await fetch(`${endpointBinding.cloudApiOrigin}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!response.ok) {
 		throw new Error(`API key verification failed with HTTP ${response.status}`);
 	}
 	const me = await readJsonObject<AuthMeResponse>(response, isAuthMeResponse, "/v1/auth/me");
-	setAuth({ apiKey, userId: me.id, email: me.email });
+	await commitClawdiCredential(
+		{ apiKey, userId: me.id, email: me.email, endpointBinding },
+		expectedCredential,
+	);
 	return me;
 }
 
-async function startDeviceAuthRpc(apiUrl: string): Promise<unknown> {
-	const response = await fetch(`${apiUrl}/v1/cli/auth/device`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ client_label: `clawdi daemon control · ${hostname()}` }),
-	});
-	if (!response.ok) {
-		throw new Error(`Failed to start device authorization: HTTP ${response.status}`);
+async function startOAuthAuthRpc(
+	apiUrl: string,
+	hostedApiUrl: string,
+	expectedCredential: StoredCredentialIdentity,
+): Promise<unknown> {
+	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
+	if (!endpointBinding.hostedApiOrigin) {
+		throw new Error("Hosted endpoint binding is required for OAuth login.");
 	}
-	const start = await readJsonObject<DeviceStartResponse>(
-		response,
-		isDeviceStartResponse,
-		"/v1/cli/auth/device",
-	);
-	const pending = {
-		deviceCode: start.device_code,
-		userCode: start.user_code,
-		verificationUri: start.verification_uri,
-		expiresAt: Math.floor(Date.now() / 1000) + start.expires_in,
-		intervalMs: Math.max(1, start.interval) * 1000,
-		apiUrl,
-	};
-	setPendingAuth(pending);
+	const config = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin);
+	const discovery = await fetchClerkOAuthDiscovery(config);
+	const pending = createClerkOAuthAuthorization({
+		config,
+		discovery,
+		apiUrl: endpointBinding.cloudApiOrigin,
+		hostedApiUrl: endpointBinding.hostedApiOrigin,
+	});
+	await persistPendingClerkOAuthLogin(pending, expectedCredential);
 	return {
 		status: "pending",
-		user_code: pending.userCode,
-		verification_uri: pending.verificationUri,
+		authorization_url: pending.authorizationUrl,
+		redirect_uri: pending.redirectUri,
 		expires_at: pending.expiresAt,
-		interval_ms: pending.intervalMs,
 		api_url: pending.apiUrl,
 	};
-}
-
-async function pollPendingAuthRpc(
-	pending: NonNullable<ReturnType<typeof getPendingAuth>>,
-	waitMs: number,
-): Promise<unknown> {
-	const deadline = Date.now() + waitMs;
-	while (true) {
-		const poll = await pollAuthOnce(pending.apiUrl, pending.deviceCode);
-		if (poll.status === "approved" && poll.api_key) {
-			setAuth({ apiKey: poll.api_key });
-			const me = await verifyAndSaveRpcAuth(pending.apiUrl, poll.api_key);
-			clearPendingAuth();
-			return { status: "logged_in", user: me };
-		}
-		if (poll.status === "denied" || poll.status === "expired") {
-			clearPendingAuth();
-			return { status: poll.status };
-		}
-		if (Date.now() >= deadline || waitMs === 0) {
-			return {
-				status: "pending",
-				user_code: pending.userCode,
-				expires_at: pending.expiresAt,
-			};
-		}
-		await new Promise((resolve) =>
-			setTimeout(resolve, Math.min(pending.intervalMs, Math.max(0, deadline - Date.now()))),
-		);
-	}
-}
-
-async function pollAuthOnce(apiUrl: string, deviceCode: string): Promise<AuthPollResponse> {
-	const response = await fetch(`${apiUrl}/v1/cli/auth/poll`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ device_code: deviceCode }),
-	});
-	if (!response.ok) throw new Error(`Auth polling failed with HTTP ${response.status}`);
-	return readJsonObject<AuthPollResponse>(response, isAuthPollResponse, "/v1/cli/auth/poll");
 }
 
 async function readJsonObject<T>(
@@ -1239,25 +1010,6 @@ async function readJsonObject<T>(
 function isAuthMeResponse(value: unknown): value is AuthMeResponse {
 	if (!isRecord(value)) return false;
 	return typeof value.id === "string";
-}
-
-function isDeviceStartResponse(value: unknown): value is DeviceStartResponse {
-	if (!isRecord(value)) return false;
-	return (
-		typeof value.device_code === "string" &&
-		typeof value.user_code === "string" &&
-		typeof value.verification_uri === "string" &&
-		typeof value.expires_in === "number" &&
-		typeof value.interval === "number"
-	);
-}
-
-function isAuthPollResponse(value: unknown): value is AuthPollResponse {
-	if (!isRecord(value)) return false;
-	return (
-		typeof value.status === "string" &&
-		(value.api_key === undefined || value.api_key === null || typeof value.api_key === "string")
-	);
 }
 
 function daemonInstallRpc(params: unknown): unknown {
@@ -1740,7 +1492,7 @@ function isAgentType(s: string): s is AgentType {
 	return (AGENT_TYPES as readonly string[]).includes(s);
 }
 
-function pickDaemonRunTargets(): DaemonRunTarget[] {
+function pickDaemonRunTargets(options: { allowEmpty?: boolean } = {}): DaemonRunTarget[] {
 	const registered = listRegisteredAgentTypes();
 	const envAgent = process.env.CLAWDI_AGENT_TYPE;
 	const targets = registered.length > 0 ? registered : envAgent ? [envAgent] : [];
@@ -1753,6 +1505,7 @@ function pickDaemonRunTargets(): DaemonRunTarget[] {
 	}
 	if (registered.length === 0) {
 		if (!envAgent) {
+			if (options.allowEmpty) return [];
 			log.error("serve.no_agent", {
 				hint: "Run `clawdi setup` to register an agent on this machine, or set CLAWDI_AGENT_TYPE in a container.",
 			});
@@ -1777,6 +1530,29 @@ function pickDaemonRunTargets(): DaemonRunTarget[] {
 		}
 		return { agentType, adapter, environmentId };
 	});
+}
+
+export async function runDaemonWorkers(input: {
+	targets: DaemonRunTarget[];
+	abortController: AbortController;
+	forcePollWatcher: boolean;
+	runObservationProducer?: typeof runRuntimeObservationProducer;
+	runEngine?: typeof runSyncEngine;
+}): Promise<void> {
+	const producer = input.runObservationProducer ?? runRuntimeObservationProducer;
+	const engine = input.runEngine ?? runSyncEngine;
+	await Promise.all([
+		producer({ abort: input.abortController.signal }),
+		...input.targets.map((target) =>
+			engine({
+				environmentId: target.environmentId,
+				adapter: target.adapter,
+				abort: input.abortController.signal,
+				abortController: input.abortController,
+				forcePollWatcher: input.forcePollWatcher,
+			}),
+		),
+	]);
 }
 
 function pickAgent(explicit: string | undefined): {
@@ -1833,16 +1609,6 @@ function resolveEnvironmentId(agentType: AgentType, registeredCount: number): st
 	if (registeredCount === 1) {
 		const fromEnv = process.env.CLAWDI_ENVIRONMENT_ID;
 		if (fromEnv) return fromEnv;
-	}
-	// Last resort: read /etc/clawdi/env-id (writable mount in
-	// the pod entrypoint). Skipped on host.
-	const podPath = "/etc/clawdi/env-id";
-	if (registeredCount === 1 && existsSync(podPath)) {
-		try {
-			return readFileSync(podPath, "utf-8").trim();
-		} catch {
-			/* fall through */
-		}
 	}
 	return null;
 }

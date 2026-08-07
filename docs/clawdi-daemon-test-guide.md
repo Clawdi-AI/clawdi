@@ -35,8 +35,8 @@ What it checks:
 | 3 | CLI scratch dirs (`~/.clawdi/`, fake skills dir) exist |
 | 4 | `clawdi daemon run` reaches `engine.start` log line |
 | 5 | Local SKILL.md edit → cloud row updates within 15s |
-| 6 | Cloud-side upload → local SKILL.md picks up the change |
-| 7 | Server-side DELETE → daemon removes local dir within 15s |
+| 6 | Mixed-version Cloud write triggers local-byte re-projection without changing the local file |
+| 7 | Local directory deletion removes the Cloud projection without local resurrection |
 | 8 | Heartbeat lands and `last_sync_at` is fresh (< 60s) |
 
 Pass = `all checks passed` at the end.
@@ -151,25 +151,56 @@ Within ~1s the daemon log shows `engine.enqueue_skill_push` →
 `engine.skill_pushed`. The dashboard's `/skills/test-skill` page
 reflects the new content_hash on refresh.
 
-### Trigger a pull (cloud → local)
+### Verify a Cloud event cannot overwrite local state
 
-A dashboard install (or a marketplace push) lands on the cloud
-side. To simulate it from a terminal, push directly through the
-project-explicit upload route. `PROJECT_ID` is the agent's
-`default_project_id`:
+The backend's protocol-aware generic Agent-Project route remains a direct
+compatibility-boundary test surface, but the current CLI uses only the
+dedicated Agent sync route. Missing protocol and `agent-authoritative-v0`
+requests retain legacy download behavior; the explicit v1 request below keeps
+the one-way boundary. A current daemon uses its SSE event only to rescan the
+local filesystem and project the local bytes back; it never downloads the
+uploaded bytes. `PROJECT_ID` is the Agent's `default_project_id`:
 
 ```sh
 PROJECT_ID=$(curl -s -H "Authorization: Bearer $RAW_KEY" \
   http://localhost:8000/v1/agents | jq -r '.[0].default_project_id')
-echo "# edited from the dashboard $(date)" >> /tmp/manual-claude/skills/test-skill/SKILL.md
-TAR=$(mktemp); ( cd /tmp/manual-claude/skills && tar czf $TAR test-skill )
+cp /tmp/manual-claude/skills/test-skill/SKILL.md /tmp/test-skill.before
+mkdir -p /tmp/cloud-hint/test-skill
+printf '%s\n' '# compatibility bytes that must not land locally' \
+  > /tmp/cloud-hint/test-skill/SKILL.md
+TAR=$(mktemp); ( cd /tmp/cloud-hint && tar czf "$TAR" test-skill )
 curl -X POST "http://localhost:8000/v1/projects/$PROJECT_ID/skills/upload" \
   -H "Authorization: Bearer $RAW_KEY" \
+  -H "X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1" \
   -F "skill_key=test-skill" -F "file=@$TAR"
+cmp /tmp/test-skill.before /tmp/manual-claude/skills/test-skill/SKILL.md
 ```
 
-The daemon log shows an SSE event arriving and rewriting
-local SKILL.md within ~2s.
+The daemon log shows an SSE invalidation followed by a local scan and
+projection upload. `cmp` stays silent and exits 0. If SSE was disconnected,
+the five-minute strong-ETag complete Agent-Project listing catches the missed
+revision; failed, truncated, or unfenced listings never authorize cleanup.
+The backend reads current caller and visible-owner revisions from PostgreSQL
+before returning 304, including for Agent-bound keys whose authentication
+snapshot may still be cached. The ETag keeps the numeric revision first for
+CLI 0.13.13, then binds the deterministic cross-project order and the complete
+visible set's Project name/kind/origin-Agent and machine-name metadata. Every
+metadata-only page retains the same ETag, and page 2 always returns its body.
+Requests with `include_content=true` ignore conditional validators and return
+200 without ETag because transient object-storage reads can produce partial
+`content=null` results; such responses are never valid cleanup evidence.
+Deleting the local `test-skill` directory then removes the Cloud projection;
+no Cloud event may recreate the directory.
+
+An intentional Cloud-owned Skill import must name a workspace or personal
+Project. Agent Projects are rejected:
+
+```sh
+clawdi pull --modules skills --project <workspace-or-personal-project> --agent claude_code
+```
+
+The import commits guarded local bytes first; watcher/boot reconciliation then
+projects that authored state through the Agent sync boundary.
 
 ### Cleanup
 
@@ -177,7 +208,8 @@ local SKILL.md within ~2s.
 
 ```sh
 ( cd backend && pdm run python scripts/seed_serve_test.py --label manual_test --teardown )
-rm -rf /tmp/manual-claude
+rm -rf /tmp/manual-claude /tmp/cloud-hint
+rm -f /tmp/test-skill.before
 ```
 
 ## Path 3 — install as a service (macOS / Linux)
@@ -231,7 +263,7 @@ The user-facing CLI wrappers stay as normal commands such as
 `clawdi daemon logs`.
 
 Besides daemon control methods, the daemon exposes headless command methods
-for `sync.push`, `sync.pull`, `vault.*`, `auth.*`, `update.*`, and
+for `sync.push`, `sync.pull`, `auth.*`, `update.*`, and
 `operation.*`. Long-running commands return an operation id:
 
 ```sh
@@ -246,12 +278,13 @@ curl -s http://127.0.0.1:17654/rpc \
   -d '{"jsonrpc":"2.0","id":1,"method":"operation.status","params":{"id":"<operation-id>"}}'
 ```
 
-Vault plaintext access is opt-in. `vault.resolve` defaults to a
-redacted dry-run unless the request explicitly asks for plaintext.
-`vault.read` and `vault.inject` require `confirm_secret_access: true`
-before rendering plaintext, and plaintext access cannot be backgrounded
-into an operation log. Mutating vault calls that would otherwise prompt
-must pass their non-interactive confirmation, such as `yes: true`.
+Vault operations are intentionally absent from the daemon control RPC.
+Agents use the authenticated Clawdi MCP endpoint; human operators use the
+foreground CLI commands directly.
+
+CLI releases 0.13.17 through 0.13.28 exposed experimental `vault.*` control
+methods. They are removed rather than retained as aliases: Agent integrations
+must use MCP, while operator automation must invoke the foreground CLI.
 
 Non-loopback HTTP binds are rejected unless the daemon is started or
 installed with `--allow-remote` (or

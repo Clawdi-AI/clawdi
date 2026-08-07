@@ -13,6 +13,7 @@ from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
+from app.services.agent_lifecycle import active_agent_filter, active_project_filter
 
 
 async def get_owned_agent_or_404(
@@ -26,6 +27,7 @@ async def get_owned_agent_or_404(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -41,7 +43,7 @@ async def assert_project_visible_to_user(
     project_id: UUID,
 ) -> Project:
     project = (
-        await db.execute(select(Project).where(Project.id == project_id))
+        await db.execute(select(Project).where(Project.id == project_id, active_project_filter()))
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
@@ -68,14 +70,14 @@ async def assert_project_writable_by_user(
     project_id: UUID,
 ) -> Project:
     project = (
-        await db.execute(select(Project).where(Project.id == project_id))
+        await db.execute(select(Project).where(Project.id == project_id, active_project_filter()))
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     if project.user_id != user_id:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Agent Project must be owned by the caller",
+            "Only the Project owner can make this change",
         )
     return project
 
@@ -96,14 +98,46 @@ async def delete_project_bindings_for_users(
     if not user_ids:
         return 0
 
-    agent_ids = select(AgentEnvironment.id).where(AgentEnvironment.user_id.in_(user_ids))
-    result = await db.execute(
-        sql_delete(AgentProjectBinding).where(
-            AgentProjectBinding.project_id == project_id,
-            AgentProjectBinding.agent_id.in_(agent_ids),
+    # Membership changes are also Project unlink operations. Serialize them
+    # with Project Skill writes and explicit Link/Unlink requests, then notify
+    # every managed Agent whose desired bundle changed in the same transaction.
+    from app.services.project_runtime_skills import lock_project_runtime_graph
+    from app.services.sync_events import queue_environment_runtime_manifest_changed
+
+    await lock_project_runtime_graph(db, project_id)
+    bound_agents = (
+        await db.execute(
+            select(AgentEnvironment.user_id, AgentProjectBinding.agent_id)
+            .join(
+                AgentEnvironment,
+                AgentEnvironment.id == AgentProjectBinding.agent_id,
+            )
+            .where(
+                AgentProjectBinding.project_id == project_id,
+                AgentProjectBinding.binding_type == "context",
+                AgentEnvironment.user_id.in_(user_ids),
+            )
         )
+    ).all()
+    target_agent_ids = [agent_id for _user_id, agent_id in bound_agents]
+    deleted_binding_ids = (
+        (
+            await db.execute(
+                sql_delete(AgentProjectBinding)
+                .where(
+                    AgentProjectBinding.project_id == project_id,
+                    AgentProjectBinding.binding_type == "context",
+                    AgentProjectBinding.agent_id.in_(target_agent_ids),
+                )
+                .returning(AgentProjectBinding.id)
+            )
+        )
+        .scalars()
+        .all()
     )
-    return int(result.rowcount or 0)
+    for user_id, agent_id in bound_agents:
+        await queue_environment_runtime_manifest_changed(db, user_id, agent_id)
+    return len(deleted_binding_ids)
 
 
 async def _next_context_priority(db: AsyncSession, *, agent_id: UUID) -> int:
@@ -144,7 +178,10 @@ async def ensure_context_binding(
     if priority is None:
         priority = await _next_context_priority(db, agent_id=agent_id)
     if priority < 1:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "attachment order must be >= 1")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Project order must be >= 1",
+        )
 
     binding = AgentProjectBinding(
         agent_id=agent_id,
@@ -167,24 +204,49 @@ async def attach_project_to_owned_agents(
     raw_agent_ids: list[str] | None,
 ) -> list[str]:
     """Attach a visible Project to the caller's Agents for read-time use."""
-    bound_agent_ids: list[str] = []
+    from app.services.project_runtime_skills import (
+        assert_project_link_compatible,
+        lock_project_agent_binding_changes,
+    )
+    from app.services.sync_events import queue_environment_runtime_manifest_changed
+
+    agent_ids: list[UUID] = []
     for raw_agent_id in raw_agent_ids or []:
         try:
             agent_id = UUID(raw_agent_id)
         except ValueError as err:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid agent id") from err
         await get_owned_agent_or_404(db, user_id=user_id, agent_id=agent_id)
-        await assert_project_visible_to_user(
+        if agent_id not in agent_ids:
+            agent_ids.append(agent_id)
+
+    if not agent_ids:
+        return []
+    await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    await lock_project_agent_binding_changes(
+        db,
+        project_id=project_id,
+        agent_ids=agent_ids,
+    )
+    # Re-check access after acquiring the Project graph lock so archive,
+    # unshare, and explicit Link cannot cross at the write boundary.
+    await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    for agent_id in sorted(agent_ids, key=str):
+        await assert_project_link_compatible(
             db,
-            user_id=user_id,
+            agent_id=agent_id,
             project_id=project_id,
         )
+
+    bound_agent_ids: list[str] = []
+    for agent_id in agent_ids:
         await ensure_context_binding(
             db,
             agent_id=agent_id,
             project_id=project_id,
             created_by_user_id=user_id,
         )
+        await queue_environment_runtime_manifest_changed(db, user_id, agent_id)
         bound_agent_ids.append(str(agent_id))
     return bound_agent_ids
 

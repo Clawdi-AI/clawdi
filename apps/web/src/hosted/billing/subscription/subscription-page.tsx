@@ -5,44 +5,38 @@ import { CreditCard, Rocket } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { PageHeader } from "@/components/page-header";
-import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
+import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { PlanCBillingUnavailableNotice } from "@/hosted/billing/components/plan-c-unavailable-notice";
 import { SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { usePlans, usePortal } from "@/hosted/billing/hooks";
+import { usePlans } from "@/hosted/billing/hooks";
+import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
 import { BillingHistorySection } from "@/hosted/billing/subscription/billing-history-section";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
-import { WelcomeCreditsCard } from "@/hosted/billing/subscription/welcome-credits-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { cn } from "@/lib/utils";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
-const DESCRIPTION =
-	"Plan options for new hosted agents. Existing compute is managed from each agent’s Settings.";
-const SUBSCRIPTION_PAGE_CLASS = cn(
-	CENTERED_PAGE_WIDTH_CLASS.page,
-	"flex flex-col gap-6 px-4 lg:px-6",
-);
+const DESCRIPTION = "Plans and account billing for hosted agents.";
+const SUBSCRIPTION_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
 
 export function SubscriptionPage() {
 	const plans = usePlans();
-	const portal = usePortal();
+	const portal = useSensitiveBillingPortal();
 	const hostedAccess = useHostedProductAccess();
 	const runAction = useActionLock();
 	const [term, setTerm] = useState(1);
 
 	async function openBillingPortal() {
 		try {
-			const res = await portal.mutateAsync({});
+			const res = await portal.execute({});
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
 				return;
 			}
-			toast.message("Billing portal unavailable", {
+			toast.error("Billing portal unavailable", {
 				description: "Refresh this page and try again in a moment.",
 			});
 		} catch (e) {
@@ -53,16 +47,16 @@ export function SubscriptionPage() {
 	if (plans.isLoading) {
 		return (
 			<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
-				<PageHeader title="Compute" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Compute" description={DESCRIPTION} />
 				<SubscriptionSkeleton />
 			</div>
 		);
 	}
 
-	if (plans.error) {
+	if (shouldBlockQueryError(plans.error, plans.data)) {
 		return (
 			<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
-				<PageHeader title="Compute" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Compute" description={DESCRIPTION} />
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={plans.error}
@@ -75,55 +69,36 @@ export function SubscriptionPage() {
 
 	return (
 		<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
-			<PageHeader title="Compute" description={DESCRIPTION} />
+			<SettingsPanelHeader title="Compute" description={DESCRIPTION} />
 
-			<WelcomeCreditsCard />
-
-			{hostedAccess.isLoading || hostedAccess.canUsePlanCBilling ? null : (
-				<PlanCBillingUnavailableNotice />
-			)}
-
-			<Card data-hosted="true">
-				<CardHeader>
-					<CardTitle>Compute is managed per agent</CardTitle>
-					<CardDescription>
-						Basic includes one free active hosted-agent slot. Additional Basic and Performance
-						agents each use a separate subscription.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<p className="text-sm text-muted-foreground">
-						Upgrade, lifecycle, and delete controls live in that agent’s Settings page. Wallet
-						balance and managed-AI usage stay account-wide.
-					</p>
-					<div className="flex flex-wrap gap-2">
-						{hostedAccess.canUsePlanCBilling ? (
-							<Button render={<Link to="/deploy" />} nativeButton={false}>
-								<Rocket /> Deploy hosted agent
-							</Button>
-						) : (
-							<Button disabled>
-								<Rocket /> Deploy hosted agent
-							</Button>
-						)}
-						<Button
-							variant="outline"
-							onClick={() => runAction(openBillingPortal)}
-							disabled={portal.isPending}
-						>
-							{portal.isPending ? <Spinner /> : <CreditCard />} Open billing portal
+			<SettingsSection
+				headingLevel={3}
+				title="Manage compute"
+				description="Deploy a new hosted agent here. Manage existing plans from each agent’s Settings."
+			>
+				<div className="flex flex-wrap gap-2">
+					{hostedAccess.canCreateCloudAgents ? (
+						<Button render={<Link to="/deploy" />} nativeButton={false}>
+							<Rocket /> Deploy hosted agent
 						</Button>
-					</div>
-				</CardContent>
-			</Card>
+					) : (
+						<Button disabled>
+							<Rocket /> Deploy hosted agent
+						</Button>
+					)}
+					<Button
+						variant="outline"
+						onClick={() => runAction(openBillingPortal)}
+						disabled={portal.isPending}
+					>
+						{portal.isPending ? <Spinner /> : <CreditCard />} Open billing portal
+					</Button>
+				</div>
+			</SettingsSection>
 
 			<BillingHistorySection />
 
-			<PlanComparison
-				term={term}
-				onTermChange={setTerm}
-				canUsePlanCBilling={hostedAccess.canUsePlanCBilling}
-			/>
+			<PlanComparison term={term} onTermChange={setTerm} />
 		</div>
 	);
 }

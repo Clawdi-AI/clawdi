@@ -6,11 +6,12 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_web_auth
+from app.core.auth import AuthContext, require_clerk_id, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import Session
 from app.schemas.dashboard import ContributionDayResponse, DashboardStatsResponse
+from app.services import composio
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 log = logging.getLogger(__name__)
@@ -47,14 +48,55 @@ async def get_stats(
     now = datetime.now(UTC)
     since = now - timedelta(days=days)
     current_floor = now.date() - timedelta(days=1)
-    manual_since = now - timedelta(days=7)
+    weekly_since = now - timedelta(days=7)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     result = await db.execute(
         text(
             """
-            WITH session_window AS (
+            WITH visible_projects AS (
+                SELECT id
+                FROM projects
+                WHERE user_id = :user_id
+                UNION
+                SELECT project_id
+                FROM project_memberships
+                WHERE member_user_id = :user_id
+            ),
+            visible_user_projects AS (
+                SELECT projects.id
+                FROM projects
+                WHERE projects.kind = 'workspace'
+                  AND projects.archived_at IS NULL
+                  AND (
+                      projects.user_id = :user_id
+                      OR projects.id IN (
+                          SELECT project_id
+                          FROM project_memberships
+                          WHERE member_user_id = :user_id
+                      )
+                  )
+            ),
+            visible_vaults AS (
+                SELECT vaults.id
+                FROM vaults
+                WHERE vaults.user_id = :user_id
+                   OR EXISTS (
+                       SELECT 1
+                       FROM vault_project_attachments
+                       WHERE vault_project_attachments.vault_id = vaults.id
+                         AND vault_project_attachments.project_id IN (
+                             SELECT id FROM visible_projects
+                         )
+                   )
+            ),
+            all_session_count AS (
+                SELECT count(*)::integer AS total_sessions
+                FROM sessions
+                WHERE user_id = :user_id
+            ),
+            session_window AS (
                 SELECT
-                    count(*)::integer AS total_sessions,
                     COALESCE(sum(message_count), 0)::bigint AS total_messages,
                     COALESCE(sum(input_tokens + output_tokens), 0)::bigint AS total_tokens
                 FROM sessions
@@ -63,12 +105,12 @@ async def get_stats(
             ),
             day_counts AS (
                 SELECT
-                    CAST(started_at AS date) AS day,
+                    CAST(started_at AT TIME ZONE 'UTC' AS date) AS day,
                     count(*)::integer AS count
                 FROM sessions
                 WHERE user_id = :user_id
                   AND started_at >= :since
-                GROUP BY CAST(started_at AS date)
+                GROUP BY CAST(started_at AT TIME ZONE 'UTC' AS date)
             ),
             favorite_model AS (
                 SELECT model
@@ -88,7 +130,7 @@ async def get_stats(
                 LIMIT 1
             ),
             days AS (
-                SELECT DISTINCT CAST(started_at AS date) AS day
+                SELECT DISTINCT CAST(started_at AT TIME ZONE 'UTC' AS date) AS day
                 FROM sessions
                 WHERE user_id = :user_id
             ),
@@ -118,31 +160,49 @@ async def get_stats(
             resource_counts AS (
                 SELECT
                     (SELECT count(*)::integer
+                     FROM visible_user_projects) AS projects_count,
+                    (SELECT count(*)::integer
                      FROM skills
-                     WHERE user_id = :user_id AND is_active) AS skills_count,
+                     WHERE is_active
+                       AND authority = 'cloud'
+                       AND project_id IN (SELECT id FROM visible_user_projects)) AS skills_count,
                     (SELECT count(*)::integer
                      FROM memories
                      WHERE user_id = :user_id) AS memories_count,
                     (SELECT count(*)::integer
-                     FROM vaults
-                     WHERE user_id = :user_id) AS vault_count,
+                     FROM visible_vaults) AS vault_count,
                     (SELECT count(*)::integer
                      FROM vault_items
-                     JOIN vaults ON vaults.id = vault_items.vault_id
-                     WHERE vaults.user_id = :user_id) AS vault_keys_count
+                     WHERE vault_id IN (SELECT id FROM visible_vaults)) AS vault_keys_count
             ),
-            manual_recent AS (
-                SELECT count(*)::integer AS manual_sessions_last_7_days
+            weekly_sessions AS (
+                SELECT
+                    count(*) FILTER (
+                        WHERE summary IS NULL
+                           OR (summary NOT LIKE 'Cron:%' AND summary NOT LIKE '[%')
+                    )::integer AS manual_sessions_last_7_days,
+                    count(*) FILTER (
+                        WHERE summary LIKE 'Cron:%' OR summary LIKE '[%'
+                    )::integer AS automated_sessions_last_7_days,
+                    count(*) FILTER (
+                        WHERE started_at >= :today_start
+                    )::integer AS sessions_today
                 FROM sessions
                 WHERE user_id = :user_id
-                  AND last_activity_at >= :manual_since
-                  AND (
-                      summary IS NULL
-                      OR (summary NOT LIKE 'Cron:%' AND summary NOT LIKE '[%')
-                  )
+                  AND started_at >= :weekly_since
+            ),
+            weekly_top_model AS (
+                SELECT model
+                FROM sessions
+                WHERE user_id = :user_id
+                  AND started_at >= :weekly_since
+                  AND model IS NOT NULL
+                GROUP BY model
+                ORDER BY count(*) DESC, model
+                LIMIT 1
             )
             SELECT
-                session_window.total_sessions,
+                all_session_count.total_sessions,
                 session_window.total_messages,
                 session_window.total_tokens,
                 (SELECT count(*)::integer FROM day_counts) AS active_days,
@@ -150,17 +210,22 @@ async def get_stats(
                 COALESCE((SELECT peak_hour FROM peak_hour), 0)::integer AS peak_hour,
                 streaks.current_streak,
                 streaks.longest_streak,
+                resource_counts.projects_count,
                 resource_counts.skills_count,
                 resource_counts.memories_count,
                 resource_counts.vault_count,
                 resource_counts.vault_keys_count,
-                manual_recent.manual_sessions_last_7_days,
+                weekly_sessions.manual_sessions_last_7_days,
+                weekly_sessions.automated_sessions_last_7_days,
+                weekly_sessions.sessions_today,
+                (SELECT model FROM weekly_top_model) AS top_model_last_7_days,
                 day_counts.day AS contribution_day,
                 day_counts.count AS contribution_count
             FROM session_window
+            CROSS JOIN all_session_count
             CROSS JOIN streaks
             CROSS JOIN resource_counts
-            CROSS JOIN manual_recent
+            CROSS JOIN weekly_sessions
             LEFT JOIN day_counts ON true
             ORDER BY day_counts.day
             """
@@ -169,7 +234,8 @@ async def get_stats(
             "user_id": auth.user_id,
             "since": since,
             "current_floor": current_floor,
-            "manual_since": manual_since,
+            "weekly_since": weekly_since,
+            "today_start": today_start,
         },
     )
     rows = result.mappings().all()
@@ -180,7 +246,7 @@ async def get_stats(
         if item["contribution_day"] is not None
     }
 
-    connectors_count = await _cached_connectors_count(auth.user.clerk_id)
+    connectors_count = await _cached_connectors_count(require_clerk_id(auth))
 
     return DashboardStatsResponse(
         total_sessions=int(row["total_sessions"] or 0),
@@ -191,12 +257,16 @@ async def get_stats(
         longest_streak=int(row["longest_streak"] or 0),
         peak_hour=int(row["peak_hour"] or 0),
         favorite_model=row["favorite_model"],
+        projects_count=int(row["projects_count"] or 0),
         skills_count=int(row["skills_count"] or 0),
         memories_count=int(row["memories_count"] or 0),
         vault_count=int(row["vault_count"] or 0),
         vault_keys_count=int(row["vault_keys_count"] or 0),
         connectors_count=connectors_count,
         manual_sessions_last_7_days=int(row["manual_sessions_last_7_days"] or 0),
+        automated_sessions_last_7_days=int(row["automated_sessions_last_7_days"] or 0),
+        top_model_last_7_days=row["top_model_last_7_days"],
+        sessions_today=int(row["sessions_today"] or 0),
         contribution=_build_contribution_graph(
             day_map,
             since_date=since.date(),
@@ -215,18 +285,19 @@ async def _cached_connectors_count(clerk_id: str) -> int:
         return cached[1]
 
     try:
-        from app.services.composio import get_connected_accounts
-
         # Composio entity_id is the Clerk user id, not the local PG UUID.
         accounts = await asyncio.wait_for(
-            get_connected_accounts(clerk_id),
+            composio.get_connected_accounts(clerk_id),
             timeout=_CONNECTORS_COUNT_TIMEOUT_SECONDS,
         )
-    except Exception as exc:
-        log.warning("dashboard connectors count unavailable: %s", exc)
+    except (composio.ComposioRouteError, TimeoutError) as exc:
+        log.warning(
+            "dashboard connectors count unavailable: error_type=%s",
+            type(exc).__name__,
+        )
         return cached[1] if cached else 0
 
-    connectors_count = sum(1 for a in accounts if (a.get("status") or "").upper() == "ACTIVE")
+    connectors_count = sum(1 for account in accounts if account.status.upper() == "ACTIVE")
     _remember_connectors_count(clerk_id, connectors_count, now=now)
     return connectors_count
 

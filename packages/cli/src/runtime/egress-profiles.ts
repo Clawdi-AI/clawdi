@@ -1,11 +1,9 @@
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
+import { canonicalSecretRefSchema } from "./secret-values";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
-const secretRefSchema = z
-	.string()
-	.min(1)
-	.regex(/^secret:\/\//);
+export const secretRefSchema = canonicalSecretRefSchema;
 const profileIdSchema = z
 	.string()
 	.min(1)
@@ -66,6 +64,12 @@ const headerMatcherSchema = z
 			secretRef: secretRefSchema,
 			prefix: z.string().optional(),
 		}),
+		z.object({
+			type: z.literal("secretRefPrefix"),
+			secretRef: secretRefSchema,
+			prefix: z.string().default(""),
+			suffix: z.string().default(""),
+		}),
 	])
 	.describe(
 		"Header matchers must never inline secret values unless type=equals is intentionally public.",
@@ -120,6 +124,7 @@ const pathReplaceSchema = z.object({
 const egressProfileMatchSchema = z.object({
 	scheme: z.enum(["http", "https", "ws", "wss"]).optional(),
 	host: z.string().min(1),
+	notAfter: z.string().datetime({ offset: true }).optional(),
 	pathPrefix: z
 		.string()
 		.min(1)
@@ -142,6 +147,7 @@ const egressProfileRewriteSchema = z.object({
 		.optional(),
 	preservePath: z.boolean().default(true),
 	pathReplace: pathReplaceSchema.optional(),
+	removeHeaders: z.array(headerNameSchema).optional(),
 	setHeaders: z.record(headerNameSchema, headerSetterSchema).default({}),
 });
 
@@ -204,6 +210,29 @@ export const egressProfileBundleSchema = z.object({
 export type EgressProfileInputBundle = z.infer<typeof egressProfileInputBundleSchema>;
 export type EgressProfileBundle = z.infer<typeof egressProfileBundleSchema>;
 
+export function egressProfileSecretRefs(bundle: EgressProfileInputBundle | undefined): string[] {
+	const refs = new Set<string>();
+	for (const profile of bundle?.profiles ?? []) {
+		if (!profile.enabled) continue;
+		for (const matcher of [
+			profile.match.path,
+			...Object.values(profile.match.headers ?? {}),
+			...Object.values(profile.match.query ?? {}),
+		]) {
+			if (matcher && "secretRef" in matcher) refs.add(matcher.secretRef);
+		}
+		const pathReplace = profile.rewrite?.pathReplace;
+		if (pathReplace) {
+			refs.add(pathReplace.secretRef);
+			refs.add(pathReplace.replacementSecretRef);
+		}
+		for (const setter of Object.values(profile.rewrite?.setHeaders ?? {})) {
+			if (typeof setter !== "string") refs.add(setter.secretRef);
+		}
+	}
+	return [...refs].sort();
+}
+
 export function buildEgressProfileBundle(input: {
 	generatedAt: string;
 	generation: number;
@@ -224,9 +253,14 @@ export function hasEnabledEgressProfiles(bundle: EgressProfileBundle): boolean {
 }
 
 export function writeEgressProfileBundle(bundle: EgressProfileBundle, paths: RuntimePaths): string {
-	writePrivateFileAtomic(paths.egressProfileBundle, `${JSON.stringify(bundle, null, 2)}\n`, {
-		mode: 0o644,
-		dirMode: 0o755,
-	});
+	writeRuntimePlatformFileAtomic(
+		paths,
+		paths.egressProfileBundle,
+		`${JSON.stringify(bundle, null, 2)}\n`,
+		{
+			mode: 0o644,
+			dirMode: 0o755,
+		},
+	);
 	return paths.egressProfileBundle;
 }

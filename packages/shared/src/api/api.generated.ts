@@ -74,6 +74,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai-providers/{provider_id}/auth/oauth/device/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll Ai Provider Oauth Device */
+        post: operations["poll_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai-providers/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Ai Provider
+         * @description Atomically create or explicitly replace a provider and credential.
+         */
+        post: operations["accept_ai_provider_v1_ai_providers_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai-providers/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Ai Provider
+         * @description Verify a draft credential, endpoint, protocol, and model without persisting it.
+         */
+        post: operations["test_ai_provider_v1_ai_providers_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai-providers/{provider_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Saved Ai Provider
+         * @description Verify a saved managed API key without exposing it to the caller.
+         */
+        post: operations["test_saved_ai_provider_v1_ai_providers__provider_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/ai-providers/{provider_id}": {
         parameters: {
             query?: never;
@@ -144,6 +221,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai-providers/{provider_id}/auth/oauth/device/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Ai Provider Oauth Device */
+        post: operations["start_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/ai-providers/{provider_id}/auth/oauth/start": {
         parameters: {
             query?: never;
@@ -206,6 +300,125 @@ export interface paths {
         get: operations["list_control_plane_audit_events_v1_audit_events_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Whatsapp Onboarding Readiness */
+        get: operations["get_whatsapp_onboarding_readiness_v1_channels_whatsapp_onboarding_readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Whatsapp Onboarding Session */
+        post: operations["create_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Whatsapp Onboarding Session */
+        get: operations["get_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions/{session_id}/pairing-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Whatsapp Onboarding Pairing Code */
+        post: operations["create_whatsapp_onboarding_pairing_code_v1_channels_whatsapp_onboarding_sessions__session_id__pairing_code_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions/{session_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Whatsapp Onboarding Session */
+        post: operations["cancel_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions/{session_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Whatsapp Onboarding Session */
+        post: operations["retry_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/accounts/{account_id}/repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Repair Whatsapp Channel Account */
+        post: operations["repair_whatsapp_channel_account_v1_channels_whatsapp_onboarding_accounts__account_id__repair_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -436,6 +649,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/channels/{account_id}/bindings/{binding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Channel Binding */
+        delete: operations["delete_channel_binding_v1_channels__account_id__bindings__binding_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/channels/{account_id}/commands/sync": {
         parameters: {
             query?: never;
@@ -470,25 +700,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/channels/whatsapp/{account_id}/tenant-creds": {
+    "/v1/cli/auth/oauth/config": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List Whatsapp Tenant Credentials */
-        get: operations["list_whatsapp_tenant_credentials_v1_channels_whatsapp__account_id__tenant_creds_get"];
+        /**
+         * Get Oauth Config
+         * @description Return only the Public OAuth App values needed by the local CLI.
+         */
+        get: operations["get_oauth_config_v1_cli_auth_oauth_config_get"];
         put?: never;
-        /** Create Whatsapp Tenant Credential */
-        post: operations["create_whatsapp_tenant_credential_v1_channels_whatsapp__account_id__tenant_creds_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/channels/whatsapp/{account_id}/tenant-creds/{credential_id}": {
+    "/v1/cli/auth/oauth/revoke": {
         parameters: {
             query?: never;
             header?: never;
@@ -497,25 +729,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
-        /** Delete Whatsapp Tenant Credential */
-        delete: operations["delete_whatsapp_tenant_credential_v1_channels_whatsapp__account_id__tenant_creds__credential_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/channels/whatsapp/{account_id}/auth-cert": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Whatsapp Auth Cert */
-        get: operations["get_whatsapp_auth_cert_v1_channels_whatsapp__account_id__auth_cert_get"];
-        put?: never;
-        post?: never;
+        /**
+         * Revoke Oauth Refresh Grant
+         * @description Revoke a Clerk OAuth refresh grant without logging or returning it.
+         *
+         *     Clerk's Backend API identifies the OAuth application in the path and
+         *     accepts the refresh token as `token`. JWT access tokens are self-contained
+         *     and remain valid until their normal expiry; this only prevents refreshes.
+         */
+        post: operations["revoke_oauth_refresh_grant_v1_cli_auth_oauth_revoke_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -818,6 +1040,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/runtime-observed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Runtime Observed
+         * @description Canonical Agent-identity route for runtime desired/observed summaries.
+         */
+        get: operations["get_agent_runtime_observed_v1_agents__agent_id__runtime_observed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Mcp Inventory
+         * @description Return only MCP inventory with proven user-declaration provenance.
+         */
+        get: operations["get_agent_mcp_inventory_v1_agents__agent_id__mcp_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent_id}/sync-heartbeat": {
         parameters: {
             query?: never;
@@ -832,10 +1094,6 @@ export interface paths {
          * @description Daemon writes its liveness state here every cycle. Extreme-
          *     light endpoint: validate ownership / env-id binding, update a
          *     handful of columns, commit. No heavy queries.
-         *
-         *     Strict-v2 companion identity is an authenticated guest report from the
-         *     per-deployment runtime credential. It is readiness authority for this
-         *     protocol, but it is not attestation-bound instance identity.
          */
         post: operations["sync_heartbeat_v1_agents__agent_id__sync_heartbeat_post"];
         delete?: never;
@@ -1148,7 +1406,7 @@ export interface paths {
          *     knows it's reading a Clawdi session and which agent / project it
          *     came from.
          *
-         *     `Content-Type: text/markdown; charset=utf-8`. NO cache header:
+         *     `Content-Type: text/markdown; charset=utf-8` and `Cache-Control: no-store`:
          *     revoke-immediacy beats CDN saving — the
          *     `(file_key, content_hash)` cache in `load_session_messages`
          *     already absorbs the parse cost.
@@ -1288,10 +1546,12 @@ export interface paths {
         get: operations["get_project_v1_projects__project_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Archive Project */
+        delete: operations["archive_project_v1_projects__project_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Project */
+        patch: operations["update_project_v1_projects__project_id__patch"];
         trace?: never;
     };
     "/v1/runtime/manifest": {
@@ -1303,6 +1563,46 @@ export interface paths {
         };
         /** Get Runtime Manifest */
         get: operations["get_runtime_manifest_v1_runtime_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runtime/project-skill-capability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Report Project Skill Capability
+         * @description Renew the short-lived Connected Project Skill reconciliation lease.
+         */
+        put: operations["report_project_skill_capability_v1_runtime_project_skill_capability_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runtime/project-skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Project Skills
+         * @description Return one Agent's complete linked-Project Skill inventory.
+         */
+        get: operations["get_agent_project_skills_v1_runtime_project_skills_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1348,7 +1648,8 @@ export interface paths {
          *     route. New CLIs and the dashboard call
          *     `POST /v1/projects/{project_id}/skills/upload` directly.
          *
-         *     Asymmetric with `delete_skill_legacy` (which 410s) by design:
+         *     Asymmetric with `delete_skill_legacy` (which only accepts an env-bound
+         *     API key) by design:
          *     a wrong-project upload creates a stray row visible in the
          *     dashboard listing, recoverable in 30s by re-uploading to the
          *     correct project. A wrong-project DELETE is permanent data loss.
@@ -1401,19 +1702,12 @@ export interface paths {
         post?: never;
         /**
          * Delete Skill Legacy
-         * @description Legacy delete by slug-only is gone in phase 2. Resolving
-         *     via `resolve_default_write_project` would silently delete
-         *     the wrong project's copy when the caller's account holds the
-         *     same `skill_key` in multiple projects (which the cross-project
-         *     listing now exposes), or 404 with no useful hint when
-         *     their default project doesn't have that key. The CLI and
-         *     dashboard both migrated to
-         *     `DELETE /v1/projects/{project_id}/skills/{skill_key}` and
-         *     pass the row's own project_id; force any stale client onto
-         *     that path with 410 instead of guessing.
+         * @description Safely serve released slug-only clients with an Agent-bound identity.
          *
-         *     Argument unused — kept so FastAPI still parses the path
-         *     param uniformly with sibling routes.
+         *     Only an env-bound API key identifies exactly one Agent and its current
+         *     Agent Project. User-level API keys, OAuth CLI sessions, and browser sessions
+         *     remain ambiguous and receive the historical 410 instead of resolving a
+         *     most-recently-active Project.
          */
         delete: operations["delete_skill_legacy_v1_skills__skill_key__delete"];
         options?: never;
@@ -1459,15 +1753,30 @@ export interface paths {
          * Upload Skill Project
          * @description Project-explicit tar.gz skill upload.
          *
-         *     The URL carries the target Project; one Agent writes to one Agent Project,
-         *     so daemon writes always land in the expected Project. The
-         *     dashboard's content editor uses `PUT /skills/{key}/content`
-         *     instead (raw markdown, server-side tar). Both converge on
-         *     `_do_upload_skill`, which serializes via a Postgres advisory
-         *     lock keyed on (user, project, skill_key); concurrent writes are
-         *     last-write-wins. SSE then fans out to subscribed daemons.
+         *     The URL carries the target Project. Workspace and Personal Projects remain
+         *     Cloud-owned; a released CLI targeting a live Agent Project is treated as a
+         *     compatibility alias for the authenticated filesystem projection. Both use
+         *     `_do_upload_skill`, which serializes mutations with a per-Skill advisory
+         *     lock. SSE is an invalidation hint only for Agent projections.
          */
         post: operations["upload_skill_project_v1_projects__project_id__skills_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Skill */
+        post: operations["create_skill_v1_projects__project_id__skills_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1484,13 +1793,11 @@ export interface paths {
         get?: never;
         /**
          * Update Skill Content
-         * @description Edit a skill's SKILL.md from the dashboard.
+         * @description Edit a Skill's user-facing fields while preserving its support files.
          *
-         *     Body is JSON `{content, content_hash?}`. The server wraps the
-         *     text into a one-file tar.gz and dispatches through the same
-         *     `_do_upload_skill` path as `POST /skills/upload`, so daemons
-         *     receiving the resulting SSE event can't distinguish dashboard
-         *     edits from CLI pushes.
+         *     The server renders SKILL.md and dispatches the resulting archive through
+         *     the shared `_do_upload_skill` integrity path. Agent Workspace projections
+         *     remain read-only here.
          *
          *     `content_hash` is interpreted as an If-Match precondition (the
          *     hash the editor saw when it loaded the skill, NOT the hash of
@@ -1593,6 +1900,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/skills/sync/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Agent Synced Skill */
+        post: operations["upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/skills/sync/{skill_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Agent Synced Skill */
+        delete: operations["delete_agent_synced_skill_v1_agents__agent_id__skills_sync__skill_key__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sync/events": {
         parameters: {
             query?: never;
@@ -1602,9 +1943,9 @@ export interface paths {
         };
         /**
          * Events
-         * @description SSE event channel. Daemons subscribe here and pull any
-         *     skill referenced in incoming `skill_changed` events. Server-
-         *     side project filter applied at broker level: subscribers only
+         * @description SSE event channel. Daemons subscribe here and treat Skill events as
+         *     invalidations that trigger an Agent-filesystem rescan and Cloud projection.
+         *     Server-side project filtering is applied at broker level: subscribers only
          *     receive events for projects they have read access to.
          *
          *     No request-scoped DB session: SSE streams live for hours,
@@ -1680,12 +2021,9 @@ export interface paths {
          *     With `force=true`, re-embeds rows that already have embeddings too
          *     (useful after changing the embedding model).
          *
-         *     Agent API keys are rejected: this is a maintenance/admin
-         *     operation that touches every memory the user owns, including
-         *     cross-Agent memories the bound key isn't allowed to read. Pre-fix
-         *     a leaked Agent A deploy key with `scopes=None` could call this
-         *     endpoint and feed every Agent's content to the embedder as a side
-         *     channel.
+         *     Agent API keys are rejected because this bulk maintenance operation is not
+         *     part of ordinary Memory read/write behavior. Environment-bound runtimes may
+         *     recall account Memory but cannot trigger account-wide re-embedding work.
          */
         post: operations["embed_backfill_v1_memories_embed_backfill_post"];
         delete?: never;
@@ -1793,97 +2131,6 @@ export interface paths {
         post?: never;
         /** Platform Delete Runtime State */
         delete: operations["platform_delete_runtime_state_v1_platform_agents__agent_id__runtime_state_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/platform/agents/{agent_id}/runtime-environment/retire": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Platform Retire Runtime Environment */
-        post: operations["platform_retire_runtime_environment_v1_platform_agents__agent_id__runtime_environment_retire_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/platform/agents/{agent_id}/runtime-observation-consumers/register": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Platform Register Runtime Observation Consumer */
-        post: operations["platform_register_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_register_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/platform/agents/{agent_id}/runtime-observations/read": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Platform Read Runtime Observations
-         * @description Read credential-authenticated guest reports for the Hosted controller.
-         *
-         *     The readiness authority is the authenticated guest report from the
-         *     per-deployment runtime credential. It is not attestation-bound instance identity.
-         */
-        post: operations["platform_read_runtime_observations_v1_platform_agents__agent_id__runtime_observations_read_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/platform/agents/{agent_id}/runtime-observation-consumers/ack": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Platform Ack Runtime Observation Consumer */
-        post: operations["platform_ack_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_ack_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/platform/agents/{agent_id}/runtime-observation-consumers/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Platform Reset Runtime Observation Consumer */
-        post: operations["platform_reset_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_reset_post"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2292,7 +2539,7 @@ export interface paths {
         };
         /**
          * Get Mcp Config
-         * @description Get MCP bridge config for the current user.
+         * @description Return the deprecated MCP bridge config required by legacy clients.
          */
         get: operations["get_mcp_config_v1_connectors_mcp_config_get"];
         put?: never;
@@ -2663,6 +2910,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/runtime/auth/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Runtime Deployment Key */
+        post: operations["create_runtime_deployment_key_v2_runtime_auth_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/runtime/environments/{environment_id}/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest Runtime Observation Event */
+        post: operations["ingest_runtime_observation_event_v2_runtime_environments__environment_id__observations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/runtime/environments/{environment_id}/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire Runtime Environment Endpoint */
+        post: operations["retire_runtime_environment_endpoint_v2_runtime_environments__environment_id__retire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/runtime/environments/{environment_id}/observation-consumers/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register Runtime Observation Consumer Endpoint */
+        post: operations["register_runtime_observation_consumer_endpoint_v2_runtime_environments__environment_id__observation_consumers_register_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/runtime/environments/{environment_id}/observations/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Runtime Observations Endpoint */
+        post: operations["read_runtime_observations_endpoint_v2_runtime_environments__environment_id__observations_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/runtime/environments/{environment_id}/observation-consumers/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge Runtime Observation Consumer Endpoint */
+        post: operations["acknowledge_runtime_observation_consumer_endpoint_v2_runtime_environments__environment_id__observation_consumers_ack_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/runtime/environments/{environment_id}/observation-consumers/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Runtime Observation Consumer Endpoint */
+        post: operations["reset_runtime_observation_consumer_endpoint_v2_runtime_environments__environment_id__observation_consumers_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -2691,6 +3057,43 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentMcpInventoryResponse */
+        AgentMcpInventoryResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable";
+            /** Servers */
+            servers?: components["schemas"]["AgentMcpServerInventoryItem"][];
+        };
+        /**
+         * AgentMcpServerInventoryItem
+         * @description A safe row whose user-declaration provenance was proven upstream.
+         */
+        AgentMcpServerInventoryItem: {
+            /** Id */
+            id: string;
+            /**
+             * Transport
+             * @enum {string}
+             */
+            transport: "stdio" | "streamable-http" | "sse";
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Source
+             * @constant
+             */
+            source: "explicit_user_declaration";
+        };
         /** AgentProjectBindingResponse */
         AgentProjectBindingResponse: {
             /** Id */
@@ -2710,6 +3113,26 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** AgentProjectSkillDesiredItem */
+        AgentProjectSkillDesiredItem: {
+            /** Project Id */
+            project_id: string;
+            /** Skill Id */
+            skill_id: string;
+            /** Skill Key */
+            skill_key: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Archive Url */
+            archive_url: string;
+        };
+        /** AgentProjectSkillDesiredResponse */
+        AgentProjectSkillDesiredResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Skills */
+            skills?: components["schemas"]["AgentProjectSkillDesiredItem"][];
         };
         /** AgentReorderRequest */
         AgentReorderRequest: {
@@ -2772,6 +3195,59 @@ export interface components {
             /** Default Project Id */
             default_project_id: string;
         };
+        /** AgentRuntimeObservedDesiredResponse */
+        AgentRuntimeObservedDesiredResponse: {
+            /** Deployment Id */
+            deployment_id: string;
+            /** Instance Id */
+            instance_id: string;
+            /** Desired Config Generation */
+            desired_config_generation: number;
+            /** Desired Source Revision */
+            desired_source_revision?: string | null;
+            /** Provider Id */
+            provider_id?: string | null;
+            /** Enabled Runtimes */
+            enabled_runtimes: string[];
+            /**
+             * Has Mcp
+             * @default false
+             */
+            has_mcp: boolean;
+            /**
+             * Has Tools
+             * @default false
+             */
+            has_tools: boolean;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Managed Skills */
+            managed_skills?: components["schemas"]["RuntimeManagedSkillSummary"][];
+        };
+        /** AgentRuntimeObservedResponse */
+        AgentRuntimeObservedResponse: {
+            environment: components["schemas"]["EnvironmentResponse"];
+            observed?: components["schemas"]["RuntimeObservedConfigResponse"] | null;
+            health: components["schemas"]["RuntimeObservedHealthResponse"];
+            /**
+             * Provider Health
+             * @default []
+             */
+            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+            desired?: components["schemas"]["AgentRuntimeObservedDesiredResponse"] | null;
+        };
+        /** AiProviderAcceptRequest */
+        AiProviderAcceptRequest: {
+            provider: components["schemas"]["AiProviderUpsert"];
+            /** Credential */
+            credential: components["schemas"]["AiProviderApiKeyAcceptCredential"] | components["schemas"]["AiProviderOAuthAcceptCredential"];
+            /**
+             * Replace
+             * @default false
+             */
+            replace: boolean;
+        };
+        AiProviderAcceptResponse: components["schemas"]["AiProviderReadyAcceptResponse"] | components["schemas"]["AiProviderOAuthPendingAcceptResponse"];
         /** AiProviderAgentProfileAuth */
         AiProviderAgentProfileAuth: {
             /**
@@ -2804,6 +3280,19 @@ export interface components {
             /** Tool */
             tool: string;
         };
+        /** AiProviderApiKeyAcceptCredential */
+        AiProviderApiKeyAcceptCredential: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "api_key";
+            /**
+             * Value
+             * Format: password
+             */
+            value: string;
+        };
         AiProviderApiKeyAuth: components["schemas"]["AiProviderEnvApiKeyAuth"] | components["schemas"]["AiProviderVaultApiKeyAuth"] | components["schemas"]["AiProviderManagedApiKeyAuth"];
         AiProviderAuth: components["schemas"]["AiProviderSecretRefAuth"] | components["schemas"]["AiProviderApiKeyAuth"] | components["schemas"]["AiProviderOAuthProfileAuth"] | components["schemas"]["AiProviderAgentProfileAuth"] | components["schemas"]["AiProviderNoneAuth"];
         /** AiProviderAuthImportRequest */
@@ -2815,6 +3304,10 @@ export interface components {
              * @default default
              */
             profile: string;
+            /** Environment Id */
+            environment_id?: string | null;
+            /** Consumer Runtime */
+            consumer_runtime?: ("codex" | "hermes" | "openclaw") | null;
         };
         /** AiProviderAuthResolveResponse */
         AiProviderAuthResolveResponse: {
@@ -2835,6 +3328,49 @@ export interface components {
             provider?: string | null;
             /** Profile */
             profile?: string | null;
+            /** Credential Revision */
+            credential_revision?: string | null;
+        };
+        /** AiProviderConnectionError */
+        AiProviderConnectionError: {
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "validation" | "credential" | "ssrf" | "dns" | "timeout" | "tls" | "network" | "authentication" | "authorization" | "rate_limit" | "redirect" | "endpoint" | "protocol_model" | "upstream";
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** AiProviderConnectionTestRequest */
+        AiProviderConnectionTestRequest: {
+            provider: components["schemas"]["AiProviderUpsert"];
+            credential: components["schemas"]["AiProviderApiKeyAcceptCredential"];
+            /** Model */
+            model?: string | null;
+        };
+        /** AiProviderConnectionTestResponse */
+        AiProviderConnectionTestResponse: {
+            /** Ok */
+            ok: boolean;
+            readiness: components["schemas"]["AiProviderReadiness"];
+            error?: components["schemas"]["AiProviderConnectionError"] | null;
+        };
+        /** AiProviderConsumer */
+        AiProviderConsumer: {
+            /**
+             * Environment Id
+             * Format: uuid
+             */
+            environment_id: string;
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "codex" | "hermes" | "openclaw";
         };
         /** AiProviderDeleteResponse */
         AiProviderDeleteResponse: {
@@ -2845,6 +3381,12 @@ export interface components {
             status: "deleted";
             /** Provider Id */
             provider_id: string;
+            /**
+             * Remote Revoke Status
+             * @default not_required
+             * @enum {string}
+             */
+            remote_revoke_status: "pending" | "not_required";
         };
         /** AiProviderEnvApiKeyAuth */
         AiProviderEnvApiKeyAuth: {
@@ -2853,13 +3395,13 @@ export interface components {
              * @constant
              */
             type: "api_key";
+            /** Profile */
+            profile?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             source: "env";
-            /** Profile */
-            profile?: string | null;
             /** Ref */
             ref: string;
         };
@@ -2875,13 +3417,13 @@ export interface components {
              * @constant
              */
             type: "api_key";
+            /** Profile */
+            profile?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             source: "managed";
-            /** Profile */
-            profile?: string | null;
         };
         /** AiProviderManagedApiKeyRequest */
         AiProviderManagedApiKeyRequest: {
@@ -2916,6 +3458,8 @@ export interface components {
             supports_reasoning?: boolean;
             /** Context Window */
             context_window?: number;
+            /** Max Input Tokens */
+            max_input_tokens?: number;
             /** Max Tokens */
             max_tokens?: number;
             /** Cost */
@@ -2957,6 +3501,22 @@ export interface components {
              */
             type: "none";
         };
+        /** AiProviderOAuthAcceptCredential */
+        AiProviderOAuthAcceptCredential: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "oauth";
+            /** Provider */
+            provider: string;
+            /**
+             * Flow
+             * @default device_code
+             * @constant
+             */
+            flow: "device_code";
+        };
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
             /** State */
@@ -2965,6 +3525,74 @@ export interface components {
             code: string;
             /** Redirect Uri */
             redirect_uri?: string | null;
+        };
+        /** AiProviderOAuthDevicePendingResponse */
+        AiProviderOAuthDevicePendingResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "pending";
+            /** Retry After Seconds */
+            retry_after_seconds: number;
+        };
+        /** AiProviderOAuthDevicePollRequest */
+        AiProviderOAuthDevicePollRequest: {
+            /** State */
+            state: string;
+        };
+        AiProviderOAuthDevicePollResponse: components["schemas"]["AiProviderOAuthDevicePendingResponse"] | components["schemas"]["AiProviderOAuthDeviceReadyResponse"];
+        /** AiProviderOAuthDeviceReadyResponse */
+        AiProviderOAuthDeviceReadyResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "ready";
+            provider: components["schemas"]["AiProviderResponse"];
+        };
+        /** AiProviderOAuthDeviceStartRequest */
+        AiProviderOAuthDeviceStartRequest: {
+            /** Provider */
+            provider: string;
+        };
+        /** AiProviderOAuthDeviceStartResponse */
+        AiProviderOAuthDeviceStartResponse: {
+            /**
+             * Flow
+             * @default device_code
+             * @constant
+             */
+            flow: "device_code";
+            /** Provider Id */
+            provider_id: string;
+            /** Oauth Provider */
+            oauth_provider: string;
+            /** Profile */
+            profile: string;
+            /** Verification Url */
+            verification_url: string;
+            /** User Code */
+            user_code: string;
+            /** State */
+            state: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number;
+        };
+        /** AiProviderOAuthPendingAcceptResponse */
+        AiProviderOAuthPendingAcceptResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "pending";
+            provider: components["schemas"]["AiProviderResponse"];
+            authorization: components["schemas"]["AiProviderOAuthDeviceStartResponse"];
         };
         /** AiProviderOAuthProfileAuth */
         AiProviderOAuthProfileAuth: {
@@ -3007,6 +3635,12 @@ export interface components {
         };
         /** AiProviderOAuthStartResponse */
         AiProviderOAuthStartResponse: {
+            /**
+             * Flow
+             * @default authorization_code
+             * @constant
+             */
+            flow: "authorization_code";
             /** Provider Id */
             provider_id: string;
             /** Oauth Provider */
@@ -3042,10 +3676,42 @@ export interface components {
             runtime_env_name?: string | null;
             /** Capabilities */
             capabilities?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
+        };
+        /** AiProviderReadiness */
+        AiProviderReadiness: {
+            /**
+             * Credential Material
+             * @enum {string}
+             */
+            credential_material: "available" | "referenced" | "not_required" | "missing";
+            runtime_compatibility: components["schemas"]["AiProviderRuntimeCompatibility"];
+            /** Deployable */
+            deployable: boolean;
+            /**
+             * Endpoint Reachability
+             * @default not_tested
+             * @enum {string}
+             */
+            endpoint_reachability: "not_tested" | "verified" | "failed";
+            /**
+             * Inference Verification
+             * @default not_tested
+             * @enum {string}
+             */
+            inference_verification: "not_tested" | "verified" | "failed";
+        };
+        /** AiProviderReadyAcceptResponse */
+        AiProviderReadyAcceptResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "ready";
+            provider: components["schemas"]["AiProviderResponse"];
         };
         /** AiProviderResponse */
         AiProviderResponse: {
@@ -3070,7 +3736,7 @@ export interface components {
             runtime_env_name?: string | null;
             /** Capabilities */
             capabilities?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
@@ -3082,6 +3748,15 @@ export interface components {
             scope: string;
             auth: components["schemas"]["AiProviderAuth"];
             /**
+             * Usable
+             * @description Whether the provider has the credential material required for runtime use. This does not validate the credential or test endpoint connectivity.
+             */
+            usable: boolean;
+            /** @description Structured readiness dimensions used for Hosted runtime admission. */
+            readiness?: components["schemas"]["AiProviderReadiness"] | null;
+            /** @description Non-secret hosted runtime claim for single-consumer credentials; omitted when the connection is unclaimed. */
+            consumer?: components["schemas"]["AiProviderConsumer"] | null;
+            /**
              * Created At
              * Format: date-time
              */
@@ -3091,6 +3766,20 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** AiProviderRuntimeCompatibility */
+        AiProviderRuntimeCompatibility: {
+            /** Openclaw */
+            openclaw: boolean;
+            /** Hermes */
+            hermes: boolean;
+            /** Codex */
+            codex: boolean;
+        };
+        /** AiProviderSavedConnectionTestRequest */
+        AiProviderSavedConnectionTestRequest: {
+            /** Model */
+            model?: string | null;
         };
         /** AiProviderSecretRefAuth */
         AiProviderSecretRefAuth: {
@@ -3125,7 +3814,7 @@ export interface components {
             runtime_env_name?: string | null;
             /** Capabilities */
             capabilities?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
@@ -3156,13 +3845,13 @@ export interface components {
              * @constant
              */
             type: "api_key";
+            /** Profile */
+            profile?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             source: "vault";
-            /** Profile */
-            profile?: string | null;
             /** Ref */
             ref: string;
         };
@@ -3268,6 +3957,15 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post */
+        Body_upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post: {
+            /** Skill Key */
+            skill_key: string;
+            /** File */
+            file: string;
+            /** Content Hash */
+            content_hash?: string | null;
+        };
         /** Body_upload_environment_avatar_v1_environments__environment_id__avatar_post */
         Body_upload_environment_avatar_v1_environments__environment_id__avatar_post: {
             /** File */
@@ -3293,6 +3991,12 @@ export interface components {
             skill_key: string;
             /** File */
             file: string;
+            /**
+             * Create Only
+             * @description Reject the upload if this Project already has an active Skill with this key.
+             * @default false
+             */
+            create_only: boolean;
             /** Content Hash */
             content_hash?: string | null;
         };
@@ -3314,11 +4018,16 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "telegram" | "discord" | "whatsapp" | "imessage";
+            provider: "telegram" | "discord" | "whatsapp";
             /** Name */
             name: string;
             /** Agent Id */
             agent_id?: string | null;
+            /**
+             * Replace Existing Provider Link
+             * @description Explicit opt-in to replace this Agent's active link for the same provider.
+             */
+            replace_existing_provider_link?: boolean;
             /** Provider Token */
             provider_token?: string | null;
             /** Config */
@@ -3469,6 +4178,11 @@ export interface components {
         ChannelAgentLinkCreate: {
             /** Agent Id */
             agent_id?: string | null;
+            /**
+             * Replace Existing Provider Link
+             * @description Explicit opt-in to replace this Agent's active link for the same provider.
+             */
+            replace_existing_provider_link?: boolean;
         };
         /** ChannelAgentLinkResponse */
         ChannelAgentLinkResponse: {
@@ -3524,6 +4238,33 @@ export interface components {
             /** Agent Token */
             agent_token?: string | null;
             account: components["schemas"]["ChannelAccountResponse"];
+            /**
+             * Binding Count
+             * @default 0
+             */
+            binding_count: number;
+        };
+        /** ChannelBindingDeleteResponse */
+        ChannelBindingDeleteResponse: {
+            /**
+             * Binding Id
+             * Format: uuid
+             */
+            binding_id: string;
+            /** Unpaired */
+            unpaired: boolean;
+            /**
+             * Notification Status
+             * @enum {string}
+             */
+            notification_status: "sent" | "failed" | "not_applicable";
+            /**
+             * Provider Cleanup Status
+             * @enum {string}
+             */
+            provider_cleanup_status: "succeeded" | "failed" | "not_applicable";
+            /** Warning */
+            warning?: string | null;
         };
         /** ChannelBindingResponse */
         ChannelBindingResponse: {
@@ -3552,6 +4293,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Last Message At */
+            last_message_at?: string | null;
         };
         /** ChannelBotPoolCapabilities */
         ChannelBotPoolCapabilities: {
@@ -3677,6 +4420,8 @@ export interface components {
              * @default 0
              */
             pending_inbox: number;
+            /** Oldest Pending Inbox At */
+            oldest_pending_inbox_at?: string | null;
             /**
              * Pending Deliveries
              * @default 0
@@ -3747,7 +4492,7 @@ export interface components {
             agent_link_id?: string | null;
             /**
              * Ttl Seconds
-             * @default 900
+             * @default 300
              */
             ttl_seconds: number;
         };
@@ -3777,6 +4522,18 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+            /** Pairing Command */
+            pairing_command: string;
+            /** Bot Username */
+            bot_username?: string | null;
+            /** Deep Link */
+            deep_link?: string | null;
+            /** Qr Payload */
+            qr_payload?: string | null;
+            /** Discord Install Url */
+            discord_install_url?: string | null;
+            /** Discord User Install Url */
+            discord_user_install_url?: string | null;
         };
         /** ChannelRuntimeAccountResponse */
         ChannelRuntimeAccountResponse: {
@@ -3886,6 +4643,75 @@ export interface components {
             external_chat_id?: string | null;
             /** Text */
             text: string;
+        };
+        /** ChannelWhatsAppOnboardingCreate */
+        ChannelWhatsAppOnboardingCreate: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Name */
+            name: string;
+        };
+        /** ChannelWhatsAppOnboardingPairingCodeCreate */
+        ChannelWhatsAppOnboardingPairingCodeCreate: {
+            /**
+             * Phone Number
+             * Format: password
+             */
+            phone_number: string;
+        };
+        /** ChannelWhatsAppOnboardingReadinessResponse */
+        ChannelWhatsAppOnboardingReadinessResponse: {
+            /** Available */
+            available: boolean;
+            /** Manual Pairing Code Supported */
+            manual_pairing_code_supported: boolean;
+            /** Reason */
+            reason?: ("not_configured" | "no_capacity" | "managed_sidecar_required" | "temporarily_unavailable") | null;
+        };
+        /** ChannelWhatsAppOnboardingSessionResponse */
+        ChannelWhatsAppOnboardingSessionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Channel Account Id */
+            channel_account_id?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "generating" | "ready" | "scanned" | "connected" | "expired" | "canceled" | "error";
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "qr" | "code";
+            /** Qr */
+            qr?: string | null;
+            /** Qr Expires At */
+            qr_expires_at?: string | null;
+            /** Pairing Code */
+            pairing_code?: string | null;
+            /** Manual Pairing Code Supported */
+            manual_pairing_code_supported: boolean;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Completed At */
+            completed_at?: string | null;
         };
         /**
          * ConnectRequest
@@ -4037,7 +4863,7 @@ export interface components {
         ConnectorToolParametersResponse: {
             /** Properties */
             properties: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Required */
             required: string[];
@@ -4142,6 +4968,8 @@ export interface components {
             peak_hour: number;
             /** Favorite Model */
             favorite_model: string | null;
+            /** Projects Count */
+            projects_count: number;
             /** Skills Count */
             skills_count: number;
             /** Memories Count */
@@ -4154,6 +4982,12 @@ export interface components {
             connectors_count: number;
             /** Manual Sessions Last 7 Days */
             manual_sessions_last_7_days: number;
+            /** Automated Sessions Last 7 Days */
+            automated_sessions_last_7_days: number;
+            /** Top Model Last 7 Days */
+            top_model_last_7_days: string | null;
+            /** Sessions Today */
+            sessions_today: number;
             /** Contribution */
             contribution: components["schemas"]["ContributionDayResponse"][];
         };
@@ -4530,28 +5364,90 @@ export interface components {
             /** Profiles */
             profiles?: components["schemas"]["HostedEgressProfile"][] | null;
         };
-        /** HostedRuntimeBridge */
-        HostedRuntimeBridge: {
-            /** Surfaces */
-            surfaces: components["schemas"]["HostedRuntimeBridgeSurface"][];
-        };
-        /** HostedRuntimeBridgeSurface */
-        HostedRuntimeBridgeSurface: {
-            /** Name */
-            name: string;
+        /** HostedHermesDashboardActivation */
+        HostedHermesDashboardActivation: {
             /**
-             * Kind
+             * Enabled
              * @constant
              */
-            kind: "control-ui";
-            /** Listenhost */
-            listenHost?: string | null;
-            /** Listenport */
-            listenPort: number;
-            /** Upstreamhost */
-            upstreamHost?: string | null;
-            /** Upstreamport */
-            upstreamPort: number;
+            enabled: true;
+            /**
+             * Capability
+             * @constant
+             */
+            capability: "hermes-basic-auth-v1";
+        };
+        /** HostedHermesDashboardAuth */
+        HostedHermesDashboardAuth: {
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "password";
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "basic";
+            /** Username */
+            username: string;
+            /**
+             * Passwordsecretref
+             * @constant
+             */
+            passwordSecretRef: "secret://runtime/hermes/dashboard-password";
+            /**
+             * Sessionsecretref
+             * @constant
+             */
+            sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret";
+            /**
+             * Sessionttlseconds
+             * @default 43200
+             */
+            sessionTtlSeconds: number;
+            /** Publicurl */
+            publicUrl: string;
+            activation: components["schemas"]["HostedHermesDashboardActivation"];
+        };
+        /** HostedOpenClawGatewayActivation */
+        HostedOpenClawGatewayActivation: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            /**
+             * Capability
+             * @constant
+             */
+            capability: "openclaw-native-auth-v1";
+        };
+        /** HostedOpenClawGatewayAuth */
+        HostedOpenClawGatewayAuth: {
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "token";
+            /**
+             * Tokenref
+             * @constant
+             */
+            tokenRef: "secret://runtime/openclaw/gateway-token";
+            /**
+             * Deviceauthrequired
+             * @constant
+             */
+            deviceAuthRequired: false;
+            activation: components["schemas"]["HostedOpenClawGatewayActivation"];
+        };
+        /** HostedRuntimeBundledSkillEntry */
+        HostedRuntimeBundledSkillEntry: {
+            /** Enabled */
+            enabled: boolean;
+            /** Version */
+            version: number;
         };
         /** HostedRuntimeConfiguredDesiredState */
         HostedRuntimeConfiguredDesiredState: {
@@ -4609,6 +5505,23 @@ export interface components {
             language: "en" | "zh-CN" | "zh-TW" | "ja" | "ko" | "es" | "fr" | "de" | "pt";
             /** Timezone */
             timezone: string;
+        };
+        /** HostedRuntimeMcp */
+        HostedRuntimeMcp: {
+            /** Servers */
+            servers: {
+                [key: string]: components["schemas"]["HostedRuntimeStdioMcpServer"] | components["schemas"]["HostedRuntimeRemoteMcpServer"];
+            };
+        };
+        /** HostedRuntimeMcpSecretHeader */
+        HostedRuntimeMcpSecretHeader: {
+            /** Secretref */
+            secretRef: string;
+            /**
+             * Prefix
+             * @default
+             */
+            prefix: string;
         };
         /** HostedRuntimeObservedAppliedV2 */
         HostedRuntimeObservedAppliedV2: {
@@ -4762,18 +5675,6 @@ export interface components {
             convergeError?: string | null;
             /** Truncated */
             truncated?: boolean | null;
-            /** Applyreceiptid */
-            applyReceiptId?: string | null;
-            /** Bootnonce */
-            bootNonce?: string | null;
-            /** Bootsessionid */
-            bootSessionId?: string | null;
-            /** Sequence */
-            sequence?: number | null;
-            /** Eventid */
-            eventId?: string | null;
-            /** Capturedat */
-            capturedAt?: string | null;
         };
         /** HostedRuntimePrimaryModel */
         HostedRuntimePrimaryModel: {
@@ -4788,6 +5689,20 @@ export interface components {
             cacheManifest: boolean;
             /** Allowofflineboot */
             allowOfflineBoot: boolean;
+        };
+        /** HostedRuntimeRemoteMcpServer */
+        HostedRuntimeRemoteMcpServer: {
+            /** Url */
+            url: string;
+            /**
+             * Transport
+             * @enum {string}
+             */
+            transport: "streamable-http" | "sse";
+            /** Headers */
+            headers?: {
+                [key: string]: string | components["schemas"]["HostedRuntimeMcpSecretHeader"];
+            };
         };
         /** HostedRuntimeRunSettings */
         HostedRuntimeRunSettings: {
@@ -4808,10 +5723,48 @@ export interface components {
             /** Prependpath */
             prependPath?: string[] | null;
         };
+        /** HostedRuntimeSkillSource */
+        HostedRuntimeSkillSource: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "github";
+            /** Url */
+            url: string;
+            /** Path */
+            path: string;
+            /** Commit */
+            commit: string;
+        };
+        /** HostedRuntimeSkills */
+        HostedRuntimeSkills: {
+            /** Entries */
+            entries: {
+                [key: string]: components["schemas"]["HostedRuntimeBundledSkillEntry"] | components["schemas"]["HostedRuntimeSourcedSkillEntry"];
+            };
+        };
+        /** HostedRuntimeSourcedSkillEntry */
+        HostedRuntimeSourcedSkillEntry: {
+            /** Enabled */
+            enabled: boolean;
+            source: components["schemas"]["HostedRuntimeSkillSource"];
+        };
+        /** HostedRuntimeStdioMcpServer */
+        HostedRuntimeStdioMcpServer: {
+            /** Command */
+            command: string;
+            /** Args */
+            args: string[];
+        };
         /** HostedRuntimeSystem */
         HostedRuntimeSystem: {
             /** Openclawcontroluiallowedorigins */
             openclawControlUiAllowedOrigins?: string[] | null;
+            /** Openclawcontroluibasepath */
+            openclawControlUiBasePath?: string | null;
+            openclawGatewayAuth?: components["schemas"]["HostedOpenClawGatewayAuth"] | null;
+            hermesDashboardAuth?: components["schemas"]["HostedHermesDashboardAuth"] | null;
         };
         /** HostedRuntimeTools */
         HostedRuntimeTools: {
@@ -5001,6 +5954,41 @@ export interface components {
             /** Source Machine Name */
             source_machine_name?: string | null;
         };
+        /**
+         * OAuthConfigResponse
+         * @description Public configuration for the first-party Clerk OAuth CLI client.
+         */
+        OAuthConfigResponse: {
+            /** Issuer */
+            issuer: string;
+            /** Client Id */
+            client_id: string;
+            /** Audience */
+            audience: string;
+            /** Authorized Parties */
+            authorized_parties?: string[];
+            /** Redirect Uri */
+            redirect_uri: string;
+        };
+        /**
+         * OAuthRevokeRequest
+         * @description Refresh credential forwarded only to Clerk's revoke-grant endpoint.
+         */
+        OAuthRevokeRequest: {
+            /**
+             * Refresh Token
+             * Format: password
+             */
+            refresh_token: string;
+        };
+        /** OAuthRevokeResponse */
+        OAuthRevokeResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "revoked";
+        };
         /** Paginated[ConnectorAvailableAppResponse] */
         Paginated_ConnectorAvailableAppResponse_: {
             /** Items */
@@ -5068,6 +6056,11 @@ export interface components {
             machine_id: string;
             /** Machine Name */
             machine_name: string;
+            /**
+             * Default Name
+             * @description Canonical Agent name supplied by the owning control plane.
+             */
+            default_name?: string | null;
             /** Agent Type */
             agent_type: string;
             /** Agent Version */
@@ -5088,8 +6081,6 @@ export interface components {
              * Format: uuid
              */
             environment_id: string;
-            /** Deployment Id */
-            deployment_id: string;
             /** Scopes */
             scopes?: string[];
         };
@@ -5129,67 +6120,6 @@ export interface components {
             /** Ref */
             ref: string;
         };
-        /** PlatformRuntimeApplyIdentity */
-        PlatformRuntimeApplyIdentity: {
-            /** Generation */
-            generation: number;
-            /** Manifestetag */
-            manifestETag: string;
-            /** Applyreceiptid */
-            applyReceiptId: string;
-            /** Bootnonce */
-            bootNonce: string;
-        };
-        /** PlatformRuntimeEnvironmentRetire */
-        PlatformRuntimeEnvironmentRetire: {
-            owner: components["schemas"]["PlatformOwner"];
-            /** Expected Deployment Id */
-            expected_deployment_id: string;
-            /** Retirement Id */
-            retirement_id: string;
-        };
-        /** PlatformRuntimeObservationConsumerAck */
-        PlatformRuntimeObservationConsumerAck: {
-            owner: components["schemas"]["PlatformOwner"];
-            /** Deployment Id */
-            deployment_id: string;
-            /** Consumer Id */
-            consumer_id: string;
-            /** Cursor */
-            cursor: string;
-        };
-        /** PlatformRuntimeObservationConsumerRegister */
-        PlatformRuntimeObservationConsumerRegister: {
-            owner: components["schemas"]["PlatformOwner"];
-            /** Deployment Id */
-            deployment_id: string;
-            /** Consumer Id */
-            consumer_id: string;
-        };
-        /** PlatformRuntimeObservationConsumerReset */
-        PlatformRuntimeObservationConsumerReset: {
-            owner: components["schemas"]["PlatformOwner"];
-            /** Deployment Id */
-            deployment_id: string;
-            /** Consumer Id */
-            consumer_id: string;
-        };
-        /** PlatformRuntimeObservationRead */
-        PlatformRuntimeObservationRead: {
-            owner: components["schemas"]["PlatformOwner"];
-            /** Deployment Id */
-            deployment_id: string;
-            /** Consumer Id */
-            consumer_id: string;
-            expectedApplyIdentity: components["schemas"]["PlatformRuntimeApplyIdentity"];
-            /** Aftercursor */
-            afterCursor: string;
-            /**
-             * Limit
-             * @default 100
-             */
-            limit: number;
-        };
         /** PlatformRuntimeStateResponse */
         PlatformRuntimeStateResponse: {
             /**
@@ -5203,6 +6133,8 @@ export interface components {
             instance_id: string;
             /** Generation */
             generation: number;
+            /** Apply Generation */
+            apply_generation?: number | null;
         };
         /** PlatformRuntimeStateUpsert */
         PlatformRuntimeStateUpsert: {
@@ -5213,6 +6145,8 @@ export interface components {
             instance_id: string;
             /** Generation */
             generation: number;
+            /** Apply Generation */
+            apply_generation?: number | null;
             /** Cli Package Spec */
             cli_package_spec: string;
             locale: components["schemas"]["HostedRuntimeLocale"];
@@ -5222,15 +6156,26 @@ export interface components {
             runtimes: {
                 [key: string]: components["schemas"]["HostedRuntimeConfiguredDesiredState"] | components["schemas"]["HostedRuntimeUnmanagedDesiredState"];
             };
-            bridge?: components["schemas"]["HostedRuntimeBridge"] | null;
             live_sync: components["schemas"]["HostedRuntimeLiveSync"];
             recovery: components["schemas"]["HostedRuntimeRecovery"];
             egress_profiles?: components["schemas"]["HostedEgressProfiles"] | null;
-            /** Mcp */
-            mcp?: {
-                [key: string]: unknown;
-            } | null;
+            mcp?: components["schemas"]["HostedRuntimeMcp"] | null;
+            skills?: components["schemas"]["HostedRuntimeSkills"] | null;
             tools: components["schemas"]["HostedRuntimeTools"];
+            /** Secretvalues */
+            secretValues: {
+                [key: string]: string;
+            };
+        };
+        /** ProjectArchiveResponse */
+        ProjectArchiveResponse: {
+            /**
+             * Status
+             * @default archived
+             */
+            status: string;
+            /** Unlinked Agent Count */
+            unlinked_agent_count: number;
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -5238,6 +6183,8 @@ export interface components {
             name: string;
             /** Slug */
             slug?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /**
          * ProjectLeaveResponse
@@ -5275,6 +6222,8 @@ export interface components {
             slug: string;
             /** Kind */
             kind: string;
+            /** Description */
+            description: string | null;
             /** Origin Environment Id */
             origin_environment_id: string | null;
             /** Archived At */
@@ -5293,6 +6242,44 @@ export interface components {
             owner_display?: string | null;
             /** Owner Handle */
             owner_handle?: string | null;
+            /**
+             * Skill Count
+             * @default 0
+             */
+            skill_count: number;
+            /**
+             * Vault Count
+             * @default 0
+             */
+            vault_count: number;
+            /**
+             * Agent Count
+             * @default 0
+             */
+            agent_count: number;
+            /**
+             * Member Count
+             * @default 0
+             */
+            member_count: number;
+        };
+        /**
+         * ProjectSkillCapabilityReport
+         * @description Current Connected Agent observation, separate from deployment generations.
+         */
+        ProjectSkillCapabilityReport: {
+            /**
+             * Project Skill Reconcile Version
+             * @constant
+             */
+            project_skill_reconcile_version: 1;
+        };
+        /** ProjectUpdate */
+        ProjectUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /**
          * PublicSessionExportResponse
@@ -5396,16 +6383,45 @@ export interface components {
             /** Owner Avatar Url */
             owner_avatar_url: string | null;
         };
-        /** RuntimeEnvironmentRetirementReceipt */
-        RuntimeEnvironmentRetirementReceipt: {
-            /** Retirementreceiptid */
-            retirementReceiptId: string;
-            /** Retirementid */
-            retirementId: string;
-            /** Environmentid */
+        /** RuntimeApplyIdentityRequest */
+        RuntimeApplyIdentityRequest: {
+            /** Generation */
+            generation: number;
+            /** Manifestetag */
+            manifestETag: string;
+            /** Applyreceiptid */
+            applyReceiptId: string;
+            /** Bootnonce */
+            bootNonce: string;
+        };
+        /** RuntimeDeploymentKeyCreate */
+        RuntimeDeploymentKeyCreate: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Label */
+            label: string;
+            /**
+             * Environmentid
+             * Format: uuid
+             */
             environmentId: string;
             /** Deploymentid */
             deploymentId: string;
+        };
+        /** RuntimeEnvironmentRetireRequest */
+        RuntimeEnvironmentRetireRequest: {
+            /** Expecteddeploymentbinding */
+            expectedDeploymentBinding: string;
+            /** Retirementid */
+            retirementId: string;
+        };
+        /** RuntimeEnvironmentRetirementReceipt */
+        RuntimeEnvironmentRetirementReceipt: {
+            /** Environmentreference */
+            environmentReference: string;
+            /** Expecteddeploymentbinding */
+            expectedDeploymentBinding: string;
+            /** Retirementid */
+            retirementId: string;
             /**
              * Retiredat
              * Format: date-time
@@ -5414,9 +6430,16 @@ export interface components {
             /** Finalcursor */
             finalCursor: string;
             /** Finalsessionhighwatermarks */
-            finalSessionHighWaterMarks: {
-                [key: string]: number;
-            };
+            finalSessionHighWaterMarks: components["schemas"]["RuntimeSessionHighWaterMark"][];
+        };
+        /** RuntimeManagedSkillSummary */
+        RuntimeManagedSkillSummary: {
+            /** Id */
+            id: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Version */
+            version: number;
         };
         /** RuntimeObservationApplyIdentityResponse */
         RuntimeObservationApplyIdentityResponse: {
@@ -5429,6 +6452,13 @@ export interface components {
             /** Bootnonce */
             bootNonce: string;
         };
+        /** RuntimeObservationConsumerAckRequest */
+        RuntimeObservationConsumerAckRequest: {
+            /** Cursor */
+            cursor: string;
+        };
+        /** RuntimeObservationConsumerRequest */
+        RuntimeObservationConsumerRequest: Record<string, never>;
         /** RuntimeObservationConsumerResetResponse */
         RuntimeObservationConsumerResetResponse: {
             /** Environmentid */
@@ -5490,6 +6520,64 @@ export interface components {
             health: "ok" | "error" | "unknown";
             diagnostics: components["schemas"]["JsonValue"];
         };
+        /**
+         * RuntimeObservationEventV2
+         * @description Strict v2 companion event; deliberately separate from the frozen v1 wire model.
+         */
+        RuntimeObservationEventV2: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: "clawdi.hostedRuntimeObserved.v2";
+            /**
+             * Reportedat
+             * Format: date-time
+             */
+            reportedAt: string;
+            /**
+             * Runtimemode
+             * @constant
+             */
+            runtimeMode: "hosted";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Activecliversion */
+            activeCliVersion: string | null;
+            applied: components["schemas"]["HostedRuntimeObservedAppliedV2"];
+            boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
+            cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
+            systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
+            supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
+            /** Providers */
+            providers?: {
+                [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
+            } | null;
+            /** Error */
+            error?: string | null;
+            /** Convergeerror */
+            convergeError?: string | null;
+            /** Truncated */
+            truncated?: false | null;
+            /** Applyreceiptid */
+            applyReceiptId: string;
+            /** Bootnonce */
+            bootNonce: string;
+            /** Bootsessionid */
+            bootSessionId: string;
+            /** Sequence */
+            sequence: number;
+            /** Eventid */
+            eventId: string;
+            /**
+             * Capturedat
+             * Format: date-time
+             */
+            capturedAt: string;
+        };
         /** RuntimeObservationEvidenceReference */
         RuntimeObservationEvidenceReference: {
             /** Eventid */
@@ -5535,6 +6623,29 @@ export interface components {
             bootNonce: string;
             /** Bootsessionid */
             bootSessionId: string;
+        };
+        /** RuntimeObservationIngestResponse */
+        RuntimeObservationIngestResponse: {
+            /** Eventid */
+            eventId: string;
+            /** Streamposition */
+            streamPosition: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "accepted_head_created" | "accepted_head_advanced" | "accepted_non_advance_sequence" | "accepted_non_advance_captured_at" | "duplicate_replay";
+        };
+        /** RuntimeObservationReadRequest */
+        RuntimeObservationReadRequest: {
+            expectedApplyIdentity: components["schemas"]["RuntimeApplyIdentityRequest"];
+            /** Aftercursor */
+            afterCursor: string;
+            /**
+             * Limit
+             * @default 100
+             */
+            limit: number;
         };
         /** RuntimeObservationReadResponse */
         RuntimeObservationReadResponse: {
@@ -5654,7 +6765,6 @@ export interface components {
         /** RuntimeObservedResponse */
         RuntimeObservedResponse: {
             environment: components["schemas"]["EnvironmentResponse"];
-            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
             observed?: components["schemas"]["RuntimeObservedConfigResponse"] | null;
             health: components["schemas"]["RuntimeObservedHealthResponse"];
             /**
@@ -5662,6 +6772,7 @@ export interface components {
              * @default []
              */
             provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
         };
         /** RuntimeObservedSummaryCountsResponse */
         RuntimeObservedSummaryCountsResponse: {
@@ -5709,13 +6820,20 @@ export interface components {
             /** Items */
             items: components["schemas"]["RuntimeObservedSummaryItemResponse"][];
         };
+        /** RuntimeSessionHighWaterMark */
+        RuntimeSessionHighWaterMark: {
+            /** Bootsessionid */
+            bootSessionId: string;
+            /** Sequence */
+            sequence: number;
+        };
         /** SearchHit */
         SearchHit: {
             /**
              * Type
              * @enum {string}
              */
-            type: "session" | "memory" | "skill" | "vault";
+            type: "session" | "memory" | "project" | "skill" | "vault";
             /** Id */
             id: string;
             /** Title */
@@ -6082,13 +7200,13 @@ export interface components {
         };
         /** SettingsResponse */
         SettingsResponse: {
-            [key: string]: unknown;
+            [key: string]: components["schemas"]["JsonValue"];
         };
         /** SettingsUpdate */
         SettingsUpdate: {
             /** Settings */
             settings: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
         };
         /** SettingsUpdateResponse */
@@ -6215,10 +7333,23 @@ export interface components {
         };
         /** SkillContentUpdateRequest */
         SkillContentUpdateRequest: {
-            /** Content */
-            content: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Instructions */
+            instructions: string;
             /** Content Hash */
-            content_hash?: string | null;
+            content_hash: string;
+        };
+        /** SkillCreateRequest */
+        SkillCreateRequest: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Instructions */
+            instructions: string;
         };
         /** SkillDeleteResponse */
         SkillDeleteResponse: {
@@ -6242,6 +7373,12 @@ export interface components {
             version: number;
             /** Source */
             source: string;
+            /**
+             * Authority
+             * @default cloud
+             * @enum {string}
+             */
+            authority: "agent_sync" | "cloud";
             /** Source Repo */
             source_repo: string | null;
             /** File Count */
@@ -6266,6 +7403,8 @@ export interface components {
             project_id?: string | null;
             /** Project Name */
             project_name?: string | null;
+            /** Project Kind */
+            project_kind?: ("environment" | "personal" | "workspace") | null;
             /** Machine Name */
             machine_name?: string | null;
             /** Environment Id */
@@ -6307,6 +7446,12 @@ export interface components {
             version: number;
             /** Source */
             source: string;
+            /**
+             * Authority
+             * @default cloud
+             * @enum {string}
+             */
+            authority: "agent_sync" | "cloud";
             /** Source Repo */
             source_repo: string | null;
             /** Agent Types */
@@ -6333,6 +7478,8 @@ export interface components {
             project_id?: string | null;
             /** Project Name */
             project_name?: string | null;
+            /** Project Kind */
+            project_kind?: ("environment" | "personal" | "workspace") | null;
             /** Machine Name */
             machine_name?: string | null;
             /** Environment Id */
@@ -6621,6 +7768,9 @@ export interface components {
             /** Project Id */
             project_id?: string | null;
         };
+        VaultResolutionRecord: {
+            [key: string]: unknown;
+        };
         /** VaultResolveResponse */
         VaultResolveResponse: {
             [key: string]: unknown;
@@ -6656,98 +7806,6 @@ export interface components {
         /** VaultSectionsResponse */
         VaultSectionsResponse: {
             [key: string]: string[];
-        };
-        /** WhatsAppSelfIdentity */
-        WhatsAppSelfIdentity: {
-            /** Id */
-            id: string;
-            /** Lid */
-            lid?: string | null;
-            /** Name */
-            name?: string | null;
-        };
-        /** WhatsAppTenantCredentialCreate */
-        WhatsAppTenantCredentialCreate: {
-            /** Agent Id */
-            agent_id?: string | null;
-            /** Agent Link Id */
-            agent_link_id?: string | null;
-            /** Phone User */
-            phone_user?: string | null;
-            /**
-             * Device
-             * @default 1
-             */
-            device: number;
-            /** Name */
-            name?: string | null;
-            self_identity?: components["schemas"]["WhatsAppSelfIdentity"] | null;
-        };
-        /** WhatsAppTenantCredentialMetadata */
-        WhatsAppTenantCredentialMetadata: {
-            /**
-             * Credential Id
-             * Format: uuid
-             */
-            credential_id: string;
-            /**
-             * Agent Link Id
-             * Format: uuid
-             */
-            agent_link_id: string;
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
-            /** Jid */
-            jid: string;
-            /** Identity Pub Key Hex */
-            identity_pub_key_hex: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-        };
-        /** WhatsAppTenantCredentialResponse */
-        WhatsAppTenantCredentialResponse: {
-            /**
-             * Channel
-             * @default whatsapp
-             */
-            channel: string;
-            /**
-             * Credential Id
-             * Format: uuid
-             */
-            credential_id: string;
-            /**
-             * Agent Link Id
-             * Format: uuid
-             */
-            agent_link_id: string;
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
-            /** Jid */
-            jid: string;
-            /** Identity Pub Key Hex */
-            identity_pub_key_hex: string;
-            /** Creds */
-            creds: {
-                [key: string]: unknown;
-            };
-            /** Auth Cert */
-            auth_cert: {
-                [key: string]: unknown;
-            };
-            /** Websocket Url */
-            websocket_url: string;
-            /** Media Proxy Base Url */
-            media_proxy_base_url: string;
         };
     };
     responses: never;
@@ -6904,6 +7962,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthDevicePollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderOAuthDevicePollResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_ai_provider_v1_ai_providers_accept_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderAcceptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderAcceptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_ai_provider_v1_ai_providers_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderConnectionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderConnectionTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_saved_ai_provider_v1_ai_providers__provider_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderSavedConnectionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderConnectionTestResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7115,6 +8311,41 @@ export interface operations {
             };
         };
     };
+    start_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthDeviceStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderOAuthDeviceStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     start_ai_provider_oauth_v1_ai_providers__provider_id__auth_oauth_start_post: {
         parameters: {
             query?: never;
@@ -7241,6 +8472,218 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlPlaneAuditEventListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_whatsapp_onboarding_readiness_v1_channels_whatsapp_onboarding_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingReadinessResponse"];
+                };
+            };
+        };
+    };
+    create_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelWhatsAppOnboardingCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_whatsapp_onboarding_pairing_code_v1_channels_whatsapp_onboarding_sessions__session_id__pairing_code_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelWhatsAppOnboardingPairingCodeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    repair_whatsapp_channel_account_v1_channels_whatsapp_onboarding_accounts__account_id__repair_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7738,6 +9181,38 @@ export interface operations {
             };
         };
     };
+    delete_channel_binding_v1_channels__account_id__bindings__binding_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelBindingDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     sync_channel_commands_route_v1_channels__account_id__commands_sync_post: {
         parameters: {
             query?: never;
@@ -7808,13 +9283,11 @@ export interface operations {
             };
         };
     };
-    list_whatsapp_tenant_credentials_v1_channels_whatsapp__account_id__tenant_creds_get: {
+    get_oauth_config_v1_cli_auth_oauth_config_get: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                account_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -7825,95 +9298,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WhatsAppTenantCredentialMetadata"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OAuthConfigResponse"];
                 };
             };
         };
     };
-    create_whatsapp_tenant_credential_v1_channels_whatsapp__account_id__tenant_creds_post: {
+    revoke_oauth_refresh_grant_v1_cli_auth_oauth_revoke_post: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                account_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WhatsAppTenantCredentialCreate"];
+                "application/json": components["schemas"]["OAuthRevokeRequest"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WhatsAppTenantCredentialResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_whatsapp_tenant_credential_v1_channels_whatsapp__account_id__tenant_creds__credential_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                account_id: string;
-                credential_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_whatsapp_auth_cert_v1_channels_whatsapp__account_id__auth_cert_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                account_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -7921,9 +9322,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OAuthRevokeResponse"];
                 };
             };
             /** @description Validation Error */
@@ -8102,7 +9501,10 @@ export interface operations {
     };
     list_agents_v1_agents_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Return only the caller's Agents linked to this exact Project. */
+                project_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -8124,6 +9526,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
@@ -8671,6 +10082,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeObservedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_runtime_observed_v1_agents__agent_id__runtime_observed_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRuntimeObservedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_mcp_inventory_v1_agents__agent_id__mcp_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentMcpInventoryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -9391,6 +10864,72 @@ export interface operations {
             };
         };
     };
+    archive_project_v1_projects__project_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectArchiveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_project_v1_projects__project_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_runtime_manifest_v1_runtime_manifest_get: {
         parameters: {
             query?: {
@@ -9422,6 +10961,70 @@ export interface operations {
             };
         };
     };
+    report_project_skill_capability_v1_runtime_project_skill_capability_put: {
+        parameters: {
+            query?: {
+                environment_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectSkillCapabilityReport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_project_skills_v1_runtime_project_skills_get: {
+        parameters: {
+            query?: {
+                environment_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectSkillDesiredResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_skills_v1_skills_get: {
         parameters: {
             query?: {
@@ -9430,11 +11033,12 @@ export interface operations {
                 page?: number;
                 page_size?: number;
                 include_content?: boolean;
-                /** @description Optional explicit project to list. Without it, results span every project the caller can read (Agent API keys see only their Agent Project, everyone else sees all projects). The serve daemon passes its Agent Project id when it boots with an unbound CLI key + an explicit --environment-id, so reconcile pulls the right Project instead of the most-recently-active one. */
+                /** @description Optional explicit project to list. Without it, results span every project the caller can read (Agent API keys see only their Agent Project, everyone else sees all projects). The serve daemon passes its Agent Project id when it boots with an unbound CLI key + an explicit --environment-id, so projection catch-up lists the right Project instead of the most-recently-active one. */
                 project_id?: string | null;
             };
             header?: {
                 "If-None-Match"?: string | null;
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -9464,7 +11068,9 @@ export interface operations {
     upload_skill_legacy_v1_skills_upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -9497,7 +11103,9 @@ export interface operations {
     download_skill_legacy_v1_skills__skill_key__download_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 skill_key: string;
             };
@@ -9559,7 +11167,9 @@ export interface operations {
     delete_skill_legacy_v1_skills__skill_key__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 skill_key: string;
             };
@@ -9623,7 +11233,9 @@ export interface operations {
     upload_skill_project_v1_projects__project_id__skills_upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 project_id: string;
             };
@@ -9632,6 +11244,41 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_upload_skill_project_v1_projects__project_id__skills_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_skill_v1_projects__project_id__skills_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillCreateRequest"];
             };
         };
         responses: {
@@ -9694,7 +11341,9 @@ export interface operations {
     download_skill_project_v1_projects__project_id__skills__skill_key__download_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 project_id: string;
                 skill_key: string;
@@ -9757,8 +11406,13 @@ export interface operations {
     };
     delete_skill_project_v1_projects__project_id__skills__skill_key__delete: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                /** @description Delete only if the active Skill still has this content hash. */
+                expected_content_hash?: string | null;
+            };
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 project_id: string;
                 skill_key: string;
@@ -9822,10 +11476,80 @@ export interface operations {
             };
         };
     };
-    events_v1_sync_events_get: {
+    upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post: {
         parameters: {
             query?: never;
             header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_agent_synced_skill_v1_agents__agent_id__skills_sync__skill_key__delete: {
+        parameters: {
+            query?: {
+                /** @description Project fence recorded when the Agent projection was claimed. Omit only for legacy clients deleting from the current Agent Project. */
+                project_id?: string | null;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+                skill_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    events_v1_sync_events_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -9838,6 +11562,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10285,197 +12018,6 @@ export interface operations {
             };
         };
     };
-    platform_retire_runtime_environment_v1_platform_agents__agent_id__runtime_environment_retire_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-                "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PlatformRuntimeEnvironmentRetire"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeEnvironmentRetirementReceipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    platform_register_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_register_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PlatformRuntimeObservationConsumerRegister"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeObservationConsumerResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    platform_read_runtime_observations_v1_platform_agents__agent_id__runtime_observations_read_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PlatformRuntimeObservationRead"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeObservationReadResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    platform_ack_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_ack_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PlatformRuntimeObservationConsumerAck"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeObservationConsumerResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    platform_reset_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_reset_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PlatformRuntimeObservationConsumerReset"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeObservationConsumerResetResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     platform_mint_api_key_v1_platform_auth_keys_post: {
         parameters: {
             query?: never;
@@ -10592,7 +12134,7 @@ export interface operations {
         parameters: {
             query?: {
                 project_id?: string | null;
-                /** @description Return 409 if this slug already exists instead of attaching it. */
+                /** @description Use strict create semantics: return 409 for an existing slug and, when project_id is omitted, leave a newly created Vault unattached. */
                 create_only?: boolean;
             };
             header?: never;
@@ -10628,8 +12170,8 @@ export interface operations {
     get_vault_detail_v1_vault_detail_get: {
         parameters: {
             query: {
-                /** @description Stable Vault identity. */
-                vault_id: string;
+                /** @description Optional stable Vault identity. */
+                vault_id?: string | null;
                 /** @description Canonical Vault slug expected for this identity. */
                 slug: string;
                 /** @description Optional attachment context. */
@@ -11923,6 +13465,263 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BindingDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_runtime_deployment_key_v2_runtime_auth_keys_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeDeploymentKeyCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_runtime_observation_event_v2_runtime_environments__environment_id__observations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeObservationEventV2"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationIngestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retire_runtime_environment_endpoint_v2_runtime_environments__environment_id__retire_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeEnvironmentRetireRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeEnvironmentRetirementReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_runtime_observation_consumer_endpoint_v2_runtime_environments__environment_id__observation_consumers_register_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeObservationConsumerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationConsumerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_runtime_observations_endpoint_v2_runtime_environments__environment_id__observations_read_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeObservationReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationReadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acknowledge_runtime_observation_consumer_endpoint_v2_runtime_environments__environment_id__observation_consumers_ack_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeObservationConsumerAckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationConsumerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_runtime_observation_consumer_endpoint_v2_runtime_environments__environment_id__observation_consumers_reset_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeObservationConsumerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationConsumerResetResponse"];
                 };
             };
             /** @description Validation Error */

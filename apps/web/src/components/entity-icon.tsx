@@ -1,4 +1,6 @@
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
+import { BrandIconTile } from "@/components/brand-icon-tile";
+import { providerBrandIcon } from "@/components/entity-brand-icons";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,10 +13,10 @@ import { cn } from "@/lib/utils";
  *
  * Sources, in resolution order:
  *   - channel   → full-color app-icon PNG on Clawdi's CDN
- *   - framework → local app-icon PNG in /public/agents
- *   - provider  → colored brand logo from simpleicons (the CDN has no
- *                 provider PNGs) on a white tile so the brand color reads in
- *                 both themes; OpenAI / custom have no brand mark → monogram
+ *   - framework → official LobeHub React icon
+ *   - provider  → official LobeHub React icon in the same neutral tile
+ *                 used by monogram fallbacks; ids without an official mark →
+ *                 monogram
  *   - anything unresolved → neutral monogram tile
  *
  * Uses plain image rendering — these are tiny/vector brand assets that don't
@@ -22,30 +24,13 @@ import { cn } from "@/lib/utils";
  */
 
 const ICON_BASE = "https://assets.clawdi.ai/icons";
-const SIMPLEICON_BASE = "https://cdn.simpleicons.org";
 
 /** Channels: full-color app-icon PNGs on Clawdi's CDN. */
-const CHANNEL_PNG: Record<string, string> = {
+const CHANNEL_PNG: Readonly<Record<string, string>> = {
 	telegram: `${ICON_BASE}/telegram.png`,
 	discord: `${ICON_BASE}/discord.png`,
 	whatsapp: `${ICON_BASE}/whatsapp.png`,
 	slack: `${ICON_BASE}/slack.png`,
-};
-
-/**
- * AI providers: no CDN PNG (those 404) → colored simpleicons brand logo. The
- * hex is pinned to a vivid, mid-tone brand color so it reads on a white tile
- * in both themes. `null` → neutral monogram (OpenAI isn't in simpleicons;
- * custom endpoints have no brand).
- */
-const PROVIDER_SIMPLEICON: Record<string, { slug: string; hex: string } | null> = {
-	openai: null,
-	anthropic: { slug: "anthropic", hex: "D97757" },
-	gemini: { slug: "googlegemini", hex: "1C69FF" },
-	google: { slug: "googlegemini", hex: "1C69FF" },
-	mistral: { slug: "mistralai", hex: "FA520F" },
-	openrouter: { slug: "openrouter", hex: "6566F1" },
-	custom_openai_compatible: null,
 };
 
 const SIZE = {
@@ -58,6 +43,33 @@ export type EntityIconSize = keyof typeof SIZE;
 export type EntityKind = "channel" | "provider" | "framework";
 
 const SHADOW = "shadow-[0_2px_6px_rgba(0,0,0,0.1)] dark:shadow-none";
+const PROVIDER_TILE = "border border-border/60 bg-muted/40 shadow-none";
+
+function NeutralMonogram({
+	label,
+	size,
+	className,
+}: {
+	label: string;
+	size: EntityIconSize;
+	className?: string;
+}) {
+	const s = SIZE[size];
+	const mono = label.trim().charAt(0).toUpperCase() || "?";
+	return (
+		<span
+			aria-hidden
+			className={cn(
+				s.box,
+				"flex shrink-0 items-center justify-center bg-muted font-semibold text-muted-foreground",
+				s.mono,
+				className,
+			)}
+		>
+			{mono}
+		</span>
+	);
+}
 
 export function EntityIcon({
 	kind,
@@ -76,7 +88,8 @@ export function EntityIcon({
 }) {
 	const s = SIZE[size];
 	const key = id?.toLowerCase?.() ?? "";
-	const alt = label ?? id ?? "";
+	const providerBrand = kind === "provider" ? providerBrandIcon(key) : undefined;
+	const alt = label ?? providerBrand?.label ?? id ?? "";
 
 	if (kind === "framework") {
 		return (
@@ -106,44 +119,23 @@ export function EntityIcon({
 		);
 	}
 
-	// Provider brand logo (colored simpleicon) on a white tile.
+	// Provider brand logo from the official LobeHub React package.
 	if (kind === "provider") {
-		const brand = PROVIDER_SIMPLEICON[key];
-		if (brand) {
+		if (providerBrand) {
 			return (
-				<span
-					className={cn(
-						s.box,
-						"flex shrink-0 items-center justify-center border border-border bg-white",
-						SHADOW,
-						className,
-					)}
-				>
-					<img
-						src={`${SIMPLEICON_BASE}/${brand.slug}/${brand.hex}`}
-						alt={alt}
-						width={s.px}
-						height={s.px}
-						className="size-[60%] object-contain"
-					/>
-				</span>
+				<BrandIconTile
+					icon={providerBrand.icon}
+					iconClassName={providerBrand.iconClassName}
+					iconScale={providerBrand.iconScale}
+					label={alt}
+					boxClassName={s.box}
+					className={cn(providerBrand.tileClassName, className)}
+				/>
 			);
 		}
+		return <NeutralMonogram label={alt} size={size} className={cn(PROVIDER_TILE, className)} />;
 	}
 
-	// Neutral fallback: a monogram tile (OpenAI, custom endpoints, unknown ids).
-	const mono = alt.trim().charAt(0).toUpperCase() || "?";
-	return (
-		<span
-			aria-hidden
-			className={cn(
-				s.box,
-				"flex shrink-0 items-center justify-center bg-muted font-semibold text-muted-foreground",
-				s.mono,
-				className,
-			)}
-		>
-			{mono}
-		</span>
-	);
+	// Neutral fallback for unresolved channels/frameworks.
+	return <NeutralMonogram label={alt} size={size} className={className} />;
 }

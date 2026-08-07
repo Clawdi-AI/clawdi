@@ -22,6 +22,7 @@ export function ConfirmAction({
 	description,
 	confirmLabel = "Confirm",
 	cancelLabel = "Cancel",
+	secondaryAction,
 	destructive = false,
 	onConfirm,
 }: {
@@ -30,35 +31,55 @@ export function ConfirmAction({
 	description: ReactNode;
 	confirmLabel?: string;
 	cancelLabel?: string;
+	secondaryAction?: {
+		label: string;
+		onAction: () => unknown;
+	};
 	destructive?: boolean;
 	/**
 	 * May be sync or async (any return). When it returns a promise the dialog
-	 * stays open with a spinner until it settles, then closes.
+	 * stays open with a spinner until it settles, then closes. Long-running
+	 * background work should resolve this promise when the action is accepted.
 	 */
 	onConfirm: () => unknown;
 }) {
 	const [open, setOpen] = useState(false);
-	const [pending, setPending] = useState(false);
+	const [pendingAction, setPendingAction] = useState<"confirm" | "secondary" | null>(null);
 	// Synchronous lock: `disabled` only takes effect on the next render, leaving
 	// a sub-frame window where a fast double-click (or Enter repeat) could fire
-	// the destructive action twice before React repaints.
+	// an action twice before React repaints.
 	const locked = useRef(false);
+	const closingAfterSuccess = useRef(false);
 
-	async function runConfirm() {
+	async function runAction(action: "confirm" | "secondary", onAction: () => unknown) {
 		if (locked.current) return;
 		locked.current = true;
-		setPending(true);
+		setPendingAction(action);
 		try {
-			await onConfirm();
+			await onAction();
+			closingAfterSuccess.current = true;
 			setOpen(false);
 		} finally {
-			setPending(false);
-			locked.current = false;
+			if (!closingAfterSuccess.current) {
+				setPendingAction(null);
+				locked.current = false;
+			}
 		}
 	}
+	const pending = pendingAction !== null;
 
 	return (
-		<AlertDialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
+		<AlertDialog
+			open={open}
+			onOpenChange={(next) => !pending && setOpen(next)}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen && closingAfterSuccess.current) {
+					closingAfterSuccess.current = false;
+					setPendingAction(null);
+					locked.current = false;
+				}
+			}}
+		>
 			<AlertDialogTrigger render={children} />
 			<AlertDialogContent>
 				<AlertDialogHeader>
@@ -69,20 +90,37 @@ export function ConfirmAction({
 				</AlertDialogHeader>
 				<AlertDialogFooter>
 					<AlertDialogCancel disabled={pending}>{cancelLabel}</AlertDialogCancel>
+					{secondaryAction ? (
+						<AlertDialogAction
+							variant="outline"
+							onClick={(event) => {
+								event.preventDefault();
+								void runAction("secondary", secondaryAction.onAction).catch(() => {});
+							}}
+							disabled={pending}
+							className="min-w-0 whitespace-normal"
+						>
+							{pendingAction === "secondary" ? <Spinner /> : null}
+							{secondaryAction.label}
+						</AlertDialogAction>
+					) : null}
 					<AlertDialogAction
-						// Keep the dialog open until the action settles; the success path closes
-						// explicitly after the mutation finishes.
+						// Keep the dialog open until the caller settles; accepted background work
+						// closes here while status polling reflects its eventual outcome.
 						onClick={(event) => {
 							event.preventDefault();
-							// runConfirm rejects when onConfirm does; the dialog already stays open
+							// runAction rejects when onConfirm does; the dialog already stays open
 							// on reject and callers own their onError, so just swallow the
 							// unhandled-rejection console noise without changing behavior.
-							void runConfirm().catch(() => {});
+							void runAction("confirm", onConfirm).catch(() => {});
 						}}
 						disabled={pending}
-						className={cn(destructive && buttonVariants({ variant: "destructive" }))}
+						className={cn(
+							"min-w-0 whitespace-normal",
+							destructive && buttonVariants({ variant: "destructive" }),
+						)}
 					>
-						{pending ? <Spinner /> : null}
+						{pendingAction === "confirm" ? <Spinner /> : null}
 						{confirmLabel}
 					</AlertDialogAction>
 				</AlertDialogFooter>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
 import { tarSkillDir } from "../../src/lib/tar";
@@ -9,15 +9,42 @@ let tmpHome: string;
 let origHome: string | undefined;
 let origStateDir: string | undefined;
 let origAgentId: string | undefined;
+let origPath: string | undefined;
 
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origStateDir = process.env.OPENCLAW_STATE_DIR;
 	origAgentId = process.env.OPENCLAW_AGENT_ID;
+	origPath = process.env.PATH;
 	delete process.env.OPENCLAW_STATE_DIR;
 	delete process.env.OPENCLAW_AGENT_ID;
 	tmpHome = copyFixtureToTmp("openclaw");
 	process.env.HOME = tmpHome;
+	const bin = join(tmpHome, "bin");
+	mkdirSync(bin, { recursive: true });
+	const command = join(bin, "openclaw");
+	writeFileSync(
+		command,
+		`#!/bin/sh
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"%s/.openclaw/agents/main"}' "$HOME"
+  if [ -d "$HOME/.openclaw/agents/financial" ]; then printf ',{"id":"financial","workspace":"%s/.openclaw/agents/financial"}' "$HOME"; fi
+  printf ']\n'
+  exit 0
+fi
+if [ "$1 $2" = "skills install" ]; then
+  source="$3"; shift 3; slug=""
+  while [ "$#" -gt 0 ]; do [ "$1" = "--as" ] && slug="$2" && shift; shift; done
+  rm -rf "$HOME/.openclaw/agents/main/skills/$slug"
+  mkdir -p "$HOME/.openclaw/agents/main/skills/$slug"
+  cp -R "$source/." "$HOME/.openclaw/agents/main/skills/$slug/"
+  exit 0
+fi
+exit 1
+`,
+	);
+	chmodSync(command, 0o755);
+	process.env.PATH = `${bin}:${origPath ?? ""}`;
 });
 
 afterEach(() => {
@@ -27,6 +54,8 @@ afterEach(() => {
 	else delete process.env.OPENCLAW_STATE_DIR;
 	if (origAgentId) process.env.OPENCLAW_AGENT_ID = origAgentId;
 	else delete process.env.OPENCLAW_AGENT_ID;
+	if (origPath !== undefined) process.env.PATH = origPath;
+	else delete process.env.PATH;
 	cleanupTmp(tmpHome);
 });
 
@@ -233,6 +262,25 @@ describe("OpenClawAdapter.collectSkills", () => {
 		const skills = await a.collectSkills();
 		// Fixture has demo/ (real) and node_modules/ (SKIP_DIRS sentinel).
 		expect(skills.map((s) => s.skillKey)).toEqual(["demo"]);
+	});
+
+	it("does not scan a hidden managed Skill recovery directory", async () => {
+		const recovery = join(
+			tmpHome,
+			".openclaw",
+			"agents",
+			"main",
+			"skills",
+			".clawdi-previous-test",
+		);
+		mkdirSync(recovery, { recursive: true });
+		writeFileSync(join(recovery, "SKILL.md"), "# Managed recovery artifact\n");
+
+		const adapter = new OpenClawAdapter();
+		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain(
+			".clawdi-previous-test",
+		);
+		expect(await adapter.listSkillKeys()).not.toContain(".clawdi-previous-test");
 	});
 
 	it("unions skills across agents/<id>/skills/ dirs (issue #28)", async () => {

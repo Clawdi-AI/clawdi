@@ -127,7 +127,12 @@ export function seedAuthAndEnv(home: string, agent: string, envId = "env-test"):
 	mkdirSync(join(clawdiDir, "environments"), { recursive: true });
 	writeFileSync(
 		join(clawdiDir, "auth.json"),
-		JSON.stringify({ apiKey: "test-key", userId: "u1", email: "e@x" }),
+		JSON.stringify({
+			apiKey: "test-key",
+			userId: "u1",
+			email: "e@x",
+			endpointBinding: { version: 1, cloudApiOrigin: "http://localhost:8000" },
+		}),
 	);
 	writeFileSync(
 		join(clawdiDir, "environments", `${agent}.json`),

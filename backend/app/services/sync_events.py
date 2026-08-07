@@ -7,18 +7,18 @@ Single owner of three intertwined concerns:
    would see — skill insert, content update, soft-delete — bumps
    it. We centralize the bump in one helper so adding new skill
    mutation paths can't accidentally skip the increment. The
-   daemon's 60s reconcile loop uses this as its `If-None-Match`
-   short-circuit and as the safety-net catchup mechanism when
-   SSE events are missed.
+   daemon uses this as an `If-None-Match` fence for periodic complete
+   Agent-Project inventory catch-up when live SSE events are missed.
 
 2. Each running `clawdi daemon` process has an open SSE connection
    to `GET /v1/sync/events` and is parked in a per-user queue.
    When `bump_skills_revision()` runs, it pushes a
-   `{type:"skill_changed"|"skill_deleted", skill_key, project_id,
-   skills_revision}` event to every connection of that user, and
+   a Cloud-owned `skill_changed`/`skill_deleted` event or an
+   Agent-projection `agent_skill_changed`/`agent_skill_deleted` event to every
+   connection of that user, and
    every accepted project member, that has visibility into the
-   event's `project_id`. SSE is the primary path for instant
-   propagation; 60s reconcile is the safety net.
+   event's `project_id`. SSE is the low-latency invalidation path;
+   revision-fenced complete inventory reconciliation is the catch-up path.
 
 3. Runtime desired-state changes emit a signal-only
    `{type:"runtime_manifest_changed", environment_id}` event. Bound deploy
@@ -44,7 +44,7 @@ event for delivery, the hook fires only when the surrounding
 transaction successfully commits, and rollback drops the queued
 event silently. Without this, a route that bumped the counter
 then rolled back would have already fanned out a phantom event,
-making every daemon do a redundant pull.
+making every daemon do a redundant local rescan.
 
 Cross-process delivery uses PostgreSQL LISTEN/NOTIFY. The notification is
 enqueued inside the same database transaction as the desired-state mutation,
@@ -62,15 +62,14 @@ import logging
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any
 from uuid import UUID, uuid4
 
-import asyncpg
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import event, select, text
 from sqlalchemy import update as sa_update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.hosted_runtime import HostedRuntimeState
@@ -78,12 +77,39 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.runtime import HostedRuntimeTools, validate_hosted_runtime_desired_state
+from app.services.managed_ai_provider import (
+    CLAWDI_MANAGED_PROVIDER_ID,
+    is_v2_deployment_managed_provider_id,
+    runtime_managed_provider_id,
+    v2_deployment_managed_provider_id,
+)
+from app.services.postgres_listener import PostgresListener, connect_postgres_listener
 
 log = logging.getLogger(__name__)
 
 _POSTGRES_CHANNEL = "clawdi_sync_events"
 _PROCESS_TOKEN = uuid4().hex
 _POSTGRES_PAYLOAD_LIMIT_BYTES = 7900
+
+# Additive Agent-authoritative event names are a rolling-upgrade safety fence.
+# Released daemons ignore unknown event types, so an already-established SSE
+# connection on an old worker cannot turn a new worker's Agent projection
+# mutation into a Cloud-to-filesystem write/delete. Current daemons accept both
+# families as invalidation hints. Cloud-owned Project events keep their released
+# names and semantics.
+AGENT_SKILL_CHANGED_EVENT = "agent_skill_changed"
+AGENT_SKILL_DELETED_EVENT = "agent_skill_deleted"
+
+type SyncEventValue = str | int
+type SyncEventPayload = dict[str, SyncEventValue]
+type SyncEventQueue = asyncio.Queue[SyncEventPayload]
+type _PendingEvent = tuple[UUID, SyncEventPayload]
+
+
+class _PostgresNotification(BaseModel):
+    origin: str
+    user_id: UUID
+    event: SyncEventPayload
 
 
 @dataclass
@@ -102,7 +128,7 @@ class _Subscriber:
     project until the connection drops.
     """
 
-    queue: asyncio.Queue[dict[str, Any]] = field(default_factory=lambda: asyncio.Queue(maxsize=64))
+    queue: SyncEventQueue = field(default_factory=lambda: asyncio.Queue(maxsize=64))
     # `None` means "no filter" (admin / future server-internal use).
     # Empty set means "no events at all" — useful for a subscriber
     # whose visible-project query returned empty (rare).
@@ -137,7 +163,7 @@ async def try_subscribe(
     is_env_bound: bool = False,
     environment_id: UUID | None = None,
     max_per_key: int = 3,
-) -> tuple[asyncio.Queue[dict[str, Any]], _Subscriber] | None:
+) -> tuple[SyncEventQueue, _Subscriber] | None:
     """Atomic check-and-subscribe. Returns `(queue, subscriber)` on
     success, `None` if EITHER the per-user OR the per-key cap is
     at limit. The subscriber handle is exposed so the SSE route
@@ -181,7 +207,7 @@ def subscribe(
     visible_project_ids: frozenset[UUID],
     *,
     environment_id: UUID | None = None,
-) -> asyncio.Queue[dict[str, Any]]:
+) -> SyncEventQueue:
     """Non-atomic subscribe — exposed for tests and callers that
     don't need to enforce a cap. Production SSE callers use
     `try_subscribe` for atomic cap-and-subscribe."""
@@ -193,7 +219,7 @@ def subscribe(
     return sub.queue
 
 
-def unsubscribe(user_id: UUID, q: asyncio.Queue[dict[str, Any]]) -> None:
+def unsubscribe(user_id: UUID, q: SyncEventQueue) -> None:
     """Remove the subscriber whose queue is `q`. Idempotent."""
     subs = _subscribers.get(user_id)
     if not subs:
@@ -209,7 +235,7 @@ def connection_count(user_id: UUID) -> int:
     return len(_subscribers.get(user_id, []))
 
 
-def _broadcast(user_id: UUID, event_payload: dict[str, Any]) -> None:
+def _broadcast(user_id: UUID, event_payload: SyncEventPayload) -> None:
     """Push an event to authorized subscribers for `user_id`.
 
     Skill events use project visibility; runtime events use the exact bound
@@ -243,10 +269,14 @@ def _broadcast(user_id: UUID, event_payload: dict[str, Any]) -> None:
                 # which N-1 are filtered.
                 continue
         try:
-            sub.queue.put_nowait(event_payload)
+            # Each connection owns its queued copy. A future consumer that
+            # annotates or normalizes its payload cannot affect sibling
+            # subscribers waiting on the same broadcast.
+            sub.queue.put_nowait(event_payload.copy())
         except asyncio.QueueFull:
-            # Subscriber is too slow / stalled; the 60s reconcile
-            # safety net will catch the change anyway. Logging at
+            # Subscriber is too slow or stalled. The daemon's periodic,
+            # revision-fenced complete inventory catch-up handles missed
+            # events without treating a failed/truncated list as absence.
             # warning level so a chronically-overloaded daemon
             # shows up in metrics.
             log.warning("sync_events queue full for user %s; event dropped", user_id)
@@ -269,7 +299,7 @@ def queue_runtime_manifest_changed(
     environment_id: UUID,
 ) -> None:
     """Queue a signal-only runtime manifest invalidation for commit."""
-    payload = {
+    payload: SyncEventPayload = {
         "type": "runtime_manifest_changed",
         "environment_id": str(environment_id),
     }
@@ -281,15 +311,17 @@ async def queue_environment_runtime_manifest_changed(
     user_id: UUID,
     environment_id: UUID,
 ) -> bool:
-    """Queue an event when an environment currently has runtime desired state."""
-    state = (
+    """Queue an exact Agent desired-state invalidation when the Agent is active."""
+    agent = (
         await db.execute(
-            select(HostedRuntimeState).where(
-                HostedRuntimeState.environment_id == environment_id,
+            select(AgentEnvironment.id).where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
     ).scalar_one_or_none()
-    if state is None:
+    if agent is None:
         return False
     queue_runtime_manifest_changed(db, user_id, environment_id)
     return True
@@ -326,7 +358,7 @@ async def queue_provider_runtime_manifest_changed(
 
 def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str) -> bool:
     runtimes = state.runtimes
-    if not isinstance(runtimes, dict) or len(runtimes) != 1:
+    if len(runtimes) != 1:
         return False
     runtime_name, raw_runtime = next(iter(runtimes.items()))
     if runtime_name not in {"hermes", "openclaw"}:
@@ -341,7 +373,17 @@ def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str)
         tools = HostedRuntimeTools.model_validate(state.tools)
     except ValidationError:
         return False
-    return provider_id == tools.codex.provider_id
+    if provider_id == tools.codex.provider_id:
+        return True
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        return False
+    if v2_deployment_managed_provider_id(state.deployment_id) != provider_id:
+        return False
+    runtime_provider_ids = {runtime_managed_provider_id(value) for value in runtime.provider_ids}
+    return (
+        CLAWDI_MANAGED_PROVIDER_ID in runtime_provider_ids
+        or runtime_managed_provider_id(tools.codex.provider_id) == CLAWDI_MANAGED_PROVIDER_ID
+    )
 
 
 async def bump_skills_revision(
@@ -367,13 +409,10 @@ async def bump_skills_revision(
     metadata leakage — even if the daemon's client-side filter
     refused to act on them.
 
-    `content_hash` is the post-write tree hash. The daemon uses
-    it for echo suppression: an event whose hash matches the
-    daemon's `lastPushedHash[skill_key]` is the daemon's own
-    upload bouncing back through SSE — pulling it would clobber
-    a fresher local edit with the bytes we just sent. Optional
-    so future event types (deletes) can omit it; daemons treat
-    a missing hash as "always pull, can't be sure it's our own".
+    `content_hash` is the post-write tree hash retained for released-client
+    diagnostics. Agent-authoritative daemons treat Skill events only as
+    local-rescan hints and never download, write, or delete filesystem content
+    from SSE. Optional so delete events can omit it.
 
     The SSE event is NOT broadcast immediately. We queue it on the
     session via SQLAlchemy's `after_commit` hook; rollback discards
@@ -395,7 +434,7 @@ async def bump_skills_revision(
     )
     new_revision = result.scalar_one()
 
-    payload: dict[str, Any] = {
+    payload: SyncEventPayload = {
         "type": event_type,
         "skill_key": skill_key,
         "project_id": str(project_id),
@@ -417,6 +456,14 @@ async def bump_skills_revision(
     target_user_ids = {user_id, *member_rows}
     for target_user_id in target_user_ids:
         _queue_for_commit(db, target_user_id, payload)
+    if event_type not in {AGENT_SKILL_CHANGED_EVENT, AGENT_SKILL_DELETED_EVENT}:
+        # Local import avoids a module cycle: Project runtime delivery uses the
+        # queue primitive above, while Cloud Skill changes fan out through it.
+        from app.services.project_runtime_skills import (
+            queue_project_runtime_manifest_changed,
+        )
+
+        await queue_project_runtime_manifest_changed(db, project_id=project_id)
     return new_revision
 
 
@@ -431,16 +478,17 @@ _PENDING_KEY = "_clawdi_pending_sse_events"
 def _queue_for_commit(
     db: AsyncSession,
     user_id: UUID,
-    event_payload: dict[str, Any],
+    event_payload: SyncEventPayload,
     *,
     deduplicate: bool = False,
 ) -> None:
     """Stash an event on the session, to be delivered on commit."""
     sync_session = db.sync_session
-    pending: list[tuple[UUID, dict[str, Any]]] = sync_session.info.setdefault(_PENDING_KEY, [])
-    if deduplicate and (user_id, event_payload) in pending:
+    pending: list[_PendingEvent] = sync_session.info.setdefault(_PENDING_KEY, [])
+    owned_payload = event_payload.copy()
+    if deduplicate and (user_id, owned_payload) in pending:
         return
-    pending.append((user_id, event_payload))
+    pending.append((user_id, owned_payload))
     # Idempotent listener registration — calling listen() twice on
     # the same target is a no-op in SQLAlchemy, so we don't need a
     # registration flag. Each session's sync_session is unique per
@@ -451,9 +499,9 @@ def _queue_for_commit(
         event.listen(sync_session, "after_rollback", _on_session_rollback)
 
 
-def _on_session_before_commit(sync_session) -> None:
+def _on_session_before_commit(sync_session: Session) -> None:
     """Publish pending events transactionally for other API processes."""
-    pending: list[tuple[UUID, dict[str, Any]]] | None = sync_session.info.get(_PENDING_KEY)
+    pending: list[_PendingEvent] | None = sync_session.info.get(_PENDING_KEY)
     if not pending:
         return
     for user_id, payload in pending:
@@ -474,20 +522,20 @@ def _on_session_before_commit(sync_session) -> None:
         )
 
 
-def _on_session_commit(sync_session) -> None:
+def _on_session_commit(sync_session: Session) -> None:
     """SQLAlchemy after_commit hook — flush all queued events.
     Runs on the sync session's thread; `_broadcast` only touches
     in-memory queues so it doesn't need the event loop. The
     daemon SSE consumer poll-loops on its own queue, so a
     cross-thread put_nowait is fine."""
-    pending: list[tuple[UUID, dict[str, Any]]] | None = sync_session.info.pop(_PENDING_KEY, None)
+    pending: list[_PendingEvent] | None = sync_session.info.pop(_PENDING_KEY, None)
     if not pending:
         return
     for user_id, payload in pending:
         _broadcast(user_id, payload)
 
 
-def _on_session_rollback(sync_session) -> None:
+def _on_session_rollback(sync_session: Session) -> None:
     """Drop queued events — the writes that produced them never
     landed."""
     sync_session.info.pop(_PENDING_KEY, None)
@@ -495,6 +543,20 @@ def _on_session_rollback(sync_session) -> None:
 
 _listener_task: asyncio.Task[None] | None = None
 _listener_stop: asyncio.Event | None = None
+
+
+async def _cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
+    """Cancel and collect every child before surfacing the first failure."""
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    for task in tasks:
+        if task.cancelled():
+            continue
+        failure = task.exception()
+        if failure is not None:
+            raise failure
 
 
 async def start_postgres_listener() -> None:
@@ -511,10 +573,12 @@ async def start_postgres_listener() -> None:
     )
     try:
         await ready
-    except Exception:
-        await asyncio.gather(_listener_task, return_exceptions=True)
-        _listener_task = None
-        _listener_stop = None
+    except BaseException:
+        try:
+            await _cancel_and_wait(_listener_task)
+        finally:
+            _listener_task = None
+            _listener_stop = None
         raise
 
 
@@ -525,9 +589,11 @@ async def stop_postgres_listener() -> None:
         return
     if _listener_stop is not None:
         _listener_stop.set()
-    await asyncio.gather(_listener_task, return_exceptions=True)
-    _listener_task = None
-    _listener_stop = None
+    try:
+        await _listener_task
+    finally:
+        _listener_task = None
+        _listener_stop = None
 
 
 async def _postgres_listener_loop(
@@ -536,24 +602,28 @@ async def _postgres_listener_loop(
 ) -> None:
     reconnect_delay = 1.0
     while not stop.is_set():
-        connection: asyncpg.Connection | None = None
+        connection: PostgresListener | None = None
         terminated = asyncio.Event()
         try:
-            connection = await asyncpg.connect(_asyncpg_dsn(), timeout=10)
-            await connection.add_listener(_POSTGRES_CHANNEL, _on_postgres_notification)
-            connection.add_termination_listener(lambda _connection: terminated.set())
+            active_connection = await connect_postgres_listener(
+                _asyncpg_dsn(),
+                _POSTGRES_CHANNEL,
+                _on_postgres_notification,
+                terminated.set,
+            )
+            connection = active_connection
             if not ready.done():
                 ready.set_result(None)
             reconnect_delay = 1.0
             stop_task = asyncio.create_task(stop.wait())
             terminated_task = asyncio.create_task(terminated.wait())
-            _, pending = await asyncio.wait(
-                {stop_task, terminated_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            try:
+                await asyncio.wait(
+                    {stop_task, terminated_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                await _cancel_and_wait(stop_task, terminated_task)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - listener reconnects after startup
@@ -564,14 +634,7 @@ async def _postgres_listener_loop(
         finally:
             if connection is not None and not connection.is_closed():
                 try:
-                    await connection.remove_listener(
-                        _POSTGRES_CHANNEL,
-                        _on_postgres_notification,
-                    )
-                except Exception as exc:  # noqa: BLE001 - reconnect loop owns recovery
-                    log.warning("sync events listener cleanup failed: %s", exc)
-                try:
-                    await connection.close(timeout=5)
+                    await connection.close()
                 except Exception as exc:  # noqa: BLE001 - reconnect loop owns recovery
                     log.warning("sync events listener close failed: %s", exc)
         if stop.is_set():
@@ -594,23 +657,20 @@ def _process_id() -> str:
 
 
 def _on_postgres_notification(
-    _connection: asyncpg.Connection,
     _pid: int,
     _channel: str,
     payload: str,
 ) -> None:
     try:
-        envelope = json.loads(payload)
-        if envelope.get("origin") == _process_id():
+        envelope = _PostgresNotification.model_validate_json(payload)
+        if envelope.origin == _process_id():
             return
-        user_id = UUID(envelope["user_id"])
-        event_payload = envelope["event"]
-        if not isinstance(event_payload, dict) or not isinstance(event_payload.get("type"), str):
+        if not isinstance(envelope.event.get("type"), str):
             raise ValueError("invalid event payload")
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (ValueError, ValidationError) as exc:
         log.warning("ignored invalid PostgreSQL sync event: %s", exc)
         return
-    _broadcast(user_id, event_payload)
+    _broadcast(envelope.user_id, envelope.event)
 
 
 async def get_skills_revision(db: AsyncSession, user_id: UUID) -> int:

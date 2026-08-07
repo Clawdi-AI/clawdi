@@ -3,12 +3,11 @@ import { randomUUID } from "node:crypto";
 import {
 	accessSync,
 	chmodSync,
+	chownSync,
 	constants,
 	existsSync,
-	mkdirSync,
 	readdirSync,
 	readFileSync,
-	writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
@@ -17,41 +16,66 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
-import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
-import { isSemverLessThan } from "../lib/semver";
+import { writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
 	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "../runtime/applied-state";
 import {
-	ensureRuntimeAuthTokenFile,
-	readRuntimeAuthToken,
-	runtimeAuthTokenFileLabel,
-} from "../runtime/auth-token";
-import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/bridge";
+	type RuntimeApplyContext,
+	type RuntimeApplyIdentity,
+	readRuntimeApplyContext,
+	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitiesEqual,
+} from "../runtime/apply-identity";
+import { readRuntimeAuthToken } from "../runtime/auth-token";
 import { applyRuntimeBundleChannelsToManifestLoad } from "../runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
 	completePendingRuntimeCliUpgrade,
+	type RuntimeCliReconciliationResult,
 	type RuntimeCliRollbackResult,
 	type RuntimeCliUpdateResult,
+	reconcilePendingRuntimeCliUpgrade,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
+import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
+import {
+	assertHostedRuntimeContract,
+	type HostedRuntimeContractOptions,
+	inspectHostedRuntimeIdentity,
+} from "../runtime/hosted-runtime-contract";
+import {
+	type PreparedHostedSourcedSkill,
+	prepareHostedSourcedSkillArchives,
+} from "../runtime/hosted-sourced-skill-archive";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
-	withRuntimeConvergeLockAsync,
+	type RuntimePrivateAppliedAuthority,
+	runtimeRecoverableSecretValues,
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
-import { loadRemoteRuntimeManifest, type RuntimeManifestLoad } from "../runtime/manifest-source";
+import {
+	loadRemoteRuntimeManifest,
+	type RuntimeManifestFailure,
+	type RuntimeManifestLoad,
+} from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
+	buildNumericUserCommand,
+	buildRuntimeUserCommand,
+	runtimeUserUid,
+} from "../runtime/runtime-user-command";
+import {
+	assertRuntimePlatformRoots,
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
 	hostPolicySummary,
@@ -63,7 +87,7 @@ import {
 import {
 	isGeneratedRuntimeSystemdFile,
 	runtimeUserName,
-	runtimeUserSystemdEnvArgs,
+	runtimeUserSystemdEnvironment,
 } from "../runtime/systemd-user";
 import {
 	applyTransparentEgressNftRulesFromEnv,
@@ -71,7 +95,6 @@ import {
 	loadTransparentEgressEnvConfig,
 	type TransparentEgressEnvConfig,
 } from "../runtime/transparent-egress";
-import { WHATSAPP_UPSTREAM_READY } from "../runtime/whatsapp-gate";
 import { consumeSse } from "../serve/sse-client";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
@@ -85,7 +108,7 @@ type ChannelProvider = ChannelAccountCreate["provider"];
 const DOTENV_BLOCK_START = "# >>> clawdi channel runtime >>>";
 const DOTENV_BLOCK_END = "# <<< clawdi channel runtime <<<";
 
-const providerSchema = z.enum(["telegram", "discord", "whatsapp", "imessage"]);
+const providerSchema = z.enum(["telegram", "discord", "whatsapp"]);
 const envNameSchema = z
 	.string()
 	.regex(/^[A-Z_][A-Z0-9_]*$/, "must be an environment variable name");
@@ -136,17 +159,8 @@ const linkSchema = z
 			.strict(),
 		pair_code: z
 			.object({
-				ttl_seconds: z.number().int().min(60).max(86_400).default(900),
+				ttl_seconds: z.number().int().min(60).max(86_400).default(300),
 				command_env: envNameSchema.optional(),
-			})
-			.strict()
-			.optional(),
-		whatsapp: z
-			.object({
-				baileys_credentials_dir: z.string().min(1).optional(),
-				phone_user: z.string().min(1).optional(),
-				device: z.number().int().min(1).default(1),
-				name: z.string().min(1).optional(),
 			})
 			.strict()
 			.optional(),
@@ -230,13 +244,6 @@ const manifestSchema = z
 						"pair_code",
 						"command_env",
 					]);
-				}
-				if (channel.provider !== "whatsapp" && link.whatsapp) {
-					ctx.addIssue({
-						code: "custom",
-						path: ["channels", channelIndex, "links", linkIndex, "whatsapp"],
-						message: "whatsapp runtime options require provider: whatsapp",
-					});
 				}
 			}
 		}
@@ -338,7 +345,7 @@ export async function runtimeApplyCommand(opts: RuntimeApplyOptions = {}): Promi
 		return;
 	}
 	const { manifest, manifestDir } = readManifest(opts.file);
-	preflightRuntimeOutputs(manifest, manifestDir);
+	preflightRuntimeOutputs(manifest);
 	const ctx: ApplyContext = {
 		api: new ApiClient(),
 		manifest,
@@ -564,7 +571,6 @@ async function applyLink(
 
 	let token = link.agent_token ?? null;
 	let tokenWritten = false;
-	const runtimeOutputGated = channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY;
 	if (
 		ctx.rotateAllTokens ||
 		(ctx.rotateMissingTokens &&
@@ -592,17 +598,17 @@ async function applyLink(
 		});
 	}
 
-	if (token && !runtimeOutputGated) {
-		addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, token);
+	if (token) {
+		addRuntimeEnv(ctx, channel.provider, linkManifest, token);
 		tokenWritten = true;
-	} else if (!runtimeOutputGated) {
+	} else {
 		const existingToken = readDotenvValue(
 			ctx.manifestDir,
 			ctx.manifest.outputs.dotenv,
 			linkManifest.runtime.token_env,
 		);
 		if (existingToken) {
-			addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, existingToken);
+			addRuntimeEnv(ctx, channel.provider, linkManifest, existingToken);
 			tokenWritten = true;
 		} else {
 			ctx.warnings.push(
@@ -611,7 +617,7 @@ async function applyLink(
 		}
 	}
 
-	if (linkManifest.pair_code && !runtimeOutputGated) {
+	if (linkManifest.pair_code) {
 		const pairCode = unwrap(
 			await ctx.api.POST("/v1/channels/{account_id}/pair-codes", {
 				params: { path: { account_id: account.id } },
@@ -628,7 +634,7 @@ async function applyLink(
 			command_env: linkManifest.pair_code.command_env,
 		});
 		if (linkManifest.pair_code.command_env) {
-			ctx.env.set(linkManifest.pair_code.command_env, `/bot_pair ${pairCode.code}`);
+			ctx.env.set(linkManifest.pair_code.command_env, pairCode.pairing_command);
 		}
 		ctx.actions.push({
 			action: "create_pair_code",
@@ -637,14 +643,6 @@ async function applyLink(
 			account_id: account.id,
 			link_id: link.id,
 		});
-	}
-
-	if (
-		channel.provider === "whatsapp" &&
-		WHATSAPP_UPSTREAM_READY &&
-		linkManifest.whatsapp?.baileys_credentials_dir
-	) {
-		await writeWhatsAppCredentials(ctx, account.id, link, linkManifest);
 	}
 
 	ctx.links.push({
@@ -657,69 +655,9 @@ async function applyLink(
 	});
 }
 
-async function writeWhatsAppCredentials(
-	ctx: ApplyContext,
-	accountId: string,
-	link: ChannelAgentLink,
-	linkManifest: RuntimeLink,
-): Promise<void> {
-	const options = linkManifest.whatsapp;
-	if (!options?.baileys_credentials_dir) return;
-	const credential = unwrap(
-		await ctx.api.POST("/v1/channels/whatsapp/{account_id}/tenant-creds", {
-			params: { path: { account_id: accountId } },
-			body: {
-				agent_id: null,
-				agent_link_id: link.id,
-				phone_user: options.phone_user ?? null,
-				device: options.device,
-				name: options.name ?? null,
-				self_identity: null,
-			},
-		}),
-	);
-	const dir = resolvePath(ctx.manifestDir, options.baileys_credentials_dir);
-	writePrivateFileAtomic(
-		join(dir, "creds.json"),
-		`${JSON.stringify(credential.creds, null, 2)}\n`,
-		{
-			dirMode: PRIVATE_DIR_MODE,
-		},
-	);
-	writePrivateFileAtomic(
-		join(dir, "auth-cert.json"),
-		`${JSON.stringify(credential.auth_cert, null, 2)}\n`,
-		{ dirMode: PRIVATE_DIR_MODE },
-	);
-	writePrivateFileAtomic(
-		join(dir, "clawdi-whatsapp.json"),
-		`${JSON.stringify(credential, null, 2)}\n`,
-		{ dirMode: PRIVATE_DIR_MODE },
-	);
-	setRuntimeEnv(
-		ctx,
-		runtimeEnvName(linkManifest, "websocket_url", "WA_WEBSOCKET_URL"),
-		credential.websocket_url,
-	);
-	setRuntimeEnv(
-		ctx,
-		runtimeEnvName(linkManifest, "media_proxy_base_url", "WHATSAPP_MEDIA_PROXY_BASE_URL"),
-		credential.media_proxy_base_url,
-	);
-	setRuntimeEnv(ctx, runtimeEnvName(linkManifest, "auth_dir", "CLAWDI_WHATSAPP_AUTH_DIR"), dir);
-	ctx.writes.push(dir);
-	ctx.actions.push({
-		action: "write_whatsapp_baileys_credentials",
-		link_ref: linkManifest.ref,
-		account_id: accountId,
-		link_id: link.id,
-	});
-}
-
 function addRuntimeEnv(
 	ctx: ApplyContext,
 	provider: ChannelProvider,
-	accountId: string,
 	link: RuntimeLink,
 	token: string,
 ): void {
@@ -742,31 +680,6 @@ function addRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
 			`${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
-		);
-	}
-	if (provider === "whatsapp") {
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "api_base_url", "WHATSAPP_GRAPH_API_BASE_URL"),
-			`${baseUrl}/v1/channels/whatsapp/graph`,
-		);
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "websocket_url", "WA_WEBSOCKET_URL"),
-			`${toWebSocketUrl(baseUrl)}/v1/channels/whatsapp/${accountId}/baileys`,
-		);
-	}
-	if (provider === "imessage") {
-		setRuntimeEnv(ctx, runtimeEnvName(link, "password", "BLUEBUBBLES_PASSWORD"), token);
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "api_base_url", "BLUEBUBBLES_API_BASE_URL"),
-			`${baseUrl}/v1/channels/imessage/bluebubbles/v1`,
-		);
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "websocket_url", "BLUEBUBBLES_SERVER_URL"),
-			`${baseUrl}/v1/channels/imessage/bluebubbles`,
 		);
 	}
 }
@@ -814,7 +727,7 @@ function readManifest(file = "clawdi.runtime.yaml"): {
 	return { manifest: result.data, manifestDir: dirname(path) };
 }
 
-function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string): void {
+function preflightRuntimeOutputs(manifest: RuntimeManifest): void {
 	const baseUrl = stripTrailingSlash(getConfig().apiUrl);
 	const outputs = new Map<string, { value: string; ref: string }>();
 	const claim = (name: string, value: string, ref: string) => {
@@ -828,9 +741,7 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 	};
 
 	for (const channel of manifest.channels) {
-		const accountKey = runtimeAccountKey(channel);
 		for (const link of channel.links) {
-			if (channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 			claim(link.runtime.token_env, `token:${link.ref}`, link.ref);
 			if (link.pair_code?.command_env) {
 				claim(link.pair_code.command_env, `pair-code:${link.ref}`, link.ref);
@@ -854,55 +765,8 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 					link.ref,
 				);
 			}
-			if (channel.provider === "whatsapp") {
-				claim(
-					runtimeEnvName(link, "api_base_url", "WHATSAPP_GRAPH_API_BASE_URL"),
-					`${baseUrl}/v1/channels/whatsapp/graph`,
-					link.ref,
-				);
-				claim(
-					runtimeEnvName(link, "websocket_url", "WA_WEBSOCKET_URL"),
-					`whatsapp-websocket:${accountKey}`,
-					link.ref,
-				);
-				if (link.whatsapp?.baileys_credentials_dir) {
-					claim(
-						runtimeEnvName(link, "media_proxy_base_url", "WHATSAPP_MEDIA_PROXY_BASE_URL"),
-						`${baseUrl}/v1/channels/whatsapp/media`,
-						link.ref,
-					);
-					claim(
-						runtimeEnvName(link, "auth_dir", "CLAWDI_WHATSAPP_AUTH_DIR"),
-						resolvePath(manifestDir, link.whatsapp.baileys_credentials_dir),
-						link.ref,
-					);
-				}
-			}
-			if (channel.provider === "imessage") {
-				claim(
-					runtimeEnvName(link, "password", "BLUEBUBBLES_PASSWORD"),
-					`imessage-password:${link.ref}`,
-					link.ref,
-				);
-				claim(
-					runtimeEnvName(link, "api_base_url", "BLUEBUBBLES_API_BASE_URL"),
-					`${baseUrl}/v1/channels/imessage/bluebubbles/v1`,
-					link.ref,
-				);
-				claim(
-					runtimeEnvName(link, "websocket_url", "BLUEBUBBLES_SERVER_URL"),
-					`${baseUrl}/v1/channels/imessage/bluebubbles`,
-					link.ref,
-				);
-			}
 		}
 	}
-}
-
-function runtimeAccountKey(channel: RuntimeChannel): string {
-	if (isExistingAccountSpec(channel.account)) return `account:${channel.account.id}`;
-	const account = createPrivateAccountSpec(channel.account);
-	return `private:${channel.provider}:${account.name}`;
 }
 
 function assertManifestAccountCompatible(channel: RuntimeChannel, account: ChannelAccount): void {
@@ -1120,8 +984,9 @@ function printHumanResult(value: unknown): void {
 		if (root.applied.pair_codes?.length) {
 			console.log(chalk.bold("Pair codes"));
 			for (const item of root.applied.pair_codes) {
-				const command = `/bot_pair ${item.pair_code.code}`;
-				console.log(`  ${item.link_ref}: ${command} (expires ${item.pair_code.expires_at})`);
+				console.log(
+					`  ${item.link_ref}: ${item.pair_code.pairing_command} (expires ${item.pair_code.expires_at})`,
+				);
 			}
 		}
 		if (root.applied.writes?.length) {
@@ -1165,7 +1030,8 @@ function collectWarnings(value: unknown): string[] {
 interface RuntimeInitOptions {
 	nonInteractive?: boolean;
 	json?: boolean;
-	manifestFile?: string;
+	applyContext?: RuntimeApplyContext;
+	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
 interface RuntimeWatchOptions {
@@ -1176,11 +1042,18 @@ interface RuntimeWatchOptions {
 	abort?: AbortSignal;
 	notifications?: boolean;
 	notificationConsumer?: typeof consumeSse;
+	applyContext?: RuntimeApplyContext;
+	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
 interface RuntimeVerifyOptions {
 	json?: boolean;
 }
+
+// The image bootstrap is a RemainAfterExit oneshot with Restart=on-failure.
+// A dedicated temporary-failure exit makes it start the newly activated CLI;
+// runtime watch instead exits cleanly because its unit uses Restart=always.
+const RUNTIME_INIT_CLI_HANDOFF_EXIT_CODE = 75;
 
 interface RuntimeDoctorCheck {
 	name: string;
@@ -1189,17 +1062,9 @@ interface RuntimeDoctorCheck {
 	hint?: string;
 }
 
-interface MinimumCliVersionGate {
-	minimumCliVersion: string;
-	currentCliVersion: string;
-	rejectedGeneration: number;
-	activeGeneration: number | null;
-	error: string;
-}
-
 type RuntimeApplyResult =
 	| RuntimeApplyConvergedResult
-	| RuntimeApplyGatedResult
+	| RuntimeApplyCliHandoffResult
 	| RuntimeApplyCliUpdateFailedResult;
 
 interface RuntimeApplyConvergedResult {
@@ -1209,10 +1074,9 @@ interface RuntimeApplyConvergedResult {
 	systemdApply: ReturnType<typeof applySystemdRuntimeUpdate>;
 }
 
-interface RuntimeApplyGatedResult {
-	kind: "minimum_cli_version_gated";
+interface RuntimeApplyCliHandoffResult {
+	kind: "cli_handoff";
 	cliUpdate: RuntimeCliUpdateResult;
-	gate: MinimumCliVersionGate;
 }
 
 interface RuntimeApplyCliUpdateFailedResult {
@@ -1221,31 +1085,24 @@ interface RuntimeApplyCliUpdateFailedResult {
 }
 
 interface RuntimeApplyOptions {
-	authorityCommit?: (convergence: ReturnType<typeof convergeRuntimeManifest>) => void;
+	authorityCommit?: (
+		convergence: ReturnType<typeof convergeRuntimeManifest>,
+		authority: RuntimePrivateAppliedAuthority,
+	) => void;
 	continueOnCliUpdateError?: boolean;
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
 	manifestIdentity?: RuntimeManifestIdentity;
+	recoverFailedSystemdUnits?: boolean;
+	requireSystemdApplied?: boolean;
+	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
 interface RuntimeManifestIdentity {
 	generation?: number | null;
 	etag?: string | null;
 	previouslyApplied?: boolean;
-}
-
-function hasRuntimeCredential(input: {
-	manifestPath?: string;
-	paths?: ReturnType<typeof getRuntimePaths>;
-}): boolean {
-	if (input.manifestPath) return true;
-	const paths = input.paths ?? getRuntimePaths();
-	if (existsSync(paths.manifestLastGood)) return true;
-	return ensureRuntimeAuthTokenFile(paths) !== null;
-}
-
-function runtimeCredentialName(paths: ReturnType<typeof getRuntimePaths>): string {
-	return runtimeAuthTokenFileLabel(paths);
 }
 
 function writable(path: string): boolean {
@@ -1277,9 +1134,15 @@ export function runtimeAppliedContentIdentity(
 		sourcePath: load.sourcePath,
 		sha256: runtimeContentSha256({
 			manifest: load.manifest,
-			secretValues: load.secretValues ?? {},
+			secretValues: runtimeRecoverableSecretValues(load.manifest, load.secretValues),
 		}),
 	};
+}
+
+// This revision may be surfaced through status/observation fallback fields.
+// Keep secret-dependent recoverability verification in the root-only applied state.
+export function runtimePublicContentRevision(load: RuntimeManifestLoad): string {
+	return runtimeContentSha256({ manifest: load.manifest });
 }
 
 export function commitRuntimeAppliedState(input: {
@@ -1288,7 +1151,20 @@ export function commitRuntimeAppliedState(input: {
 	etag: string;
 	sourceRevision: string;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
+	applyIdentity: RuntimeApplyIdentity | null;
+	daemonAuthTokenRevision?: string;
+	egressSidecarSecretRevision?: string;
 }): void {
+	if (
+		input.applyIdentity &&
+		input.applyIdentity.generation !== resolveRuntimeApplyGeneration(input.convergence.manifest)
+	) {
+		throw new Error(
+			`runtime apply identity generation ${input.applyIdentity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(input.convergence.manifest)}`,
+		);
+	}
+	// The apply identity names the Hosted control-plane snapshot; `etag` names
+	// the independently rendered runtime bundle. Persist both authorities.
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
 	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
 	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
@@ -1299,14 +1175,23 @@ export function commitRuntimeAppliedState(input: {
 			etag: input.etag,
 			sourceRevision: input.sourceRevision,
 			generation: input.convergence.manifest.generation,
-			...(input.load.applyIdentity
+			...(input.convergence.manifest.applyGeneration === undefined
+				? {}
+				: { applyGeneration: input.convergence.manifest.applyGeneration }),
+			...(input.applyIdentity
 				? {
-						manifestETag: input.load.applyIdentity.manifestETag,
-						applyReceiptId: input.load.applyIdentity.applyReceiptId,
-						bootNonce: input.load.applyIdentity.bootNonce,
+						manifestETag: input.applyIdentity.manifestETag,
+						applyReceiptId: input.applyIdentity.applyReceiptId,
+						bootNonce: input.applyIdentity.bootNonce,
 					}
 				: {}),
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
+			...(input.daemonAuthTokenRevision
+				? { daemonAuthTokenRevision: input.daemonAuthTokenRevision }
+				: {}),
+			...(input.egressSidecarSecretRevision
+				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
+				: {}),
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
 		},
@@ -1470,14 +1355,31 @@ function readFileIfExists(path: string): string | null {
 	return readFileSync(path, "utf-8");
 }
 
-interface SystemdUnitSnapshot {
+export interface SystemdUnitSnapshot {
 	system: Map<string, string>;
 	user: Map<string, string>;
 }
 
-const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
+interface SystemdUnitManagerState {
+	loadState: string;
+	activeState: string;
+	enabledState?: string;
+}
 
-function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
+interface CommandResult {
+	status: number | null;
+	stdout: string;
+	stderr: string;
+	error?: Error;
+}
+
+const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
+const RUNTIME_DAEMON_SYSTEM_UNIT = "clawdi-daemon.service";
+const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
+
+export function readSystemdUnitSnapshot(
+	paths: ReturnType<typeof getRuntimePaths>,
+): SystemdUnitSnapshot {
 	return {
 		system: readManagedSystemdUnits(paths.systemdSystemRoot),
 		user: readManagedSystemdUnits(paths.systemdUserRoot),
@@ -1516,69 +1418,290 @@ function readManagedSystemdUnits(root: string): Map<string, string> {
 function changedSystemdUnits(
 	before: Map<string, string>,
 	after: Map<string, string>,
-): { changed: string[]; removed: string[]; present: string[] } {
+): { added: string[]; changed: string[]; removed: string[]; present: string[] } {
+	const added: string[] = [];
 	const changed: string[] = [];
 	const removed: string[] = [];
 	for (const [name, contents] of after) {
-		if (before.get(name) !== contents) changed.push(name);
+		if (!before.has(name)) added.push(name);
+		else if (before.get(name) !== contents) changed.push(name);
 	}
 	for (const name of before.keys()) {
 		if (!after.has(name)) removed.push(name);
 	}
 	return {
+		added: added.sort(),
 		changed: changed.sort(),
 		removed: removed.sort(),
 		present: [...after.keys()].sort(),
 	};
 }
 
-function applySystemdRuntimeUpdate(
+function withoutStaleSystemdUnits(
+	snapshot: SystemdUnitSnapshot,
+	staleSystemUnits: readonly string[],
+	staleUserUnits: readonly string[],
+): SystemdUnitSnapshot {
+	const system = new Map(snapshot.system);
+	const user = new Map(snapshot.user);
+	for (const unit of staleSystemUnits) system.delete(unit);
+	for (const unit of staleUserUnits) user.delete(unit);
+	return { system, user };
+}
+
+export function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
+	opts: {
+		forceRestartSystemUnits?: readonly string[];
+		forceStopSystemUnits?: readonly string[];
+		forceRestartUserUnits?: readonly string[];
+		recoverFailedUnits?: boolean;
+		activationScope?: {
+			systemUnits: readonly string[];
+			userUnits: readonly string[];
+		};
+		skipActivatedSystemUnits?: readonly string[];
+	} = {},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
-	const system = changedSystemdUnits(before.system, after.system);
-	const user = changedSystemdUnits(before.user, after.user);
-	if (
-		system.changed.length === 0 &&
-		system.removed.length === 0 &&
-		user.changed.length === 0 &&
-		user.removed.length === 0
-	) {
-		return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-	}
+	const allSystem = changedSystemdUnits(before.system, after.system);
+	const allUser = changedSystemdUnits(before.user, after.user);
+	const filterChanges = (
+		changes: ReturnType<typeof changedSystemdUnits>,
+		units: readonly string[],
+	): ReturnType<typeof changedSystemdUnits> => {
+		const selected = new Set(units);
+		return {
+			added: changes.added.filter((unit) => selected.has(unit)),
+			changed: changes.changed.filter((unit) => selected.has(unit)),
+			removed: changes.removed.filter((unit) => selected.has(unit)),
+			present: changes.present.filter((unit) => selected.has(unit)),
+		};
+	};
+	const system = opts.activationScope
+		? filterChanges(allSystem, opts.activationScope.systemUnits)
+		: allSystem;
+	const user = opts.activationScope
+		? filterChanges(allUser, opts.activationScope.userUnits)
+		: allUser;
+	const systemUnitsChanged = [...system.added, ...system.changed].sort();
+	const userUnitsChanged = [...user.added, ...user.changed].sort();
+	const scopedSystemUnits = opts.activationScope ? new Set(opts.activationScope.systemUnits) : null;
+	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
+		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
+	);
+	const forcedSystemStops = (opts.forceStopSystemUnits ?? []).filter(
+		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
+	);
+	const forcedUserRestarts = (opts.forceRestartUserUnits ?? []).filter((unit) =>
+		after.user.has(unit),
+	);
+	const recoverFailedUnits = opts.recoverFailedUnits !== false;
+	const activationChanged =
+		system.added.length > 0 ||
+		system.changed.length > 0 ||
+		system.removed.length > 0 ||
+		user.added.length > 0 ||
+		user.changed.length > 0 ||
+		user.removed.length > 0 ||
+		forcedSystemRestarts.length > 0 ||
+		forcedSystemStops.length > 0 ||
+		forcedUserRestarts.length > 0;
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
-		// Unit files changed on disk but this environment does not own a live
-		// systemd (non-root/dev); report the divergence instead of hiding it.
-		return { applied: false, systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
+		return { applied: !activationChanged, systemUnitsChanged, userUnitsChanged };
 	}
 
-	const removableSystemUnits = system.removed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
-	if (removableSystemUnits.length > 0) {
-		systemctl(["stop", ...removableSystemUnits], { allowNonZero: true });
+	for (const unit of system.removed) {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		if (unit === RUNTIME_WATCH_SYSTEM_UNIT && !systemdUnitAbsentOrInactive(state)) continue;
+		if (!systemdUnitAbsentOrInactive(state)) systemctl(["stop", unit]);
 	}
-	systemctl(["daemon-reload"]);
-	if (system.present.length > 0) systemctl(["start", ...system.present]);
-	const restartSystemUnits = system.changed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
-	if (restartSystemUnits.length > 0) {
-		systemctl(["restart", ...restartSystemUnits]);
+	for (const unit of user.removed) {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		if (!systemdUnitAbsentOrInactive(state)) runtimeUserSystemctl(paths, ["stop", unit]);
+		if (!systemdUnitAbsentOrDisabled(state)) runtimeUserSystemctl(paths, ["disable", unit]);
+	}
+	for (const unit of forcedSystemStops) {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		if (!systemdUnitAbsentOrInactive(state)) systemctl(["stop", unit]);
 	}
 
-	if (user.removed.length > 0) {
-		runtimeUserSystemctl(paths, ["stop", ...user.removed], {
-			allowNonZero: true,
-		});
+	if (system.added.length > 0 || system.changed.length > 0 || system.removed.length > 0) {
+		systemctl(["daemon-reload"]);
 	}
-	runtimeUserSystemctl(paths, ["daemon-reload"]);
-	if (user.present.length > 0) {
-		runtimeUserSystemctl(paths, ["reset-failed", ...user.present], { allowNonZero: true });
-		runtimeUserSystemctl(paths, ["enable", "--now", ...user.present]);
+	if (user.added.length > 0 || user.changed.length > 0 || user.removed.length > 0) {
+		runtimeUserSystemctl(paths, ["daemon-reload"]);
 	}
-	if (user.removed.length > 0) {
-		runtimeUserSystemctl(paths, ["disable", ...user.removed], { allowNonZero: true });
+
+	const addedSystemUnits = new Set(system.added);
+	const changedSystemUnits = new Set(system.changed);
+	const forcedRestartUnits = new Set(forcedSystemRestarts);
+	const forcedStopUnits = new Set(forcedSystemStops);
+	const skipActivatedSystemUnits = new Set(opts.skipActivatedSystemUnits ?? []);
+	const resetFailedSystemUnits: string[] = [];
+	const startSystemUnits: string[] = [];
+	const restartSystemUnits: string[] = [];
+	for (const unit of system.present) {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		if (forcedStopUnits.has(unit)) continue;
+		if (skipActivatedSystemUnits.has(unit)) continue;
+		if (state.activeState === "failed" && recoverFailedUnits) {
+			resetFailedSystemUnits.push(unit);
+			startSystemUnits.push(unit);
+			continue;
+		}
+		if (state.activeState === "inactive") {
+			startSystemUnits.push(unit);
+			continue;
+		}
+		if (
+			state.activeState === "active" &&
+			unit !== RUNTIME_WATCH_SYSTEM_UNIT &&
+			(changedSystemUnits.has(unit) ||
+				(forcedRestartUnits.has(unit) &&
+					(!addedSystemUnits.has(unit) || unit === RUNTIME_SIDECAR_SYSTEM_UNIT)))
+		) {
+			restartSystemUnits.push(unit);
+		}
 	}
-	if (user.changed.length > 0) runtimeUserSystemctl(paths, ["restart", ...user.changed]);
-	return { applied: true, systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
+	// Each reconciliation makes at most one recovery attempt per failed unit.
+	// Transitional units remain untouched and fail final proof below.
+	if (resetFailedSystemUnits.length > 0) systemctl(["reset-failed", ...resetFailedSystemUnits]);
+	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
+	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
+
+	const changedUserUnits = new Set(user.changed);
+	const forcedRestartUserUnits = new Set(forcedUserRestarts);
+	const resetFailedUserUnits: string[] = [];
+	const startUserUnits: string[] = [];
+	const enableUserUnits: string[] = [];
+	const enableAndStartUserUnits: string[] = [];
+	const restartUserUnits: string[] = [];
+	for (const unit of user.present) {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		const enabled = systemdUnitEnabled(state);
+		if (state.activeState === "failed" && recoverFailedUnits) {
+			resetFailedUserUnits.push(unit);
+		}
+		if (
+			state.activeState === "inactive" ||
+			(state.activeState === "failed" && recoverFailedUnits)
+		) {
+			if (enabled) startUserUnits.push(unit);
+			else enableAndStartUserUnits.push(unit);
+			continue;
+		}
+		if (state.activeState !== "active") continue;
+		if (!enabled) enableUserUnits.push(unit);
+		if (changedUserUnits.has(unit) || forcedRestartUserUnits.has(unit)) {
+			restartUserUnits.push(unit);
+		}
+	}
+	if (resetFailedUserUnits.length > 0) {
+		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
+	}
+	if (enableAndStartUserUnits.length > 0) {
+		runtimeUserSystemctl(paths, ["enable", "--now", ...enableAndStartUserUnits]);
+	}
+	if (enableUserUnits.length > 0) runtimeUserSystemctl(paths, ["enable", ...enableUserUnits]);
+	if (startUserUnits.length > 0) runtimeUserSystemctl(paths, ["start", ...startUserUnits]);
+	if (restartUserUnits.length > 0) runtimeUserSystemctl(paths, ["restart", ...restartUserUnits]);
+
+	const systemConverged = system.present.every((unit) => {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		if (forcedStopUnits.has(unit)) return systemdUnitAbsentOrInactive(state);
+		return state.loadState !== "not-found" && state.activeState === "active";
+	});
+	const userConverged = user.present.every((unit) => {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		return (
+			state.loadState !== "not-found" && state.activeState === "active" && systemdUnitEnabled(state)
+		);
+	});
+	const removedSystemConverged = system.removed.every(
+		(unit) =>
+			unit === RUNTIME_WATCH_SYSTEM_UNIT ||
+			systemdUnitAbsentOrInactive(systemdUnitManagerState(paths, "system", unit)),
+	);
+	const removedUserConverged = user.removed.every((unit) => {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
+	});
+	return {
+		applied: systemConverged && userConverged && removedSystemConverged && removedUserConverged,
+		systemUnitsChanged,
+		userUnitsChanged,
+	};
+}
+
+function systemdUnitManagerState(
+	paths: ReturnType<typeof getRuntimePaths>,
+	scope: "system" | "user",
+	unit: string,
+): SystemdUnitManagerState {
+	const showArgs = ["show", unit, "--property=LoadState", "--property=ActiveState"];
+	const show =
+		scope === "system" ? systemctlResult(showArgs) : runtimeUserSystemctlResult(paths, showArgs);
+	assertCommandSucceeded(scope === "system" ? systemctlPath() : "systemctl --user", showArgs, show);
+	const properties = Object.fromEntries(
+		show.stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return separator < 0 ? [line, ""] : [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
+	const loadState = properties.LoadState;
+	const activeState = properties.ActiveState;
+	if (!loadState || !activeState) {
+		throw new Error(`systemd ${scope} unit ${unit} returned incomplete manager state`);
+	}
+	if (scope === "system") return { loadState, activeState };
+
+	const enabledArgs = ["is-enabled", unit];
+	const enabled = runtimeUserSystemctlResult(paths, enabledArgs);
+	const enabledState = enabled.stdout.trim().split(/\s+/)[0] ?? "";
+	if (!SYSTEMD_ENABLED_STATES.has(enabledState) && !SYSTEMD_DISABLED_STATES.has(enabledState)) {
+		assertCommandSucceeded("systemctl --user", enabledArgs, enabled);
+		throw new Error(`systemd user unit ${unit} returned unknown enabled state: ${enabledState}`);
+	}
+	return { loadState, activeState, enabledState };
+}
+
+const SYSTEMD_ENABLED_STATES = new Set([
+	"enabled",
+	"enabled-runtime",
+	"linked",
+	"linked-runtime",
+	"alias",
+]);
+const SYSTEMD_DISABLED_STATES = new Set([
+	"disabled",
+	"not-found",
+	"static",
+	"indirect",
+	"masked",
+	"generated",
+	"transient",
+]);
+
+function systemdUnitEnabled(state: SystemdUnitManagerState): boolean {
+	return state.enabledState !== undefined && SYSTEMD_ENABLED_STATES.has(state.enabledState);
+}
+
+function systemdUnitAbsentOrInactive(state: SystemdUnitManagerState): boolean {
+	return state.loadState === "not-found" || state.activeState === "inactive";
+}
+
+function systemdUnitAbsentOrDisabled(state: SystemdUnitManagerState): boolean {
+	return (
+		state.loadState === "not-found" ||
+		state.enabledState === "not-found" ||
+		state.enabledState === "disabled"
+	);
 }
 
 function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): boolean {
@@ -1588,50 +1711,75 @@ function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePath
 	return paths.systemdSystemRoot === "/run/systemd/system";
 }
 
-function systemctl(args: string[], opts: { allowNonZero?: boolean } = {}): string {
-	return runCommand(systemctlPath(), args, opts);
+function systemctl(args: string[]): string {
+	return runCommand(systemctlPath(), args);
+}
+
+function systemctlResult(args: string[]): CommandResult {
+	return runCommandResult(systemctlPath(), args);
 }
 
 function systemctlPath(): string {
 	return process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl";
 }
 
-function runtimeUserSystemctl(
+function runtimeUserSystemctl(paths: ReturnType<typeof getRuntimePaths>, args: string[]): string {
+	const result = runtimeUserSystemctlResult(paths, args);
+	assertCommandSucceeded("systemctl --user", args, result);
+	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+}
+
+function runtimeUserSystemctlResult(
 	paths: ReturnType<typeof getRuntimePaths>,
 	args: string[],
-	opts: { allowNonZero?: boolean } = {},
-): string {
+): CommandResult {
 	const runtimeUser = runtimeUserName();
-	if (process.getuid?.() === 0 && runtimeUser !== "root") {
-		const uid = commandOutput("id", ["-u", runtimeUser]).trim();
-		return runCommand(
-			"gosu",
-			[
-				runtimeUser,
-				"env",
-				...runtimeUserSystemdEnvArgs(paths, runtimeUser, uid),
-				"systemctl",
-				"--user",
-				...args,
-			],
-			opts,
+	if (runtimeUser !== "root") {
+		const uid = String(runtimeUserUid(runtimeUser));
+		const child = buildRuntimeUserCommand(
+			runtimeUser,
+			paths.userHome,
+			systemctlPath(),
+			["--user", ...args],
+			{ environment: runtimeUserSystemdEnvironment(uid) },
 		);
+		return runCommandResult(child.command, child.args, child.env);
 	}
-	return runCommand(systemctlPath(), ["--user", ...args], opts);
+	return runCommandResult(systemctlPath(), ["--user", ...args]);
 }
 
-function commandOutput(command: string, args: string[]): string {
-	return runCommand(command, args);
+function assertRuntimeUserCanRead(path: string, home: string): void {
+	const runtimeUser = runtimeUserName();
+	const proof = buildRuntimeUserCommand(runtimeUser, home, "test", ["-r", path]);
+	runCommand(proof.command, proof.args, proof.env);
 }
 
-function runCommand(
+function runCommand(command: string, args: string[], env?: Record<string, string>): string {
+	const result = runCommandResult(command, args, env);
+	assertCommandSucceeded(command, args, result);
+	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+}
+
+function runCommandResult(
 	command: string,
 	args: string[],
-	opts: { allowNonZero?: boolean } = {},
-): string {
-	const result = spawnSync(command, args, { encoding: "utf8" });
+	env?: Record<string, string>,
+): CommandResult {
+	const result = spawnSync(command, args, {
+		encoding: "utf8",
+		...(env ? { env: { ...process.env, ...env } } : {}),
+	});
+	return {
+		status: result.status,
+		stdout: result.stdout ?? "",
+		stderr: result.stderr ?? "",
+		...(result.error ? { error: result.error } : {}),
+	};
+}
+
+function assertCommandSucceeded(command: string, args: string[], result: CommandResult): void {
+	if (result.status === 0) return;
 	const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-	if (result.status === 0 || opts.allowNonZero) return output;
 	throw new Error(
 		`${command} ${args.join(" ")} failed${result.status === null ? "" : ` (${result.status})`}${
 			result.error ? `: ${result.error.message}` : ""
@@ -1653,6 +1801,10 @@ function emitRuntimeWatchEvent(value: unknown, json: boolean | undefined): void 
 	};
 	if (event.status === "applied") {
 		console.log(`runtime watch applied generation ${event.generation ?? "unknown"}`);
+		return;
+	}
+	if (event.status === "cli_handoff") {
+		console.log("runtime watch handed off to the managed CLI");
 		return;
 	}
 	if (event.status === "error") {
@@ -1690,6 +1842,67 @@ function repairStatus(
 	);
 }
 
+function finishRuntimeInitCliHandoff(input: {
+	opts: RuntimeInitOptions;
+	paths: ReturnType<typeof getRuntimePaths>;
+	mode: "hosted";
+	bootId: string;
+	hostPolicy: ReturnType<typeof readHostPolicy>;
+	manifestLoad?: RuntimeManifestLoad;
+	detail:
+		| { cliUpdate: RuntimeCliUpdateResult }
+		| { reconciliation: RuntimeCliReconciliationResult };
+}): void {
+	const activeAppliedState = readRuntimeAppliedState(input.paths);
+	const status = buildRuntimeBootStatus(
+		{
+			mode: input.manifestLoad?.offline ? "degraded-offline" : "normal",
+			status: "ok",
+			stage: "config",
+			bootId: input.bootId,
+			runtimeMode: input.mode,
+			activeGeneration: activeAppliedState?.generation ?? null,
+			rejectedGeneration: null,
+			instanceId: activeAppliedState?.instanceId ?? null,
+			enabledRuntimes: [],
+			errors: [],
+			exitCode: RUNTIME_INIT_CLI_HANDOFF_EXIT_CODE,
+			datasource: "RuntimeSource",
+			hostPolicy: hostPolicySummary(input.hostPolicy),
+			...(input.manifestLoad
+				? {
+						manifestSource: {
+							type: input.manifestLoad.source,
+							path: input.manifestLoad.sourcePath,
+							offline: input.manifestLoad.offline,
+						},
+					}
+				: {}),
+		},
+		input.paths,
+	);
+	writeRuntimeBootStatus(status, input.paths);
+	if (input.opts.json || !process.stdout.isTTY) {
+		console.log(
+			JSON.stringify(
+				{
+					...status,
+					handoff: "cli_reexec",
+					...input.detail,
+					selfReexec: true,
+				},
+				null,
+				2,
+			),
+		);
+	} else {
+		console.log(chalk.bold("clawdi runtime init"));
+		console.log(chalk.green("  CLI activated; restarting under the managed binary"));
+		console.log(chalk.gray(`  status: ${input.paths.bootStatus}`));
+	}
+	process.exitCode = RUNTIME_INIT_CLI_HANDOFF_EXIT_CODE;
+}
+
 export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 	const paths = getRuntimePaths();
 	const manifestCacheExists = existsSync(paths.manifestLastGood);
@@ -1714,7 +1927,7 @@ export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 		manifestCache: {
 			path: paths.manifestLastGood,
 			exists: manifestCacheExists,
-			valid: errors.length === 0,
+			valid: manifestCacheExists ? errors.length === 0 : null,
 		},
 		errors,
 	};
@@ -1741,7 +1954,7 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 				stage: "detect",
 				exitCode: 2,
 				errors: [
-					"runtime init requires hosted runtime mode (host policy or CLAWDI_RUNTIME_MODE=hosted)",
+					"runtime init requires CLAWDI_RUNTIME_MODE=hosted explicitly; host policy files do not select runtime mode",
 				],
 			},
 			paths,
@@ -1754,19 +1967,33 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		process.exitCode = 2;
 		return;
 	}
-	return withRuntimeConvergeLockAsync(paths, () => runtimeInitLocked(opts, paths, mode, bootId));
-}
-
-async function runtimeInitLocked(
-	opts: RuntimeInitOptions,
-	paths: ReturnType<typeof getRuntimePaths>,
-	mode: "hosted",
-	bootId: string,
-): Promise<void> {
-	const hostPolicy = readHostPolicy(paths.hostPolicy);
+	let applyContext: RuntimeApplyContext;
+	try {
+		applyContext = opts.applyContext ?? readRuntimeApplyContext();
+		assertHostedRuntimeContract(paths, applyContext, {
+			...opts.hostedRuntimeContract,
+			platformRoots: "deferred",
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const status = repairStatus(
+			{
+				bootId,
+				runtimeMode: mode,
+				stage: "detect",
+				exitCode: 20,
+				errors: [message],
+			},
+			paths,
+		);
+		if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
+		else console.log(chalk.red(message));
+		process.exitCode = 20;
+		return;
+	}
 	try {
 		ensureRuntimeStateDirs(paths);
-	} catch (e) {
+	} catch (error) {
 		const status = repairStatus(
 			{
 				bootId,
@@ -1775,7 +2002,7 @@ async function runtimeInitLocked(
 				exitCode: 20,
 				errors: [
 					`could not create runtime state directories: ${
-						e instanceof Error ? e.message : String(e)
+						error instanceof Error ? error.message : String(error)
 					}`,
 				],
 			},
@@ -1786,8 +2013,50 @@ async function runtimeInitLocked(
 		process.exitCode = 20;
 		return;
 	}
+	return withRuntimeConvergeLockAsync(paths, () =>
+		runtimeInitLocked({ ...opts, applyContext }, paths, mode, bootId),
+	);
+}
 
-	const credentialAvailable = hasRuntimeCredential({ manifestPath: opts.manifestFile, paths });
+async function runtimeInitLocked(
+	opts: RuntimeInitOptions,
+	paths: ReturnType<typeof getRuntimePaths>,
+	mode: "hosted",
+	bootId: string,
+): Promise<void> {
+	const hostPolicy = readHostPolicy(paths.hostPolicy);
+	try {
+		const reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
+		if (reconciliation.selfReexec) {
+			finishRuntimeInitCliHandoff({
+				opts,
+				paths,
+				mode,
+				bootId,
+				hostPolicy,
+				detail: { reconciliation },
+			});
+			return;
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const status = repairStatus(
+			{
+				bootId,
+				runtimeMode: mode,
+				stage: "local",
+				exitCode: 23,
+				errors: [message],
+			},
+			paths,
+		);
+		writeRuntimeBootStatus(status, paths);
+		if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
+		else console.log(chalk.red(message));
+		process.exitCode = 23;
+		return;
+	}
+
 	const nonInteractiveOk = opts.nonInteractive === true;
 	const errors: string[] = [];
 	let stage: RuntimeBootStage = "detect";
@@ -1795,19 +2064,9 @@ async function runtimeInitLocked(
 	if (!nonInteractiveOk) {
 		errors.push("runtime init requires --non-interactive in hosted mode");
 	}
-	if (!hostPolicy.exists) {
-		errors.push(`missing hosted runtime policy at ${hostPolicy.path}`);
-	} else if (!hostPolicy.valid) {
-		errors.push(
-			`invalid hosted runtime policy at ${hostPolicy.path}: ${hostPolicy.error ?? "parse failed"}`,
-		);
-	}
-	if (!credentialAvailable) {
-		errors.push(`missing ${runtimeCredentialName(paths)} and no last-good runtime manifest cache`);
-	}
 	if (errors.length === 0) {
 		stage = "local";
-		const loaded = await loadRuntimeManifest(paths, { manifestPath: opts.manifestFile });
+		const loaded = await loadRuntimeManifest(paths, { applyContext: opts.applyContext });
 		if ("errors" in loaded) {
 			stage = loaded.stage;
 			exitCode = loaded.mode === "manifest-rejected" ? 22 : 21;
@@ -1846,21 +2105,27 @@ async function runtimeInitLocked(
 		let convergenceLoad = loaded;
 		let applyResult: RuntimeApplyResult;
 		try {
-			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
-			const contentRevision = runtimeAppliedContentIdentity(convergenceLoad).sha256;
-			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
-				authorityCommit: (convergence) =>
+			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded, paths);
+			const contentRevision = runtimePublicContentRevision(convergenceLoad);
+			const applyIdentity = convergenceLoad.applyContext?.identity ?? null;
+			applyResult = await applyRuntimeDesiredState(convergenceLoad, paths, {
+				authorityCommit: (convergence, authority) =>
 					commitRuntimeAppliedState({
 						load: convergenceLoad,
 						paths,
 						etag: loaded.etag ?? `"sha256:${contentRevision}"`,
 						sourceRevision: loaded.sourceRevision ?? contentRevision,
 						convergence,
+						applyIdentity,
+						daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 					}),
 				manifestIdentity: {
 					generation: convergenceLoad.manifest.generation,
 					etag: loaded.etag ?? null,
 				},
+				requireSystemdApplied: applyIdentity !== null,
+				hostedRuntimeContract: opts.hostedRuntimeContract,
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -1927,52 +2192,22 @@ async function runtimeInitLocked(
 			process.exitCode = 23;
 			return;
 		}
-		if (applyResult.kind === "minimum_cli_version_gated") {
-			const activeAppliedState = readRuntimeAppliedState(paths);
-			const status = buildRuntimeBootStatus(
-				{
-					mode: "repair",
-					status: "error",
-					stage: "config",
-					bootId,
-					runtimeMode: mode,
-					activeGeneration: applyResult.gate.activeGeneration,
-					rejectedGeneration: applyResult.gate.rejectedGeneration,
-					instanceId: activeAppliedState?.instanceId ?? null,
-					enabledRuntimes: [],
-					error: applyResult.gate.error,
-					errors: [applyResult.gate.error],
-					exitCode: 24,
-					datasource: "RuntimeSource",
-					hostPolicy: hostPolicySummary(hostPolicy),
-					manifestSource: {
-						type: convergenceLoad.source,
-						path: convergenceLoad.sourcePath,
-						offline: convergenceLoad.offline,
-					},
-				},
+		if (applyResult.kind === "cli_handoff") {
+			finishRuntimeInitCliHandoff({
+				opts,
 				paths,
-			);
-			writeRuntimeBootStatus(status, paths);
-			if (opts.json || !process.stdout.isTTY) {
-				console.log(
-					JSON.stringify(
-						{ ...status, cliUpdate: applyResult.cliUpdate, gate: applyResult.gate },
-						null,
-						2,
-					),
-				);
-			} else {
-				console.log(chalk.bold("clawdi runtime init"));
-				console.log(chalk.yellow(`  repair: ${applyResult.gate.error}`));
-				console.log(chalk.gray(`  status: ${paths.bootStatus}`));
-			}
-			process.exitCode = 24;
+				mode,
+				bootId,
+				hostPolicy,
+				manifestLoad: convergenceLoad,
+				detail: { cliUpdate: applyResult.cliUpdate },
+			});
 			return;
 		}
 		const { convergence } = applyResult;
 		const runtimeErrors = [...convergence.installErrors];
 		const installOk = runtimeErrors.length === 0;
+		if (installOk) completePendingRuntimeCliUpgrade(paths, getCliVersion());
 		const activeAppliedState = readRuntimeAppliedState(paths);
 		const status = buildRuntimeBootStatus(
 			{
@@ -2045,18 +2280,77 @@ async function runtimeInitLocked(
 
 async function runtimeWatchTick(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
+	opts: {
+		forceRefresh: boolean;
+		deferCliInstall?: boolean;
+		deferCliInstallReason?: string;
+		recoverFailedSystemdUnits?: boolean;
+		applyContext?: RuntimeApplyContext;
+		hostedRuntimeContract?: HostedRuntimeContractOptions;
+	},
 ): Promise<Record<string, unknown>> {
 	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
 }
 
 async function runtimeWatchTickLocked(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
+	opts: {
+		forceRefresh: boolean;
+		deferCliInstall?: boolean;
+		deferCliInstallReason?: string;
+		recoverFailedSystemdUnits?: boolean;
+		applyContext?: RuntimeApplyContext;
+		hostedRuntimeContract?: HostedRuntimeContractOptions;
+	},
+): Promise<Record<string, unknown>> {
+	let reconciliation: RuntimeCliReconciliationResult;
+	try {
+		reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			stage: "cli-update",
+			errors: [message],
+			error: message,
+			selfReexec: false,
+		};
+	}
+	if (reconciliation.selfReexec) {
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "cli_handoff",
+			stage: "cli-update",
+			handoff: "cli_reexec",
+			reconciliation,
+			selfReexec: true,
+		};
+	}
+	const event = await runtimeWatchTickAfterCliReconciliation(paths, opts);
+	return {
+		...event,
+		selfReexec: reconciliation.selfReexec || event.selfReexec === true,
+	};
+}
+
+async function runtimeWatchTickAfterCliReconciliation(
+	paths: ReturnType<typeof getRuntimePaths>,
+	opts: {
+		forceRefresh: boolean;
+		deferCliInstall?: boolean;
+		deferCliInstallReason?: string;
+		recoverFailedSystemdUnits?: boolean;
+		applyContext?: RuntimeApplyContext;
+		hostedRuntimeContract?: HostedRuntimeContractOptions;
+	},
 ): Promise<Record<string, unknown>> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
 	const manifestEtag = opts.forceRefresh ? undefined : (activeAppliedState?.etag ?? undefined);
-	const manifestLoad = await loadRemoteRuntimeManifest(paths, { ifNoneMatch: manifestEtag });
+	const manifestLoad = await loadRemoteRuntimeManifest(paths, {
+		ifNoneMatch: manifestEtag,
+		applyContext: opts.applyContext,
+	});
 	if ("errors" in manifestLoad) {
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2073,8 +2367,13 @@ async function runtimeWatchTickLocked(
 	if (
 		"notModified" in manifestLoad &&
 		activeAppliedState !== null &&
-		activeAppliedState.etag === responseManifestEtag
+		activeAppliedState.etag === responseManifestEtag &&
+		runtimeApplyIdentitiesEqual(
+			manifestLoad.applyContext?.identity ?? null,
+			runtimeAppliedApplyIdentity(activeAppliedState),
+		)
 	) {
+		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "not_modified",
@@ -2083,13 +2382,28 @@ async function runtimeWatchTickLocked(
 			sourceRevision: activeAppliedState.sourceRevision,
 			generation: activeAppliedState.generation,
 			instanceId: activeAppliedState.instanceId,
+			selfReexec: completion.selfReexec,
 		};
 	}
 
 	try {
 		const fresh =
-			"notModified" in manifestLoad ? await loadFullRuntimeManifestForWatch(paths) : manifestLoad;
-		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh);
+			"notModified" in manifestLoad
+				? await loadFullRuntimeManifestForWatch(paths, opts.applyContext)
+				: manifestLoad;
+		if ("errors" in fresh) {
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "error",
+				mode: fresh.mode,
+				stage: fresh.stage,
+				errors: fresh.errors,
+				error: fresh.errors[0],
+				activeGeneration: fresh.activeGeneration ?? null,
+				rejectedGeneration: fresh.rejectedGeneration ?? null,
+			};
+		}
+		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh, paths);
 		const bundleEtag = loaded.etag;
 		const sourceRevision = loaded.sourceRevision;
 		if (!bundleEtag || !sourceRevision) {
@@ -2100,20 +2414,47 @@ async function runtimeWatchTickLocked(
 			bundleEtag,
 			paths,
 		);
-		const applyResult = applyRuntimeDesiredState(loaded, paths, {
-			authorityCommit: (convergence) =>
+		const applyIdentity = loaded.applyContext?.identity ?? null;
+		const applyResult = await applyRuntimeDesiredState(loaded, paths, {
+			authorityCommit: (convergence, authority) =>
 				commitRuntimeAppliedState({
 					load: loaded,
 					paths,
 					etag: bundleEtag,
 					sourceRevision,
 					convergence,
+					applyIdentity,
+					daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 				}),
 			continueOnCliUpdateError: true,
 			deferCliInstall: opts.deferCliInstall,
 			deferCliInstallReason: opts.deferCliInstallReason,
 			manifestIdentity,
+			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
+			requireSystemdApplied: applyIdentity !== null,
+			hostedRuntimeContract: opts.hostedRuntimeContract,
 		});
+		if (applyResult.kind === "cli_handoff") {
+			const activeAppliedState = readRuntimeAppliedState(paths);
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "cli_handoff",
+				stage: "cli-update",
+				handoff: "cli_reexec",
+				activeGeneration: activeAppliedState?.generation ?? null,
+				desiredGeneration: loaded.manifest.generation,
+				instanceId: activeAppliedState?.instanceId ?? null,
+				cliUpdate: applyResult.cliUpdate,
+				selfReexec: true,
+				systemdUnitsChanged: false,
+				systemdApply: {
+					applied: false,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+				},
+			};
+		}
 		if (applyResult.kind === "cli_update_failed") {
 			const error = applyResult.cliUpdate.error ?? "CLI update failed";
 			const activeAppliedState = readRuntimeAppliedState(paths);
@@ -2127,7 +2468,7 @@ async function runtimeWatchTickLocked(
 				rejectedGeneration: loaded.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
 				cliUpdate: applyResult.cliUpdate,
-				selfReexec: false,
+				selfReexec: applyResult.cliUpdate.selfReexec,
 				systemdUnitsChanged: false,
 				systemdApply: {
 					applied: false,
@@ -2136,37 +2477,17 @@ async function runtimeWatchTickLocked(
 				},
 			};
 		}
-		if (applyResult.kind === "minimum_cli_version_gated") {
-			const cliUpdateError =
-				applyResult.cliUpdate.status === "error"
-					? (applyResult.cliUpdate.error ?? "CLI update failed")
-					: null;
-			const errors = [...(cliUpdateError ? [cliUpdateError] : []), applyResult.gate.error];
-			return {
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "error",
-				stage: cliUpdateError ? "cli-update" : "config",
-				mode: "minimum_cli_version_gated",
-				errors,
-				error: errors[0],
-				activeGeneration: applyResult.gate.activeGeneration,
-				rejectedGeneration: applyResult.gate.rejectedGeneration,
-				cliUpdate: applyResult.cliUpdate,
-				selfReexec: shouldSelfReexecForCliUpdate(applyResult.cliUpdate),
-				gate: applyResult.gate,
-			};
-		}
 		const { convergence, cliUpdate, systemdApply: systemdApplyResult } = applyResult;
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
 		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
-		let selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
+		let selfReexec = cliUpdate.selfReexec;
 		const systemdUnitsChanged =
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
 			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
-			const cliRollback = maybeRollbackFailedCliUpgrade(paths, manifestIdentity, errors);
-			if (cliRollback.status === "rolled_back") selfReexec = false;
+			const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors);
+			if (cliRollback.status === "rolled_back") selfReexec = true;
 			const activeAppliedState = readRuntimeAppliedState(paths);
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2185,7 +2506,8 @@ async function runtimeWatchTickLocked(
 				convergence: convergence.outputs,
 			};
 		}
-		completePendingRuntimeCliUpgrade(paths, getCliVersion(), manifestIdentity);
+		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
+		selfReexec = selfReexec || completion.selfReexec;
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "applied",
@@ -2212,17 +2534,18 @@ async function runtimeWatchTickLocked(
 	}
 }
 
-function applyRuntimeDesiredState(
+async function applyRuntimeDesiredState(
 	load: RuntimeManifestLoad,
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: RuntimeApplyOptions = {},
-): RuntimeApplyResult {
+): Promise<RuntimeApplyResult> {
 	let cliUpdate: RuntimeCliUpdateResult;
 	try {
 		cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
 			deferInstall: opts.deferCliInstall,
 			deferReason: opts.deferCliInstallReason,
-			manifestIdentity: opts.manifestIdentity,
+			rollbackEligible: opts.manifestIdentity?.previouslyApplied,
+			runningVersion: getCliVersion(),
 		});
 	} catch (error) {
 		if (!opts.continueOnCliUpdateError) throw error;
@@ -2231,10 +2554,14 @@ function applyRuntimeDesiredState(
 			cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
 		};
 	}
-	const gate = minimumCliVersionGate(load.manifest, paths);
-	if (gate) {
-		return { kind: "minimum_cli_version_gated", cliUpdate, gate };
+	if (cliUpdate.selfReexec) {
+		return { kind: "cli_handoff", cliUpdate };
 	}
+	const preparedHostedSourcedSkills =
+		opts.preparedHostedSourcedSkills ??
+		(await prepareHostedSourcedSkillArchives(load.manifest, paths, {
+			authToken: load.applyContext?.manifestSource.auth.token,
+		}));
 	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
 	let systemdApply = {
@@ -2242,14 +2569,67 @@ function applyRuntimeDesiredState(
 		systemUnitsChanged: [] as string[],
 		userUnitsChanged: [] as string[],
 	};
+	let egressPrerequisiteActivated = false;
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
-		commitAuthority: opts.authorityCommit,
+		hostedRuntimeContract: opts.hostedRuntimeContract,
+		preparedHostedSourcedSkills,
+		commitAuthority: (committedConvergence, authority) => {
+			if (opts.requireSystemdApplied && !systemdApply.applied) {
+				throw new Error("systemd apply did not activate the rendered runtime manifest");
+			}
+			opts.authorityCommit?.(committedConvergence, authority);
+		},
 		systemdApply: {
-			activate: () => {
+			activateEgressPrerequisite: ({ restartEgressSidecar }) => {
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
-					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, failedSystemdUnits);
+					const prerequisite = applySystemdRuntimeUpdate(
+						paths,
+						previousSystemdUnits,
+						failedSystemdUnits,
+						{
+							activationScope: {
+								systemUnits: [RUNTIME_SIDECAR_SYSTEM_UNIT],
+								userUnits: [],
+							},
+							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+							recoverFailedUnits: opts.recoverFailedSystemdUnits,
+						},
+					);
+					if (prerequisite.applied) {
+						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
+						egressPrerequisiteActivated = true;
+					}
+					return prerequisite;
+				} catch (error) {
+					throw new Error(
+						`transparent-egress prerequisite activation failed: ${
+							error instanceof Error ? error.message : String(error)
+						}`,
+					);
+				}
+			},
+			activate: ({ restartDaemon, restartEgressSidecar, staleSystemUnits, staleUserUnits }) => {
+				// Official installers run after the prerequisite phase and add their
+				// base units, so final reconciliation must observe a fresh rendered state.
+				failedSystemdUnits = readSystemdUnitSnapshot(paths);
+				try {
+					const activationTarget = withoutStaleSystemdUnits(
+						failedSystemdUnits,
+						staleSystemUnits,
+						staleUserUnits,
+					);
+					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, activationTarget, {
+						forceRestartSystemUnits: [
+							...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
+							...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+						],
+						recoverFailedUnits: opts.recoverFailedSystemdUnits,
+						skipActivatedSystemUnits: egressPrerequisiteActivated
+							? [RUNTIME_SIDECAR_SYSTEM_UNIT]
+							: [],
+					});
 					return systemdApply;
 				} catch (error) {
 					throw new Error(
@@ -2257,30 +2637,37 @@ function applyRuntimeDesiredState(
 					);
 				}
 			},
-			rollback: () => {
-				if (!failedSystemdUnits) return;
-				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths));
+			rollback: ({
+				restartDaemon,
+				restartEgressSidecar,
+				stopEgressSidecar,
+				reconcileUserUnits,
+				staleSystemUnits,
+			}) => {
+				const restoredSystemdUnits = readSystemdUnitSnapshot(paths);
+				const rollbackSource = failedSystemdUnits ?? {
+					system: new Map(previousSystemdUnits.system),
+					user: new Map(previousSystemdUnits.user),
+				};
+				for (const unit of reconcileUserUnits) {
+					if (!rollbackSource.user.has(unit)) {
+						rollbackSource.user.set(unit, "# failed runtime apply candidate\n");
+					}
+				}
+				applySystemdRuntimeUpdate(paths, rollbackSource, restoredSystemdUnits, {
+					forceRestartSystemUnits: [
+						...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
+						...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+						...staleSystemUnits,
+					],
+					forceStopSystemUnits: stopEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+					forceRestartUserUnits: [...previousSystemdUnits.user.keys()],
+					recoverFailedUnits: false,
+				});
 			},
 		},
 	});
 	return { kind: "converged", cliUpdate, convergence, systemdApply };
-}
-
-function minimumCliVersionGate(
-	manifest: RuntimeManifestLoad["manifest"],
-	paths: RuntimePaths,
-): MinimumCliVersionGate | null {
-	const minimumCliVersion = manifest.minimumCliVersion?.trim();
-	if (!minimumCliVersion) return null;
-	const currentCliVersion = getCliVersion();
-	if (!isSemverLessThan(currentCliVersion, minimumCliVersion)) return null;
-	return {
-		minimumCliVersion,
-		currentCliVersion,
-		rejectedGeneration: manifest.generation,
-		activeGeneration: readRuntimeAppliedState(paths)?.generation ?? null,
-		error: `runtime desired state requires clawdi CLI >= ${minimumCliVersion}; current CLI is ${currentCliVersion}. Keeping the current applied state while CLI self-upgrade runs.`,
-	};
 }
 
 function runtimeCliUpdateError(
@@ -2298,14 +2685,9 @@ function runtimeCliUpdateError(
 		activePath: paths.cliManagedBin,
 		activeTarget: null,
 		version: null,
+		selfReexec: false,
 		error: error instanceof Error ? error.message : String(error),
 	};
-}
-
-function shouldSelfReexecForCliUpdate(cliUpdate: RuntimeCliUpdateResult): boolean {
-	if (cliUpdate.status === "installed") return true;
-	if (!cliUpdate.version || !cliUpdate.activeTarget) return false;
-	return cliUpdate.version !== getCliVersion();
 }
 
 function runtimeManifestIdentityForWatch(
@@ -2323,13 +2705,11 @@ function runtimeManifestIdentityForWatch(
 
 function maybeRollbackFailedCliUpgrade(
 	paths: RuntimePaths,
-	manifestIdentity: RuntimeManifestIdentity,
 	errors: string[],
 ): RuntimeCliRollbackResult {
 	const rollback = rollbackPendingRuntimeCliUpgrade(
 		paths,
 		`first converge after CLI upgrade failed: ${errors[0] ?? "unknown error"}`,
-		manifestIdentity,
 	);
 	if (rollback.status === "rolled_back") {
 		errors.push(
@@ -2343,13 +2723,11 @@ function maybeRollbackFailedCliUpgrade(
 
 async function loadFullRuntimeManifestForWatch(
 	paths: ReturnType<typeof getRuntimePaths>,
-): Promise<RuntimeManifestLoad> {
-	const loaded = await loadRemoteRuntimeManifest(paths);
+	applyContext?: RuntimeApplyContext,
+): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
+	const loaded = await loadRemoteRuntimeManifest(paths, { applyContext });
 	if ("notModified" in loaded) {
 		throw new Error("runtime manifest datasource returned 304 without If-None-Match");
-	}
-	if ("errors" in loaded) {
-		throw new Error(loaded.errors.join("; "));
 	}
 	return loaded;
 }
@@ -2359,7 +2737,6 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	const mode = detectRuntimeMode();
 	const intervalMs = parsePositiveMs(opts.intervalMs, 15_000, "--interval-ms");
 	const selfHealMs = parsePositiveMs(opts.selfHealMs, 300_000, "--self-heal-ms");
-	let lastFullFetchAt = Date.now();
 	let cliInstallRetryPending = false;
 	let cliInstallBackoffMs = 0;
 	let nextCliInstallRetryAt = 0;
@@ -2376,6 +2753,26 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		};
 		emitRuntimeWatchEvent(event, opts.json);
 		process.exitCode = 2;
+		return;
+	}
+	let applyContext: RuntimeApplyContext;
+	try {
+		applyContext = opts.applyContext ?? readRuntimeApplyContext();
+		assertHostedRuntimeContract(paths, applyContext, {
+			...opts.hostedRuntimeContract,
+			platformRoots: "deferred",
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const event = {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			stage: "detect",
+			error: message,
+			errors: [message],
+		};
+		emitRuntimeWatchEvent(event, opts.json);
+		process.exitCode = 20;
 		return;
 	}
 
@@ -2404,6 +2801,10 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			wakeSignal,
 			opts,
 		);
+		// Startup work must not consume the self-heal interval. The first watch
+		// tick should remain conditional, with full refresh timing measured from
+		// the point at which the polling loop is ready.
+		let lastFullFetchAt = Date.now();
 		for (;;) {
 			if (opts.abort?.aborted) return;
 			const now = Date.now();
@@ -2413,7 +2814,12 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
 			const event = await runtimeWatchTick(paths, {
 				forceRefresh,
+				applyContext,
+				hostedRuntimeContract: opts.hostedRuntimeContract,
 				deferCliInstall,
+				// Conditional retries run every 15 seconds. Recover failed units
+				// only on the five-minute full refresh, or once in one-shot mode.
+				recoverFailedSystemdUnits: forceRefresh || opts.once === true,
 				deferCliInstallReason: deferCliInstall
 					? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
 					: undefined,
@@ -2485,34 +2891,20 @@ export async function runtimeSidecar(): Promise<void> {
 	if (detectRuntimeMode() !== "hosted") {
 		throw new Error("runtime sidecar is only available in hosted runtime mode");
 	}
-	const shouldStartBridge = Boolean(process.env[RUNTIME_BRIDGE_SURFACES_ENV]?.trim());
 	const shouldStartEgress = Boolean(process.env.CLAWDI_EGRESS_ENV_FILE?.trim());
-	if (!shouldStartBridge && !shouldStartEgress) {
-		throw new Error("runtime sidecar requires at least one configured module.");
+	if (!shouldStartEgress) {
+		throw new Error("runtime sidecar requires egress configuration.");
 	}
 
-	let bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null = null;
 	let egress: RuntimeEgressModule | null = null;
 	try {
 		if (shouldStartEgress) {
 			egress = await startRuntimeEgress();
 			console.error(`runtime sidecar egress module listening on 127.0.0.1:${egress.port}`);
 		}
-		if (shouldStartBridge) {
-			bridge = await startRuntimeBridge();
-			console.error(
-				`runtime sidecar bridge module listening on ${bridge.surfaces
-					.map(
-						(surface) =>
-							`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
-					)
-					.join(", ")}`,
-			);
-		}
 		notifySystemdReady("runtime sidecar ready");
 	} catch (error) {
 		egress?.close();
-		await bridge?.close();
 		throw error;
 	}
 
@@ -2522,7 +2914,6 @@ export async function runtimeSidecar(): Promise<void> {
 		await (egressExit ? Promise.race([shutdown, egressExit]) : shutdown);
 	} finally {
 		egress?.close();
-		await bridge?.close();
 		await egressExit?.catch(() => undefined);
 	}
 }
@@ -2618,26 +3009,6 @@ function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
 	return child;
 }
 
-export function buildEgressEngineSpawnCommand(
-	commandExists: (command: string) => boolean,
-	uid: number,
-	gid: number,
-	command: string,
-	args: string[],
-): { command: string; args: string[] } {
-	if (uid === 0 || gid === 0) throw new Error("egress engine identity must be non-root");
-	if (commandExists("setpriv")) {
-		return {
-			command: "setpriv",
-			args: [`--reuid=${uid}`, `--regid=${gid}`, "--clear-groups", "--", command, ...args],
-		};
-	}
-	if (commandExists("gosu")) {
-		return { command: "gosu", args: [`${uid}:${gid}`, command, ...args] };
-	}
-	throw new Error(`cannot drop egress engine to ${uid}:${gid}; install setpriv or gosu`);
-}
-
 export function assertCurrentEgressIdentity(
 	currentUid: number | undefined,
 	currentGid: number | undefined,
@@ -2675,7 +3046,7 @@ function spawnWithNumericIdentity(
 	args: string[],
 	env: NodeJS.ProcessEnv,
 ): ChildProcess {
-	const child = buildEgressEngineSpawnCommand(commandExistsOnPath, uid, gid, command, args);
+	const child = buildNumericUserCommand(uid, gid, command, args);
 	return spawn(child.command, child.args, {
 		env,
 		stdio: ["ignore", "pipe", "pipe"],
@@ -2763,29 +3134,22 @@ function waitForFile(path: string, timeoutMs: number, hasExited: () => boolean):
 	});
 }
 
-function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig): void {
+export function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig): void {
 	if (config.systemCaBundle === SYSTEM_CA_BUNDLE) {
 		throw new Error("CLAWDI_EGRESS_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
 	}
 	const systemCa = readFileSync(SYSTEM_CA_BUNDLE, "utf-8");
 	const egressCa = readFileSync(config.caCertPath, "utf-8");
-	mkdirSync(dirname(config.systemCaBundle), { recursive: true });
-	writeFileSync(config.systemCaBundle, `${systemCa.trimEnd()}\n${egressCa.trimEnd()}\n`, {
-		mode: 0o644,
+	writePrivateFileAtomic(config.systemCaBundle, `${systemCa.trimEnd()}\n${egressCa.trimEnd()}\n`, {
+		mode: 0o640,
+		dirMode: 0o711,
 	});
-	chmodSync(config.systemCaBundle, 0o644);
+	if (runningAsRootCommand()) chownSync(config.systemCaBundle, 0, config.runtimeGid);
+	chmodSync(config.systemCaBundle, 0o640);
 }
 
 function runningAsRootCommand(): boolean {
 	return typeof process.getuid === "function" && process.getuid() === 0;
-}
-
-function commandExistsOnPath(command: string): boolean {
-	const result = spawnSync("command", ["-v", command], {
-		shell: true,
-		stdio: "ignore",
-	});
-	return result.status === 0;
 }
 
 function waitForShutdownSignal(): Promise<void> {
@@ -2824,6 +3188,7 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 		},
 		...read,
 	};
+	if (read.error || read.status?.status === "error") process.exitCode = 1;
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(payload, null, 2));
@@ -2838,7 +3203,6 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 	}
 	if (read.error) {
 		console.log(chalk.red(`  Could not read ${read.source}: ${read.error}`));
-		process.exitCode = 1;
 		return;
 	}
 	if (!read.status) {
@@ -2856,30 +3220,66 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 	const paths = getRuntimePaths();
 	const policy = readHostPolicy(paths.hostPolicy);
 	const lastStatus = readRuntimeBootStatus(paths);
+	const identity = inspectHostedRuntimeIdentity(paths);
+	let runtimeContextDetail: string;
+	let runtimeContextOk = false;
+	try {
+		const context = readRuntimeApplyContext();
+		runtimeContextOk = context.backend === "incus";
+		runtimeContextDetail = context.backend;
+	} catch (error) {
+		runtimeContextDetail = error instanceof Error ? error.message : String(error);
+	}
+	let platformRootsOk = true;
+	let platformRootsDetail = "trusted";
+	try {
+		assertRuntimePlatformRoots(paths);
+	} catch (error) {
+		platformRootsOk = false;
+		platformRootsDetail = error instanceof Error ? error.message : String(error);
+	}
 	const checks: RuntimeDoctorCheck[] = [
 		{
 			name: "Runtime mode",
-			ok: paths.mode === "hosted",
-			detail: paths.mode,
-			hint: "Hosted mode requires a host policy or CLAWDI_RUNTIME_MODE=hosted.",
+			ok: identity.mode.ok,
+			detail: identity.mode.error ?? identity.mode.detail,
+			hint: "Set CLAWDI_RUNTIME_MODE=hosted explicitly; host policy files do not select runtime mode.",
 		},
 		{
-			name: "Host policy",
+			name: "Hosted policy",
 			ok: policy.exists && policy.valid,
-			detail: policy.exists ? (policy.valid ? policy.path : policy.error) : "missing",
-			hint: "Expected a readable JSON policy at the configured host policy path.",
+			detail: policy.valid ? policy.source : (policy.error ?? "missing"),
+			hint: "Hosted mode uses the built-in policy; policy files are ignored.",
+		},
+		{
+			name: "Runtime identity",
+			ok: identity.user.ok,
+			detail: identity.user.error ?? identity.user.detail,
+			hint: "The hosted tenant must run as clawdi with the expected non-root UID and GID.",
+		},
+		{
+			name: "Runtime context backend",
+			ok: runtimeContextOk,
+			detail: runtimeContextDetail,
+			hint: "Hosted v2 requires a valid runtime context attested with backend=incus.",
+		},
+		{
+			name: "Platform roots",
+			ok: platformRootsOk,
+			detail: platformRootsDetail,
+			hint: "Platform roots must remain real directories owned by the system boundary.",
 		},
 		{
 			name: "Service state",
 			ok: existsSync(paths.serviceStateRoot) && writable(paths.serviceStateRoot),
 			detail: paths.serviceStateRoot,
-			hint: "The hosted service-state volume must be writable by the runtime user.",
+			hint: "The hosted service-state directory must be writable by the platform service.",
 		},
 		{
 			name: "Runtime HOME",
-			ok: existsSync(paths.userHome) && writable(paths.userHome),
-			detail: paths.userHome,
-			hint: "HOME should be the persistent runtime/user volume.",
+			ok: identity.home.ok && existsSync(paths.userHome) && writable(paths.userHome),
+			detail: identity.home.error ?? paths.userHome,
+			hint: "Hosted HOME must resolve to /home/clawdi and be a writable persistent volume.",
 		},
 		{
 			name: "Ephemeral runtime state",

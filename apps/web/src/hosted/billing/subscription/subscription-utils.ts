@@ -3,7 +3,7 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	type ComputePlanSlug,
-	type HostedDeployment,
+	type HostedComputeSubscription,
 	type Plan,
 } from "@/hosted/billing/contracts";
 
@@ -43,6 +43,14 @@ export function resolvePerformancePlan(plans: Plan[] | undefined): Plan | undefi
 	return plans?.find((plan) => plan.slug === COMPUTE_PERFORMANCE_SLUG);
 }
 
+export function largestSignupGrantUsd(plans: readonly Plan[] | undefined): string | null {
+	return (plans ?? []).reduce<string | null>((largest, plan) => {
+		const grant = Number(plan.signup_grant_usd);
+		if (!Number.isFinite(grant) || grant <= 0) return largest;
+		return largest === null || grant > Number(largest) ? plan.signup_grant_usd : largest;
+	}, null);
+}
+
 export function isBasicCompute(planSlug: string | null | undefined): boolean {
 	return planSlug === COMPUTE_BASIC_SLUG;
 }
@@ -53,7 +61,7 @@ export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "unk
 
 export function isIncludedBasicSubscription(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+	computeSubscription: HostedComputeSubscription | null | undefined,
 ): boolean {
 	return (
 		isBasicCompute(planSlug) &&
@@ -65,7 +73,7 @@ export function isIncludedBasicSubscription(
 
 export function computeFundingMode(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+	computeSubscription: HostedComputeSubscription | null | undefined,
 ): ComputeFundingMode {
 	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription) return "subscription";
@@ -74,7 +82,7 @@ export function computeFundingMode(
 
 export function computeFundingSource(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+	computeSubscription: HostedComputeSubscription | null | undefined,
 ): ComputeFundingSource {
 	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription?.funding_source === "wallet") return "wallet";
@@ -85,7 +93,7 @@ export function computeFundingSource(
 }
 
 export function computeSubscriptionId(
-	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+	subscription: HostedComputeSubscription | null | undefined,
 ): number | null {
 	if (!subscription) return null;
 	return typeof subscription.subscription_id === "number" &&
@@ -96,7 +104,7 @@ export function computeSubscriptionId(
 }
 
 export function pendingComputePlanSlug(
-	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+	subscription: HostedComputeSubscription | null | undefined,
 ): ComputePlanSlug | null {
 	if (!subscription) return null;
 	return subscription.pending_plan_slug === COMPUTE_BASIC_SLUG ||
@@ -105,10 +113,30 @@ export function pendingComputePlanSlug(
 		: null;
 }
 
+export function resolveSubscriptionCreatePlanSlug(
+	priorPlanSlug: string | null | undefined,
+	{
+		basicAvailable,
+		performanceAvailable,
+	}: { basicAvailable: boolean; performanceAvailable: boolean },
+): ComputePlanSlug {
+	const preferredPlanSlug =
+		priorPlanSlug === COMPUTE_BASIC_SLUG || priorPlanSlug === COMPUTE_PERFORMANCE_SLUG
+			? priorPlanSlug
+			: COMPUTE_PERFORMANCE_SLUG;
+	if (preferredPlanSlug === COMPUTE_PERFORMANCE_SLUG && !performanceAvailable && basicAvailable) {
+		return COMPUTE_BASIC_SLUG;
+	}
+	if (preferredPlanSlug === COMPUTE_BASIC_SLUG && !basicAvailable && performanceAvailable) {
+		return COMPUTE_PERFORMANCE_SLUG;
+	}
+	return preferredPlanSlug;
+}
+
 const COMPUTE_RENEWING_STATUSES = new Set(["trialing", "active", "past_due"]);
 
 export function isComputeSubscriptionRenewing(
-	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+	subscription: HostedComputeSubscription | null | undefined,
 ): boolean {
 	if (!subscription || subscription.cancel_at_period_end) return false;
 	return (
@@ -125,7 +153,7 @@ export type ComputeSubscriptionLifecycle = {
 };
 
 export function computeSubscriptionLifecycle(
-	subscription: NonNullable<HostedDeployment["compute_subscription"]>,
+	subscription: HostedComputeSubscription,
 ): ComputeSubscriptionLifecycle {
 	const status = subscription.status.toLowerCase();
 	const canceledAt = subscription.canceled_at ?? subscription.current_period_end ?? null;
@@ -221,6 +249,32 @@ export function planOffers(plan: Plan): BillingOffer[] {
 /** Offers explicitly advertised by the plans API; an empty list is not purchasable. */
 export function explicitPlanOffers(plan: Plan): BillingOffer[] {
 	return plan.offers ?? [];
+}
+
+/**
+ * Explicit offers from the first plan whose terms are also explicitly offered
+ * by every other plan. Prices remain plan-specific; callers use this list only
+ * to drive a synchronized billing-term control.
+ */
+export function commonExplicitBillingOffers(plans: readonly Plan[]): BillingOffer[] {
+	const [firstPlan, ...otherPlans] = plans;
+	if (!firstPlan || otherPlans.length === 0) return [];
+
+	const firstOffers = explicitPlanOffers(firstPlan);
+	const otherTermSets = otherPlans.map(
+		(plan) => new Set(explicitPlanOffers(plan).map((offer) => offer.billing_term_months)),
+	);
+	if (firstOffers.length === 0 || otherTermSets.some((terms) => terms.size === 0)) return [];
+
+	const seenTerms = new Set<number>();
+	return firstOffers
+		.filter((offer) => {
+			const term = offer.billing_term_months;
+			if (seenTerms.has(term) || !otherTermSets.every((terms) => terms.has(term))) return false;
+			seenTerms.add(term);
+			return true;
+		})
+		.sort((a, b) => a.billing_term_months - b.billing_term_months);
 }
 
 export function selectExplicitOfferForTerm(plan: Plan, term: number): ResolvedBillingOffer | null {

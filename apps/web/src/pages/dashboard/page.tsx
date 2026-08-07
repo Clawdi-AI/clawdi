@@ -13,40 +13,25 @@ import {
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
+import { type AgentGreetingState, agentGreetingSummary } from "@/components/dashboard/greeting";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
-import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
+import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
 const RECENT_SESSIONS_CACHE_PAGE_SIZE = 25;
-const DASHBOARD_STALE_MS = 30_000;
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
-
-function countProjectTypes(
-	projects: Array<{ kind?: string | null }> | undefined,
-): ProjectTypeCounts {
-	const counts: ProjectTypeCounts = { custom: 0, global: 0, agent: 0 };
-	for (const project of projects ?? []) {
-		if (project.kind === "personal") {
-			counts.global += 1;
-		} else if (project.kind === "environment") {
-			counts.agent += 1;
-		} else {
-			counts.custom += 1;
-		}
-	}
-	return counts;
-}
 
 // Lazy imports gated on a build-time hosted flag. When the flag is false (OSS),
 // the conditional collapses, the bundler eliminates the `import()` sites, and
@@ -80,7 +65,7 @@ const HostedFleetSummary = IS_HOSTED_BUILD
 	: null;
 
 export default function DashboardPage() {
-	const api = useApi();
+	const $api = useOpenApi();
 	const hostedAccess = useHostedProductAccess();
 
 	const {
@@ -88,40 +73,36 @@ export default function DashboardPage() {
 		isLoading: statsLoading,
 		error: statsError,
 		refetch: refetchStats,
-	} = useQuery({
-		queryKey: ["dashboard-stats"],
-		queryFn: async () => unwrap(await api.GET("/v1/dashboard/stats")),
-		// Overview counts are cheap and reflect recent mutations across many
-		// resources, so keep this query fresher than the global 30s default.
-		staleTime: 0,
-		refetchOnMount: "always",
-	});
-
-	const {
-		data: projects,
-		isLoading: projectsLoading,
-		error: projectsError,
-		refetch: refetchProjects,
-	} = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		staleTime: DASHBOARD_STALE_MS,
-	});
+	} = $api.useQuery(
+		"get",
+		"/v1/dashboard/stats",
+		{},
+		{
+			// Overview counts are cheap and reflect recent mutations across many
+			// resources, so keep this query fresher than the global 30s default.
+			staleTime: 0,
+			refetchOnMount: "always",
+		},
+	);
 
 	const {
 		data: environments,
 		isLoading: envsLoading,
 		error: envsError,
 		refetch: refetchEnvs,
-	} = useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-		// Daemon-status badge classification is time-sensitive — a
-		// daemon that paused while the tab was open would otherwise
-		// stay green indefinitely. Match the agent detail page's
-		// 10s cadence so the live indicator is actually live.
-		refetchInterval: 10_000,
-	});
+	} = $api.useQuery(
+		"get",
+		"/v1/agents",
+		{},
+		{
+			// Daemon-status badge classification is time-sensitive — a
+			// daemon that paused while the tab was open would otherwise
+			// stay green indefinitely. Match the agent detail page's
+			// 10s cadence so the live indicator is actually live.
+			refetchInterval: 10_000,
+			refetchIntervalInBackground: false,
+		},
+	);
 
 	// Manual sessions only: on a working fleet ~3/4 of sessions are
 	// cron/heartbeat ticks, and "Recent sessions" buried the user's own
@@ -132,18 +113,18 @@ export default function DashboardPage() {
 		error: sessionsError,
 		refetch: refetchSessions,
 	} = useQuery(
-		sessionListQueryOptions(api, {
+		sessionListQueryOptions($api, {
 			page_size: RECENT_SESSIONS_CACHE_PAGE_SIZE,
 			automated: false,
 		}),
 	);
 	const sessions = sessionsPage?.items.slice(0, RECENT_SESSIONS_LIMIT);
 	const contribution = stats?.contribution;
-
-	const streakLine =
-		stats && stats.current_streak > 0
-			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
-			: null;
+	const blockingStatsError = shouldBlockQueryError(statsError, stats) ? statsError : null;
+	const blockingEnvsError = shouldBlockQueryError(envsError, environments) ? envsError : null;
+	const blockingSessionsError = shouldBlockQueryError(sessionsError, sessionsPage)
+		? sessionsError
+		: null;
 
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 	const selfManagedFleetSummary = useMemo(
@@ -158,28 +139,29 @@ export default function DashboardPage() {
 	// `<HostedAgentsSection>` so this page doesn't need the hosted
 	// counts at all.
 	const selfManagedCount = selfManagedTiles.length;
-	const hasAgents = !envsLoading && !envsError && selfManagedCount > 0;
-	const ossIsEmptyState = !envsLoading && !envsError && selfManagedCount === 0;
-	const projectTypeCounts = useMemo(
-		() => (projects ? countProjectTypes(projects) : undefined),
-		[projects],
-	);
+	const hasAgents = !envsLoading && !blockingEnvsError && selfManagedCount > 0;
+	const ossIsEmptyState = !envsLoading && !blockingEnvsError && selfManagedCount === 0;
 	const hostedAccessLoading = Boolean(HostedAgentsSection && hostedAccess.isLoading);
 	const cloudDeploymentManagementEnabled = Boolean(HostedAgentsSection);
 	const legacyHostedAgentsEnabled = Boolean(
 		HostedAgentsSection && hostedAccess.canUseLegacyHostedDashboard,
 	);
 	const hostedSectionEnabled = cloudDeploymentManagementEnabled || legacyHostedAgentsEnabled;
-	const greeting = renderGreeting(selfManagedFleetSummary, {
-		agentStatusUnavailable: Boolean(envsError),
-	});
+	const greetingState: AgentGreetingState =
+		hostedAccessLoading || envsLoading
+			? "loading"
+			: blockingEnvsError || hostedAccess.isError
+				? "error"
+				: "resolved";
+	const greeting = renderGreeting(selfManagedFleetSummary, { state: greetingState });
+	const loadingGreeting = renderGreeting(selfManagedFleetSummary, { state: "loading" });
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			{hostedAccessLoading ? (
-				greeting
+				loadingGreeting
 			) : hostedSectionEnabled && HostedFleetSummary ? (
-				<Suspense fallback={greeting}>
+				<Suspense fallback={loadingGreeting}>
 					<HostedFleetSummary
 						cloudEnvs={environments ?? []}
 						showCloudDeployments={cloudDeploymentManagementEnabled}
@@ -187,8 +169,12 @@ export default function DashboardPage() {
 					>
 						{(summary, state) =>
 							renderGreeting(summary, {
-								agentStatusUnavailable:
-									Boolean(envsError) || !state.membershipResolved || Boolean(state.error),
+								state:
+									blockingEnvsError || hostedAccess.isError || state.error
+										? "error"
+										: envsLoading || state.isLoading || !state.membershipResolved
+											? "loading"
+											: "resolved",
 							})
 						}
 					</HostedFleetSummary>
@@ -211,12 +197,13 @@ export default function DashboardPage() {
 						<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
 							<HostedAgentsSection
 								envsLoading={envsLoading}
-								selfManagedError={envsError}
+								selfManagedError={blockingEnvsError}
 								onRetrySelfManaged={() => {
 									void refetchEnvs();
 								}}
 								selfManagedCount={selfManagedCount}
 								cloudEnvs={environments ?? []}
+								canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
 								showCloudDeployments={cloudDeploymentManagementEnabled}
 								showLegacyAgents={legacyHostedAgentsEnabled}
 							/>
@@ -227,7 +214,7 @@ export default function DashboardPage() {
 						<AgentsCard
 							agents={selfManagedTiles}
 							isLoading={envsLoading}
-							error={envsError}
+							error={blockingEnvsError}
 							onRetry={() => {
 								void refetchEnvs();
 							}}
@@ -237,15 +224,12 @@ export default function DashboardPage() {
 					<Card>
 						<CardHeader>
 							<CardTitle>Activity</CardTitle>
-							<CardDescription>
-								Sessions per day in the last 12 months
-								{streakLine ? ` · ${streakLine}` : ""}
-							</CardDescription>
+							<CardDescription>Sessions per day in the last 12 months</CardDescription>
 						</CardHeader>
 						<CardContent>
-							{statsError ? (
+							{blockingStatsError ? (
 								<ApiErrorPanel
-									error={statsError}
+									error={blockingStatsError}
 									onRetry={() => {
 										void refetchStats();
 									}}
@@ -261,14 +245,9 @@ export default function DashboardPage() {
 
 					<section className="space-y-2">
 						<div className="flex items-end justify-between">
-							<div>
-								<h2 className="text-base font-semibold">Recent sessions</h2>
-								<p className="text-sm text-muted-foreground">
-									Your latest work — automated runs live under View all.
-								</p>
-							</div>
+							<h2 className="text-base font-semibold">Recent sessions</h2>
 							<Button
-								render={<Link to="/sessions" search={{ automated: false }} />}
+								render={<Link to="/sessions" />}
 								nativeButton={false}
 								variant="ghost"
 								size="sm"
@@ -278,9 +257,9 @@ export default function DashboardPage() {
 								<ArrowRight />
 							</Button>
 						</div>
-						{sessionsError ? (
+						{blockingSessionsError ? (
 							<ApiErrorPanel
-								error={sessionsError}
+								error={blockingSessionsError}
 								onRetry={() => {
 									void refetchSessions();
 								}}
@@ -291,7 +270,7 @@ export default function DashboardPage() {
 								sessions={sessions ?? []}
 								isLoading={sessionsLoading}
 								grouped={false}
-								emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
+								emptyMessage="No manual sessions yet. Once you start a conversation, it'll show up here."
 								emptyVariant="inset"
 							/>
 						)}
@@ -310,6 +289,7 @@ export default function DashboardPage() {
 							<HostedSecondaryCTA
 								envsLoading={envsLoading}
 								cloudEnvs={environments ?? []}
+								canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
 								showCloudDeployments={cloudDeploymentManagementEnabled}
 								showLegacyAgents={legacyHostedAgentsEnabled}
 							/>
@@ -319,27 +299,14 @@ export default function DashboardPage() {
 					) : null}
 					<ResourcesCard
 						stats={stats}
-						statsError={statsError}
+						statsError={blockingStatsError}
 						onRetryStats={() => {
 							void refetchStats();
 						}}
-						projectCount={projects?.length}
-						projectTypeCounts={projectTypeCounts}
-						projectCountLoading={projectsLoading}
-						projectCountError={projectsError}
-						onRetryProjectCount={() => {
-							void refetchProjects();
-						}}
-						hasConnectedAgent={
-							hostedAccessLoading || hostedSectionEnabled || envsLoading || envsError
-								? undefined
-								: hasAgents
-						}
 					/>
 					<ThisWeekCard
 						stats={stats}
-						contribution={contribution}
-						error={statsError}
+						error={blockingStatsError}
 						onRetry={() => {
 							void refetchStats();
 						}}
@@ -350,18 +317,8 @@ export default function DashboardPage() {
 	);
 }
 
-function renderGreeting(
-	summary: AgentFleetSummary,
-	options: { agentStatusUnavailable?: boolean } = {},
-) {
-	return (
-		<Greeting
-			activeCount={summary.activeCount}
-			total={summary.total}
-			lastActive={summary.lastActive}
-			agentStatusUnavailable={options.agentStatusUnavailable}
-		/>
-	);
+function renderGreeting(summary: AgentFleetSummary, options: { state?: AgentGreetingState } = {}) {
+	return <Greeting total={summary.total} state={options.state} />;
 }
 
 function ActivityGraphSkeleton() {
@@ -417,10 +374,7 @@ function ConnectAnotherCard() {
 	return (
 		<Card className="py-4">
 			<CardContent className="flex items-center justify-between gap-3 px-4">
-				<div className="min-w-0">
-					<div className="text-sm font-medium">Connect another machine</div>
-					<p className="mt-0.5 text-xs text-muted-foreground">One command in a terminal.</p>
-				</div>
+				<div className="min-w-0 text-sm font-medium">Connect another machine</div>
 				<Button size="sm" variant="outline" onClick={() => setOpen(true)}>
 					Add agent
 				</Button>
@@ -436,32 +390,14 @@ function currentDaypart(): "morning" | "afternoon" | "evening" {
 	return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
 }
 
-function Greeting({
-	activeCount,
-	total,
-	lastActive,
-	agentStatusUnavailable = false,
-}: {
-	activeCount: number;
-	total: number;
-	/** Most recent last-seen timestamp across the fleet — the one fact the
-	 * old AgentsCard header carried that the greeting didn't. */
-	lastActive?: string | null;
-	agentStatusUnavailable?: boolean;
-}) {
+function Greeting({ total, state = "resolved" }: { total: number; state?: AgentGreetingState }) {
 	const { user } = useCurrentUser();
 	const [daypart, setDaypart] = useState<ReturnType<typeof currentDaypart> | null>(null);
 	useEffect(() => {
 		setDaypart(currentDaypart());
 	}, []);
 	const firstName = user?.fullName?.split(" ")[0];
-	const summary = agentStatusUnavailable
-		? "Agent status is unavailable right now."
-		: total === 0
-			? "Connect your first agent to start syncing."
-			: activeCount > 0
-				? `${activeCount} of ${total} agents active right now.`
-				: `${total} agents connected${lastActive ? ` · last active ${relativeTime(lastActive)}` : ""}.`;
+	const summary = agentGreetingSummary(total, state);
 	return (
 		<div>
 			<h1 className="text-2xl font-semibold tracking-tight">

@@ -1,8 +1,14 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
-import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
+import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
+import {
+	migrateLegacyLocalSetupSkill,
+	mutateUserSkillTarget,
+	shouldIgnoreUserSkill,
+} from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -253,20 +259,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	async collectSkills(): Promise<RawSkill[]> {
 		const skillsDir = join(claudeDir(), "skills");
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir, "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir)) return [];
 
 		const skills: RawSkill[] = [];
 
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
+			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			// Bundled by `clawdi setup` — not user-authored content. Without
-			// this filter every user's `clawdi push --modules skills` would
-			// upload the bundled skill to their cloud account, and pulling
-			// on another machine would re-download it on top of what
-			// `clawdi setup` already installs there.
-			if (entry.name === "clawdi") continue;
 			const dirPath = join(skillsDir, entry.name);
+			if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 
@@ -305,12 +313,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		// rescan returns the same set the bulk push would consider
 		// — otherwise nested or skip-listed dirs would diverge.
 		const skillsDir = join(claudeDir(), "skills");
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir, "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir)) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
+			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (entry.name === "clawdi") continue;
+			if (shouldIgnoreUserSkill(join(skillsDir, entry.name), entry.name)) continue;
 			const skillMd = join(skillsDir, entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 			out.push(entry.name);
@@ -328,19 +343,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(claudeDir(), "skills", key);
-		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		mutateUserSkillTarget(dir, key, () => {
+			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		});
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const skillsDir = join(claudeDir(), "skills");
 		const targetDir = join(skillsDir, key);
-
-		if (existsSync(targetDir)) {
-			rmSync(targetDir, { recursive: true, force: true });
-		}
-		mkdirSync(targetDir, { recursive: true });
-
-		await extractTarGz(skillsDir, tarGzBytes);
+		await replaceSkillArchiveTarGz(key, skillsDir, targetDir, tarGzBytes, undefined, (mutation) =>
+			mutateUserSkillTarget(targetDir, key, mutation),
+		);
 	}
 
 	async writeSharedSkillArchive(
@@ -348,7 +361,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		ownerHandle: string,
 		tarGzBytes: Buffer,
 	): Promise<void> {
-		await extractSharedSkillTarGz(key, this.getSharedSkillPath(key, ownerHandle), tarGzBytes);
+		await replaceSkillArchiveTarGz(
+			key,
+			this.getSkillsRootDir(),
+			this.getSharedSkillPath(key, ownerHandle),
+			tarGzBytes,
+		);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

@@ -8,13 +8,20 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from app.core.database import async_session_factory, engine
+from app.core.logging_config import configure_application_logging
+from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWorker
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
+from app.services.discord_command_reconciliation_worker import (
+    DiscordCommandReconciliationWorker,
+)
 from app.services.discord_gateway_worker import DiscordGatewayWorker
+from app.services.metrics import metrics_content_type, render_metrics
+from app.services.principal_lifecycle_cleanup_worker import PrincipalLifecycleCleanupWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 
-logging.basicConfig(level=logging.INFO)
+configure_application_logging()
 log = logging.getLogger(__name__)
 
 CHANNEL_WORKER_HEALTH_HOST = "0.0.0.0"
@@ -45,21 +52,28 @@ class ChannelWorkerHealth:
         }
 
 
-def _http_response(status_code: int, payload: dict[str, str]) -> bytes:
+def _raw_http_response(status_code: int, body: bytes, *, content_type: str) -> bytes:
     reason = {
         200: "OK",
         404: "Not Found",
         503: "Service Unavailable",
     }.get(status_code, "Error")
-    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     headers = (
         f"HTTP/1.1 {status_code} {reason}\r\n"
-        "Content-Type: application/json\r\n"
+        f"Content-Type: {content_type}\r\n"
         f"Content-Length: {len(body)}\r\n"
         "Connection: close\r\n"
         "\r\n"
     ).encode("ascii")
     return headers + body
+
+
+def _http_response(status_code: int, payload: dict[str, str]) -> bytes:
+    return _raw_http_response(
+        status_code,
+        json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        content_type="application/json",
+    )
 
 
 async def _handle_health_request(
@@ -77,7 +91,15 @@ async def _handle_health_request(
 
         method = parts[0] if parts else ""
         path = parts[1] if len(parts) > 1 else ""
-        if method != "GET" or path != "/health":
+        if method == "GET" and path == "/metrics":
+            writer.write(
+                _raw_http_response(
+                    200,
+                    render_metrics(),
+                    content_type=metrics_content_type(),
+                )
+            )
+        elif method != "GET" or path != "/health":
             writer.write(_http_response(404, {"status": "not_found"}))
         elif health.healthy:
             writer.write(_http_response(200, health.payload()))
@@ -110,21 +132,27 @@ async def run_health_server(
 
 
 def build_channel_workers() -> tuple[
+    AiProviderOAuthRevokeWorker,
     ChannelDeliveryWorker,
     ChannelWebhookDeliveryWorker,
+    DiscordCommandReconciliationWorker,
     DiscordGatewayWorker,
+    PrincipalLifecycleCleanupWorker,
     ChannelMessageRetentionWorker,
     RuntimeObservationRetentionWorker,
 ]:
     """Build the Clawdi-owned channel worker stack.
 
-    These are backend outbox/webhook/gateway workers. They do not recreate the
-    legacy channel bridge process or own provider routing state.
+    These are backend outbox/webhook/gateway workers. They do not recreate an
+    application-level runtime relay or own physical provider transport state.
     """
     return (
+        AiProviderOAuthRevokeWorker(async_session_factory),
         ChannelDeliveryWorker(async_session_factory),
         ChannelWebhookDeliveryWorker(async_session_factory),
+        DiscordCommandReconciliationWorker(async_session_factory),
         DiscordGatewayWorker(async_session_factory, lock_engine=engine),
+        PrincipalLifecycleCleanupWorker(async_session_factory),
         ChannelMessageRetentionWorker(async_session_factory),
         RuntimeObservationRetentionWorker(async_session_factory),
     )

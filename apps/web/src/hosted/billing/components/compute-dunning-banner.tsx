@@ -1,5 +1,6 @@
 "use client";
 
+import { Link, useSearch } from "@tanstack/react-router";
 import {
 	CreditCard,
 	ExternalLink,
@@ -17,23 +18,27 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { normalizeBillingError } from "@/hosted/billing/errors";
-import { useFixPayment, useWallet } from "@/hosted/billing/hooks";
+import { useSensitiveFixPayment } from "@/hosted/billing/sensitive-actions";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { settingsQueryHref } from "@/lib/settings-routes";
 import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
 	const state = computeDunningState(deployment);
 	const hostedAccess = useHostedProductAccess();
-	const fixPayment = useFixPayment();
+	const fixPayment = useSensitiveFixPayment();
 	const runAction = useActionLock();
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled: state?.ctaTarget === "top_up",
 	});
 	const [topUpOpen, setTopUpOpen] = useState(false);
+	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
+	const billingHistoryLink = (
+		<Link to="." search={{ ...routeSearch, settings: "billing-plan" }} hash="billing-history" />
+	);
 
 	if (!state) return null;
 
@@ -58,7 +63,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 			return;
 		}
 		try {
-			const result = await fixPayment.mutateAsync({ deployment_id: deployment.id });
+			const result = await fixPayment.execute({ deployment_id: deployment.resource.id });
 			const url = result.url || result.portal_url;
 			if (url) {
 				window.location.href = url;
@@ -93,11 +98,11 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				<AlertTitle>{state.title}</AlertTitle>
 				<AlertDescription className="flex flex-col items-start gap-3">
 					<span>{bannerDescription}</span>
-					{hostedAccess.isLoading ? null : !hostedAccess.canUsePlanCBilling &&
+					{hostedAccess.isLoading ? null : !hostedAccess.canCreateCloudAgents &&
 						state.ctaTarget === "start_new" ? (
 						<span className="text-xs text-muted-foreground">
-							Starting a new subscription is temporarily unavailable. This deployment remains
-							visible and manageable.
+							Starting a new subscription is temporarily unavailable. This agent remains visible and
+							manageable.
 						</span>
 					) : state.ctaTarget === "top_up" ? (
 						<Button
@@ -118,12 +123,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 							<Plus data-icon="inline-start" /> Start a new subscription
 						</Button>
 					) : state.ctaTarget === "billing_history" ? (
-						<Button
-							render={<a href={settingsQueryHref("billing-plan")} />}
-							nativeButton={false}
-							size="sm"
-							variant="outline"
-						>
+						<Button render={billingHistoryLink} nativeButton={false} size="sm" variant="outline">
 							<History data-icon="inline-start" /> View billing history
 						</Button>
 					) : state.ctaTarget === "support" ? (
@@ -153,12 +153,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 						</Button>
 					) : null}
 					{state.secondaryTarget === "billing_history" ? (
-						<Button
-							render={<a href={settingsQueryHref("billing-plan")} />}
-							nativeButton={false}
-							size="sm"
-							variant="outline"
-						>
+						<Button render={billingHistoryLink} nativeButton={false} size="sm" variant="outline">
 							<History data-icon="inline-start" /> View billing history
 						</Button>
 					) : state.secondaryTarget === "support" ? (
@@ -173,9 +168,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 					) : null}
 				</AlertDescription>
 			</Alert>
-			{wallet.data ? (
-				<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} wallet={wallet.data} />
-			) : null}
+			{wallet.data ? <TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} /> : null}
 		</>
 	);
 }

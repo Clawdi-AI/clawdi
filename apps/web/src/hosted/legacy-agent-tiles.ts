@@ -1,10 +1,9 @@
 import type { components } from "@clawdi/shared/api";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
-import { type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
+import type { AgentTile } from "@/components/dashboard/agents-card";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
-import { relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["AgentResponse"];
 
@@ -43,11 +42,8 @@ export function legacyConnectedAgentTiles(
 			avatarUrl: env.avatar_url,
 			sortOrder: env.sort_order,
 			agentType: env.agent_type,
-			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
-			lastSeenAt: env.last_seen_at,
 			href: agentSectionHref(env.id),
 			manageHref,
-			active: isAgentActive(env.last_seen_at),
 			env,
 		}));
 }

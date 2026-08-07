@@ -1,249 +1,336 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { toast } from "sonner";
-import { useChannelEditApi } from "@/hosted/v2/channels/channel-edit-client";
-import { channelHealthQueryOptions } from "@/hosted/v2/channels/channel-health-query";
+import { normalizeAgentChannelLinks } from "@/hosted/v2/channels/channel-edit-client.logic";
+import { CHANNEL_HEALTH_REFETCH_INTERVAL_MS } from "@/hosted/v2/channels/channel-health-query";
 import {
+	invalidateCreatedChannelQueries,
 	channelKeys as keys,
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
-import type { ChannelCreate } from "@/hosted/v2/channels/channel-types";
-import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { agentChannelLinksQueryBehavior } from "@/hosted/v2/channels/channel-query-options.logic";
+import type {
+	ChannelCreate,
+	ChannelCreated,
+	WhatsAppOnboardingSession,
+} from "@/hosted/v2/channels/channel-types";
+import { type OpenApiClient, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /**
  * Typed data hooks for the native channels surface. All reads/writes go
- * through the generated cloud-api client (`useApi`) against
+ * through the generated cloud-api client (`useOpenApi` or `useApi`) against
  * `/v1/channels/*`; mutations invalidate the affected queries and surface
  * recoverable errors as toasts.
  */
 
 export function useChannels() {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.list,
-		queryFn: async () => unwrap(await api.GET("/v1/channels")),
-	});
+	return useOpenApi().useQuery("get", "/v1/channels");
 }
 
 export function useBotPool() {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.pool,
-		queryFn: async () => unwrap(await api.GET("/v1/channels/bot-pool")),
-	});
+	return useOpenApi().useQuery("get", "/v1/channels/bot-pool");
 }
 
 export function useChannelHealth() {
-	const api = useApi();
-	return useQuery(
-		channelHealthQueryOptions(async () => unwrap(await api.GET("/v1/channels/health"))),
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/health",
+		{},
+		{
+			refetchInterval: CHANNEL_HEALTH_REFETCH_INTERVAL_MS,
+			refetchIntervalInBackground: false,
+		},
 	);
 }
 
 export function useChannel(id: string) {
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/{account_id}",
+		{ params: { path: { account_id: id } } },
+		{ enabled: Boolean(id) },
+	);
+}
+
+export function useWhatsAppOnboardingReadiness(enabled: boolean) {
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/whatsapp/onboarding/readiness",
+		{},
+		{
+			enabled,
+			staleTime: 10_000,
+			refetchOnWindowFocus: false,
+		},
+	);
+}
+
+export function useWhatsAppOnboardingActions() {
 	const api = useApi();
-	return useQuery({
-		queryKey: keys.channel(id),
-		queryFn: async () =>
+	const qc = useQueryClient();
+
+	const accept = useCallback(
+		async (result: WhatsAppOnboardingSession): Promise<WhatsAppOnboardingSession> => {
+			if (result.state === "connected" && result.channel_account_id) {
+				await invalidateCreatedChannelQueries(qc, {
+					id: result.channel_account_id,
+					agent_id: null,
+				});
+			}
+			return result;
+		},
+		[qc],
+	);
+
+	const start = useSensitiveAction(async (input: { requestId: string; name: string }) =>
+		accept(
 			unwrap(
-				await api.GET("/v1/channels/{account_id}", {
-					params: { path: { account_id: id } },
+				await api.POST("/v1/channels/whatsapp/onboarding/sessions", {
+					body: { request_id: input.requestId, name: input.name },
 				}),
 			),
-		enabled: Boolean(id),
-	});
+		),
+	);
+	const refresh = useCallback(
+		async (sessionId: string) =>
+			accept(
+				unwrap(
+					await api.GET("/v1/channels/whatsapp/onboarding/sessions/{session_id}", {
+						params: { path: { session_id: sessionId } },
+					}),
+				),
+			),
+		[accept, api],
+	);
+	const pairingCode = useSensitiveAction(
+		async (input: { sessionId: string; phoneNumber: string }) =>
+			accept(
+				unwrap(
+					await api.POST("/v1/channels/whatsapp/onboarding/sessions/{session_id}/pairing-code", {
+						params: { path: { session_id: input.sessionId } },
+						body: { phone_number: input.phoneNumber },
+					}),
+				),
+			),
+	);
+	const cancel = useSensitiveAction(async (sessionId: string) =>
+		accept(
+			unwrap(
+				await api.POST("/v1/channels/whatsapp/onboarding/sessions/{session_id}/cancel", {
+					params: { path: { session_id: sessionId } },
+				}),
+			),
+		),
+	);
+	const retry = useSensitiveAction(async (sessionId: string) =>
+		accept(
+			unwrap(
+				await api.POST("/v1/channels/whatsapp/onboarding/sessions/{session_id}/retry", {
+					params: { path: { session_id: sessionId } },
+				}),
+			),
+		),
+	);
+	const repair = useSensitiveAction(async (accountId: string) =>
+		accept(
+			unwrap(
+				await api.POST("/v1/channels/whatsapp/onboarding/accounts/{account_id}/repair", {
+					params: { path: { account_id: accountId } },
+				}),
+			),
+		),
+	);
+
+	return { start, refresh, pairingCode, cancel, retry, repair };
 }
 
 export function useChannelAgentLinks(id: string) {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.agentLinks(id),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/{account_id}/agent-links", {
-					params: { path: { account_id: id } },
-				}),
-			),
-		enabled: Boolean(id),
-	});
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/{account_id}/agent-links",
+		{ params: { path: { account_id: id } } },
+		{ enabled: Boolean(id) },
+	);
 }
 
-export function useChannelBindings(id: string) {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.bindings(id),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/{account_id}/bindings", {
-					params: { path: { account_id: id } },
-				}),
-			),
-		enabled: Boolean(id),
+function channelBindingsQueryOptionsWhen(api: OpenApiClient, id: string, enabled: boolean) {
+	return api.queryOptions(
+		"get",
+		"/v1/channels/{account_id}/bindings",
+		{ params: { path: { account_id: id } } },
+		{
+			enabled: enabled && Boolean(id),
+			refetchInterval: enabled ? 3_000 : false,
+			refetchIntervalInBackground: false,
+		},
+	);
+}
+
+export function useChannelBindings(id: string, enabled = true) {
+	return useQuery(channelBindingsQueryOptionsWhen(useOpenApi(), id, enabled));
+}
+
+export function useDeleteChannelBinding(accountId: string, agentId: string) {
+	const api = useOpenApi();
+	const qc = useQueryClient();
+	const agentLinksKey = agentChannelLinksQueryOptions(api, agentId).queryKey;
+	return api.useMutation("delete", "/v1/channels/{account_id}/bindings/{binding_id}", {
+		onSuccess: async (result) => {
+			await Promise.all([
+				qc.invalidateQueries({ queryKey: agentLinksKey, exact: true }),
+				qc.invalidateQueries({ queryKey: keys.bindings(accountId) }),
+				qc.invalidateQueries({ queryKey: keys.activity(accountId) }),
+			]);
+			if (result.warning) {
+				toast.warning("Chat unpaired", { description: result.warning });
+			} else if (result.unpaired) {
+				toast.success("Chat unpaired");
+			}
+		},
+		onError: toastApiError("Couldn't unpair chat"),
 	});
 }
 
 export function useChannelActivity(id: string) {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.activity(id),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/{account_id}/activity", {
-					params: { path: { account_id: id }, query: { limit: 50 } },
-				}),
-			),
-		enabled: Boolean(id),
-	});
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/{account_id}/activity",
+		{ params: { path: { account_id: id }, query: { limit: 50 } } },
+		{ enabled: Boolean(id) },
+	);
 }
 
 /** Connected agents available to link / pair. Shares the `environments` key. */
 export function useEnvironments() {
-	const api = useApi();
-	return useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-	});
+	return useOpenApi().useQuery("get", "/v1/agents", {});
 }
 
 export function useCreateChannel() {
 	const api = useApi();
+	const openApi = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (body: ChannelCreate) => unwrap(await api.POST("/v1/channels", { body })),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.list });
-			qc.invalidateQueries({ queryKey: keys.pool });
-			qc.invalidateQueries({ queryKey: keys.health });
-		},
-		onError: toastApiError("Couldn't connect channel"),
+	return useSensitiveAction(async (body: ChannelCreate) => {
+		try {
+			const result = unwrap(await api.POST("/v1/channels", { body }));
+			await invalidateCreatedChannelQueries(
+				qc,
+				result,
+				result.agent_id
+					? agentChannelLinksQueryOptions(openApi, result.agent_id).queryKey
+					: undefined,
+			);
+			return {
+				id: result.id,
+				name: result.name,
+				provider: result.provider,
+				webhook_url: result.webhook_url,
+				agent_link_id: result.agent_link_id ?? null,
+				agent_id: result.agent_id ?? null,
+			} satisfies Pick<
+				ChannelCreated,
+				"id" | "name" | "provider" | "webhook_url" | "agent_link_id" | "agent_id"
+			>;
+		} catch (error) {
+			toastApiError("Couldn't add Custom bot")(error);
+			throw error;
+		}
 	});
 }
 
 export function useDeleteChannel() {
-	const api = useApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (id: string) =>
-			unwrap(
-				await api.DELETE("/v1/channels/{account_id}", {
-					params: { path: { account_id: id } },
-				}),
-			),
-		onSuccess: async (_data, id) => {
+	return api.useMutation("delete", "/v1/channels/{account_id}", {
+		onSuccess: async (_data, variables) => {
+			const id = variables.params.path.account_id;
 			await removeDeletedChannelQueries(qc, id);
-			toast.success("Channel removed");
+			toast.success("Custom bot deleted");
 		},
-		onError: toastApiError("Couldn't remove channel"),
+		onError: toastApiError("Couldn't delete Custom bot"),
 	});
 }
 
-export function useLinkAgent(accountId: string) {
+export function useCreatePairCode(
+	accountId: string,
+	{ agentId, toastOnError = true }: { agentId?: string; toastOnError?: boolean } = {},
+) {
 	const api = useApi();
+	const openApi = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (agentId: string) =>
-			unwrap(
-				await api.POST("/v1/channels/{account_id}/agent-links", {
-					params: { path: { account_id: accountId } },
-					body: { agent_id: agentId },
-				}),
-			),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
-			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
-			qc.invalidateQueries({ queryKey: keys.pool });
-		},
-		onError: toastApiError("Couldn't link agent"),
-	});
-}
-
-export function useRotateAgentToken(accountId: string) {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (linkId: string) =>
-			unwrap(
-				await api.POST("/v1/channels/{account_id}/agent-links/{link_id}/token", {
-					params: { path: { account_id: accountId, link_id: linkId } },
-				}),
-			),
-		onSuccess: (data) => {
-			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
-			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
-			// Always confirm — the new token is also revealed inline when present,
-			// but the rotation must never be a silent no-op even without a token.
-			toast.success("Token rotated", {
-				description: data.agent_token
-					? "Copy the new token below — the previous one is now invalid."
-					: "The previous token is now invalid.",
-			});
-		},
-		onError: toastApiError("Couldn't rotate token"),
-	});
-}
-
-export function useCreatePairCode(accountId: string) {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: { agent_id?: string; agent_link_id?: string; ttl_seconds?: number }) =>
-			unwrap(
+	return useSensitiveAction(async (vars: { agent_link_id: string; ttl_seconds?: number }) => {
+		try {
+			const result = unwrap(
 				await api.POST("/v1/channels/{account_id}/pair-codes", {
 					params: { path: { account_id: accountId } },
-					body: { ttl_seconds: vars.ttl_seconds ?? 900, ...vars },
+					body: { ttl_seconds: vars.ttl_seconds ?? 300, ...vars },
 				}),
-			),
-		onSuccess: () => {
+			);
 			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
-			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
+			if (agentId) {
+				qc.invalidateQueries({
+					queryKey: agentChannelLinksQueryOptions(openApi, agentId).queryKey,
+					exact: true,
+				});
+			}
 			qc.invalidateQueries({ queryKey: keys.bindings(accountId) });
-		},
-		onError: toastApiError("Couldn't create pairing code"),
+			return {
+				code: result.code,
+				expires_at: result.expires_at,
+				agent_link_id: result.agent_link_id,
+				pairing_command: result.pairing_command,
+				bot_username: result.bot_username,
+				deep_link: result.deep_link,
+				qr_payload: result.qr_payload,
+				discord_install_url: result.discord_install_url,
+				discord_user_install_url: result.discord_user_install_url,
+			};
+		} catch (error) {
+			if (toastOnError) toastApiError("Couldn't create pairing code")(error);
+			throw error;
+		}
 	});
 }
 
-/** An agent's linked channels (+account summary) — fixes the per-channel N+1. */
-export function useAgentChannelLinks(agentId: string, enabled = true) {
-	const editApi = useChannelEditApi();
-	return useQuery({
-		queryKey: ["agent-channel-links", agentId],
-		queryFn: () => editApi.listAgentLinks(agentId),
-		enabled: enabled && Boolean(agentId),
-	});
+export function agentChannelLinksQueryOptions(
+	api: OpenApiClient,
+	agentId: string,
+	{ enabled = true, poll = false }: { enabled?: boolean; poll?: boolean } = {},
+) {
+	return api.queryOptions(
+		"get",
+		"/v1/channels/agent-links",
+		{ params: { query: { agent_id: agentId } } },
+		{
+			...agentChannelLinksQueryBehavior(agentId, { enabled, poll }),
+			select: normalizeAgentChannelLinks,
+		},
+	);
+}
+
+/** An Agent's linked channels and active binding counts in one generated query. */
+export function useAgentChannelLinks(agentId: string, enabled = true, poll = false) {
+	return useQuery(agentChannelLinksQueryOptions(useOpenApi(), agentId, { enabled, poll }));
 }
 
 export function useUnlinkAgentChannel(agentId: string) {
-	const editApi = useChannelEditApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (vars: { accountId: string; linkId: string }) =>
-			editApi.unlinkAgent(vars.accountId, vars.linkId),
+	const agentLinksKey = agentChannelLinksQueryOptions(api, agentId).queryKey;
+	return api.useMutation("delete", "/v1/channels/{account_id}/agent-links/{link_id}", {
 		onSuccess: (_data, vars) => {
-			qc.invalidateQueries({ queryKey: ["agent-channel-links", agentId] });
-			qc.invalidateQueries({ queryKey: keys.agentLinks(vars.accountId) });
+			const accountId = vars.params.path.account_id;
+			qc.invalidateQueries({ queryKey: agentLinksKey, exact: true });
+			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
+			qc.invalidateQueries({ queryKey: keys.bindings(accountId) });
+			qc.invalidateQueries({ queryKey: keys.activity(accountId) });
 			qc.invalidateQueries({ queryKey: keys.list });
 			qc.invalidateQueries({ queryKey: keys.pool });
 			toast.success("Channel unlinked");
 		},
 		onError: toastApiError("Couldn't unlink channel"),
-	});
-}
-
-/** Unlink keyed by channel account (for the channel-detail Agents tab). */
-export function useUnlinkChannelAgent(accountId: string) {
-	const editApi = useChannelEditApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (linkId: string) => editApi.unlinkAgent(accountId, linkId),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
-			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
-			qc.invalidateQueries({ queryKey: keys.list });
-			qc.invalidateQueries({ queryKey: keys.pool });
-			toast.success("Agent unlinked");
-		},
-		onError: toastApiError("Couldn't unlink agent"),
 	});
 }
 
@@ -258,65 +345,5 @@ export function useSyncCommands(accountId: string) {
 				}),
 			),
 		onError: toastApiError("Couldn't sync commands"),
-	});
-}
-
-// ── WhatsApp device linking (Baileys tenant credentials) ─────────────────────
-// WhatsApp connects with NO token; a device is linked by minting a per-agent
-// tenant credential (the Baileys auth material). The live QR/pairing handshake
-// runs in the agent runtime over the credential's websocket_url.
-
-export function useWhatsappTenantCreds(accountId: string, enabled = true) {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.whatsappCreds(accountId),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/whatsapp/{account_id}/tenant-creds", {
-					params: { path: { account_id: accountId } },
-				}),
-			),
-		enabled,
-	});
-}
-
-export function useCreateWhatsappTenantCred(accountId: string) {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: { agent_id?: string; agent_link_id?: string }) =>
-			unwrap(
-				await api.POST("/v1/channels/whatsapp/{account_id}/tenant-creds", {
-					params: { path: { account_id: accountId } },
-					// `device` defaults to 1 server-side but the generated client types
-					// it required — send the primary device.
-					body: { device: 1, ...vars },
-				}),
-			),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.whatsappCreds(accountId) });
-			toast.success("Device credential minted", {
-				description: "Finish pairing from the agent runtime to link the number.",
-			});
-		},
-		onError: toastApiError("Couldn't link WhatsApp device"),
-	});
-}
-
-export function useRevokeWhatsappTenantCred(accountId: string) {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (credentialId: string) =>
-			unwrap(
-				await api.DELETE("/v1/channels/whatsapp/{account_id}/tenant-creds/{credential_id}", {
-					params: { path: { account_id: accountId, credential_id: credentialId } },
-				}),
-			),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.whatsappCreds(accountId) });
-			toast.success("WhatsApp device unlinked");
-		},
-		onError: toastApiError("Couldn't unlink device"),
 	});
 }

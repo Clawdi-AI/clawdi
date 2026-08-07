@@ -1,33 +1,51 @@
 import { describe, expect, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
-import type { ComputeSubscriptionActionResult, HostedDeployment } from "@/hosted/billing/contracts";
+import {
+	environmentManager,
+	focusManager,
+	QueryClient,
+	QueryObserver,
+} from "@tanstack/react-query";
+import type {
+	ComputeSubscriptionActionResult,
+	DeploymentOperation,
+	HostedComputeSubscription,
+	HostedDeployment,
+	HostedDeploymentStatus,
+} from "@/hosted/billing/contracts";
 import {
 	applyDeploymentSubscriptionResult,
 	billingKeys,
 	billingRecoveryRefetchIntervalFor,
-	checkoutReturnMarker,
-	checkoutReturnWasCanceled,
+	HOSTED_DEPLOYMENTS_REFRESH_POLICY,
+	reconcileDeploymentSnapshots,
 	refreshCheckoutReturnQueries,
-	shouldPollBillingRecoveryFor,
 } from "@/hosted/billing/hooks";
+import { deploymentFailureProjection } from "@/hosted/deployment-failure";
+import {
+	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+	type DeploymentOperationVerb,
+} from "@/hosted/deployment-status";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
+
+function requiredDeploymentStatus(
+	deployment: HostedDeployment | undefined,
+): HostedDeploymentStatus {
+	if (!deployment) throw new Error("Expected deployment fixture");
+	const status = deployment.resource.status;
+	if (status === null) throw new Error("Expected deployment status fixture");
+	return status;
+}
 
 function deployment(
-	computeSubscription: NonNullable<HostedDeployment["compute_subscription"]>,
+	computeSubscription: HostedComputeSubscription,
+	id = "dep_123",
 ): HostedDeployment {
-	return {
-		id: "dep_123",
-		user_id: "user_123",
+	return hostedDeploymentFixture({
+		id,
 		name: "Performance agent",
-		app_id: "app_123",
-		backend: null,
-		status: "running",
-		endpoints: [],
-		openclaw_control_ui_url: null,
-		hermes_control_ui_url: null,
-		compute_subscription: computeSubscription,
-		created_at: "2026-06-22T00:00:00Z",
-		upgrade_available: false,
-	};
+		createdAt: "2026-06-22T00:00:00Z",
+		computeSubscription,
+	});
 }
 
 function subscriptionAction(cancelAtPeriodEnd: boolean): ComputeSubscriptionActionResult {
@@ -38,6 +56,26 @@ function subscriptionAction(cancelAtPeriodEnd: boolean): ComputeSubscriptionActi
 		cancel_at_period_end: cancelAtPeriodEnd,
 		current_period_end: "2026-08-01T00:00:00Z",
 		cancel_at: cancelAtPeriodEnd ? "2026-08-01T00:00:00Z" : null,
+	};
+}
+
+function acceptedOperation(
+	verb: DeploymentOperationVerb,
+	targetGeneration = 2,
+): DeploymentOperation {
+	return {
+		name: `operations/${verb}-failure`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "hdep_failure",
+			verb: verb as DeploymentOperation["metadata"]["verb"],
+			targetGeneration,
+			manifestETag: "manifest-failure",
+			createTime: "2026-07-25T00:00:00Z",
+			updateTime: "2026-07-25T00:01:00Z",
+		},
+		done: false,
+		response: null,
 	};
 }
 
@@ -61,15 +99,17 @@ describe("applyDeploymentSubscriptionResult", () => {
 		applyDeploymentSubscriptionResult(qc, "dep_123", subscriptionAction(true));
 
 		let patched = qc.getQueryData<HostedDeployment[]>(billingKeys.deployments);
-		expect(patched?.[0]?.compute_subscription?.cancel_at_period_end).toBe(true);
-		expect(patched?.[0]?.compute_subscription?.billing_term_months).toBe(12);
+		expect(patched?.[0]?.commercial_display?.compute_subscription?.cancel_at_period_end).toBe(true);
+		expect(patched?.[0]?.commercial_display?.compute_subscription?.billing_term_months).toBe(12);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
 
 		applyDeploymentSubscriptionResult(qc, "dep_123", subscriptionAction(false));
 
 		patched = qc.getQueryData<HostedDeployment[]>(billingKeys.deployments);
-		expect(patched?.[0]?.compute_subscription?.cancel_at_period_end).toBe(false);
-		expect(patched?.[0]?.compute_subscription?.cancel_at).toBeNull();
+		expect(patched?.[0]?.commercial_display?.compute_subscription?.cancel_at_period_end).toBe(
+			false,
+		);
+		expect(patched?.[0]?.commercial_display?.compute_subscription?.cancel_at).toBeNull();
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
 	});
 });
@@ -95,10 +135,10 @@ describe("refreshCheckoutReturnQueries", () => {
 			current_period_end: "2026-07-01T00:00:00Z",
 			cancel_at: null,
 		});
-		const afterCheckout: HostedDeployment = {
-			...beforeCheckout,
+		const afterCheckout = hostedDeploymentFixture({
+			id: beforeCheckout.resource.id,
 			name: "Performance agent after checkout",
-			compute_subscription: {
+			computeSubscription: {
 				status: "active",
 				funding_source: "stripe",
 				payment_state: "ok",
@@ -109,7 +149,7 @@ describe("refreshCheckoutReturnQueries", () => {
 				current_period_end: "2027-07-01T00:00:00Z",
 				cancel_at: null,
 			},
-		};
+		});
 		const deploymentSnapshots: HostedDeployment[][] = [[beforeCheckout], [afterCheckout]];
 		const walletSnapshots = [{ balance_cents: 1_000 }, { balance_cents: 5_000 }];
 		let deploymentsCalls = 0;
@@ -130,80 +170,315 @@ describe("refreshCheckoutReturnQueries", () => {
 			},
 		});
 		qc.setQueryData(billingKeys.plans, [{ id: "plan_before_checkout" }]);
-		qc.setQueryData(["agents"], [{ id: "agent_before_checkout" }]);
+		qc.setQueryData(["get", "/v1/agents"], [{ id: "agent_before_checkout" }]);
 
 		const result = await refreshCheckoutReturnQueries(qc);
 
 		expect(deploymentsCalls).toBe(2);
 		expect(walletCalls).toBe(2);
-		expect(result?.[0]?.name).toBe("Performance agent after checkout");
+		expect(result?.[0]?.resource.name).toBe("Performance agent after checkout");
 		expect(qc.getQueryData<{ balance_cents: number }>(billingKeys.wallet)?.balance_cents).toBe(
 			5_000,
 		);
 		expect(qc.getQueryState(billingKeys.plans)?.isInvalidated).toBe(true);
-		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
+	});
+
+	test("refreshes ancillary checkout state without invalidating a seeded deployment handoff", async () => {
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+		});
+		const authoritative = hostedDeploymentFixture({ id: "hdep_accepted", status: "creating" });
+		let deploymentsCalls = 0;
+		let walletCalls = 0;
+		await qc.prefetchQuery({
+			queryKey: billingKeys.deployments,
+			queryFn: async () => {
+				deploymentsCalls += 1;
+				return [authoritative];
+			},
+		});
+		await qc.prefetchQuery({
+			queryKey: billingKeys.wallet,
+			queryFn: async () => {
+				walletCalls += 1;
+				return { balance_cents: walletCalls };
+			},
+		});
+
+		const result = await refreshCheckoutReturnQueries(qc, { includeDeployments: false });
+
+		expect(deploymentsCalls).toBe(1);
+		expect(walletCalls).toBe(2);
+		expect(result).toEqual([authoritative]);
+		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
+		qc.clear();
+	});
+
+	test("rejects instead of claiming success when the required wallet refresh fails", async () => {
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		let walletRefreshShouldFail = false;
+		await qc.prefetchQuery({
+			queryKey: billingKeys.deployments,
+			queryFn: async () => [],
+		});
+		await qc.prefetchQuery({
+			queryKey: billingKeys.wallet,
+			queryFn: async () => {
+				if (walletRefreshShouldFail) throw new Error("wallet refresh failed");
+				return { balance_cents: 1_000 };
+			},
+		});
+		walletRefreshShouldFail = true;
+
+		await expect(refreshCheckoutReturnQueries(qc)).rejects.toThrow(
+			"Couldn’t refresh required checkout return data.",
+		);
 	});
 });
 
-describe("shouldPollBillingRecoveryFor", () => {
+describe("billingRecoveryRefetchIntervalFor", () => {
 	test("polls only the visible past-due deployment", () => {
-		const due = deployment({
-			status: "past_due",
-			funding_source: "wallet",
-			payment_state: "past_due",
-			recovery_action: "top_up",
-			billing_term_months: 1,
-			price_cents: 900,
-			currency: "usd",
-			cancel_at_period_end: false,
-		});
-		due.id = "hdep_due";
-		expect(shouldPollBillingRecoveryFor([due], "hdep_due")).toBe(true);
-		expect(shouldPollBillingRecoveryFor([due], "hdep_other")).toBe(false);
+		const due = deployment(
+			{
+				status: "past_due",
+				funding_source: "wallet",
+				payment_state: "past_due",
+				recovery_action: "top_up",
+				billing_term_months: 1,
+				price_cents: 900,
+				currency: "usd",
+				cancel_at_period_end: false,
+			},
+			"hdep_due",
+		);
+		expect(billingRecoveryRefetchIntervalFor([due], "hdep_due")).toBe(30_000);
+		expect(billingRecoveryRefetchIntervalFor([due], "hdep_other")).toBe(false);
 	});
 
 	test("does not derive polling from a local renewal boundary", () => {
-		const active = deployment({
-			status: "active",
-			funding_source: "wallet",
-			payment_state: "ok",
-			billing_term_months: 1,
-			price_cents: 900,
-			currency: "usd",
-			cancel_at_period_end: false,
-			current_period_end: "2026-07-16T00:00:30Z",
-		});
-		active.id = "hdep_active";
-		expect(shouldPollBillingRecoveryFor([active], active.id)).toBe(false);
-		expect(billingRecoveryRefetchIntervalFor([active], active.id)).toBe(false);
+		const active = deployment(
+			{
+				status: "active",
+				funding_source: "wallet",
+				payment_state: "ok",
+				billing_term_months: 1,
+				price_cents: 900,
+				currency: "usd",
+				cancel_at_period_end: false,
+				current_period_end: "2026-07-16T00:00:30Z",
+			},
+			"hdep_active",
+		);
+		expect(billingRecoveryRefetchIntervalFor([active], active.resource.id)).toBe(false);
 	});
 
 	test("does not poll terminal wallet states", () => {
-		const unpaid = deployment({
-			status: "unpaid",
-			funding_source: "wallet",
-			payment_state: "unpaid",
-			recovery_action: "top_up",
-			billing_term_months: 1,
-			price_cents: 900,
-			currency: "usd",
-			cancel_at_period_end: false,
-			current_period_end: "2026-07-16T00:00:00Z",
-		});
-		unpaid.id = "hdep_unpaid";
-		expect(shouldPollBillingRecoveryFor([unpaid], unpaid.id)).toBe(false);
+		const unpaid = deployment(
+			{
+				status: "unpaid",
+				funding_source: "wallet",
+				payment_state: "unpaid",
+				recovery_action: "top_up",
+				billing_term_months: 1,
+				price_cents: 900,
+				currency: "usd",
+				cancel_at_period_end: false,
+				current_period_end: "2026-07-16T00:00:00Z",
+			},
+			"hdep_unpaid",
+		);
+		expect(billingRecoveryRefetchIntervalFor([unpaid], unpaid.resource.id)).toBe(false);
 	});
 });
 
-describe("checkout return parsing", () => {
-	test("recognizes Stripe cancel returns as checkout markers", () => {
-		expect(checkoutReturnWasCanceled("?checkout=cancel")).toBe(true);
-		expect(checkoutReturnWasCanceled("?settings=billing-plan&checkout=cancel")).toBe(true);
-		expect(checkoutReturnMarker("?checkout=cancel")).toBe("checkout=cancel");
+describe("hosted deployment refresh policy", () => {
+	test("uses TanStack focus state to pause steady refreshes in a background tab", async () => {
+		expect(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS).toBe(60_000);
+		expect(HOSTED_DEPLOYMENTS_REFRESH_POLICY).toEqual({
+			refetchIntervalInBackground: false,
+			refetchOnWindowFocus: true,
+		});
+
+		environmentManager.setIsServer(() => false);
+		focusManager.setFocused(false);
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		let calls = 0;
+		const observer = new QueryObserver(queryClient, {
+			queryKey: ["test", "hosted-deployment-foreground-refresh"],
+			queryFn: async () => {
+				calls += 1;
+				return [];
+			},
+			refetchInterval: 5,
+			...HOSTED_DEPLOYMENTS_REFRESH_POLICY,
+		});
+		const unsubscribe = observer.subscribe(() => undefined);
+
+		try {
+			await Bun.sleep(20);
+			expect(calls).toBe(1);
+
+			focusManager.setFocused(true);
+			for (let attempt = 0; attempt < 20 && calls === 1; attempt += 1) {
+				await Bun.sleep(5);
+			}
+			expect(calls).toBeGreaterThan(1);
+		} finally {
+			unsubscribe();
+			queryClient.clear();
+			focusManager.setFocused(undefined);
+			environmentManager.setIsServer(() => typeof window === "undefined");
+		}
+	});
+});
+
+describe("reconcileDeploymentSnapshots", () => {
+	test("retains accepted delete intent across stale reads so a dismissed agent cannot reappear", () => {
+		const accepted = acceptedOperation("delete");
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "deleting",
+			acceptedOperation: accepted,
+		});
+		const staleServerSnapshot = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "running",
+			acceptedOperation: acceptedOperation("start"),
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [staleServerSnapshot]);
+
+		expect(reconciled?.resource.status?.summary_state).toBe("running");
+		expect(reconciled?.accepted_operation).toEqual(accepted);
+
+		const [reconciledWithoutOperation] = reconcileDeploymentSnapshots(
+			[optimistic],
+			[
+				hostedDeploymentFixture({
+					id: "hdep_delete",
+					status: "running",
+					acceptedOperation: null,
+				}),
+			],
+		);
+		expect(reconciledWithoutOperation?.accepted_operation).toEqual(accepted);
 	});
 
-	test("does not treat passive checkout success copy as a refresh marker", () => {
-		expect(checkoutReturnWasCanceled("?checkout=success")).toBe(false);
-		expect(checkoutReturnMarker("?checkout=success")).toBeNull();
+	test("converges a delete when the same operation becomes terminal and cancelled", () => {
+		const accepted = acceptedOperation("delete");
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "deleting",
+			acceptedOperation: accepted,
+		});
+		const cancelledOperation: DeploymentOperation = {
+			...accepted,
+			done: true,
+			error: {
+				code: 1,
+				message: "Delete was cancelled before teardown.",
+				details: [],
+			},
+			response: null,
+		};
+		const restoredServerSnapshot = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "running",
+			acceptedOperation: cancelledOperation,
+			computeSlotOccupancy: {
+				occupies_slot: true,
+				backing_infra: "present",
+				reason: "backing_infra_present",
+			},
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [restoredServerSnapshot]);
+
+		expect(reconciled).toEqual(restoredServerSnapshot);
+		expect(reconciled?.accepted_operation?.done).toBe(true);
+		expect(reconciled?.accepted_operation?.error?.code).toBe(1);
+
+		const laterStartOperation = acceptedOperation("start", 4);
+		const laterServerSnapshot = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "starting",
+			acceptedOperation: laterStartOperation,
+		});
+		laterServerSnapshot.resource.metadata.generation = 4;
+		const [directlyAfterCancellation] = reconcileDeploymentSnapshots(
+			[optimistic],
+			[laterServerSnapshot],
+		);
+		expect(directlyAfterCancellation?.accepted_operation).toEqual(laterStartOperation);
+
+		const [afterCancellation] = reconcileDeploymentSnapshots(
+			[restoredServerSnapshot],
+			[laterServerSnapshot],
+		);
+		expect(afterCancellation?.accepted_operation).toEqual(laterStartOperation);
+	});
+
+	test("lets a failed server snapshot override optimistic pending state without reusing its verb", () => {
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_failure",
+			status: "updating",
+			acceptedOperation: acceptedOperation("plan_change"),
+		});
+		const actionableReason =
+			"Re-quote the plan change and try again. Operation ID: operations/plan_change-failure.";
+		const failure = {
+			type: "https://api.clawdi.ai/problems/operation_aborted",
+			title: "Deployment operation was aborted",
+			status: 409,
+			detail: actionableReason,
+			instance: "hdep_failure",
+			code: "operation_aborted",
+			phase: "plan_change",
+			retryable: false,
+			conditionReason: "OperationAborted",
+			conditionMessage: "Deployment operation was aborted",
+			observedGeneration: 2,
+		};
+		const serverSnapshot = hostedDeploymentFixture({
+			id: "hdep_failure",
+			status: "failed",
+			failure,
+			acceptedOperation: null,
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [serverSnapshot]);
+		const reconciledStatus = requiredDeploymentStatus(reconciled);
+
+		expect(reconciledStatus.summary_state).toBe("failed");
+		expect(reconciledStatus.failure).toEqual(failure);
+		expect(deploymentFailureProjection(reconciled)).toEqual({
+			reason:
+				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
+			failedVerb: null,
+			retryable: false,
+			code: "operation_aborted",
+		});
+	});
+
+	test("retains accepted operation context without fabricating unavailable status", () => {
+		const accepted = acceptedOperation("update");
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_unknown",
+			status: "updating",
+			acceptedOperation: accepted,
+		});
+		const serverSnapshot = hostedDeploymentFixture({
+			id: "hdep_unknown",
+			status: null,
+			acceptedOperation: null,
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [serverSnapshot]);
+
+		expect(reconciled?.resource.status).toBeNull();
+		expect(reconciled?.accepted_operation).toEqual(accepted);
 	});
 });

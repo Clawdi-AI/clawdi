@@ -1,20 +1,22 @@
 import type {
 	ComputePlanSlug,
+	HostedComputeSubscription,
 	HostedDeployment,
-	HostedFundingEvent,
+	HostedFundingFact,
 } from "@/hosted/billing/contracts";
 import {
 	computeTierLabel,
 	isIncludedBasicSubscription,
 	pendingComputePlanSlug,
 } from "@/hosted/billing/subscription/subscription-utils";
+import { deploymentStatusFromResource } from "@/hosted/deployment-status";
 
-type ComputeSubscription = NonNullable<HostedDeployment["compute_subscription"]>;
 type DunningDeployment = Pick<
 	HostedDeployment,
-	"compute_subscription" | "config_info" | "last_funding_event" | "status"
+	"commercial_display" | "current_plan_slug" | "resource"
 >;
-export type ComputePaymentState = ComputeSubscription["payment_state"];
+export type ComputePaymentState = HostedComputeSubscription["payment_state"];
+type FundingRevocationReason = NonNullable<HostedFundingFact["reason"]>;
 
 export type ComputeDunningState = {
 	paymentState: Exclude<ComputePaymentState, "ok">;
@@ -35,15 +37,12 @@ export type ComputeDunningState = {
 	secondaryTarget: "billing_history" | "support" | null;
 	fallbackOccurredAt: string | null;
 	fallbackPlanLabel: string | null;
-	fallbackReason: HostedFundingEvent["reason"] | null;
+	fallbackReason: FundingRevocationReason | null;
 	recoveryPlanSlug: ComputePlanSlug | null;
-	tileLabel: string;
-	tileTitle: string;
-	tileTextClass: string;
 };
 
 export function fallbackReasonSentence(
-	reason: HostedFundingEvent["reason"],
+	reason: FundingRevocationReason,
 	planLabel: string,
 	dateLabel: string,
 ): string {
@@ -63,28 +62,25 @@ export function fallbackReasonSentence(
 
 function recoveryPlanSlugFor(
 	deployment: DunningDeployment,
-	subscription?: ComputeSubscription,
+	subscription?: HostedComputeSubscription,
 ): ComputePlanSlug | null {
-	if (subscription) {
-		return (
-			pendingComputePlanSlug(subscription) ?? deployment.config_info?.compute_plan_slug ?? null
-		);
-	}
-	const priorPlan = deployment.last_funding_event?.prior_plan_slug;
-	return priorPlan === "compute_basic" || priorPlan === "compute_performance" ? priorPlan : null;
+	const planSlug = subscription
+		? (pendingComputePlanSlug(subscription) ?? deployment.current_plan_slug)
+		: deployment.commercial_display?.latest_funding_fact?.prior_plan_slug;
+	return planSlug === "compute_basic" || planSlug === "compute_performance" ? planSlug : null;
 }
 
 function detachedFallbackState(deployment: DunningDeployment): ComputeDunningState | null {
-	const fallback = deployment.last_funding_event;
-	if (fallback?.type !== "compute_subscription_fallback") return null;
+	const fallback = deployment.commercial_display?.latest_funding_fact;
+	if (fallback?.fact_kind !== "funding_revoked") return null;
+	if (!fallback.reason || !fallback.funding_source) return null;
+	const recoveryPlanSlug = recoveryPlanSlugFor(deployment);
+	if (!recoveryPlanSlug) return null;
 
-	const fallbackPlanLabel =
-		fallback.prior_plan_slug === "compute_performance"
-			? "Performance compute"
-			: fallback.prior_plan_slug === "compute_basic"
-				? "Basic compute"
-				: "paid compute";
-	const stopped = deployment.status.toLowerCase() === "stopped";
+	const fallbackPlanLabel = `${computeTierLabel(recoveryPlanSlug)} compute`;
+	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
+	const stopped = deploymentStatus.kind === "stopped";
+	const statusUnavailable = !deploymentStatus.known;
 	const presentation = (() => {
 		switch (fallback.reason) {
 			case "payment_failure":
@@ -92,40 +88,30 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 					tone: "destructive" as const,
 					title: "Compute subscription ended",
 					secondaryTarget: null,
-					tileLabel: "Compute subscription ended",
-					tileTextClass: "text-destructive",
 				};
 			case "canceled":
 				return {
 					tone: "neutral" as const,
 					title: "Compute subscription ended",
 					secondaryTarget: null,
-					tileLabel: "Compute subscription ended",
-					tileTextClass: "text-muted-foreground",
 				};
 			case "refunded":
 				return {
 					tone: "neutral" as const,
 					title: "Compute payment refunded",
 					secondaryTarget: "billing_history" as const,
-					tileLabel: "Compute payment refunded",
-					tileTextClass: "text-muted-foreground",
 				};
 			case "disputed":
 				return {
 					tone: "warning" as const,
 					title: "Compute payment disputed",
 					secondaryTarget: "support" as const,
-					tileLabel: "Compute payment disputed",
-					tileTextClass: "text-warning-muted-foreground",
 				};
 			case "admin_forced":
 				return {
 					tone: "neutral" as const,
 					title: "Compute funding changed",
 					secondaryTarget: "support" as const,
-					tileLabel: "Compute funding changed",
-					tileTextClass: "text-muted-foreground",
 				};
 		}
 	})();
@@ -135,28 +121,24 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		paymentState: "unpaid",
 		fundingSource: fallback.funding_source,
 		recoveryAction: "start_new",
-		description: stopped
-			? "No included Basic slot was available, so this deployment stopped. Start a new subscription to restore paid compute."
-			: "This deployment is now using included Basic. Start a new subscription to restore paid compute.",
+		description: statusUnavailable
+			? "We can’t determine whether this agent stopped or is using included Basic because its current status is unavailable. Start a new subscription to restore paid compute."
+			: stopped
+				? "No included Basic slot was available, so this agent stopped. Start a new subscription to restore paid compute."
+				: "This agent is now using included Basic. Start a new subscription to restore paid compute.",
 		invoiceUrl: null,
 		fallbackOccurredAt: fallback.occurred_at,
 		fallbackPlanLabel,
 		fallbackReason: fallback.reason,
-		recoveryPlanSlug: recoveryPlanSlugFor(deployment),
+		recoveryPlanSlug,
 		ctaTarget: "start_new",
-		tileTitle: stopped
-			? `${fallbackPlanLabel} ended and the deployment stopped.`
-			: `${fallbackPlanLabel} ended and fell back to included Basic.`,
 	};
 }
 
 export function computeDunningState(deployment: DunningDeployment): ComputeDunningState | null {
-	const subscription = deployment.compute_subscription ?? null;
+	const subscription = deployment.commercial_display?.compute_subscription ?? null;
 	const fallbackState = detachedFallbackState(deployment);
-	if (
-		fallbackState &&
-		isIncludedBasicSubscription(deployment.config_info?.compute_plan_slug, subscription)
-	) {
+	if (fallbackState && isIncludedBasicSubscription(deployment.current_plan_slug, subscription)) {
 		return fallbackState;
 	}
 	if (!subscription) return null;
@@ -185,11 +167,8 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			tone: "destructive",
 			title: "Compute subscription ended",
 			description:
-				"This paid subscription is terminal. Start a new subscription for the fallback deployment to restore paid compute.",
+				"This paid subscription ended. Start a new subscription for this agent to restore paid compute.",
 			ctaTarget: "start_new",
-			tileLabel: "Compute subscription ended",
-			tileTitle: `${computeName} ended. Start a new subscription to restore paid compute.`,
-			tileTextClass: "text-destructive",
 		};
 	}
 
@@ -202,9 +181,6 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			title: "Payment authentication required",
 			description: `Complete the payment authentication to keep ${computeName} active.`,
 			ctaTarget: common.invoiceUrl ? "invoice" : "fix_payment",
-			tileLabel: "Payment action required",
-			tileTitle: `Complete payment authentication to keep ${computeName} active.`,
-			tileTextClass: "text-warning-muted-foreground",
 		};
 	}
 
@@ -216,11 +192,8 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			tone: "warning",
 			title: "Wallet payment past due",
 			description:
-				"Top up AI Credits. Stripe will keep the invoice open while funds are short, and billing will update automatically after payment completes.",
+				"Top up your Wallet. Stripe will keep the invoice open while funds are short, and billing will update automatically after payment completes.",
 			ctaTarget: "top_up",
-			tileLabel: "Wallet payment past due",
-			tileTitle: "Top up AI Credits to pay the open invoice.",
-			tileTextClass: "text-warning-muted-foreground",
 		};
 	}
 
@@ -232,20 +205,5 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		title: "Payment past due",
 		description: "Update the card payment method for the open invoice.",
 		ctaTarget: "fix_payment",
-		tileLabel: "Payment past due",
-		tileTitle: "Fix the card payment method for the open invoice.",
-		tileTextClass: "text-warning-muted-foreground",
-	};
-}
-
-export function computeDunningTileStatus(
-	deployment: DunningDeployment,
-): { label: string; title: string; textClass: string } | null {
-	const state = computeDunningState(deployment);
-	if (!state) return null;
-	return {
-		label: state.tileLabel,
-		title: state.tileTitle,
-		textClass: state.tileTextClass,
 	};
 }

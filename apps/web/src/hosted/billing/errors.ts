@@ -41,6 +41,36 @@ export class BillingApiError extends Error {
 	}
 }
 
+export const DEPLOYMENT_CONFLICT_MESSAGE =
+	"This agent changed in another session. We refreshed it; review the latest state and try again.";
+
+/** A declarative mutation still conflicted after its single fresh-read retry. */
+export class DeploymentConflictError extends Error {
+	constructor(options?: { cause?: unknown }) {
+		super(DEPLOYMENT_CONFLICT_MESSAGE);
+		this.name = "DeploymentConflictError";
+		if (options?.cause !== undefined) this.cause = options.cause;
+	}
+}
+
+/** A checkout-funded deploy request reached a terminal state before acceptance. */
+export class DeploymentRequestTerminalError extends BillingApiError {
+	override name = "DeploymentRequestTerminalError";
+}
+
+/** A plan change remains nonterminal after the bounded foreground poll. */
+export class PlanChangePendingError extends Error {
+	constructor(public readonly operationName: string) {
+		super("We're still waiting for the plan change to finish. Check the status again in a moment.");
+		this.name = "PlanChangePendingError";
+	}
+}
+
+/** The accepted plan change reached an explicit failed terminal state. */
+export class PlanChangeTerminalError extends BillingApiError {
+	override name = "PlanChangeTerminalError";
+}
+
 function hasDetail(value: unknown): value is { detail: unknown } {
 	return typeof value === "object" && value !== null && "detail" in value;
 }
@@ -101,7 +131,7 @@ export function isServerError(error: unknown): boolean {
 }
 
 /** True when the request never reached the server (offline / DNS / timeout). */
-export function isNetworkError(error: unknown): boolean {
+export function isNetworkError(error: unknown): error is BillingNetworkError {
 	return error instanceof BillingNetworkError;
 }
 
@@ -112,6 +142,105 @@ export function isNetworkError(error: unknown): boolean {
  */
 export function isRetryableError(error: unknown): boolean {
 	return isNetworkError(error) || isServerError(error);
+}
+
+export type DeploySubmissionContext = "card_checkout" | "included_creation" | "wallet_creation";
+
+export type DeploySubmissionErrorPresentation = {
+	description: string;
+	title: string;
+};
+
+function isDefinitiveBillingRejection(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		error.status >= 400 &&
+		error.status < 500 &&
+		error.status !== 429
+	);
+}
+
+/** Only return copy backed by a known public billing condition. */
+function knownBillingRecovery(error: unknown): string | null {
+	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
+	if (isInsufficientBalanceError(error)) return normalizeBillingError(error);
+	if (isAuthError(error)) return "Your session expired before this request could start.";
+	if (!(error instanceof BillingApiError)) return null;
+
+	const code = billingErrorDetail(error)?.code;
+	if (code === "open_refund_debt") {
+		return "Top up your Wallet before trying again.";
+	}
+	if (code === "deploy_request_funding_conflict") {
+		return "This agent request is already linked to a different payment flow.";
+	}
+	if (code === "idempotency_key_reused") {
+		return "This attempt could not be matched to the earlier request.";
+	}
+	if (error.detail === "payment_method_required") {
+		return "Add a payment method before trying again.";
+	}
+	return null;
+}
+
+/**
+ * Contextual, non-sensitive copy for the Deploy CTA. Card checkout has not
+ * collected payment until its checkout UI opens, while wallet and create
+ * transport failures can be ambiguous and must resume the same idempotent
+ * attempt instead of claiming that nothing happened.
+ */
+export function deploySubmissionErrorPresentation(
+	error: unknown,
+	context: DeploySubmissionContext,
+): DeploySubmissionErrorPresentation {
+	const knownRecovery = knownBillingRecovery(error);
+	if (context === "card_checkout") {
+		const reason = isNetworkError(error)
+			? error.kind === "timeout"
+				? "The request timed out while opening secure checkout."
+				: "The connection dropped while opening secure checkout."
+			: isServerError(error)
+				? "Secure checkout is temporarily unavailable."
+				: (knownRecovery ?? "We couldn’t open secure checkout.");
+		return {
+			title: "Checkout didn’t open",
+			description: `${reason} No payment was submitted. Retry when you’re ready.`,
+		};
+	}
+
+	if (context === "wallet_creation") {
+		if (isDefinitiveBillingRejection(error)) {
+			return {
+				title: "Payment and creation didn’t start",
+				description: `${knownRecovery ?? "The request was rejected before it was accepted."} No Wallet payment was made. Review your choices and retry.`,
+			};
+		}
+		const reason = isNetworkError(error)
+			? error.kind === "timeout"
+				? "The request timed out before payment and creation were confirmed."
+				: "The connection dropped before payment and creation were confirmed."
+			: "The service didn’t confirm payment and creation.";
+		return {
+			title: "We couldn’t confirm this attempt",
+			description: `${reason} Retry to safely resume the same attempt.`,
+		};
+	}
+
+	if (isDefinitiveBillingRejection(error)) {
+		return {
+			title: "Agent creation didn’t start",
+			description: `${knownRecovery ?? "The request was rejected before it was accepted."} Your choices are unchanged; review them and retry.`,
+		};
+	}
+	const reason = isNetworkError(error)
+		? error.kind === "timeout"
+			? "The request timed out before agent creation was confirmed."
+			: "The connection dropped before agent creation was confirmed."
+		: "The service didn’t confirm agent creation.";
+	return {
+		title: "We couldn’t confirm agent creation",
+		description: `${reason} Retry to safely resume the same attempt.`,
+	};
 }
 
 /**
@@ -153,8 +282,9 @@ export function isInsufficientBalanceError(error: unknown): boolean {
  * internals; normalizes balance exhaustion to the product narrative.
  */
 export function normalizeBillingError(error: unknown): string {
+	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
 	if (isInsufficientBalanceError(error)) {
-		return "Your AI Credits balance is too low. Top up or enable auto-reload before managed AI or wallet-funded compute is interrupted.";
+		return "Your Wallet balance is too low. Top up or enable auto-reload before Clawdi AI or wallet-funded compute is interrupted.";
 	}
 	if (error instanceof BillingNetworkError) {
 		return error.kind === "timeout"
@@ -165,7 +295,7 @@ export function normalizeBillingError(error: unknown): string {
 		return "Your session has expired. Please sign in again to continue.";
 	}
 	if (isServerError(error)) {
-		return "The billing service is having trouble right now. Please try again in a moment.";
+		return "The billing request couldn’t be completed right now. Try again in a moment.";
 	}
 	if (error instanceof BillingApiError) {
 		const code = billingErrorDetail(error)?.code;

@@ -30,7 +30,7 @@ export async function agentProjectsListCommand(
 	agentId: string,
 	opts: { json?: boolean } = {},
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
 		apiKey,
@@ -60,22 +60,20 @@ export async function agentProjectsListCommand(
 	const contexts = rows
 		.filter((row) => row.binding_type === "context")
 		.sort((a, b) => a.priority - b.priority);
-	console.log(chalk.bold(`Projects used by ${agentId}`));
-	console.log(chalk.gray("Reads: Agent Project, then attachments."));
+	console.log(chalk.bold(`Projects for ${agentId}`));
+	console.log(chalk.gray("Vault resolution: Workspace, then linked Projects."));
 	console.log();
-	console.log(chalk.bold("Agent Project"));
+	console.log(chalk.bold("Workspace"));
 	if (primary) {
 		console.log(`  ${formatBindingProject(primary, projectsById)}`);
 	} else {
-		console.log("  No Agent Project yet.");
+		console.log("  Workspace unavailable.");
 	}
 	console.log();
-	console.log(chalk.bold(`Attached Projects (${contexts.length})`));
+	console.log(chalk.bold(`Linked Projects (${contexts.length})`));
 	if (contexts.length === 0) {
 		console.log("  None.");
-		console.log(
-			chalk.gray(`  Attach: clawdi agent projects attach ${agentId} --project <project>`),
-		);
+		console.log(chalk.gray(`  Link: clawdi agent projects link ${agentId} --project <project>`));
 		return;
 	}
 	for (const [index, row] of contexts.entries()) {
@@ -87,8 +85,8 @@ export async function agentProjectsListCommand(
 			chalk.cyan(`clawdi agent projects move ${agentId} --item ${contexts[0].id}:1`),
 	);
 	console.log(
-		chalk.gray("Detach:  ") +
-			chalk.cyan(`clawdi agent projects detach ${agentId} --project <project>`),
+		chalk.gray("Unlink:  ") +
+			chalk.cyan(`clawdi agent projects unlink ${agentId} --project <project>`),
 	);
 }
 
@@ -96,7 +94,7 @@ export async function agentProjectsAddContextCommand(
 	agentId: string,
 	opts: { project: string; order?: string },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	let priority: number | undefined;
 	if (opts.order !== undefined) {
@@ -112,15 +110,15 @@ export async function agentProjectsAddContextCommand(
 			body: JSON.stringify({ project_id: projectId, priority }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Attached to ${agentId}.`);
-	console.log(chalk.gray("  Reads after Agent Project."));
+	console.log(`${chalk.green("✓")} Linked to ${agentId}.`);
+	console.log(chalk.gray("  Vaults resolve after the Workspace."));
 }
 
 export async function agentProjectsRemoveContextCommand(
 	agentId: string,
 	opts: { project: string },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
@@ -131,12 +129,12 @@ export async function agentProjectsRemoveContextCommand(
 		(row) => row.binding_type === "context" && row.project_id === projectId,
 	);
 	if (matches.length === 0) {
-		console.error(chalk.red("No matching attachment."));
+		console.error(chalk.red("No matching linked Project."));
 		process.exitCode = 1;
 		return;
 	}
 	if (matches.length > 1) {
-		console.error(chalk.red("Multiple matches. Detach by attachment id."));
+		console.error(chalk.red("Multiple linked Projects match. Unlink by relation id."));
 		process.exitCode = 1;
 		return;
 	}
@@ -146,7 +144,7 @@ export async function agentProjectsRemoveContextCommand(
 		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/${encodeURIComponent(matches[0].id)}`,
 		{ method: "DELETE" },
 	);
-	console.log(`${chalk.green("✓")} Detached from ${agentId}.`);
+	console.log(`${chalk.green("✓")} Unlinked from ${agentId}.`);
 	console.log(chalk.gray("  Project membership unchanged."));
 }
 
@@ -154,7 +152,7 @@ export async function agentProjectsReorderCommand(
 	agentId: string,
 	opts: { item?: string[] },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const itemError = "--item must use <id>:<order> with order >= 1.";
 	const items = (opts.item ?? []).map((raw) => {
 		const parts = raw.split(":");
@@ -178,7 +176,7 @@ export async function agentProjectsReorderCommand(
 			body: JSON.stringify({ items }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Updated order for ${agentId}.`);
+	console.log(`${chalk.green("✓")} Updated Vault resolution priority for ${agentId}.`);
 }
 
 function formatBindingProject(row: BindingRow, projectsById: Map<string, ProjectBrief>): string {
@@ -188,7 +186,7 @@ function formatBindingProject(row: BindingRow, projectsById: Map<string, Project
 	const name = project?.name && project.name !== project.slug ? ` ${chalk.dim(project.name)}` : "";
 	const meta =
 		row.binding_type === "context"
-			? `id=${row.id} project=${row.project_id.slice(0, 8)}... order=${row.priority}`
+			? `id=${row.id} project=${row.project_id.slice(0, 8)}... vault_priority=${row.priority}`
 			: `project=${row.project_id.slice(0, 8)}...`;
 	return `${chalk.cyan(alias)} ${chalk.gray(ownership)}${name} ${chalk.gray(meta)}`;
 }

@@ -1,8 +1,7 @@
 "use client";
 
 import type { paths } from "@clawdi/shared/api";
-import { queryOptions } from "@tanstack/react-query";
-import { unwrap, type useApi } from "@/lib/api";
+import type { OpenApiClient } from "@/lib/api";
 
 export const SESSION_LIST_STALE_MS = 60_000;
 export const SESSION_LIST_GC_MS = 10 * 60_000;
@@ -11,7 +10,6 @@ export const SESSION_DETAIL_GC_MS = 10 * 60_000;
 export const SESSION_MESSAGES_STALE_MS = 5 * 60_000;
 export const SESSION_MESSAGES_GC_MS = 30 * 60_000;
 
-type ApiClient = ReturnType<typeof useApi>;
 export type SessionListQuery = NonNullable<paths["/v1/sessions"]["get"]["parameters"]["query"]>;
 
 const DEFAULT_SESSION_LIST_QUERY = {
@@ -72,20 +70,26 @@ export function normalizeSessionListQuery(query: SessionListQuery = {}): Session
 }
 
 export function sessionListQueryKey(query: SessionListQuery = {}) {
-	return ["sessions", "list", normalizeSessionListQuery(query)] as const;
+	return ["get", "/v1/sessions", { params: { query: normalizeSessionListQuery(query) } }] as const;
 }
 
-export function sessionListQueryOptions(api: ApiClient, query: SessionListQuery = {}) {
+export function sessionDetailQueryKey(sessionId: string) {
+	return [
+		"get",
+		"/v1/sessions/{session_id}",
+		{ params: { path: { session_id: sessionId } } },
+	] as const;
+}
+
+export function sessionListQueryOptions(api: OpenApiClient, query: SessionListQuery = {}) {
 	const normalized = normalizeSessionListQuery(query);
-	return queryOptions({
-		queryKey: sessionListQueryKey(normalized),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/sessions", {
-					params: { query: normalized },
-				}),
-			),
-		staleTime: SESSION_LIST_STALE_MS,
-		gcTime: SESSION_LIST_GC_MS,
-	});
+	return api.queryOptions(
+		"get",
+		"/v1/sessions",
+		{ params: { query: normalized } },
+		{
+			staleTime: SESSION_LIST_STALE_MS,
+			gcTime: SESSION_LIST_GC_MS,
+		},
+	);
 }

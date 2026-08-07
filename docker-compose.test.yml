@@ -12,6 +12,8 @@ services:
     pids_limit: ${CLAWDI_TEST_RUNNER_PIDS_LIMIT:-512}
     environment:
       HOME: /tmp/clawdi-home
+      USER: clawdi-test
+      LOGNAME: clawdi-test
       CLAWDI_NO_AUTO_UPDATE: "1"
       CLAWDI_NO_UPDATE_CHECK: "1"
       BUN_INSTALL_CACHE_DIR: /var/cache/bun
@@ -32,7 +34,9 @@ services:
         condition: service_healthy
 
   postgres:
-    image: pgvector/pgvector:0.8.1-pg16
+    # Compose cannot import config/postgres-image.txt; the parity contract
+    # keeps this required literal copy equal to that authority.
+    image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:a1fdff3df831a4cd165795cc4c78d5e8d99ed7d279438e59fc30d75b8d10dd67
     cpus: ${CLAWDI_TEST_POSTGRES_CPUS:-2}
     mem_limit: ${CLAWDI_TEST_POSTGRES_MEMORY_LIMIT:-1g}
     memswap_limit: ${CLAWDI_TEST_POSTGRES_MEMORY_LIMIT:-1g}
@@ -43,7 +47,7 @@ services:
       POSTGRES_USER: clawdi
       POSTGRES_PASSWORD: clawdi_test
     tmpfs:
-      - /var/lib/postgresql/data:rw,nosuid,nodev,noexec,size=1g
+      - /var/lib/postgresql:rw,nosuid,nodev,noexec,size=1g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U clawdi -d clawdi_test"]
       interval: 2s

@@ -4,8 +4,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 interface CopyToastCopy {
-	/** Success toast title. Defaults to "Copied to clipboard". */
-	success?: string;
+	/** Success toast title. Defaults to "Copied to clipboard"; false suppresses it. */
+	success?: string | false;
 	/** Failure toast title (clipboard blocked / insecure context). */
 	error?: string;
 }
@@ -23,7 +23,7 @@ export function useCopyToClipboard(toasts: CopyToastCopy = {}) {
 		try {
 			await navigator.clipboard.writeText(value);
 			setCopied(true);
-			toast.success(toasts.success ?? "Copied to clipboard");
+			if (toasts.success !== false) toast.success(toasts.success ?? "Copied to clipboard");
 			setTimeout(() => setCopied(false), 1500);
 		} catch {
 			toast.error(toasts.error ?? "Couldn’t copy — select and copy manually.");

@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import type {
@@ -31,7 +32,7 @@ import type {
 	ComputePlanSlug,
 	Plan,
 } from "@/hosted/billing/contracts";
-import { billingTermLabel, formatCents } from "@/hosted/billing/format";
+import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
 import {
 	computeTierLabel,
 	explicitPlanOffers,
@@ -65,12 +66,14 @@ export function PlanChangeDialog({
 	defaultFundingSource,
 	fundingSourceSelectable,
 	quote,
-	walletBalanceCredits,
+	walletBalanceUsd,
 	isQuoting,
 	isConfirming,
+	hasAcceptedChange,
 	onQuote,
 	onConfirm,
 	onTopUp,
+	onExitComplete,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -80,12 +83,14 @@ export function PlanChangeDialog({
 	defaultFundingSource: PlanChangeSelection["funding_source"];
 	fundingSourceSelectable: boolean;
 	quote: ComputePlanChangeQuoteResponse | null;
-	walletBalanceCredits: number | null;
+	walletBalanceUsd: string | null;
 	isQuoting: boolean;
 	isConfirming: boolean;
+	hasAcceptedChange: boolean;
 	onQuote: (selection: PlanChangeSelection) => void;
 	onConfirm: (operationId: string) => void;
 	onTopUp?: () => void;
+	onExitComplete?: () => void;
 }) {
 	const initialSelection = useMemo(
 		() =>
@@ -93,6 +98,8 @@ export function PlanChangeDialog({
 		[currentBillingTermMonths, currentPlanSlug, defaultFundingSource],
 	);
 	const [selection, setSelection] = useState(initialSelection);
+	const exit = useDialogExitLifecycle({ open, value: quote, emptyValue: null });
+	const displayedQuote = exit.renderedValue;
 	const selectedPlan =
 		selection.target_plan_slug === "compute_performance"
 			? resolvePerformancePlan(plans)
@@ -106,14 +113,17 @@ export function PlanChangeDialog({
 		(offer) => offer.billing_term_months === selection.target_billing_term_months,
 	);
 	const noChange = isSamePlanChangeSelection(selection, currentPlanSlug, currentBillingTermMonths);
-	const walletBalanceBefore = walletBalanceCredits === null ? null : String(walletBalanceCredits);
-	const quoteFundingSource = quote?.funding_source ?? selection.funding_source;
+	const quoteFundingSource = displayedQuote?.funding_source ?? selection.funding_source;
 	const walletBalanceAfter =
-		quoteFundingSource === "wallet" && quote?.amount_credits && walletBalanceBefore
-			? walletBalanceAfterDebit(walletBalanceBefore, quote.amount_credits)
+		quoteFundingSource === "wallet" && displayedQuote?.amount_usd && walletBalanceUsd
+			? walletBalanceAfterDebit(walletBalanceUsd, displayedQuote.amount_usd)
 			: null;
 	const walletInsufficient = walletBalanceAfter?.startsWith("-") ?? false;
-	const walletReady = selection.funding_source !== "wallet" || walletBalanceCredits !== null;
+	const walletQuoteMissingAmount =
+		quoteFundingSource === "wallet" &&
+		displayedQuote?.change_kind === "immediate_upgrade" &&
+		!displayedQuote.amount_usd;
+	const walletReady = selection.funding_source !== "wallet" || walletBalanceUsd !== null;
 
 	useEffect(() => {
 		if (open) setSelection(initialSelection);
@@ -146,63 +156,85 @@ export function PlanChangeDialog({
 	}
 
 	const quoteTitle =
-		quote?.change_kind === "immediate_upgrade" ? "Confirm immediate upgrade" : "Schedule downgrade";
+		displayedQuote?.change_kind === "immediate_upgrade"
+			? "Confirm immediate upgrade"
+			: "Schedule downgrade";
 	const confirmLabel =
-		quote?.change_kind === "immediate_upgrade" ? "Confirm upgrade" : "Schedule downgrade";
+		displayedQuote?.change_kind === "immediate_upgrade" ? "Confirm upgrade" : "Schedule downgrade";
+	const busyLabel =
+		displayedQuote?.change_kind === "immediate_upgrade"
+			? "Confirming plan change…"
+			: "Scheduling downgrade…";
+	const blocksClose = isQuoting || (isConfirming && !hasAcceptedChange);
+	function requestOpenChange(nextOpen: boolean) {
+		if (blocksClose) return;
+		if (nextOpen) exit.beginOpen();
+		else exit.beginClose();
+		onOpenChange(nextOpen);
+	}
 
 	return (
 		<Dialog
 			open={open}
-			onOpenChange={(nextOpen) => {
-				if (!isQuoting && !isConfirming) onOpenChange(nextOpen);
+			onOpenChange={requestOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) {
+					exit.completeClose();
+					onExitComplete?.();
+				}
 			}}
 		>
-			<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!isConfirming}>
+			<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!blocksClose}>
 				<DialogHeader>
-					<DialogTitle>{quote ? quoteTitle : "Change compute subscription"}</DialogTitle>
+					<DialogTitle>{displayedQuote ? quoteTitle : "Change compute subscription"}</DialogTitle>
 					<DialogDescription>
-						{quote
-							? quote.change_kind === "immediate_upgrade"
+						{displayedQuote
+							? displayedQuote.change_kind === "immediate_upgrade"
 								? "The quoted proration is charged now. Compute changes after payment is confirmed."
-								: `The current plan remains active until ${formatShortDate(quote.effective_at)}.`
-							: "Choose a compute plan and monthly or annual billing, then review the server quote."}
+								: `The current plan remains active until ${formatShortDate(displayedQuote.effective_at)}.`
+							: "Choose a compute plan and monthly or annual billing, then review the exact price and timing."}
 					</DialogDescription>
 				</DialogHeader>
 
-				{quote ? (
+				{displayedQuote ? (
 					<div className="flex flex-col gap-4">
 						<div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
 							<dl>
 								<dt className="text-xs text-muted-foreground">New subscription</dt>
 								<dd className="font-medium">
-									{computeTierLabel(planSlug(quote.target_plan_slug))} ·{" "}
-									{billingTermLabel(quote.target_billing_term_months)}
+									{computeTierLabel(planSlug(displayedQuote.target_plan_slug))} ·{" "}
+									{billingTermLabel(displayedQuote.target_billing_term_months)}
 								</dd>
 							</dl>
 							<dl>
 								<dt className="text-xs text-muted-foreground">
-									{quote.change_kind === "immediate_upgrade" ? "Due now" : "Effective date"}
+									{displayedQuote.change_kind === "immediate_upgrade"
+										? "Due now"
+										: "Effective date"}
 								</dt>
 								<dd className="font-medium tabular-nums">
-									{quote.change_kind === "immediate_upgrade"
-										? formatCents(quote.amount_cents)
-										: formatShortDate(quote.effective_at)}
+									{displayedQuote.change_kind === "immediate_upgrade"
+										? quoteFundingSource === "wallet"
+											? displayedQuote.amount_usd
+												? formatUsdExact(displayedQuote.amount_usd)
+												: "—"
+											: formatCents(displayedQuote.amount_cents)
+										: formatShortDate(displayedQuote.effective_at)}
 								</dd>
 							</dl>
 						</div>
 						{quoteFundingSource === "wallet" &&
-						quote.change_kind === "immediate_upgrade" &&
-						quote.amount_credits &&
-						walletBalanceBefore &&
+						displayedQuote.change_kind === "immediate_upgrade" &&
+						displayedQuote.amount_usd &&
+						walletBalanceUsd &&
 						walletBalanceAfter ? (
 							<WalletDebitEquation
-								balanceBeforeCredits={walletBalanceBefore}
-								exactDebitCredits={quote.amount_credits}
-								exactDebitCents={quote.amount_cents}
-								balanceAfterCredits={walletBalanceAfter}
+								balanceBeforeUsd={walletBalanceUsd}
+								debitAmountUsd={displayedQuote.amount_usd}
+								balanceAfterUsd={walletBalanceAfter}
 							/>
 						) : null}
-						{quote.change_kind === "scheduled_downgrade" ? (
+						{displayedQuote.change_kind === "scheduled_downgrade" ? (
 							<Alert>
 								<CalendarClock aria-hidden />
 								<AlertTitle>No charge today</AlertTitle>
@@ -215,24 +247,48 @@ export function PlanChangeDialog({
 						{walletInsufficient ? (
 							<Alert variant="destructive">
 								<TriangleAlert aria-hidden />
-								<AlertTitle>Not enough AI Credits</AlertTitle>
+								<AlertTitle>Not enough Wallet balance</AlertTitle>
 								<AlertDescription className="flex flex-col items-start gap-3">
-									<span>Top up the shortfall, then request a fresh server quote.</span>
+									<span>Top up the shortfall, then request a fresh price.</span>
 									{onTopUp ? (
 										<Button type="button" size="sm" variant="outline" onClick={onTopUp}>
-											<WalletCards data-icon="inline-start" /> Top up AI Credits
+											<WalletCards data-icon="inline-start" /> Top up Wallet
 										</Button>
 									) : null}
 								</AlertDescription>
 							</Alert>
 						) : null}
+						{walletQuoteMissingAmount ? (
+							<Alert variant="destructive">
+								<TriangleAlert aria-hidden />
+								<AlertTitle>Wallet quote is incomplete</AlertTitle>
+								<AlertDescription>
+									Request a fresh quote before confirming this plan change.
+								</AlertDescription>
+							</Alert>
+						) : null}
+						{hasAcceptedChange ? (
+							<Alert>
+								<CalendarClock aria-hidden />
+								<AlertTitle>Still waiting for confirmation</AlertTitle>
+								<AlertDescription>
+									We don’t have a final result yet. Don’t submit another plan change. You can close
+									this window and check again in a few minutes; if it still hasn’t finished, contact
+									support. Checking only reads the status and does not submit another charge.
+								</AlertDescription>
+							</Alert>
+						) : null}
 						<DialogFooter>
-							<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isConfirming}>
-								Back
+							<Button
+								variant="ghost"
+								onClick={() => requestOpenChange(false)}
+								disabled={blocksClose}
+							>
+								{hasAcceptedChange ? "Close" : "Back"}
 							</Button>
 							<Button
-								onClick={() => onConfirm(quote.operation_id)}
-								disabled={isConfirming || walletInsufficient}
+								onClick={() => onConfirm(displayedQuote.operation_id)}
+								disabled={isConfirming || walletInsufficient || walletQuoteMissingAmount}
 							>
 								{isConfirming ? (
 									<Spinner data-icon="inline-start" />
@@ -241,7 +297,13 @@ export function PlanChangeDialog({
 								) : (
 									<CreditCard data-icon="inline-start" />
 								)}
-								{confirmLabel}
+								{isConfirming
+									? hasAcceptedChange
+										? "Checking status…"
+										: busyLabel
+									: hasAcceptedChange
+										? "Check status"
+										: confirmLabel}
 							</Button>
 						</DialogFooter>
 					</div>
@@ -321,13 +383,12 @@ export function PlanChangeDialog({
 						) : null}
 						{selectedOffer ? (
 							<p className="text-sm text-muted-foreground">
-								Server quote required · listed recurring price{" "}
-								{formatCents(selectedOffer.price_cents)}
+								Listed recurring price {formatCents(selectedOffer.price_cents)}
 								{selectedOffer.billing_term_months === 1 ? "/month" : "/year"}
 							</p>
 						) : null}
 						<DialogFooter>
-							<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isQuoting}>
+							<Button variant="ghost" onClick={() => requestOpenChange(false)} disabled={isQuoting}>
 								Cancel
 							</Button>
 							<Button

@@ -1,19 +1,23 @@
+import { PageHeaderSkeleton } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 /**
  * Loading fallback for hosted-build-gated lazy route imports (billing,
  * channels, ai-providers, deploy). Without it the chunk load shows a blank frame before
- * the page's own skeleton mounts. Header + body skeleton matching the canonical
- * `px-4 lg:px-6` page chrome.
+ * the page's own skeleton mounts. Its header and flat sections mirror Settings
+ * page chrome so lazy loading does not shift the content hierarchy.
  */
 export function HostedRouteSkeleton() {
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
-			<div className="space-y-2">
-				<Skeleton className="h-8 w-48" />
-				<Skeleton className="h-4 w-72" />
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
+			<PageHeaderSkeleton actions />
+			<div className="space-y-4">
+				<Skeleton className="h-4 w-28" />
+				<Skeleton className="h-4 w-56 max-w-full" />
+				<Skeleton className="h-24 w-full rounded-lg" />
 			</div>
-			<Skeleton className="h-48 w-full rounded-lg" />
 		</div>
 	);
 }

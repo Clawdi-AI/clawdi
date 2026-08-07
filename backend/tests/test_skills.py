@@ -14,10 +14,38 @@ import uuid
 
 import httpx
 import pytest
+import yaml
+from sqlalchemy import select
 
+from app.core.auth import AuthContext
+from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    SKILL_SYNC_PROTOCOL_HEADER,
+)
+from app.models.skill import Skill
+from app.models.user import User
+from app.routes import skills as skill_routes
+from app.routes.skills import _compute_file_tree_hash
+from app.services.file_store import FileStore, get_file_store
+from app.services.skill_installer import SkillPackage
 from app.services.tar_utils import tar_from_content
 
 pytestmark = pytest.mark.committed_db
+
+AGENT_SKILL_SYNC_HEADERS = {
+    SKILL_SYNC_PROTOCOL_HEADER: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+}
+
+
+def _archive_with_files(skill_key: str, files: dict[str, bytes]) -> bytes:
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        for relative_path, content in files.items():
+            info = tarfile.TarInfo(name=f"{skill_key}/{relative_path}")
+            info.size = len(content)
+            info.mode = 0o644
+            archive.addfile(info, io.BytesIO(content))
+    return output.getvalue()
 
 
 @pytest.mark.asyncio
@@ -48,6 +76,119 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: st
     # Detail endpoint returns the SKILL.md content extracted on the server.
     detail = (await client.get("/v1/skills/hello")).json()
     assert "# Hello" in (detail["content"] or "")
+
+
+@pytest.mark.asyncio
+async def test_project_copy_move_preconditions_preserve_existing_skill(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    skill_key = "conflict-safe-copy"
+    original, _ = tar_from_content(
+        skill_key,
+        "---\nname: Conflict safe copy\ndescription: original\n---\n# Original\n",
+    )
+    created = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("original.tar.gz", original, "application/gzip")},
+    )
+    assert created.status_code == 200, created.text
+    original_hash = created.json()["content_hash"]
+
+    replacement, _ = tar_from_content(
+        skill_key,
+        "---\nname: Conflict safe copy\ndescription: replacement\n---\n# Replacement\n",
+    )
+    conflict = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key, "create_only": "true"},
+        files={"file": ("replacement.tar.gz", replacement, "application/gzip")},
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.json()["detail"]["code"] == "skill_name_conflict"
+
+    updated = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("replacement.tar.gz", replacement, "application/gzip")},
+    )
+    assert updated.status_code == 200, updated.text
+    replacement_hash = updated.json()["content_hash"]
+
+    stale_delete = await client.delete(
+        f"/v1/projects/{project_id}/skills/{skill_key}",
+        params={"expected_content_hash": original_hash},
+    )
+    assert stale_delete.status_code == 412, stale_delete.text
+    assert stale_delete.json()["detail"]["current_content_hash"] == replacement_hash
+    current = await client.get(f"/v1/projects/{project_id}/skills/{skill_key}/download")
+    assert current.status_code == 200, current.text
+    assert current.content == replacement
+
+    deleted = await client.delete(
+        f"/v1/projects/{project_id}/skills/{skill_key}",
+        params={"expected_content_hash": replacement_hash},
+    )
+    assert deleted.status_code == 200, deleted.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        "---\nname: invalid\ndescription: metadata\n---\n# Body\x00\n",
+        '---\nname: "invalid\\0name"\ndescription: metadata\n---\n# Body\n',
+        '---\nname: invalid\ndescription: "invalid\\0description"\n---\n# Body\n',
+    ],
+)
+async def test_skill_upload_rejects_nul_text_before_persistence(
+    client: httpx.AsyncClient,
+    project_id: str,
+    content: str,
+):
+    tar_bytes, _ = tar_from_content("invalid-nul", content)
+
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "invalid-nul"},
+        files={"file": ("invalid-nul.tar.gz", tar_bytes, "application/gzip")},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == {
+        "code": "invalid_skill_text",
+        "message": "SKILL.md must not contain NUL characters.",
+    }
+    missing = await client.get(f"/v1/projects/{project_id}/skills/invalid-nul")
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parser_error", [RecursionError, UnicodeError])
+async def test_skill_upload_treats_yaml_parser_failures_as_empty_frontmatter(
+    client: httpx.AsyncClient,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    parser_error: type[Exception],
+):
+    def fail_to_parse(_raw: str):
+        raise parser_error("pathological frontmatter")
+
+    monkeypatch.setattr(yaml, "safe_load", fail_to_parse)
+    tar_bytes, _ = tar_from_content(
+        "parser-failure",
+        "---\nname: ignored\ndescription: ignored\n---\nInstructions.\n",
+    )
+
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "parser-failure"},
+        files={"file": ("parser-failure.tar.gz", tar_bytes, "application/gzip")},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "parser-failure"
 
 
 @pytest.mark.asyncio
@@ -82,7 +223,9 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     r = await client.put(
         f"/v1/projects/{project_id}/skills/editme/content",
         json={
-            "content": "---\nname: editme\ndescription: edited\n---\n# Edited\n",
+            "name": "Edit me",
+            "description": "edited",
+            "instructions": "# Edited",
             "content_hash": stale,
         },
     )
@@ -100,7 +243,9 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     ok = await client.put(
         f"/v1/projects/{project_id}/skills/editme/content",
         json={
-            "content": "---\nname: editme\ndescription: edited\n---\n# Edited\n",
+            "name": "Edit me",
+            "description": "edited",
+            "instructions": "# Edited",
             "content_hash": current_hash,
         },
     )
@@ -110,12 +255,8 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
 
 
 @pytest.mark.asyncio
-async def test_dashboard_edit_without_content_hash_is_last_write_wins(
-    client: httpx.AsyncClient, project_id: str
-):
-    """The `content_hash` field is optional. Phase-1 dashboard editor
-    leaves it blank for last-write-wins. Verify the omitted-hash path
-    still applies the edit even when the row exists."""
+async def test_dashboard_edit_requires_content_hash(client: httpx.AsyncClient, project_id: str):
+    """Modern Web edits are conflict-safe and never silently overwrite."""
     seed_content = "---\nname: lww\ndescription: original\n---\n# Original\n"
     tar_bytes, _ = tar_from_content("lww", seed_content)
     await client.post(
@@ -127,12 +268,246 @@ async def test_dashboard_edit_without_content_hash_is_last_write_wins(
     r = await client.put(
         f"/v1/projects/{project_id}/skills/lww/content",
         json={
-            "content": "---\nname: lww\ndescription: edited\n---\n# Edited\n",
+            "name": "LWW",
+            "description": "edited",
+            "instructions": "# Edited",
         },
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 422, r.text
     after = await client.get(f"/v1/projects/{project_id}/skills/lww")
-    assert "# Edited" in after.json().get("content", "")
+    assert "# Original" in after.json().get("content", "")
+
+
+@pytest.mark.asyncio
+async def test_native_create_is_project_explicit_and_conflict_safe(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    created = await client.post(
+        f"/v1/projects/{project_id}/skills",
+        json={
+            "name": "Review pull requests",
+            "description": "Review code carefully",
+            "instructions": "Check correctness, tests, and rollback safety.",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["skill_key"] == "review-pull-requests"
+    detail = await client.get(f"/v1/projects/{project_id}/skills/review-pull-requests")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["name"] == "Review pull requests"
+    assert detail.json()["description"] == "Review code carefully"
+    assert "Check correctness" in detail.json()["content"]
+
+    duplicate = await client.post(
+        f"/v1/projects/{project_id}/skills",
+        json={
+            "name": "Review pull requests",
+            "description": "A conflicting create",
+            "instructions": "This must not overwrite the first Skill.",
+        },
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()["detail"]["code"] == "skill_name_conflict"
+    unchanged = await client.get(f"/v1/projects/{project_id}/skills/review-pull-requests")
+    assert "Check correctness" in unchanged.json()["content"]
+
+
+@pytest.mark.asyncio
+async def test_edit_preserves_imported_support_files(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    skill_key = "preserve-files"
+    original_md = b"""---
+name: Preserve files
+description: Imported
+license: Apache-2.0
+compatibility:
+  runtimes:
+    - openclaw
+    - hermes
+  options:
+    retries: 3
+    strict: true
+tags:
+  - review
+  - safety
+---
+
+Use the references.
+"""
+    archive = _archive_with_files(
+        skill_key,
+        {
+            "SKILL.md": original_md,
+            "references/notes.md": b"# Important notes\n",
+            "scripts/check.sh": b"#!/bin/sh\nexit 0\n",
+        },
+    )
+    uploaded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("preserve-files.tar.gz", archive, "application/gzip")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    edited = await client.put(
+        f"/v1/projects/{project_id}/skills/{skill_key}/content",
+        json={
+            "name": "Preserve files",
+            "description": None,
+            "instructions": "Read references/notes.md, then run scripts/check.sh.",
+            "content_hash": uploaded.json()["content_hash"],
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    downloaded = await client.get(f"/v1/projects/{project_id}/skills/{skill_key}/download")
+    assert downloaded.status_code == 200, downloaded.text
+    with tarfile.open(fileobj=io.BytesIO(downloaded.content), mode="r:gz") as result:
+        names = set(result.getnames())
+        assert f"{skill_key}/references/notes.md" in names
+        assert f"{skill_key}/scripts/check.sh" in names
+        notes = result.extractfile(f"{skill_key}/references/notes.md")
+        script = result.extractfile(f"{skill_key}/scripts/check.sh")
+        skill_md = result.extractfile(f"{skill_key}/SKILL.md")
+        assert notes is not None and notes.read() == b"# Important notes\n"
+        assert script is not None and script.read() == b"#!/bin/sh\nexit 0\n"
+        assert skill_md is not None
+        rendered = skill_md.read().decode()
+    raw_frontmatter, body = rendered.removeprefix("---\n").split("\n---\n", 1)
+    metadata = yaml.safe_load(raw_frontmatter)
+    assert metadata == {
+        "name": "Preserve files",
+        "license": "Apache-2.0",
+        "compatibility": {
+            "runtimes": ["openclaw", "hermes"],
+            "options": {"retries": 3, "strict": True},
+        },
+        "tags": ["review", "safety"],
+    }
+    assert body.strip() == "Read references/notes.md, then run scripts/check.sh."
+
+
+@pytest.mark.asyncio
+async def test_edit_fails_closed_without_exact_root_skill_md(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    skill_key = "missing-root-document"
+    archive = _archive_with_files(
+        skill_key,
+        {
+            "references/SKILL.md": b"---\nname: Nested only\nunknown: keep-me\n---\nNested.\n",
+            "references/notes.md": b"Must remain unchanged.\n",
+        },
+    )
+    uploaded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("missing-root-document.tar.gz", archive, "application/gzip")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    edited = await client.put(
+        f"/v1/projects/{project_id}/skills/{skill_key}/content",
+        json={
+            "name": "Replacement",
+            "description": None,
+            "instructions": "This must not be written.",
+            "content_hash": uploaded.json()["content_hash"],
+        },
+    )
+    assert edited.status_code == 409, edited.text
+
+    downloaded = await client.get(f"/v1/projects/{project_id}/skills/{skill_key}/download")
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == archive
+
+
+@pytest.mark.asyncio
+async def test_failed_db_commit_cannot_change_committed_skill_object_identity(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user: User,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    skill_key = "immutable-object"
+    old_archive, _ = tar_from_content(
+        skill_key,
+        "---\nname: Immutable object\ndescription: old\n---\n# Old\n",
+    )
+    seeded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("immutable-object.tar.gz", old_archive, "application/gzip")},
+    )
+    assert seeded.status_code == 200, seeded.text
+    project_uuid = uuid.UUID(project_id)
+    committed = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == project_uuid,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    old_file_key = committed.file_key
+    old_hash = committed.content_hash
+    assert old_file_key is not None
+    file_store = get_file_store()
+    assert await file_store.get(old_file_key) == old_archive
+
+    new_archive, _ = tar_from_content(
+        skill_key,
+        "---\nname: Immutable object\ndescription: new\n---\n# New\n",
+    )
+    new_hash = _compute_file_tree_hash(new_archive, skill_key)
+    new_file_key = skill_routes._file_key(
+        seed_user.id,
+        project_uuid,
+        skill_key,
+        new_hash,
+    )
+    assert new_file_key != old_file_key
+    real_commit = db_session.commit
+    commit_count = 0
+
+    async def fail_final_commit() -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            await db_session.rollback()
+            raise RuntimeError("injected commit failure")
+        await real_commit()
+
+    monkeypatch.setattr(db_session, "commit", fail_final_commit)
+    with pytest.raises(RuntimeError, match="injected commit failure"):
+        await skill_routes._do_upload_skill(
+            db=db_session,
+            auth=AuthContext(user=seed_user),
+            project_id=project_uuid,
+            skill_key=skill_key,
+            data=new_archive,
+            content_hash=None,
+        )
+
+    row = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == project_uuid,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    assert row.content_hash == old_hash
+    assert row.file_key == old_file_key
+    assert await file_store.get(old_file_key) == old_archive
+    assert await file_store.exists(new_file_key) is True
+    await file_store.delete(new_file_key)
 
 
 @pytest.mark.asyncio
@@ -204,36 +579,37 @@ async def test_skill_upload_changed_content_bumps_version(
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_accepts_client_supplied_hash(
+async def test_skill_upload_verifies_client_supplied_hash(
     client: httpx.AsyncClient, project_id: str
 ):
-    """New CLIs (>= 0.3.4) compute a file-tree hash and send it as a form
-    field. Server should trust it and skip its own hashing.
-
-    Backwards-compat is exercised by `test_skill_upload_happy_path` which
-    intentionally omits the field.
-    """
+    """The server verifies rather than trusting a caller-supplied tree hash."""
     import hashlib
 
     content = "---\nname: hashed\ndescription: hashed skill\n---\n# Hashed\n"
     tar_bytes, _ = tar_from_content("hashed", content)
     files = {"file": ("hashed.tar.gz", tar_bytes, "application/gzip")}
 
-    # Send a phony hash. Server should trust it (sync optimization, not
-    # security boundary). The test verifies that two pushes with the
-    # SAME phony hash skip the bump — proving the field actually got used.
     fake_hash = hashlib.sha256(b"client-says-this").hexdigest()
     data = {"skill_key": "hashed", "content_hash": fake_hash}
 
-    first = await client.post(f"/v1/projects/{project_id}/skills/upload", data=data, files=files)
-    assert first.status_code == 200, first.text
-    assert first.json()["version"] == 1
+    mismatch = await client.post(f"/v1/projects/{project_id}/skills/upload", data=data, files=files)
+    assert mismatch.status_code == 400, mismatch.text
+    assert mismatch.json()["detail"]["code"] == "skill_content_hash_mismatch"
 
-    second = await client.post(f"/v1/projects/{project_id}/skills/upload", data=data, files=files)
-    assert second.status_code == 200, second.text
-    assert second.json()["version"] == 1, (
-        "second push with same client-supplied hash must skip the bump"
+    first = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "hashed"},
+        files=files,
     )
+    assert first.status_code == 200, first.text
+    computed_hash = first.json()["content_hash"]
+    second = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "hashed", "content_hash": computed_hash},
+        files=files,
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["version"] == 1
 
 
 @pytest.mark.asyncio
@@ -264,6 +640,62 @@ async def test_skill_upload_rejects_path_traversal(client: httpx.AsyncClient, pr
     # Negative contract: body must NOT echo the attacker-supplied
     # member name — that would be an uncontrolled reflection vector.
     assert "../evil" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_skill_upload_rejects_reserved_management_metadata(
+    client: httpx.AsyncClient, project_id: str
+):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, payload in (
+            ("example/SKILL.md", b"# Example\n"),
+            ("example/.clawdi-managed.json", b"{}\n"),
+        ):
+            info = tarfile.TarInfo(name=name)
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "example"},
+        files={"file": ("example.tar.gz", buf.getvalue(), "application/gzip")},
+    )
+    assert response.status_code == 400, response.text
+    assert "archive validation failed" in response.text.lower()
+    assert ".clawdi-managed" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_marketplace_install_rejects_reserved_management_metadata(
+    client: httpx.AsyncClient, project_id: str, monkeypatch: pytest.MonkeyPatch
+):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, payload in (
+            ("example/SKILL.md", b"# Example\n"),
+            ("example/.clawdi-managed.json", b"{}\n"),
+        ):
+            info = tarfile.TarInfo(name=name)
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+
+    async def fake_fetch(_repo: str, _path: str | None = None) -> SkillPackage:
+        return SkillPackage(
+            name="example",
+            description="example",
+            tar_bytes=buf.getvalue(),
+            file_count=2,
+            repo="owner/repo",
+        )
+
+    monkeypatch.setattr("app.services.skill_installer.fetch_skill_from_github", fake_fetch)
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/install",
+        json={"repo": "owner/repo", "path": "example"},
+    )
+    assert response.status_code == 400, response.text
+    assert "archive validation failed" in response.text.lower()
+    assert ".clawdi-managed" not in response.text
 
 
 @pytest.mark.asyncio
@@ -416,8 +848,7 @@ def test_compute_file_tree_hash_strips_nested_skill_key():
     segment ("category"), so the relative path was
     `foo/SKILL.md`. The CLI hashes paths inside the skill dir
     so its computed path is `SKILL.md`. Hashes never matched →
-    every reconcile re-pulled the same bytes and SSE echo
-    suppression failed.
+    every reconcile re-uploaded the same local bytes instead of converging.
 
     This unit test pins the algorithm: same payload, different
     skill_key (flat vs nested), different number of stripped
@@ -503,10 +934,14 @@ async def test_nested_skill_round_trips_through_project_routes(
 
     # PUT content — also a more-specific subroute; ordering matters
     # the same way it does for download.
-    new_md = "---\nname: nested\ndescription: edited via project PUT\n---\n# Nested v2\n"
     r_put = await client.put(
         f"/v1/projects/{project_id}/skills/{nested_key}/content",
-        json={"content": new_md},
+        json={
+            "name": "Nested",
+            "description": "edited via project PUT",
+            "instructions": "# Nested v2",
+            "content_hash": r_upload.json()["content_hash"],
+        },
     )
     assert r_put.status_code == 200, r_put.text
 
@@ -593,8 +1028,55 @@ async def test_skill_upload_requires_skill_md(client: httpx.AsyncClient, project
 
 
 @pytest.mark.asyncio
+async def test_skill_upload_rejects_non_utf8_skill_md(
+    client: httpx.AsyncClient,
+    project_id: str,
+):
+    archive = _archive_with_files("invalid-utf8", {"SKILL.md": b"\xff\xfe"})
+
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "invalid-utf8"},
+        files={"file": ("invalid-utf8.tar.gz", archive, "application/gzip")},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "Archive must contain a SKILL.md"
+
+
+@pytest.mark.asyncio
+async def test_explicit_skills_list_hides_archived_project(
+    client: httpx.AsyncClient,
+    workspace_project,
+):
+    project_id = str(workspace_project.id)
+    tar_bytes, _ = tar_from_content(
+        "archived-skill",
+        "---\nname: Archived skill\ndescription: hidden after archive\n---\nInstructions.\n",
+    )
+    uploaded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "archived-skill"},
+        files={"file": ("archived-skill.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    visible = await client.get("/v1/skills", params={"project_id": project_id})
+    assert visible.status_code == 200, visible.text
+    assert [item["skill_key"] for item in visible.json()["items"]] == ["archived-skill"]
+
+    archived = await client.delete(f"/v1/projects/{project_id}")
+    assert archived.status_code == 200, archived.text
+
+    hidden = await client.get("/v1/skills", params={"project_id": project_id})
+    assert hidden.status_code == 200, hidden.text
+    assert hidden.json()["total"] == 0
+    assert hidden.json()["items"] == []
+
+
+@pytest.mark.asyncio
 async def test_list_skills_etag_binds_revision_and_project(
-    client: httpx.AsyncClient, db_session, seed_user, project_id: str
+    client: httpx.AsyncClient, workspace_project, project_id: str
 ):
     """Round-32 P2 regression: the conditional GET ETag on
     `/api/skills` must bind both `skills_revision` AND `project_id`.
@@ -604,8 +1086,6 @@ async def test_list_skills_etag_binds_revision_and_project(
     (counter is account-wide, listing is project-filtered). Pre-fix
     the daemon would silently miss the new project's existing skills
     until some unrelated cloud change bumped the revision."""
-    from tests.conftest import create_env_with_project
-
     # Land a skill in project A so the list isn't empty.
     content = "---\nname: alpha\ndescription: in project A\n---\n# Hello\n"
     tar_bytes, _ = tar_from_content("alpha", content)
@@ -618,13 +1098,29 @@ async def test_list_skills_etag_binds_revision_and_project(
     # Capture project A's listing ETag.
     list_a = await client.get(f"/v1/skills?project_id={project_id}")
     assert list_a.status_code == 200, list_a.text
+    assert list_a.headers.get("Cache-Control") == "no-transform"
     etag_a = list_a.headers.get("ETag")
     assert etag_a is not None
-    # ETag carries `<revision>:<project_id>`. Sanity-check both
-    # components are present so a regression to plain
-    # `<revision>` would fail the test.
-    assert ":" in etag_a.strip('"'), f"expected revision:project tag, got {etag_a}"
+    assert etag_a.startswith('"') and etag_a.endswith('"')
+    # Keep the numeric revision first for CLI 0.13.13 parsing, then salt the
+    # corrected ordering/metadata identity so pre-fix validators cannot mask
+    # the new representation.
+    etag_parts = etag_a.strip('"').split(":")
+    assert etag_parts[0].isdigit()
+    assert etag_parts[1] == "skills-v2"
     assert project_id in etag_a, f"project_id missing from ETag {etag_a}"
+
+    legacy_etag = (
+        '"'
+        + ":".join([etag_parts[0], etag_parts[2], etag_parts[3], etag_parts[4], etag_parts[6]])
+        + '"'
+    )
+    legacy_replay = await client.get(
+        f"/v1/skills?project_id={project_id}",
+        headers={"If-None-Match": legacy_etag},
+    )
+    assert legacy_replay.status_code == 200, legacy_replay.text
+    assert legacy_replay.headers["etag"] == etag_a
 
     # Replaying the same ETag against the same project returns 304.
     r304 = await client.get(
@@ -632,6 +1128,31 @@ async def test_list_skills_etag_binds_revision_and_project(
         headers={"If-None-Match": etag_a},
     )
     assert r304.status_code == 304, r304.text
+    assert r304.headers.get("ETag") == etag_a
+    assert r304.headers.get("Cache-Control") == "no-transform"
+
+    # If-None-Match uses weak comparison for GET. A weak validator exposed by
+    # an intermediary must still match the origin's strong collection ETag.
+    weak_r304 = await client.get(
+        f"/v1/skills?project_id={project_id}",
+        headers={"If-None-Match": f"W/{etag_a}"},
+    )
+    assert weak_r304.status_code == 304, weak_r304.text
+    assert weak_r304.headers.get("ETag") == etag_a
+    assert weak_r304.headers.get("Cache-Control") == "no-transform"
+
+    # The hidden compatibility alias mounts this same listing contract.
+    alias_list = await client.get(f"/api/skills?project_id={project_id}")
+    assert alias_list.status_code == 200, alias_list.text
+    assert alias_list.headers.get("ETag") == etag_a
+    assert alias_list.headers.get("Cache-Control") == "no-transform"
+    alias_304 = await client.get(
+        f"/api/skills?project_id={project_id}",
+        headers={"If-None-Match": etag_a},
+    )
+    assert alias_304.status_code == 304, alias_304.text
+    assert alias_304.headers.get("ETag") == etag_a
+    assert alias_304.headers.get("Cache-Control") == "no-transform"
 
     # Now register a SECOND project and land a skill there. Crucially,
     # the second upload bumps the user-wide skills_revision (pre-fix
@@ -639,14 +1160,7 @@ async def test_list_skills_etag_binds_revision_and_project(
     # We test the stronger property anyway: the daemon's cached
     # ETag from project A must NOT cause a 304 against project B even
     # if B happened to be at the same revision.
-    env_b = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id="machine-b",
-        machine_name="Mac B",
-        agent_type="codex",
-    )
-    project_b = str(env_b.default_project_id)
+    project_b = str(workspace_project.id)
     content_b = "---\nname: beta\ndescription: in project B\n---\n# Beta\n"
     tar_bytes_b, _ = tar_from_content("beta", content_b)
     files_b = {"file": ("beta.tar.gz", tar_bytes_b, "application/gzip")}
@@ -680,52 +1194,208 @@ async def test_list_skills_etag_binds_revision_and_project(
 
 
 @pytest.mark.asyncio
-async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
+async def test_bound_api_key_skills_etag_reads_current_db_revision(
     client: httpx.AsyncClient,
+    db_session,
     seed_user,
     project_id: str,
-    monkeypatch: pytest.MonkeyPatch,
 ):
-    """Hot daemon reconcile path: a matching bound-key ETag should not open
-    the list handler's DB session.
+    """A bound key must not 304 from its TTL-cached auth revision snapshot."""
+    from sqlalchemy import update
 
-    Auth has already resolved the env-bound API key to exactly one Agent
-    Project. For that caller shape the collection ETag is derivable from the
-    auth snapshot, so the 304 path should avoid the DB-backed project
-    visibility and listing work entirely.
-    """
     from app.core.auth import AuthContext, get_auth_short_session
     from app.main import app
     from app.models.api_key import ApiKey
-    from app.routes import skills as skills_route
+    from app.models.user import User
 
     project_uuid = uuid.UUID(project_id)
+    stale_auth = AuthContext(
+        user=seed_user,
+        api_key=ApiKey(user_id=seed_user.id, environment_id=uuid.uuid4()),
+        api_key_project_id=project_uuid,
+    )
 
     async def _override_get_auth() -> AuthContext:
-        return AuthContext(
-            user=seed_user,
-            api_key=ApiKey(user_id=seed_user.id, environment_id=uuid.uuid4()),
-            api_key_project_id=project_uuid,
-        )
+        return stale_auth
 
     app.dependency_overrides[get_auth_short_session] = _override_get_auth
 
-    first = await client.get(f"/v1/skills?project_id={project_id}")
+    canonical_url = f"/v1/skills?project_id={project_id}&page=1&page_size=200"
+    first = await client.get(
+        canonical_url,
+        headers=AGENT_SKILL_SYNC_HEADERS,
+    )
     assert first.status_code == 200, first.text
+    assert first.headers.get("Cache-Control") == "no-transform"
     etag = first.headers.get("ETag")
     assert etag
+    assert etag.startswith('"') and etag.endswith('"')
+    first_revision, etag_version, *_ = etag.strip('"').split(":")
+    assert int(first_revision) == stale_auth.skills_revision
+    assert etag_version == "skills-v2"
 
-    def _fail_session_factory():
-        raise AssertionError("matching bound-key skills ETag opened a DB session")
+    # Released CLI 0.13.13 expects one ETag across every page in a complete
+    # inventory read. Preserve that fence while preventing a page-1 validator
+    # from suppressing any non-canonical representation body.
+    query_variants = [
+        (f"{canonical_url}&q=missing", True, 304),
+        (f"/v1/skills?project_id={project_id}&page=1&page_size=25", True, 304),
+        (f"/v1/skills?project_id={project_id}&page=2&page_size=200", False, 200),
+    ]
+    for url, etag_must_differ, replay_status in query_variants:
+        changed_shape = await client.get(
+            url,
+            headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
+        )
+        assert changed_shape.status_code == 200, (url, changed_shape.text)
+        variant_etag = changed_shape.headers.get("ETag")
+        assert variant_etag is not None
+        assert (variant_etag != etag) is etag_must_differ
 
-    monkeypatch.setattr(skills_route, "async_session_factory", _fail_session_factory)
+        replay = await client.get(
+            url,
+            headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": variant_etag},
+        )
+        assert replay.status_code == replay_status, (url, replay.text)
 
-    cached = await client.get(
-        f"/v1/skills?project_id={project_id}",
-        headers={"If-None-Match": etag},
+    inline = await client.get(
+        f"{canonical_url}&include_content=true",
+        headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
     )
-    assert cached.status_code == 304, cached.text
-    assert cached.headers.get("ETag") == etag
+    assert inline.status_code == 200, inline.text
+    assert inline.headers.get("etag") is None
+    inline_replay = await client.get(
+        f"{canonical_url}&include_content=true",
+        headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
+    )
+    assert inline_replay.status_code == 200, inline_replay.text
+    assert inline_replay.headers.get("etag") is None
+
+    # Simulate the API-key auth cache retaining its old user snapshot while a
+    # Skill mutation commits a newer revision in PostgreSQL.
+    await db_session.execute(
+        update(User)
+        .where(User.id == seed_user.id)
+        .values(skills_revision=User.skills_revision + 1)
+        .execution_options(synchronize_session=False)
+    )
+    await db_session.commit()
+    assert stale_auth.skills_revision == int(first_revision)
+
+    changed = await client.get(
+        canonical_url,
+        headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
+    )
+    assert changed.status_code == 200, changed.text
+    changed_etag = changed.headers["etag"]
+    assert changed_etag != etag
+    assert int(changed_etag.strip('"').split(":", 1)[0]) == int(first_revision) + 1
+
+
+@pytest.mark.asyncio
+async def test_list_skills_order_and_etag_are_stable_across_pages(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    project_id: str,
+    workspace_project,
+):
+    """Duplicate cross-project keys sort by project id with one page fence."""
+    from app.models.skill import Skill
+
+    project_ids = [uuid.UUID(project_id), workspace_project.id]
+    rows = [
+        Skill(
+            id=uuid.uuid4(),
+            user_id=seed_user.id,
+            project_id=current_project_id,
+            skill_key="same-key",
+            name=f"Skill {current_project_id}",
+            content_hash=str(index) * 64,
+        )
+        for index, current_project_id in enumerate(project_ids, start=1)
+    ]
+    db_session.add_all(reversed(rows))
+    await db_session.commit()
+
+    first = await client.get("/v1/skills", params={"page": 1, "page_size": 1})
+    second = await client.get("/v1/skills", params={"page": 2, "page_size": 1})
+    assert first.status_code == second.status_code == 200
+    assert first.headers["etag"] == second.headers["etag"]
+    listed_project_ids = [
+        first.json()["items"][0]["project_id"],
+        second.json()["items"][0]["project_id"],
+    ]
+    assert listed_project_ids == sorted(str(project) for project in project_ids)
+
+    # Compatibility debt: page 2 returns its body even when sent page 1's
+    # validator, and echoes the same collection ETag.
+    page_two_replay = await client.get(
+        "/v1/skills",
+        params={"page": 2, "page_size": 1},
+        headers={"If-None-Match": first.headers["etag"]},
+    )
+    assert page_two_replay.status_code == 200, page_two_replay.text
+    assert page_two_replay.headers["etag"] == first.headers["etag"]
+
+
+@pytest.mark.asyncio
+async def test_list_skills_etag_covers_project_and_machine_metadata(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    environment_project,
+):
+    """Metadata-only mutations must invalidate the strong list validator."""
+    from app.models.project import PROJECT_KIND_WORKSPACE
+    from app.models.session import AgentEnvironment
+    from app.models.skill import Skill
+
+    skill = Skill(
+        user_id=seed_user.id,
+        project_id=environment_project.id,
+        skill_key="metadata",
+        name="Metadata",
+        content_hash="a" * 64,
+    )
+    db_session.add(skill)
+    await db_session.commit()
+
+    url = f"/v1/skills?project_id={environment_project.id}"
+    first = await client.get(url)
+    assert first.status_code == 200, first.text
+    first_etag = first.headers["etag"]
+    revision = first_etag.strip('"').split(":", 1)[0]
+
+    environment = await db_session.get(
+        AgentEnvironment,
+        environment_project.origin_environment_id,
+    )
+    assert environment is not None
+    environment.machine_name = "Renamed machine"
+    environment_project.name = "Renamed project"
+    await db_session.commit()
+
+    renamed = await client.get(url, headers={"If-None-Match": first_etag})
+    assert renamed.status_code == 200, renamed.text
+    renamed_item = renamed.json()["items"][0]
+    assert renamed_item["project_name"] == "Renamed project"
+    assert renamed_item["machine_name"] == "Renamed machine"
+    assert renamed.headers["etag"] != first_etag
+    assert renamed.headers["etag"].strip('"').split(":", 1)[0] == revision
+
+    renamed_etag = renamed.headers["etag"]
+    environment_project.kind = PROJECT_KIND_WORKSPACE
+    environment_project.origin_environment_id = None
+    await db_session.commit()
+    detached = await client.get(url, headers={"If-None-Match": renamed_etag})
+    assert detached.status_code == 200, detached.text
+    detached_item = detached.json()["items"][0]
+    assert detached_item["project_kind"] == PROJECT_KIND_WORKSPACE
+    assert detached_item["environment_id"] is None
+    assert detached_item["machine_name"] is None
+    assert detached.headers["etag"] != renamed_etag
+    assert detached.headers["etag"].strip('"').split(":", 1)[0] == revision
 
 
 @pytest.mark.asyncio
@@ -755,17 +1425,102 @@ async def test_list_skills_releases_db_transaction_before_inline_content_fetch(
     assert upload.status_code == 200, upload.text
 
     class AssertingFileStore:
+        def __init__(self, delegate: FileStore) -> None:
+            self._delegate = delegate
+
+        async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+            await self._delegate.put(key, data, content_type)
+
         async def get(self, key: str) -> bytes:
-            assert key.endswith("/inline.tar.gz")
+            assert key.endswith(f"/{upload.json()['content_hash']}.tar.gz")
             assert not db_session.in_transaction()
             return tar_bytes
 
-    monkeypatch.setattr(skills_route, "file_store", AssertingFileStore())
+        async def delete(self, key: str) -> None:
+            await self._delegate.delete(key)
+
+        async def exists(self, key: str) -> bool:
+            return await self._delegate.exists(key)
+
+    monkeypatch.setattr(
+        skills_route,
+        "file_store",
+        AssertingFileStore(skills_route.file_store),
+    )
 
     listing = await client.get(f"/v1/skills?project_id={project_id}&include_content=true")
     assert listing.status_code == 200, listing.text
     item = next(item for item in listing.json()["items"] if item["skill_key"] == "inline")
     assert item["content"] == content
+    assert listing.headers.get("etag") is None
+
+
+@pytest.mark.asyncio
+async def test_list_skills_inline_content_failure_is_unfenced_and_retried(
+    client: httpx.AsyncClient,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A transient object-store failure must not become a reusable 304."""
+    from app.routes import skills as skills_route
+
+    content = "---\nname: retry-inline\ndescription: retry storage\n---\n# Retry\n"
+    tar_bytes, _ = tar_from_content("retry-inline", content)
+    upload = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "retry-inline"},
+        files={"file": ("retry-inline.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    metadata = await client.get(f"/v1/skills?project_id={project_id}")
+    assert metadata.status_code == 200, metadata.text
+    metadata_etag = metadata.headers["etag"]
+    real_file_store = skills_route.file_store
+
+    class FailingFileStore:
+        def __init__(self, delegate: FileStore) -> None:
+            self._delegate = delegate
+            self._failed = False
+
+        async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+            await self._delegate.put(key, data, content_type)
+
+        async def get(self, key: str) -> bytes:
+            if not self._failed:
+                self._failed = True
+                raise RuntimeError(f"temporary read failure for {key}")
+            return await self._delegate.get(key)
+
+        async def delete(self, key: str) -> None:
+            await self._delegate.delete(key)
+
+        async def exists(self, key: str) -> bool:
+            return await self._delegate.exists(key)
+
+    monkeypatch.setattr(skills_route, "file_store", FailingFileStore(real_file_store))
+    failed = await client.get(
+        f"/v1/skills?project_id={project_id}&include_content=true",
+        headers={"If-None-Match": metadata_etag},
+    )
+    assert failed.status_code == 200, failed.text
+    assert failed.headers.get("etag") is None
+    assert failed.headers["cache-control"] == "no-transform"
+    failed_item = next(
+        item for item in failed.json()["items"] if item["skill_key"] == "retry-inline"
+    )
+    assert failed_item["content"] is None
+
+    recovered = await client.get(
+        f"/v1/skills?project_id={project_id}&include_content=true",
+        headers={"If-None-Match": metadata_etag},
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.headers.get("etag") is None
+    recovered_item = next(
+        item for item in recovered.json()["items"] if item["skill_key"] == "retry-inline"
+    )
+    assert recovered_item["content"] == content
 
 
 @pytest.mark.asyncio
@@ -775,38 +1530,44 @@ async def test_project_explicit_upload_targets_named_project(
     """Phase-2 route: POST /api/projects/{project_id}/skills/upload
     lands the upload in the URL-named project, not the caller-
     resolved default. Verifies the route shim works AND that
-    cross-project writes don't bleed (a skill uploaded to env A's
-    project must not appear in env B's project's list)."""
-    from tests.conftest import create_env_with_project
+    cross-project writes don't bleed between Cloud-owned workspaces."""
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
 
-    env_a = await create_env_with_project(
-        db_session, user_id=seed_user.id, machine_id="a", machine_name="MachineA"
+    project_a = Project(
+        user_id=seed_user.id,
+        name="Workspace A",
+        slug=f"workspace-a-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
     )
-    env_b = await create_env_with_project(
-        db_session, user_id=seed_user.id, machine_id="b", machine_name="MachineB"
+    project_b = Project(
+        user_id=seed_user.id,
+        name="Workspace B",
+        slug=f"workspace-b-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
     )
+    db_session.add_all([project_a, project_b])
+    await db_session.commit()
 
     content = "---\nname: projected\ndescription: x\n---\n# Projected\n"
     tar_bytes, _ = tar_from_content("projected", content)
     files = {"file": ("projected.tar.gz", tar_bytes, "application/gzip")}
 
-    # Upload to env_a's project explicitly via phase-2 route.
+    # Upload to workspace A explicitly via the project-scoped route.
     r = await client.post(
-        f"/v1/projects/{env_a.default_project_id}/skills/upload",
+        f"/v1/projects/{project_a.id}/skills/upload",
         data={"skill_key": "projected"},
         files=files,
     )
     assert r.status_code == 200, r.text
 
-    # Phase-2 read on env_a's project: skill is there.
-    detail_a = await client.get(f"/v1/projects/{env_a.default_project_id}/skills/projected")
+    detail_a = await client.get(f"/v1/projects/{project_a.id}/skills/projected")
     assert detail_a.status_code == 200, detail_a.text
     assert detail_a.json()["skill_key"] == "projected"
 
-    # Phase-2 read on env_b's project: NOT there. This is the
+    # Workspace B must not see workspace A's row. This is the
     # isolation invariant — same skill_key in different projects
     # don't see each other.
-    detail_b = await client.get(f"/v1/projects/{env_b.default_project_id}/skills/projected")
+    detail_b = await client.get(f"/v1/projects/{project_b.id}/skills/projected")
     assert detail_b.status_code == 404, detail_b.text
 
 
@@ -905,10 +1666,10 @@ async def test_legacy_upload_resolves_default_project_with_deprecation_header(
     legacy `POST /api/skills/upload` route. Round-3 originally
     410'd it for safety, but every user has a deterministic
     default project after the migration (`resolve_default_write_project`
-    never returns None). Asymmetric with DELETE: a wrong-project
-    upload creates a stray row that's recoverable in 30s; a
-    wrong-project DELETE is permanent loss. So upload soft-
-    deprecates and continues to function — old CLIs keep
+    never returns None). A wrong-project upload creates a stray row
+    that's recoverable in 30s, while slug-only DELETE remains restricted
+    to env-bound keys that identify exactly one Agent Project. Upload
+    therefore soft-deprecates and continues to function so old CLIs keep
     pushing skills.
 
     Pinned by: legacy upload returns 200 with the skill landed
@@ -945,14 +1706,11 @@ async def test_legacy_upload_resolves_default_project_with_deprecation_header(
 
 
 @pytest.mark.asyncio
-async def test_legacy_delete_still_410s(client: httpx.AsyncClient, project_id: str):
-    """Round-r6: round-3's 410-on-DELETE design preserved.
-    DELETE remains hard-410 (not soft-deprecated like upload)
-    because a wrong-project delete is permanent data loss — the
-    asymmetry that justifies the back-compat split. Clients
-    must use the project-explicit `DELETE /api/projects/{sid}/
-    skills/{key}` so they pick which row to delete on multi-
-    project accounts.
+async def test_legacy_delete_still_410s_for_browser(client: httpx.AsyncClient, project_id: str):
+    """Slug-only DELETE remains ambiguous for browser sessions.
+
+    Only an env-bound API key can identify one Agent Project without guessing;
+    dashboard and other user-level callers must use the project-explicit route.
     """
     # Upload via the new route to make sure there's a row to
     # potentially-delete; the 410 must fire BEFORE we look up

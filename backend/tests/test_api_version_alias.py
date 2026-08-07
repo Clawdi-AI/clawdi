@@ -3,19 +3,28 @@
 Legacy routes are mounted canonically under /v1 and aliased under /api for
 clients built before the versioned-prefix migration. New contracts are
 canonical-only. The OpenAPI schema (which the web/CLI typed-client codegen
-consumes) must only advertise /v1.
+consumes) advertises legacy `/v1` plus the explicitly direct declarative-v2
+runtime companion; `/api` never aliases the v2 router.
 """
 
 import httpx
 import pytest
+from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
 
 from app.main import app
 
+_CANONICAL_ONLY_V1_PREFIXES = (
+    "/v1/platform/",
+    "/v1/runtime/",
+    "/v1/admin/channels/whatsapp/pairing-sessions",
+    "/v1/webhooks/clerk",
+)
+
 
 def _routes_by_path() -> dict[str, set[str]]:
     routes: dict[str, set[str]] = {}
-    for route in app.routes:
+    for route in iter_route_contexts(app.routes):
         path = getattr(route, "path", "")
         methods = set(getattr(route, "methods", None) or {"WEBSOCKET"})
         routes.setdefault(path, set()).update(methods)
@@ -27,9 +36,7 @@ def test_every_legacy_v1_route_has_api_alias():
     v1_paths = [
         path
         for path in routes
-        if path.startswith("/v1/")
-        and path != "/v1/runtime/manifest"
-        and not path.startswith("/v1/platform/")
+        if path.startswith("/v1/") and not path.startswith(_CANONICAL_ONLY_V1_PREFIXES)
     ]
     assert v1_paths, "expected /v1 routes to be mounted"
     missing = [
@@ -71,17 +78,44 @@ async def test_api_alias_dispatches_to_the_same_handler(path):
     assert canonical.status_code != 404
 
 
-async def test_runtime_manifest_has_no_api_alias():
+async def test_runtime_routes_have_no_api_alias():
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/runtime/manifest")
-    assert response.status_code == 404
+        responses = [
+            await client.get("/api/runtime/manifest"),
+            await client.get(
+                "/api/runtime/project-skill-archives/"
+                "00000000-0000-0000-0000-000000000000/"
+                "00000000-0000-0000-0000-000000000000/"
+                "00000000-0000-0000-0000-000000000000/"
+                f"{'0' * 64}/{'0' * 64}/example.tar.gz"
+            ),
+            await client.get(
+                "/api/runtime/project-skill-files/"
+                "00000000-0000-0000-0000-000000000000/"
+                "00000000-0000-0000-0000-000000000000/"
+                f"{'0' * 64}/{'0' * 64}/SKILL.md"
+            ),
+        ]
+    assert [response.status_code for response in responses] == [404, 404, 404]
 
 
-def test_openapi_schema_only_advertises_v1():
+def test_openapi_schema_advertises_only_v1_and_direct_runtime_v2():
     spec = app.openapi()
-    non_v1 = [path for path in spec["paths"] if not path.startswith("/v1/")]
-    assert non_v1 == ["/health"], (
-        "the /api legacy alias (and anything else outside /v1) must stay out of "
-        f"the public OpenAPI schema, found: {non_v1}"
-    )
+    assert "/v1/webhooks/clerk" not in spec["paths"]
+
+    routes = _routes_by_path()
+    assert routes["/v1/webhooks/clerk"] == {"POST"}
+
+    non_v1 = {path for path in spec["paths"] if not path.startswith("/v1/") and path != "/health"}
+    assert non_v1
+    assert all(path.startswith("/v2/runtime/") for path in non_v1)
+    assert all(not path.startswith("/api/") for path in spec["paths"])
+
+    for path in non_v1:
+        assert path not in {
+            f"/v1{path.removeprefix('/v2')}",
+            f"/api{path.removeprefix('/v2')}",
+        }
+        assert f"/v1{path.removeprefix('/v2')}" not in routes
+        assert f"/api{path.removeprefix('/v2')}" not in routes

@@ -2,60 +2,75 @@
 
 import { Link2 } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SettingsSection } from "@/components/settings-section";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CopyButton } from "@/hosted/billing/components/copy-button";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useHostedUser } from "@/hosted/billing/hooks";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
-/**
- * x402 self-funding block. Agents can top up their own wallet on-chain via the
- * x402 protocol; this surfaces the deposit address and a short explainer.
- * WalletPage mounts this only when the wallet snapshot reports x402 enabled.
- */
-export function X402Card() {
+export function X402Card({ enabled }: { enabled: boolean }) {
+	if (!enabled) {
+		return (
+			<SettingsSection
+				headingLevel={3}
+				data-hosted="true"
+				title={
+					<span className="flex flex-wrap items-center gap-2">
+						<span className="inline-flex items-center gap-2">
+							<Link2 className="size-4" aria-hidden /> USDC via x402
+						</span>
+						<Badge variant="secondary">Not available yet</Badge>
+					</span>
+				}
+				description="Agents will be able to add Wallet funds with USDC."
+			/>
+		);
+	}
+
+	return <EnabledX402Card />;
+}
+
+function EnabledX402Card() {
 	const me = useHostedUser();
 	const address = me.data?.evm_wallet_address ?? null;
 
 	return (
-		<Card data-hosted="true">
-			<CardHeader>
-				<CardTitle className="flex items-center gap-2 text-base">
-					<Link2 className="size-4" aria-hidden /> On-chain top-up (x402)
-				</CardTitle>
-				<CardDescription>
-					Your agent can fund its own AI Credits on-chain via the x402 protocol — no card needed.
-					Deposits land in the same wallet balance.
-				</CardDescription>
-			</CardHeader>
-			<CardContent>
+		<SettingsSection
+			headingLevel={3}
+			data-hosted="true"
+			title={
+				<span className="flex flex-wrap items-center gap-2">
+					<span className="inline-flex items-center gap-2">
+						<Link2 className="size-4" aria-hidden /> USDC via x402
+					</span>
+					<Badge variant="outline">Available</Badge>
+				</span>
+			}
+			description="Your agent can add Wallet funds from its linked wallet using USDC."
+		>
+			<div className="max-w-2xl">
 				{me.isLoading ? (
 					<Skeleton className="h-9 w-full rounded-md" />
-				) : me.error ? (
+				) : shouldBlockQueryError(me.error, me.data) ? (
 					<ApiErrorPanel
 						normalizer={billingErrorNormalizer}
 						error={me.error}
 						onRetry={() => me.refetch()}
-						title="Couldn’t load deposit address"
+						title="Couldn’t load linked wallet"
 					/>
 				) : address ? (
 					<div className="space-y-1.5">
-						<span className="text-xs text-muted-foreground">Deposit address</span>
-						<div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
-							<code className="min-w-0 flex-1 truncate font-mono text-xs">{address}</code>
-							<CopyButton
-								value={address}
-								label="Copy deposit address"
-								toastMessage="Address copied"
-							/>
-						</div>
+						<p className="text-xs text-muted-foreground">Linked agent wallet</p>
+						<p className="break-all font-mono text-sm">{address}</p>
+						<p className="text-xs text-muted-foreground">Top-ups must be signed by this wallet.</p>
 					</div>
 				) : (
 					<p className="text-sm text-muted-foreground">
-						An on-chain deposit address is provisioned with your first managed-AI agent.
+						Connect an agent wallet before using x402.
 					</p>
 				)}
-			</CardContent>
-		</Card>
+			</div>
+		</SettingsSection>
 	);
 }

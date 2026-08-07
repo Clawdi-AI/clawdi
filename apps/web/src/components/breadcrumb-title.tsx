@@ -1,8 +1,18 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { type AgentSectionId, agentSectionHref, agentSectionLabel } from "@/lib/agent-routes";
+import {
+	createContext,
+	type Dispatch,
+	type SetStateAction,
+	useCallback,
+	useContext,
+	useMemo,
+	useState,
+} from "react";
+import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
+import { useCommittedLocation } from "@/lib/use-committed-location";
+import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 
 /**
  * Context for "what the breadcrumb's last segment should say".
@@ -13,10 +23,10 @@ import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
  * route in `<BreadcrumbTitleProvider>`; detail pages call
  * `useSetBreadcrumbTitle(session.summary)` once they have data.
  *
- * Setting `null` (or unmounting the consumer) clears the override and
- * the breadcrumb goes back to its URL-derived label — which is correct
- * on top-level pages (`/sessions` → "Sessions") and during loading
- * states.
+ * Registrations are tied to the full route, including search params, so
+ * navigation can never reuse a name from the previous resource context.
+ * Dynamic names render a stable placeholder until their authoritative data
+ * is available; top-level pages still use their static collection label.
  *
  * Implementation note: read and write live in *separate* contexts. If
  * we put `{title, setTitle}` in one object, every render of the provider
@@ -24,32 +34,70 @@ import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
  * the cleanup fires, and the title flickers to null between renders.
  * Splitting the contexts means the setter is stable (useState setters
  * always are), so the effect only re-runs when the *title input* changes.
+ *
+ * Second implementation note: the route identity below comes from the
+ * *committed match tree* (`state.matches`), never from `state.location`.
+ * TanStack Router swaps `state.location` the moment a navigation starts
+ * (`beforeLoad`), while the route components React renders keep coming
+ * from `state.matches` until the next route has loaded. Reading the global
+ * location during that pending window pairs the new URL with the old page:
+ * the still-mounted page re-registers its title under the new routeKey,
+ * and the breadcrumb briefly renders the old detail title against the
+ * shallower path ("Agent > Old Detail" on the way back to a list) before
+ * the real label arrives. Deriving the trail and every registration key
+ * from the committed matches keeps the breadcrumb consistent with the
+ * visible page and flips it atomically when the navigation commits.
  */
 
-type SegmentTitles = Record<string, string>;
+export type BreadcrumbSegmentContext = "workspace";
+export type BreadcrumbSegmentTitle = {
+	title: string;
+	context?: BreadcrumbSegmentContext;
+};
+export type BreadcrumbSegmentTitles = Record<string, BreadcrumbSegmentTitle>;
+type BreadcrumbTitleRegistration = { routeKey: string; title: string } | null;
+type RegisteredBreadcrumbSegmentTitle = BreadcrumbSegmentTitle & { routeKey: string };
+type RegisteredBreadcrumbSegmentTitles = Record<string, RegisteredBreadcrumbSegmentTitle>;
 
-const TitleContext = createContext<string | null>(null);
-const SegmentTitlesContext = createContext<SegmentTitles>({});
-type Setter = (t: string | null) => void;
-const SetTitleContext = createContext<Setter>(() => {});
-type SegmentTitleSetter = (href: string | null | undefined, title: string | null) => void;
+const TitleContext = createContext<BreadcrumbTitleRegistration>(null);
+const SegmentTitlesContext = createContext<RegisteredBreadcrumbSegmentTitles>({});
+const SetTitleContext = createContext<Dispatch<SetStateAction<BreadcrumbTitleRegistration>>>(
+	() => {},
+);
+type SegmentTitleSetter = (
+	href: string | null | undefined,
+	title: string | null,
+	context?: BreadcrumbSegmentContext,
+	routeKey?: string,
+) => void;
 const SetSegmentTitleContext = createContext<SegmentTitleSetter>(() => {});
 
 export function BreadcrumbTitleProvider({ children }: { children: React.ReactNode }) {
-	const [title, setTitle] = useState<string | null>(null);
-	const [segmentTitles, setSegmentTitles] = useState<SegmentTitles>({});
-	const setSegmentTitle = useCallback<SegmentTitleSetter>((href, nextTitle) => {
+	const [title, setTitle] = useState<BreadcrumbTitleRegistration>(null);
+	const [segmentTitles, setSegmentTitles] = useState<RegisteredBreadcrumbSegmentTitles>({});
+	const setSegmentTitle = useCallback<SegmentTitleSetter>((href, nextTitle, context, routeKey) => {
 		const normalizedHref = normalizeBreadcrumbHref(href);
-		if (!normalizedHref) return;
+		if (!normalizedHref || !routeKey) return;
 		setSegmentTitles((current) => {
 			const trimmed = nextTitle?.trim() || null;
 			if (!trimmed) {
-				if (!(normalizedHref in current)) return current;
+				if (current[normalizedHref]?.routeKey !== routeKey) return current;
 				const { [normalizedHref]: _removed, ...rest } = current;
 				return rest;
 			}
-			if (current[normalizedHref] === trimmed) return current;
-			return { ...current, [normalizedHref]: trimmed };
+			const next: RegisteredBreadcrumbSegmentTitle = {
+				title: trimmed,
+				...(context ? { context } : {}),
+				routeKey,
+			};
+			if (
+				current[normalizedHref]?.title === next.title &&
+				current[normalizedHref]?.context === next.context &&
+				current[normalizedHref]?.routeKey === next.routeKey
+			) {
+				return current;
+			}
+			return { ...current, [normalizedHref]: next };
 		});
 	}, []);
 	return (
@@ -67,16 +115,28 @@ export function BreadcrumbTitleProvider({ children }: { children: React.ReactNod
 
 /** Read-only accessor for the breadcrumb component itself. */
 export function useBreadcrumbTitle(): string | null {
-	return useContext(TitleContext);
+	const routeKey = useBreadcrumbRouteKey();
+	const registration = useContext(TitleContext);
+	return registration?.routeKey === routeKey ? registration.title : null;
 }
 
-export function useBreadcrumbSegmentTitles(): SegmentTitles {
-	return useContext(SegmentTitlesContext);
+export function useBreadcrumbSegmentTitles(): BreadcrumbSegmentTitles {
+	const routeKey = useBreadcrumbRouteKey();
+	const registrations = useContext(SegmentTitlesContext);
+	return useMemo(
+		() =>
+			Object.fromEntries(
+				Object.entries(registrations)
+					.filter(([, registration]) => registration.routeKey === routeKey)
+					.map(([href, { title, context }]) => [href, { title, ...(context ? { context } : {}) }]),
+			),
+		[registrations, routeKey],
+	);
 }
 
 /**
  * Detail pages call this with their human-readable title. Pass `null`
- * (or wait until data is ready) to fall back to the URL segment.
+ * (or wait until data is ready) to keep the stable loading placeholder.
  *
  * Safe to call unconditionally — if `title` is null/undefined the effect
  * still runs but with no-op semantics. **Call this BEFORE any conditional
@@ -84,62 +144,43 @@ export function useBreadcrumbSegmentTitles(): SegmentTitles {
  */
 export function useSetBreadcrumbTitle(title: string | null | undefined) {
 	const setTitle = useContext(SetTitleContext);
-	useEffect(() => {
+	const routeKey = useBreadcrumbRouteKey();
+	useIsomorphicLayoutEffect(() => {
 		const trimmed = title?.trim() || null;
-		setTitle(trimmed);
+		setTitle((current) =>
+			trimmed ? { routeKey, title: trimmed } : current?.routeKey === routeKey ? null : current,
+		);
 		if (!trimmed || typeof document === "undefined") {
-			return () => setTitle(null);
+			return () => {
+				setTitle((current) => (current?.routeKey === routeKey ? null : current));
+			};
 		}
 
 		const previousTitle = document.title || APP_TITLE;
 		const nextTitle = formatDocumentTitle(trimmed);
 		document.title = nextTitle;
 		return () => {
-			setTitle(null);
+			setTitle((current) =>
+				current?.routeKey === routeKey && current.title === trimmed ? null : current,
+			);
 			if (document.title === nextTitle) {
 				document.title = previousTitle || APP_TITLE;
 			}
 		};
-	}, [setTitle, title]);
+	}, [routeKey, setTitle, title]);
 }
 
 export function useSetBreadcrumbSegmentTitle(
 	href: string | null | undefined,
 	title: string | null | undefined,
+	context?: BreadcrumbSegmentContext,
 ) {
 	const setSegmentTitle = useContext(SetSegmentTitleContext);
-	useEffect(() => {
-		setSegmentTitle(href, title?.trim() || null);
-		return () => setSegmentTitle(href, null);
-	}, [href, setSegmentTitle, title]);
-}
-
-export function useSetAgentBreadcrumbTitle({
-	agentId,
-	agentTitle,
-	section = "overview",
-	title,
-}: {
-	agentId?: string | null;
-	agentTitle?: string | null;
-	section?: AgentSectionId;
-	/**
-	 * Optional title for the current route's final segment. Omit it to use
-	 * the agent name on Overview and the canonical section label elsewhere.
-	 */
-	title?: string | null;
-}) {
-	const normalizedAgentTitle = agentTitle?.trim() || null;
-	const agentHref = agentId ? agentSectionHref(agentId) : null;
-	const currentTitle =
-		title !== undefined
-			? title
-			: section === "overview"
-				? normalizedAgentTitle
-				: agentSectionLabel(section);
-
-	useSetBreadcrumbSegmentTitle(agentHref, normalizedAgentTitle);
-	useSetBreadcrumbTitle(currentTitle);
+	const routeKey = useBreadcrumbRouteKey();
+	useIsomorphicLayoutEffect(() => {
+		setSegmentTitle(href, title?.trim() || null, context, routeKey);
+		return () => setSegmentTitle(href, null, undefined, routeKey);
+	}, [context, href, routeKey, setSegmentTitle, title]);
 }
 
 function normalizeBreadcrumbHref(href: string | null | undefined): string | null {
@@ -148,4 +189,27 @@ function normalizeBreadcrumbHref(href: string | null | undefined): string | null
 	const normalized = path.trim().replace(/\/+$/, "");
 	if (!normalized || normalized === "/") return "/";
 	return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+type CommittedBreadcrumbRoute = {
+	pathname: string;
+	search: AgentRouteSearch;
+	routeKey: string;
+};
+
+/**
+ * The route the breadcrumb should describe: the committed (rendered) match
+ * tree, not the pending navigation target. `routeKey` ties title
+ * registrations to this identity; `pathname`/`search` feed trail building.
+ */
+export function useCommittedBreadcrumbRoute(): CommittedBreadcrumbRoute {
+	const { pathname, search } = useCommittedLocation();
+	return useMemo(
+		() => ({ pathname, search, routeKey: `${pathname}${JSON.stringify(search)}` }),
+		[pathname, search],
+	);
+}
+
+function useBreadcrumbRouteKey() {
+	return useCommittedBreadcrumbRoute().routeKey;
 }

@@ -1,15 +1,9 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import {
-	keepPreviousData,
-	useMutation,
-	useQueries,
-	useQuery,
-	useQueryClient,
-} from "@tanstack/react-query";
+import { keepPreviousData, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
-import { unwrap, useApi } from "@/lib/api";
+import { type OpenApiClient, useOpenApi } from "@/lib/api";
 
 /**
  * Connector data hooks. Always talk to cloud-api — there is no
@@ -31,8 +25,41 @@ export const CONNECTOR_CATALOG_PAGE_SIZE = 24;
 export const CONNECTOR_CATALOG_STALE_TIME_MS = 10 * 60 * 1000;
 export const CONNECTOR_CATALOG_GC_TIME_MS = CONNECTOR_CATALOG_STALE_TIME_MS;
 
-type ApiClient = ReturnType<typeof useApi>;
-type ConnectorAvailableApp = components["schemas"]["ConnectorAvailableAppResponse"];
+export type ConnectorAvailableApp = components["schemas"]["ConnectorAvailableAppResponse"];
+
+export type ConnectedAppCatalogSnapshot = {
+	apps: readonly ConnectorAvailableApp[] | undefined;
+	isLoading: boolean;
+	error: unknown;
+};
+
+type ConnectedAppMetadataPlan = {
+	catalogApps: ConnectorAvailableApp[];
+	missingNames: string[];
+};
+
+export function limitConnectedAppMetadataNames(
+	names: readonly string[],
+	limit?: number,
+): readonly string[] {
+	return limit === undefined ? names : names.slice(0, Math.max(0, limit));
+}
+
+export function resolveConnectedAppMetadataPlan(
+	names: readonly string[],
+	catalog?: ConnectedAppCatalogSnapshot,
+): ConnectedAppMetadataPlan {
+	if (!catalog) return { catalogApps: [], missingNames: [...names] };
+	if (catalog.isLoading && !catalog.apps) return { catalogApps: [], missingNames: [] };
+	const byName = new Map((catalog.apps ?? []).map((app) => [app.name, app]));
+	return {
+		catalogApps: names.flatMap((name) => {
+			const app = byName.get(name);
+			return app ? [app] : [];
+		}),
+		missingNames: names.filter((name) => !byName.has(name)),
+	};
+}
 
 export type AvailableAppsQueryArgs = {
 	page: number;
@@ -41,86 +68,105 @@ export type AvailableAppsQueryArgs = {
 };
 
 export function availableAppsQueryKey({ page, pageSize, search }: AvailableAppsQueryArgs) {
-	return ["available-apps", { page, pageSize, search }] as const;
+	return [
+		"get",
+		"/v1/connectors/available",
+		{ params: { query: { page, page_size: pageSize, ...(search ? { search } : {}) } } },
+	] as const;
 }
 
-export function availableAppsQueryOptions(api: ApiClient, args: AvailableAppsQueryArgs) {
+export function availableAppsQueryOptions(api: OpenApiClient, args: AvailableAppsQueryArgs) {
 	const { page, pageSize, search } = args;
-	return {
-		queryKey: availableAppsQueryKey(args),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/available", {
-					params: {
-						query: { page, page_size: pageSize, ...(search ? { search } : {}) },
-					},
-				}),
-			),
-		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
-		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
-	};
+	return api.queryOptions(
+		"get",
+		"/v1/connectors/available",
+		{
+			params: { query: { page, page_size: pageSize, ...(search ? { search } : {}) } },
+		},
+		{
+			staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+			gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+		},
+	);
 }
 
 export function availableAppQueryKey(appName: string) {
-	return ["available-app", appName] as const;
+	return [
+		"get",
+		"/v1/connectors/available/{app_name}",
+		{ params: { path: { app_name: appName } } },
+	] as const;
 }
 
-export function availableAppQueryOptions(api: ApiClient, appName: string) {
-	return {
-		queryKey: availableAppQueryKey(appName),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/available/{app_name}", {
-					params: { path: { app_name: appName } },
-				}),
-			),
-		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
-		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
-	};
+export function availableAppQueryOptions(api: OpenApiClient, appName: string) {
+	return api.queryOptions(
+		"get",
+		"/v1/connectors/available/{app_name}",
+		{
+			params: { path: { app_name: appName } },
+		},
+		{
+			staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+			gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+		},
+	);
 }
 
-export function connectionsQueryOptions(api: ApiClient) {
-	return {
-		queryKey: ["connections"] as const,
-		queryFn: async () => unwrap(await api.GET("/v1/connectors")),
-		refetchOnWindowFocus: "always" as const,
-	};
+export function connectionsQueryOptions(api: OpenApiClient) {
+	return api.queryOptions(
+		"get",
+		"/v1/connectors",
+		{},
+		{
+			refetchOnWindowFocus: "always" as const,
+		},
+	);
 }
 
 export function connectorToolsQueryKey(appName: string) {
-	return ["connector-tools", appName] as const;
+	return [
+		"get",
+		"/v1/connectors/{app_name}/tools",
+		{ params: { path: { app_name: appName } } },
+	] as const;
 }
 
-export function connectorToolsQueryOptions(api: ApiClient, appName: string) {
-	return {
-		queryKey: connectorToolsQueryKey(appName),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/{app_name}/tools", {
-					params: { path: { app_name: appName } },
-				}),
-			),
-		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
-		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
-	};
+export function connectorToolsQueryOptions(api: OpenApiClient, appName: string) {
+	return api.queryOptions(
+		"get",
+		"/v1/connectors/{app_name}/tools",
+		{
+			params: { path: { app_name: appName } },
+		},
+		{
+			staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+			gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+		},
+	);
 }
 
-export function useConnections() {
-	const api = useApi();
-	return useQuery(connectionsQueryOptions(api));
+export function useConnections({ enabled = true }: { enabled?: boolean } = {}) {
+	const api = useOpenApi();
+	return useQuery({ ...connectionsQueryOptions(api), enabled });
 }
 
 export function useAvailableApp(appName: string) {
-	const api = useApi();
+	const api = useOpenApi();
 	return useQuery(availableAppQueryOptions(api, appName));
 }
 
-export function useAvailableApps({ page, pageSize, search }: AvailableAppsQueryArgs) {
-	const api = useApi();
+export function useAvailableApps({
+	page,
+	pageSize,
+	search,
+	enabled = true,
+}: AvailableAppsQueryArgs & { enabled?: boolean }) {
+	const api = useOpenApi();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		...availableAppsQueryOptions(api, { page, pageSize, search }),
 		placeholderData: keepPreviousData,
+		enabled,
 	});
 	useEffect(() => {
 		const apps = query.data?.items;
@@ -133,73 +179,27 @@ export function useAvailableApps({ page, pageSize, search }: AvailableAppsQueryA
 }
 
 export function useConnectorTools(appName: string) {
-	const api = useApi();
+	const api = useOpenApi();
 	return useQuery(connectorToolsQueryOptions(api, appName));
 }
 
 export function useAuthFields(appName: string, { enabled }: { enabled: boolean }) {
-	const api = useApi();
-	return useQuery({
-		queryKey: ["auth-fields", appName],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/{app_name}/auth-fields", {
-					params: { path: { app_name: appName } },
-				}),
-			),
-		enabled,
-	});
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/connectors/{app_name}/auth-fields",
+		{ params: { path: { app_name: appName } } },
+		{ enabled },
+	);
 }
 
 // ─────────────────────────────────────────────────────────────────────
 // Mutations
 
-export function useConnect() {
-	const api = useApi();
-	return useMutation({
-		mutationFn: async ({ appName, redirectUrl }: { appName: string; redirectUrl?: string }) =>
-			unwrap(
-				await api.POST("/v1/connectors/{app_name}/connect", {
-					params: { path: { app_name: appName } },
-					body: redirectUrl ? { redirect_url: redirectUrl } : {},
-				}),
-			),
-	});
-}
-
-export function useConnectCredentials() {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async ({
-			appName,
-			credentials,
-		}: {
-			appName: string;
-			credentials: Record<string, string>;
-		}) =>
-			unwrap(
-				await api.POST("/v1/connectors/{app_name}/connect-credentials", {
-					params: { path: { app_name: appName } },
-					body: { credentials },
-				}),
-			),
-		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
-	});
-}
-
 export function useDisconnect() {
-	const api = useApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async ({ connectionId }: { connectionId: string }): Promise<void> => {
-			unwrap(
-				await api.DELETE("/v1/connectors/{connection_id}", {
-					params: { path: { connection_id: connectionId } },
-				}),
-			);
-		},
-		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
+	return api.useMutation("delete", "/v1/connectors/{connection_id}", {
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["get", "/v1/connectors"] }),
 	});
 }
 
@@ -215,14 +215,17 @@ export function useDisconnect() {
  * without this rail, they'd never find their connections without
  * searching.
  *
- * Fan-out: one `/available/{name}` query per unique active app.
- * Active connection count is small in practice (single-digit per
- * user), and React Query dedupes against the catalog cache so a
- * page that already loaded the connector also has its metadata.
+ * Fan-out: one `/available/{name}` query per unique active app not
+ * covered by a supplied catalog snapshot. Callers can cap metadata
+ * resolution for compact previews without changing the full connection
+ * count; the default preserves the existing unbounded behavior.
  */
-export function useConnectedAppCards() {
-	const connectionsQ = useConnections();
-	const api = useApi();
+export function useConnectedAppCards(
+	catalog?: ConnectedAppCatalogSnapshot,
+	{ enabled = true, limit }: { enabled?: boolean; limit?: number } = {},
+) {
+	const connectionsQ = useConnections({ enabled });
+	const api = useOpenApi();
 
 	const activeConnections = useMemo(
 		() => connectionsQ.data?.filter(isActiveConnection) ?? [],
@@ -240,20 +243,57 @@ export function useConnectedAppCards() {
 		() => Array.from(new Set(activeConnections.flatMap((c) => (c.app_name ? [c.app_name] : [])))),
 		[activeConnections],
 	);
+	const metadataNames = useMemo(() => limitConnectedAppMetadataNames(names, limit), [names, limit]);
+	const metadataPlan = useMemo(
+		() => resolveConnectedAppMetadataPlan(metadataNames, catalog),
+		[metadataNames, catalog?.apps, catalog?.error, catalog?.isLoading],
+	);
 
 	const lookup = useQueries({
-		queries: names.map((name) => availableAppQueryOptions(api, name)),
+		queries: metadataPlan.missingNames.map((name) => ({
+			...availableAppQueryOptions(api, name),
+			enabled,
+		})),
 	});
 
-	const data = useMemo(() => lookup.flatMap((q) => (q.data ? [q.data] : [])), [lookup]);
-	const isLoading = connectionsQ.isLoading || lookup.some((q) => q.isLoading);
-	const error = connectionsQ.error ?? lookup.find((q) => q.error)?.error ?? null;
+	const data = useMemo(() => {
+		const byName = new Map(metadataPlan.catalogApps.map((app) => [app.name, app]));
+		for (const query of lookup) {
+			if (query.data) byName.set(query.data.name, query.data);
+		}
+		return metadataNames.flatMap((name) => {
+			const app = byName.get(name);
+			return app ? [app] : [];
+		});
+	}, [lookup, metadataPlan.catalogApps, metadataNames]);
+	const waitingForCatalog = Boolean(
+		catalog?.isLoading && !catalog.apps && metadataNames.length > 0,
+	);
+	const isLoading = connectionsQ.isLoading || waitingForCatalog || lookup.some((q) => q.isLoading);
+	const connectionsLoading = connectionsQ.isLoading;
+	const metadataLoading = waitingForCatalog || lookup.some((q) => q.isLoading);
+	const connectionsError = connectionsQ.error;
+	const metadataError = lookup.find((q) => q.error)?.error ?? null;
+	const error = connectionsError ?? metadataError;
+	const hasData =
+		connectionsQ.data !== undefined && lookup.every((query) => query.data !== undefined);
 	const refetch = () => {
 		void connectionsQ.refetch();
 		for (const q of lookup) void q.refetch();
 	};
 
-	return { activeConnections, data, isLoading, error, refetch };
+	return {
+		activeConnections,
+		data,
+		hasData,
+		isLoading,
+		connectionsLoading,
+		metadataLoading,
+		error,
+		connectionsError,
+		metadataError,
+		refetch,
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────

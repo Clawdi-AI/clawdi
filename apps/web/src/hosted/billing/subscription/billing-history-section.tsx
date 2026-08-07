@@ -3,6 +3,7 @@
 import { ExternalLink, Receipt } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
+import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,11 +18,12 @@ import {
 } from "@/components/ui/table";
 import type { ComputeBillingHistoryItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { formatCents } from "@/hosted/billing/format";
+import { formatCents, formatUsdExact } from "@/hosted/billing/format";
 import { useComputeBillingHistory } from "@/hosted/billing/hooks";
 import { billingHistoryFundingLabel } from "@/hosted/billing/subscription/billing-history.logic";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 function statusLabel(status: string): string {
 	const known: Record<string, string> = {
@@ -34,7 +36,7 @@ function statusLabel(status: string): string {
 		draft: "Draft",
 		uncollectible: "Uncollectible",
 	};
-	return known[status] ?? "Unknown";
+	return known[status] ?? "Processing";
 }
 
 function statusTone(
@@ -61,6 +63,13 @@ function planLabel(planSlug: string): string {
 	return "Compute";
 }
 
+function amountLabel(row: ComputeBillingHistoryItem): string {
+	if (row.funding_source === "wallet") {
+		return row.amount_usd ? formatUsdExact(row.amount_usd) : "—";
+	}
+	return formatCents(row.amount_cents);
+}
+
 function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
 	if (!row.hosted_invoice_url) return null;
 	return (
@@ -80,20 +89,13 @@ export function BillingHistorySection() {
 	const rows = history.data?.pages.flatMap((page) => page.data ?? []) ?? [];
 
 	return (
-		<section
+		<SettingsSection
+			id="billing-history"
 			data-hosted="true"
-			className="flex flex-col gap-3"
-			aria-labelledby="billing-history-title"
+			headingLevel={3}
+			title="Billing history"
+			description="Invoices for card and Wallet-funded compute subscriptions."
 		>
-			<div>
-				<h2 id="billing-history-title" className="text-base font-semibold">
-					Billing history
-				</h2>
-				<p className="text-sm text-muted-foreground">
-					Stripe invoices for card and AI Credits compute subscriptions.
-				</p>
-			</div>
-
 			{history.isLoading ? (
 				<div className="flex flex-col gap-px overflow-hidden rounded-lg border">
 					{Array.from({ length: 3 }, (_, index) => `history-skeleton-${index}`).map((key) => (
@@ -103,7 +105,7 @@ export function BillingHistorySection() {
 						</div>
 					))}
 				</div>
-			) : history.error && rows.length === 0 ? (
+			) : shouldBlockQueryError(history.error, history.data) ? (
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={history.error}
@@ -116,6 +118,7 @@ export function BillingHistorySection() {
 					icon={Receipt}
 					title="No billing history yet"
 					description="Paid compute invoices will appear here after the first collection."
+					className="py-8 md:p-8"
 				/>
 			) : (
 				<>
@@ -135,9 +138,7 @@ export function BillingHistorySection() {
 										<InvoiceLink row={row} />
 									</div>
 								</div>
-								<span className="shrink-0 font-medium tabular-nums">
-									{formatCents(row.amount_cents)}
-								</span>
+								<span className="shrink-0 font-medium tabular-nums">{amountLabel(row)}</span>
 							</li>
 						))}
 					</ul>
@@ -170,7 +171,7 @@ export function BillingHistorySection() {
 											<StatusBadge status={statusTone(row)}>{statusLabel(row.status)}</StatusBadge>
 										</TableCell>
 										<TableCell className="text-right font-medium tabular-nums">
-											{formatCents(row.amount_cents)}
+											{amountLabel(row)}
 										</TableCell>
 										<TableCell className="text-right">
 											<InvoiceLink row={row} />
@@ -201,6 +202,6 @@ export function BillingHistorySection() {
 					) : null}
 				</>
 			)}
-		</section>
+		</SettingsSection>
 	);
 }

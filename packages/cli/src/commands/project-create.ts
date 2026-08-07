@@ -54,7 +54,7 @@ export async function projectCreateCommand(
 	name: string,
 	opts: { slug?: string; json?: boolean } = {},
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 

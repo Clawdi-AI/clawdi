@@ -1,92 +1,71 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
 	ArrowUpRight,
+	Bot,
 	KeyRound,
-	Link2,
-	Link2Off,
 	type LucideIcon,
 	MessageSquareDashed,
-	QrCode,
 	RefreshCw,
-	Smartphone,
 	TerminalSquare,
 	Trash2,
 	TriangleAlert,
+	Unplug,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import {
-	AgentLabel,
-	AgentSourceBadgeForEnvironment,
-	agentTextLabel,
-} from "@/components/dashboard/agent-label";
+import { AgentLabel } from "@/components/dashboard/agent-label";
+import { DetailBackLink } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import { Label } from "@/components/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { nativeTransportSummary } from "@/hosted/v2/channels/channel-detail-page.logic";
+import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import type {
-	ChannelActivityItem,
-	ChannelAgentLink,
-	ChannelBinding,
-} from "@/hosted/v2/channels/channel-types";
+import type { ChannelActivityItem, ChannelAgentLink } from "@/hosted/v2/channels/channel-types";
 import {
+	ChannelStatusBadge,
 	CopyInline,
 	DeliveryBadge,
 	HealthBadge,
-	TokenReveal,
+	isNormalChannelHealth,
+	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
+import {
+	channelActivityErrorSummary,
+	channelHealthErrorSummary,
+} from "@/hosted/v2/channels/channel-user-facing-errors";
 import {
 	useChannel,
 	useChannelActivity,
 	useChannelAgentLinks,
-	useChannelBindings,
 	useChannelHealth,
-	useCreatePairCode,
-	useCreateWhatsappTenantCred,
 	useDeleteChannel,
 	useEnvironments,
-	useRevokeWhatsappTenantCred,
-	useRotateAgentToken,
 	useSyncCommands,
-	useUnlinkChannelAgent,
-	useWhatsappTenantCreds,
 } from "@/hosted/v2/channels/channels-hooks";
-import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
-import {
-	WHATSAPP_COMING_SOON_MESSAGE,
-	WHATSAPP_LINKING_READY,
-} from "@/hosted/v2/channels/link-agent-dialog.logic";
-import {
-	type AgentOwnership,
-	agentOwnershipKindFromId,
-	useAgentOwnership,
-} from "@/lib/agent-ownership";
+import { agentSectionLink } from "@/lib/agent-routes";
+import { isApiNotFoundError } from "@/lib/api-errors";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, relativeTime } from "@/lib/utils";
 
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const LIST_TAB_CLASS = "mt-4 min-w-0";
 const FORM_TAB_CLASS = "mt-4 min-w-0 max-w-xl";
+const CHANNEL_RELATION_LIST_CLASS = "divide-y overflow-hidden rounded-lg border bg-card";
+const CHANNEL_RELATION_ROW_CLASS = "flex min-h-16 items-center gap-3 px-4 py-3";
 
 type EnvironmentList = ReturnType<typeof useEnvironments>["data"];
 type Environment = NonNullable<EnvironmentList>[number];
@@ -95,26 +74,21 @@ function findEnv(envs: EnvironmentList, agentId: string): Environment | null {
 	return envs?.find((e) => e.id === agentId) ?? null;
 }
 
-/** "machine · agent-type" label for an agent id, falling back to the raw id. */
-function envName(
-	envs: EnvironmentList,
-	agentId: string,
-	ownership: AgentOwnership | null,
-	includeSource = true,
-): string {
-	const env = findEnv(envs, agentId);
-	return env
-		? agentTextLabel(env, {
-				includeSource,
-				ownershipKind: agentOwnershipKindFromId(env.id, ownership),
-			})
-		: agentId;
-}
-
-function AgentName({ env, fallback }: { env: Environment | null; fallback: string }) {
-	const ownership = useAgentOwnership();
-	if (!env) return <span className="truncate text-sm font-medium">{fallback}</span>;
-	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
+function AgentName({ env, meta }: { env: Environment | null; meta?: ReactNode[] }) {
+	if (!env) {
+		return (
+			<EntityHeader
+				className="min-w-0 flex-1"
+				icon={
+					<IconChip size="sm">
+						<Bot />
+					</IconChip>
+				}
+				title="Agent unavailable"
+				meta={meta}
+			/>
+		);
+	}
 	return (
 		<AgentLabel
 			machineName={env.machine_name}
@@ -123,10 +97,8 @@ function AgentName({ env, fallback }: { env: Environment | null; fallback: strin
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
 			size="sm"
-			titleAdornment={
-				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
-			}
-			className="min-w-0"
+			className="min-w-0 flex-1"
+			meta={meta}
 		/>
 	);
 }
@@ -177,6 +149,25 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const health = useChannelHealth();
 	const router = useRouter();
 	const del = useDeleteChannel();
+	const [removing, setRemoving] = useState(false);
+	const removeLockedRef = useRef(false);
+
+	function removeChannel() {
+		if (removeLockedRef.current) return;
+		removeLockedRef.current = true;
+		setRemoving(true);
+		void (async () => {
+			try {
+				await del.mutateAsync({ params: { path: { account_id: id } } });
+				await router.navigate({ href: "/channels" });
+			} catch {
+				// useDeleteChannel already surfaces the API error.
+			} finally {
+				removeLockedRef.current = false;
+				setRemoving(false);
+			}
+		})();
+	}
 
 	useSetBreadcrumbTitle(channel.data?.name);
 
@@ -188,14 +179,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (channel.isLoading) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-				<div className="flex items-center gap-3">
-					<Skeleton className="size-12 shrink-0 rounded-xl" />
-					<div className="min-w-0 flex-1">
-						<Skeleton className="h-6 w-52 max-w-full" />
-						<Skeleton className="mt-2 h-4 w-40 max-w-full" />
-						<Skeleton className="mt-2 h-5 w-32 max-w-full rounded-full" />
-					</div>
-				</div>
+				<DetailBackLink href="/channels" label="Channels" />
+				<PageHeaderSkeleton icon iconClassName="size-12 rounded-xl" actions />
 				<div className="flex flex-col gap-4">
 					<Skeleton className="h-9 w-full max-w-xl rounded-lg" />
 					<Skeleton className="h-64 w-full rounded-lg" />
@@ -204,9 +189,10 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 		);
 	}
 
-	if (channel.error) {
+	if (isApiNotFoundError(channel.error) || shouldBlockQueryError(channel.error, channel.data)) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
+				<DetailBackLink href="/channels" label="Channels" />
 				<ApiErrorPanel
 					error={channel.error}
 					onRetry={() => channel.refetch()}
@@ -219,15 +205,11 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (!channel.data) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
+				<DetailBackLink href="/channels" label="Channels" />
 				<EmptyState
 					icon={MessageSquareDashed}
 					title="Channel not found"
 					description="This channel may have been removed."
-					action={
-						<Button variant="outline" onClick={() => void router.navigate({ href: "/channels" })}>
-							Back to Channels
-						</Button>
-					}
 				/>
 			</div>
 		);
@@ -236,38 +218,57 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const ch = channel.data;
 	const meta = providerMeta(ch.provider);
 	const providerUnavailable = meta.unavailable === true;
+	const disconnectsWhatsApp = ch.provider === "whatsapp" && ch.visibility === "private";
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
+			<DetailBackLink href="/channels" label="Channels" />
 			<PageHeader
 				title={ch.name}
-				description={`${meta.label} · ${ch.visibility === "public" ? "Shared bot" : "Private bot"}`}
+				description={meta.label}
 				icon={<EntityIcon kind="channel" id={ch.provider} label={meta.label} size="lg" />}
 				status={
-					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-						<span className="capitalize">{ch.status}</span>
-						{healthItem ? <HealthBadge status={healthItem.health_status} /> : null}
-					</div>
+					!isNormalChannelStatus(ch.status) ||
+					(healthItem && !isNormalChannelHealth(healthItem.health_status)) ? (
+						<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+							{isNormalChannelStatus(ch.status) ? null : <ChannelStatusBadge status={ch.status} />}
+							{healthItem && !isNormalChannelHealth(healthItem.health_status) ? (
+								<HealthBadge health={healthItem} />
+							) : null}
+						</div>
+					) : undefined
 				}
 				actions={
 					<ConfirmAction
-						title={`Remove ${ch.name}?`}
+						title={`${disconnectsWhatsApp ? "Disconnect" : "Delete"} ${ch.name}?`}
 						description={
-							<p>
-								Agents linked to this channel will stop sending and receiving. This can't be undone.
-							</p>
+							disconnectsWhatsApp
+								? "This logs out Clawdi as a linked device and removes the Custom bot. Linked Agents will stop sending and receiving."
+								: "This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
 						}
-						confirmLabel="Remove channel"
+						confirmLabel={disconnectsWhatsApp ? "Disconnect and remove" : "Delete custom bot"}
 						destructive
-						onConfirm={() =>
-							del.mutateAsync(id, {
-								onSuccess: () => void router.navigate({ href: "/channels" }),
-							})
-						}
+						onConfirm={removeChannel}
 					>
-						<Button variant="outline" className="text-muted-foreground hover:text-destructive">
-							<Trash2 className="size-4" />
-							Remove
+						<Button
+							variant="outline"
+							className="text-muted-foreground hover:text-destructive"
+							disabled={removing}
+						>
+							{removing ? (
+								<Spinner className="size-4" />
+							) : disconnectsWhatsApp ? (
+								<Unplug className="size-4" />
+							) : (
+								<Trash2 className="size-4" />
+							)}
+							{removing
+								? disconnectsWhatsApp
+									? "Disconnecting…"
+									: "Deleting…"
+								: disconnectsWhatsApp
+									? "Disconnect"
+									: "Delete"}
 						</Button>
 					</ConfirmAction>
 				}
@@ -276,44 +277,28 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			{providerUnavailable ? (
 				<InfoCard icon={TriangleAlert} title="Provider unavailable">
 					This provider is no longer available for new native channels. Existing channel data
-					remains visible, and you can remove the channel.
+					remains visible, and you can delete the Custom bot.
+				</InfoCard>
+			) : null}
+			{ch.provider === "discord" && !providerUnavailable ? (
+				<InfoCard icon={TriangleAlert} title="Verify Discord credentials">
+					Clawdi stores Discord credentials during setup but does not verify them with Discord. Send
+					a test message and confirm activity and health before relying on this channel. To replace
+					credentials, remove the channel and reconnect it.
 				</InfoCard>
 			) : null}
 
-			<Tabs defaultValue="agents" className="min-w-0">
+			<section data-channel-linked-agents className="flex flex-col gap-3">
+				<AgentsTab accountId={id} />
+			</section>
+
+			<Tabs defaultValue="activity" className="min-w-0">
 				<TabsList className="h-auto flex-wrap justify-start">
-					<TabsTrigger value="agents">Agents</TabsTrigger>
-					{ch.provider === "whatsapp" && !providerUnavailable ? (
-						<TabsTrigger value="devices">Linked devices</TabsTrigger>
-					) : null}
-					{providerUnavailable ? null : <TabsTrigger value="pair">Pair code</TabsTrigger>}
-					<TabsTrigger value="bindings">Chats</TabsTrigger>
 					<TabsTrigger value="activity">Activity</TabsTrigger>
 					<TabsTrigger value="health">Health</TabsTrigger>
 					{providerUnavailable ? null : <TabsTrigger value="commands">Commands</TabsTrigger>}
 				</TabsList>
 
-				<TabsContent value="agents" className={LIST_TAB_CLASS}>
-					<AgentsTab
-						accountId={id}
-						accountName={ch.name}
-						provider={ch.provider}
-						readOnly={providerUnavailable}
-					/>
-				</TabsContent>
-				{ch.provider === "whatsapp" && !providerUnavailable ? (
-					<TabsContent value="devices" className={FORM_TAB_CLASS}>
-						<WhatsAppDevicesTab accountId={id} />
-					</TabsContent>
-				) : null}
-				{providerUnavailable ? null : (
-					<TabsContent value="pair" className={FORM_TAB_CLASS}>
-						<PairCodeTab accountId={id} provider={ch.provider} />
-					</TabsContent>
-				)}
-				<TabsContent value="bindings" className={LIST_TAB_CLASS}>
-					<BindingsTab accountId={id} />
-				</TabsContent>
 				<TabsContent value="activity" className={LIST_TAB_CLASS}>
 					<ActivityTab accountId={id} />
 				</TabsContent>
@@ -332,57 +317,28 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 // ── Agents ───────────────────────────────────────────────────────────────────
 
-function AgentsTab({
-	accountId,
-	accountName,
-	provider,
-	readOnly = false,
-}: {
-	accountId: string;
-	accountName: string;
-	provider: string;
-	readOnly?: boolean;
-}) {
+function AgentsTab({ accountId }: { accountId: string }) {
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
-	const rotate = useRotateAgentToken(accountId);
-	const unlink = useUnlinkChannelAgent(accountId);
-	const [linkOpen, setLinkOpen] = useState(false);
-	const [rotated, setRotated] = useState<Record<string, string>>({});
-	const rotatingLinksRef = useRef<Set<string>>(new Set());
-	const [rotatingLinks, setRotatingLinks] = useState<ReadonlySet<string>>(() => new Set());
 
-	function rotateToken(linkId: string) {
-		if (rotatingLinksRef.current.has(linkId)) return;
-		rotatingLinksRef.current.add(linkId);
-		setRotatingLinks((prev) => new Set(prev).add(linkId));
-		rotate.mutate(linkId, {
-			onSuccess: (data) => {
-				const token = data.agent_token;
-				if (!token) return;
-				setRotated((prev) => ({
-					...prev,
-					[linkId]: token,
-				}));
-			},
-			onSettled: () => {
-				rotatingLinksRef.current.delete(linkId);
-				setRotatingLinks((prev) => {
-					const next = new Set(prev);
-					next.delete(linkId);
-					return next;
-				});
-			},
-		});
+	if (links.isLoading || envs.isLoading) {
+		return <Skeleton className="h-24 w-full rounded-lg" />;
 	}
-
-	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
-	if (links.error) {
+	if (shouldBlockQueryError(links.error, links.data)) {
 		return (
 			<ApiErrorPanel
 				error={links.error}
 				onRetry={() => links.refetch()}
-				title="Couldn't load linked agents"
+				title="Couldn't load linked Agents"
+			/>
+		);
+	}
+	if (shouldBlockQueryError(envs.error, envs.data)) {
+		return (
+			<ApiErrorPanel
+				error={envs.error}
+				onRetry={() => envs.refetch()}
+				title="Couldn't load Agent names"
 			/>
 		);
 	}
@@ -390,511 +346,43 @@ function AgentsTab({
 
 	return (
 		<div className="flex flex-col gap-3">
-			{envs.error ? (
-				<ApiErrorPanel
-					error={envs.error}
-					onRetry={() => envs.refetch()}
-					title="Couldn't load agent names"
-				/>
-			) : null}
-			<SectionHeader
-				label="Linked agents"
-				count={items.length}
-				action={
-					readOnly ? null : (
-						<Button size="sm" onClick={() => setLinkOpen(true)}>
-							<Link2 className="size-3.5" />
-							Link an agent
-						</Button>
-					)
-				}
-			/>
+			<SectionHeader label="Linked Agents" count={items.length} />
 
 			{items.length === 0 ? (
 				<EmptyState
-					icon={Link2}
-					title="No agents linked"
-					description={
-						readOnly
-							? "No agents are linked to this channel."
-							: "Link an agent so it can send and receive on this channel."
-					}
-				/>
-			) : (
-				<div className="flex flex-col gap-2">
-					{items.map((link: ChannelAgentLink) => {
-						const isRotating = rotatingLinks.has(link.id);
-						return (
-							<div key={link.id} className={ENTITY_CARD_BASE}>
-								<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-									<div className="min-w-0">
-										<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
-										<div className="text-xs text-muted-foreground">
-											<span className="capitalize">{link.status}</span> · linked{" "}
-											{relativeTime(link.created_at)}
-										</div>
-									</div>
-									{readOnly ? null : (
-										<div className="flex shrink-0 flex-wrap items-center gap-1.5">
-											<Button
-												variant="outline"
-												size="sm"
-												// Per-row: only the acting row's button shows pending, not all.
-												disabled={isRotating}
-												onClick={() => rotateToken(link.id)}
-											>
-												{isRotating ? (
-													<Spinner className="size-3.5" />
-												) : (
-													<RefreshCw className="size-3.5" />
-												)}
-												Rotate token
-											</Button>
-											<ConfirmAction
-												title="Unlink this agent?"
-												description={<p>It stops sending and receiving on {accountName}.</p>}
-												confirmLabel="Unlink"
-												destructive
-												onConfirm={() => unlink.mutateAsync(link.id)}
-											>
-												<Button
-													variant="ghost"
-													size="icon-sm"
-													className="text-muted-foreground hover:text-destructive"
-													disabled={unlink.isPending && unlink.variables === link.id}
-													aria-label="Unlink agent"
-												>
-													<Link2Off className="size-4" />
-												</Button>
-											</ConfirmAction>
-										</div>
-									)}
-								</div>
-								{rotated[link.id] ? (
-									<div className="mt-3">
-										<TokenReveal
-											label="New agent token"
-											value={rotated[link.id]}
-											note="The previous token is now invalid. Update the agent with this value."
-										/>
-									</div>
-								) : null}
-							</div>
-						);
-					})}
-				</div>
-			)}
-
-			{readOnly ? null : (
-				<LinkAgentDialog
-					open={linkOpen}
-					onOpenChange={setLinkOpen}
-					accountId={accountId}
-					accountName={accountName}
-					provider={provider}
-				/>
-			)}
-		</div>
-	);
-}
-
-// ── WhatsApp linked devices (Baileys tenant credentials) ─────────────────────
-
-function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
-	const links = useChannelAgentLinks(accountId);
-	const envs = useEnvironments();
-	const creds = useWhatsappTenantCreds(accountId);
-	const create = useCreateWhatsappTenantCred(accountId);
-	const revoke = useRevokeWhatsappTenantCred(accountId);
-	const ownership = useAgentOwnership();
-	const [linkId, setLinkId] = useState("");
-
-	const linkItems = links.data ?? [];
-	const devices = creds.data ?? [];
-	// Default to the only link when there's exactly one.
-	const effectiveLink = linkId || (linkItems.length === 1 ? linkItems[0].id : "");
-	const linkSelectItems = linkItems.map((link) => ({
-		value: link.id,
-		label: envName(envs.data, link.agent_id, ownership),
-	}));
-
-	return (
-		<div className="flex flex-col gap-4">
-			<InfoCard
-				icon={Smartphone}
-				title={WHATSAPP_LINKING_READY ? "Link a WhatsApp number" : "WhatsApp is coming soon"}
-			>
-				{WHATSAPP_LINKING_READY
-					? "WhatsApp uses no bot token. Mint a device credential for an agent, then finish the link by scanning it in WhatsApp -> Linked devices. The credential is handed to the agent runtime to complete pairing."
-					: WHATSAPP_COMING_SOON_MESSAGE}
-			</InfoCard>
-
-			{!WHATSAPP_LINKING_READY ? (
-				<Button disabled>
-					<Smartphone className="size-4" />
-					Coming soon
-				</Button>
-			) : links.isLoading ? (
-				<Skeleton className="h-16 w-full rounded-lg" />
-			) : links.error ? (
-				<ApiErrorPanel
-					error={links.error}
-					onRetry={() => links.refetch()}
-					title="Couldn't load linked agents"
-				/>
-			) : linkItems.length === 0 ? (
-				<EmptyState
 					variant="inset"
-					title="Link an agent first"
-					description="A WhatsApp device is minted per agent. Link an agent on the Agents tab, then come back."
+					title="No Agents linked"
+					description="Connect this bot from an Agent’s Channels page."
 				/>
 			) : (
-				<div className="flex flex-col gap-2">
-					{envs.error ? (
-						<ApiErrorPanel
-							error={envs.error}
-							onRetry={() => envs.refetch()}
-							title="Couldn't load agent names"
-						/>
-					) : null}
-					{linkItems.length > 1 ? (
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="wa-agent">Agent</Label>
-							<Select
-								items={linkSelectItems}
-								value={effectiveLink}
-								onValueChange={(value) => {
-									if (value !== null) setLinkId(value);
-								}}
-							>
-								<SelectTrigger id="wa-agent">
-									<SelectValue placeholder="Choose an agent" />
-								</SelectTrigger>
-								<SelectContent>
-									{linkItems.map((l) => {
-										const env = findEnv(envs.data, l.agent_id);
-										return (
-											<SelectItem
-												key={l.id}
-												value={l.id}
-												label={envName(envs.data, l.agent_id, ownership)}
-											>
-												<AgentName env={env} fallback={l.agent_id} />
-											</SelectItem>
-										);
-									})}
-								</SelectContent>
-							</Select>
-						</div>
-					) : null}
-					<Button
-						onClick={() => effectiveLink && create.mutate({ agent_link_id: effectiveLink })}
-						disabled={!effectiveLink || create.isPending}
-					>
-						<Smartphone className="size-4" />
-						{create.isPending ? "Minting…" : "Link a device"}
-					</Button>
+				<div className={CHANNEL_RELATION_LIST_CLASS}>
+					{items.map((link: ChannelAgentLink) => (
+						<Link
+							key={link.id}
+							{...agentSectionLink(link.agent_id, "channels")}
+							data-channel-agent-link-id={link.id}
+							className={cn(
+								CHANNEL_RELATION_ROW_CLASS,
+								"group transition-colors hover:bg-muted/50",
+							)}
+						>
+							<AgentName
+								env={findEnv(envs.data, link.agent_id)}
+								meta={[
+									...(isNormalChannelStatus(link.status)
+										? []
+										: [<ChannelStatusBadge key="status" status={link.status} />]),
+									<span key="linked">Linked {relativeTime(link.created_at)}</span>,
+								]}
+							/>
+							<span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-foreground">
+								Channels
+								<ArrowUpRight className="size-3.5" />
+							</span>
+						</Link>
+					))}
 				</div>
 			)}
-
-			<div className="flex flex-col gap-2">
-				<SectionLabel count={devices.length}>Linked devices</SectionLabel>
-				{creds.isLoading ? (
-					<Skeleton className="h-16 w-full rounded-lg" />
-				) : creds.error ? (
-					<ApiErrorPanel
-						error={creds.error}
-						onRetry={() => creds.refetch()}
-						title="Couldn't load linked devices"
-					/>
-				) : devices.length === 0 ? (
-					<EmptyState variant="inset" description="No devices linked yet." />
-				) : (
-					devices.map((d) => (
-						<div
-							key={d.credential_id}
-							className={cn(ENTITY_CARD_BASE, "flex items-center justify-between gap-3")}
-						>
-							<EntityHeader
-								className="min-w-0 flex-1"
-								icon={
-									<IconChip size="sm">
-										<Smartphone />
-									</IconChip>
-								}
-								title={
-									d.jid ? <span className="font-mono text-xs">{d.jid}</span> : "Pending pairing"
-								}
-								titleAdornment={!d.jid ? <Spinner className="size-3" /> : undefined}
-								meta={`${envName(envs.data, d.agent_id, ownership)} · added ${relativeTime(
-									d.created_at,
-								)}`}
-							/>
-							<ConfirmAction
-								title="Unlink this device?"
-								description={<p>The WhatsApp credential is revoked. This can't be undone.</p>}
-								confirmLabel="Unlink"
-								destructive
-								onConfirm={() => revoke.mutateAsync(d.credential_id)}
-							>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									className="text-muted-foreground hover:text-destructive"
-									disabled={revoke.isPending}
-									aria-label="Unlink device"
-								>
-									<Trash2 className="size-4" />
-								</Button>
-							</ConfirmAction>
-						</div>
-					))
-				)}
-			</div>
-		</div>
-	);
-}
-
-// ── Pair code ────────────────────────────────────────────────────────────────
-
-const TTL_OPTIONS = [
-	{ value: "900", label: "15 minutes" },
-	{ value: "3600", label: "1 hour" },
-	{ value: "86400", label: "24 hours" },
-];
-
-type PairCodeResult = {
-	code: string;
-	expires_at: string;
-	agent_link_id: string;
-};
-
-type RevealedAgentToken = {
-	agentLinkId: string;
-	value: string;
-};
-
-function isExpired(expiresAt: string, nowMs: number): boolean {
-	const expiresAtMs = new Date(expiresAt).getTime();
-	return Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs;
-}
-
-function PairCodeTab({ accountId, provider }: { accountId: string; provider: string }) {
-	const envs = useEnvironments();
-	const create = useCreatePairCode(accountId);
-	const ownership = useAgentOwnership();
-	// "" = no agent chosen (use the channel's linked agent). Sentinel keeps the
-	// Select controlled; mapped back to undefined in the request below.
-	const [agentId, setAgentId] = useState("");
-	const [ttl, setTtl] = useState("900");
-	const [result, setResult] = useState<PairCodeResult | null>(null);
-	const [revealedAgentToken, setRevealedAgentToken] = useState<RevealedAgentToken | null>(null);
-	const [nowMs, setNowMs] = useState(() => Date.now());
-	const agentItems = (envs.data ?? []).map((env) => ({
-		value: env.id,
-		label: envName(envs.data, env.id, ownership),
-	}));
-	const generateLocked = useRef(false);
-	const meta = providerMeta(provider);
-	const isGenerating = create.isPending || generateLocked.current;
-	const visibleAgentToken =
-		result && revealedAgentToken?.agentLinkId === result.agent_link_id
-			? revealedAgentToken.value
-			: null;
-	const resultExpired = result ? isExpired(result.expires_at, nowMs) : false;
-
-	useEffect(() => {
-		if (!result) return;
-		setNowMs(Date.now());
-		const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
-		return () => window.clearInterval(interval);
-	}, [result]);
-
-	function generate() {
-		if (generateLocked.current) return;
-		generateLocked.current = true;
-		setResult(null);
-		create.mutate(
-			{ agent_id: agentId || undefined, ttl_seconds: Number(ttl) },
-			{
-				onSuccess: (data) => {
-					if (data.agent_token) {
-						setRevealedAgentToken({
-							agentLinkId: data.agent_link_id,
-							value: data.agent_token,
-						});
-					}
-					setResult({
-						code: data.code,
-						expires_at: data.expires_at,
-						agent_link_id: data.agent_link_id,
-					});
-				},
-				onSettled: () => {
-					generateLocked.current = false;
-				},
-			},
-		);
-	}
-
-	if (provider === "whatsapp" && !WHATSAPP_LINKING_READY) {
-		return (
-			<InfoCard icon={TriangleAlert} title="WhatsApp is coming soon">
-				{WHATSAPP_COMING_SOON_MESSAGE}
-			</InfoCard>
-		);
-	}
-
-	return (
-		<div className="flex flex-col gap-4">
-			<InfoCard icon={QrCode} title="Pair a chat">
-				Generate a one-time code, then send it from the {meta.label} chat you want to pair — the
-				agent links that conversation when it sees the code.
-			</InfoCard>
-
-			<div className="grid gap-3 sm:grid-cols-2">
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="pair-agent">Agent</Label>
-					{envs.isLoading ? (
-						<Skeleton className="h-10 w-full rounded-md" />
-					) : (
-						<Select
-							items={agentItems}
-							value={agentId}
-							onValueChange={(value) => {
-								if (value !== null) setAgentId(value);
-							}}
-							disabled={!!envs.error || isGenerating}
-						>
-							<SelectTrigger id="pair-agent">
-								<SelectValue placeholder="Use linked agent" />
-							</SelectTrigger>
-							<SelectContent>
-								{(envs.data ?? []).map((env) => (
-									<SelectItem
-										key={env.id}
-										value={env.id}
-										label={envName(envs.data, env.id, ownership)}
-									>
-										<AgentName env={env} fallback={env.id} />
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					)}
-				</div>
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="pair-ttl">Expires in</Label>
-					<Select
-						items={TTL_OPTIONS}
-						value={ttl}
-						onValueChange={(value) => {
-							if (value !== null) setTtl(value);
-						}}
-						disabled={isGenerating}
-					>
-						<SelectTrigger id="pair-ttl">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{TTL_OPTIONS.map((o) => (
-								<SelectItem key={o.value} value={o.value}>
-									{o.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</div>
-			</div>
-
-			{envs.error ? (
-				<ApiErrorPanel
-					error={envs.error}
-					onRetry={() => envs.refetch()}
-					title="Couldn't load agents"
-				/>
-			) : null}
-
-			<Button onClick={generate} disabled={isGenerating}>
-				<QrCode className="size-4" />
-				{isGenerating ? "Generating…" : "Generate pairing code"}
-			</Button>
-
-			{result ? (
-				<div className="flex flex-col gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
-					<div className="text-xs font-medium text-primary">Pairing code</div>
-					<div className="font-mono text-3xl font-semibold tracking-[0.2em]">{result.code}</div>
-					<p className="text-sm text-muted-foreground">
-						{resultExpired ? (
-							"Expired. Generate a new code."
-						) : (
-							<>
-								Send <span className="font-mono font-medium">{result.code}</span> from the chat you
-								want to pair. Expires {relativeTime(result.expires_at)}.
-							</>
-						)}
-					</p>
-					{visibleAgentToken ? (
-						<TokenReveal
-							label="Agent token"
-							value={visibleAgentToken}
-							note="Copy it now. It won't be shown again. The agent runtime uses this to send and receive on this channel."
-						/>
-					) : null}
-				</div>
-			) : null}
-		</div>
-	);
-}
-
-// ── Bindings (paired chats) ──────────────────────────────────────────────────
-
-function BindingsTab({ accountId }: { accountId: string }) {
-	const bindings = useChannelBindings(accountId);
-	if (bindings.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
-	if (bindings.error) {
-		return (
-			<ApiErrorPanel
-				error={bindings.error}
-				onRetry={() => bindings.refetch()}
-				title="Couldn't load paired chats"
-			/>
-		);
-	}
-	const items = bindings.data ?? [];
-
-	if (items.length === 0) {
-		return (
-			<EmptyState
-				icon={MessageSquareDashed}
-				title="No paired chats"
-				description="Generate a pairing code, then send it from a chat to link it here."
-			/>
-		);
-	}
-
-	return (
-		<div className="flex flex-col gap-2">
-			{items.map((b: ChannelBinding) => (
-				<div key={b.id} className={cn(ENTITY_CARD_BASE, "flex items-center gap-3")}>
-					<EntityHeader
-						className="min-w-0 flex-1"
-						icon={
-							<IconChip size="sm">
-								<MessageSquareDashed />
-							</IconChip>
-						}
-						title={b.external_chat_name ?? "Chat"}
-						meta={[
-							<span key="type" className="capitalize">
-								{b.external_chat_type ?? "chat"}
-							</span>,
-							<CopyInline key="chat-id" value={b.external_chat_id} label="chat ID" />,
-						]}
-					/>
-					<span className="text-xs capitalize text-muted-foreground">{b.status}</span>
-				</div>
-			))}
 		</div>
 	);
 }
@@ -904,7 +392,7 @@ function BindingsTab({ accountId }: { accountId: string }) {
 function ActivityTab({ accountId }: { accountId: string }) {
 	const activity = useChannelActivity(accountId);
 	if (activity.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
-	if (activity.error) {
+	if (shouldBlockQueryError(activity.error, activity.data)) {
 		return (
 			<ApiErrorPanel
 				error={activity.error}
@@ -937,7 +425,7 @@ function ActivityTab({ accountId }: { accountId: string }) {
 function ActivityRow({ item }: { item: ChannelActivityItem }) {
 	const inbound = item.direction === "inbound";
 	const isEvent = item.kind === "debug_event";
-	const error = item.delivery_last_error ?? item.error;
+	const error = channelActivityErrorSummary(item);
 
 	return (
 		<div className={cn(ENTITY_CARD_BASE, "flex items-start gap-3")}>
@@ -976,7 +464,7 @@ function ActivityRow({ item }: { item: ChannelActivityItem }) {
 function HealthTab({ accountId }: { accountId: string }) {
 	const health = useChannelHealth();
 	if (health.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
-	if (health.error) {
+	if (shouldBlockQueryError(health.error, health.data)) {
 		return (
 			<ApiErrorPanel
 				error={health.error}
@@ -995,18 +483,15 @@ function HealthTab({ accountId }: { accountId: string }) {
 		{ label: "In progress", value: h.in_progress_deliveries },
 		{ label: "Failed deliveries", value: h.failed_deliveries },
 	];
+	const transport = h.native_transport ? nativeTransportSummary(h.native_transport) : null;
+	const summary = channelHealthSummary(h);
+	const errorSummary = channelHealthErrorSummary(h);
 
 	return (
 		<div className="flex flex-col gap-4">
-			<div className="flex items-center gap-2">
-				<HealthBadge status={h.health_status} />
-				{(h.reasons ?? []).length > 0 ? (
-					<span className="text-xs text-muted-foreground">
-						{(h.reasons ?? []).join(" · ").replace(/_/g, " ")}
-					</span>
-				) : (
-					<span className="text-xs text-muted-foreground">No issues detected</span>
-				)}
+			<div className="flex flex-wrap items-center gap-2">
+				<HealthBadge health={h} />
+				<span className="text-xs text-muted-foreground">{summary.detail}</span>
 			</div>
 
 			<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1018,7 +503,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 				))}
 			</div>
 
-			{h.last_error ? (
+			{errorSummary ? (
 				<div
 					className={cn(
 						ENTITY_CARD_BASE,
@@ -1029,20 +514,28 @@ function HealthTab({ accountId }: { accountId: string }) {
 						<TriangleAlert className="size-4" />
 						Last error
 					</div>
-					<p className="text-sm text-destructive/90">{h.last_error}</p>
-					<p className="text-xs text-muted-foreground">
-						{[h.last_error_stage, h.last_error_outcome].filter(Boolean).join(" · ")} ·{" "}
-						{relativeTime(h.last_error_at)}
-					</p>
+					<p className="text-sm text-destructive/90">{errorSummary}</p>
+					<p className="text-xs text-muted-foreground">Reported {relativeTime(h.last_error_at)}</p>
 				</div>
 			) : null}
 
-			{h.native_transport ? (
+			{transport ? (
 				<div className={ENTITY_CARD_BASE}>
-					<SectionLabel className="mb-2 px-0">Native transport</SectionLabel>
-					<pre className="overflow-x-auto text-xs text-muted-foreground">
-						{JSON.stringify(h.native_transport, null, 2)}
-					</pre>
+					<SectionLabel className="mb-3 px-0">Message transport</SectionLabel>
+					<dl className="grid gap-3 text-sm sm:grid-cols-3">
+						<div>
+							<dt className="text-xs text-muted-foreground">Status</dt>
+							<dd className="mt-0.5 font-medium">{transport.status}</dd>
+						</div>
+						<div>
+							<dt className="text-xs text-muted-foreground">Connection</dt>
+							<dd className="mt-0.5 font-medium">{transport.connection}</dd>
+						</div>
+						<div>
+							<dt className="text-xs text-muted-foreground">Message delivery</dt>
+							<dd className="mt-0.5 font-medium">{transport.delivery}</dd>
+						</div>
+					</dl>
 				</div>
 			) : null}
 		</div>
@@ -1056,20 +549,38 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 	const meta = providerMeta(provider);
 	const supportsCommands = provider === "telegram" || provider === "discord";
 	const commands = sync.data?.commands ?? [];
+	const [syncing, setSyncing] = useState(false);
+	const syncLockedRef = useRef(false);
+
+	function syncCommands() {
+		if (syncLockedRef.current) return;
+		syncLockedRef.current = true;
+		setSyncing(true);
+		void (async () => {
+			try {
+				await sync.mutateAsync();
+			} catch {
+				// useSyncCommands already surfaces the API error.
+			} finally {
+				syncLockedRef.current = false;
+				setSyncing(false);
+			}
+		})();
+	}
 
 	return (
 		<div className="flex flex-col gap-4">
-			<InfoCard icon={KeyRound} title="Slash commands">
+			<InfoCard icon={KeyRound} title="Pairing commands">
 				{supportsCommands
-					? `Publish this agent's slash commands to ${meta.label}.`
-					: `${meta.label} doesn't support slash commands.`}
+					? `Publish Clawdi’s pairing commands to ${meta.label}.`
+					: `${meta.label} doesn't support pairing commands.`}
 			</InfoCard>
 
 			{supportsCommands ? (
 				<>
-					<Button onClick={() => sync.mutate()} disabled={sync.isPending}>
-						<RefreshCw className="size-4" />
-						{sync.isPending ? "Syncing…" : "Sync commands"}
+					<Button onClick={syncCommands} disabled={syncing}>
+						{syncing ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
+						{syncing ? "Syncing…" : "Sync commands"}
 					</Button>
 					{commands.length > 0 ? (
 						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2")}>
@@ -1086,7 +597,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 					) : sync.data ? (
 						<EmptyState
 							variant="inset"
-							description="Command sync completed. The runtime returned no commands to publish."
+							description="Command sync completed. No pairing commands were returned."
 						/>
 					) : null}
 				</>

@@ -1,45 +1,49 @@
 import { describe, expect, test } from "bun:test";
+import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
-	findNewDeploymentId,
-	hasCheckoutClientSecret,
+	checkoutSessionClientSecret,
+	checkoutUiModeForPublishableKey,
 } from "@/hosted/billing/components/stripe-checkout.logic";
-import type { CheckoutResult, HostedDeployment } from "@/hosted/billing/contracts";
 
 describe("stripe checkout logic", () => {
-	test("prefers the action_url for hosted fallback redirects", () => {
-		const result: CheckoutResult = {
+	function checkoutResult(
+		overrides: Partial<Extract<CheckoutOperationResult, { flow_type: "checkout_session" }>>,
+	): CheckoutOperationResult {
+		return {
 			flow_type: "checkout_session",
 			funding_source: "stripe",
+			action_url: null,
+			checkout_url: "",
+			client_secret: null,
+			...overrides,
+		};
+	}
+
+	test("prefers the action_url for hosted Checkout redirects", () => {
+		const result = checkoutResult({
 			action_url: "https://checkout.stripe.com/primary",
 			checkout_url: "https://checkout.stripe.com/secondary",
-			client_secret: null,
-		};
+		});
 
 		expect(checkoutRedirectUrl(result)).toBe("https://checkout.stripe.com/primary");
 	});
 
 	test("detects elements checkout responses from a client secret", () => {
-		const result: CheckoutResult = {
-			flow_type: "checkout_session",
-			funding_source: "stripe",
-			action_url: null,
-			checkout_url: "",
+		const result = checkoutResult({
 			client_secret: "cs_test_elements",
-		};
+		});
 
-		expect(hasCheckoutClientSecret(result)).toBe(true);
+		expect(checkoutSessionClientSecret(result) === "cs_test_elements").toBe(true);
 	});
 
 	test("documents the checkout elements ui mode for the installed Stripe SDK", () => {
 		expect(CHECKOUT_ELEMENTS_UI_MODE).toBe("custom");
 	});
 
-	test("finds a deployment created after checkout completes", () => {
-		const deployments = [{ id: "dep_old" }, { id: "dep_new" }] as HostedDeployment[];
-
-		expect(findNewDeploymentId(["dep_old"], deployments)).toBe("dep_new");
-		expect(findNewDeploymentId(["dep_old", "dep_new"], deployments)).toBeNull();
+	test("starts with hosted Checkout when Stripe.js cannot be configured", () => {
+		expect(checkoutUiModeForPublishableKey(undefined)).toBe("hosted");
+		expect(checkoutUiModeForPublishableKey("pk_test_browser")).toBe("custom");
 	});
 });

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import invalidate_api_key_auth_cache
-from app.core.database import get_runtime_observation_session, get_session
+from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
@@ -26,28 +26,34 @@ from app.schemas.platform import (
     PlatformApiKeyCreate,
     PlatformMutationBody,
     PlatformOwner,
-    PlatformRuntimeEnvironmentRetire,
-    PlatformRuntimeObservationConsumerAck,
-    PlatformRuntimeObservationConsumerRegister,
-    PlatformRuntimeObservationConsumerReset,
-    PlatformRuntimeObservationRead,
     PlatformRuntimeStateResponse,
     PlatformRuntimeStateUpsert,
 )
 from app.schemas.platform_oauth import PlatformOAuthErrorResponse, PlatformOAuthTokenResponse
-from app.schemas.runtime_observation import (
-    RuntimeEnvironmentRetirementReceipt,
-    RuntimeObservationConsumerResetResponse,
-    RuntimeObservationConsumerResponse,
-    RuntimeObservationReadResponse,
-)
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
     register_agent_environment,
 )
+from app.services.agent_lifecycle import (
+    AgentLifecycleBoundaryError,
+    active_agent_filter,
+    archive_agent_and_project,
+)
+from app.services.ai_provider_credentials import (
+    OAuthCredentialClaimConflict,
+    lock_ai_provider_owner,
+    reconcile_runtime_oauth_claims,
+    release_runtime_oauth_claims,
+)
 from app.services.api_key import mint_api_key
 from app.services.audit import record_control_plane_audit
+from app.services.hosted_runtime_secrets import (
+    hosted_runtime_secret_values_changed,
+    load_hosted_runtime_secrets_for_update,
+    runtime_secret_values_idempotency_identity,
+    sync_hosted_runtime_secret_values,
+)
 from app.services.platform_contract import (
     PlatformReplay,
     lock_platform_idempotency,
@@ -63,15 +69,24 @@ from app.services.platform_workload_auth import (
     issue_platform_workload_token,
     require_platform_mutation_auth,
 )
-from app.services.runtime_observation import (
-    RuntimeApplyIdentity,
-    RuntimeObservationProtocolError,
-    acknowledge_runtime_observation_cursor,
-    provision_runtime_environment_fence,
-    read_runtime_observations,
-    register_runtime_observation_consumer,
-    reset_runtime_observation_consumer,
-    retire_runtime_environment,
+from app.services.principal_lifecycle import (
+    PrincipalIdentityConflictError,
+    PrincipalLifecycleConfigurationError,
+    PrincipalTerminatedError,
+    assert_user_authority_active,
+    load_clerk_user_for_issuer,
+    resolve_clerk_owner_issuer,
+)
+from app.services.project_runtime_skills import (
+    assert_agent_workspace_skill_write_compatible,
+)
+from app.services.runtime_generation import (
+    RuntimeApplyGenerationUpdateError,
+    resolve_runtime_apply_generation_update,
+)
+from app.services.runtime_manifest_resources import (
+    enabled_runtime_manifest_skill_ids,
+    lock_runtime_manifest_skill_reservations,
 )
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
@@ -128,10 +143,6 @@ def _oauth_error_response(exc: PlatformOAuthProtocolError) -> JSONResponse:
         content=body.model_dump(),
         headers=headers,
     )
-
-
-def _raise_runtime_observation_error(exc: RuntimeObservationProtocolError) -> NoReturn:
-    raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
 
 
 def _oauth_form_value(form: Any, name: str) -> str:
@@ -310,17 +321,54 @@ async def _resolve_owner(
     idempotency_key: str,
 ) -> User:
     if owner.kind == PRINCIPAL_KIND_CLERK:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_CLERK,
-            User.clerk_id == owner.ref,
-        )
+        try:
+            issuer = await resolve_clerk_owner_issuer(db, subject=owner.ref)
+            user = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=owner.ref,
+                bind_legacy=False,
+            )
+        except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+            await _reject(
+                db,
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Owner has been terminated",
+                result="owner_terminated",
+                owner=owner,
+                owner_user_id=None,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action=action,
+                request=request,
+                idempotency_key=idempotency_key,
+            )
+            raise AssertionError("unreachable")
+        except PrincipalLifecycleConfigurationError:
+            await _reject(
+                db,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Clerk owner issuer is not configured",
+                result="owner_issuer_unconfigured",
+                owner=owner,
+                owner_user_id=None,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action=action,
+                request=request,
+                idempotency_key=idempotency_key,
+            )
+            raise AssertionError("unreachable")
     else:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
-            User.partner_tenant_ref == owner.ref,
-            User.clerk_id.is_(None),
-        )
-    user = (await db.execute(select(User).where(*filters))).scalar_one_or_none()
+        user = (
+            await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                    User.partner_tenant_ref == owner.ref,
+                    User.clerk_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
     if user is None:
         await _reject(
             db,
@@ -336,26 +384,23 @@ async def _resolve_owner(
             idempotency_key=idempotency_key,
         )
         raise AssertionError("unreachable")
-    return user
-
-
-async def _resolve_owner_read(db: AsyncSession, owner: PlatformOwner) -> User:
-    """Resolve a read principal without creating mutation/audit side effects."""
-
-    if owner.kind == PRINCIPAL_KIND_CLERK:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_CLERK,
-            User.clerk_id == owner.ref,
+    try:
+        await assert_user_authority_active(db, user.id)
+    except PrincipalTerminatedError:
+        await _reject(
+            db,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Owner has been terminated",
+            result="owner_terminated",
+            owner=owner,
+            owner_user_id=user.id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
         )
-    else:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
-            User.partner_tenant_ref == owner.ref,
-            User.clerk_id.is_(None),
-        )
-    user = (await db.execute(select(User).where(*filters))).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Owner not found")
+        raise AssertionError("unreachable")
     return user
 
 
@@ -468,6 +513,7 @@ async def _load_owned_agent(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == owner_user_id,
+                active_agent_filter(),
             )
             .with_for_update()
         )
@@ -557,6 +603,7 @@ async def platform_create_agent(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
         operation="agents.create",
@@ -583,6 +630,7 @@ async def platform_create_agent(
             sort_order=await _next_agent_sort_order(db, owner.id),
             environment_id=body.agent_id,
             registration_key=None,
+            default_name=body.default_name,
             commit=False,
         )
     except AgentEnvironmentIdConflict:
@@ -649,6 +697,7 @@ async def platform_delete_agent(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
         operation="agents.delete",
@@ -678,7 +727,18 @@ async def platform_delete_agent(
         "explicit_identity": agent.registration_key is None,
     }
     await queue_environment_runtime_manifest_changed(db, owner.id, agent_id)
-    await db.delete(agent)
+    try:
+        revoked_key_ids = await archive_agent_and_project(db, agent=agent)
+    except AgentLifecycleBoundaryError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_project_ownership_unproven",
+                "message": (
+                    "Agent Project ownership could not be proven; no resources were archived."
+                ),
+            },
+        ) from None
     await _complete_mutation(
         db,
         operation="agents.delete",
@@ -695,6 +755,8 @@ async def platform_delete_agent(
         environment_id=agent_id,
         audit_details=audit_details,
     )
+    for key_id in revoked_key_ids:
+        invalidate_api_key_auth_cache(key_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -722,11 +784,15 @@ async def platform_upsert_runtime_state(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
         operation="runtime_state.upsert",
         idempotency_key=idempotency_key,
-        request_payload={"agent_id": str(agent_id), **body.model_dump(mode="json")},
+        request_payload={
+            "agent_id": str(agent_id),
+            **_runtime_state_idempotency_payload(body),
+        },
         owner=body.owner,
         owner_user_id=owner.id,
         resource_type="hosted_runtime_state",
@@ -745,6 +811,14 @@ async def platform_upsert_runtime_state(
         request=request,
         idempotency_key=idempotency_key,
     )
+    new_workspace_skill_keys: set[str] = (
+        set(body.skills.entries) if body.skills is not None else set()
+    )
+    await assert_agent_workspace_skill_write_compatible(
+        db,
+        agent_id=agent_id,
+        skill_keys=new_workspace_skill_keys,
+    )
     runtime_state = (
         await db.execute(
             select(HostedRuntimeState)
@@ -759,37 +833,93 @@ async def platform_upsert_runtime_state(
             .with_for_update()
         )
     ).scalar_one_or_none()
+    secret_rows = await load_hosted_runtime_secrets_for_update(
+        db,
+        environment_id=agent_id,
+    )
+    secret_values_changed = hosted_runtime_secret_values_changed(
+        secret_rows,
+        body.secret_values,
+    )
+    old_skill_ids = enabled_runtime_manifest_skill_ids(
+        runtime_state.skills if runtime_state is not None else None
+    )
+    new_skill_ids = enabled_runtime_manifest_skill_ids(
+        body.skills.model_dump(mode="json", exclude_none=True) if body.skills is not None else None
+    )
+    await lock_runtime_manifest_skill_reservations(
+        db,
+        user_id=owner.id,
+        project_id=agent.default_project_id,
+        skill_ids=old_skill_ids | new_skill_ids,
+    )
     previous_generation = runtime_state.generation if runtime_state is not None else None
-    changed_fields = _runtime_state_changed_fields(runtime_state, body)
-    if runtime_state is not None and body.generation <= runtime_state.generation:
+    previous_apply_generation = (
+        runtime_state.apply_generation if runtime_state is not None else None
+    )
+    if runtime_state is not None and body.generation < runtime_state.generation:
         current_generation = runtime_state.generation
-        if body.generation < current_generation:
-            await _reject(
-                db,
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "stale_generation",
-                    "current_generation": current_generation,
-                },
-                result="stale_generation",
-                owner=body.owner,
-                owner_user_id=owner.id,
-                resource_type="hosted_runtime_state",
-                resource_id=str(agent_id),
-                action=action,
-                request=request,
-                idempotency_key=idempotency_key,
-                environment_id=agent_id,
-            )
-            raise AssertionError("unreachable")
-        material_changes = [field for field in changed_fields if field != "generation"]
+        await _reject(
+            db,
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "stale_generation",
+                "current_generation": current_generation,
+            },
+            result="stale_generation",
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="hosted_runtime_state",
+            resource_id=str(agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=agent_id,
+        )
+        raise AssertionError("unreachable")
+    try:
+        apply_generation = resolve_runtime_apply_generation_update(
+            current=previous_apply_generation,
+            requested=body.apply_generation,
+            explicitly_set="apply_generation" in body.model_fields_set,
+        )
+    except RuntimeApplyGenerationUpdateError as exc:
+        await _reject(
+            db,
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": exc.code,
+                "current_apply_generation": exc.current_apply_generation,
+            },
+            result=exc.code,
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="hosted_runtime_state",
+            resource_id=str(agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=agent_id,
+        )
+        raise AssertionError("unreachable")
+    changed_fields = _runtime_state_changed_fields(
+        runtime_state,
+        body,
+        apply_generation=apply_generation,
+    )
+    if secret_values_changed:
+        changed_fields.append("secretValues")
+    if runtime_state is not None and body.generation == runtime_state.generation:
+        material_changes = [
+            field for field in changed_fields if field not in {"generation", "apply_generation"}
+        ]
         if material_changes:
             await _reject(
                 db,
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "code": "generation_conflict",
-                    "current_generation": current_generation,
+                    "current_generation": runtime_state.generation,
                 },
                 result="generation_conflict",
                 owner=body.owner,
@@ -802,10 +932,30 @@ async def platform_upsert_runtime_state(
                 environment_id=agent_id,
             )
             raise AssertionError("unreachable")
+    try:
+        await reconcile_runtime_oauth_claims(
+            db,
+            owner_user_id=owner.id,
+            environment_id=agent_id,
+            runtimes={
+                name: runtime.model_dump(exclude_none=True, mode="json")
+                for name, runtime in body.runtimes.items()
+            },
+        )
+    except OAuthCredentialClaimConflict as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if runtime_state is None:
         runtime_state = HostedRuntimeState(environment_id=agent_id)
         db.add(runtime_state)
-    _assign_runtime_state(runtime_state, body)
+    _assign_runtime_state(runtime_state, body, apply_generation=apply_generation)
+    if secret_values_changed:
+        await db.flush()
+        await sync_hosted_runtime_secret_values(
+            db,
+            environment_id=agent_id,
+            rows=secret_rows,
+            desired=body.secret_values,
+        )
     if changed_fields:
         queue_runtime_manifest_changed(db, agent.user_id, agent_id)
     response = PlatformRuntimeStateResponse(
@@ -813,6 +963,7 @@ async def platform_upsert_runtime_state(
         deployment_id=body.deployment_id,
         instance_id=body.instance_id,
         generation=body.generation,
+        apply_generation=apply_generation,
     )
     await _complete_mutation(
         db,
@@ -832,6 +983,10 @@ async def platform_upsert_runtime_state(
             "deployment_id": body.deployment_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
+            "apply_generation": apply_generation,
+            "previous_apply_generation": previous_apply_generation,
+            "has_secret_values": bool(body.secret_values),
+            "secret_refs": sorted(body.secret_values),
             "changed_fields": changed_fields,
         },
     )
@@ -862,6 +1017,7 @@ async def platform_delete_runtime_state(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
         operation="runtime_state.delete",
@@ -901,6 +1057,11 @@ async def platform_delete_runtime_state(
     ).scalar_one_or_none()
     existed = runtime_state is not None
     if runtime_state is not None:
+        await release_runtime_oauth_claims(
+            db,
+            owner_user_id=agent.user_id,
+            environment_id=agent_id,
+        )
         await db.delete(runtime_state)
         queue_runtime_manifest_changed(db, agent.user_id, agent_id)
     await _complete_mutation(
@@ -920,230 +1081,6 @@ async def platform_delete_runtime_state(
         audit_details={"existed": existed},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post(
-    "/agents/{agent_id}/runtime-environment/retire",
-    response_model=RuntimeEnvironmentRetirementReceipt,
-)
-async def platform_retire_runtime_environment(
-    agent_id: UUID,
-    body: PlatformRuntimeEnvironmentRetire,
-    request: Request,
-    idempotency_key: IdempotencyKey,
-    _auth: PlatformMutationAuth = Depends(
-        require_platform_mutation_auth("platform:runtime-state:write")
-    ),
-    db: AsyncSession = Depends(get_session),
-) -> RuntimeEnvironmentRetirementReceipt | Response:
-    action = "runtime_environment.retire"
-    owner = await _resolve_owner(
-        db,
-        owner=body.owner,
-        resource_type="runtime_environment_fence",
-        resource_id=str(agent_id),
-        action=action,
-        request=request,
-        idempotency_key=idempotency_key,
-    )
-    request_hash, replay = await _begin_mutation(
-        db,
-        operation="runtime_environment.retire",
-        idempotency_key=idempotency_key,
-        request_payload={"agent_id": str(agent_id), **body.model_dump(mode="json")},
-        owner=body.owner,
-        owner_user_id=owner.id,
-        resource_type="runtime_environment_fence",
-        resource_id=str(agent_id),
-        action=action,
-        request=request,
-    )
-    if replay is not None:
-        return _replay_response(replay)
-    try:
-        receipt_values = await retire_runtime_environment(
-            db,
-            environment_id=agent_id,
-            expected_deployment_id=body.expected_deployment_id,
-            retirement_id=body.retirement_id,
-            owner_id=owner.id,
-        )
-    except RuntimeObservationProtocolError as exc:
-        await _reject(
-            db,
-            status_code=exc.status_code,
-            detail=exc.detail(),
-            result=exc.code,
-            owner=body.owner,
-            owner_user_id=owner.id,
-            resource_type="runtime_environment_fence",
-            resource_id=str(agent_id),
-            action=action,
-            request=request,
-            idempotency_key=idempotency_key,
-            environment_id=agent_id,
-        )
-        raise AssertionError("unreachable")
-    receipt = RuntimeEnvironmentRetirementReceipt.model_validate(receipt_values)
-    await _complete_mutation(
-        db,
-        operation="runtime_environment.retire",
-        idempotency_key=idempotency_key,
-        request_hash=request_hash,
-        owner=body.owner,
-        owner_user_id=owner.id,
-        resource_type="runtime_environment_fence",
-        resource_id=str(agent_id),
-        action=action,
-        request=request,
-        response_status=status.HTTP_200_OK,
-        response_body=receipt,
-        environment_id=agent_id,
-        audit_details={
-            "deployment_id": body.expected_deployment_id,
-            "retirement_id": body.retirement_id,
-            "retirement_receipt_id": receipt.retirement_receipt_id,
-        },
-    )
-    return receipt
-
-
-@router.post(
-    "/agents/{agent_id}/runtime-observation-consumers/register",
-    response_model=RuntimeObservationConsumerResponse,
-)
-async def platform_register_runtime_observation_consumer(
-    agent_id: UUID,
-    body: PlatformRuntimeObservationConsumerRegister,
-    _auth: PlatformMutationAuth = Depends(
-        require_platform_mutation_auth("platform:runtime-observations:read")
-    ),
-    db: AsyncSession = Depends(get_session),
-) -> RuntimeObservationConsumerResponse:
-    owner = await _resolve_owner_read(db, body.owner)
-    try:
-        values = await register_runtime_observation_consumer(
-            db,
-            environment_id=agent_id,
-            owner_id=owner.id,
-            deployment_id=body.deployment_id,
-            consumer_id=body.consumer_id,
-        )
-    except RuntimeObservationProtocolError as exc:
-        if exc.code == "observation_cursor_expired":
-            await db.commit()
-        else:
-            await db.rollback()
-        _raise_runtime_observation_error(exc)
-    await db.commit()
-    return RuntimeObservationConsumerResponse.model_validate(values)
-
-
-@router.post(
-    "/agents/{agent_id}/runtime-observations/read",
-    response_model=RuntimeObservationReadResponse,
-)
-async def platform_read_runtime_observations(
-    agent_id: UUID,
-    body: PlatformRuntimeObservationRead,
-    _auth: PlatformMutationAuth = Depends(
-        require_platform_mutation_auth("platform:runtime-observations:read")
-    ),
-    db: AsyncSession = Depends(get_runtime_observation_session),
-) -> RuntimeObservationReadResponse:
-    """Read credential-authenticated guest reports for the Hosted controller.
-
-    The readiness authority is the authenticated guest report from the
-    per-deployment runtime credential. It is not attestation-bound instance identity.
-    """
-
-    owner = await _resolve_owner_read(db, body.owner)
-    identity = body.expected_apply_identity
-    try:
-        values = await read_runtime_observations(
-            db,
-            environment_id=agent_id,
-            owner_id=owner.id,
-            deployment_id=body.deployment_id,
-            consumer_id=body.consumer_id,
-            expected_apply_identity=RuntimeApplyIdentity(
-                generation=identity.generation,
-                manifest_etag=identity.manifest_etag,
-                apply_receipt_id=identity.apply_receipt_id,
-                boot_nonce=identity.boot_nonce,
-            ),
-            after_cursor=body.after_cursor,
-            limit=body.limit,
-        )
-    except RuntimeObservationProtocolError as exc:
-        if exc.code == "observation_cursor_expired":
-            # A known invalid cursor installs its explicit reset boundary in
-            # this same repeatable-read transaction before the 410 is visible.
-            await db.commit()
-        else:
-            await db.rollback()
-        _raise_runtime_observation_error(exc)
-    return RuntimeObservationReadResponse.model_validate(values)
-
-
-@router.post(
-    "/agents/{agent_id}/runtime-observation-consumers/ack",
-    response_model=RuntimeObservationConsumerResponse,
-)
-async def platform_ack_runtime_observation_consumer(
-    agent_id: UUID,
-    body: PlatformRuntimeObservationConsumerAck,
-    _auth: PlatformMutationAuth = Depends(
-        require_platform_mutation_auth("platform:runtime-observations:read")
-    ),
-    db: AsyncSession = Depends(get_session),
-) -> RuntimeObservationConsumerResponse:
-    owner = await _resolve_owner_read(db, body.owner)
-    try:
-        values = await acknowledge_runtime_observation_cursor(
-            db,
-            environment_id=agent_id,
-            owner_id=owner.id,
-            deployment_id=body.deployment_id,
-            consumer_id=body.consumer_id,
-            opaque_cursor=body.cursor,
-        )
-    except RuntimeObservationProtocolError as exc:
-        if exc.code == "observation_cursor_expired":
-            await db.commit()
-        else:
-            await db.rollback()
-        _raise_runtime_observation_error(exc)
-    await db.commit()
-    return RuntimeObservationConsumerResponse.model_validate(values)
-
-
-@router.post(
-    "/agents/{agent_id}/runtime-observation-consumers/reset",
-    response_model=RuntimeObservationConsumerResetResponse,
-)
-async def platform_reset_runtime_observation_consumer(
-    agent_id: UUID,
-    body: PlatformRuntimeObservationConsumerReset,
-    _auth: PlatformMutationAuth = Depends(
-        require_platform_mutation_auth("platform:runtime-observations:read")
-    ),
-    db: AsyncSession = Depends(get_session),
-) -> RuntimeObservationConsumerResetResponse:
-    owner = await _resolve_owner_read(db, body.owner)
-    try:
-        values = await reset_runtime_observation_consumer(
-            db,
-            environment_id=agent_id,
-            owner_id=owner.id,
-            deployment_id=body.deployment_id,
-            consumer_id=body.consumer_id,
-        )
-    except RuntimeObservationProtocolError as exc:
-        await db.rollback()
-        _raise_runtime_observation_error(exc)
-    await db.commit()
-    return RuntimeObservationConsumerResetResponse.model_validate(values)
 
 
 @router.post("/auth/keys", response_model=ApiKeyCreated)
@@ -1187,36 +1124,12 @@ async def platform_mint_api_key(
         request=request,
         idempotency_key=idempotency_key,
     )
-    try:
-        await provision_runtime_environment_fence(
-            db,
-            environment_id=body.environment_id,
-            owner_id=owner.id,
-            deployment_id=body.deployment_id,
-        )
-    except RuntimeObservationProtocolError as exc:
-        await _reject(
-            db,
-            status_code=exc.status_code,
-            detail=exc.detail(),
-            result=exc.code,
-            owner=body.owner,
-            owner_user_id=owner.id,
-            resource_type="runtime_environment_fence",
-            resource_id=str(body.environment_id),
-            action=action,
-            request=request,
-            idempotency_key=idempotency_key,
-            environment_id=body.environment_id,
-        )
-        raise AssertionError("unreachable")
     minted = await mint_api_key(
         db,
         user_id=owner.id,
         label=body.label,
         scopes=body.scopes,
         environment_id=body.environment_id,
-        runtime_deployment_id=body.deployment_id,
         managed=True,
         commit=False,
     )
@@ -1325,10 +1238,13 @@ async def platform_revoke_api_key(
 def _assign_runtime_state(
     state: HostedRuntimeState,
     body: PlatformRuntimeStateUpsert,
+    *,
+    apply_generation: int | None,
 ) -> None:
     state.deployment_id = body.deployment_id
     state.instance_id = body.instance_id
     state.generation = body.generation
+    state.apply_generation = apply_generation
     state.cli_package_spec = body.cli_package_spec
     state.locale = body.locale.model_dump()
     state.system = body.system.model_dump(exclude_none=True, mode="json")
@@ -1337,12 +1253,20 @@ def _assign_runtime_state(
         name: runtime.model_dump(exclude_none=True, mode="json")
         for name, runtime in body.runtimes.items()
     }
-    state.bridge = _optional_runtime_model(body.bridge)
     state.live_sync = body.live_sync.model_dump(mode="json")
     state.recovery = body.recovery.model_dump(mode="json")
     state.egress_profiles = _optional_runtime_model(body.egress_profiles)
-    state.mcp = body.mcp
+    state.mcp = _optional_runtime_model(body.mcp)
+    state.skills = _optional_runtime_model(body.skills)
     state.tools = body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+
+
+def _runtime_state_idempotency_payload(body: PlatformRuntimeStateUpsert) -> dict[str, Any]:
+    payload = body.model_dump(mode="json", exclude={"secret_values"})
+    payload["secretValuesIdentity"] = runtime_secret_values_idempotency_identity(body.secret_values)
+    if "apply_generation" not in body.model_fields_set:
+        payload.pop("apply_generation", None)
+    return payload
 
 
 def _optional_runtime_model(value: BaseModel | None) -> dict[str, Any] | None:
@@ -1354,28 +1278,35 @@ def _optional_runtime_model(value: BaseModel | None) -> dict[str, Any] | None:
 def _runtime_state_changed_fields(
     state: HostedRuntimeState | None,
     body: PlatformRuntimeStateUpsert,
+    *,
+    apply_generation: int | None,
 ) -> list[str]:
     fields = [
         "deployment_id",
         "instance_id",
         "generation",
+        "apply_generation",
         "cli_package_spec",
         "locale",
         "system",
         "egress_engine",
         "runtimes",
-        "bridge",
         "live_sync",
         "recovery",
         "egress_profiles",
         "mcp",
+        "skills",
         "tools",
     ]
     if state is None:
-        return fields
+        return [
+            field for field in fields if field != "apply_generation" or apply_generation is not None
+        ]
     changed: list[str] = []
     for field in fields:
-        if field == "locale":
+        if field == "apply_generation":
+            body_value = apply_generation
+        elif field == "locale":
             body_value = body.locale.model_dump()
         elif field == "system":
             body_value = body.system.model_dump(exclude_none=True, mode="json")
@@ -1384,7 +1315,7 @@ def _runtime_state_changed_fields(
                 name: runtime.model_dump(exclude_none=True, mode="json")
                 for name, runtime in body.runtimes.items()
             }
-        elif field in {"bridge", "egress_engine", "egress_profiles"}:
+        elif field in {"egress_engine", "egress_profiles", "mcp", "skills"}:
             body_value = _optional_runtime_model(getattr(body, field))
         elif field in {"live_sync", "recovery"}:
             body_value = getattr(body, field).model_dump(mode="json")

@@ -17,28 +17,32 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     SecretStr,
     field_validator,
     model_validator,
 )
 
-from app.schemas.ai_provider import AiProviderModel
+from app.schemas.ai_provider import AiProviderAuth, AiProviderModel
+from app.schemas.platform import PlatformOwner
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
-    HostedRuntimeBridge,
+    HostedRuntimeCompanions,
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
+    HostedRuntimeMcp,
     HostedRuntimeRecovery,
+    HostedRuntimeSecretValues,
+    HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
-    validate_hosted_runtime_bridge,
-    validate_no_plaintext_tool_secrets,
+    validate_hosted_runtime_secret_values,
 )
 
-AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
+AdminChannelProvider = Literal["telegram", "discord", "whatsapp"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
 _SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
@@ -92,6 +96,12 @@ class AdminAgentCreate(BaseModel):
     agent_id: UUID | None = None
     machine_id: str
     machine_name: str
+    default_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Canonical Agent name supplied by the owning control plane.",
+    )
     agent_type: str
     agent_version: str | None = None
     os_name: str = "linux"
@@ -107,11 +117,6 @@ class AdminApiKeyCreate(BaseModel):
     `environment_id` is optional — if set, the minted key is bound
     to that env (deploy-key semantics). If null, the key is unbound.
 
-    `deployment_id` opts an environment-bound managed key into the strict-v2
-    runtime observation protocol. Legacy managed keys remain valid without it;
-    those keys cannot submit strict-v2 observations because no environment
-    fence is provisioned.
-
     `scopes` is optional — same API-permission semantics as the user-facing
     `ApiKeyCreate`: `None` means full account access (the default
     for both user-self-mint and admin-mint). Pass an explicit list
@@ -124,18 +129,8 @@ class AdminApiKeyCreate(BaseModel):
     target_clerk_id: AdminClerkId
     label: str
     environment_id: str | None = None
-    deployment_id: str | None = Field(default=None, min_length=1, max_length=200)
     scopes: list[str] | None = None
     managed: bool = False
-
-    @model_validator(mode="after")
-    def validate_v2_runtime_binding(self) -> AdminApiKeyCreate:
-        is_v2_runtime_key = self.managed and self.environment_id is not None
-        if self.deployment_id is not None and not is_v2_runtime_key:
-            raise ValueError(
-                "deployment_id is only valid for managed environment-bound runtime keys"
-            )
-        return self
 
 
 class AdminRuntimeStateUpsert(BaseModel):
@@ -145,28 +140,36 @@ class AdminRuntimeStateUpsert(BaseModel):
     links are owned by `/v1/channels/*` and must not be embedded here.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     target_clerk_id: str | None = None
     deployment_id: str = Field(min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
+    apply_generation: int | None = Field(default=None, ge=1)
     cli_package_spec: str = Field(min_length=1, max_length=200)
     locale: HostedRuntimeLocale
     system: HostedRuntimeSystem
     egress_engine: HostedEgressEngine | None = None
+    companions: HostedRuntimeCompanions | None = None
     runtimes: dict[str, HostedRuntimeDesiredState]
-    bridge: HostedRuntimeBridge | None = None
     live_sync: HostedRuntimeLiveSync
     recovery: HostedRuntimeRecovery
     egress_profiles: HostedEgressProfiles | None = None
-    mcp: dict[str, Any] | None = None
+    mcp: HostedRuntimeMcp | None = None
+    skills: HostedRuntimeSkills | None = None
     tools: HostedRuntimeTools
+    secret_values: HostedRuntimeSecretValues = Field(alias="secretValues")
 
     @field_validator("cli_package_spec")
     @classmethod
     def _validate_cli_package_spec(cls, value: str) -> str:
         return validate_clawdi_cli_package_spec(value)
+
+    @field_validator("secret_values")
+    @classmethod
+    def _validate_secret_values(cls, value: HostedRuntimeSecretValues) -> HostedRuntimeSecretValues:
+        return validate_hosted_runtime_secret_values(value)
 
     @field_validator("runtimes")
     @classmethod
@@ -186,17 +189,20 @@ class AdminRuntimeStateUpsert(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_runtime_bridge(self) -> AdminRuntimeStateUpsert:
-        runtime = next(iter(self.runtimes))
-        validate_hosted_runtime_bridge(runtime, self.bridge)
+    def _validate_filebrowser_binding(self) -> AdminRuntimeStateUpsert:
+        filebrowser = self.companions.filebrowser if self.companions is not None else None
+        if filebrowser is None:
+            return self
+        expected_audience = f"clawdi-files:{self.deployment_id}"
+        expected_subject = f"deployment:{self.deployment_id}:owner"
+        expected_group = f"{expected_audience}:{filebrowser.auth.accessRevision}"
+        if (
+            filebrowser.auth.audience != expected_audience
+            or filebrowser.auth.subject != expected_subject
+            or filebrowser.auth.requiredGroup != expected_group
+        ):
+            raise ValueError("Files authentication must be bound to this deployment revision")
         return self
-
-    @field_validator("mcp")
-    @classmethod
-    def _validate_tool_desired_state(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        if value is not None:
-            validate_no_plaintext_tool_secrets(value)
-        return value
 
 
 class AdminRuntimeStateResponse(BaseModel):
@@ -204,6 +210,7 @@ class AdminRuntimeStateResponse(BaseModel):
     deployment_id: str
     instance_id: str
     generation: int
+    apply_generation: int | None = None
 
 
 class AdminManagedAiProviderUpsert(BaseModel):
@@ -231,17 +238,49 @@ class AdminManagedAiProviderResponse(BaseModel):
     has_api_key: bool
 
 
+class AdminDeploymentManagedAiProviderUpsert(BaseModel):
+    """Create or rotate one deployment-scoped first-party managed provider."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    owner: PlatformOwner
+    base_url: str = Field(min_length=1, max_length=1000)
+    api_key: SecretStr = Field(min_length=1)
+    default_model: str | None = Field(default=None, max_length=300)
+    models: list[AiProviderModel] | None = None
+    label: str | None = Field(default=None, max_length=200)
+    capabilities: dict[str, Any] | None = None
+
+
+class AdminDeploymentManagedAiProviderResponse(BaseModel):
+    id: UUID
+    owner: PlatformOwner
+    owner_user_id: UUID
+    owner_clerk_id: str | None
+    provider_id: str
+    scope: Literal["account_global"]
+    type: Literal["custom_openai_compatible"]
+    label: str
+    api_mode: str
+    auth: AiProviderAuth
+    managed_by: Literal["clawdi"]
+    runtime_env_name: str
+    base_url: str
+    capabilities: dict[str, Any] | None = None
+    models: list[dict[str, Any]] | None = None
+    has_api_key: bool
+
+
 class AdminChannelCreate(BaseModel):
     """Create a provider bot account through the admin control plane.
 
-    `target_clerk_id` supplies the backing user row for bookkeeping and
-    private managed bots. Public bots remain admin-managed shared
-    infrastructure: authenticated users can create their own links and pair
-    codes, but cannot mutate provider credentials or destructive bot-level
-    state through user APIs.
+    Private accounts require a target tenant owner. Public accounts are
+    platform inventory and reject a target tenant owner.
     """
 
-    target_clerk_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    target_clerk_id: AdminClerkId | None = None
     provider: AdminChannelProvider
     name: str = Field(min_length=1, max_length=120)
     visibility: AdminChannelVisibility = "public"
@@ -261,6 +300,30 @@ class AdminChannelCreate(BaseModel):
     @classmethod
     def _validate_secrets(cls, value: dict[str, str] | None) -> dict[str, str] | None:
         return _clean_channel_secret_values(value)
+
+    @model_validator(mode="after")
+    def _validate_ownership(self) -> AdminChannelCreate:
+        if self.visibility == "private" and self.target_clerk_id is None:
+            raise ValueError("private channels require target_clerk_id")
+        if self.visibility == "public" and self.target_clerk_id is not None:
+            raise ValueError("public channels must not specify target_clerk_id")
+        return self
+
+
+class AdminPlatformWhatsAppPairingSessionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_id: UUID
+    request_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name cannot be blank")
+        return stripped
 
 
 class AdminChannelUpdate(BaseModel):
@@ -295,7 +358,7 @@ class AdminChannelUpdate(BaseModel):
 
 class AdminChannelResponse(BaseModel):
     id: UUID
-    owner_user_id: UUID
+    owner_user_id: UUID | None
     owner_clerk_id: str | None
     provider: str
     name: str
@@ -318,6 +381,26 @@ class AdminChannelWebhookSecretResponse(BaseModel):
     webhook_secret: str
 
 
+class AdminAppSettingUpsert(BaseModel):
+    """Replace one registered global setting as a single JSON value."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    value: JsonValue
+
+
+class AdminAppSettingResponse(BaseModel):
+    key: str
+    value: JsonValue
+    description: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminAppSettingListResponse(BaseModel):
+    items: list[AdminAppSettingResponse]
+
+
 def _clean_channel_secret_values(value: dict[str, str] | None) -> dict[str, str] | None:
     if value is None:
         return None
@@ -326,7 +409,7 @@ def _clean_channel_secret_values(value: dict[str, str] | None) -> dict[str, str]
         name = key.strip()
         if not name or len(name) > 80 or not name.replace("_", "").isalnum():
             raise ValueError("secret names must be alphanumeric or underscore")
-        if not isinstance(secret, str) or not secret:
+        if not secret:
             raise ValueError("secret values cannot be blank")
         cleaned[name] = secret
     return cleaned

@@ -6,32 +6,50 @@ import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
-import type { AiProviderAuth } from "@/hosted/v2/ai-providers/types";
+import {
+	MANAGED_PROVIDER_ID,
+	MANAGED_PROVIDER_LABEL,
+	providerPresentation,
+} from "@/hosted/v2/ai-providers/model-binding";
+import type { AiProvider, AiProviderAuth } from "@/hosted/v2/ai-providers/types";
 
-/** Real brand-logo icon for a provider type (delegates to the unified EntityIcon). */
-export function ProviderTypeChip({
-	type,
+/** Brand-preserving icon for a saved provider or provider reference. */
+export function ProviderIcon({
+	provider,
+	providers = [],
 	size = "md",
 	className,
 }: {
-	type: string;
+	provider: AiProvider | string;
+	providers?: readonly AiProvider[];
 	size?: EntityIconSize;
 	className?: string;
 }) {
-	const meta = providerTypeMeta(type);
+	const presentation = providerPresentation(provider, providers);
+	if (presentation.managed) {
+		return (
+			<IconChip size={size} tint="bg-primary/10 text-primary" className={className}>
+				<Sparkles />
+			</IconChip>
+		);
+	}
 	return (
-		<EntityIcon kind="provider" id={type} label={meta.label} size={size} className={className} />
+		<EntityIcon
+			kind="provider"
+			id={presentation.iconId}
+			label={presentation.brandLabel}
+			size={size}
+			className={className}
+		/>
 	);
 }
 
 const AUTH_LABEL: Record<string, string> = {
 	api_key: "API key",
-	// Matches the "Sign in with ChatGPT (Codex)" auth option label.
 	agent_profile: "ChatGPT",
 	oauth_profile: "ChatGPT",
 	secret_ref: "Vault key",
-	none: "No auth",
+	none: "No credential",
 };
 
 /** Auth-method pill for a provider. */
@@ -49,18 +67,22 @@ export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 	);
 }
 
+export function ProviderReadinessBadge({ deployable }: { deployable: boolean }) {
+	return (
+		<StatusBadge status={deployable ? "success" : "warning"} withDot>
+			{deployable ? "Ready" : "Setup required"}
+		</StatusBadge>
+	);
+}
+
 /** The always-on managed default, no setup. */
 export function ManagedProviderCard() {
 	return (
 		<div data-hosted="true" data-v2="true" className={ENTITY_CARD_BASE}>
 			<EntityHeader
 				align="start"
-				icon={
-					<IconChip tint="bg-primary/10 text-primary">
-						<Sparkles className="size-5" />
-					</IconChip>
-				}
-				title="Managed by Clawdi"
+				icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
+				title={MANAGED_PROVIDER_LABEL}
 				titleAdornment={
 					<StatusBadge status="success">
 						<ShieldCheck className="size-3" />

@@ -1,15 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
-const readRepoFile = (path: string): string => readFileSync(resolve(repoRoot, path), "utf8");
+const repoPath = (path: string): string => resolve(repoRoot, path);
+const readRepoFile = (path: string): string => readFileSync(repoPath(path), "utf8");
+const readPackageScripts = (path: string): Record<string, string> =>
+	JSON.parse(readRepoFile(path)).scripts;
+
 const clientWorkflow = readRepoFile(".github/workflows/client-ci.yml");
 const cleanRunnerWorkflow = readRepoFile(".github/workflows/clean-test-runner-ci.yml");
-const outerRunner = readRepoFile("scripts/test.sh");
-const innerRunner = readRepoFile("docker/test-runner.sh");
+const setupBunAction = readRepoFile(".github/actions/setup-bun-ci/action.yml");
+const runner = readRepoFile("scripts/test.sh");
+const runnerDockerfile = readRepoFile("docker/test-runner.Dockerfile");
 const compose = readRepoFile("docker-compose.test.yml");
+const backendProject = readRepoFile("backend/pyproject.toml");
 const turboConfig = readRepoFile("turbo.json");
+const rootScripts = readPackageScripts("package.json");
+const webScripts = readPackageScripts("apps/web/package.json");
+const cliScripts = readPackageScripts("packages/cli/package.json");
+const sharedScripts = readPackageScripts("packages/shared/package.json");
+const sidecarScripts = readPackageScripts("packages/whatsapp-baileys-sidecar/package.json");
 
 function section(source: string, start: string, end: string): string {
 	const startIndex = source.indexOf(start);
@@ -23,197 +34,143 @@ function occurrences(source: string, value: string): number {
 	return source.split(value).length - 1;
 }
 
-const compositionFunctions = new Set([
-	"install_js",
-	"install_backend",
-	"workspace_typecheck",
-	"web_typecheck",
-	"web_tests",
-	"web_build",
-	"cli_typecheck",
-	"cli_tests",
-	"shared_tests",
-	"sidecar_tests",
-	"runner_contract_tests",
-	"backend_tests",
-]);
-
-function calledCompositionFunctions(shellFunction: string): string[] {
-	return shellFunction
-		.split("\n")
-		.map((line) => line.trim().split(/[ (]/, 1)[0])
-		.filter((name) => compositionFunctions.has(name));
-}
-
 describe("client workflow contract", () => {
-	test("keeps build and typecheck as independent required gates", () => {
-		const typecheckJob = section(clientWorkflow, "  typecheck:\n", "  cli-test:\n");
-		const buildJob = section(clientWorkflow, "  build:\n", "  deploy-contract-drift:\n");
+	test("uses truthful change routing and verifies every client package in one job", () => {
+		const changesJob = section(clientWorkflow, "  changes:\n", "  # Lint");
+		const verifyJob = section(clientWorkflow, "  verify:\n", "  deploy-contract-drift:\n");
 
-		expect(typecheckJob).toContain("needs: changes");
-		expect(buildJob).toContain("needs: changes");
-		expect(buildJob).not.toMatch(/needs:.*typecheck/);
-		for (const job of [typecheckJob, buildJob]) {
-			expect(job).toContain("uses: actions/checkout@v6");
-			expect(job).not.toContain("actions/upload-artifact");
-			expect(job).not.toContain("actions/download-artifact");
+		expect(changesJob).toContain(`client: \${{ steps.filter.outputs.client }}`);
+		expect(changesJob).toContain(`deploy_contract: \${{ steps.filter.outputs.deploy_contract }}`);
+		for (const path of [
+			"apps/web/**",
+			"packages/shared/**",
+			"packages/cli/**",
+			"packages/whatsapp-baileys-sidecar/**",
+		]) {
+			expect(changesJob).toContain(`- "${path}"`);
 		}
+		for (const staleOutput of ["web", "cli", "shared", "sidecar", "infra"]) {
+			expect(changesJob).not.toContain(
+				`${staleOutput}: \${{ steps.filter.outputs.${staleOutput} }}`,
+			);
+		}
+		expect(verifyJob).toContain("needs.changes.outputs.client == 'true'");
+		expect(verifyJob).not.toContain("matrix:");
+		expect(clientWorkflow).not.toContain("actions/upload-artifact");
+		expect(clientWorkflow).not.toContain("actions/download-artifact");
+
 		const typecheckTask = section(turboConfig, '\t\t"typecheck": {\n', '\t\t"lint": {\n');
 		expect(typecheckTask).toContain('"outputs": []');
-
-		expect(typecheckJob).toContain(`bunx turbo typecheck --filter=\${{ matrix.filter }}`);
-		expect(typecheckJob).toContain("target: web");
-		expect(typecheckJob).toContain("target: cli");
-		expect(typecheckJob).toContain("target: shared");
-		expect(buildJob).toContain("bunx turbo build --filter=web");
-	});
-
-	test("retains the existing client build and test commands", () => {
 		for (const command of [
 			"bun run check",
-			"bun run --cwd packages/cli build",
-			"bun run --cwd packages/cli build:binary",
-			"packages/cli/dist-bin/clawdi --version",
+			"bunx turbo typecheck build",
+			"bun run --cwd packages/cli test:native-linux-lifecycle:internal",
 			"bun run --cwd packages/cli check:publish-manifest",
-			"bun test --isolate --max-concurrency=1 packages/cli",
+			"bun run --cwd apps/web test:internal",
+			"bun run --cwd packages/shared test:internal",
+			"bun run --cwd packages/whatsapp-baileys-sidecar test:internal",
+			"bun run --cwd packages/cli test:internal",
 		]) {
-			expect(clientWorkflow).toContain(command);
+			expect(verifyJob).toContain(command);
 		}
+		for (const filter of [
+			"--filter=web",
+			"--filter=clawdi",
+			"--filter=@clawdi/shared",
+			"--filter=@clawdi/whatsapp-baileys-sidecar",
+		]) {
+			expect(verifyJob).toContain(filter);
+		}
+	});
+
+	test("does not cache the Bun install directory", () => {
+		expect(setupBunAction).not.toContain("actions/cache");
+		expect(setupBunAction).toContain("bun install --frozen-lockfile");
 	});
 });
 
 describe("clean runner suite contract", () => {
-	test("keeps every public suite entrypoint routed", () => {
-		expect(outerRunner).toContain("all|backend|ci|js|cli|web)");
-		expect(outerRunner).toContain("all|backend|ci)\n");
-		expect(outerRunner).toContain("js|cli|web)\n");
+	test("uses one self-reentrant runner for every public suite", () => {
+		expect(existsSync(repoPath("docker/test-runner.sh"))).toBe(false);
+		expect(runner).toContain(`if [[ "\${1:-}" == "--in-container" ]]`);
+		expect(runner).toContain('test-runner bash /repo/scripts/test.sh --in-container "$suite" "$@"');
+		expect(runner).toContain("all|backend|ci|js|cli|shared|sidecar|web)");
+		expect(runnerDockerfile).not.toContain("docker/test-runner.sh");
+		expect(runnerDockerfile).not.toContain("ENTRYPOINT");
 
-		const dispatch = section(innerRunner, 'case "$suite" in\n', "esac\n");
-		for (const suite of ["all", "js", "cli", "web", "backend", "ci"]) {
-			expect(dispatch).toContain(`\t${suite})\n`);
-		}
-		expect(dispatch).toContain('run_js\n\t\trun_backend "$@"');
-		expect(dispatch).toContain('run_ci "$@"');
+		const postgresSelection = section(runner, "needs_postgres() {\n", "run_on_host() {\n");
+		expect(postgresSelection).toContain("all|backend|ci)");
+		expect(runner).toContain('if ! needs_postgres "$suite"; then');
+		expect(runner).toContain("run_args+=(--no-deps)");
 	});
 
-	test("composes public and focused suites from single command primitives", () => {
-		const primitives = [
-			{
-				name: "workspace_typecheck",
-				next: "web_typecheck",
-				commands: ["bun run typecheck"],
-			},
-			{
-				name: "web_typecheck",
-				next: "web_tests",
-				commands: ["bun run --cwd apps/web typecheck"],
-			},
-			{
-				name: "web_tests",
-				next: "web_build",
-				commands: ['bun run --cwd apps/web test "$@"'],
-			},
-			{
-				name: "web_build",
-				next: "cli_typecheck",
-				commands: ["bun run --cwd apps/web build:oss"],
-			},
-			{
-				name: "cli_typecheck",
-				next: "cli_tests",
-				commands: ["bun run --cwd packages/cli typecheck"],
-			},
-			{
-				name: "cli_tests",
-				next: "shared_tests",
-				commands: ['bun run --cwd packages/cli test "$@"'],
-			},
-			{
-				name: "shared_tests",
-				next: "sidecar_tests",
-				commands: ["bun test packages/shared/src"],
-			},
-			{
-				name: "sidecar_tests",
-				next: "runner_contract_tests",
-				commands: ["bun run --cwd packages/whatsapp-baileys-sidecar test"],
-			},
-			{
-				name: "runner_contract_tests",
-				next: "backend_tests",
-				commands: ["bun test packages/cli/tests/clean-test-runner.test.ts"],
-			},
-			{
-				name: "backend_tests",
-				next: "run_js",
-				commands: ["uv run alembic upgrade head", 'uv run pytest -q "$@"'],
-			},
-		];
+	test("separates safe public entrypoints from internal and local suites", () => {
+		expect(rootScripts.test).toBe("scripts/test.sh");
+		expect(rootScripts["test:local"]).toBe("turbo test:internal");
+		expect(turboConfig).toContain('"test:internal": {');
+		expect(turboConfig).not.toContain('"test": {');
 
-		for (const primitive of primitives) {
-			const body = section(innerRunner, `${primitive.name}() {\n`, `${primitive.next}() {\n`);
-			for (const command of primitive.commands) {
-				expect(body).toContain(command);
-				expect(occurrences(innerRunner, command)).toBe(1);
-			}
+		expect(webScripts).toMatchObject({
+			test: "../../scripts/test.sh web",
+			"test:internal": "bun test",
+		});
+		expect(cliScripts).toMatchObject({
+			test: "../../scripts/test.sh cli",
+			"test:internal": "bun test --isolate --max-concurrency=1",
+			"test:e2e": "../../scripts/test.sh cli tests/e2e",
+			"test:watch:local": "bun test --watch",
+		});
+		expect(sharedScripts).toMatchObject({
+			test: "../../scripts/test.sh shared",
+			"test:internal": "bun test src",
+		});
+		expect(sidecarScripts).toMatchObject({
+			test: "../../scripts/test.sh sidecar",
+			"test:internal": "vitest run",
+		});
+		expect(cliScripts["test:native-linux-lifecycle:internal"]).toContain(
+			"native-installer.e2e.test.ts",
+		);
+		expect(cliScripts["test:native-linux-lifecycle"]).toBeUndefined();
+		expect(cliScripts["test:watch"]).toBeUndefined();
+		expect(backendProject).toContain('test = { shell = "../scripts/test.sh backend" }');
+	});
+
+	test("preserves suite behavior and container isolation invariants", () => {
+		for (const command of [
+			"bun run typecheck",
+			'bun run --cwd apps/web test:internal "$@"',
+			"bun run --cwd apps/web build:oss",
+			'bun run --cwd packages/cli test:internal "$@"',
+			"bun run --cwd packages/shared test:internal",
+			"bun run --cwd packages/whatsapp-baileys-sidecar test:internal",
+			"uv run alembic upgrade head",
+			'uv run pytest -q "$@"',
+			"web_tests src/hosted/oss-clean.test.ts",
+			"cli_tests tests/smoke.test.ts",
+			"backend_tests tests/test_smoke.py",
+		]) {
+			expect(runner).toContain(command);
 		}
-
-		const wrappers = [
-			{
-				body: section(innerRunner, "run_js() {\n", "run_cli() {\n"),
-				calls: [
-					"install_js",
-					"workspace_typecheck",
-					"web_tests",
-					"shared_tests",
-					"sidecar_tests",
-					"cli_tests",
-				],
-			},
-			{
-				body: section(innerRunner, "run_cli() {\n", "run_web() {\n"),
-				calls: ["install_js", "cli_typecheck", "cli_tests"],
-			},
-			{
-				body: section(innerRunner, "run_web() {\n", "run_backend() {\n"),
-				calls: ["install_js", "web_typecheck", "web_tests", "web_build"],
-			},
-			{
-				body: section(innerRunner, "run_backend() {\n", "run_ci() {\n"),
-				calls: ["install_backend", "backend_tests"],
-			},
-			{
-				body: section(innerRunner, "run_ci() {\n", "copy_repo\n"),
-				calls: [
-					"install_js",
-					"workspace_typecheck",
-					"runner_contract_tests",
-					"web_tests",
-					"web_build",
-					"shared_tests",
-					"sidecar_tests",
-					"cli_tests",
-					"install_backend",
-					"backend_tests",
-				],
-			},
-		];
-
-		for (const wrapper of wrappers) {
-			expect(calledCompositionFunctions(wrapper.body)).toEqual(wrapper.calls);
-			expect(wrapper.body).not.toMatch(/^\s*(?:bun|uv)\b/m);
+		expect(runner).toContain('run_backend "$@"');
+		expect(runner).toContain('run_cli "$@"');
+		expect(runner).toContain('run_web "$@"');
+		for (const suite of ["ci", "js", "shared", "sidecar"]) {
+			expect(runner).toContain(`Suite '${suite}' does not accept extra arguments`);
 		}
-
-		for (const [primitive, useCount] of [
-			["workspace_typecheck", 3],
-			["web_tests", 4],
-			["web_build", 3],
-			["cli_tests", 4],
-			["shared_tests", 3],
-			["sidecar_tests", 3],
-			["backend_tests", 3],
-		] as const) {
-			expect(occurrences(innerRunner, primitive)).toBe(useCount);
+		expect(runner).toContain(`source_dir="\${CLAWDI_REPO_SOURCE:-/repo}"`);
+		expect(runner).toContain(`work_dir="\${CLAWDI_TEST_WORKDIR:-/work/clawdi}"`);
+		expect(runner).toContain("rsync -a --delete");
+		expect(compose).toContain("- .:/repo:ro");
+		expect(compose).toContain("HOME: /tmp/clawdi-home");
+		expect(runnerDockerfile).toContain("PDM_IGNORE_SAVED_PYTHON=1");
+		for (const publicInvocation of [
+			'bun run --cwd apps/web test "$@"',
+			'bun run --cwd packages/cli test "$@"',
+			"bun run --cwd packages/shared test\n",
+			"bun run --cwd packages/whatsapp-baileys-sidecar test\n",
+		]) {
+			expect(runner).not.toContain(publicInvocation);
 		}
 	});
 
@@ -239,13 +196,11 @@ describe("clean runner suite contract", () => {
 		);
 		expect(fullStep).toContain("run: scripts/test.sh all");
 		expect(occurrences(cleanRunnerWorkflow, "run: scripts/test.sh")).toBe(2);
-		expect(cleanRunnerWorkflow).not.toContain("scripts/test.sh web");
-		expect(cleanRunnerWorkflow).not.toContain("scripts/test.sh cli");
 	});
 });
 
 describe("clean runner workflow inputs", () => {
-	test("tracks runner, dependency, configuration, and focused fixture inputs", () => {
+	test("tracks harness inputs without broad product test triggers", () => {
 		const requiredPaths = [
 			"docker/**",
 			".dockerignore",
@@ -281,9 +236,6 @@ describe("clean runner workflow inputs", () => {
 		for (const path of requiredPaths) {
 			expect(occurrences(cleanRunnerWorkflow, `- "${path}"`)).toBe(2);
 		}
-	});
-
-	test("does not broaden triggers to ordinary product test trees", () => {
 		for (const path of [
 			"apps/web/**",
 			"packages/cli/**",
@@ -313,5 +265,8 @@ describe("clean runner resource contract", () => {
 		expect(cleanRunnerWorkflow).toContain(
 			"run: docker compose -f docker-compose.test.yml config >/dev/null",
 		);
+		expect(compose).toContain('user: "1000:1000"');
+		expect(runnerDockerfile).toContain("groupadd --gid 1000 clawdi-test");
+		expect(runnerDockerfile).toContain("useradd --uid 1000 --gid 1000");
 	});
 });

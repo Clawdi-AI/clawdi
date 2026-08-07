@@ -16,7 +16,9 @@ context.
 from __future__ import annotations
 
 import json
-from typing import Any
+from collections.abc import Mapping, Sequence
+
+from pydantic import JsonValue
 
 from app.core.config import settings
 from app.models.session import Session
@@ -46,7 +48,7 @@ def public_session_base_fields(
     session: Session,
     agent_type: str | None,
     owner: User | None = None,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Session-derived fields that are SAFE for a public/share viewer.
 
     Single source of truth for "what does a non-owner see about a
@@ -101,7 +103,7 @@ def public_session_base_fields(
 
 def session_to_markdown(
     session: Session,
-    messages: list[dict[str, Any]],
+    messages: Sequence[JsonValue],
     *,
     agent_type: str | None = None,
     public: bool = False,
@@ -160,10 +162,17 @@ def session_to_markdown(
 
     body_lines: list[str] = ["", f"# {title}", ""]
 
-    for m in messages:
-        role = m.get("role") or "unknown"
-        model = m.get("model")
-        ts = m.get("timestamp")
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role_value = message.get("role")
+        role = role_value if isinstance(role_value, str) and role_value else "unknown"
+        model_value = message.get("model")
+        model = model_value if isinstance(model_value, str) and model_value else None
+        timestamp_value = message.get("timestamp")
+        timestamp = (
+            timestamp_value if isinstance(timestamp_value, str) and timestamp_value else None
+        )
 
         # Heading: capitalized role, optional model badge, optional timestamp.
         # Format is stable so an LLM consuming the body can parse turn
@@ -171,12 +180,13 @@ def session_to_markdown(
         heading_parts: list[str] = [f"## {role.capitalize()}"]
         if role == "assistant" and model:
             heading_parts.append(f"({model})")
-        if ts:
-            heading_parts.append(f"· {ts}")
+        if timestamp:
+            heading_parts.append(f"· {timestamp}")
         body_lines.append(" ".join(heading_parts))
         body_lines.append("")
 
-        content = m.get("content") or ""
+        content_value = message.get("content")
+        content = content_value if isinstance(content_value, str) else ""
         # Content is raw — adapter has already normalized to a string.
         # NOT wrapped in a fence; many messages are already Markdown
         # (or contain fences themselves), and double-fencing produces
@@ -189,13 +199,13 @@ def session_to_markdown(
 
 def session_to_json(
     session: Session,
-    messages: list[dict[str, Any]],
+    messages: Sequence[Mapping[str, JsonValue]],
     *,
     agent_type: str | None = None,
     machine_name: str | None = None,
     public: bool = False,
     include_owner_metadata: bool = False,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Structured serialization — fed to `.json` export route + the MCP tool.
 
     By default (`include_owner_metadata=False`) drops fields a public
@@ -206,7 +216,7 @@ def session_to_json(
     `public=True` adds a `share_url` field pointing at `/s/{session.id}`.
     """
     body = public_session_base_fields(session, agent_type)
-    body["messages"] = messages
+    body["messages"] = list(messages)
     if public:
         body["share_url"] = _build_share_url(session)
     if include_owner_metadata:

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +7,32 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cliRoot = join(here, "..");
 const binPath = join(cliRoot, "bin", "clawdi.mjs");
 const srcEntry = join(cliRoot, "src", "index.ts");
+function writeRuntimeContext(
+	path: string,
+	options: { authToken?: string | null; manifestUrl?: string } = {},
+): void {
+	const authToken = options.authToken === undefined ? "smoke-runtime-token" : options.authToken;
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(
+		path,
+		`${JSON.stringify({
+			schemaVersion: "clawdi.runtimeContext.v2",
+			backend: "incus",
+			apply: {
+				generation: 1,
+				manifestETag: '"smoke-manifest-1"',
+				applyReceiptId: "smoke-apply-receipt-0001",
+				bootNonce: "smoke-boot-nonce-000001",
+			},
+			cliPackageSpec: "clawdi@1.2.3-test",
+			manifestSource: {
+				type: "http",
+				url: options.manifestUrl ?? "https://runtime.test/v1/runtime/manifest",
+				...(authToken === null ? {} : { auth: { type: "bearer", token: authToken } }),
+			},
+		})}\n`,
+	);
+}
 
 /**
  * Run the CLI and return stdout + stderr + exit code.
@@ -20,7 +47,6 @@ async function runCli(
 		...process.env,
 		CLAWDI_NO_AUTO_UPDATE: "1",
 		CLAWDI_NO_UPDATE_CHECK: "1",
-		CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
 	};
 	for (const [key, value] of Object.entries(envOverrides)) {
 		if (value === undefined) delete env[key];
@@ -85,10 +111,21 @@ describe("CLI smoke — src entry", () => {
 			const parsed = JSON.parse(stdout);
 			expect(parsed.schemaVersion).toBe("clawdi.capabilities.v1");
 			expect(parsed.commands).toContain("runtime");
+			expect(parsed.commands).toContain("deploy");
+			expect(parsed.commands).toContain("channel");
 			expect(parsed.updateMode).toBe("local-self-update");
+			expect(parsed.providerApply).toBeUndefined();
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
 		}
+	});
+
+	it("ai-provider help omits retired local activation commands", async () => {
+		const { stdout, code } = await runCli(["ai-provider", "--help"]);
+		expect(code).toBe(0);
+		expect(stdout).not.toContain("apply");
+		expect(stdout).not.toContain("materialize-auth");
+		expect(stdout).not.toContain("status");
 	});
 
 	it("auth status reports no auth in an isolated HOME", async () => {
@@ -153,14 +190,36 @@ describe("CLI smoke — src entry", () => {
 		}
 	});
 
-	it("runtime init enters repair and writes boot status without datasource", async () => {
+	it("runtime verify treats a missing manifest cache as not checked", async () => {
 		const { tmpdir } = await import("node:os");
-		const { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+		const { mkdirSync, rmSync } = await import("node:fs");
+		const root = join(tmpdir(), `clawdi-smoke-runtime-verify-${Date.now()}`);
+		mkdirSync(join(root, "home"), { recursive: true });
+
+		try {
+			const { stdout, code } = await runCli(["runtime", "verify", "--json"], {
+				HOME: join(root, "home"),
+				CLAWDI_SERVICE_STATE_DIR: join(root, "state"),
+				CLAWDI_RUN_DIR: join(root, "run"),
+			});
+			expect(code).toBe(0);
+			const parsed = JSON.parse(stdout);
+			expect(parsed.status).toBe("ok");
+			expect(parsed.manifestCache).toMatchObject({ exists: false, valid: null });
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("runtime init fails closed when the canonical context is invalid", async () => {
+		const { tmpdir } = await import("node:os");
+		const { existsSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-init-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
 		const runRoot = join(root, "run", "clawdi");
+		const contextPath = join(root, "runtime-context.json");
 		mkdirSync(dirname(policyPath), { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(
@@ -173,13 +232,19 @@ describe("CLI smoke — src entry", () => {
 			}),
 		);
 
+		writeRuntimeContext(contextPath, { authToken: null });
 		const env = {
-			HOME: home,
+			HOME: "/home/clawdi",
 			CLAWDI_RUNTIME_MODE: "hosted",
+			CLAWDI_RUNTIME_USER: "clawdi",
+			CLAWDI_RUNTIME_UID: "10001",
+			CLAWDI_RUNTIME_GID: "10001",
 			CLAWDI_HOST_POLICY_PATH: policyPath,
 			CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
 			CLAWDI_RUN_DIR: runRoot,
 			CLAWDI_AUTH_TOKEN: undefined,
+			CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+			CLAWDI_RUNTIME_TEST_CONTEXT_FILE: contextPath,
 		};
 
 		try {
@@ -192,220 +257,50 @@ describe("CLI smoke — src entry", () => {
 			expect(parsed.mode).toBe("repair");
 			expect(parsed.status).toBe("error");
 			expect(parsed.stage).toBe("detect");
-			expect(parsed.errors).toContain(
-				`missing ${join(runRoot, "secrets", "auth-token")} and no last-good runtime manifest cache`,
-			);
+			expect(parsed.errors[0]).toContain(`invalid runtime context file ${contextPath}`);
+			expect(parsed.errors[0]).toContain("manifestSource.auth: Invalid input");
 			expect(parsed.datasource).toBe("RuntimeSource");
-			expect(parsed.hostPolicy.valid).toBe(true);
+			expect(parsed.hostPolicy).toMatchObject({
+				source: "builtin",
+				exists: true,
+				valid: true,
+				mode: "hosted",
+			});
 			expect(parsed.paths.serviceStateRoot).toBe(serviceStateRoot);
-			expect(existsSync(join(serviceStateRoot, "cache", "boot-status.json"))).toBe(true);
-			const cloudResult = JSON.parse(
-				readFileSync(join(serviceStateRoot, "boot", "result.json"), "utf-8"),
-			);
-			expect(cloudResult.v1.stage).toBe("detect");
-			expect(cloudResult.v1.errors).toEqual(parsed.errors);
-
-			const status = await runCli(["runtime", "status", "--json"], env);
-			expect(status.code).toBe(0);
-			const statusParsed = JSON.parse(status.stdout);
-			expect(statusParsed.exists).toBe(true);
-			expect(statusParsed.status.mode).toBe("repair");
+			expect(existsSync(serviceStateRoot)).toBe(false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
-	it("runtime init rejects a generic manifest-file fixture in hosted mode", async () => {
-		const { tmpdir } = await import("node:os");
-		const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
-		const root = join(tmpdir(), `clawdi-smoke-runtime-generic-reject-${Date.now()}`);
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const manifestPath = join(root, "generic-manifest.json");
-		mkdirSync(home, { recursive: true });
-		writeFileSync(
-			manifestPath,
-			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_generic_reject",
-				environmentId: "env_generic_reject",
-				instanceId: "iid_generic_reject",
-				generation: 1,
-				issuedAt: "2026-07-12T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: false } },
-				recovery: {},
-			}),
-		);
-
-		try {
-			const result = await runCli(
-				["runtime", "init", "--non-interactive", "--json", "--manifest-file", manifestPath],
-				{
-					HOME: home,
-					CLAWDI_RUNTIME_MODE: "hosted",
-					CLAWDI_SERVICE_STATE_DIR: state,
-					CLAWDI_RUN_DIR: run,
-				},
-			);
-			expect(result.code).toBe(22);
-			expect(JSON.parse(result.stdout).mode).toBe("manifest-rejected");
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("runtime init converges a strict hosted manifest-file fixture", async () => {
-		const { tmpdir } = await import("node:os");
-		const { chmodSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } = await import(
-			"node:fs"
-		);
-		const root = join(tmpdir(), `clawdi-smoke-runtime-strict-${Date.now()}`);
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const manifestPath = join(root, "strict-hosted-manifest.json");
-		const installer = join(root, "install-openclaw.sh");
-		const managedCli = join(state, "bin", "clawdi");
-		const managedCliTarget = join(state, "npm", "bin", "clawdi");
-		mkdirSync(home, { recursive: true });
-		mkdirSync(dirname(installer), { recursive: true });
-		mkdirSync(dirname(managedCli), { recursive: true });
-		mkdirSync(dirname(managedCliTarget), { recursive: true });
-		mkdirSync(join(state, "status"), { recursive: true });
-		writeFileSync(
-			installer,
-			`#!/usr/bin/env sh
-set -eu
-mkdir -p "$HOME/.openclaw/bin"
-printf '#!/usr/bin/env sh\nexit 0\n' > "$HOME/.openclaw/bin/openclaw"
-chmod +x "$HOME/.openclaw/bin/openclaw"
-`,
-		);
-		chmodSync(installer, 0o700);
-		writeFileSync(managedCliTarget, "#!/usr/bin/env sh\nexit 0\n");
-		chmodSync(managedCliTarget, 0o700);
-		symlinkSync(managedCliTarget, managedCli);
-		writeFileSync(
-			join(state, "status", "cli-bootstrap.json"),
-			JSON.stringify({
-				schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
-				status: "installed",
-				source: "npm",
-				packageSpec: "clawdi@0.12.10-beta.55",
-				registry: "https://registry.npmjs.org",
-				activePath: managedCli,
-				activeTarget: managedCliTarget,
-				version: "0.12.10-beta.55",
-			}),
-		);
-		writeFileSync(
-			manifestPath,
-			JSON.stringify({
-				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					minimumCliVersion: "0.12.10-beta.55",
-					runtime: "openclaw",
-					deploymentId: "dep_strict_smoke",
-					environmentId: "env_strict_smoke",
-					instanceId: "iid_strict_smoke",
-					generation: 1,
-					issuedAt: "2026-07-12T00:00:00Z",
-					locale: { language: "en", timezone: "UTC" },
-					system: {},
-					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-					clawdiCli: {
-						source: "npm:clawdi",
-						packageSpec: "clawdi@0.12.10-beta.55",
-						registry: "https://registry.npmjs.org",
-					},
-					runtimes: {
-						openclaw: {
-							enabled: true,
-							install: { source: "official" },
-							providerMode: "unmanaged",
-							provider_ids: [],
-						},
-					},
-					providers: {},
-					terminalTooling: {
-						codex: {
-							enabled: true,
-							provider_id: "codex-managed",
-							primary_model: { provider_id: "codex-managed", model: "gpt-test" },
-							provider: {
-								kind: "openai-compatible",
-								type: "openai",
-								baseUrl: "https://provider.test/v1",
-								apiMode: "openai_responses",
-								managed_by: "clawdi",
-								runtimeEnvName: "OPENAI_API_KEY",
-								apiKeySecretRef: "tool.codex.apiKey",
-							},
-						},
-					},
-					liveSync: { enabled: false, agents: [] },
-					recovery: { cacheManifest: true, allowOfflineBoot: true },
-				},
-				secretValues: { "tool.codex.apiKey": "sk-codex-tool" },
-			}),
-		);
-
-		try {
-			const result = await runCli(
-				["runtime", "init", "--non-interactive", "--json", "--manifest-file", manifestPath],
-				{
-					HOME: home,
-					CLAWDI_RUNTIME_MODE: "hosted",
-					CLAWDI_SERVICE_STATE_DIR: state,
-					CLAWDI_RUN_DIR: run,
-					CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
-					CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: installer,
-					CLAWDI_CODEX_INSTALL_DISABLED: "1",
-				},
-			);
-			expect(result.code).toBe(0);
-			const parsed = JSON.parse(result.stdout);
-			expect(parsed.status).toBe("ok");
-			expect(parsed.stage).toBe("final");
-			expect(parsed.enabledRuntimes).toEqual(["openclaw"]);
-			expect(parsed.manifestSource.type).toBe("fixture-file");
-			expect(existsSync(join(home, ".openclaw", "bin", "openclaw"))).toBe(true);
-			expect(existsSync(join(state, "cache", "manifest.last-good.json"))).toBe(true);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("runtime init uses built-in policy when image policy is missing", async () => {
+	it("runtime init rejects a wrong hosted HOME before creating state", async () => {
 		const { tmpdir } = await import("node:os");
 		const { existsSync, mkdirSync, rmSync } = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-no-policy-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
 		const policyPath = join(root, "etc", "clawdi", "missing-host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
+		const runRoot = join(root, "run", "clawdi");
+		const contextPath = join(root, "runtime-context.json");
 		mkdirSync(home, { recursive: true });
 
 		try {
+			writeRuntimeContext(contextPath);
 			const { stdout, code } = await runCli(["runtime", "init", "--non-interactive", "--json"], {
 				HOME: home,
 				CLAWDI_RUNTIME_MODE: "hosted",
 				CLAWDI_HOST_POLICY_PATH: policyPath,
 				CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
-				CLAWDI_RUN_DIR: join(root, "run", "clawdi"),
-				CLAWDI_AUTH_TOKEN: "auth-test-token",
+				CLAWDI_RUN_DIR: runRoot,
+				CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+				CLAWDI_RUNTIME_TEST_CONTEXT_FILE: contextPath,
 			});
-			expect(code).toBe(21);
+			expect(code).toBe(20);
 			const parsed = JSON.parse(stdout);
 			expect(parsed.mode).toBe("repair");
-			expect(parsed.stage).toBe("network");
-			expect(parsed.hostPolicy.exists).toBe(true);
-			expect(parsed.hostPolicy.valid).toBe(true);
-			expect(parsed.hostPolicy.source).toBe("builtin");
-			expect(parsed.hostPolicy.path).toBeUndefined();
-			expect(parsed.errors[0]).toContain("missing CLAWDI_RUNTIME_MANIFEST_URL");
-			expect(existsSync(join(serviceStateRoot, "cache", "boot-status.json"))).toBe(true);
+			expect(parsed.stage).toBe("detect");
+			expect(parsed.errors[0]).toContain("hosted runtime HOME must resolve to /home/clawdi");
+			expect(existsSync(serviceStateRoot)).toBe(false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

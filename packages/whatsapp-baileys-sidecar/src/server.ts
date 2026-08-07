@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import {
@@ -8,8 +9,9 @@ import {
 	parseBinaryNode,
 	parseStringRecord,
 } from "./json-bytes.js";
+import { type BaileysSessionSupervisor, InvalidSessionIdError } from "./session-supervisor.js";
 import {
-	type BaileysRuntime,
+	PairingLifecycleError,
 	type RelayMessageRequest,
 	RuntimeNotConnectedError,
 } from "./types.js";
@@ -19,9 +21,32 @@ export type ServerConfig = {
 	maxBodyBytes?: number;
 };
 
-const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+export type SidecarSessionService = Pick<
+	BaileysSessionSupervisor,
+	"health" | "capabilities" | "session"
+>;
 
-export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfig): Server {
+const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+const SESSION_RUNTIME_METHODS = new Map([
+	["/v1/health", "GET"],
+	["/v1/pairing/status", "GET"],
+	["/v1/pairing/qr", "POST"],
+	["/v1/pairing/code", "POST"],
+	["/v1/pairing/cancel", "POST"],
+	["/v1/pairing/logout", "POST"],
+	["/v1/pairing/retry", "POST"],
+	["/v1/pairing/recover", "POST"],
+	["/v1/relay-message", "POST"],
+	["/v1/raw-node", "POST"],
+	["/v1/query-iq", "POST"],
+	["/v1/provider-events", "GET"],
+	["/v1/provider-events/ack", "POST"],
+]);
+
+export function createSidecarServer(
+	supervisor: SidecarSessionService,
+	config: ServerConfig,
+): Server {
 	if (!config.apiToken.trim()) {
 		throw new Error("apiToken is required");
 	}
@@ -33,9 +58,57 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 				return;
 			}
 			const method = request.method ?? "GET";
-			const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+			let path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+			if (method === "GET" && path === "/v1/health") {
+				writeJson(response, 200, supervisor.health());
+				return;
+			}
+			if (method === "GET" && path === "/v1/capabilities") {
+				writeJson(response, 200, supervisor.capabilities());
+				return;
+			}
+			const sessionRoute = parseSessionRoute(path);
+			if (!sessionRoute) {
+				writeJson(response, 404, { error: "not_found" });
+				return;
+			}
+			if (SESSION_RUNTIME_METHODS.get(sessionRoute.runtimePath) !== method) {
+				writeJson(response, 404, { error: "not_found" });
+				return;
+			}
+			const runtime = await supervisor.session(sessionRoute.sessionId);
+			path = sessionRoute.runtimePath;
 			if (method === "GET" && path === "/v1/health") {
 				writeJson(response, 200, runtime.health());
+				return;
+			}
+			if (method === "GET" && path === "/v1/pairing/status") {
+				writeJson(response, 200, runtime.pairingStatus());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/qr") {
+				writeJson(response, 200, await runtime.startQrPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/code") {
+				const body = await readJsonBody(request, maxBodyBytes);
+				writeJson(response, 200, await runtime.requestPairingCode(parsePhoneNumber(body)));
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/cancel") {
+				writeJson(response, 200, await runtime.cancelPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/logout") {
+				writeJson(response, 200, await runtime.logoutPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/retry") {
+				writeJson(response, 200, await runtime.retryPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/recover") {
+				writeJson(response, 200, await runtime.recoverPairing());
 				return;
 			}
 			if (method === "POST" && path === "/v1/relay-message") {
@@ -59,6 +132,18 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 				writeJson(response, 200, { node: result === null ? null : encodeJsonBytes(result) });
 				return;
 			}
+			if (method === "GET" && path === "/v1/provider-events") {
+				const limit = parseEventLimit(request.url);
+				writeJson(response, 200, { events: runtime.providerEvents(limit) });
+				return;
+			}
+			if (method === "POST" && path === "/v1/provider-events/ack") {
+				const body = await readJsonBody(request, maxBodyBytes);
+				const throughSequence = parseEventAckBody(body);
+				runtime.acknowledgeProviderEvents(throughSequence);
+				writeJson(response, 200, { ok: true, throughSequence });
+				return;
+			}
 			writeJson(response, 404, { error: "not_found" });
 		} catch (error: unknown) {
 			writeError(response, error);
@@ -66,9 +151,21 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 	});
 }
 
+function parseSessionRoute(path: string): { sessionId: string; runtimePath: string } | undefined {
+	const match = /^\/v1\/sessions\/([^/]+)(\/.*)$/.exec(path);
+	if (!match) return undefined;
+	const sessionId = match[1];
+	const suffix = match[2];
+	if (!sessionId || !suffix) return undefined;
+	return { sessionId, runtimePath: `/v1${suffix}` };
+}
+
 function authorized(request: IncomingMessage, token: string): boolean {
 	const header = request.headers.authorization;
-	return header === `Bearer ${token}`;
+	if (typeof header !== "string") return false;
+	const actual = createHash("sha256").update(header).digest();
+	const expected = createHash("sha256").update(`Bearer ${token}`).digest();
+	return timingSafeEqual(actual, expected);
 }
 
 async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Promise<unknown> {
@@ -115,10 +212,40 @@ function parseRelayMessageBody(body: unknown): RelayMessageRequest {
 				body.additionalAttributes ?? {},
 				"additionalAttributes",
 			),
+			additionalNodes: parseRelayAdditionalNodes(body.additionalNodes ?? []),
 		};
 	} catch (error: unknown) {
 		throw new HttpError(400, error instanceof Error ? error.message : "invalid_relay_message");
 	}
+}
+
+function parseRelayAdditionalNodes(value: unknown): RelayMessageRequest["additionalNodes"] {
+	if (!Array.isArray(value) || value.length > 1) {
+		throw new Error("unsupported_additionalNodes");
+	}
+	if (value.length === 0) return [];
+	const node = value[0];
+	if (
+		!isRecord(node) ||
+		Object.keys(node).some((key) => key !== "tag" && key !== "attrs") ||
+		node.tag !== "meta" ||
+		!isRecord(node.attrs) ||
+		Object.keys(node.attrs).length !== 1 ||
+		node.attrs.polltype !== "creation"
+	) {
+		throw new Error("unsupported_additionalNodes");
+	}
+	return [{ tag: "meta", attrs: { polltype: "creation" } }];
+}
+
+function parsePhoneNumber(body: unknown): string {
+	if (!isRecord(body) || typeof body.phoneNumber !== "string") {
+		throw new HttpError(400, "phoneNumber_required");
+	}
+	if (!/^[1-9][0-9]{6,14}$/.test(body.phoneNumber)) {
+		throw new HttpError(422, "invalid_phone_number");
+	}
+	return body.phoneNumber;
 }
 
 function parseNodeBody(body: unknown) {
@@ -151,13 +278,43 @@ function parseQueryBody(body: unknown) {
 	};
 }
 
+function parseEventLimit(rawUrl: string | undefined): number {
+	const raw = new URL(rawUrl ?? "/", "http://127.0.0.1").searchParams.get("limit") ?? "100";
+	const limit = Number(raw);
+	if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+		throw new HttpError(400, "limit_must_be_1_to_100");
+	}
+	return limit;
+}
+
+function parseEventAckBody(body: unknown): number {
+	if (!isRecord(body)) throw new HttpError(400, "body_must_be_object");
+	const throughSequence = body.throughSequence;
+	if (
+		typeof throughSequence !== "number" ||
+		!Number.isInteger(throughSequence) ||
+		throughSequence < 1
+	) {
+		throw new HttpError(400, "throughSequence_must_be_positive_integer");
+	}
+	return throughSequence;
+}
+
 function writeError(response: ServerResponse, error: unknown): void {
 	if (error instanceof HttpError) {
 		writeJson(response, error.status, { error: error.message });
 		return;
 	}
+	if (error instanceof InvalidSessionIdError) {
+		writeJson(response, 400, { error: error.message });
+		return;
+	}
 	if (error instanceof RuntimeNotConnectedError) {
 		writeJson(response, 503, { error: "baileys_not_connected" });
+		return;
+	}
+	if (error instanceof PairingLifecycleError) {
+		writeJson(response, 409, { error: error.message });
 		return;
 	}
 	writeJson(response, 500, {
@@ -166,7 +323,11 @@ function writeError(response: ServerResponse, error: unknown): void {
 }
 
 function writeJson(response: ServerResponse, status: number, body: unknown): void {
-	response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+	response.writeHead(status, {
+		"cache-control": "no-store, private",
+		"content-type": "application/json; charset=utf-8",
+		pragma: "no-cache",
+	});
 	response.end(JSON.stringify(body));
 }
 

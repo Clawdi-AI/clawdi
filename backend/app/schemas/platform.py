@@ -1,32 +1,30 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.api_scopes import RUNTIME_MCP_SCOPES
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
-    HostedRuntimeBridge,
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
+    HostedRuntimeMcp,
     HostedRuntimeRecovery,
+    HostedRuntimeSecretValues,
+    HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
-    validate_hosted_runtime_bridge,
-    validate_no_plaintext_tool_secrets,
+    validate_hosted_runtime_secret_values,
 )
 
 PlatformOwnerKind = Literal["clerk", "partner_tenant"]
-PLATFORM_RUNTIME_KEY_SCOPES = (
-    "sessions:write",
-    "skills:read",
-    "skills:write",
-)
+PLATFORM_RUNTIME_KEY_SCOPES = RUNTIME_MCP_SCOPES
 
 _CLERK_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _PARTNER_TENANT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -59,6 +57,12 @@ class PlatformAgentCreate(PlatformMutationBody):
     agent_id: UUID
     machine_id: str = Field(min_length=1, max_length=200)
     machine_name: str = Field(min_length=1, max_length=200)
+    default_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Canonical Agent name supplied by the owning control plane.",
+    )
     agent_type: str = Field(min_length=1, max_length=50)
     agent_version: str | None = Field(default=None, max_length=50)
     os_name: str = Field(default="linux", min_length=1, max_length=50)
@@ -67,7 +71,6 @@ class PlatformAgentCreate(PlatformMutationBody):
 class PlatformApiKeyCreate(PlatformMutationBody):
     label: str = Field(min_length=1, max_length=200)
     environment_id: UUID
-    deployment_id: str = Field(min_length=1, max_length=200)
     scopes: list[str] = Field(default_factory=lambda: list(PLATFORM_RUNTIME_KEY_SCOPES))
 
     @field_validator("scopes")
@@ -84,25 +87,34 @@ class PlatformApiKeyCreate(PlatformMutationBody):
 
 
 class PlatformRuntimeStateUpsert(PlatformMutationBody):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
     deployment_id: str = Field(min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
+    apply_generation: int | None = Field(default=None, ge=1)
     cli_package_spec: str = Field(min_length=1, max_length=200)
     locale: HostedRuntimeLocale
     system: HostedRuntimeSystem
     egress_engine: HostedEgressEngine | None = None
     runtimes: dict[str, HostedRuntimeDesiredState]
-    bridge: HostedRuntimeBridge | None = None
     live_sync: HostedRuntimeLiveSync
     recovery: HostedRuntimeRecovery
     egress_profiles: HostedEgressProfiles | None = None
-    mcp: dict[str, Any] | None = None
+    mcp: HostedRuntimeMcp | None = None
+    skills: HostedRuntimeSkills | None = None
     tools: HostedRuntimeTools
+    secret_values: HostedRuntimeSecretValues = Field(alias="secretValues")
 
     @field_validator("cli_package_spec")
     @classmethod
     def _validate_cli_package_spec(cls, value: str) -> str:
         return validate_clawdi_cli_package_spec(value)
+
+    @field_validator("secret_values")
+    @classmethod
+    def _validate_secret_values(cls, value: HostedRuntimeSecretValues) -> HostedRuntimeSecretValues:
+        return validate_hosted_runtime_secret_values(value)
 
     @field_validator("runtimes")
     @classmethod
@@ -121,60 +133,10 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
 
-    @model_validator(mode="after")
-    def _validate_runtime_bridge(self) -> PlatformRuntimeStateUpsert:
-        runtime = next(iter(self.runtimes))
-        validate_hosted_runtime_bridge(runtime, self.bridge)
-        return self
-
-    @field_validator("mcp")
-    @classmethod
-    def _validate_tool_desired_state(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        if value is not None:
-            validate_no_plaintext_tool_secrets(value)
-        return value
-
 
 class PlatformRuntimeStateResponse(BaseModel):
     environment_id: UUID
     deployment_id: str
     instance_id: str
     generation: int
-
-
-class PlatformRuntimeEnvironmentRetire(PlatformMutationBody):
-    expected_deployment_id: str = Field(min_length=1, max_length=200)
-    retirement_id: str = Field(min_length=1, max_length=200)
-
-
-class PlatformRuntimeObservationConsumerRegister(PlatformMutationBody):
-    deployment_id: str = Field(min_length=1, max_length=200)
-    consumer_id: str = Field(min_length=1, max_length=200)
-
-
-class PlatformRuntimeObservationConsumerAck(PlatformMutationBody):
-    deployment_id: str = Field(min_length=1, max_length=200)
-    consumer_id: str = Field(min_length=1, max_length=200)
-    cursor: str = Field(min_length=1, max_length=2000)
-
-
-class PlatformRuntimeObservationConsumerReset(PlatformMutationBody):
-    deployment_id: str = Field(min_length=1, max_length=200)
-    consumer_id: str = Field(min_length=1, max_length=200)
-
-
-class PlatformRuntimeApplyIdentity(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    generation: int = Field(ge=1)
-    manifest_etag: str = Field(alias="manifestETag", min_length=1, max_length=1024)
-    apply_receipt_id: str = Field(alias="applyReceiptId", min_length=16, max_length=128)
-    boot_nonce: str = Field(alias="bootNonce", min_length=16, max_length=128)
-
-
-class PlatformRuntimeObservationRead(PlatformMutationBody):
-    deployment_id: str = Field(min_length=1, max_length=200)
-    consumer_id: str = Field(min_length=1, max_length=200)
-    expected_apply_identity: PlatformRuntimeApplyIdentity = Field(alias="expectedApplyIdentity")
-    after_cursor: str = Field(alias="afterCursor", min_length=1, max_length=2000)
-    limit: int = Field(default=100, ge=1, le=500)
+    apply_generation: int | None = None

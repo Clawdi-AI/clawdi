@@ -26,9 +26,15 @@ beforeEach(() => {
 	origApiUrl = process.env.CLAWDI_API_URL;
 	tmpHome = join(tmpdir(), `clawdi-channel-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
-	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
+	writeFileSync(
+		join(tmpHome, ".clawdi", "auth.json"),
+		JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		}),
+	);
 	process.env.HOME = tmpHome;
-	process.env.CLAWDI_API_URL = "http://api.test";
+	process.env.CLAWDI_API_URL = "https://api.test";
 	process.exitCode = 0;
 });
 
@@ -321,8 +327,9 @@ describe("channel commands", () => {
 							agent_link_id: "link-1",
 							agent_id: "agent-1",
 							agent_token: null,
-							code: "PAIR12345678",
+							code: "BCDFGHJKLM",
 							expires_at: new Date().toISOString(),
+							pairing_command: "/clawdi_pair BCDFGHJKLM",
 						},
 						201,
 					),
@@ -339,8 +346,72 @@ describe("channel commands", () => {
 			body: { agent_id: null, agent_link_id: "link-1", ttl_seconds: 600 },
 		});
 		expect(JSON.parse(out)).toMatchObject({
-			pair_code: { code: "PAIR12345678", agent_link_id: "link-1" },
+			pair_code: { code: "BCDFGHJKLM", agent_link_id: "link-1" },
 		});
+	});
+
+	it("uses the five-minute pair-code TTL by default", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/channels/channel-1/pair-codes",
+				response: () =>
+					jsonResponse(
+						{
+							id: "pair-default-ttl",
+							agent_link_id: "link-1",
+							agent_id: "agent-1",
+							agent_token: null,
+							code: "BCDFGHJKLM",
+							expires_at: new Date().toISOString(),
+							pairing_command: "/clawdi_pair BCDFGHJKLM",
+						},
+						201,
+					),
+			},
+		]);
+
+		await captureStdout(() => channelPairCodeCommand("channel-1", { link: "link-1", json: true }));
+		restore();
+
+		expect(captured[0]?.body).toMatchObject({
+			agent_id: null,
+			agent_link_id: "link-1",
+			ttl_seconds: 300,
+		});
+	});
+
+	it("prints the provider-specific Discord pairing command", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/channels/discord-channel/pair-codes",
+				response: () =>
+					jsonResponse(
+						{
+							id: "pair-discord",
+							agent_link_id: "link-discord",
+							agent_id: "agent-1",
+							agent_token: null,
+							code: "NPQRSTVWXY",
+							expires_at: new Date().toISOString(),
+							pairing_command: "/clawdi_pair NPQRSTVWXY",
+							discord_install_url:
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands",
+							discord_user_install_url:
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
+						},
+						201,
+					),
+			},
+		]);
+		const out = await captureStdout(() =>
+			channelPairCodeCommand("discord-channel", { link: "link-discord", ttl: "600" }),
+		);
+		restore();
+
+		expect(out).toContain("Send this in the external chat: /clawdi_pair NPQRSTVWXY");
+		expect(out).not.toContain("/bot_pair");
 	});
 
 	it("rejects pair-code requests that pass both agent and link", async () => {
@@ -430,14 +501,14 @@ describe("channel commands", () => {
 				response: () =>
 					jsonResponse({
 						provider: "discord",
-						commands: [{ name: "bot_pair", description: "Pair this chat with Clawdi." }],
+						commands: [{ name: "clawdi_pair", description: "Pair this chat with Clawdi." }],
 					}),
 			},
 		]);
 		const out = await captureStdout(() =>
 			channelSyncCommandsCommand("channel-1", {
 				guild: "guild-1",
-				commands: '[{"name":"bot_pair","description":"Pair"}]',
+				commands: '[{"name":"clawdi_pair","description":"Pair"}]',
 				json: true,
 			}),
 		);
@@ -448,7 +519,7 @@ describe("channel commands", () => {
 			path: "/v1/channels/channel-1/commands/sync",
 			body: {
 				guild_id: "guild-1",
-				commands: [{ name: "bot_pair", description: "Pair" }],
+				commands: [{ name: "clawdi_pair", description: "Pair" }],
 			},
 		});
 		expect(JSON.parse(out)).toMatchObject({ sync: { provider: "discord" } });

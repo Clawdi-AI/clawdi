@@ -1,313 +1,584 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Copy, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Check, Copy, KeyRound, Laptop, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
+import {
+	API_KEYS_QUERY_KEY,
+	activeApiKeys,
+	removeApiKeyFromList,
+	restoreApiKeyToList,
+} from "@/components/settings/api-keys-panel.logic";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
-import { Badge } from "@/components/ui/badge";
+import { TimeTooltip } from "@/components/time-tooltip";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import {
+	Empty,
+	EmptyContent,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type ApiError, unwrap, useApi } from "@/lib/api";
+import { Spinner } from "@/components/ui/spinner";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
+import { formatShortDate } from "@/lib/format";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
+
+const API_KEY_LABEL_MAX_LENGTH = 200;
+const REVOKE_API_KEY_MUTATION_KEY = ["revoke-api-key"] as const;
+
+type RevokeContext = {
+	removedKey?: ApiKey;
+};
 
 /** API Keys settings — CLI-facing bearer tokens. */
 export function ApiKeysPanel() {
 	const api = useApi();
+	const $api = useOpenApi();
 	const queryClient = useQueryClient();
+	const [createDialogOpen, setCreateDialogOpen] = useState(false);
 	const [newLabel, setNewLabel] = useState("");
 	const [createdKey, setCreatedKey] = useState<string | null>(null);
-
-	const { data: keys, isLoading } = useQuery({
-		queryKey: ["api-keys"],
-		queryFn: async () => unwrap(await api.GET("/v1/auth/keys")),
+	const [secretAcknowledged, setSecretAcknowledged] = useState(false);
+	const [revokeOpen, setRevokeOpen] = useState(false);
+	const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
+	const revokeExit = useDialogExitLifecycle({
+		open: revokeOpen,
+		value: revokeTarget,
+		emptyValue: null,
+	});
+	const renderedRevokeTarget = revokeExit.renderedValue;
+	const normalizedNewLabel = newLabel.trim();
+	const { copied, copy } = useCopyToClipboard({
+		success: "API key copied to clipboard",
+		error: "Couldn’t copy the API key — select and copy it manually.",
 	});
 
-	const createKey = useMutation({
-		mutationFn: async (label: string) =>
-			unwrap(await api.POST("/v1/auth/keys", { body: { label } })),
-		onSuccess: (data) => {
+	const { data: listedKeys, error, isLoading, refetch } = $api.useQuery("get", "/v1/auth/keys");
+	const keys = useMemo(() => activeApiKeys(listedKeys), [listedKeys]);
+
+	const createKey = useSensitiveAction(async (label: string) => {
+		try {
+			const data = unwrap(await api.POST("/v1/auth/keys", { body: { label } }));
 			setCreatedKey(data.raw_key);
+			setSecretAcknowledged(false);
 			setNewLabel("");
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-		},
-		onError: (e: ApiError) => toast.error("Couldn't create key", { description: e.detail }),
+			void queryClient.invalidateQueries({ queryKey: API_KEYS_QUERY_KEY });
+			return data;
+		} catch (actionError) {
+			toastApiError("Couldn’t create API key")(actionError);
+			throw actionError;
+		}
 	});
 
 	const revokeKey = useMutation({
+		mutationKey: REVOKE_API_KEY_MUTATION_KEY,
 		mutationFn: async (keyId: string) =>
 			unwrap(
 				await api.DELETE("/v1/auth/keys/{key_id}", {
 					params: { path: { key_id: keyId } },
 				}),
 			),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-			toast.success("Key turned off");
+		onMutate: async (keyId): Promise<RevokeContext> => {
+			await queryClient.cancelQueries({ queryKey: API_KEYS_QUERY_KEY });
+			const currentKeys = queryClient.getQueryData<ApiKey[]>(API_KEYS_QUERY_KEY);
+			const removedKey = currentKeys?.find((key) => key.id === keyId);
+			queryClient.setQueryData<ApiKey[]>(
+				API_KEYS_QUERY_KEY,
+				removeApiKeyFromList(currentKeys, keyId),
+			);
+			return { removedKey };
 		},
-		onError: (e: ApiError) => toast.error("Couldn't turn off key", { description: e.detail }),
+		onSuccess: () => {
+			revokeExit.beginClose();
+			setRevokeOpen(false);
+			toast.success("API key revoked");
+		},
+		onError: (mutationError, _keyId, context) => {
+			const removedKey = context?.removedKey;
+			if (removedKey) {
+				queryClient.setQueryData<ApiKey[]>(API_KEYS_QUERY_KEY, (currentKeys) =>
+					restoreApiKeyToList(currentKeys, removedKey),
+				);
+			}
+			toastApiError("Couldn’t revoke API key")(mutationError);
+		},
+		onSettled: () => {
+			// Reconcile once the last overlapping revoke settles so a refetch cannot
+			// temporarily resurrect another row whose request is still in flight.
+			if (queryClient.isMutating({ mutationKey: REVOKE_API_KEY_MUTATION_KEY }) === 1) {
+				return queryClient.invalidateQueries({ queryKey: API_KEYS_QUERY_KEY });
+			}
+		},
 	});
 
-	const columns = useMemo<ColumnDef<ApiKey>[]>(
-		() => [
-			{
-				accessorKey: "label",
-				header: "Label",
-				cell: ({ row }) => (
-					<div className="flex items-center gap-2">
-						<span className="font-medium">{row.original.label}</span>
-						{row.original.revoked_at ? <Badge variant="destructive">Off</Badge> : null}
-					</div>
-				),
-			},
-			{
-				accessorKey: "key_prefix",
-				header: "Prefix",
-				cell: ({ row }) => (
-					<span className="font-mono text-xs text-muted-foreground">
-						{row.original.key_prefix}…
-					</span>
-				),
-			},
-			{
-				accessorKey: "created_at",
-				header: "Created",
-				cell: ({ row }) => (
-					<span className="text-xs text-muted-foreground">
-						{new Date(row.original.created_at).toLocaleDateString()}
-					</span>
-				),
-			},
-			{
-				accessorKey: "last_used_at",
-				header: "Last used",
-				cell: ({ row }) =>
-					row.original.last_used_at ? (
-						<span className="text-xs text-muted-foreground">
-							{new Date(row.original.last_used_at).toLocaleDateString()}
-						</span>
-					) : (
-						<span className="text-xs text-muted-foreground">—</span>
-					),
-			},
-			{
-				id: "actions",
-				header: "",
-				cell: ({ row }) =>
-					!row.original.revoked_at ? (
-						<ConfirmAction
-							title={`Turn off ${row.original.label}?`}
-							description={
-								<p>
-									If a machine is still using this key, sync will stop within a minute. Sign in
-									again from that machine to resume.
-								</p>
-							}
-							confirmLabel="Turn Off Key"
-							destructive
-							onConfirm={() => revokeKey.mutate(row.original.id)}
-						>
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon-sm"
-								disabled={revokeKey.isPending}
-								aria-label="Turn off key"
-								className="text-muted-foreground hover:text-destructive"
-							>
-								<Trash2 className="size-3.5" />
-							</Button>
-						</ConfirmAction>
-					) : null,
-				size: 40,
-			},
-		],
-		[revokeKey],
+	const handleRevoke = useCallback((key: ApiKey) => {
+		setRevokeTarget(key);
+		setRevokeOpen(true);
+	}, []);
+	const showExpiration = keys.some((key) => key.expires_at !== null);
+	const columns = useMemo(
+		() => apiKeyColumns({ showExpiration, onRevoke: handleRevoke }),
+		[handleRevoke, showExpiration],
 	);
 
+	function openCreateDialog() {
+		if (createdKey !== null) return;
+		createKey.reset();
+		setNewLabel("");
+		setSecretAcknowledged(false);
+		setCreateDialogOpen(true);
+	}
+
+	function handleCreateDialogOpenChange(nextOpen: boolean) {
+		if (!nextOpen && (createKey.isPending || createdKey !== null)) return;
+		setCreateDialogOpen(nextOpen);
+	}
+
+	function finishSecretReveal() {
+		if (!secretAcknowledged) return;
+		setCreateDialogOpen(false);
+	}
+
+	function handleCreateDialogOpenChangeComplete(nextOpen: boolean) {
+		if (nextOpen) return;
+		createKey.reset();
+		setCreatedKey(null);
+		setNewLabel("");
+		setSecretAcknowledged(false);
+	}
+
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className="flex flex-col gap-8 px-5 sm:px-6 lg:px-8">
 			<SettingsPanelHeader
 				title="API Keys"
-				description={
-					<>
-						On a laptop,{" "}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-							clawdi auth login
-						</code>{" "}
-						handles auth automatically — you don&apos;t need to touch this. Create a key here when
-						you&apos;re setting up a server or container that can&apos;t open a browser, then paste
-						it into{" "}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-							CLAWDI_AUTH_TOKEN
-						</code>{" "}
-						(this is the env var the CLI and{" "}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">clawdi daemon</code>{" "}
-						actually read).
-					</>
+				description="Manage bearer tokens for servers, containers, and other headless environments."
+				actions={
+					<Button type="button" onClick={openCreateDialog}>
+						<Plus data-icon="inline-start" />
+						Create API key
+					</Button>
 				}
 			/>
 
-			{/* Create form */}
-			<form
-				className="flex flex-col gap-2 sm:flex-row"
-				onSubmit={(e) => {
-					e.preventDefault();
-					if (newLabel) createKey.mutate(newLabel);
+			<div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3 text-sm">
+				<Laptop className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+				<p className="text-muted-foreground">
+					<span className="font-medium text-foreground">Using Clawdi on a laptop?</span> Run{" "}
+					<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">clawdi auth login</code>{" "}
+					instead; it completes sign-in without a manually managed key.
+				</p>
+			</div>
+
+			{shouldBlockQueryError(error, listedKeys) ? (
+				<ApiErrorPanel error={error} onRetry={() => refetch()} title="Couldn’t load API keys" />
+			) : isLoading ? (
+				<>
+					<ApiKeysMobileLoading />
+					<DataTable columns={columns} data={[]} isLoading className="hidden md:block" />
+				</>
+			) : keys.length === 0 ? (
+				<ApiKeysEmptyState onCreate={openCreateDialog} />
+			) : (
+				<>
+					<div className="md:hidden">
+						<ApiKeysMobileList keys={keys} onRevoke={handleRevoke} />
+					</div>
+					<DataTable
+						columns={columns}
+						data={keys}
+						className="hidden md:block"
+						tableContainerClassName="max-w-full"
+					/>
+				</>
+			)}
+
+			<Dialog
+				open={createDialogOpen}
+				onOpenChange={handleCreateDialogOpenChange}
+				onOpenChangeComplete={handleCreateDialogOpenChangeComplete}
+			>
+				<DialogContent
+					showCloseButton={!createKey.isPending && createdKey === null}
+					className="sm:max-w-lg"
+				>
+					<DialogHeader>
+						<DialogTitle>{createdKey ? "Save your API key" : "Create API key"}</DialogTitle>
+						<DialogDescription>
+							{createdKey
+								? "Copy this key now. For your security, it won’t be available again."
+								: "Use a recognizable name so you know which client can be revoked later."}
+						</DialogDescription>
+					</DialogHeader>
+
+					{createdKey ? (
+						<div className="space-y-5">
+							<Alert className="border-primary/30 bg-primary/5">
+								<ShieldCheck aria-hidden="true" />
+								<AlertTitle>Key created</AlertTitle>
+								<AlertDescription>
+									Store it in your secret manager and set it as{" "}
+									<code className="font-mono text-xs">CLAWDI_AUTH_TOKEN</code> on the client.
+								</AlertDescription>
+							</Alert>
+
+							<div className="flex min-w-0 items-start gap-2 rounded-lg border bg-muted/30 p-2">
+								<code className="min-w-0 flex-1 select-all break-all px-1 py-1.5 font-mono text-xs leading-relaxed">
+									{createdKey}
+								</code>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={() => void copy(createdKey)}
+									data-copied={copied}
+								>
+									{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+									{copied ? "Copied" : "Copy"}
+								</Button>
+							</div>
+
+							<div className="flex items-start gap-2.5">
+								<Checkbox
+									id="api-key-secret-acknowledgement"
+									checked={secretAcknowledged}
+									onCheckedChange={(checked) => setSecretAcknowledged(checked === true)}
+									className="mt-0.5"
+								/>
+								<Label
+									htmlFor="api-key-secret-acknowledgement"
+									className="text-sm leading-snug font-normal"
+								>
+									I have copied and stored this API key safely.
+								</Label>
+							</div>
+
+							<DialogFooter>
+								<Button type="button" disabled={!secretAcknowledged} onClick={finishSecretReveal}>
+									Done
+								</Button>
+							</DialogFooter>
+						</div>
+					) : (
+						<form
+							className="space-y-5"
+							onSubmit={(event) => {
+								event.preventDefault();
+								if (normalizedNewLabel && !createKey.isPending) {
+									void createKey.execute(normalizedNewLabel).catch(() => undefined);
+								}
+							}}
+						>
+							<div className="space-y-2">
+								<Label htmlFor="new-key-label">Key name</Label>
+								<Input
+									id="new-key-label"
+									value={newLabel}
+									onChange={(event) => {
+										setNewLabel(event.target.value);
+										createKey.reset();
+									}}
+									placeholder="Production server"
+									name="new-key-label"
+									autoComplete="off"
+									maxLength={API_KEY_LABEL_MAX_LENGTH}
+									required
+									disabled={createKey.isPending}
+									aria-describedby="new-key-label-help"
+								/>
+								<p id="new-key-label-help" className="text-xs text-muted-foreground">
+									For example, the server, container, or automation that will use this key.
+								</p>
+								{createKey.error ? (
+									<p role="alert" className="text-xs text-destructive">
+										The key couldn’t be created. Check the name and try again.
+									</p>
+								) : null}
+							</div>
+
+							<DialogFooter>
+								<Button
+									type="button"
+									variant="outline"
+									onClick={() => handleCreateDialogOpenChange(false)}
+									disabled={createKey.isPending}
+								>
+									Cancel
+								</Button>
+								<Button type="submit" disabled={!normalizedNewLabel || createKey.isPending}>
+									{createKey.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
+									Create API key
+								</Button>
+							</DialogFooter>
+						</form>
+					)}
+				</DialogContent>
+			</Dialog>
+			<AlertDialog
+				open={revokeOpen}
+				onOpenChange={(nextOpen) => {
+					if (revokeKey.isPending) return;
+					if (nextOpen) revokeExit.beginOpen();
+					else revokeExit.beginClose();
+					setRevokeOpen(nextOpen);
+				}}
+				onOpenChangeComplete={(nextOpen) => {
+					if (!nextOpen) {
+						revokeExit.completeClose();
+						setRevokeTarget(null);
+					}
 				}}
 			>
-				<Label htmlFor="new-key-label" className="sr-only">
-					New API key label
-				</Label>
-				<Input
-					id="new-key-label"
-					value={newLabel}
-					onChange={(e) => setNewLabel(e.target.value)}
-					placeholder="my-laptop…"
-					className="min-w-0 flex-1"
-					name="new-key-label"
-					autoComplete="off"
-				/>
-				<Button
-					type="submit"
-					disabled={!newLabel || createKey.isPending}
-					className="w-full sm:w-auto"
-				>
-					<Plus />
-					Create
-				</Button>
-			</form>
-
-			{/* Created key banner */}
-			{createdKey ? (
-				<div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-4">
-					<div className="text-sm font-medium text-primary">
-						Key created — copy it now, it won't be shown again.
-					</div>
-					<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-						<code className="flex-1 break-all rounded bg-muted px-3 py-2 font-mono text-xs">
-							{createdKey}
-						</code>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							onClick={() => {
-								navigator.clipboard
-									.writeText(createdKey)
-									.then(() => toast.success("Copied to clipboard"))
-									.catch(() => toast.error("Couldn't copy", { description: "Copy it manually." }));
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							Revoke “{renderedRevokeTarget?.label ?? "API key"}”?
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							Requests using this key will stop working. This can’t be undone; create and install a
+							new key to reconnect the client.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={revokeKey.isPending}>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							variant="destructive"
+							disabled={!renderedRevokeTarget || revokeKey.isPending}
+							onClick={(event) => {
+								event.preventDefault();
+								if (renderedRevokeTarget && !revokeKey.isPending)
+									revokeKey.mutate(renderedRevokeTarget.id);
 							}}
-							aria-label="Copy key"
 						>
-							<Copy />
-						</Button>
-					</div>
-				</div>
-			) : null}
+							{revokeKey.isPending ? <Spinner /> : null}
+							Revoke key
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+		</div>
+	);
+}
 
-			<div className="md:hidden">
-				<ApiKeysMobileList
-					keys={keys ?? []}
-					isLoading={isLoading}
-					isRevoking={revokeKey.isPending}
-					onRevoke={(keyId) => revokeKey.mutate(keyId)}
-				/>
-			</div>
-			<DataTable
-				columns={columns}
-				data={keys ?? []}
-				isLoading={isLoading}
-				emptyMessage="No API keys yet."
-				className="hidden md:block"
-			/>
+function apiKeyColumns({
+	showExpiration,
+	onRevoke,
+}: {
+	showExpiration: boolean;
+	onRevoke: (key: ApiKey) => void;
+}): ColumnDef<ApiKey>[] {
+	const columns: ColumnDef<ApiKey>[] = [
+		{
+			accessorKey: "label",
+			header: "Name",
+			cell: ({ row }) => (
+				<span className="block min-w-0 truncate font-medium" title={row.original.label}>
+					{row.original.label}
+				</span>
+			),
+			size: 240,
+		},
+		{
+			accessorKey: "key_prefix",
+			header: "Key",
+			cell: ({ row }) => <KeyIdentifier prefix={row.original.key_prefix} />,
+			size: 170,
+		},
+		{
+			accessorKey: "created_at",
+			header: "Created",
+			cell: ({ row }) => <ApiKeyDate value={row.original.created_at} />,
+			size: 120,
+		},
+		{
+			accessorKey: "last_used_at",
+			header: "Last used",
+			cell: ({ row }) => <ApiKeyDate value={row.original.last_used_at} emptyLabel="Never" />,
+			size: 120,
+		},
+	];
+
+	if (showExpiration) {
+		columns.push({
+			accessorKey: "expires_at",
+			header: "Expires",
+			cell: ({ row }) => <ApiKeyDate value={row.original.expires_at} emptyLabel="Never" />,
+			size: 120,
+		});
+	}
+
+	columns.push({
+		id: "actions",
+		header: "",
+		cell: ({ row }) => (
+			<RevokeApiKeyAction key={row.original.id} apiKey={row.original} onRevoke={onRevoke} />
+		),
+		size: 88,
+	});
+
+	return columns;
+}
+
+function KeyIdentifier({ prefix }: { prefix: string }) {
+	return (
+		<code
+			className="block min-w-0 truncate font-mono text-xs text-muted-foreground"
+			title={`Key prefix: ${prefix}`}
+		>
+			{prefix}…
+		</code>
+	);
+}
+
+function ApiKeyDate({ value, emptyLabel = "—" }: { value: string | null; emptyLabel?: string }) {
+	if (!value) return <span className="text-xs text-muted-foreground">{emptyLabel}</span>;
+	return (
+		<TimeTooltip value={value}>
+			<span className="text-xs text-muted-foreground">{formatShortDate(value)}</span>
+		</TimeTooltip>
+	);
+}
+
+function RevokeApiKeyAction({
+	apiKey,
+	onRevoke,
+}: {
+	apiKey: ApiKey;
+	onRevoke: (key: ApiKey) => void;
+}) {
+	return (
+		<Button
+			type="button"
+			variant="ghost"
+			size="sm"
+			aria-label={`Revoke ${apiKey.label}`}
+			className="text-muted-foreground hover:text-destructive"
+			onClick={() => onRevoke(apiKey)}
+		>
+			<Trash2 aria-hidden="true" />
+			Revoke
+		</Button>
+	);
+}
+
+function ApiKeysEmptyState({ onCreate }: { onCreate: () => void }) {
+	return (
+		<div className="rounded-lg border bg-card">
+			<Empty className="p-8 sm:p-12">
+				<EmptyHeader>
+					<EmptyMedia variant="icon">
+						<KeyRound aria-hidden="true" />
+					</EmptyMedia>
+					<EmptyTitle>No active API keys</EmptyTitle>
+					<EmptyDescription>
+						Create a key to authenticate a server, container, or other client that can’t open a
+						browser.
+					</EmptyDescription>
+				</EmptyHeader>
+				<EmptyContent>
+					<Button type="button" onClick={onCreate}>
+						<Plus aria-hidden="true" />
+						Create API key
+					</Button>
+				</EmptyContent>
+			</Empty>
+		</div>
+	);
+}
+
+function ApiKeysMobileLoading() {
+	return (
+		<div className="flex flex-col gap-3 md:hidden" role="status">
+			<span className="sr-only">Loading API keys</span>
+			{[0, 1, 2].map((index) => (
+				<div key={index} className="rounded-lg border bg-card p-4">
+					<Skeleton className="h-4 w-2/3" />
+					<Skeleton className="mt-3 h-3 w-1/2" />
+					<Skeleton className="mt-4 h-8 w-full" />
+				</div>
+			))}
 		</div>
 	);
 }
 
 function ApiKeysMobileList({
 	keys,
-	isLoading,
-	isRevoking,
 	onRevoke,
 }: {
 	keys: ApiKey[];
-	isLoading: boolean;
-	isRevoking: boolean;
-	onRevoke: (keyId: string) => void;
+	onRevoke: (key: ApiKey) => void;
 }) {
-	if (isLoading) {
-		return (
-			<div className="flex flex-col gap-2">
-				{[0, 1, 2].map((i) => (
-					<div key={i} className="rounded-lg border bg-card p-3">
-						<Skeleton className="h-4 w-32" />
-						<Skeleton className="mt-2 h-3 w-24" />
-					</div>
-				))}
-			</div>
-		);
-	}
-
-	if (keys.length === 0) {
-		return (
-			<div className="rounded-lg border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
-				No API keys yet.
-			</div>
-		);
-	}
-
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col gap-3">
 			{keys.map((key) => (
-				<div key={key.id} className="rounded-lg border bg-card p-3">
-					<div className="flex min-w-0 items-start justify-between gap-3">
+				<article key={key.id} className="min-w-0 rounded-lg border bg-card p-4">
+					<div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
 						<div className="min-w-0">
-							<div className="flex min-w-0 flex-wrap items-center gap-2">
-								<span className="break-words text-sm font-medium">{key.label}</span>
-								{key.revoked_at ? <Badge variant="destructive">Off</Badge> : null}
-							</div>
-							<div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-								<span className="font-mono">{key.key_prefix}…</span>
-								<span>Created {new Date(key.created_at).toLocaleDateString()}</span>
-								<span>
-									Last used{" "}
-									{key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : "—"}
-								</span>
+							<h3 className="line-clamp-2 break-all text-sm font-medium" title={key.label}>
+								{key.label}
+							</h3>
+							<div className="mt-1.5 max-w-full">
+								<KeyIdentifier prefix={key.key_prefix} />
 							</div>
 						</div>
-						{key.revoked_at ? null : (
-							<ConfirmAction
-								title={`Turn off ${key.label}?`}
-								description={
-									<p>
-										If a machine is still using this key, sync will stop within a minute. Sign in
-										again from that machine to resume.
-									</p>
-								}
-								confirmLabel="Turn Off Key"
-								destructive
-								onConfirm={() => onRevoke(key.id)}
-							>
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon-sm"
-									disabled={isRevoking}
-									aria-label="Turn off key"
-									className="shrink-0 text-muted-foreground hover:text-destructive"
-								>
-									<Trash2 className="size-3.5" />
-								</Button>
-							</ConfirmAction>
-						)}
+						<RevokeApiKeyAction apiKey={key} onRevoke={onRevoke} />
 					</div>
-				</div>
+
+					<dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 text-xs">
+						<div className="min-w-0">
+							<dt className="text-muted-foreground">Created</dt>
+							<dd className="mt-0.5 font-medium text-foreground">
+								<ApiKeyDate value={key.created_at} />
+							</dd>
+						</div>
+						<div className="min-w-0">
+							<dt className="text-muted-foreground">Last used</dt>
+							<dd className="mt-0.5 font-medium text-foreground">
+								<ApiKeyDate value={key.last_used_at} emptyLabel="Never" />
+							</dd>
+						</div>
+						{key.expires_at ? (
+							<div className="min-w-0">
+								<dt className="text-muted-foreground">Expires</dt>
+								<dd className="mt-0.5 font-medium text-foreground">
+									<ApiKeyDate value={key.expires_at} />
+								</dd>
+							</div>
+						) : null}
+					</dl>
+				</article>
 			))}
 		</div>
 	);

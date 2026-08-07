@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { ExternalLink, RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -12,6 +12,7 @@ import {
 	agentDisplayName,
 	agentTypeLabel,
 } from "@/components/dashboard/agent-label";
+import { syncAgentNameDraft } from "@/components/dashboard/agent-settings-panel.logic";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -19,13 +20,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
+import { useUnsavedNavigationState } from "@/components/unsaved-navigation-state";
 import {
 	agentDisconnectUnavailable,
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
-import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 
 type Environment = components["schemas"]["AgentResponse"];
@@ -35,8 +39,11 @@ const MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024;
 const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
-	queryClient.setQueryData(["agents", environment.id], environment);
-	queryClient.setQueryData<Environment[]>(["agents"], (current) =>
+	queryClient.setQueryData(
+		["get", "/v1/agents/{agent_id}", { params: { path: { agent_id: environment.id } } }],
+		environment,
+	);
+	queryClient.setQueryData<Environment[]>(["get", "/v1/agents", {}], (current) =>
 		current?.map((item) => (item.id === environment.id ? environment : item)),
 	);
 }
@@ -49,30 +56,34 @@ export function AgentSettingsPanel({
 	className?: string;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const ownership = useAgentOwnership();
 	const uploadAvatar = useAgentAvatarUploader();
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
+	const lastServerNameRef = useRef<{ environmentId: string; name: string } | null>(null);
 	const [draftName, setDraftName] = useState("");
 	const {
 		data: agent,
 		isLoading,
 		error,
-	} = useQuery({
-		queryKey: ["agents", environmentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}", {
-					params: { path: { agent_id: environmentId } },
-				}),
-			),
+	} = $api.useQuery("get", "/v1/agents/{agent_id}", {
+		params: { path: { agent_id: environmentId } },
 	});
 
+	const serverDraftName = agent ? (agent.display_name ? agent.display_name : "") : undefined;
+
 	useEffect(() => {
-		if (!agent) return;
-		setDraftName(agent.display_name ?? "");
-	}, [agent]);
+		if (serverDraftName === undefined) return;
+		const previous = lastServerNameRef.current;
+		const previousServerName =
+			previous?.environmentId === environmentId ? previous.name : undefined;
+		lastServerNameRef.current = { environmentId, name: serverDraftName };
+		setDraftName((currentDraft) =>
+			syncAgentNameDraft(currentDraft, previousServerName, serverDraftName),
+		);
+	}, [environmentId, serverDraftName]);
 
 	const updateIdentity = useMutation({
 		mutationFn: async (body: EnvironmentUpdate) =>
@@ -86,7 +97,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Agent updated");
 		},
-		onError: (e) => toast.error("Couldn't update agent", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't update agent"),
 	});
 
 	const uploadMutation = useMutation({
@@ -95,7 +106,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Avatar uploaded");
 		},
-		onError: (e) => toast.error("Couldn't upload avatar", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't upload avatar"),
 	});
 
 	const clearAvatar = useMutation({
@@ -109,7 +120,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Avatar removed");
 		},
-		onError: (e) => toast.error("Couldn't remove avatar", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't remove avatar"),
 	});
 
 	const disconnect = useMutation({
@@ -121,17 +132,20 @@ export function AgentSettingsPanel({
 			),
 		onSuccess: () => {
 			toast.success("Agent disconnected", {
-				description: "Sessions and skills stay in your account.",
+				description: "Data is retained. Run clawdi setup on this installation to reconnect.",
 			});
-			queryClient.invalidateQueries({
+			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
+			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
+			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
+			void queryClient.invalidateQueries({
 				predicate: (q) => {
 					const key = q.queryKey[0];
 					return key === "agents" || key === "sessions";
 				},
 			});
-			void router.navigate({ href: "/" });
+			void router.navigate({ href: "/agents" });
 		},
-		onError: (e) => toast.error("Couldn't disconnect agent", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't disconnect agent"),
 	});
 
 	const onUploadChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,6 +166,13 @@ export function AgentSettingsPanel({
 		}
 		uploadMutation.mutate(file);
 	};
+	const normalizedDraftName = draftName.trim() || null;
+	const currentName = agent?.display_name ? agent.display_name : null;
+	const nameChanged = Boolean(agent) && normalizedDraftName !== currentName;
+	const guardedBySurface = useUnsavedNavigationState({
+		dirty: nameChanged,
+		busy: updateIdentity.isPending,
+	});
 
 	if (isLoading) {
 		return (
@@ -161,7 +182,7 @@ export function AgentSettingsPanel({
 		);
 	}
 
-	if (error || !agent) {
+	if (shouldBlockQueryError(error, agent) || !agent) {
 		return (
 			<div className={cn("flex flex-col gap-1 rounded-md border p-4", className)}>
 				<div className="text-sm font-semibold">Settings unavailable</div>
@@ -170,13 +191,10 @@ export function AgentSettingsPanel({
 		);
 	}
 
-	const normalizedDraftName = draftName.trim() || null;
-	const currentCustomName = agent.display_name ?? null;
-	const nameChanged = normalizedDraftName !== currentCustomName;
 	const hasCustomAvatar = Boolean(agent.avatar_url);
 	const ownershipKind = agentOwnershipKindFromId(agent.id, ownership);
-	// Disconnect deregisters the environment — destructive, so it must wait
-	// for RESOLVED ownership (`ownership !== null`). While the hosted sensor
+	// Disconnect archives the active Agent and Project, so it must wait for
+	// RESOLVED ownership (`ownership !== null`). While the hosted sensor
 	// is still resolving, a live hosted/legacy agent would otherwise briefly
 	// classify as connected and expose a working Disconnect.
 	const disconnectUnavailable = agentDisconnectUnavailable({
@@ -196,7 +214,14 @@ export function AgentSettingsPanel({
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 
 	return (
-		<div className={cn("flex flex-col gap-9", className)}>
+		<div className={cn("flex flex-col gap-8", className)}>
+			{guardedBySurface ? null : (
+				<UnsavedNavigationGuard
+					dirty={nameChanged}
+					busy={updateIdentity.isPending}
+					description="Your agent name will return to the last value saved on the server."
+				/>
+			)}
 			<input
 				ref={fileInputRef}
 				type="file"
@@ -222,13 +247,13 @@ export function AgentSettingsPanel({
 			</div>
 
 			<SettingsSection
-				title="Display name"
+				title="Name"
 				description="Use a short name that distinguishes this agent from others."
 			>
 				<div className="flex max-w-2xl flex-col gap-3">
 					<div className="flex flex-col gap-2 lg:flex-row">
 						<Label htmlFor="agent-display-name" className="sr-only">
-							Display name
+							Agent name
 						</Label>
 						<Input
 							id="agent-display-name"
@@ -347,24 +372,20 @@ export function AgentSettingsPanel({
 			{!disconnectUnavailable ? (
 				<SettingsSection
 					title="Disconnect"
-					description="Remove this connected agent from your dashboard."
+					description="Stop this installation while keeping its Clawdi data."
 					variant="destructive"
 				>
 					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 						<p className="max-w-md text-sm text-muted-foreground">
-							The agent stops syncing here. Existing sessions, skills, and Projects stay in your
-							account.
+							Sync stops and retained Sessions, Skills, files, and Projects stay in your account.
 						</p>
 						<ConfirmAction
 							title="Disconnect this agent?"
 							description={
-								<>
-									<p>Sessions and skills stay in your account.</p>
-									<p>
-										This agent will stop syncing and sessions will no longer be tagged with it.
-										Reconnect from that agent to resume.
-									</p>
-								</>
+								<p>
+									Disconnect stops this installation and removes it from active views. Run{" "}
+									<code>clawdi setup</code> on it to reconnect with the same retained data.
+								</p>
 							}
 							confirmLabel="Disconnect agent"
 							destructive

@@ -14,6 +14,22 @@ closest-to-end-user:
 | Exercise a globally-installed CLI from source | `bun link` (see below) |
 | Simulate an `npm publish` | `bun pm pack` (see below) |
 
+Native release builds use one catalog-backed layout:
+`dist-native/<target>/{clawdi,skills/,egress-addon/}`. The supported targets are
+Linux x64/arm64 for glibc and musl, plus macOS x64/arm64. Build and exercise the
+host target with the same internal lifecycle command used by ephemeral CI:
+
+```bash
+bun run --cwd packages/cli build:native
+bun run --cwd packages/cli test:native-linux-lifecycle:internal
+```
+
+The lifecycle command exercises the Linux x64 release layout. `build:native`
+itself builds the current host target. The macOS Bun executables are linker
+ad-hoc signed. This repository does not
+claim Developer ID signing, notarization, or browser-download Gatekeeper
+compatibility.
+
 Read-only local commands (`skill init`, `config *`, `status --json` while
 unauthenticated) work without a backend. Anything that hits the API
 (`auth login`, `setup`, `push`, `pull`, `doctor`, `skill install/list/rm`,
@@ -53,9 +69,9 @@ workspace deps leaking into `dependencies`, …):
 ```bash
 cd packages/cli
 bun run build
-bun pm pack                                  # → clawdi-0.1.0.tgz
-tar -tzf clawdi-0.1.0.tgz | head   # inspect contents
-bun install -g ./clawdi-0.1.0.tgz
+bun pm pack                                  # → clawdi-<package-version>.tgz
+tar -tzf clawdi-*.tgz | head                 # inspect contents
+bun install -g ./clawdi-*.tgz
 clawdi --version
 bun uninstall -g clawdi
 rm clawdi-*.tgz
@@ -76,7 +92,7 @@ Example with Hermes (`nousresearch/hermes-agent`). Prerequisite:
 # 0. Pack the CLI on the host.
 cd packages/cli
 bun run build
-bun pm pack                # → clawdi-0.1.0.tgz
+bun pm pack                # → clawdi-<package-version>.tgz
 
 # 1. Start the container. The upstream ENTRYPOINT bootstraps
 #    $HERMES_HOME and launches the Hermes TUI as PID 1 — we leave it
@@ -146,26 +162,82 @@ backend, dashboard, local key minting, and cleanup.
 Once it's up, a canonical smoke loop:
 
 ```bash
-clawdi auth login     # paste an API key from the web dashboard
+clawdi auth login     # Clerk OAuth Authorization Code + PKCE
 clawdi setup          # register this agent + install the built-in skill
 clawdi doctor         # all ✓ means the full pipe is wired up
 clawdi push --dry-run # preview what push would upload
 ```
+
+`clawdi auth login` is the canonical human login for both Cloud and Hosted. It
+stores the current short-lived access token and Clerk refresh grant in the
+existing private atomic CLI state file (0700 directory, 0600 file), refreshes
+before expiry, and rotates the persisted refresh value when Clerk returns one.
+The verified login is bound to the canonical Cloud and Hosted API origins that
+were active when the grant was created. The CLI checks the exact request origin
+before adding an Authorization header; changing either endpoint requires a new
+login. Process-injected `CLAWDI_AUTH_TOKEN` credentials retain production Cloud
+compatibility, while custom Cloud endpoints must also set the explicit
+`CLAWDI_AUTH_TOKEN_ORIGIN` binding.
+`clawdi auth logout` asks the Cloud backend to revoke the refresh grant before
+removing local state. The legacy `--manual` API-key path remains Cloud-only.
+The Clerk Public OAuth Application must allow `openid`, `profile`, `email`, and
+`offline_access`; the last scope is required for the persisted refresh grant.
+At the Clerk instance level, `oauth_jwt_access_tokens` must be enabled through
+the Backend API. This setting may not appear on the OAuth Application screen.
+Cloud and Hosted verify the resulting RS256 access JWT and deliberately reject
+opaque tokens.
+Cloud reads its public-client identifiers from the strictly registered global
+`clerk_cli_oauth` App Setting. Cloud and Hosted are configured independently;
+there is no automatic synchronization or shared secret reference between them.
+
+On SSH, run `clawdi auth login --no-open`, open the printed URL locally, then
+paste the complete failed loopback callback URL into the masked terminal
+prompt. Clerk does not advertise RFC 8628 device authorization. A non-TTY flow
+can save the pending PKCE transaction and later run `clawdi auth complete` with
+the callback URL on stdin; the authorization code is never accepted as a flag.
+
+The Hosted deploy wizard shares its defaults, validation, request builder,
+compute/payment selection, and deployment-request projection with the Web
+Deploy Wizard:
+
+```bash
+clawdi deploy
+clawdi deploy --runtime hermes --provider managed --model <id> \
+  --compute basic --request-id <uuid> --yes --json
+clawdi deploy --provider <saved-provider-id> --model <id> \
+  --compute basic --request-id <uuid> --yes --json
+clawdi deploy --compute performance --term 12 --payment wallet \
+  --request-id <uuid> --yes --json
+clawdi deploy --compute performance --payment card --request-id <uuid> --yes --json
+```
+
+Included Basic deploys create directly. Wallet deploys require an exact quote
+and explicit confirmation. Card deploys open Hosted Checkout and reuse the
+stable request ID for recovery; the CLI never accepts provider/card secrets in
+flags. Every non-interactive deploy requires `--yes` and a caller-supplied
+`--request-id`; paid deploys also require `--payment`. Use `--json` for
+deterministic automation and reuse the same request ID after an ambiguous
+create or checkout response.
+`--provider` also accepts an exact Cloud saved-provider id. The CLI reads only
+secret-free provider metadata and sends a provider binding/bootstrap; it never
+accepts or prints the saved credential. Pass `--model` unless that provider has
+one unambiguous default model.
 
 ## Typecheck / test / build
 
 ```bash
 bun install
 bun run --cwd packages/cli typecheck   # tsc --noEmit
-bun run --cwd packages/cli test        # ~350 tests, ~5s
+bun run --cwd packages/cli test        # Docker-isolated CLI suite
 bun run --cwd packages/cli build       # produces dist/
 ```
 
 ## Testing
 
-All tests run with `bun test` (~5s for the full suite, ~350 tests) and never
-touch the network, your real `~/.clawdi`, or a real agent install. They're
-designed to be safe to run on every file save.
+The public package `test` command runs through the clean Docker runner with a
+fake `HOME`; pass a test path or Bun test filter after the command for a focused
+run. `test:internal` is reserved for the Docker runner and CI and must not be
+used as a normal host-local entrypoint. Tests do not use a real agent install.
 
 For daemon end-to-end and manual browser verification, see
 [`clawdi-daemon-test-guide.md`](clawdi-daemon-test-guide.md).
@@ -211,12 +283,12 @@ when an upstream agent's on-disk format changes and a test breaks.
 ### Running tests
 
 ```bash
-bun test                              # everything (~350 tests, ~5s)
-bun run test:e2e                     # process-level vault reference e2e
-scripts/vault-e2e.sh                 # real backend + Postgres vault smoke
-bun test tests/adapters/              # adapter layer only
-bun test tests/commands/push.test.ts  # just push regression
-bun run test:watch                    # watch mode
+bun run --cwd packages/cli test                                # full Docker-isolated suite
+bun run --cwd packages/cli test:e2e                            # Docker-isolated process E2E
+bun run --cwd packages/cli test -- tests/adapters/             # focused adapter layer
+bun run --cwd packages/cli test -- tests/commands/push.test.ts # focused command regression
+scripts/vault-e2e.sh                                           # real backend + Postgres smoke
+bun run --cwd packages/cli test:watch:local                    # opt-in host-local watch
 ```
 
 ## Releasing
@@ -225,22 +297,32 @@ Use `docs/runbooks/release.md` for the full app/backend/web/CLI release
 checklist. This section covers the CLI/npm release line in detail.
 
 Publishing is automated. `.github/workflows/cli-publish.yml` watches `main`
-for changes under `packages/cli/` and publishes to npm when it sees a
-version bump. A merge with no version change is a no-op — the workflow
-diffs `packages/cli/package.json` against `npm view clawdi version` and
-exits early on a match.
+for changes to `packages/cli/package.json`, so a release run starts only when
+the package identity changes. It builds the artifact from its own `GITHUB_SHA`.
+An absent exact npm version is
+published; an existing version is never republished and must have the same
+`dist.integrity` as the artifact built by this run.
 
 Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
-typechecks, runs the full CLI suite, and packs one immutable tarball. It installs
-the tarball, records and checks its SHA-256, transfers the same artifact to the
-protected npm job, checks it again, and publishes it exactly once to the
+typechecks, runs the full CLI suite, packs one immutable npm tarball, and builds
+the native target matrix once. It verifies the npm package after installation
+and runs the compiled Linux artifact through the installer/daemon lifecycle.
+The exact-version native manifest is the checksum contract for all native
+assets. The workflow transfers the same artifacts to the protected npm job and
+publishes the npm tarball exactly once to the
 standard npm channel derived from the package version: prereleases use `beta`
 and stable releases use `latest`. Package-level tag overrides are rejected.
 The build/test job may use the configured fast runner, but the protected
 publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
 does not support self-hosted or third-party GitHub Actions runners. The publish
 job uses Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm
-11.5.1.
+11.5.1. After a fresh `npm publish --provenance` succeeds, that command plus the exact registry
+version and matching `dist.integrity` authorizes GitHub Release completion; the
+job does not wait for the eventually consistent registry attestation read API.
+If release work remains and the immutable npm version already exists, the
+workflow never republishes it and only accepts an exact integrity match. The
+GitHub Release and tag must target that run's `GITHUB_SHA`; another commit while
+completion is required fails closed.
 
 The CLI workflow neither calls nor checks out the Hosted repository. An operator
 verifies the exact package publication, then explicitly supplies the exact
@@ -263,9 +345,10 @@ enabling v2. Do not add legacy fields or aliases.
 
 The monorepo has two GitHub Release lines:
 
-- `clawdi-cli-vX.Y.Z` for the published npm package. The CLI publish
-  workflow creates this release after npm publish succeeds and prepends
-  package/install notes to the generated changelog.
+- `clawdi-cli-vX.Y.Z` for the published npm package and native distribution.
+  The CLI publish workflow creates this release after npm publish succeeds and
+  attaches `install.sh`, the exact native manifest, and its checksum-bound
+  target archives.
 - `clawdi-YYYY-MM-DD` for Clawdi app/backend/web changes. Additional releases
   on the same UTC day append `-2`, `-3`, and so on. The suffix is a same-day
   release sequence, not a semver patch number.
@@ -303,10 +386,8 @@ NPM_TAG=$(node -e "const p=require('./package.json'); console.log(p.version.incl
 npm publish --access public --tag "$NPM_TAG"  # plain publish, no --provenance
 ```
 
-The workflow detects this case (`npm view clawdi` returns nothing → falls
-back to `"0.0.0"`) and stays inert until the package exists. After the
-first publish, configure trusted publisher (next section) and from v0.1.1
-onward releases are automatic.
+After the first publish, configure trusted publisher (next section); subsequent
+releases are automatic.
 
 ### To ship a new version (after bootstrap)
 
@@ -316,7 +397,16 @@ onward releases are automatic.
    one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
    from GitHub-hosted `ubuntu-latest` with
    `npm publish <tarball> --access public --provenance --ignore-scripts --tag <resolved-tag>`.
-4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
+   A successful fresh publish is completed using that command result plus the
+   exact registry version and `dist.integrity`; it does not depend on immediate
+   visibility of the registry attestation query endpoint.
+   If npm already has the exact version, the workflow never republishes it and
+   compares the current run's tarball directly with npm `dist.integrity`.
+   Integrity drift requires a version bump or a rerun of the original workflow;
+   the workflow never checks out a source commit inferred from registry data.
+4. The workflow creates or completes `clawdi-cli-v<version>` as a draft,
+   uploads the verified binary assets, then finalizes the release with changelog
+   notes.
 5. Watch the Actions tab; on green,
    `npm view clawdi@<exact-version> version` reflects the new number. A
    prerelease updates `beta`; a stable release updates `latest`.
@@ -325,8 +415,9 @@ Stop here for this release workflow. Hosted rollout selects the approved exact
 version through its Cloud manifest. The `beta` tag is publication metadata;
 production and Hosted never resolve an npm dist-tag.
 
-A manual run is available under `workflow_dispatch` if the auto-run
-needs a nudge (e.g. npm was transiently unavailable).
+A manual run is available under `workflow_dispatch` if the auto-run needs a
+nudge. If npm succeeded but GitHub Release creation failed, rerun that original
+workflow run so `GITHUB_SHA` and the artifact remain identical.
 
 ### Smoke checks before bumping the version
 

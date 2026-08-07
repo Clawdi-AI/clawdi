@@ -5,7 +5,7 @@ node_modules/
 .vite/
 .vite-temp/
 dist/
-dist-bin/
+packages/cli/dist-native/
 packages/cli/dist-release/
 packages/cli/clawdi-mitm-broker/
 .turbo/
@@ -24,8 +24,6 @@ __pycache__/
 .clawdi.env
 .vercel/
 .paseo/
-infra/deploy/coolify/*.local.json
-infra/deploy/coolify/*.live.json
 
 # File Store (local dev)
 data/
@@ -51,3 +49,5 @@ data/
 # memory content; keep them out of the repo.
 backend/scripts/seed_demo.py
 backend/pdm.lock
+.kamal/secrets
+.kamal/secrets.tmp

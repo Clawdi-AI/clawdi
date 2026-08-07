@@ -18,6 +18,12 @@ export const AI_PROVIDER_API_MODES = [
 
 export type AiProviderApiMode = (typeof AI_PROVIDER_API_MODES)[number];
 
+export interface AiProviderRuntimeCompatibility {
+	openclaw: boolean;
+	hermes: boolean;
+	codex: boolean;
+}
+
 export type AiProviderApiKeyAuth =
 	| {
 			type: "api_key";
@@ -122,6 +128,15 @@ const COMPATIBLE_API_MODES: Record<AiProviderType, readonly AiProviderApiMode[]>
 	custom_openai_compatible: ["openai_chat", "openai_responses"],
 };
 
+const RUNTIME_API_MODES: Record<
+	keyof AiProviderRuntimeCompatibility,
+	readonly AiProviderApiMode[]
+> = {
+	openclaw: ["openai_chat", "openai_responses", "anthropic_messages", "google_generate_content"],
+	hermes: ["openai_chat", "openai_responses", "anthropic_messages"],
+	codex: ["openai_responses"],
+};
+
 const DEFAULT_API_MODE: Partial<Record<AiProviderType, AiProviderApiMode>> = {
 	openai: "openai_responses",
 	anthropic: "anthropic_messages",
@@ -147,36 +162,72 @@ const DEFAULT_RUNTIME_ENV_NAME: Partial<Record<AiProviderType, string>> = {
 };
 
 const DEFAULT_MODEL_CATALOG: Partial<Record<AiProviderType, readonly AiProviderModel[]>> = {
-	openai: [{ id: "gpt-5.5" }, { id: "gpt-5.4" }, { id: "gpt-5.4-mini" }],
-	anthropic: [{ id: "claude-sonnet-5" }, { id: "claude-opus-4-6" }, { id: "claude-haiku-4-5" }],
-	openrouter: [
-		{ id: "anthropic/claude-sonnet-5" },
-		{ id: "anthropic/claude-opus-4.6" },
-		{ id: "openai/gpt-5.5" },
+	openai: [
+		{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", context_window: 1_050_000 },
+		{ id: "gpt-5.6-terra", label: "GPT-5.6 Terra", context_window: 1_050_000 },
+		{ id: "gpt-5.6-luna", label: "GPT-5.6 Luna", context_window: 1_050_000 },
+		{ id: "gpt-5.5", label: "GPT-5.5" },
+		{ id: "gpt-5.4", label: "GPT-5.4" },
+		{ id: "gpt-5.4-mini", label: "GPT-5.4 mini" },
 	],
-	gemini: [{ id: "gemini-2.5-pro" }, { id: "gemini-3.5-flash" }],
-	mistral: [{ id: "mistral-large-latest" }],
+	anthropic: [
+		{ id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+		{ id: "claude-opus-5", label: "Claude Opus 5" },
+		{ id: "claude-opus-4-6", label: "Claude Opus 4.6" },
+		{ id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+	],
+	openrouter: [
+		{ id: "openrouter/auto-beta", label: "Auto Router" },
+		{ id: "~openai/gpt-latest", label: "OpenAI GPT Latest" },
+		{
+			id: "anthropic/claude-sonnet-5",
+			label: "Claude Sonnet 5",
+			context_window: 1_000_000,
+		},
+		{ id: "anthropic/claude-opus-4.6", label: "Claude Opus 4.6" },
+		{ id: "openai/gpt-5.5", label: "OpenAI GPT-5.5" },
+	],
+	gemini: [
+		{ id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", context_window: 1_048_576 },
+		{ id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", context_window: 1_048_576 },
+		{
+			id: "gemini-3.5-flash-lite",
+			label: "Gemini 3.5 Flash-Lite",
+			context_window: 1_048_576,
+		},
+	],
+	mistral: [
+		{ id: "mistral-medium-latest", label: "Mistral Medium" },
+		{ id: "mistral-small-latest", label: "Mistral Small" },
+		{ id: "mistral-large-latest", label: "Mistral Large" },
+		{ id: "codestral-latest", label: "Codestral" },
+	],
 };
 
 export const CODEX_OAUTH_MODEL_CATALOG: readonly AiProviderModel[] = [
-	{ id: "gpt-5.5" },
-	{ id: "gpt-5.4" },
-	{ id: "gpt-5.3-codex" },
-	{ id: "gpt-5.4-mini" },
+	{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+	{ id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+	{ id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+	{ id: "gpt-5.5", label: "GPT-5.5" },
 ];
 
+export const CLAWDI_MANAGED_PROVIDER_ID = "clawdi";
 export const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
 const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
-export const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-v2";
-// TODO(#425): Remove this legacy alias after hosted#892 is deployed everywhere and no
-// dev/self-hosted binding still uses clawdi-managed-v2.
+export const CLAWDI_MANAGED_V2_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID;
+export const CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX = "clawdi-v2-deployment-";
+const CLAWDI_MANAGED_PROVIDER_MAX_ID_LENGTH = 63;
+export const CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID = "clawdi-v2";
+// TODO(#425): Remove legacy aliases only after the cross-repo rollout is complete and
+// persisted clients no longer send either legacy id.
 export const CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID = "clawdi-managed-v2";
 const CLAWDI_MANAGED_V2_API_MODE = "openai_chat";
-// TODO(#425): Remove the legacy member after hosted#892 is deployed everywhere and no
-// dev/self-hosted binding still uses clawdi-managed-v2.
+// TODO(#425): Remove legacy members after the compatibility window closes.
 export const CLAWDI_MANAGED_PROVIDER_IDS: ReadonlySet<string> = new Set([
+	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 ]);
 const CLAWDI_MANAGED_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY";
@@ -192,12 +243,40 @@ export interface AiProviderManagedIdentity {
 	managed_by?: string | null;
 }
 
+export function isClawdiManagedV2ProviderId(providerId: string): boolean {
+	if (
+		providerId === CLAWDI_MANAGED_PROVIDER_ID ||
+		providerId === CLAWDI_MANAGED_V2_PROVIDER_ID ||
+		providerId === CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID ||
+		providerId === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
+	) {
+		return true;
+	}
+	if (
+		providerId.length > CLAWDI_MANAGED_PROVIDER_MAX_ID_LENGTH ||
+		!providerId.startsWith(CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX)
+	) {
+		return false;
+	}
+	const deploymentId = providerId.slice(CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX.length);
+	return /^[1-9][0-9]*$/.test(deploymentId);
+}
+
+export function isClawdiManagedProviderId(providerId: string): boolean {
+	return providerId === CLAWDI_MANAGED_V1_PROVIDER_ID || isClawdiManagedV2ProviderId(providerId);
+}
+
 export function isFirstPartyManagedAiProvider(provider: AiProviderManagedIdentity): boolean {
 	const id = provider.provider_id ?? provider.id;
 	return (
-		provider.managed_by === "clawdi" ||
-		(typeof id === "string" && CLAWDI_MANAGED_PROVIDER_IDS.has(id))
+		provider.managed_by === "clawdi" || (typeof id === "string" && isClawdiManagedProviderId(id))
 	);
+}
+
+export function projectUserSelectableAiProviders<T extends AiProviderManagedIdentity>(
+	providers: readonly T[],
+): T[] {
+	return providers.filter((provider) => !isFirstPartyManagedAiProvider(provider));
 }
 
 export function isAiProviderId(input: string): boolean {
@@ -248,6 +327,42 @@ export function defaultAiProviderModels(type: AiProviderType): readonly AiProvid
 	return DEFAULT_MODEL_CATALOG[type] ?? [];
 }
 
+export function aiProviderRuntimeCompatibility(
+	provider: Pick<AiProvider, "api_mode" | "auth" | "base_url" | "runtime_env_name" | "type">,
+): AiProviderRuntimeCompatibility {
+	const apiMode = provider.api_mode ?? defaultAiProviderApiMode(provider.type);
+	const nativeCodexAuth = provider.auth.type === "agent_profile" && provider.auth.tool === "codex";
+	const nativeCodexShape =
+		nativeCodexAuth &&
+		provider.type === "openai" &&
+		apiMode === "openai_responses" &&
+		normalizeUrl(provider.base_url) === normalizeUrl(DEFAULT_BASE_URL.openai ?? "");
+	const authRef = "ref" in provider.auth ? provider.auth.ref : undefined;
+	const hasRuntimeAuth =
+		provider.auth.type === "none" ||
+		nativeCodexAuth ||
+		Boolean(provider.runtime_env_name) ||
+		Boolean(authRef?.startsWith("env:"));
+	if (provider.auth.type === "oauth_profile") {
+		return { openclaw: false, hermes: false, codex: false };
+	}
+	if (nativeCodexAuth) {
+		return {
+			openclaw: nativeCodexShape,
+			hermes: nativeCodexShape,
+			codex: nativeCodexShape,
+		};
+	}
+	if (!apiMode || !hasRuntimeAuth) {
+		return { openclaw: false, hermes: false, codex: false };
+	}
+	return {
+		openclaw: RUNTIME_API_MODES.openclaw.includes(apiMode),
+		hermes: RUNTIME_API_MODES.hermes.includes(apiMode),
+		codex: RUNTIME_API_MODES.codex.includes(apiMode),
+	};
+}
+
 export function validateAiProviderCatalog(
 	catalog: AiProviderCatalog,
 	options: AiProviderValidationOptions = {},
@@ -264,6 +379,7 @@ export function validateAiProviderCatalog(
 	}
 
 	const ids = new Set<string>();
+	const runtimeEnvOwners = new Map<string, string>();
 	for (const entry of catalog.providers) {
 		if (!isRecord(entry)) {
 			errors.push("Provider entry must be an object.");
@@ -276,6 +392,17 @@ export function validateAiProviderCatalog(
 		}
 		if (typeof provider.id === "string") {
 			ids.add(provider.id);
+		}
+		const runtimeEnvName = effectiveRuntimeEnvName(provider);
+		if (runtimeEnvName) {
+			const existingOwner = runtimeEnvOwners.get(runtimeEnvName);
+			if (existingOwner && existingOwner !== provider.id) {
+				errors.push(
+					`Provider ${provider.id} runtime env ${runtimeEnvName} collides with provider ${existingOwner}.`,
+				);
+			} else if (typeof provider.id === "string") {
+				runtimeEnvOwners.set(runtimeEnvName, provider.id);
+			}
 		}
 	}
 
@@ -292,6 +419,20 @@ export function validateAiProviderCatalog(
 	}
 
 	return { valid: errors.length === 0, errors, warnings };
+}
+
+function effectiveRuntimeEnvName(provider: AiProvider): string | undefined {
+	const auth = (provider as { auth?: unknown }).auth;
+	if (!isRecord(auth)) return undefined;
+	if (typeof auth.ref === "string" && auth.ref.startsWith("env:")) {
+		return auth.ref.slice("env:".length);
+	}
+	if (auth.type !== "api_key" && auth.type !== "secret_ref") return undefined;
+	return typeof provider.runtime_env_name === "string" ? provider.runtime_env_name : undefined;
+}
+
+function normalizeUrl(value: string): string {
+	return value.replace(/\/+$/, "");
 }
 
 function validateProvider(
@@ -331,6 +472,14 @@ function validateProvider(
 		errors.push(`Provider ${prefix} auth must be an object.`);
 	} else {
 		validateAuth(prefix, provider, auth, errors, warnings, options);
+		if (
+			typeof auth.ref === "string" &&
+			auth.ref.startsWith("env:") &&
+			provider.runtime_env_name !== undefined &&
+			provider.runtime_env_name !== auth.ref.slice("env:".length)
+		) {
+			errors.push(`Provider ${prefix} runtime_env_name must match its env auth ref.`);
+		}
 	}
 	validateModels(prefix, (provider as { models?: unknown }).models, errors);
 }
@@ -341,47 +490,44 @@ function validateManagedProviderContract(
 	errors: string[],
 ): void {
 	const isManagedContract =
-		CLAWDI_MANAGED_PROVIDER_IDS.has(provider.id) || provider.managed_by === "clawdi";
+		isClawdiManagedProviderId(provider.id) || provider.managed_by === "clawdi";
 	if (!isManagedContract) return;
+	const publicPrefix = isClawdiManagedV2ProviderId(provider.id)
+		? CLAWDI_MANAGED_PROVIDER_ID
+		: prefix;
 
 	const expectedApiMode = clawdiManagedApiMode(provider.id);
 	if (!expectedApiMode) {
 		errors.push(
-			`Provider ${prefix} managed_by clawdi must use id ${Array.from(CLAWDI_MANAGED_PROVIDER_IDS)
-				.sort()
-				.join(" or ")}.`,
+			`Provider ${publicPrefix} managed_by clawdi must use id ${CLAWDI_MANAGED_PROVIDER_ID} or an internal deployment-scoped managed provider id.`,
 		);
 	}
 	if (provider.managed_by !== "clawdi") {
-		errors.push(`Provider ${prefix} with Clawdi-managed id must be managed_by clawdi.`);
+		errors.push(`Provider ${publicPrefix} with Clawdi-managed id must be managed_by clawdi.`);
 	}
 	if (provider.type !== "custom_openai_compatible") {
-		errors.push(`Provider ${prefix} managed_by clawdi must use custom_openai_compatible.`);
+		errors.push(`Provider ${publicPrefix} managed_by clawdi must use custom_openai_compatible.`);
 	}
 	if (expectedApiMode && provider.api_mode !== expectedApiMode) {
-		errors.push(`Provider ${prefix} managed_by clawdi must use api_mode ${expectedApiMode}.`);
+		errors.push(`Provider ${publicPrefix} managed_by clawdi must use api_mode ${expectedApiMode}.`);
 	}
 	if (!provider.runtime_env_name || !CLAWDI_MANAGED_RUNTIME_ENVS.has(provider.runtime_env_name)) {
 		errors.push(
-			`Provider ${prefix} managed_by clawdi must use runtime_env_name ${Array.from(
+			`Provider ${publicPrefix} managed_by clawdi must use runtime_env_name ${Array.from(
 				CLAWDI_MANAGED_RUNTIME_ENVS,
 			).join(" or ")}.`,
 		);
 	}
 	const auth = (provider as { auth?: unknown }).auth;
 	if (!isRecord(auth) || auth.type !== "api_key" || auth.source !== "managed") {
-		errors.push(`Provider ${prefix} managed_by clawdi must use managed api_key auth.`);
+		errors.push(`Provider ${publicPrefix} managed_by clawdi must use managed api_key auth.`);
 	}
 }
 
 function clawdiManagedApiMode(providerId: string): AiProviderApiMode | null {
 	if (providerId === CLAWDI_MANAGED_V1_PROVIDER_ID) return CLAWDI_MANAGED_V1_API_MODE;
-	// TODO(#425): Remove legacy mode resolution after hosted#892 is deployed everywhere
-	// and no dev/self-hosted binding still uses clawdi-managed-v2.
-	if (
-		providerId === CLAWDI_MANAGED_V2_PROVIDER_ID ||
-		providerId === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
-	) {
+	// TODO(#425): Remove legacy mode resolution after the compatibility window closes.
+	if (isClawdiManagedV2ProviderId(providerId)) {
 		return CLAWDI_MANAGED_V2_API_MODE;
 	}
 	return null;

@@ -97,8 +97,8 @@ export function useUnifiedAgentList({
 		cloudEnvs,
 		includeDeployments: showCloudDeployments,
 	});
-	const resolvedLegacyEnvIds = useLegacyEnvIds();
-	const legacyEnvIds = showLegacyAgents ? resolvedLegacyEnvIds : EMPTY_ENV_IDS;
+	const legacy = useLegacyEnvIds();
+	const legacyEnvIds = showLegacyAgents ? legacy.envIds : EMPTY_ENV_IDS;
 	const selection = useMemo(
 		() =>
 			selectUnifiedAgentList({
@@ -122,12 +122,16 @@ export function useUnifiedAgentList({
 	return {
 		...selection,
 		hasExistingDeployments: hosted.hasExistingDeployments,
+		deletionFailures: hosted.deletionFailures,
 		inventoryStatus: hosted.inventoryStatus,
-		isLoading:
-			(showCloudDeployments && hosted.isLoading) ||
-			(showLegacyAgents && resolvedLegacyEnvIds === null),
-		error: hosted.error,
-		refetch: hosted.refetch,
+		isFetching: hosted.isFetching,
+		isLoading: (showCloudDeployments && hosted.isLoading) || (showLegacyAgents && legacy.isLoading),
+		error: hosted.error ?? (showLegacyAgents ? legacy.error : null),
+		refetch: () =>
+			Promise.all([
+				...(showCloudDeployments ? [hosted.refetch()] : []),
+				...(showLegacyAgents ? [legacy.refetch()] : []),
+			]),
 	};
 }
 
@@ -140,7 +144,11 @@ export function HostedUnifiedAgentListSensor({
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
-	onChange: (tiles: AgentTile[] | null, membershipResolved: boolean) => void;
+	onChange: (
+		tiles: AgentTile[] | null,
+		membershipResolved: boolean,
+		inventoryFetching: boolean,
+	) => void;
 }) {
 	const unified = useUnifiedAgentList({
 		cloudEnvs,
@@ -149,9 +157,9 @@ export function HostedUnifiedAgentListSensor({
 	});
 
 	useEffect(() => {
-		onChange(unified.tiles, unified.membershipResolved);
-	}, [onChange, unified.membershipResolved, unified.tiles]);
-	useEffect(() => () => onChange(null, false), [onChange]);
+		onChange(unified.tiles, unified.membershipResolved, unified.isFetching);
+	}, [onChange, unified.isFetching, unified.membershipResolved, unified.tiles]);
+	useEffect(() => () => onChange(null, false, false), [onChange]);
 
 	return null;
 }

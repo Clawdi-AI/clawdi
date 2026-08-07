@@ -1,14 +1,8 @@
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	rmSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { normalizeCloudApiBaseUrl, normalizeHostedDeployApiBaseUrl } from "./api-origin";
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "./private-file";
 
 // NOTE: these paths are computed lazily so tests can override HOME per-run
 // and module caching doesn't freeze the path at first import.
@@ -34,44 +28,77 @@ function authFile() {
 function pendingAuthFile() {
 	return join(clawdiDir(), "pending-auth.json");
 }
-
 export interface ClawdiConfig {
 	apiUrl: string;
-	// Default-on. Set to "false" to opt out of background auto-updates.
+	deployApiUrl: string;
+	// Default-on. Set to false to opt out of background auto-updates.
 	// `CLAWDI_NO_AUTO_UPDATE=1` env var has the same effect for ad-hoc opt-out.
-	autoUpdate?: "true" | "false";
+	autoUpdate?: boolean;
 }
 
 // Keys accepted by `clawdi config set/get/unset`. Add a new entry here
 // when introducing a new persistent setting.
-export const CONFIG_KEYS = ["apiUrl", "autoUpdate"] as const;
+export const CONFIG_KEYS = ["apiUrl", "deployApiUrl", "autoUpdate"] as const;
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
 
-export interface ClawdiAuth {
+export interface LegacyClawdiAuth {
+	authType?: "api_key";
 	apiKey: string;
 	userId?: string;
 	email?: string;
+	endpointBinding?: CredentialEndpointBinding;
 }
+
+export interface CredentialEndpointBinding {
+	version: 1;
+	cloudApiOrigin: string;
+	hostedApiOrigin?: string;
+}
+
+export interface ClerkOAuthAuth {
+	authType: "clerk_oauth";
+	/** Current Clerk OAuth access token. Kept under the historical name for compatibility. */
+	apiKey: string;
+	refreshToken: string;
+	accessTokenExpiresAt: string;
+	issuer: string;
+	clientId: string;
+	audience: string;
+	/** Clerk Account Portal/custom-domain origins accepted from the optional `azp` claim. */
+	authorizedParties?: string[];
+	tokenEndpoint: string;
+	scopes: string[];
+	/** Stable Clerk user id from the OAuth access token `sub` claim. */
+	subject: string;
+	/** Cloud-local user id, populated after `/v1/auth/me` succeeds. */
+	userId: string;
+	email?: string;
+	/** Exact Cloud + Hosted origins selected when this OAuth grant was created. */
+	endpointBinding?: CredentialEndpointBinding;
+}
+
+export type ClawdiAuth = LegacyClawdiAuth | ClerkOAuthAuth;
 
 /**
- * Persisted between `clawdi auth login` (which kicks off the device flow
- * and exits in non-interactive contexts) and `clawdi auth complete` (which
- * resumes polling after the user has approved in their browser).
+ * Short-lived PKCE transaction state persisted between `clawdi auth login`
+ * and `clawdi auth complete` for SSH and non-interactive callers. It contains
+ * no access or refresh credential.
  */
 export interface PendingAuth {
-	deviceCode: string;
-	userCode: string;
-	verificationUri: string;
-	expiresAt: number; // unix seconds — absolute, not duration
-	intervalMs: number;
-	apiUrl: string; // sanity-check at completion time
-}
-
-function ensureDir() {
-	const dir = clawdiDir();
-	if (!existsSync(dir)) {
-		mkdirSync(dir, { recursive: true });
-	}
+	authType: "clerk_oauth_pkce";
+	state: string;
+	codeVerifier: string;
+	authorizationUrl: string;
+	redirectUri: string;
+	issuer: string;
+	clientId: string;
+	audience: string;
+	authorizedParties: string[];
+	tokenEndpoint: string;
+	expiresAt: string;
+	apiUrl: string;
+	endpointBinding?: CredentialEndpointBinding;
+	scopes: string[];
 }
 
 function readJson<T>(path: string): T | null {
@@ -79,45 +106,85 @@ function readJson<T>(path: string): T | null {
 	return JSON.parse(readFileSync(path, "utf-8"));
 }
 
+type StoredConfigRecord = Partial<ClawdiConfig> & Record<string, unknown>;
+
+function readStoredConfig(): StoredConfigRecord {
+	const value = readJson<unknown>(configFile());
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+	const normalized: Record<string, unknown> = { ...value };
+	// Released CLIs persisted these two spellings; collapse them once here so
+	// every consumer sees the canonical boolean shape.
+	if (normalized.autoUpdate === "true") normalized.autoUpdate = true;
+	else if (normalized.autoUpdate === "false") normalized.autoUpdate = false;
+	else if (typeof normalized.autoUpdate !== "boolean") delete normalized.autoUpdate;
+	if (typeof normalized.apiUrl !== "string") delete normalized.apiUrl;
+	if (typeof normalized.deployApiUrl !== "string") delete normalized.deployApiUrl;
+	return normalized;
+}
+
 function writeJson(path: string, data: unknown) {
-	ensureDir();
-	writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
-	// `mode` only fires when the file is CREATED. If a previous
-	// holder left auth.json group/world-readable, the option does
-	// nothing on overwrite. Re-apply explicitly so credentials
-	// never linger with loose perms across user-error cycles.
-	try {
-		chmodSync(path, 0o600);
-	} catch {
-		/* best effort — Windows / read-only FS */
-	}
+	writePrivateFileAtomic(path, `${JSON.stringify(data, null, 2)}\n`, {
+		mode: PRIVATE_FILE_MODE,
+		dirMode: PRIVATE_DIR_MODE,
+	});
 }
 
 // Replaced by `bun build --define 'process.env.CLAWDI_DEFAULT_API_URL=...'`
 // at release build; dev runs fall through to localhost.
 const DEFAULT_API_URL = process.env.CLAWDI_DEFAULT_API_URL || "http://localhost:8000";
+const DEFAULT_DEPLOY_API_URL =
+	process.env.CLAWDI_DEFAULT_DEPLOY_API_URL || "http://localhost:50021";
 
 export function getConfig(): ClawdiConfig {
 	// Precedence: CLAWDI_API_URL env var > ~/.clawdi/config.json > default.
 	// Env var wins so CI / scripted runs can override without writing to disk.
-	const stored = readJson<Partial<ClawdiConfig>>(configFile()) ?? {};
+	const stored = readStoredConfig();
 	return {
 		apiUrl: process.env.CLAWDI_API_URL || stored.apiUrl || DEFAULT_API_URL,
+		deployApiUrl:
+			process.env.CLAWDI_DEPLOY_API_URL || stored.deployApiUrl || DEFAULT_DEPLOY_API_URL,
+		autoUpdate: stored.autoUpdate,
 	};
 }
 
 /** Raw config on disk, without env overrides. Used by `config list / get`. */
 export function getStoredConfig(): Partial<ClawdiConfig> {
-	return readJson<Partial<ClawdiConfig>>(configFile()) ?? {};
+	return readStoredConfig();
 }
 
-export function setConfig(config: ClawdiConfig) {
-	writeJson(configFile(), config);
+export function setConfig(config: Pick<ClawdiConfig, "apiUrl"> & Partial<ClawdiConfig>) {
+	const normalized: Partial<ClawdiConfig> = {
+		...config,
+		apiUrl: normalizeConfigUrl("apiUrl", config.apiUrl),
+	};
+	if (config.deployApiUrl !== undefined) {
+		normalized.deployApiUrl = normalizeConfigUrl("deployApiUrl", config.deployApiUrl);
+	}
+	if (config.autoUpdate !== undefined && typeof config.autoUpdate !== "boolean") {
+		throw new Error("autoUpdate must be true or false.");
+	}
+	writeJson(configFile(), normalized);
 }
 
 export function setConfigKey(key: ConfigKey, value: string) {
+	const normalized = normalizeConfigValue(key, value);
 	const current = getStoredConfig();
-	writeJson(configFile(), { ...current, [key]: value });
+	writeJson(configFile(), { ...current, [key]: normalized });
+}
+
+function normalizeConfigValue(key: ConfigKey, value: string): string | boolean {
+	if (key === "autoUpdate") {
+		if (value === "true") return true;
+		if (value === "false") return false;
+		throw new Error("autoUpdate must be true or false.");
+	}
+	return normalizeConfigUrl(key, value);
+}
+
+function normalizeConfigUrl(key: "apiUrl" | "deployApiUrl", value: string): string {
+	return key === "apiUrl"
+		? normalizeCloudApiBaseUrl(value)
+		: normalizeHostedDeployApiBaseUrl(value);
 }
 
 export function unsetConfigKey(key: ConfigKey) {
@@ -130,13 +197,18 @@ export function getAuth(): ClawdiAuth | null {
 	// Precedence: CLAWDI_AUTH_TOKEN env var > ~/.clawdi/auth.json.
 	// Hosted pods get the token via env (the monorepo writes it
 	// into the container's startup config); they have no
-	// auth.json on disk and never round-trip through device-flow
+	// auth.json on disk and never round-trip through interactive
 	// login. Laptops continue to use the file.
 	const envToken = process.env.CLAWDI_AUTH_TOKEN;
 	if (envToken) {
 		return { apiKey: envToken };
 	}
-	return readJson<ClawdiAuth>(authFile());
+	return getStoredAuth();
+}
+
+/** Credential persisted in auth.json, ignoring CLAWDI_AUTH_TOKEN overrides. */
+export function getStoredAuth(): ClawdiAuth | null {
+	return readRecoverablePrivateJson<ClawdiAuth>(authFile());
 }
 
 export function setAuth(auth: ClawdiAuth) {
@@ -162,7 +234,7 @@ export function isLoggedIn(): boolean {
 }
 
 export function getPendingAuth(): PendingAuth | null {
-	return readJson<PendingAuth>(pendingAuthFile());
+	return readRecoverablePrivateJson<PendingAuth>(pendingAuthFile());
 }
 
 export function setPendingAuth(pending: PendingAuth) {
@@ -173,6 +245,20 @@ export function clearPendingAuth() {
 	const p = pendingAuthFile();
 	if (existsSync(p)) {
 		unlinkSync(p);
+	}
+}
+
+export function readRecoverablePrivateJson<T>(
+	path: string,
+	reader: (candidate: string) => T | null = readJson<T>,
+): T | null {
+	try {
+		return reader(path);
+	} catch {
+		// A failed read is only an observation. Another process can atomically
+		// replace the stale bytes before this catch runs, so deleting here could
+		// remove a newer credential committed under the credential lock.
+		return null;
 	}
 }
 

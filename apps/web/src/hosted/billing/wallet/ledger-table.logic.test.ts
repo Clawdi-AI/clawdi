@@ -9,12 +9,12 @@ import {
 
 function entry(overrides: Partial<WalletLedgerEntry> = {}): WalletLedgerEntry {
 	return {
-		id: "entry_1",
 		operation: "topup",
-		request_id: "request_1",
-		credits_amount: 1000,
+		description: "Wallet top-up",
+		amount_usd: "1",
 		status: "applied",
-		notes: null,
+		payment_reference: null,
+		receipt_url: null,
 		created_at: "2026-07-01T00:00:00Z",
 		applied_at: "2026-07-01T00:00:00Z",
 		...overrides,
@@ -33,14 +33,21 @@ describe("filteredLedgerEntries", () => {
 		expect(ledgerOperationGroup("compute_credit")).toBe("compute");
 		expect(
 			filteredLedgerEntries(
-				[entry({ operation: "compute_charge" }), entry({ id: "entry_2", operation: "topup" })],
+				[entry({ operation: "compute_charge" }), entry({ operation: "topup" })],
 				"compute",
 			).map((item) => item.operation),
 		).toEqual(["compute_charge"]);
 	});
 
+	test("groups automatic reloads with top-ups while keeping their label", () => {
+		expect(ledgerOperationGroup("auto_reload")).toBe("topup");
+		expect(ledgerOperationLabel("auto_reload")).toBe("Auto-reload");
+	});
+
 	test("does not expose an unknown backend operation token", () => {
 		expect(ledgerOperationLabel("bridge_internal_credit_v3")).toBe("Other activity");
+		expect(ledgerOperationGroup("invoice")).toBe("all");
+		expect(ledgerOperationLabel("invoice")).toBe("Other activity");
 	});
 });
 

@@ -3,11 +3,17 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Literal, Protocol
 from urllib.parse import urlsplit
 
 import jwt
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    EllipticCurvePrivateKey,
+    EllipticCurvePublicKey,
+)
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from fastapi import Depends, Header, HTTPException, Request, status
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -37,11 +43,16 @@ PLATFORM_WORKLOAD_SCOPES = (
     "platform:runtime-state:write",
     "platform:keys:mint",
     "platform:keys:revoke",
-    "platform:runtime-observations:read",
+    "platform:runtime-observations:consume",
+    "platform:runtime-environments:retire",
 )
 
 _PRIVATE_JWK_FIELDS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
 _MAX_JWT_LENGTH = 16_384
+type _JwtObject = dict[str, JsonValue]
+type _WorkloadPrivateKey = RSAPrivateKey | EllipticCurvePrivateKey
+type _WorkloadVerificationKey = RSAPublicKey | EllipticCurvePublicKey | jwt.PyJWK
+_JWT_OBJECT_ADAPTER: TypeAdapter[_JwtObject] = TypeAdapter(dict[str, JsonValue])
 
 
 class PlatformWorkloadKeyUnavailable(RuntimeError):
@@ -57,9 +68,9 @@ class PlatformWorkloadKeyResolver(Protocol):
         self,
         *,
         private_key_ref: str,
-        payload: dict[str, Any],
+        payload: _JwtObject,
         algorithm: str,
-        headers: dict[str, Any],
+        headers: _JwtObject,
     ) -> str: ...
 
     async def resolve_verification_key(
@@ -67,7 +78,7 @@ class PlatformWorkloadKeyResolver(Protocol):
         *,
         private_key_ref: str,
         algorithm: str,
-    ) -> Any: ...
+    ) -> _WorkloadVerificationKey: ...
 
 
 class UnconfiguredPlatformWorkloadKeyResolver:
@@ -75,9 +86,9 @@ class UnconfiguredPlatformWorkloadKeyResolver:
         self,
         *,
         private_key_ref: str,
-        payload: dict[str, Any],
+        payload: _JwtObject,
         algorithm: str,
-        headers: dict[str, Any],
+        headers: _JwtObject,
     ) -> str:
         raise PlatformWorkloadKeyUnavailable("platform workload signing resolver is unavailable")
 
@@ -86,17 +97,17 @@ class UnconfiguredPlatformWorkloadKeyResolver:
         *,
         private_key_ref: str,
         algorithm: str,
-    ) -> Any:
+    ) -> _WorkloadVerificationKey:
         raise PlatformWorkloadKeyUnavailable("platform workload signing resolver is unavailable")
 
 
 class InMemoryPlatformWorkloadKeyResolver:
     """Local/test resolver that never persists private key material in the database."""
 
-    def __init__(self, keys: dict[str, Any]):
+    def __init__(self, keys: dict[str, _WorkloadPrivateKey]):
         self._keys = dict(keys)
 
-    def _private_key(self, private_key_ref: str) -> Any:
+    def _private_key(self, private_key_ref: str) -> _WorkloadPrivateKey:
         try:
             return self._keys[private_key_ref]
         except KeyError as exc:
@@ -108,9 +119,9 @@ class InMemoryPlatformWorkloadKeyResolver:
         self,
         *,
         private_key_ref: str,
-        payload: dict[str, Any],
+        payload: _JwtObject,
         algorithm: str,
-        headers: dict[str, Any],
+        headers: _JwtObject,
     ) -> str:
         try:
             return jwt.encode(
@@ -129,10 +140,8 @@ class InMemoryPlatformWorkloadKeyResolver:
         *,
         private_key_ref: str,
         algorithm: str,
-    ) -> Any:
-        private_key = self._private_key(private_key_ref)
-        public_key = getattr(private_key, "public_key", None)
-        return public_key() if callable(public_key) else private_key
+    ) -> _WorkloadVerificationKey:
+        return self._private_key(private_key_ref).public_key()
 
 
 _unconfigured_key_resolver = UnconfiguredPlatformWorkloadKeyResolver()
@@ -217,7 +226,7 @@ def _temporarily_unavailable() -> PlatformOAuthProtocolError:
     )
 
 
-def _numeric_date(payload: dict[str, Any], claim: str) -> int:
+def _numeric_date(payload: _JwtObject, claim: str) -> int:
     value = payload.get(claim)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise _invalid_client()
@@ -225,7 +234,7 @@ def _numeric_date(payload: dict[str, Any], claim: str) -> int:
 
 
 def _validate_time_window(
-    payload: dict[str, Any],
+    payload: _JwtObject,
     *,
     now: datetime,
     max_ttl_seconds: int,
@@ -268,26 +277,26 @@ def _validated_client_scopes(client: PlatformWorkloadClient) -> frozenset[str]:
     return frozenset(scopes)
 
 
-def _unverified_jwt(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def _unverified_jwt(token: str) -> tuple[_JwtObject, _JwtObject]:
     if not token or len(token) > _MAX_JWT_LENGTH or token.count(".") != 2:
         raise _invalid_client()
     try:
-        header = jwt.get_unverified_header(token)
-        payload = jwt.decode(
-            token,
-            options={"verify_signature": False, "verify_aud": False},
+        header = _JWT_OBJECT_ADAPTER.validate_python(jwt.get_unverified_header(token))
+        payload = _JWT_OBJECT_ADAPTER.validate_python(
+            jwt.decode(
+                token,
+                options={"verify_signature": False, "verify_aud": False},
+            )
         )
-    except jwt.PyJWTError as exc:
+    except (jwt.PyJWTError, ValidationError) as exc:
         raise _invalid_client() from exc
-    if not isinstance(header, dict) or not isinstance(payload, dict):
-        raise _invalid_client()
     return header, payload
 
 
 def _assertion_verification_key(
     client: PlatformWorkloadClient,
-    header: dict[str, Any],
-) -> Any:
+    header: _JwtObject,
+) -> jwt.PyJWK:
     algorithm = header.get("alg")
     kid = header.get("kid")
     if algorithm not in PLATFORM_WORKLOAD_ALLOWED_ALGORITHMS:
@@ -297,8 +306,11 @@ def _assertion_verification_key(
     if header.get("crit"):
         raise _invalid_client()
 
-    jwk = client.public_jwk
-    if not isinstance(jwk, dict) or _PRIVATE_JWK_FIELDS.intersection(jwk):
+    try:
+        jwk = _JWT_OBJECT_ADAPTER.validate_python(client.public_jwk)
+    except ValidationError as exc:
+        raise _invalid_client() from exc
+    if _PRIVATE_JWK_FIELDS.intersection(jwk):
         raise _invalid_client()
     if jwk.get("kid") != client.assertion_kid or jwk.get("alg") != algorithm:
         raise _invalid_client()
@@ -310,7 +322,7 @@ def _assertion_verification_key(
     ):
         raise _invalid_client()
     try:
-        return jwt.PyJWK.from_dict(jwk, algorithm=algorithm).key
+        return jwt.PyJWK.from_dict(jwk, algorithm=algorithm)
     except jwt.PyJWTError as exc:
         raise _invalid_client() from exc
 
@@ -429,17 +441,19 @@ async def issue_platform_workload_token(
         verification_key = _assertion_verification_key(client, header)
         assertion_audience = canonical_platform_workload_token_endpoint()
         try:
-            assertion_payload = jwt.decode(
-                client_assertion,
-                verification_key,
-                algorithms=[client.assertion_algorithm],
-                audience=assertion_audience,
-                issuer=client_id,
-                subject=client_id,
-                leeway=PLATFORM_WORKLOAD_CLOCK_SKEW_SECONDS,
-                options={"require": ["iss", "sub", "aud", "iat", "exp", "jti"]},
+            assertion_payload = _JWT_OBJECT_ADAPTER.validate_python(
+                jwt.decode(
+                    client_assertion,
+                    verification_key,
+                    algorithms=[client.assertion_algorithm],
+                    audience=assertion_audience,
+                    issuer=client_id,
+                    subject=client_id,
+                    leeway=PLATFORM_WORKLOAD_CLOCK_SKEW_SECONDS,
+                    options={"require": ["iss", "sub", "aud", "iat", "exp", "jti"]},
+                )
             )
-        except jwt.PyJWTError as exc:
+        except (jwt.PyJWTError, ValidationError) as exc:
             raise _invalid_client() from exc
 
         if assertion_payload.get("aud") != assertion_audience:
@@ -579,31 +593,33 @@ async def authenticate_platform_workload_access_token(
         )
         issuer = platform_workload_issuer()
         try:
-            payload = jwt.decode(
-                token,
-                verification_key,
-                algorithms=[signing_key.algorithm],
-                audience=PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE,
-                issuer=issuer,
-                subject=client.client_id,
-                leeway=0,
-                options={
-                    "require": [
-                        "iss",
-                        "sub",
-                        "aud",
-                        "iat",
-                        "nbf",
-                        "exp",
-                        "jti",
-                        "client_id",
-                        "credential_id",
-                        "token_version",
-                        "scope",
-                    ]
-                },
+            payload = _JWT_OBJECT_ADAPTER.validate_python(
+                jwt.decode(
+                    token,
+                    verification_key,
+                    algorithms=[signing_key.algorithm],
+                    audience=PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE,
+                    issuer=issuer,
+                    subject=client.client_id,
+                    leeway=0,
+                    options={
+                        "require": [
+                            "iss",
+                            "sub",
+                            "aud",
+                            "iat",
+                            "nbf",
+                            "exp",
+                            "jti",
+                            "client_id",
+                            "credential_id",
+                            "token_version",
+                            "scope",
+                        ]
+                    },
+                )
             )
-        except jwt.PyJWTError as exc:
+        except (jwt.PyJWTError, ValidationError) as exc:
             raise _invalid_access_token() from exc
 
         if payload.get("aud") != PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE:
@@ -682,7 +698,7 @@ def _credential_values(request: Request, name: str) -> list[str]:
     return request.headers.getlist(name)
 
 
-def require_platform_mutation_auth(required_scope: str):
+def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
     if required_scope not in PLATFORM_WORKLOAD_SCOPES:
         raise ValueError(f"unsupported platform workload scope: {required_scope}")
 
@@ -737,6 +753,11 @@ def require_platform_mutation_auth(required_scope: str):
                     status.HTTP_400_BAD_REQUEST,
                     "multiple credentials are not allowed",
                 )
+            if not allow_legacy_admin:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    "platform workload credentials are required",
+                )
             if not settings.platform_legacy_admin_auth_enabled:
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
@@ -747,8 +768,19 @@ def require_platform_mutation_auth(required_scope: str):
             request.state.platform_mutation_auth = auth
             return auth
 
-        if settings.platform_legacy_admin_auth_enabled:
+        if allow_legacy_admin and settings.platform_legacy_admin_auth_enabled:
             await require_admin_api_key(x_admin_key=x_admin_key)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "platform credentials are required")
+        detail = (
+            "platform credentials are required"
+            if allow_legacy_admin
+            else "platform workload credentials are required"
+        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail)
 
     return dependency
+
+
+def require_platform_mutation_auth(required_scope: str):
+    """Authenticate a workload token or the explicitly enabled legacy admin key."""
+
+    return _require_platform_auth(required_scope, allow_legacy_admin=True)

@@ -18,11 +18,13 @@ from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
+from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment, VaultProjectSlugAlias
+from app.services import sync_events
 from app.services.sharing import generate_share_token, hash_share_token, resolve_owner_handle
 from app.services.vault_crypto import encrypt
-from tests.conftest import create_env_with_project
+from tests.conftest import create_env_with_project, create_test_hosted_runtime_state
 
 pytestmark = pytest.mark.asyncio
 
@@ -83,6 +85,7 @@ async def test_inbox_accept_link_and_invitation_create_memberships(
         machine_id=f"accept-{uuid.uuid4().hex[:8]}",
         machine_name="atlas",
     )
+    await create_test_hosted_runtime_state(db_session, env, runtime_name="openclaw")
     raw = generate_share_token()
     db_session.add(
         ProjectShareLink(
@@ -111,8 +114,20 @@ async def test_inbox_accept_link_and_invitation_create_memberships(
         created_at=datetime.now(UTC),
     )
     db_session.add(invitation)
+    db_session.add(
+        Skill(
+            user_id=owner.id,
+            project_id=link_project.id,
+            skill_key="shared-review",
+            name="Shared review",
+            description="Delivered with the linked Project",
+            content_hash="a" * 64,
+            authority=SKILL_AUTHORITY_CLOUD,
+        )
+    )
     await db_session.commit()
     invitation_id = invitation.id
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
 
     try:
         link_response = await client.post(
@@ -125,6 +140,10 @@ async def test_inbox_accept_link_and_invitation_create_memberships(
         assert link_response.status_code == 200, link_response.text
         assert link_response.json()["project_id"] == str(link_project.id)
         assert link_response.json()["bound_agent_ids"] == [str(env.id)]
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
 
         invite_response = await client.post(f"/v1/me/invitations/{invitation_id}/accept")
         assert invite_response.status_code == 200, invite_response.text
@@ -154,6 +173,7 @@ async def test_inbox_accept_link_and_invitation_create_memberships(
         ).scalar_one_or_none()
         assert binding is not None
     finally:
+        sync_events.unsubscribe(seed_user.id, queue)
         await db_session.delete(link_project)
         await db_session.delete(invite_project)
         await db_session.delete(owner)
@@ -181,6 +201,7 @@ async def test_agent_binding_list_materializes_default_primary_and_blocks_delete
 
     delete_primary = await client.delete(f"/v1/agents/{env.id}/project-bindings/{rows[0]['id']}")
     assert delete_primary.status_code == 400
+    assert delete_primary.json()["detail"] == "Workspace cannot be unlinked"
 
 
 async def test_agent_binding_list_restores_default_primary_and_demotes_stale_primary(
@@ -297,7 +318,88 @@ async def test_agent_context_attach_rejects_managed_projects(
             json={"project_id": str(project.id)},
         )
         assert response.status_code == 400, response.text
-        assert "Only Custom Projects" in response.text
+        assert "Projects you create or that are shared with you" in response.text
+
+
+async def test_invitation_accept_link_conflict_rolls_back_membership_and_binding(
+    client,
+    db_session,
+    seed_user,
+):
+    owner, project = await _owner_with_project(db_session)
+    invitation = ProjectInvitation(
+        project_id=project.id,
+        invitee_user_id=seed_user.id,
+        invitee_email=seed_user.email or "seed@test.dev",
+        invited_by=owner.id,
+        resolved_owner_handle=resolve_owner_handle(owner),
+        created_at=datetime.now(UTC),
+    )
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"invite-conflict-{uuid.uuid4().hex[:8]}",
+        machine_name="forge",
+        agent_type="openclaw",
+    )
+    state = await create_test_hosted_runtime_state(db_session, env, runtime_name="openclaw")
+    state.skills = {"entries": {"duplicate": {"enabled": False, "version": 1}}}
+    db_session.add_all(
+        [
+            invitation,
+            Skill(
+                user_id=owner.id,
+                project_id=project.id,
+                skill_key="duplicate",
+                name="Duplicate",
+                description="Conflicts even while the Workspace copy is disabled",
+                content_hash="b" * 64,
+                authority=SKILL_AUTHORITY_CLOUD,
+            ),
+        ]
+    )
+    await db_session.commit()
+    invitation_id = invitation.id
+    project_id = project.id
+    owner_id = owner.id
+    environment_id = env.id
+    seed_user_id = seed_user.id
+
+    try:
+        response = await client.post(
+            f"/v1/me/invitations/{invitation_id}/accept",
+            json={"agent_ids": [str(environment_id)]},
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "project_skill_name_conflict"
+        # The production request session closes and rolls back after the 409.
+        # The shared test session needs that boundary made explicit.
+        await db_session.rollback()
+        assert (
+            await db_session.execute(
+                select(ProjectMembership).where(
+                    ProjectMembership.project_id == project_id,
+                    ProjectMembership.member_user_id == seed_user_id,
+                )
+            )
+        ).scalar_one_or_none() is None
+        assert (
+            await db_session.execute(
+                select(AgentProjectBinding).where(
+                    AgentProjectBinding.agent_id == environment_id,
+                    AgentProjectBinding.project_id == project_id,
+                )
+            )
+        ).scalar_one_or_none() is None
+        assert await db_session.get(ProjectInvitation, invitation_id) is not None
+    finally:
+        persisted_project = await db_session.get(Project, project_id)
+        persisted_owner = await db_session.get(User, owner_id)
+        if persisted_project is not None:
+            await db_session.delete(persisted_project)
+        if persisted_owner is not None:
+            await db_session.delete(persisted_owner)
+        await db_session.commit()
 
 
 async def test_agent_binding_delete_repairs_stale_primary_before_detaching(
@@ -347,6 +449,57 @@ async def test_agent_binding_delete_repairs_stale_primary_before_detaching(
     assert all(row.project_id != workspace.id for row in rows)
     primary_rows = [row for row in rows if row.binding_type == "primary"]
     assert [row.project_id for row in primary_rows] == [env.default_project_id]
+
+
+async def test_binding_list_stale_link_cleanup_notifies_managed_agent(
+    client,
+    db_session,
+    seed_user,
+):
+    owner, shared_project = await _owner_with_project(db_session)
+    membership = ProjectMembership(
+        project_id=shared_project.id,
+        member_user_id=seed_user.id,
+        role="viewer",
+        joined_via="invite",
+        joined_at=datetime.now(UTC),
+        resolved_owner_handle=resolve_owner_handle(owner),
+    )
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"stale-link-{uuid.uuid4().hex[:8]}",
+        machine_name="forge",
+        agent_type="openclaw",
+    )
+    await create_test_hosted_runtime_state(db_session, env, runtime_name="openclaw")
+    binding = AgentProjectBinding(
+        agent_id=env.id,
+        project_id=shared_project.id,
+        binding_type="context",
+        priority=1,
+        default_write_enabled=False,
+        created_by_user_id=seed_user.id,
+    )
+    db_session.add_all([membership, binding])
+    await db_session.commit()
+    await db_session.delete(membership)
+    await db_session.commit()
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+
+    try:
+        response = await client.get(f"/v1/agents/{env.id}/project-bindings")
+        assert response.status_code == 200, response.text
+        assert str(shared_project.id) not in {row["project_id"] for row in response.json()}
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+        await db_session.delete(shared_project)
+        await db_session.delete(owner)
+        await db_session.commit()
 
 
 async def test_recipient_leave_removes_attached_agent_project(client, db_session, seed_user):
@@ -417,6 +570,7 @@ async def test_owner_unshare_removes_member_agent_context_binding(db_session, se
         machine_id=f"unshare-{uuid.uuid4().hex[:8]}",
         machine_name="forge",
     )
+    await create_test_hosted_runtime_state(db_session, env, runtime_name="openclaw")
     db_session.add(
         AgentProjectBinding(
             agent_id=env.id,
@@ -428,6 +582,7 @@ async def test_owner_unshare_removes_member_agent_context_binding(db_session, se
         )
     )
     await db_session.commit()
+    queue = sync_events.subscribe(recipient.id, frozenset(), environment_id=env.id)
 
     try:
         async for owner_client in _client_for_user(db_session, owner):
@@ -435,7 +590,12 @@ async def test_owner_unshare_removes_member_agent_context_binding(db_session, se
         assert response.status_code == 200, response.text
         assert response.json()["members_removed"] == 1
         assert response.json()["agent_bindings_removed"] == 1
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
     finally:
+        sync_events.unsubscribe(recipient.id, queue)
         await db_session.delete(shared_project)
         await db_session.delete(owner)
         await db_session.commit()

@@ -1,8 +1,9 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { AlertCircle, LifeBuoy } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { AgentSourceBadge } from "@/components/dashboard/agent-label";
+import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentsCard,
 	AgentTileGrid,
@@ -10,10 +11,71 @@ import {
 } from "@/components/dashboard/agents-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { SectionLabel } from "@/components/section-label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
+import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
+import { deploymentFailurePresentation } from "@/hosted/deployment-failure";
 import { useUnifiedAgentList } from "@/hosted/use-unified-agent-list";
 
 type Env = components["schemas"]["AgentResponse"];
+
+function HostedEmptyAccountHero({ canDeployOnClawdi }: { canDeployOnClawdi: boolean }) {
+	return (
+		<div className="space-y-4">
+			<OnboardingCard variant="first-agent" canDeployOnClawdi={canDeployOnClawdi} />
+			<WelcomeWalletCard showDeployAction={false} />
+		</div>
+	);
+}
+
+function HostedDeletionFailureNotices({ deployments }: { deployments: HostedDeployment[] }) {
+	if (deployments.length === 0) return null;
+	return (
+		<div className="space-y-3">
+			{deployments.map((deployment) => {
+				const failure = deploymentFailurePresentation(deployment);
+				if (failure?.failedVerb !== "delete") return null;
+				const name = agentDisplayName({
+					name: deployment.resource.name,
+					agent_type: deployment.resource.spec.runtime,
+				});
+				const retrySafe = failure.retryable !== false;
+				return (
+					<Alert key={deployment.resource.id} variant="destructive">
+						<AlertCircle />
+						<AlertTitle>{`Cleanup for ${name} needs attention`}</AlertTitle>
+						<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+							<span>
+								The agent stays out of your list, but the Clawdi service couldn’t finish releasing
+								its resources.{" "}
+								{retrySafe ? "Retry cleanup." : "Contact support before trying again."}
+							</span>
+							{retrySafe ? (
+								<HostedDeploymentDeleteAction deployment={deployment}>
+									<Button type="button" variant="outline" size="sm">
+										Retry cleanup
+									</Button>
+								</HostedDeploymentDeleteAction>
+							) : (
+								<Button
+									render={<a href="mailto:support@clawdi.ai" />}
+									nativeButton={false}
+									variant="outline"
+									size="sm"
+								>
+									<LifeBuoy data-icon="inline-start" /> Contact support
+								</Button>
+							)}
+						</AlertDescription>
+					</Alert>
+				);
+			})}
+		</div>
+	);
+}
 
 /**
  * Hosted-only branch of the dashboard's agent panel.
@@ -44,6 +106,7 @@ export function HostedAgentsSection({
 	onRetrySelfManaged,
 	selfManagedCount,
 	cloudEnvs,
+	canDeployOnClawdi,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
@@ -54,12 +117,13 @@ export function HostedAgentsSection({
 	/**
 	 * Cloud-api environments the parent already fetched for the
 	 * self-managed grid. Passed through so hosted tiles can join
-	 * to their daemon-sync row (`config_info.clawdi_cloud_environments`
-	 * → `EnvironmentResponse.id`) and render the same status badge
-	 * as self-managed tiles. Empty/missing envs is harmless — the
-	 * matched-env lookup falls back to null and the tile still renders.
+	 * avatar and sort metadata using the stored environment id projected
+	 * by the deploy API. Empty/missing envs is harmless — the tile still
+	 * renders from the deployment identity.
 	 */
 	cloudEnvs: Env[];
+	/** Whether this account may create another Cloud agent. */
+	canDeployOnClawdi: boolean;
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
 }) {
@@ -70,6 +134,14 @@ export function HostedAgentsSection({
 	});
 	const connectedTiles = unified.connectedTiles;
 	const agentTiles = unified.tiles;
+	if (envsLoading) {
+		return (
+			<div data-hosted="true" className="space-y-4">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
+				<AgentsCard agents={[]} isLoading />
+			</div>
+		);
+	}
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!unified.error` so a transient hosted-fetch failure surfaces in
 	// AgentsCard's error banner instead of dropping silently into the
@@ -83,9 +155,10 @@ export function HostedAgentsSection({
 		!unified.isLoading &&
 		!unified.error;
 	return (
-		<div data-hosted="true">
+		<div data-hosted="true" className="space-y-4">
+			<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
 			{isEmptyState ? (
-				<OnboardingCard variant="first-agent" />
+				<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />
 			) : (
 				<AgentsCard
 					agents={agentTiles}
@@ -118,11 +191,13 @@ export function HostedAgentsSection({
 export function HostedSecondaryCTA({
 	envsLoading,
 	cloudEnvs,
+	canDeployOnClawdi,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
 	envsLoading: boolean;
 	cloudEnvs: Env[];
+	canDeployOnClawdi: boolean;
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
 }) {
@@ -135,7 +210,9 @@ export function HostedSecondaryCTA({
 		showLegacyAgents,
 	});
 	const hasAnyAgent = unified.tiles.length > 0;
-	if (hasAnyAgent) return <OnboardingCard variant="additional-agent" />;
+	if (hasAnyAgent) {
+		return <OnboardingCard variant="additional-agent" canDeployOnClawdi={canDeployOnClawdi} />;
+	}
 	// Loading: don't flash an empty slot then pop in. Wait for pending
 	// sources only when none has already proven there is an agent.
 	if (envsLoading || unified.isLoading) return null;
@@ -152,6 +229,7 @@ export function HostedAgentsByCompute({
 	onRetrySelfManaged,
 	selfManagedCount,
 	cloudEnvs,
+	canDeployOnClawdi,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
@@ -160,6 +238,7 @@ export function HostedAgentsByCompute({
 	onRetrySelfManaged?: () => void;
 	selfManagedCount: number;
 	cloudEnvs: Env[];
+	canDeployOnClawdi: boolean;
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
 }) {
@@ -170,6 +249,14 @@ export function HostedAgentsByCompute({
 	});
 	const hostedTiles = unified.hostedTiles;
 	const connectedTiles = unified.connectedTiles;
+	if (envsLoading) {
+		return (
+			<div data-hosted="true" className="space-y-6">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
+				<AgentsCard agents={[]} isLoading />
+			</div>
+		);
+	}
 
 	const isEmptyState =
 		!envsLoading &&
@@ -181,8 +268,9 @@ export function HostedAgentsByCompute({
 		!unified.error;
 	if (isEmptyState) {
 		return (
-			<div data-hosted="true">
-				<OnboardingCard variant="first-agent" />
+			<div data-hosted="true" className="space-y-6">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
+				<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />
 			</div>
 		);
 	}
@@ -193,7 +281,8 @@ export function HostedAgentsByCompute({
 		connectedTiles.length === 0
 	) {
 		return (
-			<div data-hosted="true">
+			<div data-hosted="true" className="space-y-6">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
 				<AgentsCard agents={[]} isLoading />
 			</div>
 		);
@@ -201,6 +290,7 @@ export function HostedAgentsByCompute({
 
 	return (
 		<div data-hosted="true" className="space-y-6">
+			<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
 			{hostedTiles.length > 0 ? (
 				<section className="space-y-2">
 					<SectionLabel

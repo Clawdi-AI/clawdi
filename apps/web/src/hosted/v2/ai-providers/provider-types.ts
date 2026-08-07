@@ -5,12 +5,12 @@ import {
 	defaultAiProviderModels,
 	defaultAiProviderRuntimeEnvName,
 } from "@clawdi/shared";
-import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 /**
  * The six AI provider types (backend `ProviderType`) with the defaults the
  * add flow prefills: base URL, allowed API modes, runtime env var, and a
- * model placeholder. Tints reuse the app identity palette.
+ * model placeholder.
  */
 export const PROVIDER_TYPES = [
 	"openai",
@@ -22,24 +22,20 @@ export const PROVIDER_TYPES = [
 ] as const;
 export type ProviderTypeId = (typeof PROVIDER_TYPES)[number];
 
-export type ApiMode =
-	| "openai_chat"
-	| "openai_responses"
-	| "anthropic_messages"
-	| "google_generate_content";
+export type ApiMode = NonNullable<AiProviderUpsert["api_mode"]>;
 
 export type ProviderCatalogModel = NonNullable<AiProvider["models"]>[number];
 
 export interface ProviderTypeMeta {
 	id: ProviderTypeId;
 	label: string;
-	tint: string;
 	defaultBaseUrl: string;
 	apiModes: ApiMode[];
 	defaultApiMode: ApiMode;
 	defaultRuntimeEnv: string;
 	modelPlaceholder: string;
 	defaultModels: readonly ProviderCatalogModel[];
+	apiKeyUrl?: string;
 	/** base_url + api_mode are user-supplied / required. */
 	custom?: boolean;
 	/** Offers "Sign in with ChatGPT" (Codex OAuth). */
@@ -53,63 +49,62 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 	openai: {
 		id: "openai",
 		label: "OpenAI",
-		tint: "bg-identity-2-bg text-identity-2-fg",
 		defaultBaseUrl: defaultAiProviderBaseUrl("openai") ?? "",
 		apiModes: ["openai_chat", "openai_responses"],
 		defaultApiMode: defaultAiProviderApiMode("openai") ?? "openai_responses",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("openai") ?? "",
 		modelPlaceholder: defaultAiProviderModels("openai")[0]?.id ?? "",
 		defaultModels: toProviderCatalogModels(defaultAiProviderModels("openai")),
+		apiKeyUrl: "https://platform.openai.com/settings/organization/api-keys",
 		oauth: true,
 	},
 	anthropic: {
 		id: "anthropic",
 		label: "Anthropic",
-		tint: "bg-identity-1-bg text-identity-1-fg",
 		defaultBaseUrl: defaultAiProviderBaseUrl("anthropic") ?? "",
 		apiModes: ["anthropic_messages"],
 		defaultApiMode: defaultAiProviderApiMode("anthropic") ?? "anthropic_messages",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("anthropic") ?? "",
 		modelPlaceholder: defaultAiProviderModels("anthropic")[0]?.id ?? "",
 		defaultModels: toProviderCatalogModels(defaultAiProviderModels("anthropic")),
+		apiKeyUrl: "https://platform.claude.com/settings/keys",
 	},
 	openrouter: {
 		id: "openrouter",
 		label: "OpenRouter",
-		tint: "bg-identity-7-bg text-identity-7-fg",
 		defaultBaseUrl: defaultAiProviderBaseUrl("openrouter") ?? "",
 		apiModes: ["openai_chat"],
 		defaultApiMode: defaultAiProviderApiMode("openrouter") ?? "openai_chat",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("openrouter") ?? "",
 		modelPlaceholder: defaultAiProviderModels("openrouter")[0]?.id ?? "",
 		defaultModels: toProviderCatalogModels(defaultAiProviderModels("openrouter")),
+		apiKeyUrl: "https://openrouter.ai/keys",
 	},
 	gemini: {
 		id: "gemini",
-		label: "Gemini",
-		tint: "bg-identity-3-bg text-identity-3-fg",
+		label: "Google Gemini",
 		defaultBaseUrl: defaultAiProviderBaseUrl("gemini") ?? "",
 		apiModes: ["google_generate_content"],
 		defaultApiMode: defaultAiProviderApiMode("gemini") ?? "google_generate_content",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("gemini") ?? "",
 		modelPlaceholder: defaultAiProviderModels("gemini")[0]?.id ?? "",
 		defaultModels: toProviderCatalogModels(defaultAiProviderModels("gemini")),
+		apiKeyUrl: "https://aistudio.google.com/apikey",
 	},
 	mistral: {
 		id: "mistral",
-		label: "Mistral",
-		tint: "bg-identity-4-bg text-identity-4-fg",
+		label: "Mistral AI",
 		defaultBaseUrl: defaultAiProviderBaseUrl("mistral") ?? "",
 		apiModes: ["openai_chat"],
 		defaultApiMode: defaultAiProviderApiMode("mistral") ?? "openai_chat",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("mistral") ?? "",
 		modelPlaceholder: defaultAiProviderModels("mistral")[0]?.id ?? "",
 		defaultModels: toProviderCatalogModels(defaultAiProviderModels("mistral")),
+		apiKeyUrl: "https://console.mistral.ai/api-keys",
 	},
 	custom_openai_compatible: {
 		id: "custom_openai_compatible",
 		label: "Custom (OpenAI-compatible)",
-		tint: "bg-identity-6-bg text-identity-6-fg",
 		defaultBaseUrl: "",
 		apiModes: ["openai_chat", "openai_responses"],
 		defaultApiMode: "openai_chat",
@@ -121,10 +116,10 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 };
 
 export const API_MODE_LABEL: Record<ApiMode, string> = {
-	openai_chat: "OpenAI Chat",
+	openai_chat: "OpenAI Chat Completions",
 	openai_responses: "OpenAI Responses",
 	anthropic_messages: "Anthropic Messages",
-	google_generate_content: "Google GenerateContent",
+	google_generate_content: "Gemini generateContent",
 };
 
 export function providerTypeMeta(id: string): ProviderTypeMeta {

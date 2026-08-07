@@ -25,6 +25,9 @@ const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : [];
 if (!packageFiles.includes("egress-addon")) {
 	problems.push('package.json files must include "egress-addon"');
 }
+if (!packageFiles.includes("skills")) {
+	problems.push('package.json files must include "skills"');
+}
 
 if (problems.length > 0) {
 	console.error("The published CLI package manifest is not ready:");

@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { formatDuration, formatModelLabel, formatShortDate } from "./format";
+import { formatDuration, formatMemoryMib, formatModelLabel, formatShortDate } from "./format";
 
 describe("formatModelLabel", () => {
 	it.each([
@@ -68,6 +68,16 @@ describe("formatDuration", () => {
 		[7200, "2h 0m"],
 	])("%s → %s", (input, expected) => {
 		expect(formatDuration(input)).toBe(expected);
+	});
+});
+
+describe("formatMemoryMib", () => {
+	it.each([
+		[1024, "1 GiB"],
+		[1536, "1.5 GiB"],
+		[768, "0.75 GiB"],
+	])("%s MiB → %s", (input, expected) => {
+		expect(formatMemoryMib(input)).toBe(expected);
 	});
 });
 

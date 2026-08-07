@@ -108,6 +108,12 @@ export function formatDuration(seconds: number | null | undefined): string {
 	return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
+/** Format the backend's binary MiB resource value as compact dashboard GiB. */
+export function formatMemoryMib(memoryMib: number): string {
+	const gibibytes = memoryMib / 1024;
+	return `${gibibytes.toLocaleString(undefined, { maximumFractionDigits: 2 })} GiB`;
+}
+
 /** Short absolute calendar date for UI copy and compact meta labels. */
 export function formatShortDate(
 	value: string | null | undefined,

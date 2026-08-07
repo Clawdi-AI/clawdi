@@ -47,6 +47,12 @@ def test_metrics_exports_all_expected_metrics() -> None:
     assert "msg_router_active_polls" in text
     assert "msg_router_webhook_deliveries_total" in text
     assert "msg_router_webhook_ttl_drops_total" in text
+    assert "msg_router_channel_queue_pending" in text
+    assert "msg_router_channel_queue_stuck_pending" in text
+    assert "msg_router_channel_queue_oldest_pending_age_seconds" in text
+    assert "msg_router_channel_retention_deletions_total" in text
+    assert "msg_router_channel_retention_secret_scrubs_total" in text
+    assert "msg_router_channel_retention_budget_exhaustions_total" in text
 
 
 def test_metrics_increment_counters() -> None:
@@ -160,7 +166,7 @@ async def test_telegram_webhook_increments_inbound_metric(
             "message": {
                 "message_id": 1,
                 "chat": {"id": 42, "type": "private", "first_name": "Metrics"},
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
             },
         },
     )

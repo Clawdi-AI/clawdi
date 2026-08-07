@@ -13,7 +13,7 @@ export async function projectFolderLinkCommand(
 	folderPath: string | undefined,
 	opts: { project: string },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	const project = await findVisibleProject(apiUrl, apiKey, projectId, opts.project);
 	const label = projectAlias(project);
@@ -79,7 +79,7 @@ export async function projectFolderStatusCommand(folderPath: string | undefined)
 			console.log(chalk.gray(`  Project name: ${fallback.name}`));
 		}
 	} else {
-		console.log("  Project: default Project");
+		console.log("  Project: automatically selected for this legacy folder link");
 	}
 	console.log("  Source: default");
 	console.log(chalk.gray("  Add a link: clawdi project folder link --project <project>"));
@@ -100,7 +100,7 @@ async function findVisibleProject(
 }
 
 async function fetchDefaultProject(): Promise<ProjectBrief | null> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const r = await fetch(`${apiUrl}/v1/projects/default`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});

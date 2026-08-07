@@ -27,18 +27,27 @@
   <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="900">
 </p>
 
-> Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share the same memory, secrets, skills, sessions, and app connections. Switch frameworks or machines; nothing gets lost.
+> Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share memory, secrets, Skill inventory, sessions, and app connections. Agent Skill files remain authoritative on their own filesystems.
 
 The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: MIT-licensed CLI, FastAPI backend, TanStack Start dashboard, database schema, migrations, and docs. Use the hosted service, self-host it, fork it, or build your own agent sync layer from the pieces.
 
 ## Quickstart
 
+Recommended on macOS and Linux (no Node.js required):
+
 ```bash
-npm i -g clawdi
+curl -fsSL https://clawdi.ai/install.sh | sh
 
 clawdi auth login
 clawdi setup
 clawdi doctor
+```
+
+On Windows, or when you prefer a package-manager-owned installation, use npm
+with Node.js ≥ 22.5:
+
+```bash
+npm i -g clawdi
 ```
 
 That gets you:
@@ -52,19 +61,29 @@ That gets you:
 
 By default the CLI talks to hosted Clawdi Cloud. Want to run your own backend? See [Own the Stack](#own-the-stack).
 
-Requires Node ≥ 22.5 (the CLI uses the built-in `node:sqlite` module).
+Native installations update from checksum-verified exact GitHub Release assets.
+npm/Bun installations update through their current package manager. Hosted CLI
+transactions remain separate and select an exact npm version.
 
-You can also try without installing:
+With Node.js ≥ 22.5, you can also try without installing:
 
 ```bash
 npx clawdi --help
 ```
 
-Headless environment? Use the manual flow:
+SSH or headless environment? Keep the same Clerk login and print the PKCE URL:
 
 ```bash
-clawdi auth login --manual
+clawdi auth login --no-open
 ```
+
+Open the URL on your local computer. If the browser cannot reach the registered
+loopback callback on the remote machine, copy the complete failed callback URL
+from the browser address bar and paste it into the CLI's masked prompt. For a
+non-interactive first step, finish later with `clawdi auth complete` and provide
+that URL on stdin; never put the authorization code in a command-line flag.
+`--manual` is retained only for legacy Cloud API keys and cannot deploy Hosted
+agents.
 
 ## Why Clawdi
 
@@ -73,11 +92,11 @@ AI agents are still treated like isolated apps. Claude Code has one set of sessi
 Clawdi is the shared layer underneath:
 
 - **Cross-agent memory** — Store durable preferences, decisions, facts, and project context once. Search them from any connected agent.
-- **Portable skills** — Upload or install agent instructions once, then sync them into every registered agent.
+- **Portable skills** — Author instructions in each Agent's guarded filesystem and project a read-only Cloud inventory; explicitly import Cloud-owned Project Skills when needed.
 - **Project sharing** — Share read-only Project access from the dashboard or CLI, accept it from a share page or CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
 - **Vault secrets** — Store secrets server-side, commit only `clawdi://` references, and resolve them at runtime.
-- **AI Providers** — Define model providers once, keep keys in env/Vault/auth profiles, and apply verified Codex, Hermes, or OpenClaw agent config without proxying BYOK model traffic.
+- **AI Providers** — Keep a multi-record provider catalog and auth references while Core Hosted manifests bind at most one provider to Hermes or OpenClaw, without proxying BYOK model traffic.
 - **App connections** — Hook agents into Notion, Gmail, Drive, Calendar, Linear, GitHub, and more from the dashboard. Tools show up inside every connected agent automatically over MCP.
 - **MCP tools** — Memory, vault, and connector tools served through the Model Context Protocol so any MCP-aware agent can use them.
 
@@ -140,18 +159,7 @@ clawdi ai-provider test openai-main --live # optional direct provider probe
 
 AI Provider metadata lives in `~/.clawdi/ai-providers/catalog.json`; API keys do not. Use `env:...` refs, `clawdi://...` Vault refs, `none` for local unauthenticated endpoints, or a verified auth profile such as `agent:codex/default`. BYOK model requests still go directly from the agent runtime to OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or your compatible endpoint.
 
-Apply provider config explicitly, with a dry run first:
-
-```bash
-clawdi ai-provider apply openai-main --dry-run
-clawdi ai-provider apply openai-main
-codex --profile clawdi-ai-provider
-
-clawdi ai-provider apply openai-main --target hermes --dry-run
-clawdi ai-provider apply openai-main --target openclaw --dry-run
-```
-
-Codex OAuth is managed through the AI Provider surface:
+Codex OAuth is connected through the AI Provider surface:
 
 ```bash
 clawdi ai-provider add openai-codex \
@@ -159,23 +167,27 @@ clawdi ai-provider add openai-codex \
   --default-model gpt-5-codex \
   --auth agent:codex/default
 clawdi ai-provider connect openai-codex --tool codex
-clawdi ai-provider apply openai-codex
 ```
 
-`apply openai-codex` writes compatible target config and materializes the Codex
-OAuth profile into each selected target's native auth store. For the default
-target set, that means `$CODEX_HOME/auth.json`, `$HERMES_HOME/auth.json`, and
-OpenClaw's `agents/<agentId>/agent/auth-profiles.json`. Those projections do
-not write API key refs for OAuth-backed providers.
+Local Provider Catalogs may contain many records. Core Hosted activation comes
+from the stable runtime manifest/controller path: configured Hermes or OpenClaw
+binds exactly one `provider_ids` entry, while unmanaged mode binds none.
+Selection is replacement-only, with no fallback or secondary pool.
+
+Each Codex OAuth credential family still has one Hosted runtime owner. Hermes
+uses its native auth store and OpenClaw uses its database-first
+`openclaw-agent.sqlite` store through the public provider-auth SDK. Clawdi seeds
+a missing owned entry but preserves target-native token refresh and durable
+revoke state.
 
 Use `clawdi ai-provider connect ... --callback manual` in headless environments. Export/import is metadata-only by default; `--include-secrets` requires passphrase-encrypted secret export.
 
 Current vault storage is server-managed encryption. Clawdi avoids plaintext secrets in repo files and local templates, but the backend can decrypt stored vault values and credential profiles today. Do not treat this release as zero-knowledge.
 
-Install a shared skill into every registered agent at once:
+Install a public Skill into one Agent's authoritative local root:
 
 ```bash
-clawdi skill install anthropics/skills/artifacts-builder
+clawdi skill install anthropics/skills/artifacts-builder --agent claude_code
 ```
 
 ## Roadmap
@@ -208,7 +220,7 @@ Clawdi has two intended paths.
 Best for trying it in minutes.
 
 ```bash
-npm i -g clawdi
+curl -fsSL https://clawdi.ai/install.sh | sh
 clawdi auth login
 clawdi setup
 ```
@@ -235,7 +247,7 @@ Local self-hosting currently expects:
 - Python 3.12, uv for dependency sync, and PDM for backend scripts
 - PostgreSQL 16 with `pg_trgm` and `pgvector`
 - Clerk keys for dashboard auth
-- Two generated encryption keys for vault data and MCP bridge JWTs
+- Two generated encryption keys for vault data and backend security material
 - **One backend process** until v1.5. The `clawdi daemon` realtime SSE fan-out lives in process memory (`backend/app/services/sync_events.py`), so a broadcast on worker A doesn't reach a daemon attached to worker B. Run a single uvicorn worker (or one gunicorn worker with `--workers 1`) behind your reverse proxy. Multi-process fan-out via Postgres LISTEN/NOTIFY ships in v1.5.
 
 See [`backend/.env.example`](backend/.env.example) and [`apps/web/.env.example`](apps/web/.env.example) for the exact environment variables.
@@ -278,28 +290,29 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | --- | --- |
 | `clawdi auth login` / `logout` | Authenticate this machine |
 | `clawdi auth status [--json]` | Show credential source without printing secrets |
+| `clawdi deploy [--json]` | Create a Hosted agent with interactive or automation-safe payment handling; every non-interactive deploy requires a caller-supplied `--request-id <uuid>` before create or checkout mutation |
 | `clawdi status [--json]` | Show auth and sync state |
 | `clawdi config list/get/set/unset/paths` | Read/write CLI configuration and inspect local/runtime paths |
 | `clawdi setup [--agent <type>] [--no-daemon]` | Register local agents, install MCP, install the bundled skill, and install/start the singleton daemon by default |
 | `clawdi teardown [--agent <type>]` | Remove Clawdi's local agent wiring |
 | `clawdi daemon run/install/status/logs/doctor/restart/uninstall/ping/rotate-token` | Run, inspect, and control the singleton background sync daemon (`serve` remains a legacy alias) |
 | `clawdi push` | Upload sessions and skills |
-| `clawdi pull` | Download cloud skills into registered agents and mirror cloud sessions to `~/.clawdi/sessions/` |
+| `clawdi pull` | Mirror cloud sessions, or explicitly import Skills from a workspace/personal Project with `--project` |
 | `clawdi session list/extract` | Inspect local agent sessions |
 | `clawdi memory list/search/add/rm` | Manage cross-agent long-term memory |
 | `clawdi skill list/add/install/rm/init` | Manage portable skills |
 | `clawdi project create/list/show/share/share-links/invite/invites/members/leave/unshare` | Manage Projects and read-only sharing |
 | `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
-| `clawdi agent credentials import/materialize` | Compatibility backup/restore for local CLI credential profiles; use `ai-provider import-auth/connect/materialize-auth` for Codex provider auth |
-| `clawdi ai-provider list/add/edit/remove/validate/test/connect/complete-oauth/import-auth/materialize-auth/apply/status/export/import` | Manage portable model providers, auth refs, Codex OAuth/profile auth, tests, verified Codex/Hermes/OpenClaw agent config apply, and provider-only export/import |
+| `clawdi agent credentials import/materialize` | Compatibility backup/restore for local CLI credential profiles; use `ai-provider import-auth/connect` for Codex provider auth |
+| `clawdi ai-provider list/add/edit/remove/validate/test/connect/complete-oauth/import-auth/export/import` | Manage local provider catalog records, auth refs, Codex OAuth/profile auth, direct tests, and provider-only export/import; Core Hosted activation comes from the runtime manifest/controller |
 | `clawdi channel list/available/get/create/links/link/rotate-token/pair-code/send/bindings/sync-commands/delete` | Manage channel bots, bot-agent links, chat pairing, outbound messages, and provider slash-command sync |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for vault reference selection |
 | `clawdi vault set/list/import/attach/detach/rm/resolve` | Manage encrypted secrets, Project access, exact references, and dry-run/explicit secret resolution |
 | `clawdi read <clawdi://...>` | Explicitly print one vault reference value |
 | `clawdi inject --in <file> --out <file>` | Render `clawdi://` references into templates |
 | `clawdi run --env-file <file> -- <cmd>` | Run a command with explicit vault references resolved |
-| `clawdi doctor [ai-provider]` | Diagnose auth, agent paths, vault, MCP config, and AI Provider setup |
+| `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |
 | `clawdi update` | Install the latest CLI version (`--check` only reports) |
 | `clawdi mcp` | Start the MCP stdio server used by agents |
 
@@ -315,7 +328,7 @@ part of normal laptop onboarding.
 | Command | What it does |
 | --- | --- |
 | `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and policy restrictions |
-| `clawdi runtime init/watch/bridge/status/doctor` | Converge, watch, expose runtime bridge surfaces, inspect, and diagnose runtime state |
+| `clawdi runtime init/watch/status/doctor` | Converge, watch, inspect, and diagnose runtime state |
 | `clawdi runtime plan/apply/status --file <manifest>` | Preview, apply, and inspect channel runtime manifest projections |
 
 Runtime mode is detected from policy or runtime credentials. In managed mode,
@@ -340,6 +353,8 @@ bun run test             # same clean Docker runner
 scripts/test.sh ci       # focused CI harness profile; not a product test replacement
 scripts/test.sh js       # JS typecheck + web/shared/sidecar/CLI tests
 scripts/test.sh cli      # CLI typecheck + full CLI tests
+scripts/test.sh shared   # shared package typecheck + tests
+scripts/test.sh sidecar  # WhatsApp sidecar typecheck + tests
 scripts/test.sh web      # web typecheck + tests + OSS build only
 scripts/test.sh backend  # Alembic + backend pytest against throwaway Postgres
 ```
@@ -351,23 +366,24 @@ their own temporary stub binaries without touching the host. Dependency caches
 are intentionally per-run inside the container; only Docker image layers and
 build cache are reused by the Docker daemon. It does not force `CLAWDI_HOME`, so
 tests can still isolate Clawdi state through the same home/config paths as the
-product. Backend tests use a temporary `pgvector/pgvector:0.8.1-pg16` Postgres
-service and do not reuse the dev database.
+product. Backend tests use the production-pinned PostgreSQL 18.4 image from
+`config/postgres-image.txt`, verify pgvector 0.8.6 and loadable `pg_trgm`, and
+do not reuse the dev database.
 
 Clean Test Runner CI uses the first-class `ci` profile to exercise the runner
 contract in one container without repeating the full web and CLI product
-suites. The normal `all`, `js`, `web`, `cli`, and `backend` entrypoints retain
-their comprehensive behavior. Core runner changes can use the workflow's
-manual `suite=all` dispatch gate without adding full-suite duplication to
-routine pull requests. See
+suites. The normal `all`, `js`, `web`, `cli`, `shared`, `sidecar`, and `backend`
+entrypoints retain their comprehensive behavior. Core runner changes can use
+the workflow's manual `suite=all` dispatch gate without adding full-suite
+duplication to routine pull requests. See
 [`docs/clean-test-runner.md`](docs/clean-test-runner.md) for the exact focused
 suite, measured resource envelope, and override variables.
 
 For a focused CLI pytest-style argument pass-through, append paths after the
 suite name, for example `scripts/test.sh cli tests/api-client.test.ts`. The
-full package-local test commands remain available through `bun run test:local`
-or package-level scripts as opt-in development loops when you need to
-investigate broader failures.
+public package-level `test` scripts also route through this Docker runner.
+Explicit host-local development loops remain available from the workspace root
+through `bun run test:local`; `test:internal` is reserved for the runner and CI.
 
 Install workspace dependencies from the repo root:
 
@@ -432,7 +448,7 @@ clawdi doctor
 
 Common issues:
 
-- **`clawdi auth login` fails** - Re-run login, or use `clawdi auth login --manual` in headless environments.
+- **`clawdi auth login` fails** - Re-run login; over SSH use `clawdi auth login --no-open` and paste the complete failed loopback callback URL. `--manual` is legacy API-key compatibility and does not authorize Hosted deploys.
 - **No supported agent detected** - Install a supported agent or pass `--agent claude_code`, `--agent codex`, `--agent hermes`, or `--agent openclaw`.
 - **Memory search is empty** - Add a memory first with `clawdi memory add "..."`, then verify with `clawdi memory search "..."`.
 - **Local backend cannot start because `vector` is missing** - Install `pgvector` for your PostgreSQL 16 instance, or use the included Docker Compose database.

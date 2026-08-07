@@ -1,4 +1,4 @@
-"""Device authorization flow.
+"""Legacy browser-approved API-key bootstrap.
 
 Covers the four end states a poll can land in (pending → approved+consumed,
 denied, expired) and verifies that an unauthenticated /poll never leaks
@@ -165,12 +165,11 @@ async def test_device_start_prunes_expired_rows(
 
 @pytest.mark.asyncio
 async def test_real_client_ip_reads_x_forwarded_for_when_trusted(monkeypatch):
-    """Round-51 P1 regression: behind a Coolify/Cloudflare proxy
-    `request.client.host` is the proxy's IP. Without forwarded-
-    header support every CLI login shares one bucket and the
-    third concurrent login 429s. With `trust_forwarded_for=True`
-    we read `X-Forwarded-For` (first hop = real client) and
-    `CF-Connecting-IP`.
+    """Round-51 P1 regression: behind a reverse proxy,
+    `request.client.host` is the proxy's IP. Without forwarded-header
+    support every CLI login shares one bucket and the third concurrent
+    login 429s. With `trust_forwarded_for=True` we read `X-Forwarded-For`
+    (first hop = real client) and `CF-Connecting-IP`.
 
     Trust is gated so a direct-uvicorn dev/production setup
     can't be header-spoofed; the default (False) ignores
