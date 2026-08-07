@@ -61,7 +61,7 @@ type ConsoleNavigationItemId =
 	| "channels"
 	| "ai-providers";
 
-type ConsoleNavigationGroupId = "primary" | "library" | "integrations";
+type ConsoleNavigationGroupId = "primary" | "library";
 
 type ConsoleCommandPaletteMetadata = {
 	subtitle: string;
@@ -222,14 +222,10 @@ const CONSOLE_NAVIGATION_GROUPS = [
 	{
 		id: "library",
 		label: "Library",
-		itemIds: ["projects", "skills", "vaults"],
+		// Assets first (mirrors the dashboard Library card), integrations last;
+		// cloud-gated items drop out in OSS without disturbing the order.
+		itemIds: ["projects", "skills", "vaults", "connectors", "channels", "ai-providers"],
 		separated: false,
-	},
-	{
-		id: "integrations",
-		label: "Integrations",
-		itemIds: ["channels", "ai-providers", "connectors"],
-		separated: true,
 	},
 ] as const satisfies readonly {
 	id: ConsoleNavigationGroupId;
