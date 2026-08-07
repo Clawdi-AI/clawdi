@@ -2,7 +2,15 @@
 
 import { keepPreviousData } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { Brain, Key, type LucideIcon, MessageSquare, Settings, Sparkles } from "lucide-react";
+import {
+	Brain,
+	FolderKanban,
+	Key,
+	type LucideIcon,
+	MessageSquare,
+	Settings,
+	Sparkles,
+} from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
 	Command,
@@ -35,6 +43,7 @@ interface NavShortcut {
 const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
 	session: MessageSquare,
 	memory: Brain,
+	project: FolderKanban,
 	skill: Sparkles,
 	vault: Key,
 };
@@ -42,6 +51,7 @@ const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
 const TYPE_LABEL: Record<SearchHit["type"], string> = {
 	session: "Sessions",
 	memory: "Memories",
+	project: "Projects",
 	skill: "Skills",
 	vault: "Vaults",
 };
@@ -269,7 +279,7 @@ function CommandPalette({
 					) : null}
 
 					{hasQuery
-						? (["session", "memory", "skill", "vault"] as const).map((type, i) => {
+						? (["session", "memory", "project", "skill", "vault"] as const).map((type, i) => {
 								const hits = grouped[type];
 								if (!hits?.length) return null;
 								const Icon = TYPE_ICON[type];

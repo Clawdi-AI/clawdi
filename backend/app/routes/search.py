@@ -21,6 +21,7 @@ from app.core.auth import AuthContext, get_auth, is_scoped_api_key
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
 from app.core.query_utils import like_needle
+from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault, VaultProjectAttachment
@@ -44,7 +45,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/search", tags=["search"])
 
-SearchType = Literal["session", "memory", "skill", "vault"]
+SearchType = Literal["session", "memory", "project", "skill", "vault"]
 
 
 class SearchHit(BaseModel):
@@ -179,6 +180,35 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
     ]
 
 
+async def _search_projects(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
+    needle = like_needle(query)
+    visible_project_ids = await project_ids_visible_to(db, auth)
+    stmt = (
+        select(Project)
+        .where(
+            Project.id.in_(visible_project_ids),
+            Project.archived_at.is_(None),
+            or_(
+                Project.name.ilike(needle, escape="\\"),
+                Project.slug.ilike(needle, escape="\\"),
+            ),
+        )
+        .order_by(Project.name)
+        .limit(TYPE_LIMIT)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        SearchHit(
+            type="project",
+            id=str(p.id),
+            title=p.name,
+            subtitle=p.slug,
+            href=f"/projects/{p.id}",
+        )
+        for p in rows
+    ]
+
+
 async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     needle = like_needle(query)
     visible_project_ids = await project_ids_visible_to(db, auth)
@@ -254,6 +284,10 @@ async def global_search(
         # Insert memories right after sessions if present, otherwise first.
         idx = 1 if any(label == "sessions" for label, _fn in jobs) else 0
         jobs.insert(idx, ("memories", _search_memories))
+    if _has_scope(auth, "projects:read"):
+        # Projects are the Library hubs — after activity objects, before assets.
+        idx = next((i + 1 for i, (label, _fn) in enumerate(jobs) if label == "memories"), len(jobs))
+        jobs.insert(idx, ("projects", _search_projects))
     hits: list[SearchHit] = []
     for source, searcher in jobs:
         try:

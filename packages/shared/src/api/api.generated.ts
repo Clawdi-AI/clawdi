@@ -6833,7 +6833,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "session" | "memory" | "skill" | "vault";
+            type: "session" | "memory" | "project" | "skill" | "vault";
             /** Id */
             id: string;
             /** Title */
