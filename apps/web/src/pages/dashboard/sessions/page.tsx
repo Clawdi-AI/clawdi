@@ -3,13 +3,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
 import { LayoutList, Table2 } from "lucide-react";
-import {
-	createParser,
-	parseAsBoolean,
-	parseAsString,
-	parseAsStringLiteral,
-	useQueryStates,
-} from "nuqs";
+import { parseAsBoolean, parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -30,6 +24,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
+import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, recencyBucketFor } from "@/lib/utils";
 
@@ -48,17 +43,6 @@ const SORT_KEYS = [
 ] as const;
 type SortKey = (typeof SORT_KEYS)[number];
 const SESSIONS_RESOURCE = getProjectResourceDefinition("sessions");
-
-// 1-indexed strict integer parser. `Number()` (unlike `parseInt`)
-// rejects mixed input like "3junk", so a malformed `?page=3junk`
-// falls back to the nuqs default instead of silently landing 3.
-const parseAsPositiveInt = createParser({
-	parse: (raw: string) => {
-		const n = Number(raw);
-		return Number.isInteger(n) && n >= 1 ? n : null;
-	},
-	serialize: (n: number) => String(n),
-});
 
 /**
  * Wrap the body in `<Suspense>` because nuqs reads URL state under the hood.

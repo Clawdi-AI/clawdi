@@ -45,6 +45,7 @@ import type { components } from "@/lib/api-schemas";
 import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
+import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { cn } from "@/lib/utils";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -89,8 +90,16 @@ function SkillsPageInner() {
 		"add",
 		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
 	);
-	const [search, setSearch] = useState("");
-	const [page, setPage] = useState(1);
+	// URL-backed list state (like sessions/connectors/memories): back from a
+	// Skill detail restores the exact search/page instead of resetting.
+	const [search, setSearch] = useQueryState(
+		"q",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
+	const [page, setPage] = useQueryState(
+		"page",
+		parseAsPositiveInt.withDefault(1).withOptions({ clearOnDefault: true, history: "replace" }),
+	);
 	const [createOpen, setCreateOpen] = useState(false);
 	const [importOpen, setImportOpen] = useState(false);
 
@@ -111,10 +120,6 @@ function SkillsPageInner() {
 	const projectError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
 		? projectsQuery.error
 		: null;
-
-	useEffect(() => {
-		setPage(1);
-	}, [projectParam, search]);
 
 	const skillsQuery = useQuery({
 		queryKey: ["skills", "project", selectedProject?.id, search.trim(), page],
@@ -163,6 +168,7 @@ function SkillsPageInner() {
 	const selectProject = (projectId: string) => {
 		void setProjectParam(projectId);
 		void setLegacyTarget("");
+		void setPage(1);
 	};
 
 	const removeSkill = useMutation({
@@ -262,7 +268,14 @@ function SkillsPageInner() {
 				<>
 					<ListToolbar
 						search={
-							<SearchInput value={search} onChange={setSearch} placeholder="Search this Project…" />
+							<SearchInput
+								value={search}
+								onChange={(v) => {
+									void setSearch(v);
+									void setPage(1);
+								}}
+								placeholder="Search this Project…"
+							/>
 						}
 						filters={
 							<ProjectCompactPicker

@@ -102,7 +102,7 @@ export function NotificationCenter() {
 		},
 		onSuccess: () => {
 			refetchMembershipDerived();
-			toast.success("Invitation Declined");
+			toast.success("Invitation declined");
 		},
 		onError: (e) => {
 			toast.error("Couldn't decline invitation", {
