@@ -461,7 +461,8 @@ function writeLastGoodSecretValues(
 		`${JSON.stringify(recoverable, null, 2)}\n`,
 		{
 			mode: 0o600,
-			dirMode: 0o755,
+			// The parent is the cache platform root; its mode is owned by the
+			// systemd CacheDirectory directive, never by this writer.
 		},
 	);
 }
@@ -4610,7 +4611,12 @@ function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: Runt
 			null,
 			2,
 		)}\n`,
-		{ mode: 0o644, dirMode: 0o755 },
+		{
+			mode: 0o644,
+			// The parent is the configuration platform root; its mode is owned
+			// by the systemd ConfigurationDirectory directive, never by this
+			// writer.
+		},
 	);
 }
 

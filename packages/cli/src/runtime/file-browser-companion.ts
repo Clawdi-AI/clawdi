@@ -353,7 +353,9 @@ export function ensureFileBrowserCompanion(
 		installCandidate(companion, paths, asset, options);
 		writeRuntimePlatformFileAtomic(paths, paths.fileBrowserConfig, config, {
 			mode: 0o600,
-			dirMode: 0o700,
+			// The parent is the configuration platform root; its mode is owned
+			// by the systemd ConfigurationDirectory directive, never by this
+			// writer.
 		});
 	}
 	const current = () => currentRevision(companion, paths, asset.sha256, config);
