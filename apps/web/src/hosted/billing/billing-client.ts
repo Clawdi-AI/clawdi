@@ -77,36 +77,6 @@ type WorkspaceSkillMutation =
 	| { action: "install"; request: HostedWorkspaceSkillInstallRequest }
 	| { action: "uninstall"; skillKey: string };
 
-/**
- * The generated deploy-api client predates the operation-cancel endpoint
- * (`/v2/operations/{operation_id}:cancel` in the hosted backend OpenAPI). The
- * path is hand-typed here in the generated `post` style until the client is
- * regenerated against that contract; the empty response body matches
- * `CancelOperationResponse` in the backend.
- */
-type OperationCancelPost = {
-	POST: (
-		path: "/v2/operations/{operation_id}:cancel",
-		init: {
-			params: { path: { operation_id: string }; header: { "Idempotency-Key": string } };
-			body?: never;
-		},
-	) => Promise<DeployResult<Record<string, never>>>;
-};
-
-function postOperationCancel(
-	api: ReturnType<typeof createClient<DeployPaths>>,
-	operationId: string,
-	idempotencyKey: string,
-): Promise<DeployResult<Record<string, never>>> {
-	return (api as unknown as OperationCancelPost).POST("/v2/operations/{operation_id}:cancel", {
-		params: {
-			path: { operation_id: operationId },
-			header: { "Idempotency-Key": idempotencyKey },
-		},
-	});
-}
-
 function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Response> {
 	const caller = init?.signal ?? request.signal;
 	const controller = new AbortController();
@@ -725,7 +695,12 @@ export function createBillingClient(
 			),
 		cancelDeploymentOperation: async (operationName: string, idempotencyKey: string) => {
 			unwrapDeploy(
-				await postOperationCancel(api, operationIdFromName(operationName), idempotencyKey),
+				await api.POST("/v2/operations/{operation_id}:cancel", {
+					params: {
+						path: { operation_id: operationIdFromName(operationName) },
+						header: { "Idempotency-Key": idempotencyKey },
+					},
+				}),
 			);
 		},
 		deleteDeployment,
