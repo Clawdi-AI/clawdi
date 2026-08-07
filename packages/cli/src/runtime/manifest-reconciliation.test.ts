@@ -2917,6 +2917,65 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(true);
 	});
 
+	test("publishes transparent egress env as a root-authored read-only handoff to the numeric egress identity", () => {
+		const numericPrivilegeToolPath = ["/usr/bin/set", "priv"].join("");
+		if (process.geteuid?.() !== 0 || !existsSync(numericPrivilegeToolPath)) return;
+		const paths = tempRuntimePaths();
+		const egressUid = 10_002;
+		const egressGid = 10_002;
+		process.env.CLAWDI_EGRESS_UID = String(egressUid);
+		process.env.CLAWDI_EGRESS_GID = String(egressGid);
+		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_RUNTIME_UID = "10001";
+		process.env.CLAWDI_RUNTIME_GID = "10001";
+		const manifest = egressRuntimeManifest(paths, {
+			generation: 1,
+			engine: installCachedTestEgressEngine(paths, "12.2.3-test-egress-env-identity"),
+			profile: "enabled",
+		});
+		chmodSync(dirname(paths.serviceStateRoot), 0o777);
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "root-egress-env-handoff"),
+			paths,
+			{
+				cacheLastGood: false,
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: successfulPrerequisiteActivation,
+					rollback: () => {},
+				},
+				hostedRuntimeContract: {
+					expectedIdentity: {
+						home: paths.userHome,
+						user: "clawdi",
+						uid: 10_001,
+						gid: 10_001,
+					},
+					resolveUserIdentity: () => ({ uid: 10_001, gid: 10_001 }),
+				},
+			},
+		);
+		expect(result.installErrors).toEqual([]);
+
+		const envFile = paths.egressTransparentEnv;
+		const node = statSync(envFile);
+		expect([node.uid, node.gid]).toEqual([0, egressGid]);
+		expect(node.mode & 0o777).toBe(0o640);
+		expect(statSync(paths.egressRoot).mode & 0o777).toBe(0o711);
+		expect(statSync(paths.egressTransparentEnv).mode & 0o022).toBe(0);
+
+		const runAsEgressIdentity = (args: string[]) =>
+			execFileSync(
+				numericPrivilegeToolPath,
+				[`--reuid=${egressUid}`, `--regid=${egressGid}`, "--clear-groups", "--", ...args],
+				{ encoding: "utf8" },
+			);
+		expect(runAsEgressIdentity(["sh", "-c", `cat -- ${JSON.stringify(envFile)}`])).toContain(
+			`CLAWDI_EGRESS_GID="${egressGid}"`,
+		);
+		expect(() => runAsEgressIdentity(["sh", "-c", `: > ${JSON.stringify(envFile)}`])).toThrow();
+	});
+
 	test("activates transparent egress before authenticated managed-model discovery", () => {
 		const paths = tempRuntimePaths();
 		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");

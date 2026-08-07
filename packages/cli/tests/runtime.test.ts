@@ -15201,13 +15201,15 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		expect(statSync(getRuntimePaths().egressProfileBundle).mode & 0o777).toBe(0o644);
 		expect(statSync(paths.egressRoot).mode & 0o777).toBe(0o711);
 		expect(statSync(paths.egressAddon).mode & 0o777).toBe(0o640);
-		expect(statSync(paths.egressTransparentEnv).mode & 0o777).toBe(0o600);
+		expect(statSync(paths.egressTransparentEnv).mode & 0o777).toBe(0o640);
 		expect(statSync(paths.egressCaDir).mode & 0o777).toBe(0o700);
 		if (typeof process.getuid === "function" && process.getuid() === 0) {
 			expect(statSync(paths.egressCaDir).uid).toBe(10002);
 			expect(statSync(paths.egressCaDir).gid).toBe(10002);
 			expect(statSync(paths.egressAddon).uid).toBe(0);
 			expect(statSync(paths.egressAddon).gid).toBe(10002);
+			expect(statSync(paths.egressTransparentEnv).uid).toBe(0);
+			expect(statSync(paths.egressTransparentEnv).gid).toBe(10002);
 		}
 		expect(statSync(join(run, "egress-scratch")).mode & 0o777).toBe(0o700);
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
