@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -126,7 +126,10 @@ beforeEach(() => {
 	priorAuthToken = process.env.CLAWDI_AUTH_TOKEN;
 	delete process.env.CLAWDI_AUTH_TOKEN;
 	stateDir = join(tmpdir(), `clawdi-oauth-${crypto.randomUUID()}`);
+	// The state home is private CLI-owned state; the CLI creates it at 0700
+	// (mkdir modes are umask-filtered, so re-assert the exact mode).
 	mkdirSync(stateDir, { recursive: true });
+	chmodSync(stateDir, 0o700);
 	process.env.CLAWDI_HOME = stateDir;
 });
 

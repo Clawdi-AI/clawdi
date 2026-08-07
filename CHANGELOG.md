@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.43
+
+Package: `clawdi@0.13.43`
+
+### Fixed
+
+- Hosted runtime platform roots keep their systemd-defined access modes:
+  the CLI no longer re-asserts modes on `/etc/clawdi`, `/var/lib/clawdi`,
+  `/var/cache/clawdi`, or `/run/clawdi` when it writes files inside them, so
+  the root-owned `0700` configuration and cache boundaries stay closed to
+  the tenant user.
+
 ## Clawdi CLI v0.13.42
 
 Package: `clawdi@0.13.42`
