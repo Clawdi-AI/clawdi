@@ -9,7 +9,7 @@ export type ProjectResourceId =
 	| "connectors";
 
 export type ProjectResourceScope = "container" | "project-managed" | "activity" | "all-agents";
-export type ProjectResourceGroup = "project-registry" | "project-resources" | "user-resources";
+export type ProjectResourceGroup = "projects" | "library" | "activity";
 
 export const PROJECT_RESOURCE_LIST_PATHS = {
 	projects: "/projects",
@@ -55,7 +55,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 			"Create shareable Projects that bundle Skills with attached Vault access. Each Agent also has a private Workspace on that Agent's page.",
 		href: PROJECT_RESOURCE_LIST_PATHS.projects,
 		emptyCta: "Create project",
-		routeGroup: "project-registry",
+		routeGroup: "projects",
 		projectScope: "container",
 		pathSegments: ["Projects"],
 		countLabel: "projects",
@@ -70,7 +70,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 			"Skills belong to Projects. Choose a Project before adding, editing, removing, copying, or moving a Skill. Linked Agents use the whole Project bundle.",
 		href: PROJECT_RESOURCE_LIST_PATHS.skills,
 		emptyCta: "Add skill",
-		routeGroup: "project-resources",
+		routeGroup: "library",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Skills"],
 		projectQueryParam: "project",
@@ -87,7 +87,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 			"Keep API keys in a Vault, then attach it to the Projects where Agents should use those keys.",
 		href: PROJECT_RESOURCE_LIST_PATHS.vaults,
 		emptyCta: "Create vault",
-		routeGroup: "project-resources",
+		routeGroup: "library",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Vaults"],
 		projectQueryParam: "project",
@@ -104,9 +104,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 			"Sessions are agent activity. Browse conversations and filter by the agent that produced them.",
 		href: PROJECT_RESOURCE_LIST_PATHS.sessions,
 		emptyCta: "Start syncing",
-		routeGroup: "user-resources",
+		routeGroup: "activity",
 		projectScope: "activity",
-		pathSegments: ["Account resources", "Sessions"],
+		pathSegments: ["Activity", "Sessions"],
 		statsKey: "total_sessions",
 		countLabel: "sessions",
 	},
@@ -119,9 +119,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		managementDescription: "Memories are shared across all agents in this account.",
 		href: PROJECT_RESOURCE_LIST_PATHS.memories,
 		emptyCta: "Create memory",
-		routeGroup: "user-resources",
+		routeGroup: "activity",
 		projectScope: "all-agents",
-		pathSegments: ["Account resources", "Memory"],
+		pathSegments: ["Activity", "Memory"],
 		statsKey: "memories_count",
 		countLabel: "memories",
 	},
@@ -134,9 +134,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		managementDescription: "Connect apps once to share approved tools across all agents.",
 		href: PROJECT_RESOURCE_LIST_PATHS.connectors,
 		emptyCta: "Browse connectors",
-		routeGroup: "user-resources",
+		routeGroup: "library",
 		projectScope: "all-agents",
-		pathSegments: ["Account resources", "Connectors"],
+		pathSegments: ["Library", "Connectors"],
 		statsKey: "connectors_count",
 		countLabel: "connectors",
 	},
@@ -144,19 +144,19 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 
 export const PROJECT_RESOURCE_GROUPS = [
 	{
-		id: "project-registry",
+		id: "projects",
 		label: "Projects",
 		resourceIds: ["projects"],
 	},
 	{
-		id: "project-resources",
-		label: "Project resources",
-		resourceIds: ["skills", "vaults"],
+		id: "library",
+		label: "Library",
+		resourceIds: ["skills", "vaults", "connectors"],
 	},
 	{
-		id: "user-resources",
-		label: "Account resources",
-		resourceIds: ["sessions", "memories", "connectors"],
+		id: "activity",
+		label: "Activity",
+		resourceIds: ["sessions", "memories"],
 	},
 ] as const satisfies readonly {
 	id: ProjectResourceGroup;
@@ -243,7 +243,7 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 		case "project-managed":
 			return "Saved in a Project";
 		case "activity":
-			return "Account resources";
+			return "Account activity";
 		case "all-agents":
 			return "All agents";
 	}
@@ -252,7 +252,7 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 export function projectResourceScopeDescription(resource: ProjectResourceDefinition): string {
 	switch (resource.projectScope) {
 		case "container":
-			return "Start here to create shareable Projects or open Project resources.";
+			return "Start here to create shareable Projects, then browse the Library for reusable Skills and Vaults.";
 		case "project-managed":
 			return "Saved in a Project. Pick the Project before you add, edit, or remove it.";
 		case "activity":

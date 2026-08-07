@@ -132,9 +132,9 @@ function projectResourceNavigationItem(
 	const commandGroupLabel =
 		id === "projects"
 			? "Projects"
-			: id === "skills" || id === "vaults"
-				? "Project resources"
-				: "Account resources";
+			: id === "skills" || id === "vaults" || id === "connectors"
+				? "Library"
+				: "Account activity";
 	return {
 		id,
 		...CANONICAL_NAVIGATION_IDENTITIES[id],
@@ -192,7 +192,7 @@ export const CONSOLE_NAVIGATION_ITEMS: Record<
 		tooltip: "Channels — Account integrations",
 		availability: "cloud",
 		commandPalette: {
-			subtitle: "Account resources",
+			subtitle: "Library",
 			searchText: "channels telegram discord whatsapp bots messaging",
 		},
 	},
@@ -205,7 +205,7 @@ export const CONSOLE_NAVIGATION_ITEMS: Record<
 		tooltip: "AI Providers — Account integrations",
 		availability: "cloud",
 		commandPalette: {
-			subtitle: "Account resources",
+			subtitle: "Library",
 			searchText:
 				"model providers ai providers models openai anthropic openrouter gemini mistral byok api key",
 		},
