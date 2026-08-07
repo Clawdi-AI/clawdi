@@ -730,7 +730,7 @@ function RailFocusButton({
 			aria-label={label}
 			className={cn(
 				hasCaption
-					? "h-16 w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
+					? "h-16 w-full flex-col justify-center gap-0.5 rounded-lg px-1 py-0.5"
 					: "size-11 justify-center rounded-lg p-0",
 				className,
 			)}
@@ -760,7 +760,7 @@ function RailFocusButton({
 			<span
 				aria-hidden="true"
 				className={cn(
-					"absolute -left-2.5 w-1 rounded-r-full bg-sidebar-foreground/70 opacity-0 transition-[height,opacity] duration-200 ease-out",
+					"absolute -left-1.5 w-1 rounded-r-full bg-sidebar-foreground/70 opacity-0 transition-[height,opacity] duration-200 ease-out",
 					active
 						? hasCaption
 							? "h-10 opacity-100"
@@ -1056,7 +1056,7 @@ function FocusRailContent({
 
 			<SidebarSeparator className="mx-auto w-8" />
 
-			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-2.5 pt-2.5 pb-[calc(var(--header-height)+0.75rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-1.5 pt-2.5 pb-[calc(var(--header-height)+0.75rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 				<SidebarMenu className="w-full items-center">
 					<RailTileButton
 						render={<Link to="/" onClick={onNavigate} />}
@@ -1068,7 +1068,7 @@ function FocusRailContent({
 						<IconChip
 							size="sm"
 							tint={RESOURCE_TINT_CLASSES.overview}
-							className="size-9 [&>svg]:size-4.5"
+							className="size-10 [&>svg]:size-5"
 						>
 							<LayoutDashboard />
 						</IconChip>
