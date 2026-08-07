@@ -165,11 +165,13 @@ function projectLocalTabHref(
 function searchRecordToSearchParams(search: Record<string, unknown>): URLSearchParams {
 	const params = new URLSearchParams();
 	for (const [key, value] of Object.entries(search)) {
-		if (typeof value === "string") params.set(key, value);
-		else if (Array.isArray(value))
-			for (const item of value)
-				if (typeof item === "string") params.append(key, item);
-				else if (value != null) params.set(key, String(value));
+		if (typeof value === "string") {
+			params.set(key, value);
+		} else if (Array.isArray(value)) {
+			for (const item of value) if (typeof item === "string") params.append(key, item);
+		} else if (value != null) {
+			params.set(key, String(value));
+		}
 	}
 	return params;
 }
