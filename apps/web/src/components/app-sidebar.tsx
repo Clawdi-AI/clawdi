@@ -730,7 +730,7 @@ function RailFocusButton({
 			aria-label={label}
 			className={cn(
 				hasCaption
-					? "h-16 w-full flex-col justify-center gap-0.5 rounded-lg px-1 py-0.5"
+					? "h-[4.25rem] w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
 					: "size-11 justify-center rounded-lg p-0",
 				className,
 			)}
@@ -754,7 +754,7 @@ function RailFocusButton({
 		<div
 			className={cn(
 				"group/rail-focus relative flex min-w-0 items-center justify-center",
-				hasCaption ? "h-16 w-full" : "size-11",
+				hasCaption ? "h-[4.25rem] w-full" : "size-11",
 			)}
 		>
 			<span
@@ -763,7 +763,7 @@ function RailFocusButton({
 					"absolute -left-1.5 w-1 rounded-r-full bg-sidebar-foreground/70 opacity-0 transition-[height,opacity] duration-200 ease-out",
 					active
 						? hasCaption
-							? "h-10 opacity-100"
+							? "h-11 opacity-100"
 							: "h-8 opacity-100"
 						: "h-2 group-hover/rail-focus:h-4 group-hover/rail-focus:opacity-50",
 				)}
@@ -817,7 +817,7 @@ function RailTileButton({
 			ref={itemRef}
 			data-testid={itemTestId}
 			style={itemStyle}
-			className={cn("relative h-16 w-full", itemClassName)}
+			className={cn("relative h-[4.25rem] w-full", itemClassName)}
 		>
 			<RailFocusButton
 				render={render}
