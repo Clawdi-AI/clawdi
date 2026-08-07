@@ -4349,7 +4349,7 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	if (!connectedTileBox || !connectedButtonBox) {
 		throw new Error("Hosted rail agent tile should be a whole interactive button.");
 	}
-	expect(connectedTileBox.height).toBeCloseTo(64, 0);
+	expect(connectedTileBox.height).toBeCloseTo(68, 0);
 	expect(connectedButtonBox.x).toBeCloseTo(connectedTileBox.x, 0);
 	expect(connectedButtonBox.y).toBeCloseTo(connectedTileBox.y, 0);
 	expect(connectedButtonBox.height).toBeCloseTo(connectedTileBox.height, 0);

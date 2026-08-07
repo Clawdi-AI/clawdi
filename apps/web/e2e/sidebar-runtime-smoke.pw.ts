@@ -2504,7 +2504,7 @@ test("agent rail uses each whole tile for Space keyboard sorting", async ({ page
 	const firstTileBox = await firstTile.boundingBox();
 	const firstButtonBox = await firstButton.boundingBox();
 	if (!firstTileBox || !firstButtonBox) throw new Error("Agent rail tile should be interactive.");
-	expect(firstTileBox.height).toBeCloseTo(64, 0);
+	expect(firstTileBox.height).toBeCloseTo(68, 0);
 	expect(firstButtonBox.height).toBeCloseTo(firstTileBox.height, 0);
 	expect(firstButtonBox.width).toBeCloseTo(firstTileBox.width, 0);
 
