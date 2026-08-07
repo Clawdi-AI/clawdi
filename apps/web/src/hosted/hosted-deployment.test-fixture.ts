@@ -20,7 +20,7 @@ type HostedDeploymentFixtureOptions = {
 	resources?: HostedDeploymentSpec["resources"];
 	endpoints?: HostedDeploymentStatus["endpoints"];
 	failure?: HostedDeploymentStatus["failure"];
-	backingInfrastructure?: HostedDeploymentStatus["backing_infrastructure"];
+	backingInfrastructure?: NonNullable<HostedDeployment["compute_slot_occupancy"]>["backing_infra"];
 	computeSubscription?: HostedComputeSubscription | null;
 	fundingFact?: HostedFundingFact | null;
 	occupiesSlot?: boolean;
@@ -51,7 +51,6 @@ export function hostedDeploymentFixture(
 		resource: {
 			id: options.id ?? "dep_test",
 			name: options.name ?? "Test deployment",
-			owner_user_id: "usr_test",
 			commercial_revision: 0,
 			deployment_target: "saas",
 			metadata: {
@@ -84,7 +83,6 @@ export function hostedDeploymentFixture(
 							observedGeneration: 1,
 							conditions: [],
 							failure: options.failure,
-							backing_infrastructure: backingInfrastructure,
 							driver_acknowledged_generation: 1,
 							driver_applied_generation: 1,
 							driver_observation_sequence: 1,

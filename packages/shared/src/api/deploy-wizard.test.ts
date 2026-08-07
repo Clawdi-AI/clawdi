@@ -66,7 +66,6 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 		resource: {
 			id: "hdep_test",
 			name: "Hermes",
-			owner_user_id: "usr_test",
 			commercial_revision: 0,
 			deployment_target: "test",
 			metadata: {
@@ -92,7 +91,6 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 				summary_state: "running",
 				observedGeneration: 1,
 				conditions: [],
-				backing_infrastructure: "present",
 				driver_acknowledged_generation: 1,
 				driver_applied_generation: 1,
 				driver_observation_sequence: 1,
