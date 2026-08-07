@@ -15,9 +15,19 @@ import { useMemo } from "react";
  * committed match tree keeps every reader consistent with the visible
  * page; both flip atomically when the navigation commits.
  */
-export function useCommittedLocation() {
+/**
+ * Index-route matches interpolate to a trailing slash ("/agents/x/skills/")
+ * while `state.location.pathname` is normalized without one ("/agents/x/skills").
+ * Consumers compare and build URLs from this value, so normalize centrally.
+ */
+function normalizeCommittedPathname(pathname: string): string {
+	return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+}
+
+export function useCommittedLocation(): { pathname: string; search: Record<string, unknown> } {
 	const pathname = useRouterState({
-		select: (state) => state.matches.at(-1)?.pathname ?? state.location.pathname,
+		select: (state) =>
+			normalizeCommittedPathname(state.matches.at(-1)?.pathname ?? state.location.pathname),
 	});
 	const search = useRouterState({
 		select: (state) => state.matches.at(-1)?.search ?? state.location.search,
@@ -37,6 +47,7 @@ export function useCommittedLocation() {
 export function useCommittedRouteIsLatestTarget(): boolean {
 	return useRouterState({
 		select: (state) =>
-			(state.matches.at(-1)?.pathname ?? state.location.pathname) === state.location.pathname,
+			normalizeCommittedPathname(state.matches.at(-1)?.pathname ?? state.location.pathname) ===
+			normalizeCommittedPathname(state.location.pathname),
 	});
 }

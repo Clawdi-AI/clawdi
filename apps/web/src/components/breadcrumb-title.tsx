@@ -6,14 +6,13 @@ import {
 	type SetStateAction,
 	useCallback,
 	useContext,
-	useEffect,
-	useLayoutEffect,
 	useMemo,
 	useState,
 } from "react";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
 import { useCommittedLocation } from "@/lib/use-committed-location";
+import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 
 /**
  * Context for "what the breadcrumb's last segment should say".
@@ -214,5 +213,3 @@ export function useCommittedBreadcrumbRoute(): CommittedBreadcrumbRoute {
 function useBreadcrumbRouteKey() {
 	return useCommittedBreadcrumbRoute().routeKey;
 }
-
-const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;

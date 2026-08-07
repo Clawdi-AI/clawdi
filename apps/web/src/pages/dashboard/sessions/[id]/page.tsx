@@ -10,7 +10,7 @@ import {
 	MessageSquare,
 	Zap,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline } from "@/components/dashboard/agent-label";
@@ -43,6 +43,7 @@ import {
 	SESSION_MESSAGES_STALE_MS,
 } from "@/lib/session-queries";
 import { useCommittedLocation } from "@/lib/use-committed-location";
+import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function SessionDetailPage({ sessionId }: { sessionId: string }) {
@@ -622,5 +623,3 @@ function MessagesSkeleton() {
 function EmptyContent() {
 	return <EmptyState variant="inset" description="No messages in this session." />;
 }
-
-const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
