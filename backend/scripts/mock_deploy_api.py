@@ -2,7 +2,7 @@
 
 Run from ``backend/``:
 
-    uv run python scripts/mock_deploy_api.py --host 0.0.0.0 --port 50001
+    uv run python scripts/mock_deploy_api.py --host 0.0.0.0 --port 8001
 
 This is intentionally in-memory and dev-only. It lets the web dashboard exercise
 hosted/v2 UI flows without the external hosted runtime service.
@@ -416,6 +416,11 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/me")
 async def me() -> dict[str, Any]:
     now = _iso(_now() - timedelta(days=14))
@@ -544,6 +549,14 @@ def _accept_operation(
     }
     OPERATIONS[operation_id] = operation
     return operation
+
+
+@app.post("/v2/deployments", status_code=202)
+async def create_deployment(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    idempotency_key = request.headers.get("Idempotency-Key") or uuid.uuid4().hex
+    created = _create_deployment_record(body)
+    return _accept_operation(created, verb="create", idempotency_key=idempotency_key)
 
 
 @app.get("/v2/deployments/{deployment_id}")
@@ -1097,7 +1110,7 @@ async def auto_reload(request: Request) -> dict[str, Any]:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=50001)
+    parser.add_argument("--port", type=int, default=8001)
     args = parser.parse_args()
 
     import uvicorn

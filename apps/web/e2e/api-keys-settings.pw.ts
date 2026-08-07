@@ -162,9 +162,7 @@ async function stubApiKeys(
 	};
 }
 
-test("API key settings protects secrets and reconciles optimistic revokes", async ({
-	page,
-}, testInfo) => {
+test("API key settings protects secrets and reconciles optimistic revokes", async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.addInitScript(() => {
 		Object.defineProperty(navigator, "clipboard", {
@@ -187,10 +185,6 @@ test("API key settings protects secrets and reconciles optimistic revokes", asyn
 		scrollWidth: element.scrollWidth,
 	}));
 	expect(truncation.scrollWidth).toBeGreaterThan(truncation.clientWidth);
-	await testInfo.attach("api-keys-desktop", {
-		body: await page.screenshot(),
-		contentType: "image/png",
-	});
 
 	await page.getByRole("button", { name: "Create API key", exact: true }).first().click();
 	let createDialog = page.getByRole("dialog", { name: "Create API key" });
@@ -258,10 +252,6 @@ test("API key settings protects secrets and reconciles optimistic revokes", asyn
 	expect(cardBox?.x ?? -1).toBeGreaterThanOrEqual(0);
 	expect((cardBox?.x ?? 0) + (cardBox?.width ?? 0)).toBeLessThanOrEqual(390);
 	await expect(mobileCard.getByRole("button", { name: `Revoke ${longLabel}` })).toBeVisible();
-	await testInfo.attach("api-keys-mobile", {
-		body: await page.screenshot(),
-		contentType: "image/png",
-	});
 });
 
 test("API key list error is retryable and the active-only empty state can create a key", async ({

@@ -317,6 +317,7 @@ export function DeployWizard() {
 	const resolveDeploymentRequest = useResolveDeploymentRequest().mutateAsync;
 	const [acceptedDeploymentRecovery, setAcceptedDeploymentRecovery] =
 		useState<AcceptedDeploymentRecovery | null>(null);
+	const acceptanceNavigatingRef = useRef(false);
 	const acceptDeployment = useCallback(
 		async (target: CheckoutReturnNavigationTarget, replace = false): Promise<boolean> => {
 			setAcceptedDeploymentRecovery(null);
@@ -326,6 +327,7 @@ export function DeployWizard() {
 			);
 			setSubmitTakingLong(false);
 			setSubmitting(true);
+			acceptanceNavigatingRef.current = true;
 			try {
 				const navigation = {
 					getDeployment: billingClient.getDeployment,
@@ -347,6 +349,7 @@ export function DeployWizard() {
 				}
 				return true;
 			} catch {
+				acceptanceNavigatingRef.current = false;
 				setAcceptedDeploymentRecovery({ replace, target });
 				setSubmitting(false);
 				setSubmitTakingLong(false);
@@ -1008,7 +1011,13 @@ export function DeployWizard() {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
-			<UnsavedNavigationGuard dirty={deployDirty} busy={submitting} />
+			{/* Guard only while idle: a submission in flight continues server-side
+			    (checkout-return recovers it), and the acceptance navigation is the
+			    wizard's own exit, not an abandonment. */}
+			<UnsavedNavigationGuard
+				dirty={deployDirty && !submitting && !acceptanceNavigatingRef.current}
+				busy={false}
+			/>
 			<form
 				className="flex flex-col gap-6"
 				onSubmit={(event) => {
