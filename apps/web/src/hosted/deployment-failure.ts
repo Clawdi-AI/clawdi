@@ -2,7 +2,6 @@ import type { HostedDeployment } from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
 	BillingNetworkError,
-	billingErrorDetail,
 	DeploymentConflictError,
 } from "@/hosted/billing/errors";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
@@ -14,23 +13,6 @@ const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service could not complete th
 const RUNTIME_UNAVAILABLE_REASON =
 	"Clawdi is checking the runtime. Open Compute settings for details.";
 
-const CUSTOMER_FAILURE_REASONS_BY_CODE = new Map<string, string>([
-	["provider_not_found", "The selected provider is no longer available in your Clawdi account."],
-	["invalid_managed_provider_id", "Clawdi AI cannot be combined with a saved provider."],
-	[
-		"insufficient_balance",
-		"Your Wallet balance was too low for the Clawdi service to complete this request.",
-	],
-	[
-		"insufficient_wallet_balance",
-		"Your Wallet balance was too low for the Clawdi service to complete this request.",
-	],
-	[
-		"open_refund_debt",
-		"Your Wallet has an unsettled refund balance, so the Clawdi service could not complete this request.",
-	],
-]);
-
 export type DeploymentFailureProjection = {
 	reason: string;
 	failedVerb: DeploymentOperationVerb | null;
@@ -39,11 +21,10 @@ export type DeploymentFailureProjection = {
 };
 
 export type DeploymentFailureRemediation =
-	| { kind: "restart"; label: string; requiresWalletTopUp: boolean }
-	| { kind: "review_plan_change"; label: string; requiresWalletTopUp: boolean }
-	| { kind: "review_provider"; label: string; requiresWalletTopUp: false }
-	| { kind: "retry_delete"; label: string; requiresWalletTopUp: false }
-	| { kind: "none"; label: null; requiresWalletTopUp: boolean };
+	| { kind: "restart"; label: string }
+	| { kind: "review_plan_change"; label: string }
+	| { kind: "retry_delete"; label: string }
+	| { kind: "none"; label: null };
 
 export type DeploymentFailurePresentation = DeploymentFailureProjection & {
 	title: string;
@@ -56,12 +37,6 @@ export type DeploymentFailurePresentation = DeploymentFailureProjection & {
 	remediation: DeploymentFailureRemediation;
 };
 
-const WALLET_FUNDING_CODES = new Set([
-	"insufficient_balance",
-	"insufficient_wallet_balance",
-	"open_refund_debt",
-]);
-const PROVIDER_CONFIGURATION_CODES = new Set(["provider_not_found", "invalid_managed_provider_id"]);
 const RUNTIME_FAILURE_CODES = new Set(["runtime_readiness_timeout"]);
 const FAILED_STATUS = { kind: "failed", label: "Failed", tone: "destructive" } as const;
 const RUNTIME_UNAVAILABLE_STATUS = {
@@ -83,19 +58,6 @@ export function deploymentMutationErrorMessage(error: unknown): string {
 			: "Clawdi couldn’t reach the agent service. Check your connection, then try again.";
 	}
 	if (error instanceof BillingApiError) {
-		const code = billingErrorDetail(error)?.code;
-		if (
-			error.status === 403 &&
-			error.detail === "The Compute Basic free slot allows only one active deployment."
-		) {
-			return "Your free Basic compute slot is already in use. Stop that agent or choose paid compute, then try again.";
-		}
-		if (code === "provider_not_found") {
-			return "The selected provider is no longer available in your Clawdi account. Choose Clawdi AI or save the provider again, then retry.";
-		}
-		if (code === "invalid_managed_provider_id") {
-			return "Clawdi AI can’t be combined with a saved provider. Choose Clawdi AI alone or choose a saved provider, then retry.";
-		}
 		if (error.status === 401) {
 			return "Your session has expired. Sign in again before changing this agent.";
 		}
@@ -144,10 +106,6 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 	}
 }
 
-function deploymentFailureNeedsWalletTopUp(failure: DeploymentFailureProjection): boolean {
-	return WALLET_FUNDING_CODES.has(failure.code);
-}
-
 /** Shared honest copy/action decision for detail, status, and tile surfaces. */
 export function deploymentFailurePresentation(
 	deployment: HostedDeployment | null | undefined,
@@ -156,27 +114,12 @@ export function deploymentFailurePresentation(
 	if (!failure) return null;
 	const operationLabel = deploymentOperationLabel(failure.failedVerb);
 	const operationName = operationLabel.toLocaleLowerCase();
-	const requiresWalletTopUp = deploymentFailureNeedsWalletTopUp(failure);
 	const statusFailure =
 		deployment?.resource.status?.summary_state === "failed"
 			? deployment.resource.status.failure
 			: null;
 	// Specific customer-actionable classes must win over a broad controller
 	// phase such as reconcile. A phase alone cannot prove a runtime-health issue.
-	if (PROVIDER_CONFIGURATION_CODES.has(failure.code)) {
-		return {
-			...failure,
-			title: "Provider configuration failed",
-			description:
-				"The current provider settings could not start this agent. Fix or switch the provider, then save the agent settings.",
-			status: FAILED_STATUS,
-			remediation: {
-				kind: "review_provider",
-				label: "Fix provider",
-				requiresWalletTopUp: false,
-			},
-		};
-	}
 	if (failure.failedVerb === null && statusFailure?.phase === "plan_change") {
 		return {
 			...failure,
@@ -186,7 +129,6 @@ export function deploymentFailurePresentation(
 			remediation: {
 				kind: "review_plan_change",
 				label: "Get fresh quote",
-				requiresWalletTopUp,
 			},
 		};
 	}
@@ -196,7 +138,7 @@ export function deploymentFailurePresentation(
 			title: "Temporarily unavailable",
 			description: RUNTIME_UNAVAILABLE_REASON,
 			status: RUNTIME_UNAVAILABLE_STATUS,
-			remediation: { kind: "none", label: null, requiresWalletTopUp: false },
+			remediation: { kind: "none", label: null },
 		};
 	}
 
@@ -206,42 +148,34 @@ export function deploymentFailurePresentation(
 			return {
 				...failure,
 				title: `${operationLabel} failed`,
-				description: requiresWalletTopUp
-					? `Top up your Wallet, then retry ${operationName}.`
-					: `The Clawdi service could not finish ${operationName}. Restart the agent to try again.`,
+				description: `The Clawdi service could not finish ${operationName}. Restart the agent to try again.`,
 				status: FAILED_STATUS,
 				remediation: {
 					kind: "restart",
 					label: "Retry startup",
-					requiresWalletTopUp,
 				},
 			};
 		case "restart":
 			return {
 				...failure,
 				title: `${operationLabel} failed`,
-				description: requiresWalletTopUp
-					? "The Clawdi service could not restart the agent. Top up your Wallet, then try again."
-					: "The Clawdi service could not restart the agent. Review the reason below, then try again.",
+				description:
+					"The Clawdi service could not restart the agent. Review the reason below, then try again.",
 				status: FAILED_STATUS,
 				remediation: {
 					kind: "restart",
 					label: "Retry restart",
-					requiresWalletTopUp,
 				},
 			};
 		case "plan_change":
 			return {
 				...failure,
 				title: `${operationLabel} failed`,
-				description: requiresWalletTopUp
-					? "Top up your Wallet, then get a fresh quote and confirm the price before trying again."
-					: "Get a fresh quote and confirm the price before trying again.",
+				description: "Get a fresh quote and confirm the price before trying again.",
 				status: FAILED_STATUS,
 				remediation: {
 					kind: "review_plan_change",
 					label: "Get fresh quote",
-					requiresWalletTopUp,
 				},
 			};
 		case "delete":
@@ -254,7 +188,6 @@ export function deploymentFailurePresentation(
 				remediation: {
 					kind: "retry_delete",
 					label: "Retry delete",
-					requiresWalletTopUp: false,
 				},
 			};
 		case "stop":
@@ -270,7 +203,7 @@ export function deploymentFailurePresentation(
 				title: `${operationLabel} failed`,
 				description: `Review the reason below. There is no safe one-click retry for this ${operationName} failure.`,
 				status: FAILED_STATUS,
-				remediation: { kind: "none", label: null, requiresWalletTopUp },
+				remediation: { kind: "none", label: null },
 			};
 	}
 }
@@ -297,8 +230,6 @@ export function deploymentFailureReason(
 	if (failedVerb === "plan_change" || failure.phase === "plan_change") {
 		return PLAN_CHANGE_FAILURE_REASON;
 	}
-	const customerReason = CUSTOMER_FAILURE_REASONS_BY_CODE.get(failure.code ?? "");
-	if (customerReason) return customerReason;
 	return isRuntimeStatusFailure(failure)
 		? RUNTIME_UNAVAILABLE_REASON
 		: DEFAULT_SERVICE_FAILURE_REASON;
