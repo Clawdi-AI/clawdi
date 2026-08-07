@@ -175,7 +175,7 @@ export function AgentSourceBadge({
 			className={cn(
 				"shrink-0 whitespace-nowrap border font-medium leading-none shadow-sm",
 				iconOnly
-					? "size-4 justify-center rounded-full p-0"
+					? "size-5 justify-center rounded-full p-0"
 					: compact
 						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
 						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
@@ -185,7 +185,7 @@ export function AgentSourceBadge({
 				className,
 			)}
 		>
-			<Icon className={cn(iconOnly ? "size-2.5" : "size-3.5", iconClass)} />
+			<Icon className={cn("size-3.5", iconClass)} />
 			{iconOnly ? <span className="sr-only">{label}</span> : label}
 		</StatusBadge>
 	);
@@ -207,16 +207,14 @@ export function LegacyAgentBadge({
 			className={cn(
 				"shrink-0 whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
 				iconOnly
-					? "size-4 justify-center rounded-full p-0"
+					? "size-5 justify-center rounded-full p-0"
 					: compact
 						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
 						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
 				className,
 			)}
 		>
-			<History
-				className={cn(iconOnly ? "size-2.5" : "size-3.5", "text-warning-muted-foreground")}
-			/>
+			<History className={cn("size-3.5", "text-warning-muted-foreground")} />
 			{iconOnly ? <span className="sr-only">Legacy</span> : "Legacy"}
 		</StatusBadge>
 	);

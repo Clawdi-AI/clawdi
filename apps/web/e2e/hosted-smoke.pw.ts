@@ -4338,8 +4338,8 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(cloudMarkerBox.height).toBe(legacyMarkerBox.height);
 	expect(cloudIconBox.width).toBe(legacyIconBox.width);
 	expect(cloudIconBox.height).toBe(legacyIconBox.height);
-	expect(cloudMarkerBox.width).toBe(16);
-	expect(cloudIconBox.width).toBe(12);
+	expect(cloudMarkerBox.width).toBe(20);
+	expect(cloudIconBox.width).toBe(14);
 
 	const connectedTileBox = await rail
 		.getByTestId("app-sidebar-agent-tile")
