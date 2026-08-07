@@ -4,7 +4,7 @@
  * The deploy/cloud-api backend raises FastAPI `HTTPException`s whose body is
  * `{ "detail": "<message-or-code>" }`. This module captures the status + the
  * parsed detail, and normalizes the user-facing copy for hosted billing cases:
- * most importantly the managed-AI balance-exhausted 403, which
+ * most importantly the managed-AI balance-exhausted 402, which
  * must read as "insufficient balance / top up", never a raw gateway error
  * from the upstream provider.
  */
@@ -260,21 +260,19 @@ export function billingQueryRetry(failureCount: number, error: unknown): boolean
 	return failureCount < 2 && isRetryableError(error);
 }
 
-const INSUFFICIENT_BALANCE_PATTERNS = [
-	/insufficient[_\s-]?balance/i,
-	/insufficient funds/i,
-	/balance.*(too low|exhausted|depleted)/i,
-];
-
 /**
- * Detect the managed-AI balance-exhausted condition. The gateway emits a 403
- * `INSUFFICIENT_BALANCE`; cloud-api may also surface it as a detail string.
- * Used to swap in the normalized "top up / enable auto-reload" UX.
+ * Detect the managed-AI balance-exhausted condition. The deploy API emits this
+ * as a structured 402 detail: `{"code": "insufficient_wallet_balance", ...}`
+ * (see `_wallet_compute_insufficient_detail` in clawdi-hosted
+ * `backend/app/v2/compute/routes.py`). Key on that code, never on free-form
+ * message text from an upstream gateway.
  */
+export const INSUFFICIENT_WALLET_BALANCE_CODE = "insufficient_wallet_balance";
+
 export function isInsufficientBalanceError(error: unknown): boolean {
 	if (!(error instanceof BillingApiError)) return false;
 	if (error.status !== 403 && error.status !== 402) return false;
-	return INSUFFICIENT_BALANCE_PATTERNS.some((re) => re.test(error.detail));
+	return billingErrorDetail(error)?.code === INSUFFICIENT_WALLET_BALANCE_CODE;
 }
 
 /**

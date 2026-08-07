@@ -107,10 +107,28 @@ describe("normalizeBillingError", () => {
 		expect(msg).not.toMatch(/upstream connect error/);
 	});
 
-	test("insufficient balance keeps the product narrative", () => {
-		const e = new BillingApiError(403, "INSUFFICIENT_BALANCE");
+	test("insufficient balance keeps the product narrative for the structured 402 code", () => {
+		const e = new BillingApiError(
+			402,
+			'{"code":"insufficient_wallet_balance","required_usd":"5.00","available_usd":"1.00","shortfall_usd":"4.00"}',
+			{
+				detail: {
+					code: "insufficient_wallet_balance",
+					required_usd: "5.00",
+					available_usd: "1.00",
+					shortfall_usd: "4.00",
+				},
+			},
+		);
 		expect(isInsufficientBalanceError(e)).toBe(true);
 		expect(normalizeBillingError(e)).toMatch(/balance is too low/i);
+	});
+
+	test("message-text matching alone never triggers the insufficient-balance narrative", () => {
+		const gatewayText = new BillingApiError(403, "INSUFFICIENT_BALANCE");
+		const missingCode = new BillingApiError(402, "The wallet balance is insufficient. Top up.");
+		expect(isInsufficientBalanceError(gatewayText)).toBe(false);
+		expect(isInsufficientBalanceError(missingCode)).toBe(false);
 	});
 
 	test("snake_case codes stay internal while real sentences pass through", () => {

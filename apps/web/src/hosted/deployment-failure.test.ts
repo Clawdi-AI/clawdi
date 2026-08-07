@@ -130,7 +130,6 @@ describe("deploymentFailureReason", () => {
 			remediation: {
 				kind: "review_plan_change",
 				label: "Get fresh quote",
-				requiresWalletTopUp: false,
 			},
 		});
 	});
@@ -233,19 +232,14 @@ describe("deploymentFailureReason", () => {
 	test("prioritizes customer-actionable codes over a broad reconcile phase", () => {
 		const cases = [
 			{
-				code: "provider_not_found",
-				title: "Provider configuration failed",
-				reason: "The selected provider is no longer available in your Clawdi account.",
+				code: "runtime_readiness_timeout",
+				title: "Temporarily unavailable",
+				reason: "Clawdi is checking the runtime. Open Compute settings for details.",
 			},
 			{
-				code: "invalid_managed_provider_id",
-				title: "Provider configuration failed",
-				reason: "Clawdi AI cannot be combined with a saved provider.",
-			},
-			{
-				code: "insufficient_wallet_balance",
+				code: "operation_aborted",
 				title: "Agent action failed",
-				reason: "Your Wallet balance was too low for the Clawdi service to complete this request.",
+				reason: "The Clawdi service could not complete this request.",
 			},
 		] as const;
 
@@ -270,10 +264,34 @@ describe("deploymentFailureReason", () => {
 			expect(presentation).toMatchObject({
 				title: item.title,
 				reason: item.reason,
-				status: { kind: "failed", label: "Failed", tone: "destructive" },
 			});
-			expect(presentation?.title).not.toBe("Temporarily unavailable");
 		}
+	});
+
+	test("never maps codes outside the pinned lifecycle problem set to provider or wallet copy", () => {
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			failure: {
+				type: "https://api.clawdi.ai/problems/provider-not-found",
+				title: "Provider not found",
+				status: 404,
+				detail: "Provider unavailable",
+				code: "provider_not_found",
+				phase: "reconcile",
+				retryable: false,
+				conditionReason: "ProviderNotFound",
+				conditionMessage: "Provider unavailable",
+				observedGeneration: 2,
+			},
+		});
+		const presentation = deploymentFailurePresentation(deployment);
+		const projection = deploymentFailureProjection(deployment);
+
+		expect(projection?.code).toBe("provider_not_found");
+		expect(projection?.reason).toBe("The Clawdi service could not complete this request.");
+		expect(presentation?.title).not.toContain("Provider configuration failed");
+		expect(presentation?.remediation.kind).not.toBe("review_provider");
+		expect(presentation?.description).not.toContain("Wallet");
 	});
 
 	test("does not expose a stale failure outside the authoritative failed state", () => {
@@ -294,33 +312,33 @@ describe("deploymentFailureReason", () => {
 		expect(deploymentFailureProjection(deployment)).toBeNull();
 	});
 
-	test("surfaces a terminal provider operation before the resource summary catches up", () => {
+	test("surfaces a terminal operation failure before the resource summary catches up", () => {
 		const operation: DeploymentOperation = {
-			name: "operations/provider-failed",
+			name: "operations/create-failed",
 			metadata: {
 				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
-				deploymentId: "hdep_provider_failed",
+				deploymentId: "hdep_create_failed",
 				verb: "create",
 				targetGeneration: 1,
-				manifestETag: "manifest-provider-failed",
+				manifestETag: "manifest-create-failed",
 				createTime: "2026-07-27T00:00:00Z",
 				updateTime: "2026-07-27T00:01:00Z",
 			},
 			done: true,
 			error: {
-				code: 5,
-				message: "provider unavailable",
+				code: 13,
+				message: "operation failed",
 				details: [
 					{
 						"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
-						type: "https://api.clawdi.ai/problems/provider-not-found",
-						title: "Provider not found",
-						status: 404,
-						detail: "Provider unavailable",
-						code: "provider_not_found",
+						type: "https://api.clawdi.ai/problems/operation_aborted",
+						title: "Deployment operation was aborted",
+						status: 409,
+						detail: "Operation aborted",
+						code: "operation_aborted",
 						retryable: false,
-						conditionReason: "ProviderNotFound",
-						conditionMessage: "Provider unavailable",
+						conditionReason: "OperationAborted",
+						conditionMessage: "Operation aborted",
 						observedGeneration: 1,
 					},
 				],
@@ -328,15 +346,15 @@ describe("deploymentFailureReason", () => {
 			response: null,
 		};
 		const deployment = hostedDeploymentFixture({
-			id: "hdep_provider_failed",
+			id: "hdep_create_failed",
 			status: "starting",
 			acceptedOperation: operation,
 		});
 
 		expect(deploymentFailurePresentation(deployment)).toMatchObject({
-			title: "Provider configuration failed",
-			reason: "The selected provider is no longer available in your Clawdi account.",
-			remediation: { kind: "review_provider", label: "Fix provider" },
+			title: "Agent setup failed",
+			failedVerb: "create",
+			remediation: { kind: "restart", label: "Retry startup" },
 		});
 	});
 
@@ -348,15 +366,16 @@ describe("deploymentFailureReason", () => {
 });
 
 describe("deploymentMutationErrorMessage", () => {
-	test("maps provider failures to provider recovery instead of billing copy", () => {
+	test("does not map never-emitted provider codes to provider recovery copy", () => {
 		const error = new BillingApiError(404, "provider_not_found", {
 			detail: { code: "provider_not_found" },
 		});
 		const message = deploymentMutationErrorMessage(error);
 
-		expect(message).toContain("selected provider is no longer available");
-		expect(message).toContain("Choose Clawdi AI");
-		expect(message).not.toContain("billing");
+		expect(message).toBe(
+			"This agent is no longer available. Return to Agents and refresh the list.",
+		);
+		expect(message).not.toContain("selected provider is no longer available");
 	});
 
 	test("keeps an unconfirmed timeout distinct from a rejection", () => {
@@ -365,13 +384,11 @@ describe("deploymentMutationErrorMessage", () => {
 		);
 	});
 
-	test("maps the Basic slot entitlement to its actual recovery", () => {
+	test("falls back to the account-level 403 copy instead of a literal detail string", () => {
 		expect(
 			deploymentMutationErrorMessage(
 				new BillingApiError(403, "The Compute Basic free slot allows only one active deployment."),
 			),
-		).toBe(
-			"Your free Basic compute slot is already in use. Stop that agent or choose paid compute, then try again.",
-		);
+		).toBe("Your Clawdi account can’t change this agent. Ask the agent owner to update it.");
 	});
 });
