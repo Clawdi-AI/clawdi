@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { DeploymentOperation } from "@/hosted/billing/contracts";
 import {
+	canCancelOperation,
 	canDelete,
 	canQueryDeploymentProjection,
 	canRestart,
 	canStart,
 	canStop,
 	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+	DEPLOYMENT_TRANSITION_ESCALATION_MS,
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 	type DeploymentOperationVerb,
 	deploymentPollingState,
@@ -226,6 +228,33 @@ describe("DeploymentStatus", () => {
 		expect(canDelete(parseDeploymentStatus("future_status"))).toBe(false);
 	});
 
+	test("gates cancellation on the backend cancel acceptance contract", () => {
+		expect(canCancelOperation(undefined)).toBe(false);
+		expect(canCancelOperation(null)).toBe(false);
+		for (const verb of [
+			"create",
+			"start",
+			"stop",
+			"restart",
+			"update",
+			"delete",
+			"rename",
+		] as const) {
+			const inFlight = acceptedOperation(verb);
+			expect(canCancelOperation(inFlight)).toBe(true);
+		}
+		const done = acceptedOperation("delete");
+		done.done = true;
+		expect(canCancelOperation(done)).toBe(false);
+	});
+
+	test("refuses cancellation for backend-managed image cohort operations", () => {
+		for (const verb of ["migrate_image", "rollback_image"] as const) {
+			const operation = acceptedOperation(verb);
+			expect(canCancelOperation(operation)).toBe(false);
+		}
+	});
+
 	test("classifies whether any deployment is non-terminal", () => {
 		expect(
 			shouldPollDeployments([
@@ -369,6 +398,84 @@ describe("DeploymentStatus", () => {
 		expect(running.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
 		expect(running.transitions.size).toBe(0);
 		expect(running.trackers.size).toBe(0);
+	});
+
+	test("escalates a transition stuck past the escalation window with reconciliation polling intact", () => {
+		const acceptedAtMs = Date.parse("2026-07-29T05:00:00Z");
+		const operation = acceptedOperation("update");
+		operation.metadata.deploymentId = "hdep_stuck_update";
+		operation.metadata.createTime = "2026-07-29T05:00:00Z";
+		operation.metadata.updateTime = "2026-07-29T05:00:00Z";
+		const stuck = hostedDeploymentFixture({
+			id: "hdep_stuck_update",
+			status: "updating",
+			acceptedOperation: operation,
+		});
+		const accepted = deploymentPollingState([stuck], new Map(), acceptedAtMs);
+		const stillTimedOut = deploymentPollingState(
+			[stuck],
+			accepted.trackers,
+			Date.parse("2026-07-29T05:14:59Z"),
+		);
+		const escalated = deploymentPollingState(
+			[stuck],
+			stillTimedOut.trackers,
+			Date.parse("2026-07-29T05:15:00Z"),
+		);
+
+		expect(stillTimedOut.transitions.get("hdep_stuck_update")?.kind).toBe("timed_out");
+		expect(escalated.transitions.get("hdep_stuck_update")).toMatchObject({
+			kind: "escalated",
+			verb: "update",
+		});
+		expect(escalated.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(DEPLOYMENT_TRANSITION_ESCALATION_MS).toBe(15 * 60_000);
+	});
+
+	test("drops the escalation as soon as the deployment reaches a terminal state", () => {
+		const operation = acceptedOperation("restart");
+		operation.metadata.deploymentId = "hdep_stuck_restart";
+		operation.metadata.createTime = "2026-07-29T05:00:00Z";
+		operation.metadata.updateTime = "2026-07-29T05:00:00Z";
+		const stuck = hostedDeploymentFixture({
+			id: "hdep_stuck_restart",
+			status: "restarting",
+			acceptedOperation: operation,
+		});
+		const escalated = deploymentPollingState(
+			[stuck],
+			new Map(),
+			Date.parse("2026-07-29T05:20:00Z"),
+		);
+		const resolved = deploymentPollingState(
+			[
+				hostedDeploymentFixture({
+					id: "hdep_stuck_restart",
+					status: "running",
+					acceptedOperation: operation,
+				}),
+			],
+			escalated.trackers,
+			Date.parse("2026-07-29T05:21:00Z"),
+		);
+
+		expect(escalated.transitions.get("hdep_stuck_restart")?.kind).toBe("escalated");
+		expect(resolved.transitions.size).toBe(0);
+		expect(resolved.trackers.size).toBe(0);
+	});
+
+	test("cancels fast polling on a failed accepted operation before escalation matters", () => {
+		const operation = acceptedOperation("create");
+		operation.done = true;
+		operation.error = { code: 1, message: "cancelled", details: [] };
+		const result = deploymentPollingState(
+			[hostedDeploymentFixture({ status: "deleting", acceptedOperation: operation })],
+			new Map(),
+			Date.parse("2026-07-29T05:20:00Z"),
+		);
+
+		expect(result.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(result.transitions.size).toBe(0);
 	});
 
 	test("schedules a modest reconciliation interval for steady inventory", () => {

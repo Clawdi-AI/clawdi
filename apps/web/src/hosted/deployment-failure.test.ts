@@ -6,6 +6,7 @@ import {
 	deploymentFailureProjection,
 	deploymentFailureReason,
 	deploymentMutationErrorMessage,
+	operationCancelErrorMessage,
 } from "@/hosted/deployment-failure";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
@@ -390,5 +391,99 @@ describe("deploymentMutationErrorMessage", () => {
 				new BillingApiError(403, "The Compute Basic free slot allows only one active deployment."),
 			),
 		).toBe("Your Clawdi account can’t change this agent. Ask the agent owner to update it.");
+	});
+});
+
+describe("cancelled operation presentation", () => {
+	function cancelledOperation(verb: DeploymentOperationVerb): DeploymentOperation {
+		return {
+			...failedOperation(verb),
+			name: `operations/${verb}-cancelled`,
+			error: {
+				code: 1,
+				message: "Operation was cancelled",
+				details: [
+					{
+						"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+						type: "https://api.clawdi.ai/problems/operation-cancelled",
+						title: "Deployment operation was cancelled",
+						status: 409,
+						detail: "Cancellation committed a compensating desired-state generation.",
+						code: "operation_cancelled",
+						retryable: false,
+						conditionReason: "OperationCancelled",
+						conditionMessage: "Cancellation committed a compensating desired-state generation.",
+						observedGeneration: 2,
+					},
+				],
+			},
+		};
+	}
+
+	test("presents a user-cancelled delete as cancelled, not failed, with no retry", () => {
+		const presentation = deploymentFailurePresentation(
+			hostedDeploymentFixture({
+				status: "running",
+				acceptedOperation: cancelledOperation("delete"),
+			}),
+		);
+
+		expect(presentation).toMatchObject({
+			title: "Agent deletion cancelled",
+			status: { kind: "cancelled", label: "Cancelled", tone: "neutral" },
+			remediation: { kind: "none", label: null },
+		});
+		expect(presentation?.description).toContain("was stopped before it completed");
+	});
+
+	test("labels every cancelled operation verb without inventing a retry", () => {
+		for (const verb of ["create", "start", "restart", "update", "plan_change"] as const) {
+			const presentation = deploymentFailurePresentation(
+				hostedDeploymentFixture({
+					status: "starting",
+					acceptedOperation: cancelledOperation(verb),
+				}),
+			);
+			expect(presentation?.title).toContain("cancelled");
+			expect(presentation?.remediation.kind).toBe("none");
+		}
+	});
+
+	test("does not claim failure for a cancelled operation", () => {
+		const presentation = deploymentFailurePresentation(
+			hostedDeploymentFixture({
+				status: "running",
+				acceptedOperation: cancelledOperation("start"),
+			}),
+		);
+		expect(presentation?.status.kind).toBe("cancelled");
+		expect(presentation?.title).not.toContain("failed");
+	});
+});
+
+describe("operationCancelErrorMessage", () => {
+	test("explains a completed-change race instead of the generic mutation copy", () => {
+		const error = new BillingApiError(409, "Deployment operation was cancelled", {
+			detail: { code: "operation_cancelled" },
+		});
+		expect(operationCancelErrorMessage(error)).toBe(
+			"This change already finished before cancellation could be applied.",
+		);
+	});
+
+	test("explains an idempotency-key reuse without leaking the key", () => {
+		const error = new BillingApiError(409, "Deployment idempotency key was reused", {
+			detail: { code: "idempotency_key_reused" },
+		});
+		expect(operationCancelErrorMessage(error)).toBe(
+			"This cancellation was already requested. Check the latest status, then try again.",
+		);
+	});
+
+	test("falls back to the shared mutation copy for other rejections", () => {
+		const error = new BillingApiError(404, "Operation not found");
+		expect(operationCancelErrorMessage(error)).toBe(
+			"This agent is no longer available. Return to Agents and refresh the list.",
+		);
 	});
 });

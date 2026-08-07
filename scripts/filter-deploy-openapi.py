@@ -65,6 +65,7 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/deployments/{deployment_id}/workspace-skills": {"get", "post"},
     "/v2/deployments/{deployment_id}/workspace-skills/{skill_key}": {"delete"},
     "/v2/operations/{operation_id}": {"get"},
+    "/v2/operations/{operation_id}:cancel": {"post"},
     "/v2/subscription/checkout": {"post"},
     "/v2/subscription/cancel": {"post"},
     "/v2/subscription/fix-payment": {"post"},

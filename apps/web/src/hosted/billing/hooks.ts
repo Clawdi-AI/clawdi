@@ -326,7 +326,7 @@ export function useUsage(
 
 const BILLING_RECOVERY_POLL_INTERVAL_MS = 30_000;
 
-/** Foreground polling is a bridge until deployment SSE is wired into this client. */
+/** Foreground polling is a bridge for live updates; no background polling. */
 export const HOSTED_DEPLOYMENTS_REFRESH_POLICY = {
 	refetchIntervalInBackground: false,
 	refetchOnWindowFocus: true,

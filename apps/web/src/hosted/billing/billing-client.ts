@@ -4,7 +4,6 @@ import {
 	type DeployPaths,
 	extractApiDetail,
 	projectHostedDeployRequest,
-	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
@@ -27,7 +26,6 @@ import type {
 	DeploymentUpdateRequest,
 	HostedDeployment,
 	HostedDeployRequestStatus,
-	HostedEventStreamSnapshotHandoff,
 	HostedWorkspaceSkillInstallRequest,
 	HostedWorkspaceSkillListResponse,
 	HostedWorkspaceSkillMutationResponse,
@@ -633,14 +631,6 @@ export function createBillingClient(
 
 		listDeployments: async (): Promise<HostedDeployment[]> =>
 			unwrapDeploymentList(unwrapDeploy(await api.GET("/v2/deployments"))),
-		listEventStreamHandoff: async (): Promise<HostedEventStreamSnapshotHandoff> =>
-			unwrapDeploymentEventStreamSnapshotHandoff(
-				unwrapDeploy(
-					await api.GET("/v2/deployments", {
-						params: { query: { eventStreamHandoff: true } },
-					}),
-				),
-			),
 		getDeployment,
 		waitForDeploymentRequest,
 		createDeployment: async (
@@ -703,6 +693,16 @@ export function createBillingClient(
 					body,
 				}),
 			),
+		cancelDeploymentOperation: async (operationName: string, idempotencyKey: string) => {
+			unwrapDeploy(
+				await api.POST("/v2/operations/{operation_id}:cancel", {
+					params: {
+						path: { operation_id: operationIdFromName(operationName) },
+						header: { "Idempotency-Key": idempotencyKey },
+					},
+				}),
+			);
+		},
 		deleteDeployment,
 	};
 }

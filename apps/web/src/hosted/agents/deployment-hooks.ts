@@ -19,7 +19,10 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
-import { deploymentMutationErrorMessage } from "@/hosted/deployment-failure";
+import {
+	deploymentMutationErrorMessage,
+	operationCancelErrorMessage,
+} from "@/hosted/deployment-failure";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
@@ -154,6 +157,7 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		isFetching: inventory.isFetching,
 		deploymentTransition,
 		deploymentTransitionTimedOut: deploymentTransition?.kind === "timed_out",
+		deploymentTransitionEscalated: deploymentTransition?.kind === "escalated",
 		deploymentFailure,
 		error: inventory.error,
 		refetch: inventory.refetch,
@@ -271,6 +275,30 @@ export function useUpdateDeployment() {
 			if (toastDeploymentConflict(error)) return;
 			toast.error("Couldn't update agent settings", {
 				description: deploymentMutationErrorMessage(error),
+			});
+		},
+		onSettled: () => invalidateDeploymentSnapshots(qc),
+	});
+}
+
+/** Request cancellation of an in-flight accepted deployment operation. */
+export function useCancelDeploymentOperation() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (vars: { operationName: string }) =>
+			runStableDeploymentIntent("deployment-cancel", vars, (idempotencyKey) =>
+				client.cancelDeploymentOperation(vars.operationName, idempotencyKey),
+			),
+		onSuccess: () => {
+			toast.message("Cancellation requested", {
+				description: "The change will be stopped. This page updates automatically.",
+			});
+		},
+		onError: (error) => {
+			if (toastDeploymentConflict(error)) return;
+			toast.error("Couldn't cancel this change", {
+				description: operationCancelErrorMessage(error),
 			});
 		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),

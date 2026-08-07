@@ -107,6 +107,7 @@ import {
 } from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { isCloudEnvId } from "@/hosted/agent-route";
+import { DeploymentCancelAction } from "@/hosted/agents/deployment-cancel-action";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
 	useDeploymentLifecycle,
@@ -440,6 +441,7 @@ export function HostedAgentDetail({
 	routeSearch,
 	onDeleteAccepted,
 	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 }: {
@@ -450,6 +452,7 @@ export function HostedAgentDetail({
 	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => void;
 	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 }) {
@@ -588,6 +591,7 @@ export function HostedAgentDetail({
 						<InitialDeploymentPage
 							deployment={deployment}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							deploymentTransitionEscalated={deploymentTransitionEscalated}
 							isCheckingDeployment={isCheckingDeployment}
 							onCheckDeploymentAgain={onCheckDeploymentAgain}
 						/>
@@ -607,6 +611,7 @@ export function HostedAgentDetail({
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							deploymentTransitionEscalated={deploymentTransitionEscalated}
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "console" ? (
@@ -615,6 +620,7 @@ export function HostedAgentDetail({
 							runtime={runtime}
 							terminalHref={terminalHref}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							deploymentTransitionEscalated={deploymentTransitionEscalated}
 							isCheckingDeployment={isCheckingDeployment}
 							onCheckDeploymentAgain={onCheckDeploymentAgain}
 						/>
@@ -851,10 +857,12 @@ export function OverviewComputeStatus({
 	deployment,
 	failure,
 	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 }: {
 	deployment: HostedDeployment;
 	failure: DeploymentFailurePresentation | null;
 	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	return (
@@ -872,6 +880,13 @@ export function OverviewComputeStatus({
 				<p className="text-destructive-muted-foreground" role="status">
 					The last compute change did not complete.
 				</p>
+			) : deploymentTransitionEscalated ? (
+				<div className="flex flex-wrap items-center justify-between gap-2" role="status">
+					<p className="text-warning-muted-foreground">
+						This change appears to be stuck. You can cancel it and try again.
+					</p>
+					<DeploymentCancelAction deployment={deployment} />
+				</div>
 			) : status.kind === "restarting" ? (
 				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
 					<Spinner className="size-3.5" /> Restarting
@@ -949,11 +964,13 @@ export function OverviewComputeSummary({
 export function InitialDeploymentPage({
 	deployment,
 	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
 	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 }) {
@@ -975,25 +992,32 @@ export function InitialDeploymentPage({
 		<DetailPanel
 			className={cn(
 				"p-6 md:p-8",
-				deploymentTransitionTimedOut && "border-warning/30 bg-warning-muted",
+				(deploymentTransitionTimedOut || deploymentTransitionEscalated) &&
+					"border-warning/30 bg-warning-muted",
 			)}
 		>
 			<div
 				data-testid="hosted-initial-deployment-panel"
-				role={deploymentTransitionTimedOut ? "alert" : undefined}
+				role={deploymentTransitionTimedOut || deploymentTransitionEscalated ? "alert" : undefined}
 				className="space-y-6"
 			>
 				<div>
 					<h2 className="flex items-center gap-2 text-lg font-semibold">
-						{deploymentTransitionTimedOut ? <AlertCircle className="size-5" /> : null}
-						{deploymentTransitionTimedOut
-							? "Setup is taking longer than expected"
-							: `Setting up ${runtimeLabel}`}
+						{deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
+							<AlertCircle className="size-5" />
+						) : null}
+						{deploymentTransitionEscalated
+							? "Setup appears to be stuck"
+							: deploymentTransitionTimedOut
+								? "Setup is taking longer than expected"
+								: `Setting up ${runtimeLabel}`}
 					</h2>
 					<p className="mt-1 text-sm text-muted-foreground">
-						{deploymentTransitionTimedOut
-							? "Your agent may still be starting. We’ll keep checking automatically."
-							: "This page updates automatically as setup progresses."}
+						{deploymentTransitionEscalated
+							? "We’ll keep checking automatically. If you want, cancel this setup and try again."
+							: deploymentTransitionTimedOut
+								? "Your agent may still be starting. We’ll keep checking automatically."
+								: "This page updates automatically as setup progresses."}
 					</p>
 				</div>
 				<div>
@@ -1004,7 +1028,9 @@ export function InitialDeploymentPage({
 							aria-live="polite"
 							aria-atomic="true"
 						>
-							{!deploymentTransitionTimedOut && status.kind !== "running" ? (
+							{!deploymentTransitionTimedOut &&
+							!deploymentTransitionEscalated &&
+							status.kind !== "running" ? (
 								<span className="inline-flex" aria-hidden="true">
 									<Spinner className="size-3.5 shrink-0 text-primary" />
 								</span>
@@ -1058,16 +1084,21 @@ export function InitialDeploymentPage({
 						})}
 					</ol>
 				</div>
-				{deploymentTransitionTimedOut ? (
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						disabled={isCheckingDeployment}
-						onClick={onCheckDeploymentAgain}
-					>
-						{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}Check again
-					</Button>
+				{deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
+					<div className="flex flex-wrap gap-2">
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isCheckingDeployment}
+							onClick={onCheckDeploymentAgain}
+						>
+							{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}Check again
+						</Button>
+						{deploymentTransitionEscalated ? (
+							<DeploymentCancelAction deployment={deployment} />
+						) : null}
+					</div>
 				) : null}
 			</div>
 		</DetailPanel>
@@ -1087,6 +1118,7 @@ function OverviewTab({
 	onRetrySessions,
 	sessionLink,
 	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 }: {
 	agentId: string;
 	routeSearch: AgentRouteSearch;
@@ -1103,6 +1135,7 @@ function OverviewTab({
 		params: { id: string; sessionId: string };
 	};
 	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 }) {
 	const spec = deployment.resource.spec;
 	const primaryModel = spec.runtime_configuration.primary_model;
@@ -1228,6 +1261,7 @@ function OverviewTab({
 										deployment={deployment}
 										failure={deploymentFailure}
 										deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+										deploymentTransitionEscalated={deploymentTransitionEscalated}
 									/>
 								</div>
 							)}
@@ -1325,6 +1359,7 @@ function ConsoleTab({
 	runtime,
 	terminalHref,
 	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 }: {
@@ -1332,6 +1367,7 @@ function ConsoleTab({
 	runtime: Runtime;
 	terminalHref: string;
 	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 }) {
@@ -1350,37 +1386,48 @@ function ConsoleTab({
 	if (!isRunning) {
 		return (
 			<EmptyState
-				icon={deploymentTransitionTimedOut ? AlertCircle : MonitorPlay}
+				icon={
+					deploymentTransitionTimedOut || deploymentTransitionEscalated ? AlertCircle : MonitorPlay
+				}
 				title={
-					deploymentTransitionTimedOut
-						? "Your agent is taking longer than expected"
-						: isStarting
-							? startingTitle()
-							: "Agent is not running"
+					deploymentTransitionEscalated
+						? "Your agent’s setup appears to be stuck"
+						: deploymentTransitionTimedOut
+							? "Your agent is taking longer than expected"
+							: isStarting
+								? startingTitle()
+								: "Agent is not running"
 				}
 				description={
-					deploymentTransitionTimedOut
-						? "The latest status still shows this change in progress after five minutes. It may still finish. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
-						: isStarting
-							? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
-							: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+					deploymentTransitionEscalated
+						? "The latest status still shows this change in progress after fifteen minutes. We’ll keep checking automatically once a minute while you’re here, or you can cancel the change and try again."
+						: deploymentTransitionTimedOut
+							? "The latest status still shows this change in progress after five minutes. It may still finish. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
+							: isStarting
+								? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
+								: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={
-					deploymentTransitionTimedOut ? (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							disabled={isCheckingDeployment}
-							onClick={onCheckDeploymentAgain}
-						>
-							{isCheckingDeployment ? (
-								<Spinner className="size-3.5" />
-							) : (
-								<RefreshCw className="size-3.5" />
-							)}
-							Check again
-						</Button>
+					deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
+						<div className="flex flex-wrap justify-center gap-2">
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={isCheckingDeployment}
+								onClick={onCheckDeploymentAgain}
+							>
+								{isCheckingDeployment ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<RefreshCw className="size-3.5" />
+								)}
+								Check again
+							</Button>
+							{deploymentTransitionEscalated ? (
+								<DeploymentCancelAction deployment={deployment} />
+							) : null}
+						</div>
 					) : canStartDeployment(status) ? (
 						<StartComputeAction deployment={deployment} />
 					) : null

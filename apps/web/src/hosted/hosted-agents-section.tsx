@@ -38,6 +38,8 @@ function HostedDeletionFailureNotices({ deployments }: { deployments: HostedDepl
 			{deployments.map((deployment) => {
 				const failure = deploymentFailurePresentation(deployment);
 				if (failure?.failedVerb !== "delete") return null;
+				// A user-cancelled deletion is deliberate, not a cleanup failure.
+				if (failure.code === "operation_cancelled") return null;
 				const name = agentDisplayName({
 					name: deployment.resource.name,
 					agent_type: deployment.resource.spec.runtime,

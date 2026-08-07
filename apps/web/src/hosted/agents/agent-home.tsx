@@ -90,6 +90,7 @@ export function AgentHome({
 		isLoading,
 		isFetching,
 		deploymentTransitionTimedOut,
+		deploymentTransitionEscalated,
 		error,
 		refetch,
 	} = useAgentDeployment(environmentId, deploymentSelector);
@@ -286,6 +287,7 @@ export function AgentHome({
 				routeSearch={deploymentRouteSearch}
 				onDeleteAccepted={() => router.navigate({ href: "/agents", replace: true })}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+				deploymentTransitionEscalated={deploymentTransitionEscalated}
 				isCheckingDeployment={manualChecking}
 				onCheckDeploymentAgain={() => void handleCheckAgain()}
 			/>
