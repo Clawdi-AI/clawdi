@@ -9,7 +9,6 @@ import {
 	defaultAiProviderRuntimeEnvName,
 } from "@clawdi/shared";
 import { parse as parseYaml } from "yaml";
-import { extractManagedLiveModels } from "../runtime/managed-model-resolution";
 import { buildAgentTargetProjection } from "./ai-provider-projection";
 
 const byokOpenAiCatalog: AiProviderCatalog = {
@@ -370,25 +369,15 @@ describe("AI provider projection", () => {
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "OPENAI_API_KEY",
-					models: extractManagedLiveModels({
-						data: [
-							{
-								id: "k3",
-								context_length: 1_048_576,
-								max_input_tokens: 1_048_576,
-							},
-							{
-								id: "kimi-for-coding",
-								context_length: 262_144,
-								max_input_tokens: 262_144,
-							},
-							{
-								id: "kimi-for-coding-highspeed",
-								context_length: 262_144,
-								max_input_tokens: 262_144,
-							},
-						],
-					}),
+					models: [
+						{ id: "k3", context_window: 1_048_576, max_input_tokens: 1_048_576 },
+						{ id: "kimi-for-coding", context_window: 262_144, max_input_tokens: 262_144 },
+						{
+							id: "kimi-for-coding-highspeed",
+							context_window: 262_144,
+							max_input_tokens: 262_144,
+						},
+					],
 				},
 			],
 			defaults: { chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID },
@@ -448,16 +437,14 @@ describe("AI provider projection", () => {
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "OPENAI_API_KEY",
-					models: extractManagedLiveModels({
-						data: [
-							{
-								id: "generic-output-alias",
-								context_length: 400_000,
-								max_input_tokens: 350_000,
-								max_output_tokens: 16_384,
-							},
-						],
-					}),
+					models: [
+						{
+							id: "generic-output-alias",
+							context_window: 400_000,
+							max_input_tokens: 350_000,
+							max_tokens: 16_384,
+						},
+					],
 				},
 			],
 			defaults: { chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID },

@@ -2,15 +2,9 @@ import type {
 	AiProviderApiMode,
 	AiProviderAuth,
 	AiProviderCatalog,
-	AiProviderModel,
 	AiProviderType,
 } from "@clawdi/shared";
-import {
-	CLAWDI_MANAGED_PROVIDER_ID,
-	isAiProviderApiMode,
-	isAiProviderType,
-	isClawdiManagedV2ProviderId,
-} from "@clawdi/shared";
+import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
@@ -19,9 +13,6 @@ import type { RuntimeManifest } from "./manifest-contract";
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
-	options: {
-		managedModelsOverride?: readonly AiProviderModel[];
-	} = {},
 ): { catalog: AiProviderCatalog; primaryModel: AgentPrimaryModel } | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
@@ -44,7 +35,6 @@ export function hostedAiProviderCatalog(
 			const models = hostedProviderModels(
 				input,
 				id === primaryModel.provider_id ? primaryModel : null,
-				id === primaryModel.provider_id ? options.managedModelsOverride : undefined,
 			);
 			return {
 				id,
@@ -101,7 +91,6 @@ function hostedRuntimePrimaryModel(
 function hostedProviderModels(
 	input: Record<string, unknown>,
 	primaryModel: AgentPrimaryModel | null,
-	managedModelsOverride?: readonly AiProviderModel[],
 ): NonNullable<AiProviderCatalog["providers"][number]["models"]> {
 	const providerApiMode = hostedProviderApiMode(input);
 	// Hosted wire rejects singular model; this fallback serves generic provider projections only.
@@ -121,24 +110,15 @@ function hostedProviderModels(
 			};
 		})
 		.filter((model): model is NonNullable<typeof model> => model !== null);
-	const manifestModelsById = new Map(manifestModels.map((model) => [model.id, model]));
-	const models = managedModelsOverride
-		? managedModelsOverride.map((model) => ({
-				...manifestModelsById.get(model.id),
-				...model,
-				id: model.id,
-			}))
-		: manifestModels;
+	// The manifest is the only source: the hosted control plane already
+	// intersected curation with Sub2API inventory and froze the result with its
+	// facts. Anything not in it is not offered.
+	const models = manifestModels;
 	if (singularModel && !models.some((model) => model.id === singularModel)) {
 		models.unshift({ id: singularModel, api_mode: providerApiMode });
 	}
 	if (primaryModel && !models.some((model) => model.id === primaryModel.model)) {
-		models.unshift(
-			manifestModelsById.get(primaryModel.model) ?? {
-				id: primaryModel.model,
-				api_mode: providerApiMode,
-			},
-		);
+		models.unshift({ id: primaryModel.model, api_mode: providerApiMode });
 	}
 	return models.filter(
 		(model, index, entries) => entries.findIndex((entry) => entry.id === model.id) === index,
@@ -151,117 +131,6 @@ function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMod
 		return raw;
 	}
 	return "openai_chat";
-}
-
-function managedProviderSupportsLiveModelProbe(apiMode: AiProviderApiMode): boolean {
-	return apiMode === "openai_chat" || apiMode === "openai_responses";
-}
-
-function managedGatewayPrimaryModelTarget(
-	manifest: RuntimeManifest,
-	runtimeName: string,
-): {
-	baseUrl: string;
-	credential: string;
-	providerId: string;
-} | null {
-	const providers = recordValue(manifest.projection?.providers);
-	if (!providers) return null;
-	const rawEntries = hostedProviderEntries(providers, runtimeName, manifest);
-	if (rawEntries.length === 0) return null;
-	const currentPrimary = hostedRuntimePrimaryModel(manifest, runtimeName);
-	const selectedProviderId = currentPrimary?.provider_id ?? null;
-	if (!selectedProviderId) return null;
-	const selectedProvider = rawEntries.find(
-		([providerId]) => providerId === selectedProviderId,
-	)?.[1];
-	const provider = recordValue(selectedProvider);
-	if (!provider || !isClawdiManagedProviderProjection(provider)) return null;
-	const baseUrl = stringValue(provider.baseUrl);
-	if (!baseUrl) return null;
-	const apiMode = hostedProviderApiMode(provider);
-	if (!managedProviderSupportsLiveModelProbe(apiMode)) return null;
-	const runtimeEnvName = hostedProviderRuntimeEnvName(selectedProviderId, provider);
-	const credential = hostedProviderPlaceholderEnv(manifest, runtimeName)[runtimeEnvName];
-	if (!credential) return null;
-	return {
-		baseUrl,
-		credential,
-		providerId: selectedProviderId,
-	};
-}
-
-interface ManagedGatewayModelOverrides {
-	models: Partial<Record<string, AiProviderModel[]>>;
-}
-
-interface ManagedGatewayModelFetchInput {
-	baseUrl: string;
-	credential: string;
-	home: string;
-	egressSystemCaFile: string | null;
-	providerId: string;
-	runtimeName: string;
-	workspaceRoot: string;
-}
-
-type ManagedGatewayModelFetchResult =
-	| { status: "ok"; endpoint: string; models: AiProviderModel[] }
-	| { status: "failed"; endpoint: string; detail: string };
-
-export type ManagedGatewayModelListFetcher = (
-	input: ManagedGatewayModelFetchInput,
-) => ManagedGatewayModelFetchResult;
-
-export function requiresManagedGatewayModelProbe(
-	manifest: RuntimeManifest,
-	enabledRuntimes: readonly string[],
-): boolean {
-	return enabledRuntimes.some(
-		(runtimeName) => managedGatewayPrimaryModelTarget(manifest, runtimeName) !== null,
-	);
-}
-
-export function resolveManagedGatewayModelOverrides(
-	manifest: RuntimeManifest,
-	enabledRuntimes: readonly string[],
-	home: string,
-	workspaceRoot: string,
-	egressSystemCaFile: string | null,
-	fetcher: ManagedGatewayModelListFetcher,
-): ManagedGatewayModelOverrides {
-	const overrides: ManagedGatewayModelOverrides = { models: {} };
-	const fetchCache = new Map<string, ManagedGatewayModelFetchResult>();
-	for (const runtimeName of enabledRuntimes) {
-		const target = managedGatewayPrimaryModelTarget(manifest, runtimeName);
-		if (!target) continue;
-		const cacheKey = `${target.providerId}\n${target.baseUrl}`;
-		let fetchResult = fetchCache.get(cacheKey);
-		if (!fetchResult) {
-			fetchResult = fetcher({
-				baseUrl: target.baseUrl,
-				credential: target.credential,
-				home,
-				egressSystemCaFile,
-				providerId: target.providerId,
-				runtimeName,
-				workspaceRoot,
-			});
-			fetchCache.set(cacheKey, fetchResult);
-			if (fetchResult.status === "failed") {
-				const loggedProviderId = isClawdiManagedV2ProviderId(target.providerId)
-					? CLAWDI_MANAGED_PROVIDER_ID
-					: target.providerId;
-				console.warn(
-					`managed model probe failed for ${runtimeName}/${loggedProviderId} at ${fetchResult.endpoint}: ${fetchResult.detail}; keeping configured catalog and default`,
-				);
-			}
-		}
-		if (fetchResult.status === "ok" && fetchResult.models.length > 0) {
-			overrides.models[runtimeName] = fetchResult.models;
-		}
-	}
-	return overrides;
 }
 
 function hostedProviderType(input: Record<string, unknown>): AiProviderType {

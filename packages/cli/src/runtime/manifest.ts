@@ -99,11 +99,8 @@ import {
 	hostedAiProviderCatalog,
 	hostedProviderEnvironment,
 	hostedProviderRequiresApiKey,
-	type ManagedGatewayModelListFetcher,
 	mergeRuntimeEnvWithProviderPlaceholders,
 	mergeRuntimeServiceEnvWithProviderPlaceholders,
-	requiresManagedGatewayModelProbe,
-	resolveManagedGatewayModelOverrides,
 } from "./hosted-provider-resolution";
 import {
 	assertHostedRuntimeContract,
@@ -131,7 +128,6 @@ import {
 	managedBaileysCompatSnapshotRuntimes,
 	reconcileManagedBaileysCompatibility,
 } from "./managed-baileys-compat";
-import { buildManagedModelsEndpoint, extractManagedLiveModels } from "./managed-model-resolution";
 import {
 	installReservedManagedSkill,
 	managedSkillReservationOwner,
@@ -202,7 +198,6 @@ import {
 	runtimeSystemdCommonEnvironment,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
-	writeRuntimeSidecarSystemdUnit,
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import {
@@ -235,10 +230,6 @@ import {
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 	parseManagedWhatsAppSocketMetadataJson,
 } from "./whatsapp-upstream-contract";
-
-type ManagedGatewayModelFetchInput = Parameters<ManagedGatewayModelListFetcher>[0];
-type ManagedGatewayModelFetchResult = ReturnType<ManagedGatewayModelListFetcher>;
-type ManagedGatewayModelOverrides = ReturnType<typeof resolveManagedGatewayModelOverrides>;
 
 export interface RuntimeConvergenceResult {
 	manifest: RuntimeManifest;
@@ -1433,95 +1424,6 @@ function applyHostedLocaleProjection(
 	return null;
 }
 
-const MANAGED_GATEWAY_MODEL_FETCH_TIMEOUT_MS = 3_000;
-
-const MANAGED_GATEWAY_MODEL_FETCH_SCRIPT = [
-	"const [url, timeoutRaw, credential] = process.argv.slice(1);",
-	"const timeoutMs = Number.parseInt(timeoutRaw ?? '', 10) || 3000;",
-	"const controller = new AbortController();",
-	"const timer = setTimeout(() => controller.abort(), timeoutMs);",
-	"(async () => {",
-	"  try {",
-	"    const response = await fetch(url, {",
-	"      method: 'GET',",
-	"      headers: { accept: 'application/json', authorization: 'Bearer ' + credential },",
-	"      signal: controller.signal,",
-	"    });",
-	"    const body = await response.text();",
-	"    process.stdout.write(JSON.stringify({ ok: response.ok, status: response.status, body }));",
-	"    process.exit(response.ok ? 0 : 1);",
-	"  } catch (error) {",
-	"    const detail = error && typeof error === 'object' && 'name' in error && error.name === 'AbortError'",
-	"      ? 'request timed out'",
-	"      : (error instanceof Error ? error.message : String(error));",
-	"    process.stderr.write(detail);",
-	"    process.exit(2);",
-	"  } finally {",
-	"    clearTimeout(timer);",
-	"  }",
-	"})();",
-].join("\n");
-
-function fetchManagedGatewayModelList(
-	input: ManagedGatewayModelFetchInput,
-): ManagedGatewayModelFetchResult {
-	const endpoint = buildManagedModelsEndpoint(input.baseUrl);
-	if (!input.egressSystemCaFile || !existsSync(input.egressSystemCaFile)) {
-		return {
-			status: "failed",
-			detail: "transparent managed gateway CA bundle is unavailable",
-			endpoint,
-		};
-	}
-	const result = spawnRuntimeUserCommand(
-		process.execPath,
-		[
-			"-e",
-			MANAGED_GATEWAY_MODEL_FETCH_SCRIPT,
-			endpoint,
-			String(MANAGED_GATEWAY_MODEL_FETCH_TIMEOUT_MS),
-			input.credential,
-		],
-		input.home,
-		input.workspaceRoot,
-		{
-			egressSystemCaFile: input.egressSystemCaFile,
-		},
-	);
-	const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout.toString("utf8");
-	const stderr = typeof result.stderr === "string" ? result.stderr : result.stderr.toString("utf8");
-	if (result.status !== 0) {
-		const detail = parseManagedGatewayFetchFailure(stdout, stderr, result.status);
-		return { status: "failed", detail, endpoint };
-	}
-	try {
-		const payload = JSON.parse(stdout) as { body?: string };
-		const body = payload.body ? JSON.parse(payload.body) : null;
-		return { status: "ok", endpoint, models: extractManagedLiveModels(body) };
-	} catch (error) {
-		return {
-			status: "failed",
-			detail: `invalid /models response: ${error instanceof Error ? error.message : String(error)}`,
-			endpoint,
-		};
-	}
-}
-
-function parseManagedGatewayFetchFailure(
-	stdout: string,
-	stderr: string,
-	status: number | null,
-): string {
-	try {
-		const payload = JSON.parse(stdout) as { status?: unknown };
-		if (typeof payload.status === "number") return `HTTP ${payload.status}`;
-	} catch {
-		// Best-effort parse only.
-	}
-	const detail = stderr.trim() || stdout.trim();
-	return detail || `exit ${status ?? "unknown"}`;
-}
-
 function resolvedRuntimeServiceSettings(
 	manifest: RuntimeManifest,
 	runtime: RuntimeName,
@@ -2520,16 +2422,11 @@ function applyHostedAiProviderProjection(
 	home: string,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
-	managedModelOverrides: ManagedGatewayModelOverrides,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
 	}
-	const projectionInput = agentTargetProjectionInput(
-		hostedAiProviderCatalog(manifest, name, {
-			managedModelsOverride: managedModelOverrides.models[name],
-		}),
-	);
+	const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, name));
 	assertHostedProviderProjectionMode(name, manifest, projectionInput);
 	if (manifest.runtimes[name]?.providerMode === "configured" && !projectionInput) {
 		if (name === "openclaw") {
@@ -2586,7 +2483,6 @@ function previewHostedAiProviderProjectionRevision(
 	manifest: RuntimeManifest,
 	home: string,
 	previousProviderIds: readonly string[],
-	managedModelOverrides: ManagedGatewayModelOverrides,
 ): string | null {
 	if (
 		(name !== "openclaw" && name !== "hermes") ||
@@ -2596,11 +2492,7 @@ function previewHostedAiProviderProjectionRevision(
 	) {
 		return null;
 	}
-	const projectionInput = agentTargetProjectionInput(
-		hostedAiProviderCatalog(manifest, name, {
-			managedModelsOverride: managedModelOverrides.models[name],
-		}),
-	);
+	const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, name));
 	assertHostedProviderProjectionMode(name, manifest, projectionInput);
 	if (manifest.runtimes[name]?.providerMode === "configured" && !projectionInput) {
 		return null;
@@ -4964,7 +4856,6 @@ function validateRuntimeProjectionPlan(input: {
 	secretValues: Record<string, string> | undefined;
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
-	managedModelOverrides?: ManagedGatewayModelOverrides;
 }): void {
 	const {
 		manifest,
@@ -4973,7 +4864,6 @@ function validateRuntimeProjectionPlan(input: {
 		secretValues,
 		observations,
 		previousProjectedProviderIds,
-		managedModelOverrides,
 	} = input;
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
@@ -5028,19 +4918,12 @@ function validateRuntimeProjectionPlan(input: {
 			mergeRuntimeServiceSecretEnv(name, service, settings, secretEnv);
 		}
 
-		const projectionInput = agentTargetProjectionInput(
-			hostedAiProviderCatalog(manifest, name, {
-				managedModelsOverride: managedModelOverrides?.models[name],
-			}),
-		);
+		const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, name));
 		assertHostedProviderProjectionMode(name, manifest, projectionInput);
 		const configuredProjectionUnavailable =
 			manifest.runtimes[name]?.providerMode === "configured" && !projectionInput;
-		const projectionRequiresInstalledModelProbe =
-			projectionInput?.catalog.providers.some((provider) => provider.managed_by === "clawdi") &&
-			managedModelOverrides === undefined;
 		if (name === "openclaw") {
-			if (projectionInput && !projectionRequiresInstalledModelProbe) {
+			if (projectionInput) {
 				buildOpenClawHostedProviderPatch(
 					projectionInput,
 					previousProjectedProviderIds.openclaw ?? [],
@@ -5051,7 +4934,7 @@ function validateRuntimeProjectionPlan(input: {
 			JSON.stringify(openClawGatewayHostedPatch(manifest, secretValues));
 		}
 		if (name === "hermes") {
-			if (projectionInput && !projectionRequiresInstalledModelProbe) {
+			if (projectionInput) {
 				const yamlProjection = buildAgentTargetProjection(
 					"hermes",
 					projectionInput.catalog,
@@ -5444,7 +5327,6 @@ export function convergeRuntimeManifest(
 			convergence: RuntimeConvergenceResult,
 			authority: RuntimePrivateAppliedAuthority,
 		) => void;
-		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
 		egressEngineEnsureOptions?: EnsureRuntimeMitmproxyOptions;
 		systemdApply?: RuntimeSystemdApplyHooks;
 		executeOfficialServiceInstallers?: boolean;
@@ -5619,7 +5501,6 @@ export function convergeRuntimeManifest(
 	let rollbackEgressSecretOverride: RuntimeEgressSecretMaterial | undefined;
 	let rollbackEgressSecretRevision: string | undefined;
 	let egressRollbackAuthorityVerified = true;
-	let egressPrerequisiteActivated = false;
 	let staleSystemdFiles: RuntimeSystemdStaleFilePlan = {
 		files: [],
 		systemUnits: [],
@@ -5935,46 +5816,7 @@ export function convergeRuntimeManifest(
 			}
 		}
 		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(paths);
-		const egressCaUnavailable = !existsSync(paths.egressSystemCaFile);
-		if (
-			requiresManagedGatewayModelProbe(manifest, enabledRuntimes) &&
-			egressCaUnavailable &&
-			egressSystemdProgram &&
-			egressIdentity &&
-			runtimeSystemdUserPrograms.length > 0 &&
-			opts.systemdApply
-		) {
-			writeRuntimeSidecarSystemdUnit({
-				program: egressSystemdProgram,
-				identity: egressIdentity,
-				manifest,
-				paths,
-				workspaceRoot,
-				commonEnvironment: commonSystemdEnvironment,
-			});
-			restartEgressSidecar = restartEgressSidecar || egressCaUnavailable;
-			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
-				restartDaemon,
-				restartEgressSidecar,
-				stopEgressSidecar: false,
-				reconcileUserUnits: mutationPlan.systemdUserUnits,
-				staleSystemUnits: [],
-				staleUserUnits: [],
-			});
-			if (!prerequisite.applied) {
-				throw new Error("transparent-egress system prerequisites did not reach readiness");
-			}
-			egressPrerequisiteActivated = true;
-		}
 
-		const managedModelOverrides = resolveManagedGatewayModelOverrides(
-			manifest,
-			enabledRuntimes,
-			projectionHome,
-			workspaceRoot,
-			egressProfileBundlePath ? paths.egressSystemCaFile : null,
-			opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
-		);
 		validateRuntimeProjectionPlan({
 			manifest,
 			paths,
@@ -5982,7 +5824,6 @@ export function convergeRuntimeManifest(
 			secretValues,
 			observations,
 			previousProjectedProviderIds,
-			managedModelOverrides,
 		});
 		const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
 		for (const [name] of runtimeEntries) {
@@ -5994,7 +5835,6 @@ export function convergeRuntimeManifest(
 				manifest,
 				projectionHome,
 				previousProjectedProviderIds[name] ?? [],
-				managedModelOverrides,
 			);
 		}
 		try {
@@ -6171,7 +6011,6 @@ export function convergeRuntimeManifest(
 					projectionHome,
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
-					managedModelOverrides,
 				);
 				projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {
@@ -6268,7 +6107,6 @@ export function convergeRuntimeManifest(
 				(hermesDashboardArtifactPlan.program !== null &&
 					hermesDashboardArtifactPlan.target?.expectedCurrentRevision === null)) &&
 			systemdUnits.egressSidecarActive &&
-			!egressPrerequisiteActivated &&
 			opts.systemdApply
 		) {
 			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
