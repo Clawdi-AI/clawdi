@@ -1343,14 +1343,14 @@ function failedDeploymentOperation(
 			details: [
 				{
 					"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
-					type: "https://api.clawdi.ai/problems/operation-failed",
-					title: "Operation failed",
-					status: 500,
+					type: "https://api.clawdi.ai/problems/runtime-bootstrap-failed",
+					title: "Runtime bootstrap failed",
+					status: 502,
 					detail: "Internal operation detail",
-					code: "operation_failed",
+					code: "runtime_bootstrap_failed",
 					retryable: true,
-					conditionReason: "OperationFailed",
-					conditionMessage: "Internal operation detail",
+					conditionReason: "RuntimeBootstrapFailed",
+					conditionMessage: "Runtime bootstrap failed",
 					observedGeneration: 2,
 				},
 			],
@@ -1366,6 +1366,10 @@ function failedDeletionReadFixture(
 	const read = mutationDeploymentReadFixture({ ...deployment, status: "failed" });
 	const status = read.resource.status;
 	if (status === null) throw new Error("Failed deletion fixture requires deployment status");
+	const failureTitle = retryable
+		? "Deployment resource teardown failed"
+		: "Deployment resource teardown failed permanently";
+	const failureReason = retryable ? "ResourceTeardownFailed" : "ResourceTeardownTerminalFailure";
 	return {
 		...read,
 		accepted_operation: failedDeploymentOperation(deployment, "delete"),
@@ -1374,16 +1378,18 @@ function failedDeletionReadFixture(
 			status: {
 				...status,
 				failure: {
-					type: "https://api.clawdi.ai/problems/deployment-delete-failed",
-					title: "Deployment deletion failed",
-					status: 409,
+					type: retryable
+						? "https://api.clawdi.ai/problems/resource-teardown-failed"
+						: "https://api.clawdi.ai/problems/resource-teardown-terminal-failure",
+					title: failureTitle,
+					status: 502,
 					detail: "The deployment could not be deleted.",
 					instance: deployment.id,
-					code: "deployment_delete_failed",
+					code: retryable ? "resource_teardown_failed" : "resource_teardown_terminal_failure",
 					phase: "delete",
 					retryable,
-					conditionReason: "DeploymentDeleteFailed",
-					conditionMessage: "The deployment could not be deleted.",
+					conditionReason: failureReason,
+					conditionMessage: failureTitle,
 					observedGeneration: 2,
 				},
 			},

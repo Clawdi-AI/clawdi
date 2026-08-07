@@ -202,6 +202,11 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Install Chromium for Playwright
+        # Run from apps/web so bunx resolves the workspace-pinned playwright.
+        # At the repo root the bin is absent and bunx silently downloads the
+        # latest release, installing browsers the pinned @playwright/test
+        # version then can't find.
+        working-directory: apps/web
         run: bunx playwright install --with-deps chromium
       - name: OSS web e2e
         run: bun run --cwd apps/web e2e
