@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.42
+
+Package: `clawdi@0.13.42`
+
+### Fixed
+
+- Transparent egress on every tenant: the runtime now publishes
+  `transparent-egress.env` owned by root with a mode that lets the numeric
+  egress identity read it, so the mitmproxy add-on can load the tenant's
+  mTLS and copy rules instead of failing convergence.
+
 ## Clawdi CLI v0.13.41
 
 Package: `clawdi@0.13.41`

@@ -4485,10 +4485,11 @@ function writeTransparentEgressEnvFile(input: {
 		input.paths.egressTransparentEnv,
 		`${lines.join("\n")}\n`,
 		{
-			mode: 0o600,
+			mode: 0o640,
 			dirMode: 0o711,
 		},
 	);
+	if (runningAsRoot()) chownSync(input.paths.egressTransparentEnv, 0, input.egressGid);
 	return input.paths.egressTransparentEnv;
 }
 
