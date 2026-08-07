@@ -378,10 +378,10 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 				.writeText(value)
 				.then(() => toast.success(success))
 				.catch(() =>
-					toast.error("Couldn't Copy", { description: "Select the text and copy it manually." }),
+					toast.error("Couldn't copy", { description: "Select the text and copy it manually." }),
 				);
 		} else {
-			toast.error("Couldn't Copy", { description: "Select the text and copy it manually." });
+			toast.error("Couldn't copy", { description: "Select the text and copy it manually." });
 		}
 	};
 	const agentPrompt = buildShareAgentHandoffPrompt(link);

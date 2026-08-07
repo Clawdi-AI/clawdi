@@ -46,6 +46,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
 import {
 	type AgentRouteSearch,
 	agentDeploymentRouteQuery,
@@ -429,8 +430,16 @@ export function SkillDetailContent({
 		isLoading: skillIsLoading,
 	});
 
+	const editDirty =
+		isEditing &&
+		skill != null &&
+		(draftName.trim() !== skill.name ||
+			draftDescription.trim() !== (skill.description ?? "") ||
+			draftInstructions.trim() !== stripFrontmatter(skill.content ?? "").trim());
+
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<UnsavedNavigationGuard dirty={editDirty} busy={saveEdit.isPending} />
 			<DetailBackLink
 				href={skillListHref}
 				label={skillListLabel}

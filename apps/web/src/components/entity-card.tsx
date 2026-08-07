@@ -603,7 +603,14 @@ export function EntityChoiceCard({
 			>
 				<div className="min-w-0 flex-1">
 					<div className="flex min-w-0 items-center gap-2">
-						<span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+						<span
+							className="min-w-0 flex-1 truncate text-sm font-medium"
+							title={
+								typeof title === "string" || typeof title === "number" ? String(title) : undefined
+							}
+						>
+							{title}
+						</span>
 						{badge ? <span className="shrink-0">{badge}</span> : null}
 					</div>
 					{description ? (

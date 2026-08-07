@@ -5,6 +5,12 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+/**
+ * Back affordance for detail pages. Content states keep the default
+ * (mobile-only — desktop has the header breadcrumb); error, not-found,
+ * and loading states pass `mobileOnly={false}` because a dead-end page
+ * needs a visible exit on every viewport.
+ */
 export function DetailBackLink({
 	href,
 	label,
