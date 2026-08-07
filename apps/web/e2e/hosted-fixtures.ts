@@ -51,15 +51,20 @@ function initialChannel(): JsonRecord {
 
 function managedProvider(): JsonRecord {
 	return {
+		id: "prov_e2e_managed",
 		provider_id: "clawdi-managed-v2",
 		type: "openai",
 		label: "Clawdi managed",
 		base_url: "https://api.openai.com/v1",
 		api_mode: "openai_chat",
-		auth: { type: "managed" },
 		managed_by: "clawdi",
 		runtime_env_name: null,
 		models: [{ id: "openai/gpt-4o-mini", label: "GPT-4o mini" }],
+		scope: "account",
+		auth: { type: "secret_ref", secret_ref: "clawdi://e2e/managed" },
+		usable: true,
+		created_at: "2026-07-11T12:00:00Z",
+		updated_at: "2026-07-11T12:00:00Z",
 	};
 }
 
@@ -193,6 +198,32 @@ export async function stubCloudApi(page: Page) {
 		}
 
 		if (path === "/v1/ai-providers" && method === "GET") return fulfillJson(route, { providers });
+		// The save flow validates then accepts; accept carries the credential.
+		if (path === "/v1/ai-providers/accept" && method === "POST") {
+			const body = requestJson(route);
+			const incoming = (body.provider ?? {}) as JsonRecord;
+			const provider: JsonRecord = {
+				id: `prov_e2e_${providers.length + 1}`,
+				provider_id: incoming.provider_id ?? "openai",
+				type: incoming.type ?? "openai",
+				label: incoming.label ?? null,
+				base_url: incoming.base_url ?? "https://api.openai.com/v1",
+				api_mode: incoming.api_mode ?? "openai_chat",
+				managed_by: "user",
+				runtime_env_name: incoming.runtime_env_name ?? null,
+				models: incoming.models ?? [],
+				scope: "account",
+				auth: { type: "secret_ref", secret_ref: "clawdi://e2e/provider/key" },
+				usable: true,
+				created_at: "2026-07-11T12:00:00Z",
+				updated_at: "2026-07-11T12:00:00Z",
+			};
+			providers.push(provider);
+			return fulfillJson(route, { status: "ready", provider });
+		}
+		if (path === "/v1/ai-providers/test" && method === "POST") {
+			return fulfillJson(route, { ok: true });
+		}
 		if (path === "/v1/ai-providers" && method === "POST") {
 			const body = requestJson(route);
 			const provider: JsonRecord = {

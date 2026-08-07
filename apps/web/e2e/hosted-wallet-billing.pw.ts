@@ -9,12 +9,7 @@ import {
 	walletPastDueDeployment,
 } from "./hosted-stub-api";
 
-// The walletPastDueDeployment fixture predates the current DeploymentRead
-// shape (inventory render crashes on it) — re-enable after modernizing the
-// fixture to the live contract.
-test.skip("wallet top-up completion refreshes an automatically paid open invoice", async ({
-	page,
-}) => {
+test("wallet top-up completion refreshes an automatically paid open invoice", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const deployments: unknown[] = [walletPastDueDeployment];
 	const topUpRequests: string[] = [];
@@ -36,12 +31,12 @@ test.skip("wallet top-up completion refreshes an automatically paid open invoice
 	await expect(page.getByRole("button", { name: /Retry payment/ })).toHaveCount(0);
 
 	await pastDueAlert.getByRole("button", { name: "Top up" }).click();
-	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up AI Credits" });
+	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up Wallet" });
 	await expect(topUpDialog).toBeVisible();
 	await topUpDialog.getByRole("button", { name: "Continue with $25.00" }).click();
 
 	await expect.poll(() => topUpRequests.length).toBe(1);
-	await expect(page.getByText("Top-up complete", { exact: true })).toBeVisible();
+	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
 	await expect(pastDueAlert).toHaveCount(0);
 	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 2_500 });
