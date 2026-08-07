@@ -150,7 +150,6 @@ export function mutationDeploymentReadFixture(
 		resource: {
 			id: deployment.id,
 			name: deployment.name,
-			owner_user_id: deployment.user_id,
 			commercial_revision: 1,
 			deployment_target: "saas",
 			metadata: {
@@ -186,7 +185,6 @@ export function mutationDeploymentReadFixture(
 				observedGeneration: 1,
 				conditions: [],
 				failure,
-				backing_infrastructure: backingInfrastructure,
 				driver_acknowledged_generation: 1,
 				driver_applied_generation: 1,
 				driver_observation_sequence: 1,

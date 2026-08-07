@@ -768,22 +768,10 @@ export interface components {
             /** Name */
             name: string;
             /**
-             * Owner User Id
-             * Format: sqid
-             * @example usr_K8fJ3pQm
-             */
-            owner_user_id: string;
-            /** Commercial Reference */
-            commercial_reference?: string | null;
-            /** Commercial Event Id */
-            commercial_event_id?: string | null;
-            /**
              * Commercial Revision
              * @default 0
              */
             commercial_revision: number;
-            /** Deploy Request Id */
-            deploy_request_id?: string | null;
             /** Deployment Target */
             deployment_target: string;
             metadata: components["schemas"]["DeploymentMetadata"];
@@ -848,12 +836,6 @@ export interface components {
              */
             conditions: components["schemas"]["DeploymentCondition"][];
             failure?: components["schemas"]["LifecycleFailureOccurrence"] | null;
-            /**
-             * Backing Infrastructure
-             * @default unknown
-             * @enum {string}
-             */
-            backing_infrastructure: "present" | "absent" | "unknown";
             /** Driver Acknowledged Generation */
             driver_acknowledged_generation: number;
             /** Driver Applied Generation */
