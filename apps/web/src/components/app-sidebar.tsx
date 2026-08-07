@@ -739,7 +739,7 @@ function RailFocusButton({
 			{caption ? (
 				<span
 					className={cn(
-						"block max-w-16 truncate text-center text-2xs font-medium",
+						"block max-w-full truncate text-center text-2xs font-medium",
 						active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
 					)}
 					title={label}
@@ -896,7 +896,10 @@ function SortableAgentRailItem({
 			className={cn("touch-pan-y", agent.href && "cursor-pointer")}
 			showTooltip={showTooltip}
 		>
-			<span className="relative inline-flex rounded-md">
+			{/* The corner markers protrude -top-1/-right-1 past the icon, so the
+			    wrapper carries a small margin to keep them off the rail's
+			    overflow-hidden clip edge. */}
+			<span className="relative m-0.5 inline-flex rounded-md">
 				<AgentIcon agent={agent.agentType} size="rail" avatarUrl={agent.avatarUrl} />
 				{kind === "cloud" ? (
 					<span
