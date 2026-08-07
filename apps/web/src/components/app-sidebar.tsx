@@ -730,7 +730,7 @@ function RailFocusButton({
 			aria-label={label}
 			className={cn(
 				hasCaption
-					? "h-16 w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
+					? "h-16 w-full flex-col justify-center gap-0.5 rounded-lg px-1 py-0.5"
 					: "size-11 justify-center rounded-lg p-0",
 				className,
 			)}
@@ -1068,7 +1068,7 @@ function FocusRailContent({
 						<IconChip
 							size="sm"
 							tint={RESOURCE_TINT_CLASSES.overview}
-							className="size-9 [&>svg]:size-4.5"
+							className="size-10 [&>svg]:size-5"
 						>
 							<LayoutDashboard />
 						</IconChip>
