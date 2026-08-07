@@ -17,6 +17,7 @@ import {
 	agentSectionHref,
 } from "@/lib/agent-routes";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { useCommittedRouteIsLatestTarget } from "@/lib/use-committed-location";
 import { cn } from "@/lib/utils";
 
 type ProjectResourceSection = "skills" | "vaults";
@@ -81,11 +82,12 @@ function CanonicalizeProjectResource({
 			)
 		: projectsHref;
 	const canCanonicalize = bindings.data !== undefined;
+	const isLatestTarget = useCommittedRouteIsLatestTarget();
 
 	useEffect(() => {
-		if (!canCanonicalize || blockingError) return;
+		if (!canCanonicalize || blockingError || !isLatestTarget) return;
 		void router.navigate({ href: targetHref, replace: true, resetScroll: false });
-	}, [blockingError, canCanonicalize, router, targetHref]);
+	}, [blockingError, canCanonicalize, isLatestTarget, router, targetHref]);
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>

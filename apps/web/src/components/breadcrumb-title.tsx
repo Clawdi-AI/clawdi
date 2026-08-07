@@ -1,6 +1,5 @@
 "use client";
 
-import { useLocation } from "@tanstack/react-router";
 import {
 	createContext,
 	type Dispatch,
@@ -12,7 +11,9 @@ import {
 	useMemo,
 	useState,
 } from "react";
+import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 
 /**
  * Context for "what the breadcrumb's last segment should say".
@@ -34,6 +35,19 @@ import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
  * the cleanup fires, and the title flickers to null between renders.
  * Splitting the contexts means the setter is stable (useState setters
  * always are), so the effect only re-runs when the *title input* changes.
+ *
+ * Second implementation note: the route identity below comes from the
+ * *committed match tree* (`state.matches`), never from `state.location`.
+ * TanStack Router swaps `state.location` the moment a navigation starts
+ * (`beforeLoad`), while the route components React renders keep coming
+ * from `state.matches` until the next route has loaded. Reading the global
+ * location during that pending window pairs the new URL with the old page:
+ * the still-mounted page re-registers its title under the new routeKey,
+ * and the breadcrumb briefly renders the old detail title against the
+ * shallower path ("Agent > Old Detail" on the way back to a list) before
+ * the real label arrives. Deriving the trail and every registration key
+ * from the committed matches keeps the breadcrumb consistent with the
+ * visible page and flips it atomically when the navigation commits.
  */
 
 export type BreadcrumbSegmentContext = "workspace";
@@ -178,10 +192,27 @@ function normalizeBreadcrumbHref(href: string | null | undefined): string | null
 	return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
 
+type CommittedBreadcrumbRoute = {
+	pathname: string;
+	search: AgentRouteSearch;
+	routeKey: string;
+};
+
+/**
+ * The route the breadcrumb should describe: the committed (rendered) match
+ * tree, not the pending navigation target. `routeKey` ties title
+ * registrations to this identity; `pathname`/`search` feed trail building.
+ */
+export function useCommittedBreadcrumbRoute(): CommittedBreadcrumbRoute {
+	const { pathname, search } = useCommittedLocation();
+	return useMemo(
+		() => ({ pathname, search, routeKey: `${pathname}${JSON.stringify(search)}` }),
+		[pathname, search],
+	);
+}
+
 function useBreadcrumbRouteKey() {
-	return useLocation({
-		select: (location) => `${location.pathname}${location.searchStr}`,
-	});
+	return useCommittedBreadcrumbRoute().routeKey;
 }
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;

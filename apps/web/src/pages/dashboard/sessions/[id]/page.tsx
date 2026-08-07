@@ -1,7 +1,6 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useLocation } from "@tanstack/react-router";
 import {
 	ArrowDown,
 	ArrowDownNarrowWide,
@@ -11,7 +10,7 @@ import {
 	MessageSquare,
 	Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline } from "@/components/dashboard/agent-label";
@@ -43,6 +42,7 @@ import {
 	SESSION_MESSAGES_GC_MS,
 	SESSION_MESSAGES_STALE_MS,
 } from "@/lib/session-queries";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function SessionDetailPage({ sessionId }: { sessionId: string }) {
@@ -59,7 +59,10 @@ export function SessionDetailContent({
 	const api = useApi();
 	const $api = useOpenApi();
 	const { user } = useCurrentUser();
-	const routeSearch = useLocation({ select: (location) => location.search });
+	// Committed-match search, not the pending target: this page stays mounted
+	// while an outgoing navigation loads, and its links must keep pointing at
+	// the context the user is still looking at.
+	const { search: routeSearch } = useCommittedLocation();
 	const sessionsHref = agentId
 		? agentSectionHref(agentId, "sessions", agentDeploymentRouteQuery(routeSearch))
 		: "/sessions";
@@ -108,11 +111,15 @@ export function SessionDetailContent({
 	// scroll-to-bottom on open) without requiring a scroll gesture
 	// to find the latest reply.
 	type Direction = "asc" | "desc";
-	const [direction, setDirection] = useState<Direction>(() => {
-		if (typeof window === "undefined") return "desc";
+	// SSR and hydration must agree on the first render, so the stored
+	// preference syncs in a layout effect instead of the state initializer.
+	// Layout effects run before the messages query subscribes, so a stored
+	// "asc" swaps the query key without a wasted "desc" fetch.
+	const [direction, setDirection] = useState<Direction>("desc");
+	useIsomorphicLayoutEffect(() => {
 		const stored = localStorage.getItem("clawdi.session.message-direction");
-		return stored === "asc" ? "asc" : "desc";
-	});
+		if (stored === "asc") setDirection("asc");
+	}, []);
 	const persistDirection = (d: Direction) => {
 		setDirection(d);
 		try {
@@ -615,3 +622,5 @@ function MessagesSkeleton() {
 function EmptyContent() {
 	return <EmptyState variant="inset" description="No messages in this session." />;
 }
+
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
