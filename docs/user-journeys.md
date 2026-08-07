@@ -104,7 +104,7 @@ Severity legend for open gaps: 🔴 blocks · 🟡 friction · ⚪ nitpick.
 
 ## 12. Connectors / channels
 
-- **Path**: Integrations → Connectors → catalog → connect (OAuth returns
+- **Path**: Library → Connectors → catalog → connect (OAuth returns
   to the same page; state params clean themselves up). Hosted adds
   Channels/AI Providers.
 - **Guards**: connector nested-navigation e2e; hosted channel suites.

@@ -569,8 +569,7 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 	await page.goto("/");
 	await expectSidebarNavigationGroups(page, [
 		{ label: null, items: ["Overview", "Agents", "Sessions", "Memories"] },
-		{ label: "Library", items: ["Projects", "Skills", "Vaults"] },
-		{ label: "Integrations", items: ["Connectors"] },
+		{ label: "Library", items: ["Projects", "Skills", "Vaults", "Connectors"] },
 	]);
 
 	await page.goto("/agents/agent-smoke-1");

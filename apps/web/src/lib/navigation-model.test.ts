@@ -30,7 +30,7 @@ function groupShape(
 
 function expectNavigationHeadings(
 	groups: ReadonlyArray<{ label: string | null; items: readonly unknown[] }>,
-	expected = ["Library", "Integrations"],
+	expected = ["Library"],
 ) {
 	expect(groups.filter((group) => group.label !== null).map((group) => group.label)).toEqual(
 		expected,
@@ -61,24 +61,21 @@ describe("sidebar navigation model", () => {
 					{ id: "projects", label: "Projects" },
 					{ id: "skills", label: "Skills" },
 					{ id: "vaults", label: "Vaults" },
-				],
-			},
-			{
-				id: "integrations",
-				label: "Integrations",
-				separated: true,
-				items: [
+					{ id: "connectors", label: "Connectors" },
 					{ id: "channels", label: "Channels" },
 					{ id: "ai-providers", label: "AI Providers" },
-					{ id: "connectors", label: "Connectors" },
 				],
 			},
 		]);
 		expectNavigationHeadings(cloudGroups);
 
 		const ossGroups = consoleNavigationGroups(false);
-		expect(ossGroups[1]?.items.map((item) => item.id)).toEqual(["projects", "skills", "vaults"]);
-		expect(ossGroups[2]?.items.map((item) => item.id)).toEqual(["connectors"]);
+		expect(ossGroups[1]?.items.map((item) => item.id)).toEqual([
+			"projects",
+			"skills",
+			"vaults",
+			"connectors",
+		]);
 		expectNavigationHeadings(ossGroups);
 	});
 
@@ -99,9 +96,9 @@ describe("sidebar navigation model", () => {
 			"projects",
 			"skills",
 			"vaults",
+			"connectors",
 			"channels",
 			"ai-providers",
-			"connectors",
 		]);
 	});
 
