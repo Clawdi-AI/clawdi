@@ -49,7 +49,7 @@ export function ResourcesCard({
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">
-				<CardTitle>Resources</CardTitle>
+				<CardTitle>Library</CardTitle>
 			</CardHeader>
 			<CardContent className="p-0">
 				{statsError ? (
@@ -76,6 +76,18 @@ export function ResourcesCard({
 						)}
 					</div>
 				)}
+				{ready && stats.projects_count === 0 ? (
+					<div className="border-t px-6 py-3 text-xs text-muted-foreground">
+						Next:{" "}
+						<Link
+							to="/projects"
+							className="font-medium text-foreground underline-offset-4 hover:underline"
+						>
+							create your first Project
+						</Link>{" "}
+						to organize reusable skills and credentials for your agents.
+					</div>
+				) : null}
 			</CardContent>
 		</Card>
 	);
