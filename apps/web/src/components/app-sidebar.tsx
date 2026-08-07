@@ -728,7 +728,11 @@ function RailFocusButton({
 			size="lg"
 			isActive={active}
 			aria-label={label}
+			// Chromeless tiles: no accent plate on hover/active — the left
+			// marker (peeking on hover, full bar when active) and the caption
+			// color carry the state, so uneven inner margins stay invisible.
 			className={cn(
+				"hover:bg-transparent active:bg-transparent data-active:bg-transparent data-active:font-medium",
 				hasCaption
 					? "h-[4.25rem] w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
 					: "size-11 justify-center rounded-lg p-0",
@@ -740,7 +744,7 @@ function RailFocusButton({
 				<span
 					className={cn(
 						"block max-w-full truncate text-center text-2xs font-medium",
-						active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
+						active ? "text-sidebar-foreground" : "text-muted-foreground",
 					)}
 					title={label}
 				>
@@ -896,24 +900,25 @@ function SortableAgentRailItem({
 			className={cn("touch-pan-y", agent.href && "cursor-pointer")}
 			showTooltip={showTooltip}
 		>
-			{/* The corner markers protrude -top-1/-right-1 past the icon, so the
-			    wrapper carries a small margin to keep them off the rail's
-			    overflow-hidden clip edge. */}
+			{/* The corner markers protrude past the icon, so the wrapper carries
+			    a small margin to keep them off the rail's overflow-hidden clip
+			    edge. The background-colored ring lifts the badge off the avatar
+			    instead of letting it smear across it. */}
 			<span className="relative m-0.5 inline-flex rounded-md">
 				<AgentIcon agent={agent.agentType} size="rail" avatarUrl={agent.avatarUrl} />
 				{kind === "cloud" ? (
 					<span
 						data-agent-rail-corner-marker="cloud"
-						className="-top-1 -right-1 pointer-events-none absolute z-10"
+						className="-top-1.5 -right-1.5 pointer-events-none absolute z-10"
 					>
-						<AgentSourceBadge source="hosted" iconOnly />
+						<AgentSourceBadge source="hosted" iconOnly className="ring-2 ring-sidebar" />
 					</span>
 				) : kind === "legacy" ? (
 					<span
 						data-agent-rail-corner-marker="legacy"
-						className="-top-1 -right-1 pointer-events-none absolute z-10"
+						className="-top-1.5 -right-1.5 pointer-events-none absolute z-10"
 					>
-						<LegacyAgentBadge iconOnly />
+						<LegacyAgentBadge iconOnly className="ring-2 ring-sidebar" />
 					</span>
 				) : null}
 			</span>
