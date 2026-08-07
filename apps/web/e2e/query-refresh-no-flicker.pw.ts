@@ -99,7 +99,10 @@ for (const viewport of [
 		await page.goto("/");
 
 		const link = page.getByRole("link", { name: /Open Stable Agent/ }).first();
-		await expect(link).toBeVisible();
+		// The agents query can error once during SSR (no stub server-side) and
+		// only resolve on a client retry, so the first paint allowance matches
+		// the suite-wide 15s convention instead of the 5s default.
+		await expect(link).toBeVisible({ timeout: 15_000 });
 		await expect(page.getByText("1 agent", { exact: true })).toBeVisible();
 		const card = link.locator("..");
 		const before = await card.boundingBox();

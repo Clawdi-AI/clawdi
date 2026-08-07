@@ -13,7 +13,6 @@ import {
 	Share2,
 	Trash2,
 } from "lucide-react";
-import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -74,6 +73,7 @@ import {
 	type ResourceNavigationScope,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -102,7 +102,13 @@ export default function VaultDetailPage({
 	scope: ResourceNavigationScope;
 }) {
 	const slug = decodeResourceRouteParam(rawSlug);
-	const [vaultId] = useQueryState("vault", parseAsString);
+	// Router-validated search (one ownership system — not nuqs): committed
+	// match state keeps the id consistent with the rendered route.
+	const { search: committedSearch } = useCommittedLocation();
+	const vaultId =
+		typeof committedSearch.vault === "string" && committedSearch.vault.trim()
+			? committedSearch.vault
+			: null;
 	const api = useApi();
 	const $api = useOpenApi();
 	const qc = useQueryClient();

@@ -1254,37 +1254,32 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 
 test("connected detail only requests overview data on Overview", async ({ page }) => {
 	const sessionRequests: string[] = [];
-	const projectBindingRequests: string[] = [];
-	const projectRequests: string[] = [];
 	const skillRequests: string[] = [];
 	await stubDashboardApi(page, [], {
 		sessionRequests,
-		projectBindingRequests,
-		projectRequests,
 		skillRequests,
 	});
 
+	// Page data stays lazy per section; the sidebar's Workspace rail owns the
+	// project-bindings/projects pair on every agent page, so only section
+	// queries prove a page over-fetches.
 	await page.goto("/agents/agent-smoke-1/settings");
 	await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
 	await page.waitForTimeout(100);
 	expect(sessionRequests).toEqual([]);
-	expect(projectBindingRequests).toEqual([]);
-	expect(projectRequests).toEqual([]);
 	expect(skillRequests).toEqual([]);
 
 	await page.goto("/agents/agent-smoke-1/sessions");
 	await expect(page.getByRole("heading", { name: "Sessions", level: 1 })).toBeVisible();
 	await expect.poll(() => sessionRequests.length).toBe(1);
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("50");
-	expect(projectBindingRequests).toEqual([]);
-	expect(projectRequests).toEqual([]);
 	expect(skillRequests).toEqual([]);
 });
 
 test("connected agent settings protects an unsaved display name", async ({ page }) => {
 	await stubDashboardApi(page);
 	await page.goto("/agents/agent-smoke-1/settings");
-	const displayName = page.getByRole("textbox", { name: "Display name" });
+	const displayName = page.getByRole("textbox", { name: "Agent name" });
 	await displayName.fill("Unsaved agent name");
 
 	const sessionsLink = page.locator('a[href="/agents/agent-smoke-1/sessions"]').first();
@@ -2219,9 +2214,12 @@ test("Workspace Skills fail closed on Project binding errors without reading Ski
 	await expect(
 		main.getByText("Couldn't verify Workspace or Project access", { exact: true }),
 	).toBeVisible({ timeout: 15_000 });
-	await expect(
-		page.getByTestId("app-sidebar").getByRole("group", { name: "Workspace", exact: true }),
-	).toHaveCount(0);
+	// Fail closed: the Workspace rail keeps only its unconditional Projects
+	// entry — scoped Skills/Vaults items stay hidden while bindings error.
+	const workspaceGroup = page
+		.getByTestId("app-sidebar")
+		.getByRole("group", { name: "Workspace", exact: true });
+	await expect(workspaceGroup.getByRole("link")).toHaveText(["Projects"]);
 	expect(skillRequests).toEqual([]);
 });
 

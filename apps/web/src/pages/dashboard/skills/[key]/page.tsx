@@ -15,8 +15,7 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -46,7 +45,6 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
 	type AgentRouteSearch,
@@ -61,6 +59,7 @@ import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-res
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { skillCapabilities } from "@/lib/skill-authority";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import {
 	removeDeletedSkillQueries,
@@ -78,25 +77,10 @@ function stripFrontmatter(raw: string): string {
 	return m ? (m[1] ?? "") : raw;
 }
 
-// Wrap the inner URL-state tree in Suspense. Mirrors the same pattern in
-// /skills/page.tsx and /cli-authorize.
+// nuqs used to require a Suspense boundary here; router-owned search does
+// not suspend, so the page renders directly.
 export default function SkillDetailPage({ routeKey }: { routeKey: string }) {
-	return (
-		<Suspense fallback={<SkillDetailRouteSkeleton />}>
-			<SkillDetailPageInner routeKey={routeKey} />
-		</Suspense>
-	);
-}
-
-function SkillDetailRouteSkeleton() {
-	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<DetailBackLink href="/skills" label="Skills" mobileOnly={false} />
-			<PageHeaderSkeleton icon actions />
-			<Skeleton className="h-24 w-full rounded-lg" />
-			<Skeleton className="h-48 w-full rounded-lg" />
-		</div>
-	);
+	return <SkillDetailPageInner routeKey={routeKey} />;
 }
 
 function SkillDetailPageInner({ routeKey }: { routeKey: string }) {
@@ -121,7 +105,10 @@ export function SkillDetailContent({
 	// Library routes keep their legacy resolver fallback for backwards
 	// compatibility. Agent routes must resolve one explicit binding first and
 	// only call the endpoint for the Project selected on the Project hub.
-	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
+	// Router-validated search (one ownership system — not nuqs), from the
+	// committed match so the page agrees with the rendered route.
+	const { search: committedSearch } = useCommittedLocation();
+	const projectIdParam = typeof committedSearch.project === "string" ? committedSearch.project : "";
 	const isAgentScope = Boolean(agentId);
 	const selectedProjectId = (
 		isAgentScope && typeof routeSearch?.project === "string" ? routeSearch.project : projectIdParam
