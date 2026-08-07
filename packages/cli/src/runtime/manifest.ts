@@ -5745,13 +5745,7 @@ export function convergeRuntimeManifest(
 			makeRuntimeUserPrivateDir(paths.clawdiHome, paths.userHome);
 			makeRuntimeUserOwned(workspaceRoot);
 		});
-		for (const directory of [
-			paths.installInventory,
-			paths.projectionRoot,
-			instanceRoot,
-			semRoot,
-			paths.egressProfileRoot,
-		]) {
+		for (const directory of [paths.installInventory, paths.projectionRoot, instanceRoot, semRoot]) {
 			ensureRuntimePlatformDirectory(paths, directory, { mode: 0o755 });
 		}
 		ensureRuntimePlatformDirectory(paths, paths.managedSecretRoot);

@@ -373,8 +373,6 @@ describe("runtime handoff filesystem access contract", () => {
 
 	test("the tenant workload user (uid 10001) cannot read any platform-rendered file", () => {
 		const { paths, root } = convergeHostedEgressFixture();
-		const files = platformRenderedFiles(paths);
-		expect(files.length).toBeGreaterThan(10);
 		const labels = new Map<string, string>([
 			[paths.managedConfig, "hosted managed config"],
 			[paths.runtimeContextFile, "runtime context"],
@@ -387,6 +385,7 @@ describe("runtime handoff filesystem access contract", () => {
 			[paths.egressProfileBundle, "egress profile bundle"],
 			[paths.egressTransparentEnv, "transparent-egress env handoff"],
 			[paths.egressAddon, "egress addon script"],
+			[paths.egressSystemCaFile, "tenant-published CA bundle"],
 			[join(paths.managedSecretRoot, "egress-secrets.json"), "egress sidecar secrets"],
 			[paths.daemonAuthToken, "daemon auth token"],
 			[paths.bootStatus, "boot status"],
@@ -415,6 +414,8 @@ describe("runtime handoff filesystem access contract", () => {
 			chownSync(paths.egressSystemCaFile, 0, TENANT_GID);
 		}
 		const publishedCaOwner = { uid: 0, gid: TENANT_GID };
+		const files = platformRenderedFiles(paths);
+		expect(files.length).toBeGreaterThan(10);
 
 		for (const file of files) {
 			const label = labels.get(file) ?? `platform-rendered file ${file}`;
