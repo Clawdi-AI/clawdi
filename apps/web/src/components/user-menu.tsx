@@ -2,6 +2,7 @@
 
 import { LogOut, Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
+import { TruncatedText } from "@/components/truncated-text";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
 	DropdownMenuGroup,
@@ -49,10 +50,10 @@ export function UserMenuItems() {
 							<AvatarFallback className="rounded-lg">{user?.fullName?.[0] ?? "U"}</AvatarFallback>
 						</Avatar>
 						<div className="grid flex-1 text-left text-sm leading-tight">
-							<span className="truncate font-medium">{user?.fullName}</span>
-							<span className="truncate text-xs text-muted-foreground">
+							<TruncatedText className="font-medium">{user?.fullName}</TruncatedText>
+							<TruncatedText className="text-xs text-muted-foreground">
 								{user?.primaryEmailAddress?.emailAddress}
-							</span>
+							</TruncatedText>
 						</div>
 					</div>
 				</DropdownMenuLabel>
