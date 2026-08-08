@@ -141,9 +141,7 @@ export function toProviderCatalogModels(
 			? { supports_reasoning: model.supports_reasoning }
 			: {}),
 		...(model.context_window !== undefined ? { context_window: model.context_window } : {}),
-		...(model.max_input_tokens !== undefined
-			? { max_input_tokens: model.max_input_tokens }
-			: {}),
+		...(model.max_input_tokens !== undefined ? { max_input_tokens: model.max_input_tokens } : {}),
 		...(model.max_tokens !== undefined ? { max_tokens: model.max_tokens } : {}),
 		...(model.compat && Object.keys(model.compat).length > 0
 			? { compat: { ...model.compat } }
