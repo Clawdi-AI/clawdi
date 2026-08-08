@@ -506,6 +506,7 @@ const hostedProviderModelSchema = z
 		supports_vision: z.boolean().optional(),
 		supports_tools: z.boolean().optional(),
 		supports_reasoning: z.boolean().optional(),
+		compat: z.record(z.string(), z.unknown()).optional(),
 		context_window: z.number().int().positive().optional(),
 		max_input_tokens: z.number().int().positive().optional(),
 		max_tokens: z.number().int().positive().optional(),
