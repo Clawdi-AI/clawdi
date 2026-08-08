@@ -28,7 +28,10 @@ from app.services.runtime_source import load_runtime_source_batch, render_runtim
 from app.services.user_provisioning import lazy_create_partner_user_with_personal_project
 from app.services.vault_crypto import decrypt
 from tests.conftest import create_env_with_project
-from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
+from tests.hosted_runtime_fixtures import (
+    ensure_canonical_codex_tool_provider,
+    filebrowser_companion,
+)
 
 _ADMIN_KEY = "test-platform-admin-secret"
 _CLERK_ISSUER = "https://platform-tests.clerk.example.test"
@@ -64,6 +67,7 @@ _TEST_TOOLS = {
         },
     }
 }
+_TEST_COMPANIONS = filebrowser_companion("deployment-1")
 
 
 @pytest_asyncio.fixture
@@ -460,6 +464,64 @@ async def test_platform_agent_reregistration_updates_its_name(
     agent = await db_session.get(AgentEnvironment, agent_id)
     assert agent is not None
     assert agent.default_name == "Writing"
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_state_accepts_and_projects_filebrowser_companion(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key="runtime-companion-agent",
+    )
+    assert created.status_code == 200, created.text
+
+    response = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("runtime-companion-upsert"),
+        json={**_runtime_body(owner, agent_id), "companions": _TEST_COMPANIONS},
+    )
+
+    assert response.status_code == 200, response.text
+    state = await db_session.get(HostedRuntimeState, agent_id)
+    assert state is not None
+    assert state.companions == _TEST_COMPANIONS
+
+    batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    source = render_runtime_source(
+        batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert source.manifest["companions"]["filebrowser"] == _TEST_COMPANIONS["filebrowser"]
+
+    cleared = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("runtime-companion-clear"),
+        json={**_runtime_body(owner, agent_id), "generation": 2},
+    )
+    assert cleared.status_code == 200, cleared.text
+    await db_session.refresh(state)
+    assert state.companions is None
+
+    cleared_batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    cleared_source = render_runtime_source(
+        cleared_batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert "companions" not in cleared_source.manifest
 
 
 @pytest.mark.asyncio
@@ -1321,6 +1383,10 @@ async def test_platform_routes_are_canonical_and_exposed_in_openapi(platform_cli
     }
     assert all(not path.startswith("/api/platform") for path in paths)
     assert set(paths["/v1/platform/agents/{agent_id}/runtime-state"]) == {"put", "delete"}
+    companions_schema = response.json()["components"]["schemas"]["PlatformRuntimeStateUpsert"][
+        "properties"
+    ]["companions"]
+    assert companions_schema["anyOf"][0] == {"$ref": "#/components/schemas/HostedRuntimeCompanions"}
 
     missing_alias = await platform_client.post(
         "/api/platform/agents",

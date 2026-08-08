@@ -5364,6 +5364,96 @@ export interface components {
             /** Profiles */
             profiles?: components["schemas"]["HostedEgressProfile"][] | null;
         };
+        /** HostedFileBrowserAsset */
+        HostedFileBrowserAsset: {
+            /** Url */
+            url: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** HostedFileBrowserAssets */
+        HostedFileBrowserAssets: {
+            amd64: components["schemas"]["HostedFileBrowserAsset"];
+            arm64: components["schemas"]["HostedFileBrowserAsset"];
+        };
+        /** HostedFileBrowserAuth */
+        HostedFileBrowserAuth: {
+            /**
+             * Method
+             * @constant
+             */
+            method: "jwt";
+            /**
+             * Algorithm
+             * @constant
+             */
+            algorithm: "HS256";
+            /**
+             * Header
+             * @constant
+             */
+            header: "X-JWT-Assertion";
+            /**
+             * Useridentifier
+             * @constant
+             */
+            userIdentifier: "sub";
+            /**
+             * Groupsclaim
+             * @constant
+             */
+            groupsClaim: "groups";
+            /** Secret */
+            secret: string;
+            /** Audience */
+            audience: string;
+            /** Subject */
+            subject: string;
+            /** Requiredgroup */
+            requiredGroup: string;
+            /** Accessrevision */
+            accessRevision: string;
+        };
+        /** HostedFileBrowserCompanion */
+        HostedFileBrowserCompanion: {
+            /**
+             * Version
+             * @constant
+             */
+            version: "v1.5.0-stable";
+            /**
+             * Commit
+             * @constant
+             */
+            commit: "79552f8adb27c3e29934c4001660eb98f4aab5d6";
+            /**
+             * Listen
+             * @constant
+             */
+            listen: "0.0.0.0";
+            /**
+             * Port
+             * @constant
+             */
+            port: 9120;
+            /**
+             * Baseurl
+             * @constant
+             */
+            baseURL: "/";
+            /**
+             * Healthpath
+             * @constant
+             */
+            healthPath: "/health";
+            /**
+             * Sourceroot
+             * @constant
+             */
+            sourceRoot: "/home/clawdi";
+            assets: components["schemas"]["HostedFileBrowserAssets"];
+            auth: components["schemas"]["HostedFileBrowserAuth"];
+        };
         /** HostedHermesDashboardActivation */
         HostedHermesDashboardActivation: {
             /**
@@ -5448,6 +5538,10 @@ export interface components {
             enabled: boolean;
             /** Version */
             version: number;
+        };
+        /** HostedRuntimeCompanions */
+        HostedRuntimeCompanions: {
+            filebrowser?: components["schemas"]["HostedFileBrowserCompanion"] | null;
         };
         /** HostedRuntimeConfiguredDesiredState */
         HostedRuntimeConfiguredDesiredState: {
@@ -6152,6 +6246,7 @@ export interface components {
             locale: components["schemas"]["HostedRuntimeLocale"];
             system: components["schemas"]["HostedRuntimeSystem"];
             egress_engine?: components["schemas"]["HostedEgressEngine"] | null;
+            companions?: components["schemas"]["HostedRuntimeCompanions"] | null;
             /** Runtimes */
             runtimes: {
                 [key: string]: components["schemas"]["HostedRuntimeConfiguredDesiredState"] | components["schemas"]["HostedRuntimeUnmanagedDesiredState"];
