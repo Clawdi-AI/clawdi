@@ -699,7 +699,6 @@ const hostedRuntimeManifestBaseSchema = z
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
 		mcp: hostedMcpDesiredStateSchema.optional(),
 		skills: hostedSkillsDesiredStateSchema.optional(),
-		agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
 		tools: z.unknown().optional(),
 		terminalTooling: hostedTerminalToolingSchema,
 		recovery: z
@@ -924,6 +923,7 @@ export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSche
 	.safeExtend({
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
 		clawdiCli: hostedCliPayloadPolicySchema,
+		agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
 	})
 	.strict()
 	.superRefine(validateHostedRuntimeManifest);
@@ -968,6 +968,7 @@ export const hostedRuntimeManifestFixtureResponseSchema = z
 export type RuntimeManifest = z.output<typeof manifestSchema>;
 export type RuntimeInstall = z.infer<typeof installSchema>;
 export type HostedRuntimeManifest = z.infer<typeof hostedRuntimeManifestSchema>;
+export type HostedRuntimeBundleV2Manifest = z.infer<typeof hostedRuntimeBundleV2ManifestSchema>;
 export type LiveSyncAgent = z.infer<typeof liveSyncAgentSchema>;
 
 export const AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR =

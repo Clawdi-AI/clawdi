@@ -801,7 +801,7 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test("strictly parses and preserves the Agent Plugins desired-state contract", () => {
-		const parsed = hostedRuntimeManifestSchema.parse(
+		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
 		);
 		expect(parsed.agentPlugins).toEqual(TEST_AGENT_PLUGINS);
@@ -809,7 +809,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			TEST_AGENT_PLUGINS,
 		);
 
-		const empty = hostedRuntimeManifestSchema.parse(
+		const empty = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ agentPlugins: { schemaVersion: 1, installations: {} } }),
 		);
 		expect(hostedManifestToRuntimeManifest(empty).projection?.agentPlugins).toEqual({
@@ -817,9 +817,18 @@ describe("runtime manifest reconciliation invariants", () => {
 			installations: {},
 		});
 		expect(
-			hostedManifestToRuntimeManifest(hostedRuntimeManifestSchema.parse(hostedManifestFixture()))
-				.projection?.agentPlugins,
+			hostedManifestToRuntimeManifest(
+				hostedRuntimeBundleV2ManifestSchema.parse(hostedManifestFixture()),
+			).projection?.agentPlugins,
 		).toBeUndefined();
+	});
+
+	test("rejects Agent Plugins on the legacy Hosted manifest v1 contract", () => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
+			).success,
+		).toBe(false);
 	});
 
 	test.each([
@@ -860,7 +869,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		],
 	] as const)("rejects Agent Plugins %s", (_name, installation) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({
 					agentPlugins: {
 						schemaVersion: 1,
@@ -873,7 +882,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("rejects a noncanonical Agent Plugin installation key", () => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({
 					agentPlugins: {
 						schemaVersion: 1,
@@ -886,7 +895,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("fails closed before converging non-empty Agent Plugins installations", () => {
 		const paths = tempRuntimePaths();
-		const hosted = hostedRuntimeManifestSchema.parse(
+		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
 		);
 		const normalized = hostedManifestToRuntimeManifest(hosted);

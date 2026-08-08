@@ -20,6 +20,7 @@ import {
 import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
+	type HostedRuntimeBundleV2Manifest,
 	type HostedRuntimeManifest,
 	hasUnsupportedAgentPluginInstallations,
 	hostedCliPayloadPolicySchema,
@@ -426,8 +427,11 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 	return error instanceof RuntimeAuthError ? "auth" : "network";
 }
 
+type NormalizableHostedRuntimeManifest = HostedRuntimeManifest &
+	Partial<Pick<HostedRuntimeBundleV2Manifest, "agentPlugins">>;
+
 export function hostedManifestToRuntimeManifest(
-	hosted: HostedRuntimeManifest,
+	hosted: NormalizableHostedRuntimeManifest,
 	applyGeneration?: number,
 ): RuntimeManifest {
 	const paths = getRuntimePaths({ mode: "hosted" });
@@ -496,7 +500,7 @@ export function hostedManifestToRuntimeManifest(
 }
 
 function hostedRuntimeProviderBinding(
-	runtime: HostedRuntimeManifest["runtimes"][string],
+	runtime: NormalizableHostedRuntimeManifest["runtimes"][string],
 ):
 	| { provider_ids: string[]; primary_model: { provider_id: string; model: string } }
 	| { provider_ids: [] } {
