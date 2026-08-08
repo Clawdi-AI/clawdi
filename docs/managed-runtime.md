@@ -518,8 +518,9 @@ The CLI normalizes these wire contracts into the desired-state shape:
   consumed by `runtime init`.
 - `clawdi.hosted-runtime.bundle.v2` wraps an inner
   `clawdi.hosted-runtime.manifest.v1` and is marked locally after validation.
-  OpenClaw requires typed native auth, the exact gateway command, and an
-  environment secret reference for the gateway token.
+  Its inner manifest additionally accepts the optional `agentPlugins`
+  projection. OpenClaw requires typed native auth, the exact gateway command,
+  and an environment secret reference for the gateway token.
 
 Normalization maps hosted fields into the internal shape:
 
@@ -549,6 +550,7 @@ Normalization maps hosted fields into the internal shape:
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with one Clawdi-managed provider metadata and secret reference, independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
 | `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
+| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional declaration-only Agent Plugins desired state; schema version `1` entries pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, a `sha256-tree-v1` content digest, and canonical secret references |
 | `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
@@ -662,6 +664,15 @@ drift without following them. The public sync hash remains unchanged for old
 and new clients.
 
 ### Skill And MCP Authority Boundaries
+
+In the v2 bundle inner manifest, `agentPlugins` is declaration-only in this
+phase. Cloud may persist and render the strict desired-state block, but the
+current CLI does not download,
+materialize, inject secrets for, or connect Agent Plugins to native runtime
+loaders. Empty or absent installations preserve existing convergence behavior;
+any non-empty installation map fails closed at the CLI capability boundary and
+cannot be reported as applied. A later runtime phase must add reconciliation
+and an explicit supported capability before non-empty state can converge.
 
 The bundled `clawdi` Skill is platform infrastructure. Hosted constructs its
 private `skills.entries` runtime state internally, and capable CLIs reconcile

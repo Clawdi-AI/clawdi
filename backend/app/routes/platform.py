@@ -1259,6 +1259,7 @@ def _assign_runtime_state(
     state.egress_profiles = _optional_runtime_model(body.egress_profiles)
     state.mcp = _optional_runtime_model(body.mcp)
     state.skills = _optional_runtime_model(body.skills)
+    state.agent_plugins = _optional_runtime_model(body.agent_plugins)
     state.tools = body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
 
 
@@ -1298,6 +1299,7 @@ def _runtime_state_changed_fields(
         "egress_profiles",
         "mcp",
         "skills",
+        "agent_plugins",
         "tools",
     ]
     if state is None:
@@ -1317,7 +1319,14 @@ def _runtime_state_changed_fields(
                 name: runtime.model_dump(exclude_none=True, mode="json")
                 for name, runtime in body.runtimes.items()
             }
-        elif field in {"egress_engine", "companions", "egress_profiles", "mcp", "skills"}:
+        elif field in {
+            "egress_engine",
+            "companions",
+            "egress_profiles",
+            "mcp",
+            "skills",
+            "agent_plugins",
+        }:
             body_value = _optional_runtime_model(getattr(body, field))
         elif field in {"live_sync", "recovery"}:
             body_value = getattr(body, field).model_dump(mode="json")

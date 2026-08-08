@@ -18,8 +18,11 @@ import {
 	isClawdiManagedProviderProjection,
 } from "./hosted-egress-profiles";
 import {
+	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
+	type HostedRuntimeBundleV2Manifest,
 	type HostedRuntimeManifest,
+	hasUnsupportedAgentPluginInstallations,
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	manifestSchema,
@@ -424,8 +427,11 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 	return error instanceof RuntimeAuthError ? "auth" : "network";
 }
 
+type NormalizableHostedRuntimeManifest = HostedRuntimeManifest &
+	Partial<Pick<HostedRuntimeBundleV2Manifest, "agentPlugins">>;
+
 export function hostedManifestToRuntimeManifest(
-	hosted: HostedRuntimeManifest,
+	hosted: NormalizableHostedRuntimeManifest,
 	applyGeneration?: number,
 ): RuntimeManifest {
 	const paths = getRuntimePaths({ mode: "hosted" });
@@ -480,6 +486,7 @@ export function hostedManifestToRuntimeManifest(
 			providers: hosted.providers,
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
 			...(hosted.skills === undefined ? {} : { skills: hosted.skills }),
+			...(hosted.agentPlugins === undefined ? {} : { agentPlugins: hosted.agentPlugins }),
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
 			...(hosted.terminalTooling === undefined ? {} : { terminalTooling: hosted.terminalTooling }),
 		},
@@ -493,7 +500,7 @@ export function hostedManifestToRuntimeManifest(
 }
 
 function hostedRuntimeProviderBinding(
-	runtime: HostedRuntimeManifest["runtimes"][string],
+	runtime: NormalizableHostedRuntimeManifest["runtimes"][string],
 ):
 	| { provider_ids: string[]; primary_model: { provider_id: string; model: string } }
 	| { provider_ids: [] } {
@@ -558,6 +565,9 @@ function validateManifestSemantics(
 		errors.push(`runtime workspaceRoot must be absolute: ${manifest.workspaceRoot}`);
 	}
 	if (trustDomain !== "generic") {
+		if (hasUnsupportedAgentPluginInstallations(manifest)) {
+			errors.push(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+		}
 		const cliPolicy = hostedCliPayloadPolicySchema.safeParse(manifest.clawdiCli);
 		if (!cliPolicy.success) {
 			errors.push(...zodErrors(cliPolicy.error).map((error) => `clawdiCli.${error}`));

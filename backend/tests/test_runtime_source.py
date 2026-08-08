@@ -319,6 +319,36 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
     ]
 
 
+def test_runtime_source_revalidates_persisted_agent_plugins_before_rendering() -> None:
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    state.agent_plugins = {
+        "schemaVersion": 1,
+        "installations": {
+            "acme.tools": {
+                "installationId": "install_01hxyz",
+                "version": "1.2.3",
+                "agentPluginsSchema": (
+                    "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+                ),
+                "source": {
+                    "type": "github",
+                    "url": "https://github.com/acme/agent-plugins",
+                    "path": "plugins/acme.tools",
+                    "commit": "a" * 40,
+                },
+                "contentDigest": f"sha256-tree-v1:{'b' * 64}",
+                "secretRefs": {},
+                "plaintextSecrets": {"token": "must-not-render"},
+            }
+        },
+    }
+
+    with pytest.raises(RuntimeSourceError, match="Agent Plugins state is invalid"):
+        _render(batch)
+
+
 def test_runtime_source_delivers_owned_oauth_only_to_selected_runtime(monkeypatch) -> None:
     from app.services import runtime_source
 
