@@ -12,7 +12,6 @@ import {
 	compactDeploymentFailureReason,
 	type DeploymentFailurePresentation,
 	deploymentFailurePresentation,
-	deploymentFailureProjection,
 	deploymentFailureReason,
 } from "@/hosted/deployment-failure";
 import {
@@ -156,23 +155,12 @@ export function useHostedAgentTiles({
 		if (!includeDeployments) return new Set<string>();
 		return claimedEnvIdsFromDeployments(deployments);
 	}, [deployments, includeDeployments]);
-	const deletionFailures = useMemo(
-		() =>
-			includeDeployments
-				? deployments.filter(
-						(deployment) => deploymentFailureProjection(deployment)?.failedVerb === "delete",
-					)
-				: [],
-		[deployments, includeDeployments],
-	);
-
 	return {
 		inventoryStatus: inventory.status,
 		hasExistingDeployments:
 			includeDeployments && hasExistingCloudDeployments(inventory.deployments),
 		tiles,
 		claimedEnvIds,
-		deletionFailures,
 		isFetching: inventory.isFetching,
 		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
 		error: inventory.error,
@@ -199,7 +187,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 		source: "on-clawdi",
 		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.resource.id,
 	};
-	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
+	const detailHref = agentSectionHref(envId ?? d.resource.id, "overview", routeQuery);
 	const failure = deploymentFailurePresentation(d);
 	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv, failure);
 	const cardStatus: AgentCardStatusProjection = {

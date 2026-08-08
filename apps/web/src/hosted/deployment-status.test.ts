@@ -7,6 +7,7 @@ import {
 	canRestart,
 	canStart,
 	canStop,
+	DEPLOYMENT_CREATION_TRANSITION_TIMEOUT_MS,
 	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
 	DEPLOYMENT_TRANSITION_ESCALATION_MS,
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
@@ -355,7 +356,7 @@ describe("DeploymentStatus", () => {
 		expect(terminal.trackers.size).toBe(0);
 	});
 
-	test("keeps reconciling a create observed from 05:00 through Running at 05:09", () => {
+	test("keeps fast polling a create through the measured ten-minute setup window", () => {
 		const acceptedAtMs = Date.parse("2026-07-29T05:00:00Z");
 		const operation = acceptedOperation("create");
 		operation.metadata.deploymentId = "hdep_slow_create";
@@ -370,12 +371,12 @@ describe("DeploymentStatus", () => {
 		const lastFast = deploymentPollingState(
 			[creating],
 			accepted.trackers,
-			Date.parse("2026-07-29T05:04:59Z"),
+			Date.parse("2026-07-29T05:09:59Z"),
 		);
 		const delayed = deploymentPollingState(
 			[creating],
 			lastFast.trackers,
-			Date.parse("2026-07-29T05:05:00Z"),
+			Date.parse("2026-07-29T05:10:00Z"),
 		);
 		const running = deploymentPollingState(
 			[
@@ -386,7 +387,7 @@ describe("DeploymentStatus", () => {
 				}),
 			],
 			delayed.trackers,
-			Date.parse("2026-07-29T05:09:00Z"),
+			Date.parse("2026-07-29T05:10:01Z"),
 		);
 
 		expect([accepted.refetchInterval, lastFast.refetchInterval]).toEqual([
@@ -395,6 +396,7 @@ describe("DeploymentStatus", () => {
 		]);
 		expect(delayed.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
 		expect(delayed.transitions.get("hdep_slow_create")?.kind).toBe("timed_out");
+		expect(DEPLOYMENT_CREATION_TRANSITION_TIMEOUT_MS).toBe(10 * 60_000);
 		expect(running.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
 		expect(running.transitions.size).toBe(0);
 		expect(running.trackers.size).toBe(0);

@@ -164,12 +164,12 @@ describe("hosted agent sessions refresh", () => {
 		expect(HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE).toBe("No sessions from this agent yet.");
 	});
 
-	test("keeps Overview sessions visible during starting, updating, stopped, and failed states", () => {
+	test("keeps the Overview sessions query independent from deployment lifecycle", () => {
 		const detailStart = detailSource.indexOf("export function HostedAgentDetail(");
 		const sessionsQueryStart = detailSource.indexOf("const sessions = useQuery({", detailStart);
 		const sessionsQueryEnd = detailSource.indexOf("\n\t});", sessionsQueryStart) + "\n\t});".length;
 		const sessionsQuerySource = detailSource.slice(sessionsQueryStart, sessionsQueryEnd);
-		const initialPageStart = detailSource.indexOf("const showInitialStartingPage", detailStart);
+		const initialPageStart = detailSource.indexOf("const showInitialDeploymentPage", detailStart);
 		const initialPageEnd = detailSource.indexOf("const interfaceAvailable", initialPageStart);
 		const initialPageSource = detailSource.slice(initialPageStart, initialPageEnd);
 		const overviewStart = detailSource.indexOf("function OverviewTab(");
@@ -188,7 +188,8 @@ describe("hosted agent sessions refresh", () => {
 		expect(sessionsQuerySource).toContain('enabled: activeTab === "overview" && sessionsQueryable');
 		expect(sessionsQuerySource).not.toContain("deploymentStatus");
 		expect(sessionsQuerySource).not.toContain("projection.status");
-		expect(initialPageSource).toContain("!cloudEnvironmentId");
+		expect(initialPageSource).toContain("shouldShowInitialDeploymentProgress(");
+		expect(initialPageSource).not.toContain("cloudEnvironmentId");
 		expect(initialPageSource).not.toContain('projection.status !== "resolved"');
 		expect(recentSessionsStart).toBeGreaterThan(overviewStart);
 		expect(recentSessionsEnd).toBeGreaterThan(recentSessionsStart);

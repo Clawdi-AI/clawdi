@@ -55,6 +55,7 @@ export type DeploymentOperationVerb =
 
 export const DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS = 10_000;
 export const DEPLOYMENT_TRANSITION_TIMEOUT_MS = 5 * 60_000;
+export const DEPLOYMENT_CREATION_TRANSITION_TIMEOUT_MS = 10 * 60_000;
 // The backend controller keeps recovering stalled generations on its own
 // (60s scan, `clawdi_v2_a3_stalled_generation_seconds` in clawdi-hosted
 // backend/app/v2/hosted/controller_scheduling.py). Escalation waits well
@@ -457,7 +458,10 @@ export function deploymentPollingState(
 			tracker: trackers.get(deploymentId) ?? null,
 			nowMs,
 			pollIntervalMs: DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
-			timeoutMs: DEPLOYMENT_TRANSITION_TIMEOUT_MS,
+			timeoutMs:
+				operation?.metadata.verb === "create"
+					? DEPLOYMENT_CREATION_TRANSITION_TIMEOUT_MS
+					: DEPLOYMENT_TRANSITION_TIMEOUT_MS,
 			escalationMs: DEPLOYMENT_TRANSITION_ESCALATION_MS,
 		});
 		nextTrackers.set(deploymentId, pollState.tracker);
