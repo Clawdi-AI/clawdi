@@ -3456,6 +3456,10 @@ export interface components {
             supports_tools?: boolean;
             /** Supports Reasoning */
             supports_reasoning?: boolean;
+            /** Compat */
+            compat?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
             /** Context Window */
             context_window?: number;
             /** Max Input Tokens */

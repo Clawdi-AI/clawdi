@@ -1703,7 +1703,12 @@ async def test_ai_provider_accepts_complete_hosted_model_contract(client: httpx.
         "supports_vision": True,
         "supports_tools": True,
         "supports_reasoning": False,
+        "compat": {
+            "supportsDeveloperRole": False,
+            "future": {"nested": [True, 7, "opaque"]},
+        },
         "context_window": 128000,
+        "max_input_tokens": 120000,
         "max_tokens": 16384,
         "cost": {"input": 1, "output": 2, "cache_read": 0.1, "cache_write": 0.2},
         "capabilities": {
