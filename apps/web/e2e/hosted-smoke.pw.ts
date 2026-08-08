@@ -3398,8 +3398,9 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await expect(page).toHaveURL(/\/agents\/hdep_created/);
 	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(
-		page.getByText("This page updates automatically as setup progresses.", { exact: false }),
+		page.getByText("Setup usually takes about 7–10 minutes.", { exact: false }),
 	).toBeVisible();
+	await expect(page.getByText("Preparing cloud resources", { exact: true })).toBeVisible();
 	expect(deploymentRequestReads).toHaveLength(1);
 	expect(operationPollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);

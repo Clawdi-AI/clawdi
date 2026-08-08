@@ -399,7 +399,7 @@ describe("deploymentToTiles", () => {
 		expect(resolveAgentDeployment([deleting], environmentId).match).toBeNull();
 	});
 
-	test("keeps a deployment without an env identity non-navigable and summary-only", () => {
+	test("links a visible deployment by deployment identity before its env identity exists", () => {
 		const hostedDeployment = deployment({
 			status: "failed",
 			failureReason: "creation_interrupted",
@@ -410,11 +410,10 @@ describe("deploymentToTiles", () => {
 		expect(tile).toMatchObject({
 			id: "dep_123",
 			name: "hosted-test",
-			href: null,
+			href: "/agents/dep_123?source=on-clawdi&d=dep_123",
 			env: null,
 		});
 		expectHostedTileStatus(tile, "Temporarily unavailable");
-		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 });
 

@@ -17,6 +17,7 @@ import {
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 	type DeploymentOperationVerb,
 	deploymentRefetchInterval,
+	deploymentStatusFromResource,
 } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
@@ -34,6 +35,10 @@ type OverviewComputeSummary =
 	typeof import("@/hosted/agents/hosted-agent-detail").OverviewComputeSummary;
 type InitialDeploymentPage =
 	typeof import("@/hosted/agents/hosted-agent-detail").InitialDeploymentPage;
+type ShouldShowInitialDeploymentProgress =
+	typeof import("@/hosted/agents/hosted-agent-detail").shouldShowInitialDeploymentProgress;
+type CanRetryInitialDeployment =
+	typeof import("@/hosted/agents/hosted-agent-detail").canRetryInitialDeployment;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
@@ -42,6 +47,8 @@ let runManualDeploymentRefetch: RunManualDeploymentRefetch | null = null;
 let overviewComputeStatus: OverviewComputeStatus | null = null;
 let overviewComputeSummary: OverviewComputeSummary | null = null;
 let initialDeploymentPage: InitialDeploymentPage | null = null;
+let shouldShowInitialDeploymentProgress: ShouldShowInitialDeploymentProgress | null = null;
+let canRetryInitialDeployment: CanRetryInitialDeployment | null = null;
 
 function requiredDeploymentStatus(
 	deployment: HostedDeployment | undefined,
@@ -66,6 +73,8 @@ beforeAll(async () => {
 	overviewComputeStatus = detailModule.OverviewComputeStatus;
 	overviewComputeSummary = detailModule.OverviewComputeSummary;
 	initialDeploymentPage = detailModule.InitialDeploymentPage;
+	shouldShowInitialDeploymentProgress = detailModule.shouldShowInitialDeploymentProgress;
+	canRetryInitialDeployment = detailModule.canRetryInitialDeployment;
 });
 
 describe("deployment failure status rendering", () => {
@@ -264,7 +273,8 @@ describe("deployment transition timeout rendering", () => {
 				status: "creating",
 				runtime: "hermes",
 				title: "Setting up Hermes",
-				activeLabel: "Preparing your environment",
+				activeLabel: "Preparing cloud resources",
+				activeDescription: "Creating a private environment and connecting your AI provider.",
 				step: "Step 1 of 3",
 				currentStage: "creating",
 				states: { creating: "active", starting: "pending", running: "pending" },
@@ -273,7 +283,9 @@ describe("deployment transition timeout rendering", () => {
 				status: "starting",
 				runtime: "openclaw",
 				title: "Setting up OpenClaw",
-				activeLabel: "Installing OpenClaw",
+				activeLabel: "Installing and starting OpenClaw",
+				activeDescription:
+					"Booting the environment, installing Clawdi and the agent runtime, then checking readiness.",
 				step: "Step 2 of 3",
 				currentStage: "starting",
 				states: { creating: "completed", starting: "active", running: "pending" },
@@ -283,6 +295,7 @@ describe("deployment transition timeout rendering", () => {
 				runtime: "hermes",
 				title: "Setting up Hermes",
 				activeLabel: "Ready",
+				activeDescription: "Setup is complete.",
 				step: "Step 3 of 3",
 				currentStage: "running",
 				states: { creating: "completed", starting: "completed", running: "completed" },
@@ -305,6 +318,7 @@ describe("deployment transition timeout rendering", () => {
 			expect(markup).not.toContain("Deploying your agent");
 			expect(markup).not.toContain("Current status");
 			expect(markup).toContain(fixture.activeLabel);
+			expect(markup).toContain(fixture.activeDescription);
 			expect(markup).toContain(fixture.step);
 			expect(markup).toContain('aria-label="Deployment progress"');
 			for (const [stage, state] of Object.entries(fixture.states)) {
@@ -314,9 +328,10 @@ describe("deployment transition timeout rendering", () => {
 					),
 				);
 			}
-			for (const shortLabel of ["Environment", "Install", "Ready"])
+			for (const shortLabel of ["Cloud resources", "Agent software", "Ready"])
 				expect(markup).toContain(`>${shortLabel}</p>`);
 			expect(markup).toContain("updates automatically");
+			expect(markup).toContain("7–10 minutes");
 			if (fixture.status === "running") {
 				expect(markup).not.toContain('data-slot="spinner"');
 			} else {
@@ -347,10 +362,69 @@ describe("deployment transition timeout rendering", () => {
 		expect(markup).toContain("Setup is taking longer than expected");
 		expect(markup).toContain("Check again");
 		expect(markup).not.toContain("Current status");
-		expect(markup).toContain(">Installing OpenClaw</p>");
+		expect(markup).toContain(">Installing and starting OpenClaw</p>");
 		expect(markup).toContain("Step 2 of 3");
 		expect(markup).toContain('data-deployment-stage="starting" data-stage-state="active"');
 		expect(markup).not.toContain('data-slot="spinner"');
+	});
+
+	test("keeps deployment progress on the agent surface after its env identity is projected", () => {
+		if (!shouldShowInitialDeploymentProgress) throw new Error("agent detail was not loaded");
+		for (const status of ["creating", "starting"] as const) {
+			const deployment = hostedDeploymentFixture({
+				status,
+				cloudEnvironments: { openclaw: "11111111-1111-4111-8111-111111111111" },
+			});
+			expect(
+				shouldShowInitialDeploymentProgress(
+					deploymentStatusFromResource(deployment.resource.status),
+					null,
+				),
+			).toBe(true);
+		}
+	});
+
+	test("renders a create failure in the setup panel without exposing internal details", () => {
+		if (
+			!initialDeploymentPage ||
+			!shouldShowInitialDeploymentProgress ||
+			!canRetryInitialDeployment
+		) {
+			throw new Error("agent detail was not loaded");
+		}
+		const deployment = hostedDeploymentFixture({
+			id: "hdep_create_failed",
+			status: "failed",
+			acceptedOperation: failedOperation("create"),
+		});
+		const failure = deploymentFailurePresentation(deployment);
+		if (!failure) throw new Error("Expected create failure presentation");
+		const nonRetryableFailure = { ...failure, retryable: false };
+		expect(canRetryInitialDeployment(failure)).toBe(true);
+		expect(canRetryInitialDeployment(nonRetryableFailure)).toBe(false);
+		expect(
+			shouldShowInitialDeploymentProgress(
+				deploymentStatusFromResource(deployment.resource.status),
+				failure,
+			),
+		).toBe(true);
+
+		const markup = renderToStaticMarkup(
+			createElement(initialDeploymentPage, {
+				deployment,
+				failure: nonRetryableFailure,
+				deploymentTransitionTimedOut: false,
+				deploymentTransitionEscalated: false,
+				isCheckingDeployment: false,
+				onCheckDeploymentAgain: () => undefined,
+			}),
+		);
+
+		expect(markup).toContain("Agent setup failed");
+		expect(markup).not.toContain("Retry startup");
+		expect(markup).toContain("The Clawdi service could not complete this request.");
+		expect(markup).not.toContain("Internal operation failure");
+		expect(markup).not.toContain("Contact support");
 	});
 
 	test("keeps projection availability notices off the deployment-backed overview", () => {
@@ -382,7 +456,7 @@ describe("deployment transition timeout rendering", () => {
 		expect(overviewStatusSource).not.toContain("<Button");
 		expect(overviewStatusSource).not.toContain("href=");
 		expect(detailSource).not.toContain("OverviewFailureAction");
-		expect(detailSource).toContain("!hasTerminalDeploymentFailure &&");
+		expect(detailSource).toContain("shouldShowInitialDeploymentProgress(");
 	});
 
 	test("wires the timed-out inventory state and real refetch action into the detail", () => {
@@ -537,7 +611,6 @@ describe("hosted agent customer language", () => {
 
 		for (const staleLifecycleCopy of [
 			"Provisioning",
-			"Booting",
 			"Getting your agent ready",
 			"Setting up your agent",
 			"Your agent is ready",

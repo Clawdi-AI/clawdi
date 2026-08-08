@@ -2,6 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 describe("hosted agent detail header", () => {
+	test("keeps per-agent failures off the dashboard home", () => {
+		const homeSource = readFileSync(
+			new URL("../hosted-agents-section.tsx", import.meta.url),
+			"utf8",
+		);
+
+		for (const misplacedCopy of [
+			"HostedDeletionFailureNotices",
+			"Cleanup for",
+			"Retry cleanup",
+			"Contact support before trying again",
+		]) {
+			expect(homeSource).not.toContain(misplacedCopy);
+		}
+	});
+
 	test("embeds owner SSO Files without credentials and keeps a top-level launch", () => {
 		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
 

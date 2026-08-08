@@ -353,6 +353,17 @@ function isStartingStatus(status: DeploymentStatus): boolean {
 	return status.kind === "creating" || status.kind === "starting";
 }
 
+export function shouldShowInitialDeploymentProgress(
+	status: DeploymentStatus,
+	failure: DeploymentFailurePresentation | null,
+): boolean {
+	return (isStartingStatus(status) && failure === null) || failure?.failedVerb === "create";
+}
+
+export function canRetryInitialDeployment(failure: DeploymentFailurePresentation): boolean {
+	return failure.retryable !== false && failure.remediation.kind === "restart";
+}
+
 function startingTitle(): string {
 	return "Starting your agent…";
 }
@@ -459,7 +470,7 @@ export function HostedAgentDetail({
 	const $api = useOpenApi();
 	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
-	const hasTerminalDeploymentFailure = deploymentFailurePresentation(deployment) !== null;
+	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
 	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
@@ -521,13 +532,11 @@ export function HostedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
 	const resourceScope = agentResourceScope(environmentId, routeSearch);
-	const showInitialStartingPage =
+	const showInitialDeploymentPage =
 		activeTab === "overview" &&
-		isStartingStatus(deploymentStatus) &&
-		!hasTerminalDeploymentFailure &&
-		!cloudEnvironmentId;
+		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
 	const interfaceAvailable =
-		activeTab === "overview" && !showInitialStartingPage && isRunningStatus(deploymentStatus);
+		activeTab === "overview" && !showInitialDeploymentPage && isRunningStatus(deploymentStatus);
 	const isLiveToolTab =
 		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
 	return (
@@ -587,9 +596,10 @@ export function HostedAgentDetail({
 					/>
 				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
-					{showInitialStartingPage ? (
+					{showInitialDeploymentPage ? (
 						<InitialDeploymentPage
 							deployment={deployment}
+							failure={deploymentFailure}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							deploymentTransitionEscalated={deploymentTransitionEscalated}
 							isCheckingDeployment={isCheckingDeployment}
@@ -963,12 +973,14 @@ export function OverviewComputeSummary({
 
 export function InitialDeploymentPage({
 	deployment,
+	failure = null,
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
+	failure?: DeploymentFailurePresentation | null;
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
 	isCheckingDeployment: boolean;
@@ -976,18 +988,55 @@ export function InitialDeploymentPage({
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const runtimeLabel = runtimeDisplayName(deployment.resource.spec.runtime);
+	if (failure?.failedVerb === "create") {
+		const canRetry = canRetryInitialDeployment(failure);
+		return (
+			<DetailPanel className="border-destructive/30 bg-destructive-muted p-6 md:p-8">
+				<div data-testid="hosted-initial-deployment-panel" role="alert" className="space-y-5">
+					<div>
+						<h2 className="flex items-center gap-2 text-lg font-semibold">
+							<AlertCircle className="size-5 text-destructive" />
+							Agent setup failed
+						</h2>
+						<p className="mt-1 text-sm text-muted-foreground">
+							Setup stopped before this agent became ready.
+						</p>
+					</div>
+					<Alert variant="destructive">
+						<AlertCircle />
+						<AlertTitle>{failure.title}</AlertTitle>
+						<AlertDescription className="space-y-1">
+							<p>{failure.reason}</p>
+							<p>{failure.description}</p>
+						</AlertDescription>
+					</Alert>
+					{canRetry ? <StartComputeAction deployment={deployment} label="Retry startup" /> : null}
+				</div>
+			</DetailPanel>
+		);
+	}
 	const stages = [
-		{ status: "creating", label: "Environment" },
-		{ status: "starting", label: "Install" },
+		{ status: "creating", label: "Cloud resources" },
+		{ status: "starting", label: "Agent software" },
 		{ status: "running", label: "Ready" },
 	] as const;
 	const activeStageIndex = status.kind === "starting" ? 1 : status.kind === "running" ? 2 : 0;
-	const activeStageLabel =
+	const activeStage =
 		activeStageIndex === 0
-			? "Preparing your environment"
+			? {
+					label: "Preparing cloud resources",
+					description: "Creating a private environment and connecting your AI provider.",
+				}
 			: activeStageIndex === 1
-				? `Installing ${runtimeLabel}`
-				: "Ready";
+				? {
+						label: `Installing and starting ${runtimeLabel}`,
+						description:
+							"Booting the environment, installing Clawdi and the agent runtime, then checking readiness.",
+					}
+				: {
+						label: "Ready",
+						description: "Setup is complete.",
+					};
 	return (
 		<DetailPanel
 			className={cn(
@@ -1017,7 +1066,7 @@ export function InitialDeploymentPage({
 							? "We’ll keep checking automatically. If you want, cancel this setup and try again."
 							: deploymentTransitionTimedOut
 								? "Your agent may still be starting. We’ll keep checking automatically."
-								: "This page updates automatically as setup progresses."}
+								: "Setup usually takes about 7–10 minutes. It continues if you leave, and this page updates automatically while open."}
 					</p>
 				</div>
 				<div>
@@ -1035,12 +1084,13 @@ export function InitialDeploymentPage({
 									<Spinner className="size-3.5 shrink-0 text-primary" />
 								</span>
 							) : null}
-							{activeStageLabel}
+							{activeStage.label}
 						</p>
 						<p className="shrink-0 text-xs font-medium text-muted-foreground">
 							Step {activeStageIndex + 1} of {stages.length}
 						</p>
 					</div>
+					<p className="mt-2 text-sm text-muted-foreground">{activeStage.description}</p>
 					<ol aria-label="Deployment progress" className="mt-4 grid w-full grid-cols-3 gap-2">
 						{stages.map((stage, index) => {
 							const stageState =
