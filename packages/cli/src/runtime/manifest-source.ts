@@ -18,8 +18,10 @@ import {
 	isClawdiManagedProviderProjection,
 } from "./hosted-egress-profiles";
 import {
+	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	type HostedRuntimeManifest,
+	hasUnsupportedAgentPluginInstallations,
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	manifestSchema,
@@ -480,6 +482,7 @@ export function hostedManifestToRuntimeManifest(
 			providers: hosted.providers,
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
 			...(hosted.skills === undefined ? {} : { skills: hosted.skills }),
+			...(hosted.agentPlugins === undefined ? {} : { agentPlugins: hosted.agentPlugins }),
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
 			...(hosted.terminalTooling === undefined ? {} : { terminalTooling: hosted.terminalTooling }),
 		},
@@ -558,6 +561,9 @@ function validateManifestSemantics(
 		errors.push(`runtime workspaceRoot must be absolute: ${manifest.workspaceRoot}`);
 	}
 	if (trustDomain !== "generic") {
+		if (hasUnsupportedAgentPluginInstallations(manifest)) {
+			errors.push(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+		}
 		const cliPolicy = hostedCliPayloadPolicySchema.safeParse(manifest.clawdiCli);
 		if (!cliPolicy.success) {
 			errors.push(...zodErrors(cliPolicy.error).map((error) => `clawdiCli.${error}`));

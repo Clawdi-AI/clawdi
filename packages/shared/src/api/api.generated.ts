@@ -5181,6 +5181,37 @@ export interface components {
              */
             status: "ok";
         };
+        /** HostedAgentPluginInstallation */
+        HostedAgentPluginInstallation: {
+            /** Installationid */
+            installationId: string;
+            /** Version */
+            version: string;
+            /**
+             * Agentpluginsschema
+             * @constant
+             */
+            agentPluginsSchema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+            source: components["schemas"]["HostedRuntimeSkillSource"];
+            /** Contentdigest */
+            contentDigest: string;
+            /** Secretrefs */
+            secretRefs: {
+                [key: string]: string;
+            };
+        };
+        /** HostedAgentPlugins */
+        HostedAgentPlugins: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Installations */
+            installations: {
+                [key: string]: components["schemas"]["HostedAgentPluginInstallation"];
+            };
+        };
         /** HostedCodexTool */
         HostedCodexTool: {
             /**
@@ -6256,6 +6287,7 @@ export interface components {
             egress_profiles?: components["schemas"]["HostedEgressProfiles"] | null;
             mcp?: components["schemas"]["HostedRuntimeMcp"] | null;
             skills?: components["schemas"]["HostedRuntimeSkills"] | null;
+            agent_plugins?: components["schemas"]["HostedAgentPlugins"] | null;
             tools: components["schemas"]["HostedRuntimeTools"];
             /** Secretvalues */
             secretValues: {

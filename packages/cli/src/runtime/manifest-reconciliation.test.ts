@@ -45,6 +45,7 @@ import {
 	runtimeUserMutationTargets,
 } from "./manifest";
 import {
+	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	FILE_BROWSER_AMD64_SHA256,
 	FILE_BROWSER_ARM64_SHA256,
 	FILE_BROWSER_COMMIT,
@@ -58,6 +59,10 @@ import {
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
+import {
+	AGENT_PLUGINS_SCHEMA_1_0_0,
+	type HostedAgentPluginsDesiredState,
+} from "./manifest-resources";
 import {
 	hostedManifestToRuntimeManifest,
 	loadCommittedRuntimeManifest,
@@ -102,6 +107,23 @@ const TEST_HOSTED_CODEX_TOOLING = {
 			apiKeySecretRef: "secret://tool.codex.apiKey",
 		},
 	},
+};
+const TEST_AGENT_PLUGIN_INSTALLATION: HostedAgentPluginsDesiredState["installations"][string] = {
+	installationId: "install_01hxyz",
+	version: "1.2.3-rc.1+linux",
+	agentPluginsSchema: AGENT_PLUGINS_SCHEMA_1_0_0,
+	source: {
+		type: "github",
+		url: "https://github.com/acme/agent-plugins",
+		path: "plugins/acme.tools",
+		commit: "a".repeat(40),
+	},
+	contentDigest: `sha256-tree-v1:${"b".repeat(64)}`,
+	secretRefs: { "api-token": "secret://agent-plugins/acme.tools/api-token" },
+};
+const TEST_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
+	schemaVersion: 1,
+	installations: { "acme.tools": TEST_AGENT_PLUGIN_INSTALLATION },
 };
 
 function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -776,6 +798,105 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		expect(parsed.locale).toEqual({ language: "zh-CN", timezone: "Asia/Shanghai" });
 		expect(hostedManifestToRuntimeManifest(parsed).locale).toEqual(parsed.locale);
+	});
+
+	test("strictly parses and preserves the Agent Plugins desired-state contract", () => {
+		const parsed = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
+		);
+		expect(parsed.agentPlugins).toEqual(TEST_AGENT_PLUGINS);
+		expect(hostedManifestToRuntimeManifest(parsed).projection?.agentPlugins).toEqual(
+			TEST_AGENT_PLUGINS,
+		);
+
+		const empty = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({ agentPlugins: { schemaVersion: 1, installations: {} } }),
+		);
+		expect(hostedManifestToRuntimeManifest(empty).projection?.agentPlugins).toEqual({
+			schemaVersion: 1,
+			installations: {},
+		});
+		expect(
+			hostedManifestToRuntimeManifest(hostedRuntimeManifestSchema.parse(hostedManifestFixture()))
+				.projection?.agentPlugins,
+		).toBeUndefined();
+	});
+
+	test.each([
+		["mutable version", { ...TEST_AGENT_PLUGIN_INSTALLATION, version: "^1.2.3" }],
+		["noncanonical schema URI", { ...TEST_AGENT_PLUGIN_INSTALLATION, agentPluginsSchema: "1.0.0" }],
+		[
+			"mutable source",
+			{
+				...TEST_AGENT_PLUGIN_INSTALLATION,
+				source: { ...TEST_AGENT_PLUGIN_INSTALLATION.source, commit: "main" },
+			},
+		],
+		[
+			"unsafe source path",
+			{
+				...TEST_AGENT_PLUGIN_INSTALLATION,
+				source: { ...TEST_AGENT_PLUGIN_INSTALLATION.source, path: "plugins/../escape" },
+			},
+		],
+		[
+			"noncanonical digest",
+			{ ...TEST_AGENT_PLUGIN_INSTALLATION, contentDigest: `sha256-tree-v1:${"B".repeat(64)}` },
+		],
+		[
+			"plaintext secret",
+			{ ...TEST_AGENT_PLUGIN_INSTALLATION, secretRefs: { "api-token": "plaintext" } },
+		],
+		[
+			"noncanonical secret slot",
+			{
+				...TEST_AGENT_PLUGIN_INSTALLATION,
+				secretRefs: { API_TOKEN: "secret://agent-plugins/acme.tools/api-token" },
+			},
+		],
+		[
+			"unknown secret shape",
+			{ ...TEST_AGENT_PLUGIN_INSTALLATION, secretValues: { "api-token": "plaintext" } },
+		],
+	] as const)("rejects Agent Plugins %s", (_name, installation) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({
+					agentPlugins: {
+						schemaVersion: 1,
+						installations: { "acme.tools": installation },
+					},
+				}),
+			).success,
+		).toBe(false);
+	});
+
+	test("rejects a noncanonical Agent Plugin installation key", () => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({
+					agentPlugins: {
+						schemaVersion: 1,
+						installations: { Acme: TEST_AGENT_PLUGIN_INSTALLATION },
+					},
+				}),
+			).success,
+		).toBe(false);
+	});
+
+	test("fails closed before converging non-empty Agent Plugins installations", () => {
+		const paths = tempRuntimePaths();
+		const hosted = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
+		);
+		const normalized = hostedManifestToRuntimeManifest(hosted);
+
+		expect(() =>
+			convergeRuntimeManifestWithContract(
+				manifestLoad(normalized, "inline-hosted-agent-plugins"),
+				paths,
+			),
+		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
 	});
 
 	test.each([

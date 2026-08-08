@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
-import { hostedMcpDesiredStateSchema, hostedSkillsDesiredStateSchema } from "./manifest-resources";
+import {
+	hostedAgentPluginsDesiredStateSchema,
+	hostedMcpDesiredStateSchema,
+	hostedSkillsDesiredStateSchema,
+} from "./manifest-resources";
 import {
 	runtimeNameSchema,
 	runtimeRunSettingsSchema,
@@ -285,6 +289,7 @@ const runtimeProjectionSchema = z.object({
 	aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
 	mcp: hostedMcpDesiredStateSchema.optional(),
 	skills: hostedSkillsDesiredStateSchema.optional(),
+	agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
 	tools: z.unknown().optional(),
 	terminalTooling: z.unknown().optional(),
 });
@@ -694,6 +699,7 @@ const hostedRuntimeManifestBaseSchema = z
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
 		mcp: hostedMcpDesiredStateSchema.optional(),
 		skills: hostedSkillsDesiredStateSchema.optional(),
+		agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
 		tools: z.unknown().optional(),
 		terminalTooling: hostedTerminalToolingSchema,
 		recovery: z
@@ -963,3 +969,12 @@ export type RuntimeManifest = z.output<typeof manifestSchema>;
 export type RuntimeInstall = z.infer<typeof installSchema>;
 export type HostedRuntimeManifest = z.infer<typeof hostedRuntimeManifestSchema>;
 export type LiveSyncAgent = z.infer<typeof liveSyncAgentSchema>;
+
+export const AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR =
+	"Agent Plugin installations require a newer Clawdi runtime capability";
+
+export function hasUnsupportedAgentPluginInstallations(
+	manifest: Pick<RuntimeManifest, "projection">,
+): boolean {
+	return Object.keys(manifest.projection?.agentPlugins?.installations ?? {}).length > 0;
+}

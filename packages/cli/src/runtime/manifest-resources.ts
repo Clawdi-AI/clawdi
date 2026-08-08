@@ -3,7 +3,15 @@ import { hasAsciiControlCharacter } from "../lib/github-skill-archive";
 import { secretRefSchema } from "./egress-profiles";
 
 const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
+const agentPluginNameSchema = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
 const mcpHeaderNameSchema = z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/);
+
+export const AGENT_PLUGINS_SCHEMA_1_0_0 =
+	"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 
 function isMcpCredentialHeader(name: string): boolean {
 	const normalized = name.toLowerCase();
@@ -143,6 +151,45 @@ const hostedGithubSkillSourceSchema = z
 		commit: exactGitCommitSchema,
 	})
 	.strict();
+
+const exactAgentPluginSemverSchema = z
+	.string()
+	.min(1)
+	.max(100)
+	.regex(
+		/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+	);
+
+const hostedAgentPluginInstallationSchema = z
+	.object({
+		installationId: z
+			.string()
+			.min(1)
+			.max(200)
+			.refine(
+				(value) => value === value.trim() && !hasAsciiControlCharacter(value),
+				"must be a canonical non-empty identifier",
+			),
+		version: exactAgentPluginSemverSchema,
+		agentPluginsSchema: z.literal(AGENT_PLUGINS_SCHEMA_1_0_0),
+		source: hostedGithubSkillSourceSchema,
+		contentDigest: z.string().regex(/^sha256-tree-v1:[0-9a-f]{64}$/),
+		secretRefs: z
+			.record(agentPluginNameSchema, secretRefSchema.max(1_000))
+			.refine((value) => Object.keys(value).length <= 128, "must contain at most 128 entries"),
+	})
+	.strict();
+
+export const hostedAgentPluginsDesiredStateSchema = z
+	.object({
+		schemaVersion: z.literal(1),
+		installations: z
+			.record(agentPluginNameSchema, hostedAgentPluginInstallationSchema)
+			.refine((value) => Object.keys(value).length <= 128, "must contain at most 128 entries"),
+	})
+	.strict();
+
+export type HostedAgentPluginsDesiredState = z.infer<typeof hostedAgentPluginsDesiredStateSchema>;
 
 const cleanHttpUrlSchema = z
 	.string()

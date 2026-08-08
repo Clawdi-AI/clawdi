@@ -135,7 +135,13 @@ import {
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "./managed-skill-reservation";
-import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
+import {
+	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+	hasUnsupportedAgentPluginInstallations,
+	type LiveSyncAgent,
+	type RuntimeInstall,
+	type RuntimeManifest,
+} from "./manifest-contract";
 import {
 	type HostedMcpServerDesiredState,
 	type HostedSkillSource,
@@ -5339,6 +5345,9 @@ export function convergeRuntimeManifest(
 	} = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
+	if (hasUnsupportedAgentPluginInstallations(manifest)) {
+		throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+	}
 	const secretValues = runtimeSecretValues(load);
 	const applyContext = load.applyContext;
 	if (!applyContext) {

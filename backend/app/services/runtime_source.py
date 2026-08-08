@@ -35,6 +35,7 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
+    HostedAgentPlugins,
     HostedCodexProviderProjection,
     HostedEgressEngine,
     HostedEgressProfiles,
@@ -423,8 +424,15 @@ def render_runtime_source(
             if state.skills is not None
             else None
         )
+        agent_plugins = (
+            HostedAgentPlugins.model_validate(state.agent_plugins).model_dump(mode="json")
+            if state.agent_plugins is not None
+            else None
+        )
     except (ValidationError, ValueError) as exc:
-        raise RuntimeSourceError("Hosted runtime MCP or skills state is invalid") from exc
+        raise RuntimeSourceError(
+            "Hosted runtime MCP, skills, or Agent Plugins state is invalid"
+        ) from exc
     skills = _project_runtime_skills(
         workspace_skills,
         batch.project_skills.get(environment_id, ()),
@@ -660,6 +668,8 @@ def render_runtime_source(
         manifest["mcp"] = mcp
     if skills is not None:
         manifest["skills"] = skills
+    if agent_plugins is not None:
+        manifest["agentPlugins"] = agent_plugins
     if tool_projection:
         manifest["tools"] = tool_projection
     manifest["terminalTooling"] = terminal_tooling
