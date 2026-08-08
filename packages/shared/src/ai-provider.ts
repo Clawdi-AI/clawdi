@@ -75,6 +75,7 @@ export interface AiProviderModel {
 	supports_vision?: boolean;
 	supports_tools?: boolean;
 	supports_reasoning?: boolean;
+	compat?: Record<string, unknown>;
 	context_window?: number;
 	max_input_tokens?: number;
 	max_tokens?: number;
@@ -695,6 +696,9 @@ function validateModels(prefix: string, models: unknown, errors: string[]): void
 			if (model[field] !== undefined && typeof model[field] !== "boolean") {
 				errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid ${field}.`);
 			}
+		}
+		if (model.compat !== undefined && !isRecord(model.compat)) {
+			errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid compat.`);
 		}
 		if (model.alias !== undefined && typeof model.alias !== "string") {
 			errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid alias.`);

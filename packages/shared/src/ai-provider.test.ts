@@ -120,6 +120,7 @@ describe("validateAiProviderCatalog", () => {
 							context_window: "large",
 							max_input_tokens: "large",
 							supports_tools: "yes",
+							compat: [],
 						},
 					],
 				},
@@ -140,6 +141,7 @@ describe("validateAiProviderCatalog", () => {
 		expect(result.errors).toContain(
 			"Provider openai-alt model gpt-5.2 has invalid supports_tools.",
 		);
+		expect(result.errors).toContain("Provider openai-alt model gpt-5.2 has invalid compat.");
 	});
 
 	test("accepts model alias and cost metadata", () => {
@@ -156,6 +158,7 @@ describe("validateAiProviderCatalog", () => {
 							id: "gpt-5.5",
 							alias: "GPT-5.5",
 							max_input_tokens: 128_000,
+							compat: { supportsDeveloperRole: false },
 							cost: { input: 5, output: 30, cache_read: 0.5, cache_write: 0 },
 						},
 					],

@@ -357,6 +357,49 @@ describe("AI provider projection", () => {
 		expect(hermes.files[0]?.content).toContain("cache_write_cost_per_million: 0");
 	});
 
+	test("preserves opaque OpenClaw compat fields with explicit values taking precedence", () => {
+		const catalog: AiProviderCatalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: "custom-main",
+					type: "custom_openai_compatible",
+					base_url: "https://api.example.test/v1",
+					api_mode: "openai_chat",
+					auth: { type: "api_key", source: "env", ref: "env:CUSTOM_API_KEY" },
+					runtime_env_name: "CUSTOM_API_KEY",
+					models: [
+						{
+							id: "k3",
+							supports_tools: true,
+							compat: { supportsDeveloperRole: false, supportsTools: false },
+						},
+						{
+							id: "future-model",
+							supports_tools: false,
+							compat: { futureCompatibilityFlag: "preserved" },
+						},
+					],
+				},
+			],
+			defaults: { chat_provider_id: "custom-main" },
+		};
+
+		const projection = buildAgentTargetProjection("openclaw", catalog);
+		const patch = JSON.parse(projection.files[0]?.content ?? "{}") as {
+			models?: { providers?: Record<string, { models?: Array<Record<string, unknown>> }> };
+		};
+		const models = patch.models?.providers?.["custom-main"]?.models;
+		expect(models?.[0]?.compat).toEqual({
+			supportsDeveloperRole: false,
+			supportsTools: false,
+		});
+		expect(models?.[1]?.compat).toEqual({
+			supportsTools: false,
+			futureCompatibilityFlag: "preserved",
+		});
+	});
+
 	test("projects Sub2API overlay metadata without inventing a missing output cap", () => {
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,

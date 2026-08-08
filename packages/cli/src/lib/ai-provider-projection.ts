@@ -345,8 +345,7 @@ function openClawModels(
 				api,
 				input: openClawInputModalities(model),
 				reasoning: model.supports_reasoning,
-				compat:
-					model.supports_tools === undefined ? undefined : { supportsTools: model.supports_tools },
+				compat: openClawModelCompat(model),
 				contextWindow: positiveNumber(model.context_window),
 				maxTokens: positiveNumber(model.max_tokens),
 				cost: openClawModelCost(model.cost),
@@ -368,6 +367,11 @@ function openClawModels(
 		);
 	}
 	return models;
+}
+
+function openClawModelCompat(model: AiProviderModel): Record<string, unknown> | undefined {
+	if (model.supports_tools === undefined) return model.compat;
+	return { supportsTools: model.supports_tools, ...model.compat };
 }
 
 function openClawInputModalities(model: AiProviderModel): AiProviderModel["input_modalities"] {
