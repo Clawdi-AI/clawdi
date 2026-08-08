@@ -303,6 +303,7 @@ class AiProviderModel(BaseModel):
     supports_vision: bool | SkipJsonSchema[None] = None
     supports_tools: bool | SkipJsonSchema[None] = None
     supports_reasoning: bool | SkipJsonSchema[None] = None
+    compat: dict[str, JsonValue] | SkipJsonSchema[None] = None
     context_window: int | SkipJsonSchema[None] = Field(default=None, gt=0)
     max_input_tokens: int | SkipJsonSchema[None] = Field(default=None, gt=0)
     max_tokens: int | SkipJsonSchema[None] = Field(default=None, gt=0)
@@ -323,6 +324,7 @@ class AiProviderModel(BaseModel):
                     "supports_vision",
                     "supports_tools",
                     "supports_reasoning",
+                    "compat",
                     "context_window",
                     "max_input_tokens",
                     "max_tokens",

@@ -275,11 +275,23 @@ function toRuntimeModels(models: HostedSavedAiProvider["models"]): RuntimeAiProv
 		if (model.supports_reasoning !== null && model.supports_reasoning !== undefined) {
 			runtimeModel.supports_reasoning = model.supports_reasoning;
 		}
+		if (model.supports_vision !== null && model.supports_vision !== undefined) {
+			runtimeModel.supports_vision = model.supports_vision;
+		}
+		if (model.supports_tools !== null && model.supports_tools !== undefined) {
+			runtimeModel.supports_tools = model.supports_tools;
+		}
 		if (model.context_window !== null && model.context_window !== undefined) {
 			runtimeModel.context_window = model.context_window;
 		}
+		if (model.max_input_tokens !== null && model.max_input_tokens !== undefined) {
+			runtimeModel.max_input_tokens = model.max_input_tokens;
+		}
 		if (model.max_tokens !== null && model.max_tokens !== undefined) {
 			runtimeModel.max_tokens = model.max_tokens;
+		}
+		if (model.compat && Object.keys(model.compat).length > 0) {
+			runtimeModel.compat = { ...model.compat };
 		}
 		const cost = toRuntimeModelCost(model.cost);
 		if (cost) runtimeModel.cost = cost;
