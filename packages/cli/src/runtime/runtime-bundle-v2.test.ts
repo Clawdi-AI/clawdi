@@ -568,13 +568,7 @@ describe("hosted runtime bundle v2", () => {
 				skills: { entries: {} },
 			},
 		};
-		const result = convergeRuntimeManifest(load, paths, {
-			managedGatewayModelListFetcher: ({ baseUrl }) => ({
-				status: "ok",
-				endpoint: `${baseUrl}/models`,
-				models: [{ id: "gpt-test" }],
-			}),
-		});
+		const result = convergeRuntimeManifest(load, paths, {});
 
 		expect(result.installErrors).toEqual([]);
 		const egressSecretPath = join(paths.managedSecretRoot, "egress-secrets.json");
@@ -692,13 +686,7 @@ describe("hosted runtime bundle v2", () => {
 				},
 			},
 			paths,
-			{
-				managedGatewayModelListFetcher: ({ baseUrl }) => ({
-					status: "ok",
-					endpoint: `${baseUrl}/models`,
-					models: [{ id: "gpt-test" }],
-				}),
-			},
+			{},
 		);
 		expect(watched.installErrors).toEqual([]);
 		const reconciledEgressSecrets = JSON.parse(readFileSync(egressSecretPath, "utf-8")) as Record<
@@ -1231,11 +1219,6 @@ describe("hosted runtime bundle v2", () => {
 		const converge = (load: Parameters<typeof convergeRuntimeManifest>[0]) =>
 			convergeRuntimeManifest(load, paths, {
 				cacheLastGood: false,
-				managedGatewayModelListFetcher: ({ baseUrl }) => ({
-					status: "ok",
-					endpoint: `${baseUrl}/models`,
-					models: [{ id: "gpt-test" }],
-				}),
 			});
 
 		const remote = await loadRemoteRuntimeManifest(paths, { applyContext });
