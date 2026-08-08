@@ -10,6 +10,7 @@ from app.core.api_scopes import RUNTIME_MCP_SCOPES
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
+    HostedRuntimeCompanions,
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
@@ -97,6 +98,7 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
     locale: HostedRuntimeLocale
     system: HostedRuntimeSystem
     egress_engine: HostedEgressEngine | None = None
+    companions: HostedRuntimeCompanions | None = None
     runtimes: dict[str, HostedRuntimeDesiredState]
     live_sync: HostedRuntimeLiveSync
     recovery: HostedRuntimeRecovery

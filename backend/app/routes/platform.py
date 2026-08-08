@@ -1249,6 +1249,7 @@ def _assign_runtime_state(
     state.locale = body.locale.model_dump()
     state.system = body.system.model_dump(exclude_none=True, mode="json")
     state.egress_engine = _optional_runtime_model(body.egress_engine)
+    state.companions = _optional_runtime_model(body.companions)
     state.runtimes = {
         name: runtime.model_dump(exclude_none=True, mode="json")
         for name, runtime in body.runtimes.items()
@@ -1290,6 +1291,7 @@ def _runtime_state_changed_fields(
         "locale",
         "system",
         "egress_engine",
+        "companions",
         "runtimes",
         "live_sync",
         "recovery",
@@ -1315,7 +1317,7 @@ def _runtime_state_changed_fields(
                 name: runtime.model_dump(exclude_none=True, mode="json")
                 for name, runtime in body.runtimes.items()
             }
-        elif field in {"egress_engine", "egress_profiles", "mcp", "skills"}:
+        elif field in {"egress_engine", "companions", "egress_profiles", "mcp", "skills"}:
             body_value = _optional_runtime_model(getattr(body, field))
         elif field in {"live_sync", "recovery"}:
             body_value = getattr(body, field).model_dump(mode="json")

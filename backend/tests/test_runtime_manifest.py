@@ -71,6 +71,9 @@ from tests.hosted_runtime_fixtures import (
 from tests.hosted_runtime_fixtures import (
     canonical_hosted_runtime_state,
 )
+from tests.hosted_runtime_fixtures import (
+    filebrowser_companion as _filebrowser_companion,
+)
 
 pytestmark = pytest.mark.committed_db
 
@@ -135,44 +138,6 @@ TEST_HERMES_DASHBOARD_AUTH = {
         "capability": "hermes-basic-auth-v1",
     },
 }
-
-
-def _filebrowser_companion(deployment_id: str, access_revision: str = "a" * 64) -> dict:
-    audience = f"clawdi-files:{deployment_id}"
-    release = "https://github.com/gtsteffaniak/filebrowser/releases/download/v1.5.0-stable"
-    return {
-        "filebrowser": {
-            "version": "v1.5.0-stable",
-            "commit": "79552f8adb27c3e29934c4001660eb98f4aab5d6",
-            "listen": "0.0.0.0",
-            "port": 9120,
-            "baseURL": "/",
-            "healthPath": "/health",
-            "sourceRoot": "/home/clawdi",
-            "assets": {
-                "amd64": {
-                    "url": f"{release}/linux-amd64-filebrowser",
-                    "sha256": "8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e",
-                },
-                "arm64": {
-                    "url": f"{release}/linux-arm64-filebrowser",
-                    "sha256": "3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f",
-                },
-            },
-            "auth": {
-                "method": "jwt",
-                "algorithm": "HS256",
-                "header": "X-JWT-Assertion",
-                "userIdentifier": "sub",
-                "groupsClaim": "groups",
-                "secret": "s" * 43,
-                "audience": audience,
-                "subject": f"deployment:{deployment_id}:owner",
-                "requiredGroup": f"{audience}:{access_revision}",
-                "accessRevision": access_revision,
-            },
-        }
-    }
 
 
 def test_hosted_filebrowser_companion_enforces_pins_and_deployment_binding() -> None:
