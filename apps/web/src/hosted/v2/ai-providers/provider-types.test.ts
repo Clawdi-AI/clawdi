@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { API_MODE_LABEL, PROVIDER_TYPE_META } from "@/hosted/v2/ai-providers/provider-types";
+import {
+	API_MODE_LABEL,
+	PROVIDER_TYPE_META,
+	toProviderCatalogModels,
+} from "@/hosted/v2/ai-providers/provider-types";
 
 describe("AI provider type metadata", () => {
 	test("uses current model placeholders for known providers", () => {
@@ -43,6 +47,30 @@ describe("AI provider type metadata", () => {
 			"gpt-5.4-mini",
 		]);
 		expect(PROVIDER_TYPE_META.custom_openai_compatible.defaultModels).toEqual([]);
+	});
+
+	test("preserves generated model capabilities and omits empty compat", () => {
+		expect(
+			toProviderCatalogModels([
+				{
+					id: "complete-model",
+					supports_vision: true,
+					supports_tools: false,
+					max_input_tokens: 120_000,
+					compat: { supportsDeveloperRole: false, future: { opaque: true } },
+				},
+				{ id: "empty-compat", compat: {} },
+			]),
+		).toEqual([
+			{
+				id: "complete-model",
+				supports_vision: true,
+				supports_tools: false,
+				max_input_tokens: 120_000,
+				compat: { supportsDeveloperRole: false, future: { opaque: true } },
+			},
+			{ id: "empty-compat" },
+		]);
 	});
 
 	test("uses the factual protocol names shown in Advanced settings", () => {
