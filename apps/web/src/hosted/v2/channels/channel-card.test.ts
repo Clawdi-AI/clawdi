@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { ChannelCard } from "./channel-card";
 
 function source(relativePath: string): string {
@@ -116,5 +118,20 @@ describe("shared Channel card", () => {
 		expect(pairedChatsDialog).toContain("aria-controls={panelId}");
 		expect(pairedChatsDialog).not.toContain("Show more");
 		expect(pairedChatsDialog).not.toContain("Show less");
+	});
+
+	test("styles paired chats as a muted, persistently underlined shadcn link button", () => {
+		const resolvedClasses = cn(
+			buttonVariants({ variant: "link", size: "xs" }),
+			"h-auto max-w-full justify-start p-0 text-sm text-muted-foreground underline hover:text-foreground",
+		).split(" ");
+
+		expect(pairedChatsDialog).toContain(
+			'buttonVariants({ variant: "link", size: "xs" }),\n\t\t\t\t"h-auto max-w-full justify-start p-0 text-sm text-muted-foreground underline hover:text-foreground"',
+		);
+		expect(resolvedClasses).toContain("text-muted-foreground");
+		expect(resolvedClasses).toContain("underline");
+		expect(resolvedClasses).toContain("hover:text-foreground");
+		expect(resolvedClasses).not.toContain("text-primary");
 	});
 });
