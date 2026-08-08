@@ -424,15 +424,16 @@ def render_runtime_source(
             if state.skills is not None
             else None
         )
+    except (ValidationError, ValueError) as exc:
+        raise RuntimeSourceError("Hosted runtime MCP or skills state is invalid") from exc
+    try:
         agent_plugins = (
             HostedAgentPlugins.model_validate(state.agent_plugins).model_dump(mode="json")
             if state.agent_plugins is not None
             else None
         )
-    except (ValidationError, ValueError) as exc:
-        raise RuntimeSourceError(
-            "Hosted runtime MCP, skills, or Agent Plugins state is invalid"
-        ) from exc
+    except ValidationError as exc:
+        raise RuntimeSourceError("Hosted runtime Agent Plugins state is invalid") from exc
     skills = _project_runtime_skills(
         workspace_skills,
         batch.project_skills.get(environment_id, ()),
