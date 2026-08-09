@@ -547,7 +547,7 @@ Normalization maps hosted fields into the internal shape:
 | `providers.<id>` | Canonical Hosted provider projection: `kind` is exactly `openai-compatible`; normal entries also require `type` and `baseUrl`, while `provider_not_found` is the only reduced error entry |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids`; `{}` in unmanaged mode |
-| `terminalTooling.codex` | Required typed Hosted terminal-tool projection with one Clawdi-managed provider metadata and secret reference, independent of runtime providers |
+| `terminalTooling.codex` | Required typed Hosted terminal-tool projection with the selected model plus minimal Clawdi-managed endpoint/secret metadata; it has no provider model catalog and is independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
 | `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
 | v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional declaration-only Agent Plugins desired state; schema version `1` entries pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, a `sha256-tree-v1` content digest, and canonical secret references |
@@ -603,6 +603,15 @@ real Codex with the original arguments; it never adds `--profile`. Managed,
 BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the same
 terminal Codex default. Unmanaged OpenClaw or Hermes units receive no provider
 environment.
+
+Only the selected model and managed endpoint vary for the terminal consumer;
+the provider model catalog remains on runtime provider projections where
+OpenClaw and Hermes consume its capability and compatibility facts. Fixed v1
+terminal fields remain on the wire because strict manifest parsing precedes a
+`clawdiCli.packageSpec` self-upgrade. The versioned CLI validates those fields
+and derives the local Codex provider id, Responses transport, environment name,
+and secret wiring. This compatibility ordering rules out removing the fixed
+fields in place even though they are consumer invariants.
 
 This mode controls default configuration ownership, not pod-wide network
 isolation. Egress matching is domain based, so another pod process could call a

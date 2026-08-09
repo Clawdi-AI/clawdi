@@ -609,9 +609,15 @@ def render_runtime_source(
         exclude_unset=True,
         mode="json",
     )
+    codex_provider_material = provider_material[codex_agent_provider_id]
     codex_provider_input = {
-        **provider_material[codex_agent_provider_id],
+        "kind": "openai-compatible",
+        "type": codex_provider_material.get("type"),
+        "baseUrl": codex_provider_material.get("baseUrl"),
         "apiMode": _CODEX_TOOL_API_MODE,
+        "managed_by": codex_provider_material.get("managed_by"),
+        "runtimeEnvName": codex_provider_material.get("runtimeEnvName"),
+        "apiKeySecretRef": codex_provider_material.get("apiKeySecretRef"),
     }
     try:
         codex_provider = HostedCodexProviderProjection.model_validate(

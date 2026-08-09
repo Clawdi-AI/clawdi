@@ -44,7 +44,15 @@ const apiKeyProvider = {
 	managed_by: "user",
 	runtime_env_name: "OPENAI_API_KEY",
 	capabilities: { chat: true, responses: true },
-	models: [{ id: "gpt-catalog" }],
+	models: [
+		{
+			id: "gpt-catalog",
+			supports_vision: true,
+			supports_tools: false,
+			max_input_tokens: 120_000,
+			compat: { supportsDeveloperRole: false, future: { opaque: true } },
+		},
+	],
 	auth: { type: "api_key", source: "managed", profile: "work" },
 	usable: true,
 	readiness: {
@@ -154,6 +162,13 @@ describe("shared Hosted AI provider binding", () => {
 				type: "api_key",
 				source: "managed",
 				profile: "work",
+			});
+			expect(fields.ai_provider_bootstrap?.catalog.providers[0]?.models?.[0]).toEqual({
+				id: "gpt-catalog",
+				supports_vision: true,
+				supports_tools: false,
+				max_input_tokens: 120_000,
+				compat: { supportsDeveloperRole: false, future: { opaque: true } },
 			});
 		}
 	});
@@ -276,6 +291,7 @@ describe("shared Hosted AI provider binding", () => {
 				models: [
 					{
 						id: "gpt-nullable",
+						compat: {},
 						supports_reasoning: null,
 						context_window: null,
 						max_tokens: null,

@@ -94,7 +94,6 @@ const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	anthropic_messages: "anthropic_messages",
 };
 
-const HERMES_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 export function buildAgentTargetProjection(
 	target: AgentTarget,
 	catalog: AiProviderCatalog,
@@ -454,7 +453,6 @@ function buildHermesProjection(
 	if (nativeCodexDefault) {
 		lines.push('  provider: "openai-codex"');
 		lines.push(`  default: ${quoteYaml(codexNativeModelId(primaryModel.model))}`);
-		lines.push(`  base_url: ${quoteYaml(HERMES_CODEX_BASE_URL)}`);
 	} else {
 		lines.push(`  provider: ${quoteYaml(hermesProviderSelector(primaryProvider.id))}`);
 		lines.push(`  default: ${quoteYaml(primaryModel.model)}`);
