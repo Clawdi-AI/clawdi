@@ -550,7 +550,7 @@ Normalization maps hosted fields into the internal shape:
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with the selected model plus minimal Clawdi-managed endpoint/secret metadata; it has no provider model catalog and is independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
 | `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
-| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional declaration-only Agent Plugins desired state; schema version `1` entries pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, a `sha256-tree-v1` content digest, and canonical secret references |
+| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional runtime-native Agent Plugins desired state; schema version `1` entries pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, a `sha256-tree-v1` content digest, and canonical secret references |
 | `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
@@ -674,14 +674,52 @@ and new clients.
 
 ### Skill And MCP Authority Boundaries
 
-In the v2 bundle inner manifest, `agentPlugins` is declaration-only in this
-phase. Cloud may persist and render the strict desired-state block, but the
-current CLI does not download,
-materialize, inject secrets for, or connect Agent Plugins to native runtime
-loaders. Empty or absent installations preserve existing convergence behavior;
-any non-empty installation map fails closed at the CLI capability boundary and
-cannot be reported as applied. A later runtime phase must add reconciliation
-and an explicit supported capability before non-empty state can converge.
+The `agentPlugins` projection is supported only in the v2 Hosted bundle. Each
+installation key is the Agent Plugins name and must equal `plugin.json.name`;
+`installationId` is an opaque Hosted lifecycle identity rather than a native
+runtime plugin id. Before touching the runtime, the CLI downloads the exact
+GitHub commit, safely extracts only the declared repository path, validates the
+Agent Plugins 1.0.0 schema/name/version identity, and verifies the canonical
+`sha256-tree-v1` regular-file tree digest. Symlinks, non-regular entries,
+unsafe or colliding paths, and bounded-size violations fail closed.
+
+Clawdi remains a lifecycle and ownership driver. It gives the complete,
+already-verified package to the selected runtime's native plugin commands and
+does not flatten Skills or MCP declarations into separately managed resources.
+OpenClaw installs from a task-scoped local directory. Hermes accepts only Git,
+so Clawdi creates a task-scoped local `file://` Git transport from the verified
+bytes and removes it after the native command completes; the Hosted repository
+URL is never passed to Hermes for another download. Packages containing Git
+control directories or attributes that could change verified checkout bytes
+fail closed instead of weakening that transport boundary.
+
+There is no release-version cutoff. Before any live Hosted mutation, the CLI
+runs an install, enable, JSON observation, disable, and uninstall capability
+probe with the absolute installed runtime command under a temporary HOME and
+runtime-specific state root. OpenClaw location overrides and Hermes
+`HERMES_HOME`, `HERMES_PROFILE`, `HERMES_CONFIG`, and `HERMES_ENV` are
+explicitly cleared or replaced so inherited process state cannot redirect the
+probe into the live Hosted profile. Missing, old, or incompatible runtimes fail
+with the stable unsupported-capability error.
+
+Hermes support is limited to Agent Plugins Skills and stdio MCP servers.
+`streamable-http`, SSE, unknown, or malformed MCP transport declarations are
+rejected before the isolated probe because Hermes does not guarantee that
+configured headers stay on an authorized redirect or legacy SSE event origin.
+Agent Plugins URL and header strings are treated as literal package data.
+Non-empty Hosted `secretRefs` are rejected before download or probing; the CLI
+does not resolve, log, persist, or inject secret values without a separate
+native binding contract.
+
+A private last-applied receipt binds each managed name to `installationId`,
+version, schema, immutable source tuple, and content digest. A same-name native
+plugin without that receipt is unmanaged and is never replaced or removed.
+Repeat convergence is a no-op only after native JSON observation confirms the
+installed version and enabled state. Removal disables and uninstalls only a
+receipt-owned plugin. Replacement and removal participate in the main
+convergence transaction: native rollback restores the prior package and state
+if mutation or authority commit fails, and desired authority is committed only
+after the native state and receipt converge.
 
 The bundled `clawdi` Skill is platform infrastructure. Hosted constructs its
 private `skills.entries` runtime state internally, and capable CLIs reconcile

@@ -82,6 +82,17 @@ import {
 	probeFileBrowserReadiness,
 } from "./file-browser-companion";
 import {
+	type PreparedHostedAgentPlugins,
+	writeHostedAgentPluginReceipt,
+} from "./hosted-agent-plugin-package";
+import {
+	type HostedAgentPluginCapabilityProof,
+	type HostedAgentPluginCommandRunner,
+	type HostedAgentPluginTransaction,
+	hostedAgentPluginCommands,
+	prepareHostedAgentPluginTransaction,
+} from "./hosted-agent-plugin-runtime";
+import {
 	adoptableLegacyHostedBundledSkill,
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
@@ -147,6 +158,7 @@ import {
 	type HostedSkillSource,
 	hostedMcpDesiredStateSchema,
 } from "./manifest-resources";
+import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
 export type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
@@ -353,46 +365,6 @@ interface RuntimeInstallReceiptTargets {
 	channelPlugins: Map<string, RuntimeInstallReceiptTarget>;
 	companions: Map<"filebrowser", RuntimeInstallReceiptTarget>;
 }
-
-// Supported by `openclaw plugins inspect <id> --json`. The command returns
-// `{ ...inspect, install }` from the cold registry and persisted install index:
-// https://github.com/openclaw/openclaw/blob/main/src/cli/plugins-inspect-command.ts
-// Keep this as a passthrough boundary because OpenClaw exposes additional
-// diagnostics; the receipt only depends on documented registry/install identity.
-const openClawPluginInspectSchema = z
-	.object({
-		plugin: z
-			.object({
-				id: z.string().min(1),
-				source: z.string().min(1),
-				origin: z.enum(["bundled", "global", "workspace", "config"]),
-				status: z.enum(["loaded", "disabled", "error"]),
-				version: z.string().min(1).optional(),
-				enabled: z.boolean(),
-			})
-			.passthrough(),
-		install: z
-			.object({
-				source: z.enum(["npm", "archive", "path", "clawhub", "git"]),
-				spec: z.string().min(1).optional(),
-				sourcePath: z.string().min(1).optional(),
-				installPath: z.string().min(1).optional(),
-				version: z.string().min(1).optional(),
-				resolvedName: z.string().min(1).optional(),
-				resolvedVersion: z.string().min(1).optional(),
-				resolvedSpec: z.string().min(1).optional(),
-				integrity: z.string().min(1).optional(),
-				shasum: z.string().min(1).optional(),
-				npmIntegrity: z.string().min(1).optional(),
-				npmShasum: z.string().min(1).optional(),
-				clawpackSha256: z.string().min(1).optional(),
-				gitUrl: z.string().min(1).optional(),
-				gitRef: z.string().min(1).optional(),
-				gitCommit: z.string().min(1).optional(),
-			})
-			.passthrough(),
-	})
-	.passthrough();
 
 function writeRuntimePrivateFileAtomic(
 	paths: RuntimePaths,
@@ -5332,13 +5304,16 @@ export function convergeRuntimeManifest(
 		fileBrowserInstallOptions?: FileBrowserCompanionInstallOptions;
 		fileBrowserReadinessProbe?: (url: string) => boolean;
 		preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+		preparedHostedAgentPlugins?: PreparedHostedAgentPlugins;
+		hostedAgentPluginCapabilityProof?: HostedAgentPluginCapabilityProof;
+		hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 		hostedHermesSkillExactSourceDriver?: HostedHermesSkillExactSourceDriver;
 		hostedOpenClawSkillDriver?: HostedOpenClawSkillDriver;
 		hostedRuntimeContract?: HostedRuntimeContractOptions;
 	} = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
-	if (hasUnsupportedAgentPluginInstallations(manifest)) {
+	if (hasUnsupportedAgentPluginInstallations(manifest) && !opts.preparedHostedAgentPlugins) {
 		throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
 	}
 	const secretValues = runtimeSecretValues(load);
@@ -5361,6 +5336,20 @@ export function convergeRuntimeManifest(
 	}
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
+	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
+	if (opts.preparedHostedAgentPlugins) {
+		agentPluginTransaction = prepareHostedAgentPluginTransaction({
+			prepared: opts.preparedHostedAgentPlugins,
+			home: projectionHome,
+			commands: hostedAgentPluginCommands(projectionHome),
+			...(opts.hostedAgentPluginCapabilityProof
+				? { capabilityProof: opts.hostedAgentPluginCapabilityProof }
+				: {}),
+			...(opts.hostedAgentPluginCommandRunner
+				? { runner: opts.hostedAgentPluginCommandRunner }
+				: {}),
+		});
+	}
 	const enabledRuntimes = Object.entries(manifest.runtimes)
 		.filter(([, runtime]) => runtime.enabled)
 		.map(([name]) => name)
@@ -6154,6 +6143,7 @@ export function convergeRuntimeManifest(
 			}
 			probeFileBrowserReadiness(manifest, { probe: opts.fileBrowserReadinessProbe });
 		}
+		if (installErrors.length === 0) agentPluginTransaction?.apply();
 		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
 			manifestLastGood = writeLastGoodManifest(
 				load.sourceManifest ?? manifest,
@@ -6209,6 +6199,9 @@ export function convergeRuntimeManifest(
 				desiredEgressSidecarSecretRevision !== undefined &&
 				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
 			commitRuntimeInstallReceipts(installReceiptTargets, paths);
+			if (agentPluginTransaction) {
+				writeHostedAgentPluginReceipt(agentPluginTransaction.nextReceipt, paths);
+			}
 			opts.commitAuthority?.(convergence, {
 				...(desiredDaemonAuthTokenRevision !== undefined &&
 				(systemdActivationApplied || daemonRevisionPreviouslyCommitted)
@@ -6251,6 +6244,7 @@ export function convergeRuntimeManifest(
 		return convergence;
 	} catch (error) {
 		const applyError = error instanceof Error ? error.message : String(error);
+		if (agentPluginTransaction) installErrors.push(...agentPluginTransaction.rollback());
 		let filesystemRollbackSucceeded = false;
 		try {
 			hostedRuntimeContract.assertPlatformRoots();

@@ -270,7 +270,10 @@ export function resolveRuntimeUserIdentity(runtimeUser: string): RuntimeUserIden
 function runtimeUserCommandEnv(
 	home: string,
 	runtimeUid: number | null,
-	options: { egressSystemCaFile?: string } = {},
+	options: {
+		egressSystemCaFile?: string;
+		environmentOverrides?: Readonly<Record<string, string | undefined>>;
+	} = {},
 ): NodeJS.ProcessEnv {
 	const runtimeDir = runtimeUid === null ? null : `/run/user/${runtimeUid}`;
 	const env: NodeJS.ProcessEnv = {
@@ -287,6 +290,10 @@ function runtimeUserCommandEnv(
 			: {}),
 	};
 	clearTenantToolLocationOverrides(env);
+	for (const [key, value] of Object.entries(options.environmentOverrides ?? {})) {
+		if (value === undefined) delete env[key];
+		else env[key] = value;
+	}
 	if (options.egressSystemCaFile) {
 		applyEgressTransparentRuntimeEnv(env, { caFile: options.egressSystemCaFile });
 	}
@@ -374,6 +381,7 @@ export function spawnRuntimeUserCommand(
 	cwd: string,
 	options: {
 		egressSystemCaFile?: string;
+		environmentOverrides?: Readonly<Record<string, string | undefined>>;
 		input?: string;
 		maxBufferBytes?: number;
 		timeoutMs?: number;

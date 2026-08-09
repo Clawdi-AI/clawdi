@@ -13,6 +13,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { hostedAgentPluginReceiptsPath } from "./hosted-agent-plugin-package";
 import { runtimeInstallReceiptsPath } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
@@ -60,6 +61,7 @@ export function runtimeRootLiveMutationTargets(
 		paths.appliedState,
 		paths.oauthCredentialRoot,
 		runtimeInstallReceiptsPath(paths),
+		hostedAgentPluginReceiptsPath(paths),
 		paths.runConfigRoot,
 		paths.egressProfileBundle,
 		paths.installInventory,

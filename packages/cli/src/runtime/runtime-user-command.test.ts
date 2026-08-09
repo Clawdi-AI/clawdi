@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	buildNumericUserCommand,
 	buildRuntimeUserCommand,
@@ -40,6 +42,68 @@ test("tenant tools inherit HOME but not platform location overrides", () => {
 		HOME: "/home/clawdi",
 		CLAWDI_API_URL: "https://api.example.test",
 	});
+});
+
+test("isolated runtime commands override and clear native state locations", () => {
+	const root = mkdtempSync(join(tmpdir(), "runtime-user-isolation-"));
+	const output = join(root, "environment.json");
+	const previousOpenClawState = process.env.OPENCLAW_STATE_DIR;
+	const previousOpenClawConfig = process.env.OPENCLAW_CONFIG_PATH;
+	const previousHermesHome = process.env.HERMES_HOME;
+	const previousHermesProfile = process.env.HERMES_PROFILE;
+	const previousHermesConfig = process.env.HERMES_CONFIG;
+	const previousHermesEnv = process.env.HERMES_ENV;
+	try {
+		process.env.OPENCLAW_STATE_DIR = "/live/openclaw";
+		process.env.OPENCLAW_CONFIG_PATH = "/live/openclaw.json";
+		process.env.HERMES_HOME = "/live/hermes";
+		process.env.HERMES_PROFILE = "live-profile";
+		process.env.HERMES_CONFIG = "/live/hermes-config.yaml";
+		process.env.HERMES_ENV = "/live/hermes.env";
+		const result = spawnRuntimeUserCommand(
+			process.execPath,
+			[
+				"-e",
+				`require("node:fs").writeFileSync(${JSON.stringify(output)}, JSON.stringify({ home: process.env.HOME, openclawState: process.env.OPENCLAW_STATE_DIR, openclawConfig: process.env.OPENCLAW_CONFIG_PATH ?? null, hermesHome: process.env.HERMES_HOME, hermesProfile: process.env.HERMES_PROFILE ?? null, hermesConfig: process.env.HERMES_CONFIG ?? null, hermesEnv: process.env.HERMES_ENV ?? null }))`,
+			],
+			root,
+			root,
+			{
+				environmentOverrides: {
+					OPENCLAW_STATE_DIR: join(root, "openclaw"),
+					OPENCLAW_CONFIG_PATH: undefined,
+					HERMES_HOME: join(root, "hermes"),
+					HERMES_PROFILE: undefined,
+					HERMES_CONFIG: undefined,
+					HERMES_ENV: undefined,
+				},
+			},
+		);
+		expect(result.status).toBe(0);
+		expect(JSON.parse(readFileSync(output, "utf8"))).toEqual({
+			home: root,
+			openclawState: join(root, "openclaw"),
+			openclawConfig: null,
+			hermesHome: join(root, "hermes"),
+			hermesProfile: null,
+			hermesConfig: null,
+			hermesEnv: null,
+		});
+	} finally {
+		if (previousOpenClawState === undefined) delete process.env.OPENCLAW_STATE_DIR;
+		else process.env.OPENCLAW_STATE_DIR = previousOpenClawState;
+		if (previousOpenClawConfig === undefined) delete process.env.OPENCLAW_CONFIG_PATH;
+		else process.env.OPENCLAW_CONFIG_PATH = previousOpenClawConfig;
+		if (previousHermesHome === undefined) delete process.env.HERMES_HOME;
+		else process.env.HERMES_HOME = previousHermesHome;
+		if (previousHermesProfile === undefined) delete process.env.HERMES_PROFILE;
+		else process.env.HERMES_PROFILE = previousHermesProfile;
+		if (previousHermesConfig === undefined) delete process.env.HERMES_CONFIG;
+		else process.env.HERMES_CONFIG = previousHermesConfig;
+		if (previousHermesEnv === undefined) delete process.env.HERMES_ENV;
+		else process.env.HERMES_ENV = previousHermesEnv;
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 const NUMERIC_PRIVILEGE_TOOL = ["set", "priv"].join("");

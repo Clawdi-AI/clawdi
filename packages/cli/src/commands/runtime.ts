@@ -47,6 +47,15 @@ import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
+	type PreparedHostedAgentPlugins,
+	prepareHostedAgentPluginPackages,
+} from "../runtime/hosted-agent-plugin-package";
+import {
+	type HostedAgentPluginCommandRunner,
+	hostedAgentPluginCommands,
+	proveHostedAgentPluginCapabilities,
+} from "../runtime/hosted-agent-plugin-runtime";
+import {
 	assertHostedRuntimeContract,
 	type HostedRuntimeContractOptions,
 	inspectHostedRuntimeIdentity,
@@ -69,6 +78,7 @@ import {
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
+import { hostedRuntimeProjectionHome } from "../runtime/projection-home";
 import {
 	buildNumericUserCommand,
 	buildRuntimeUserCommand,
@@ -1096,6 +1106,8 @@ interface RuntimeApplyOptions {
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
 	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+	preparedHostedAgentPlugins?: PreparedHostedAgentPlugins | null;
+	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
@@ -2539,6 +2551,19 @@ async function applyRuntimeDesiredState(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: RuntimeApplyOptions = {},
 ): Promise<RuntimeApplyResult> {
+	const preparedHostedAgentPlugins =
+		opts.preparedHostedAgentPlugins === undefined
+			? await prepareHostedAgentPluginPackages(load.manifest, paths)
+			: opts.preparedHostedAgentPlugins;
+	const agentPluginCapabilityProof = preparedHostedAgentPlugins
+		? proveHostedAgentPluginCapabilities({
+				prepared: preparedHostedAgentPlugins,
+				commands: hostedAgentPluginCommands(hostedRuntimeProjectionHome(load.manifest, paths)),
+				...(opts.hostedAgentPluginCommandRunner
+					? { runner: opts.hostedAgentPluginCommandRunner }
+					: {}),
+			})
+		: null;
 	let cliUpdate: RuntimeCliUpdateResult;
 	try {
 		cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
@@ -2574,6 +2599,13 @@ async function applyRuntimeDesiredState(
 		cacheLastGood: false,
 		hostedRuntimeContract: opts.hostedRuntimeContract,
 		preparedHostedSourcedSkills,
+		...(preparedHostedAgentPlugins ? { preparedHostedAgentPlugins } : {}),
+		...(agentPluginCapabilityProof
+			? { hostedAgentPluginCapabilityProof: agentPluginCapabilityProof }
+			: {}),
+		...(opts.hostedAgentPluginCommandRunner
+			? { hostedAgentPluginCommandRunner: opts.hostedAgentPluginCommandRunner }
+			: {}),
 		commitAuthority: (committedConvergence, authority) => {
 			if (opts.requireSystemdApplied && !systemdApply.applied) {
 				throw new Error("systemd apply did not activate the rendered runtime manifest");

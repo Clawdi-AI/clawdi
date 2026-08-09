@@ -3,7 +3,7 @@ import { hasAsciiControlCharacter } from "../lib/github-skill-archive";
 import { secretRefSchema } from "./egress-profiles";
 
 const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
-const agentPluginNameSchema = z
+export const agentPluginNameSchema = z
 	.string()
 	.min(1)
 	.max(64)
@@ -160,7 +160,7 @@ const exactAgentPluginSemverSchema = z
 		/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
 	);
 
-const hostedAgentPluginInstallationSchema = z
+export const hostedAgentPluginInstallationSchema = z
 	.object({
 		installationId: z
 			.string()
@@ -190,6 +190,7 @@ export const hostedAgentPluginsDesiredStateSchema = z
 	.strict();
 
 export type HostedAgentPluginsDesiredState = z.infer<typeof hostedAgentPluginsDesiredStateSchema>;
+export type HostedAgentPluginInstallation = z.infer<typeof hostedAgentPluginInstallationSchema>;
 
 const cleanHttpUrlSchema = z
 	.string()

@@ -26,6 +26,7 @@ import {
 } from "./applied-state";
 import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
 import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-browser-isolation";
+import { hostedAgentPluginReceiptsPath } from "./hosted-agent-plugin-package";
 import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
@@ -4216,6 +4217,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.appliedState,
 				paths.oauthCredentialRoot,
 				paths.installReceipts,
+				hostedAgentPluginReceiptsPath(paths),
 				paths.runConfigRoot,
 				paths.egressProfileBundle,
 				paths.installInventory,
