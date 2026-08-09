@@ -58,6 +58,7 @@ import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
+import { TRANSPARENT_EGRESS_PORT } from "./transparent-egress";
 
 function runtimeCommandPath(name: string, home: string): string | null {
 	if (name === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
@@ -128,7 +129,6 @@ interface RuntimeEgressIdentity {
 }
 
 function runtimeEgressSystemdProgram(
-	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	profileBundlePath: string | null,
 	secretFilePath: string | null,
@@ -138,11 +138,10 @@ function runtimeEgressSystemdProgram(
 	if (!profileBundlePath) return null;
 	if (engine?.status !== "ready") return null;
 	if (!addon) return null;
-	const port = 18_080 + (hashToUInt16(`${manifest.instanceId}:${paths.serviceStateRoot}`) % 20_000);
 	return {
 		profileBundlePath,
 		envFilePath: paths.egressTransparentEnv,
-		transparentPort: port,
+		transparentPort: TRANSPARENT_EGRESS_PORT,
 		addonPath: addon.path,
 		addonSha256: addon.sha256,
 		engine,
@@ -152,7 +151,6 @@ function runtimeEgressSystemdProgram(
 }
 
 export function resolveRuntimeSystemdIdentity(input: {
-	manifest: RuntimeManifest;
 	paths: RuntimePaths;
 	profileBundlePath: string | null;
 	secretFilePath: string | null;
@@ -164,7 +162,6 @@ export function resolveRuntimeSystemdIdentity(input: {
 	identity: RuntimeEgressIdentity | null;
 } {
 	const egressProgram = runtimeEgressSystemdProgram(
-		input.manifest,
 		input.paths,
 		input.profileBundlePath,
 		input.secretFilePath,
@@ -228,10 +225,6 @@ export function buildRuntimeSystemdUserProgram(input: {
 		env,
 		resolvedSecretEnv,
 	};
-}
-
-function hashToUInt16(input: string): number {
-	return createHash("sha256").update(input).digest().readUInt16BE(0);
 }
 
 function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
