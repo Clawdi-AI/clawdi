@@ -5735,7 +5735,6 @@ export function convergeRuntimeManifest(
 		const egressSecretFile = egressSecretWrite.path;
 		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 		const resolvedSystemdIdentity = resolveRuntimeSystemdIdentity({
-			manifest,
 			paths,
 			profileBundlePath: egressProfileBundlePath,
 			secretFilePath: egressSecretFile,

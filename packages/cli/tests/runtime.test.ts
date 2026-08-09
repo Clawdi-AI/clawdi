@@ -92,6 +92,7 @@ import {
 	writeRuntimeWatchStatus,
 } from "../src/runtime/state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
+import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
 import { mockFetch } from "./commands/helpers";
 
@@ -14876,6 +14877,9 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain(
 			'CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"',
+		);
+		expect(transparentEgressEnv).toContain(
+			`CLAWDI_EGRESS_TRANSPARENT_PORT="${TRANSPARENT_EGRESS_PORT}"`,
 		);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
