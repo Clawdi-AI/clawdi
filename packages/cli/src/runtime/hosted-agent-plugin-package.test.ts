@@ -1,15 +1,37 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as tar from "tar";
 import {
 	AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR,
+	cleanupHostedAgentPluginTransientArchives,
+	gcHostedAgentPluginArchives,
 	HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR,
+	type PreparedHostedAgentPluginInstallation,
+	type PreparedHostedAgentPlugins,
 	prepareHostedAgentPluginPackages,
+	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
-import type { RuntimeManifest } from "./manifest-contract";
+import {
+	type HostedAgentPluginCommandRunner,
+	hostedAgentPluginCommands,
+	proveHostedAgentPluginCapabilities,
+} from "./hosted-agent-plugin-runtime";
+import {
+	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+	type RuntimeManifest,
+} from "./manifest-contract";
 import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
 import { getRuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
@@ -45,12 +67,21 @@ function archiveResponse(bytes: Buffer): Response {
 	return new Response(body, { status: 200 });
 }
 
-async function archive(files: Readonly<Record<string, Buffer>>): Promise<Buffer> {
+async function archive(
+	files: Readonly<Record<string, Buffer>>,
+	packagePath = "plugins/acme.tools",
+	repositoryFiles: Readonly<Record<string, Buffer>> = {},
+): Promise<Buffer> {
 	const source = join(root, "source");
 	const repositoryRoot = "agent-plugins-aaaaaaaa";
-	const pluginRoot = join(source, repositoryRoot, "plugins", "acme.tools");
+	const pluginRoot = join(source, repositoryRoot, ...packagePath.split("/").filter(Boolean));
 	for (const [path, bytes] of Object.entries(files)) {
 		const target = join(pluginRoot, ...path.split("/"));
+		mkdirSync(dirname(target), { recursive: true });
+		writeFileSync(target, bytes);
+	}
+	for (const [path, bytes] of Object.entries(repositoryFiles)) {
+		const target = join(source, repositoryRoot, ...path.split("/"));
 		mkdirSync(dirname(target), { recursive: true });
 		writeFileSync(target, bytes);
 	}
@@ -64,6 +95,8 @@ function manifest(
 	runtime: "openclaw" | "hermes",
 	contentDigest: string,
 	secretRefs: Record<string, string> = {},
+	sourcePath = "plugins/acme.tools",
+	identity: { commit?: string; installationId?: string; version?: string } = {},
 ): RuntimeManifest {
 	return {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -81,14 +114,14 @@ function manifest(
 				schemaVersion: 1,
 				installations: {
 					"acme.tools": {
-						installationId: "install_acme_tools",
-						version: "1.2.3",
+						installationId: identity.installationId ?? "install_acme_tools",
+						version: identity.version ?? "1.2.3",
 						agentPluginsSchema: AGENT_PLUGINS_SCHEMA_1_0_0,
 						source: {
 							type: "github",
 							url: "https://github.com/acme/agent-plugins",
-							path: "plugins/acme.tools",
-							commit: "a".repeat(40),
+							path: sourcePath,
+							commit: identity.commit ?? "a".repeat(40),
 						},
 						contentDigest,
 						secretRefs,
@@ -110,17 +143,27 @@ function paths() {
 	return runtimePaths;
 }
 
-function pluginFiles(mcp?: Record<string, unknown>): Record<string, Buffer> {
+function pluginFiles(mcp?: Record<string, unknown>, version = "1.2.3"): Record<string, Buffer> {
 	return {
 		"plugin.json": Buffer.from(
 			JSON.stringify({
 				$schema: AGENT_PLUGINS_SCHEMA_1_0_0,
 				name: "acme.tools",
-				version: "1.2.3",
+				version,
 			}),
 		),
 		"skills/review/SKILL.md": Buffer.from("---\nname: review\ndescription: Review\n---\n"),
 		...(mcp ? { "mcp.json": Buffer.from(JSON.stringify(mcp)) } : {}),
+	};
+}
+
+function permissiveNativeRunner(onCommand: () => void): HostedAgentPluginCommandRunner {
+	return {
+		available: () => true,
+		run: () => {
+			onCommand();
+			return { status: 0, stdout: "[]", stderr: "" };
+		},
 	};
 }
 
@@ -173,11 +216,293 @@ describe("Hosted Agent Plugin package preparation", () => {
 			},
 		});
 		const bytes = await archive(files);
+		let nativeCommands = 0;
 		await expect(
-			prepareHostedAgentPluginPackages(manifest("hermes", treeDigest(files)), runtimePaths, {
+			(async () => {
+				const prepared = await prepareHostedAgentPluginPackages(
+					manifest("hermes", treeDigest(files)),
+					runtimePaths,
+					{ fetcher: async () => archiveResponse(bytes) },
+				);
+				if (!prepared) throw new Error("missing prepared Agent Plugin fixture");
+				proveHostedAgentPluginCapabilities({
+					prepared,
+					commands: hostedAgentPluginCommands(runtimePaths.userHome),
+					runner: permissiveNativeRunner(() => {
+						nativeCommands += 1;
+					}),
+				});
+			})(),
+		).rejects.toThrow(HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR);
+		expect(nativeCommands).toBe(0);
+	});
+
+	test("validates repo-root packages and excludes sibling files for a subpath source", async () => {
+		const rootPaths = paths();
+		const rootFiles = pluginFiles();
+		const rootArchive = await archive(rootFiles, "");
+		const preparedRoot = await prepareHostedAgentPluginPackages(
+			manifest("openclaw", treeDigest(rootFiles), {}, ""),
+			rootPaths,
+			{ fetcher: async () => archiveResponse(rootArchive) },
+		);
+		expect(preparedRoot?.desired.get("acme.tools")?.tree.map((file) => file.path)).toEqual(
+			Object.keys(rootFiles).sort(),
+		);
+
+		rmSync(root, { recursive: true, force: true });
+		root = "";
+		const subpathPaths = paths();
+		const subpathFiles = pluginFiles();
+		const subpathArchive = await archive(subpathFiles, "plugins/acme.tools", {
+			"plugins/sibling/private.txt": Buffer.from("must-not-cross-source-boundary"),
+		});
+		const preparedSubpath = await prepareHostedAgentPluginPackages(
+			manifest("openclaw", treeDigest(subpathFiles)),
+			subpathPaths,
+			{ fetcher: async () => archiveResponse(subpathArchive) },
+		);
+		expect(preparedSubpath?.desired.get("acme.tools")?.tree.map((file) => file.path)).toEqual(
+			Object.keys(subpathFiles).sort(),
+		);
+	});
+
+	test("rejects Python-casefold-equivalent paths before caching", async () => {
+		const runtimePaths = paths();
+		const files = {
+			...pluginFiles(),
+			"skills/straße/SKILL.md": Buffer.from(
+				"---\nname: straße\ndescription: Unicode spelling\n---\n",
+			),
+			"skills/strasse/SKILL.md": Buffer.from(
+				"---\nname: strasse\ndescription: ASCII spelling\n---\n",
+			),
+		};
+		const bytes = await archive(files);
+		await expect(
+			prepareHostedAgentPluginPackages(manifest("openclaw", treeDigest(files)), runtimePaths, {
 				fetcher: async () => archiveResponse(bytes),
 			}),
-		).rejects.toThrow(HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR);
+		).rejects.toThrow("case-fold path collision");
+	});
+
+	test("rejects invalid Skills and stdio MCP entries before native execution", async () => {
+		const runtimePaths = paths();
+		const cases: Array<{ label: string; files: Record<string, Buffer> }> = [
+			{
+				label: "Skill frontmatter",
+				files: {
+					...pluginFiles(),
+					"skills/review/SKILL.md": Buffer.from("---\nname: other\ndescription: Review\n---\n"),
+				},
+			},
+			...[
+				{ command: "node server.js" },
+				{ command: "node", args: ["valid", 42] },
+				{ command: "node", env: { PLUGIN_ROOT: "override" } },
+				{ command: "node", cwd: "../outside" },
+			].map((server, index) => ({
+				label: `stdio ${index}`,
+				files: pluginFiles({
+					$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+					mcpServers: { invalid: { type: "stdio", ...server } },
+				}),
+			})),
+		];
+		let nativeCommands = 0;
+		const runner = permissiveNativeRunner(() => {
+			nativeCommands += 1;
+		});
+		for (const fixture of cases) {
+			const bytes = await archive(fixture.files);
+			await expect(
+				(async () => {
+					const prepared = await prepareHostedAgentPluginPackages(
+						manifest("hermes", treeDigest(fixture.files)),
+						runtimePaths,
+						{ fetcher: async () => archiveResponse(bytes) },
+					);
+					if (!prepared) throw new Error("missing prepared Agent Plugin fixture");
+					proveHostedAgentPluginCapabilities({
+						prepared,
+						commands: hostedAgentPluginCommands(runtimePaths.userHome),
+						runner,
+					});
+				})(),
+			).rejects.toThrow();
+			expect(nativeCommands).toBe(0);
+		}
+	});
+
+	test("boots offline only from a verified cache and never fetches for missing or corrupt cache", async () => {
+		const runtimePaths = paths();
+		const files = pluginFiles();
+		const bytes = await archive(files);
+		const online = await prepareHostedAgentPluginPackages(
+			manifest("openclaw", treeDigest(files)),
+			runtimePaths,
+			{ fetcher: async () => archiveResponse(bytes) },
+		);
+		if (!online) throw new Error("missing prepared Agent Plugin fixture");
+		const ownership = online.desired.get("acme.tools")?.installation.ownershipIdentity;
+		if (!ownership) throw new Error("missing cache ownership fixture");
+		let fetches = 0;
+		const offlineFetcher = async (): Promise<Response> => {
+			fetches += 1;
+			throw new Error("offline fetch must not run");
+		};
+		await expect(
+			prepareHostedAgentPluginPackages(manifest("openclaw", treeDigest(files)), runtimePaths, {
+				offline: true,
+				fetcher: offlineFetcher,
+			}),
+		).resolves.toBeTruthy();
+
+		const cacheRoot = join(runtimePaths.cacheRoot, "agent-plugins", ownership);
+		writeFileSync(join(cacheRoot, "source.tar.gz"), "corrupt");
+		await expect(
+			prepareHostedAgentPluginPackages(manifest("openclaw", treeDigest(files)), runtimePaths, {
+				offline: true,
+				fetcher: offlineFetcher,
+			}),
+		).rejects.toThrow("offline Agent Plugin cache is invalid");
+		rmSync(cacheRoot, { recursive: true });
+		await expect(
+			prepareHostedAgentPluginPackages(manifest("openclaw", treeDigest(files)), runtimePaths, {
+				offline: true,
+				fetcher: offlineFetcher,
+			}),
+		).rejects.toThrow("offline Agent Plugin cache is missing");
+		expect(fetches).toBe(0);
+	});
+
+	test("garbage collection removes stale owned archives without touching unknown or symlink entries", async () => {
+		const runtimePaths = paths();
+		const previousFiles = pluginFiles(undefined, "1.2.2");
+		const previousBytes = await archive(previousFiles);
+		const previous = await prepareHostedAgentPluginPackages(
+			manifest("openclaw", treeDigest(previousFiles), {}, "plugins/acme.tools", {
+				commit: "b".repeat(40),
+				installationId: "install_acme_tools_previous",
+				version: "1.2.2",
+			}),
+			runtimePaths,
+			{ fetcher: async () => archiveResponse(previousBytes) },
+		);
+		const previousInstallation = previous?.desired.get("acme.tools")?.installation;
+		if (!previousInstallation) throw new Error("missing previous Agent Plugin fixture");
+
+		const currentFiles = pluginFiles(undefined, "1.2.3");
+		const currentBytes = await archive(currentFiles);
+		const current = await prepareHostedAgentPluginPackages(
+			manifest("openclaw", treeDigest(currentFiles)),
+			runtimePaths,
+			{ fetcher: async () => archiveResponse(currentBytes) },
+		);
+		const currentInstallation = current?.desired.get("acme.tools")?.installation;
+		if (!currentInstallation) throw new Error("missing current Agent Plugin fixture");
+		const container = join(runtimePaths.cacheRoot, "agent-plugins");
+		const unknownOwnership = "f".repeat(64);
+		mkdirSync(join(container, unknownOwnership), { recursive: true });
+		writeFileSync(join(container, unknownOwnership, "user-data"), "unknown");
+		const invalidLookalike = "d".repeat(64);
+		mkdirSync(join(container, invalidLookalike), { recursive: true });
+		writeFileSync(join(container, invalidLookalike, "source.tar.gz"), "not-a-managed-archive");
+		writeFileSync(join(container, invalidLookalike, "receipt.json"), "{}");
+		const unknown = join(container, "leave-me-alone");
+		mkdirSync(unknown, { recursive: true });
+		writeFileSync(join(unknown, "data"), "unknown");
+		const symlinkTarget = join(root, "outside-cache");
+		mkdirSync(symlinkTarget);
+		const symlink = join(container, "e".repeat(64));
+		symlinkSync(symlinkTarget, symlink);
+
+		gcHostedAgentPluginArchives(
+			{
+				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
+				runtime: "openclaw",
+				installations: { "acme.tools": { ...currentInstallation, nativeId: "acme-tools" } },
+			},
+			runtimePaths,
+		);
+
+		expect(existsSync(join(container, previousInstallation.ownershipIdentity))).toBe(false);
+		expect(existsSync(join(container, currentInstallation.ownershipIdentity))).toBe(true);
+		expect(readFileSync(join(container, unknownOwnership, "user-data"), "utf8")).toBe("unknown");
+		expect(readFileSync(join(container, invalidLookalike, "receipt.json"), "utf8")).toBe("{}");
+		expect(readFileSync(join(unknown, "data"), "utf8")).toBe("unknown");
+		expect(lstatSync(symlink).isSymbolicLink()).toBe(true);
+		expect(existsSync(symlinkTarget)).toBe(true);
+	});
+
+	test("capability failure removes only this attempt's new desired archive", async () => {
+		const runtimePaths = paths();
+		const previousFiles = pluginFiles(undefined, "1.2.2");
+		const previousBytes = await archive(previousFiles);
+		const previous = await prepareHostedAgentPluginPackages(
+			manifest("openclaw", treeDigest(previousFiles), {}, "plugins/acme.tools", {
+				commit: "b".repeat(40),
+				installationId: "install_acme_tools_previous",
+				version: "1.2.2",
+			}),
+			runtimePaths,
+			{ fetcher: async () => archiveResponse(previousBytes) },
+		);
+		const previousInstallation = previous?.desired.get("acme.tools")?.installation;
+		if (!previousInstallation) throw new Error("missing previous Agent Plugin fixture");
+		writeHostedAgentPluginReceipt(
+			{
+				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
+				runtime: "openclaw",
+				installations: {
+					"acme.tools": { ...previousInstallation, nativeId: "acme-tools" },
+				},
+			},
+			runtimePaths,
+		);
+
+		const desiredFiles = pluginFiles(undefined, "1.2.3");
+		const desiredBytes = await archive(desiredFiles);
+		let prepared: PreparedHostedAgentPlugins | null = null;
+		let liveCommands = 0;
+		const runner: HostedAgentPluginCommandRunner = {
+			available: () => false,
+			run: () => {
+				liveCommands += 1;
+				return { status: 0, stdout: "", stderr: "" };
+			},
+		};
+		let desiredInstallation: PreparedHostedAgentPluginInstallation | undefined;
+		try {
+			const capabilityPrepared = await prepareHostedAgentPluginPackages(
+				manifest("openclaw", treeDigest(desiredFiles)),
+				runtimePaths,
+				{ fetcher: async () => archiveResponse(desiredBytes) },
+			);
+			prepared = capabilityPrepared;
+			desiredInstallation = capabilityPrepared?.desired.get("acme.tools")?.installation;
+			if (!capabilityPrepared || !desiredInstallation) {
+				throw new Error("missing desired Agent Plugin fixture");
+			}
+			expect(capabilityPrepared.transientCacheOwnerships).toEqual(
+				new Set([desiredInstallation.ownershipIdentity]),
+			);
+			expect(() =>
+				proveHostedAgentPluginCapabilities({
+					prepared: capabilityPrepared,
+					commands: hostedAgentPluginCommands(runtimePaths.userHome),
+					runner,
+				}),
+			).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+		} finally {
+			cleanupHostedAgentPluginTransientArchives(prepared, runtimePaths);
+		}
+
+		const container = join(runtimePaths.cacheRoot, "agent-plugins");
+		if (!desiredInstallation) throw new Error("missing desired Agent Plugin fixture");
+		expect(liveCommands).toBe(0);
+		expect(existsSync(join(container, desiredInstallation.ownershipIdentity))).toBe(false);
+		expect(existsSync(join(container, previousInstallation.ownershipIdentity))).toBe(true);
 	});
 
 	test("rejects secretRefs without fetching or disclosing the reference", async () => {

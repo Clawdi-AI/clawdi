@@ -86,11 +86,11 @@ import {
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
 import {
-	type HostedAgentPluginCapabilityProof,
 	type HostedAgentPluginCommandRunner,
 	type HostedAgentPluginTransaction,
 	hostedAgentPluginCommands,
 	prepareHostedAgentPluginTransaction,
+	proveHostedAgentPluginCapabilities,
 } from "./hosted-agent-plugin-runtime";
 import {
 	adoptableLegacyHostedBundledSkill,
@@ -128,6 +128,7 @@ import {
 } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
+	type RuntimeLiveSnapshot,
 	type RuntimeManagedMutationPlan,
 	restoreRuntimeLiveSnapshot,
 	runtimeRootLiveMutationDirectories,
@@ -214,6 +215,7 @@ import {
 	removeStaleRuntimeSystemdFiles,
 	resolveRuntimeSystemdIdentity,
 	runtimeSystemdCommonEnvironment,
+	runtimeSystemdUserUnitName,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
 	writeRuntimeSystemdState,
@@ -300,6 +302,7 @@ interface RuntimeSystemdApplySignal {
 	restartEgressSidecar: boolean;
 	stopEgressSidecar: boolean;
 	reconcileUserUnits: string[];
+	restartUserUnits: string[];
 	staleSystemUnits: string[];
 	staleUserUnits: string[];
 }
@@ -5305,7 +5308,6 @@ export function convergeRuntimeManifest(
 		fileBrowserReadinessProbe?: (url: string) => boolean;
 		preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
 		preparedHostedAgentPlugins?: PreparedHostedAgentPlugins;
-		hostedAgentPluginCapabilityProof?: HostedAgentPluginCapabilityProof;
 		hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 		hostedHermesSkillExactSourceDriver?: HostedHermesSkillExactSourceDriver;
 		hostedOpenClawSkillDriver?: HostedOpenClawSkillDriver;
@@ -5337,19 +5339,9 @@ export function convergeRuntimeManifest(
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
-	if (opts.preparedHostedAgentPlugins) {
-		agentPluginTransaction = prepareHostedAgentPluginTransaction({
-			prepared: opts.preparedHostedAgentPlugins,
-			home: projectionHome,
-			commands: hostedAgentPluginCommands(projectionHome),
-			...(opts.hostedAgentPluginCapabilityProof
-				? { capabilityProof: opts.hostedAgentPluginCapabilityProof }
-				: {}),
-			...(opts.hostedAgentPluginCommandRunner
-				? { runner: opts.hostedAgentPluginCommandRunner }
-				: {}),
-		});
-	}
+	let agentPluginSnapshot: RuntimeLiveSnapshot | null = null;
+	let agentPluginMutated = false;
+	let agentPluginRestartUserUnits: string[] = [];
 	const enabledRuntimes = Object.entries(manifest.runtimes)
 		.filter(([, runtime]) => runtime.enabled)
 		.map(([name]) => name)
@@ -5544,6 +5536,40 @@ export function convergeRuntimeManifest(
 			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
+		if (opts.preparedHostedAgentPlugins) {
+			const commands = hostedAgentPluginCommands(projectionHome);
+			const capabilityProof = proveHostedAgentPluginCapabilities({
+				prepared: opts.preparedHostedAgentPlugins,
+				commands,
+				...(opts.hostedAgentPluginCommandRunner
+					? { runner: opts.hostedAgentPluginCommandRunner }
+					: {}),
+			});
+			agentPluginTransaction = prepareHostedAgentPluginTransaction({
+				prepared: opts.preparedHostedAgentPlugins,
+				home: projectionHome,
+				commands,
+				capabilityProof,
+				...(opts.hostedAgentPluginCommandRunner
+					? { runner: opts.hostedAgentPluginCommandRunner }
+					: {}),
+			});
+			if (agentPluginTransaction.snapshotTargets.length > 0) {
+				agentPluginSnapshot = captureRuntimeLiveSnapshot({
+					rootTargets: [],
+					trustedRootDirectories: [],
+					runtimeUserTargets: [...agentPluginTransaction.snapshotTargets],
+					runtimeUserTrustedRoots: [projectionHome],
+					runtimeUserSymlinkTargets: [],
+					metadataTargets: mutationAncestorMetadataTargets(agentPluginTransaction.snapshotTargets, [
+						projectionHome,
+					]),
+				});
+			}
+			if (agentPluginTransaction.hasMutations && !opts.systemdApply) {
+				throw new Error("Agent Plugin mutations require systemd activation and readiness");
+			}
+		}
 
 		hostedRuntimeContract.assertPlatformRoots();
 		let codexCli: Record<string, string> | null = null;
@@ -6093,6 +6119,24 @@ export function convergeRuntimeManifest(
 				hermesDashboardArtifactPlan.target,
 			);
 		}
+		// Agent Plugin mutations must precede every native service installer.
+		// The final activation below restarts the affected runtime units.
+		agentPluginMutated = agentPluginTransaction?.apply() ?? false;
+		const appliedAgentPluginTransaction = agentPluginTransaction;
+		if (agentPluginMutated && appliedAgentPluginTransaction) {
+			agentPluginRestartUserUnits = [
+				...new Set(
+					runtimeSystemdUserPrograms
+						.filter(
+							(program) =>
+								program.programKind === "runtime" &&
+								(program.runtime === "openclaw" || program.runtime === "hermes") &&
+								appliedAgentPluginTransaction.mutationRuntimes.has(program.runtime),
+						)
+						.map(runtimeSystemdUserUnitName),
+				),
+			].sort();
+		}
 		if (
 			(officialServicePlan.pending.length > 0 ||
 				(hermesDashboardArtifactPlan.program !== null &&
@@ -6105,6 +6149,7 @@ export function convergeRuntimeManifest(
 				restartEgressSidecar,
 				stopEgressSidecar: false,
 				reconcileUserUnits: mutationPlan.systemdUserUnits,
+				restartUserUnits: [],
 				staleSystemUnits: [],
 				staleUserUnits: [],
 			});
@@ -6134,6 +6179,7 @@ export function convergeRuntimeManifest(
 				restartEgressSidecar,
 				stopEgressSidecar: false,
 				reconcileUserUnits: mutationPlan.systemdUserUnits,
+				restartUserUnits: agentPluginRestartUserUnits,
 				staleSystemUnits: staleSystemdFiles.systemUnits,
 				staleUserUnits: staleSystemdFiles.userUnits,
 			});
@@ -6143,7 +6189,6 @@ export function convergeRuntimeManifest(
 			}
 			probeFileBrowserReadiness(manifest, { probe: opts.fileBrowserReadinessProbe });
 		}
-		if (installErrors.length === 0) agentPluginTransaction?.apply();
 		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
 			manifestLastGood = writeLastGoodManifest(
 				load.sourceManifest ?? manifest,
@@ -6245,6 +6290,19 @@ export function convergeRuntimeManifest(
 	} catch (error) {
 		const applyError = error instanceof Error ? error.message : String(error);
 		if (agentPluginTransaction) installErrors.push(...agentPluginTransaction.rollback());
+		let pluginFilesystemRollbackSucceeded = true;
+		if (agentPluginSnapshot) {
+			try {
+				restoreRuntimeLiveSnapshot(agentPluginSnapshot);
+			} catch (rollbackError) {
+				pluginFilesystemRollbackSucceeded = false;
+				installErrors.push(
+					`runtime Agent Plugin filesystem rollback failed: ${
+						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+					}`,
+				);
+			}
+		}
 		let filesystemRollbackSucceeded = false;
 		try {
 			hostedRuntimeContract.assertPlatformRoots();
@@ -6262,7 +6320,7 @@ export function convergeRuntimeManifest(
 			} else if (!egressRollbackAuthorityVerified) {
 				rmSync(egressSecretFilePath(paths), { force: true });
 			}
-			filesystemRollbackSucceeded = true;
+			filesystemRollbackSucceeded = pluginFilesystemRollbackSucceeded;
 		} catch (rollbackError) {
 			installErrors.push(
 				`runtime filesystem rollback failed: ${
@@ -6296,6 +6354,7 @@ export function convergeRuntimeManifest(
 					restartEgressSidecar: restartEgressSidecar && egressRollbackAuthorityVerified,
 					stopEgressSidecar: restartEgressSidecar && !egressRollbackAuthorityVerified,
 					reconcileUserUnits: mutationPlan.systemdUserUnits,
+					restartUserUnits: agentPluginRestartUserUnits,
 					staleSystemUnits: staleSystemdFiles.systemUnits,
 					staleUserUnits: staleSystemdFiles.userUnits,
 				});

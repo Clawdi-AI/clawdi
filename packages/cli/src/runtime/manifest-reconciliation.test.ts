@@ -26,7 +26,11 @@ import {
 } from "./applied-state";
 import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
 import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-browser-isolation";
-import { hostedAgentPluginReceiptsPath } from "./hosted-agent-plugin-package";
+import {
+	hostedAgentPluginReceiptsPath,
+	type PreparedHostedAgentPlugin,
+	type PreparedHostedAgentPlugins,
+} from "./hosted-agent-plugin-package";
 import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
@@ -126,6 +130,70 @@ const TEST_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
 	schemaVersion: 1,
 	installations: { "acme.tools": TEST_AGENT_PLUGIN_INSTALLATION },
 };
+
+function preparedTestAgentPlugin(
+	name: string,
+	version: string,
+	ownershipIdentity: string,
+): PreparedHostedAgentPlugin {
+	const bytes = Buffer.from(JSON.stringify({ $schema: AGENT_PLUGINS_SCHEMA_1_0_0, name, version }));
+	const fileDigest = createHash("sha256").update(bytes).digest("hex");
+	const treeDigest = createHash("sha256")
+		.update(`100644\0plugin.json\0${bytes.byteLength}\0${fileDigest}\n`)
+		.digest("hex");
+	return {
+		name,
+		installation: {
+			installationId: `install_${ownershipIdentity.slice(0, 8)}`,
+			version,
+			agentPluginsSchema: AGENT_PLUGINS_SCHEMA_1_0_0,
+			source: {
+				type: "github",
+				url: "https://github.com/acme/agent-plugins",
+				path: `plugins/${name}`,
+				commit: ownershipIdentity.slice(0, 40),
+			},
+			contentDigest: `sha256-tree-v1:${treeDigest}`,
+			ownershipIdentity,
+		},
+		receiptNativeId: null,
+		tree: [{ path: "plugin.json", mode: 0o100644, bytes }],
+	};
+}
+
+function testAgentPluginDesiredState(
+	prepared: PreparedHostedAgentPlugin,
+): HostedAgentPluginsDesiredState {
+	const { ownershipIdentity: _ownershipIdentity, ...installation } = prepared.installation;
+	return {
+		schemaVersion: 1,
+		installations: { [prepared.name]: { ...installation, secretRefs: {} } },
+	};
+}
+
+function preparedTestAgentPluginState(
+	desired: PreparedHostedAgentPlugin,
+	previous?: PreparedHostedAgentPlugin,
+): PreparedHostedAgentPlugins {
+	const previousNativeId = previous?.name.replaceAll(".", "-") ?? "";
+	return {
+		runtime: "openclaw",
+		desired: new Map([[desired.name, desired]]),
+		previousReceipt: previous
+			? {
+					schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
+					runtime: "openclaw",
+					installations: {
+						[previous.name]: { ...previous.installation, nativeId: previousNativeId },
+					},
+				}
+			: null,
+		rollback: previous
+			? new Map([[previous.name, { ...previous, receiptNativeId: previousNativeId }]])
+			: new Map(),
+		transientCacheOwnerships: new Set(),
+	};
+}
 
 function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -907,6 +975,208 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths,
 			),
 		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+	});
+
+	test("orders cold native plugin activation and restores the full preimage after rollback failure", () => {
+		const paths = tempRuntimePaths();
+		const eventLog = join(dirname(paths.userHome), "agent-plugin-order.log");
+		const installerPath = join(dirname(paths.userHome), "openclaw-agent-plugin-installer.sh");
+		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		writeFileSync(
+			installerPath,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' binary-install >> '${eventLog}'
+mkdir -p '${dirname(commandPath)}'
+cat > '${commandPath}' <<'CLI'
+#!/usr/bin/env bash
+set -euo pipefail
+plugin_root="$HOME/.openclaw/extensions/acme-tools"
+plugin_config="$HOME/.openclaw/openclaw.json"
+plugin_database="$HOME/.openclaw/state/openclaw.sqlite"
+plugin_enabled=false
+if [[ -f "$plugin_config" ]] && grep -q '"enabled":true' "$plugin_config"; then
+  plugin_enabled=true
+fi
+plugin_status=disabled
+if [[ "$plugin_enabled" == true ]]; then plugin_status=loaded; fi
+
+case "\${1:-}" in
+  --version)
+    printf '%s\\n' 'OpenClaw test-version'
+    ;;
+  gateway)
+    [[ "\${2:-}" == install && "\${3:-}" == --force && "\${4:-}" == --json ]] || exit 2
+    printf '%s\\n' gateway-install >> '${eventLog}'
+    mkdir -p '${dirname(unitPath)}'
+    printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=openclaw gateway run' > '${unitPath}'
+    printf '%s\\n' '{"ok":true}'
+    ;;
+  plugins)
+    case "\${2:-}" in
+      list)
+        [[ "\${3:-}" == --json ]] || exit 2
+        if [[ ! -f "$plugin_root/plugin.json" ]]; then
+          printf '%s\\n' '{"plugins":[]}'
+          exit 0
+        fi
+        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
+        printf '{"plugins":[{"id":"acme-tools","name":"acme.tools","version":"%s","enabled":%s,"status":"%s","format":"bundle","bundleFormat":"agent"}]}\\n' "$version" "$plugin_enabled" "$plugin_status"
+        ;;
+      inspect)
+        [[ "\${3:-}" == acme-tools && "\${4:-}" == --json && -f "$plugin_root/plugin.json" ]] || exit 2
+        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
+        printf '{"plugin":{"id":"acme-tools","name":"acme.tools","source":"test","origin":"config","status":"%s","version":"%s","enabled":%s,"format":"bundle","bundleFormat":"agent"},"install":{"source":"path","installPath":"%s","resolvedVersion":"%s"}}\\n' "$plugin_status" "$version" "$plugin_enabled" "$plugin_root" "$version"
+        ;;
+      install)
+        [[ "\${4:-}" == --force && -f "\${3:-}/plugin.json" ]] || exit 2
+        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$3/plugin.json")
+        if [[ "$HOME" == '${paths.userHome}' ]]; then
+          if [[ -f "$HOME/.openclaw/fail-rollback" && "$version" == 1.0.0 ]]; then exit 9; fi
+          printf 'plugin-apply:%s\\n' "$version" >> '${eventLog}'
+        else
+          printf 'probe-install:%s\\n' "$version" >> '${eventLog}'
+        fi
+        rm -rf "$plugin_root"
+        mkdir -p "$(dirname "$plugin_root")"
+        cp -R "$3" "$plugin_root"
+        mkdir -p "$(dirname "$plugin_config")"
+        printf '%s\\n' '{"plugins":{"entries":{"acme-tools":{"enabled":false}}}}' > "$plugin_config"
+        mkdir -p "$(dirname "$plugin_database")"
+        printf 'installed:%s\\n' "$version" > "$plugin_database"
+        printf 'wal:%s\\n' "$version" > "$plugin_database-wal"
+        printf 'shm:%s\\n' "$version" > "$plugin_database-shm"
+        ;;
+      enable|disable)
+        [[ "\${3:-}" == acme-tools && -f "$plugin_root/plugin.json" ]] || exit 2
+        enabled=false
+        if [[ "$2" == enable ]]; then enabled=true; fi
+        printf '{"plugins":{"entries":{"acme-tools":{"enabled":%s}}}}\\n' "$enabled" > "$plugin_config"
+        ;;
+      uninstall)
+        [[ "\${3:-}" == acme-tools && "\${4:-}" == --force ]] || exit 2
+        rm -rf "$plugin_root"
+        printf '%s\\n' '{}' > "$plugin_config"
+        printf '%s\\n' uninstalled > "$plugin_database"
+        rm -f "$plugin_database-wal"
+        printf '%s\\n' dirty > "$plugin_database-shm"
+        ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  *) exit 2 ;;
+esac
+CLI
+chmod 0755 '${commandPath}'
+`,
+		);
+		chmodSync(installerPath, 0o700);
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = installerPath;
+		const previous = preparedTestAgentPlugin("acme.tools", "1.0.0", "a".repeat(64));
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: OFFICIAL_INSTALL_URLS.openclaw,
+						home: paths.userHome,
+						args: [...OFFICIAL_INSTALL_ARGS.openclaw],
+					},
+					run: runSettings(commandPath, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{
+				runtime: "openclaw",
+				projection: { agentPlugins: testAgentPluginDesiredState(previous) },
+			},
+		);
+		let firstRestartUnits: string[] = [];
+		const first = convergeRuntimeManifest(manifestLoad(manifest, "agent-plugin-cold-boot"), paths, {
+			cacheLastGood: false,
+			preparedHostedAgentPlugins: preparedTestAgentPluginState(previous),
+			commitAuthority: () => undefined,
+			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
+				activate: (signal) => {
+					firstRestartUnits = signal.restartUserUnits;
+					writeFileSync(eventLog, "activation\n", { flag: "a" });
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					throw new Error("successful cold boot must not roll back");
+				},
+			},
+		});
+		expect(first.installErrors).toEqual([]);
+		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
+			"binary-install",
+			"probe-install:1.0.0",
+			"plugin-apply:1.0.0",
+			"gateway-install",
+			"activation",
+		]);
+		expect(firstRestartUnits).toEqual(["openclaw-gateway.service"]);
+
+		const pluginRoot = join(paths.userHome, ".openclaw", "extensions", "acme-tools");
+		const configPath = join(paths.userHome, ".openclaw", "openclaw.json");
+		const receiptPath = hostedAgentPluginReceiptsPath(paths);
+		const pluginManifestPath = join(pluginRoot, "plugin.json");
+		const pluginDatabasePath = join(paths.userHome, ".openclaw", "state", "openclaw.sqlite");
+		const preimage = new Map(
+			[
+				pluginManifestPath,
+				configPath,
+				receiptPath,
+				pluginDatabasePath,
+				`${pluginDatabasePath}-wal`,
+				`${pluginDatabasePath}-shm`,
+			].map((path) => [path, readFileSync(path)]),
+		);
+		const desired = preparedTestAgentPlugin("acme.tools", "2.0.0", "b".repeat(64));
+		const nextManifest: RuntimeManifest = {
+			...manifest,
+			generation: 2,
+			issuedAt: "2026-07-01T00:02:00.000Z",
+			projection: { agentPlugins: testAgentPluginDesiredState(desired) },
+		};
+		writeFileSync(eventLog, "");
+		writeFileSync(join(paths.userHome, ".openclaw", "fail-rollback"), "1\n");
+		let rollbackCalled = false;
+		const failed = convergeRuntimeManifest(
+			manifestLoad(nextManifest, "agent-plugin-authority-failure"),
+			paths,
+			{
+				cacheLastGood: false,
+				preparedHostedAgentPlugins: preparedTestAgentPluginState(desired, previous),
+				commitAuthority: () => {
+					throw new Error("injected Agent Plugin authority failure");
+				},
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: (signal) => {
+						expect(signal.restartUserUnits).toEqual(["openclaw-gateway.service"]);
+						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					},
+					rollback: () => {
+						rollbackCalled = true;
+					},
+				},
+			},
+		);
+
+		expect(failed.installErrors.join("\n")).toContain("injected Agent Plugin authority failure");
+		expect(failed.installErrors.join("\n")).toContain(
+			"runtime openclaw Agent Plugin acme.tools rollback failed",
+		);
+		expect(rollbackCalled).toBe(true);
+		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
+		expect(readFileSync(join(pluginRoot, "plugin.json"), "utf8")).toContain('"version":"1.0.0"');
 	});
 
 	test.each([

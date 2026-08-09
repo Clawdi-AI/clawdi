@@ -298,6 +298,10 @@ function systemdUnitFileName(name: string): string {
 	return `${systemdUnitNameSegment(name)}.service`;
 }
 
+export function runtimeSystemdUserUnitName(program: RuntimeSystemdUserProgram): string {
+	return systemdUnitFileName(runtimeSystemdProgramName(program));
+}
+
 const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
 
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {

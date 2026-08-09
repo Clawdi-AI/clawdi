@@ -1003,6 +1003,7 @@ describe("hosted runtime bundle v2", () => {
 				const headers = new Headers(init?.headers);
 				expect(headers.get("accept")).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 				expect(headers.get("if-none-match")).toBe('"bundle-1"');
+				expect(headers.get("x-clawdi-runtime-capabilities")).toBe("agent-plugins-manifest-v1");
 				expect(headers.get("x-clawdi-runtime-generation")).toBeNull();
 				expect(headers.get("x-clawdi-runtime-manifest-etag")).toBeNull();
 				expect(headers.get("x-clawdi-runtime-apply-receipt-id")).toBeNull();
@@ -1087,6 +1088,74 @@ describe("hosted runtime bundle v2", () => {
 		expect(loaded.etag).toBe(`"sha256:${EXPECTED_GOLDEN_SOURCE_REVISION}"`);
 		expect(loaded.sourceRevision).toBe(EXPECTED_GOLDEN_SOURCE_REVISION);
 		expect(loaded.channelBindings).toHaveLength(1);
+	});
+
+	test("loads capable Hosted v2 Agent Plugins and reaches the native convergence guard", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-agent-plugins-"));
+		roots.push(root);
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		process.env.CLAWDI_RUN_DIR = join(root, "run");
+		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+		const applyContext = setRuntimeApplyIdentityFile(
+			root,
+			{
+				generation: 1,
+				manifestETag: '"bundle-golden"',
+				applyReceiptId: "apply-receipt-golden-0001",
+				bootNonce: "boot-nonce-golden-000001",
+			},
+			"clawdi@1.2.3-test",
+		);
+		const paths = getRuntimePaths({ mode: "hosted" });
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		const sourceRevision = z.string().parse(raw.sourceRevision);
+		const body = {
+			...raw,
+			manifest: {
+				...manifest,
+				agentPlugins: {
+					schemaVersion: 1,
+					installations: {
+						"acme.tools": {
+							installationId: "install_acme_tools",
+							version: "1.2.3",
+							agentPluginsSchema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+							source: {
+								type: "github",
+								url: "https://github.com/acme/agent-plugins",
+								path: "plugins/acme.tools",
+								commit: "a".repeat(40),
+							},
+							contentDigest: `sha256-tree-v1:${"b".repeat(64)}`,
+							secretRefs: {},
+						},
+					},
+				},
+			},
+		};
+		globalThis.fetch = Object.assign(
+			async () =>
+				new Response(JSON.stringify(body), {
+					status: 200,
+					headers: {
+						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+						etag: `"sha256:${sourceRevision}"`,
+					},
+				}),
+			{ preconnect: () => undefined },
+		);
+
+		const loaded = await loadRemoteRuntimeManifest(paths, { applyContext });
+		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
+		expect(Object.keys(loaded.manifest.projection?.agentPlugins?.installations ?? {})).toEqual([
+			"acme.tools",
+		]);
+		expect(() => convergeRuntimeManifest(loaded, paths)).toThrow(
+			"Agent Plugin installations require a newer Clawdi runtime capability",
+		);
 	});
 
 	test("rejects a bundle whose HTTP validator does not name its source revision", async () => {

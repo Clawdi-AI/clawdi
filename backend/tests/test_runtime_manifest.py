@@ -51,7 +51,9 @@ from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
 from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
 from app.services.runtime_source import (
+    RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+    RUNTIME_CAPABILITIES_HEADER,
     expected_runtime_bundle_v2_etag,
     runtime_manifest_issued_at,
 )
@@ -3971,15 +3973,83 @@ async def test_runtime_manifest_requires_exact_v2_media_type(admin_client, db_se
     }
     assert bundle.headers["content-type"] == RUNTIME_BUNDLE_V2_MEDIA_TYPE
     assert bundle.headers["cache-control"] == "no-store, no-transform"
-    assert bundle.headers["vary"] == "Accept"
+    assert bundle.headers["vary"] == f"Accept, {RUNTIME_CAPABILITIES_HEADER}"
     assert bundle.headers["etag"] == expected_runtime_bundle_v2_etag(body["sourceRevision"])
     assert bundle_not_modified.status_code == 304
     assert bundle_not_modified.headers["etag"] == bundle.headers["etag"]
     assert bundle_not_modified.headers["cache-control"] == "no-store, no-transform"
-    assert bundle_not_modified.headers["vary"] == "Accept"
+    assert bundle_not_modified.headers["vary"] == f"Accept, {RUNTIME_CAPABILITIES_HEADER}"
     assert unsupported.status_code == 406
     assert unsupported.headers["cache-control"] == "no-store"
     assert unsupported.headers["vary"] == "Accept"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_agent_plugins_are_capability_projected_with_distinct_validators(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    state.agent_plugins = {
+        "schemaVersion": 1,
+        "installations": {
+            "acme.tools": {
+                "installationId": "install_acme_tools",
+                "version": "1.2.3",
+                "agentPluginsSchema": (
+                    "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+                ),
+                "source": {
+                    "type": "github",
+                    "url": "https://github.com/acme/agent-plugins",
+                    "path": "plugins/acme.tools",
+                    "commit": "a" * 40,
+                },
+                "contentDigest": f"sha256-tree-v1:{'b' * 64}",
+                "secretRefs": {},
+            }
+        },
+    }
+    await db_session.commit()
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle-capability")
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        old_client = await client.get("/v1/runtime/manifest")
+        capable_client = await client.get(
+            "/v1/runtime/manifest",
+            headers={RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY},
+        )
+        wrong_variant_validator = await client.get(
+            "/v1/runtime/manifest",
+            headers={
+                RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                "If-None-Match": old_client.headers["etag"],
+            },
+        )
+        capable_not_modified = await client.get(
+            "/v1/runtime/manifest",
+            headers={
+                RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                "If-None-Match": capable_client.headers["etag"],
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert old_client.status_code == 200, old_client.text
+    assert "agentPlugins" not in old_client.json()["manifest"]
+    assert old_client.json()["manifest"]["clawdiCli"]["packageSpec"] == state.cli_package_spec
+    assert capable_client.status_code == 200, capable_client.text
+    assert capable_client.json()["manifest"]["agentPlugins"] == state.agent_plugins
+    assert capable_client.headers["etag"] != old_client.headers["etag"]
+    assert capable_client.json()["sourceRevision"] != old_client.json()["sourceRevision"]
+    assert wrong_variant_validator.status_code == 200
+    assert wrong_variant_validator.headers["etag"] == capable_client.headers["etag"]
+    assert capable_not_modified.status_code == 304
+    assert capable_not_modified.headers["etag"] == capable_client.headers["etag"]
+    assert capable_client.headers["vary"] == (f"Accept, {RUNTIME_CAPABILITIES_HEADER}")
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -26,12 +28,24 @@ interface FakePluginState {
 	compatible: boolean;
 }
 
+const runtimeTestRoot = mkdtempSync(join(tmpdir(), "clawdi-agent-plugin-runtime-test-"));
+let runtimeTestHomeSequence = 0;
+afterAll(() => rmSync(runtimeTestRoot, { recursive: true, force: true }));
+
 class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 	readonly calls: CommandInput[] = [];
 	readonly states = new Map<string, FakePluginState>();
 	availableResult = true;
+	failProbeInstallName: string | null = null;
 	failLiveEnableVersion: string | null = null;
-	liveHome = "/hosted/home";
+	failLiveInstallVersion: string | null = null;
+	readonly liveHome: string;
+
+	constructor() {
+		runtimeTestHomeSequence += 1;
+		this.liveHome = join(runtimeTestRoot, `home-${runtimeTestHomeSequence}`);
+		mkdirSync(this.liveHome, { recursive: true });
+	}
 
 	available(): boolean {
 		return this.availableResult;
@@ -45,8 +59,40 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 		return `${input.home}\0${this.runtime(input)}\0${name}`;
 	}
 
-	seed(runtime: HostedAgentPluginRuntime, plugin: FakePluginState): void {
+	private installPath(home: string, runtime: HostedAgentPluginRuntime, nativeId: string): string {
+		return join(
+			home,
+			runtime === "openclaw" ? ".openclaw" : ".hermes",
+			runtime === "openclaw" ? "extensions" : "plugins",
+			nativeId,
+		);
+	}
+
+	seed(
+		runtime: HostedAgentPluginRuntime,
+		plugin: FakePluginState,
+		prepared?: PreparedHostedAgentPlugin,
+	): void {
 		this.states.set(`${this.liveHome}\0${runtime}\0${plugin.name}`, plugin);
+		const target = this.installPath(this.liveHome, runtime, plugin.nativeId);
+		rmSync(target, { recursive: true, force: true });
+		mkdirSync(target, { recursive: true });
+		if (prepared) {
+			for (const file of prepared.tree) {
+				const path = join(target, ...file.path.split("/"));
+				mkdirSync(join(path, ".."), { recursive: true });
+				writeFileSync(path, file.bytes, { mode: file.mode & 0o777 });
+			}
+		} else {
+			writeFileSync(
+				join(target, "plugin.json"),
+				JSON.stringify({
+					$schema: AGENT_PLUGINS_SCHEMA_1_0_0,
+					name: plugin.name,
+					version: plugin.version,
+				}),
+			);
+		}
 	}
 
 	get(runtime: HostedAgentPluginRuntime, name: string): FakePluginState | undefined {
@@ -137,7 +183,11 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 						format: plugin.compatible ? "bundle" : "openclaw",
 						bundleFormat: plugin.compatible ? "agent" : undefined,
 					},
-					install: { source: "path", version: plugin.version },
+					install: {
+						source: "path",
+						version: plugin.version,
+						installPath: this.installPath(input.home, runtime, plugin.nativeId),
+					},
 				}),
 				stderr: "",
 			};
@@ -145,9 +195,21 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 		if (args[1] === "install") {
 			const source = runtime === "hermes" ? fileURLToPath(args[2] ?? "") : (args[2] ?? "");
 			const manifest = this.pluginFromSource(source);
+			if (input.home !== this.liveHome && manifest.name === this.failProbeInstallName) {
+				return { status: 42, stdout: "", stderr: "probe failure" };
+			}
+			if (input.home === this.liveHome && manifest.version === this.failLiveInstallVersion) {
+				this.failLiveInstallVersion = null;
+				return { status: 43, stdout: "", stderr: "live install failure" };
+			}
+			const nativeId = runtime === "openclaw" ? manifest.name.replaceAll(".", "-") : manifest.name;
+			const target = this.installPath(input.home, runtime, nativeId);
+			rmSync(target, { recursive: true, force: true });
+			mkdirSync(join(target, ".."), { recursive: true });
+			cpSync(source, target, { recursive: true });
 			this.states.set(this.key(input, manifest.name), {
 				name: manifest.name,
-				nativeId: runtime === "openclaw" ? manifest.name.replaceAll(".", "-") : manifest.name,
+				nativeId,
 				version: manifest.version,
 				enabled: false,
 				compatible: true,
@@ -178,6 +240,10 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 					(plugin.nativeId === args[2] || plugin.name === args[2])
 				) {
 					this.states.delete(key);
+					rmSync(this.installPath(input.home, runtime, plugin.nativeId), {
+						recursive: true,
+						force: true,
+					});
 				}
 			}
 			return { status: 0, stdout: "", stderr: "" };
@@ -200,6 +266,13 @@ function plugin(
 	version: string,
 	ownershipIdentity: string,
 ): PreparedHostedAgentPlugin {
+	const manifest = Buffer.from(
+		JSON.stringify({ $schema: AGENT_PLUGINS_SCHEMA_1_0_0, name, version }),
+	);
+	const fileDigest = createHash("sha256").update(manifest).digest("hex");
+	const treeDigest = createHash("sha256")
+		.update(`100644\0plugin.json\0${manifest.byteLength}\0${fileDigest}\n`)
+		.digest("hex");
 	return {
 		name,
 		installation: {
@@ -212,17 +285,29 @@ function plugin(
 				path: `plugins/${name}`,
 				commit: ownershipIdentity.slice(0, 40),
 			},
-			contentDigest: `sha256-tree-v1:${ownershipIdentity}`,
+			contentDigest: `sha256-tree-v1:${treeDigest}`,
 			ownershipIdentity,
 		},
+		receiptNativeId: null,
 		tree: [
 			{
 				path: "plugin.json",
 				mode: 0o100644,
-				bytes: Buffer.from(JSON.stringify({ $schema: AGENT_PLUGINS_SCHEMA_1_0_0, name, version })),
+				bytes: manifest,
 			},
 		],
 	};
+}
+
+function prepareTransaction(prepared: PreparedHostedAgentPlugins, runner: FakeNativeRunner) {
+	const capabilityProof = proveHostedAgentPluginCapabilities({ prepared, commands, runner });
+	return prepareHostedAgentPluginTransaction({
+		prepared,
+		home: runner.liveHome,
+		commands,
+		capabilityProof,
+		runner,
+	});
 }
 
 function desiredState(
@@ -232,9 +317,14 @@ function desiredState(
 ): PreparedHostedAgentPlugins {
 	const previousReceipt: HostedAgentPluginReceipt | null = previous
 		? {
-				schemaVersion: "clawdi.hostedAgentPluginReceipts.v1",
+				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
 				runtime: previous.runtime,
-				installations: { [previous.plugin.name]: previous.plugin.installation },
+				installations: {
+					[previous.plugin.name]: {
+						...previous.plugin.installation,
+						nativeId: previous.plugin.name.replaceAll(".", "-"),
+					},
+				},
 			}
 		: null;
 	return {
@@ -242,6 +332,7 @@ function desiredState(
 		desired: new Map([[desired.name, desired]]),
 		previousReceipt,
 		rollback: previous ? new Map([[previous.plugin.name, previous.plugin]]) : new Map(),
+		transientCacheOwnerships: new Set(),
 	};
 }
 
@@ -293,17 +384,16 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		const receipt = first.nextReceipt;
 		if (!receipt) throw new Error("missing receipt fixture");
 		const liveMutations = runner.liveMutations().length;
-		const repeat = prepareHostedAgentPluginTransaction({
-			prepared: {
+		const repeat = prepareTransaction(
+			{
 				runtime: "openclaw",
 				desired: new Map([[desired.name, desired]]),
 				previousReceipt: receipt,
 				rollback: new Map([[desired.name, desired]]),
+				transientCacheOwnerships: new Set(),
 			},
-			home: runner.liveHome,
-			commands,
 			runner,
-		});
+		);
 		repeat.apply();
 		expect(runner.liveMutations()).toHaveLength(liveMutations);
 	});
@@ -311,12 +401,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 	test("installs the Hermes stdio-capable package from a local file Git transport", () => {
 		const runner = new FakeNativeRunner();
 		const desired = plugin("acme.tools", "1.2.3", "b".repeat(64));
-		const transaction = prepareHostedAgentPluginTransaction({
-			prepared: desiredState("hermes", desired),
-			home: runner.liveHome,
-			commands,
-			runner,
-		});
+		const transaction = prepareTransaction(desiredState("hermes", desired), runner);
 		transaction.apply();
 		const install = runner.calls.find(
 			(call) => call.home === runner.liveHome && call.args[1] === "install",
@@ -366,9 +451,8 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		const runner = new FakeNativeRunner();
 		runner.availableResult = false;
 		expect(() =>
-			prepareHostedAgentPluginTransaction({
+			proveHostedAgentPluginCapabilities({
 				prepared: desiredState("openclaw", plugin("acme.tools", "1.2.3", "c".repeat(64))),
-				home: runner.liveHome,
 				commands,
 				runner,
 			}),
@@ -378,6 +462,8 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 
 	test("refuses an unmanaged same-name native plugin before live mutation", () => {
 		const runner = new FakeNativeRunner();
+		const prepared = desiredState("openclaw", plugin("acme.tools", "1.2.3", "d".repeat(64)));
+		const capabilityProof = proveHostedAgentPluginCapabilities({ prepared, commands, runner });
 		runner.seed("openclaw", {
 			name: "acme.tools",
 			nativeId: "acme-tools",
@@ -387,9 +473,10 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		});
 		expect(() =>
 			prepareHostedAgentPluginTransaction({
-				prepared: desiredState("openclaw", plugin("acme.tools", "1.2.3", "d".repeat(64))),
+				prepared,
 				home: runner.liveHome,
 				commands,
+				capabilityProof,
 				runner,
 			}),
 		).toThrow("unmanaged");
@@ -399,12 +486,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 	test("refuses a same-name plugin that appears after ownership planning", () => {
 		const runner = new FakeNativeRunner();
 		const desired = plugin("acme.tools", "1.2.3", "1".repeat(64));
-		const transaction = prepareHostedAgentPluginTransaction({
-			prepared: desiredState("openclaw", desired),
-			home: runner.liveHome,
-			commands,
-			runner,
-		});
+		const transaction = prepareTransaction(desiredState("openclaw", desired), runner);
 		runner.seed("openclaw", {
 			name: desired.name,
 			nativeId: "acme-tools",
@@ -422,20 +504,22 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		const runner = new FakeNativeRunner();
 		const previous = plugin("acme.tools", "1.2.3", "e".repeat(64));
 		const desired = plugin("acme.tools", "2.0.0", "f".repeat(64));
-		runner.seed("openclaw", {
-			name: previous.name,
-			nativeId: "acme-tools",
-			version: previous.installation.version,
-			enabled: true,
-			compatible: true,
-		});
+		runner.seed(
+			"openclaw",
+			{
+				name: previous.name,
+				nativeId: "acme-tools",
+				version: previous.installation.version,
+				enabled: true,
+				compatible: true,
+			},
+			previous,
+		);
 		runner.failLiveEnableVersion = desired.installation.version;
-		const transaction = prepareHostedAgentPluginTransaction({
-			prepared: desiredState("openclaw", desired, { runtime: "openclaw", plugin: previous }),
-			home: runner.liveHome,
-			commands,
+		const transaction = prepareTransaction(
+			desiredState("openclaw", desired, { runtime: "openclaw", plugin: previous }),
 			runner,
-		});
+		);
 		let authorityCommitted = false;
 		try {
 			transaction.apply();
@@ -448,5 +532,153 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			version: previous.installation.version,
 			enabled: true,
 		});
+	});
+
+	test("proves every package before any live mutation", () => {
+		const runner = new FakeNativeRunner();
+		const first = plugin("acme.first", "1.0.0", "2".repeat(64));
+		const second = plugin("acme.second", "1.0.0", "3".repeat(64));
+		runner.failProbeInstallName = second.name;
+		const prepared: PreparedHostedAgentPlugins = {
+			runtime: "openclaw",
+			desired: new Map([
+				[first.name, first],
+				[second.name, second],
+			]),
+			previousReceipt: null,
+			rollback: new Map(),
+			transientCacheOwnerships: new Set(),
+		};
+
+		expect(() => proveHostedAgentPluginCapabilities({ prepared, commands, runner })).toThrow(
+			AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+		);
+		expect(runner.liveMutations()).toEqual([]);
+		expect(
+			runner.calls.some((call) => call.home !== runner.liveHome && call.args[1] === "install"),
+		).toBe(true);
+	});
+
+	test("refuses same-version installed byte drift under an ownership receipt", () => {
+		const runner = new FakeNativeRunner();
+		const desired = plugin("acme.tools", "1.2.3", "4".repeat(64));
+		runner.seed(
+			"openclaw",
+			{
+				name: desired.name,
+				nativeId: "acme-tools",
+				version: desired.installation.version,
+				enabled: true,
+				compatible: true,
+			},
+			desired,
+		);
+		writeFileSync(
+			join(runner.liveHome, ".openclaw", "extensions", "acme-tools", "drift.txt"),
+			"unmanaged drift",
+		);
+		const prepared = desiredState("openclaw", desired, {
+			runtime: "openclaw",
+			plugin: desired,
+		});
+
+		expect(() => prepareTransaction(prepared, runner)).toThrow("ownership receipt");
+		expect(runner.liveMutations()).toEqual([]);
+	});
+
+	test("refuses an unmanaged OpenClaw plugin occupying the probed native id", () => {
+		const runner = new FakeNativeRunner();
+		const desired = plugin("acme.tools", "1.2.3", "5".repeat(64));
+		const prepared = desiredState("openclaw", desired);
+		const capabilityProof = proveHostedAgentPluginCapabilities({ prepared, commands, runner });
+		runner.seed("openclaw", {
+			name: "acme-tools",
+			nativeId: "acme-tools",
+			version: "9.0.0",
+			enabled: true,
+			compatible: true,
+		});
+
+		expect(() =>
+			prepareHostedAgentPluginTransaction({
+				prepared,
+				home: runner.liveHome,
+				commands,
+				capabilityProof,
+				runner,
+			}),
+		).toThrow("unmanaged");
+		expect(runner.liveMutations()).toEqual([]);
+	});
+
+	test("refuses an unobserved filesystem target occupying the probed native id", () => {
+		const runner = new FakeNativeRunner();
+		const desired = plugin("acme.tools", "1.2.3", "a".repeat(64));
+		const prepared = desiredState("openclaw", desired);
+		const capabilityProof = proveHostedAgentPluginCapabilities({ prepared, commands, runner });
+		const target = join(runner.liveHome, ".openclaw", "extensions", "acme-tools");
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "unmanaged.txt"), "unmanaged");
+
+		expect(() =>
+			prepareHostedAgentPluginTransaction({
+				prepared,
+				home: runner.liveHome,
+				commands,
+				capabilityProof,
+				runner,
+			}),
+		).toThrow("unmanaged native Agent Plugin target");
+		expect(readFileSync(join(target, "unmanaged.txt"), "utf8")).toBe("unmanaged");
+		expect(runner.liveMutations()).toEqual([]);
+	});
+
+	test("rejects desired packages that resolve to one native id", () => {
+		const runner = new FakeNativeRunner();
+		const dotted = plugin("acme.tools", "1.0.0", "6".repeat(64));
+		const dashed = plugin("acme-tools", "1.0.0", "7".repeat(64));
+		const prepared: PreparedHostedAgentPlugins = {
+			runtime: "openclaw",
+			desired: new Map([
+				[dotted.name, dotted],
+				[dashed.name, dashed],
+			]),
+			previousReceipt: null,
+			rollback: new Map(),
+			transientCacheOwnerships: new Set(),
+		};
+
+		expect(() => proveHostedAgentPluginCapabilities({ prepared, commands, runner })).toThrow(
+			"same native identity",
+		);
+		expect(runner.liveMutations()).toEqual([]);
+	});
+
+	test("reports native rollback failure for filesystem snapshot recovery", () => {
+		const runner = new FakeNativeRunner();
+		const previous = plugin("acme.tools", "1.2.3", "8".repeat(64));
+		const desired = plugin("acme.tools", "2.0.0", "9".repeat(64));
+		runner.seed(
+			"openclaw",
+			{
+				name: previous.name,
+				nativeId: "acme-tools",
+				version: previous.installation.version,
+				enabled: true,
+				compatible: true,
+			},
+			previous,
+		);
+		runner.failLiveEnableVersion = desired.installation.version;
+		runner.failLiveInstallVersion = previous.installation.version;
+		const transaction = prepareTransaction(
+			desiredState("openclaw", desired, { runtime: "openclaw", plugin: previous }),
+			runner,
+		);
+
+		expect(() => transaction.apply()).toThrow("state change failed");
+		expect(transaction.rollback()).toEqual([
+			"runtime openclaw Agent Plugin acme.tools rollback failed",
+		]);
 	});
 });

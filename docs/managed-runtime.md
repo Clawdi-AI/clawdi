@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-08-02 |
+| Last updated | 2026-08-09 |
 | Owner | CLI runtime and cloud-api layers |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
@@ -550,7 +550,7 @@ Normalization maps hosted fields into the internal shape:
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with the selected model plus minimal Clawdi-managed endpoint/secret metadata; it has no provider model catalog and is independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
 | `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
-| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional runtime-native Agent Plugins desired state; schema version `1` entries pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, a `sha256-tree-v1` content digest, and canonical secret references |
+| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional runtime-native Agent Plugins desired state, projected only when the client declares `agent-plugins-manifest-v1`; schema version `1` entries pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, a `sha256-tree-v1` content digest, and canonical secret references |
 | `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
@@ -683,6 +683,16 @@ Agent Plugins 1.0.0 schema/name/version identity, and verifies the canonical
 `sha256-tree-v1` regular-file tree digest. Symlinks, non-regular entries,
 unsafe or colliding paths, and bounded-size violations fail closed.
 
+Agent Plugins use an explicit rollout capability because the v2 inner manifest
+is strict. The CLI sends
+`X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1`; Cloud omits
+`agentPlugins` for clients that do not send that token while retaining the
+`clawdiCli` desired update. After that update re-execs, the capable CLI fetches
+the plugin-bearing variant. Each projection has its own canonical
+`sourceRevision` and strong ETag, and successful responses vary on both
+`Accept` and `X-Clawdi-Runtime-Capabilities`, so a validator from one variant
+cannot produce a false `304` for the other.
+
 Clawdi remains a lifecycle and ownership driver. It gives the complete,
 already-verified package to the selected runtime's native plugin commands and
 does not flatten Skills or MCP declarations into separately managed resources.
@@ -693,33 +703,64 @@ URL is never passed to Hermes for another download. Packages containing Git
 control directories or attributes that could change verified checkout bytes
 fail closed instead of weakening that transport boundary.
 
-There is no release-version cutoff. Before any live Hosted mutation, the CLI
-runs an install, enable, JSON observation, disable, and uninstall capability
-probe with the absolute installed runtime command under a temporary HOME and
-runtime-specific state root. OpenClaw location overrides and Hermes
+There is no release-version cutoff. After the official runtime binary is
+installed and observed, but before any live plugin or gateway-service mutation,
+the CLI runs an install, enable, JSON observation, disable, and uninstall probe
+for every desired and rollback package with the absolute installed runtime
+command. Each probe has a separate temporary HOME and runtime-specific state
+root. OpenClaw location overrides and Hermes
 `HERMES_HOME`, `HERMES_PROFILE`, `HERMES_CONFIG`, and `HERMES_ENV` are
 explicitly cleared or replaced so inherited process state cannot redirect the
-probe into the live Hosted profile. Missing, old, or incompatible runtimes fail
-with the stable unsupported-capability error.
+probe into the live Hosted profile. The proof binds the command, injected
+runner identity, package ownership identity, and observed native id; one failed
+package prevents every live package mutation. Missing, old, or incompatible
+runtimes fail with the stable unsupported-capability error. This follows
+OpenClaw support commit
+`f4387b7a5effd63fe2c0f05495175b9eacd12cec` and Hermes support head
+`255e6987b6150341a732d227a3e4d39d665752ca`, neither of which is inferred from a
+published SemVer.
 
 Hermes support is limited to Agent Plugins Skills and stdio MCP servers.
-`streamable-http`, SSE, unknown, or malformed MCP transport declarations are
-rejected before the isolated probe because Hermes does not guarantee that
-configured headers stay on an authorized redirect or legacy SSE event origin.
+Hermes main added portable streamable-http mapping and cross-origin header
+stripping in commit `471baea520e89220c7a5306d6410b5c8ce7e34d5`, but the public
+native CLI observation still cannot distinguish a registered remote component
+from an install that succeeded while skipping that component diagnostically.
+Hosted therefore rejects streamable-http and SSE, as well as unknown or
+malformed transports, before the isolated probe. Package validation also
+checks Skill frontmatter and the complete supported stdio command, args, env,
+and cwd shapes, so plugin identity plus a successful native list is never used
+as component proof.
 Agent Plugins URL and header strings are treated as literal package data.
 Non-empty Hosted `secretRefs` are rejected before download or probing; the CLI
 does not resolve, log, persist, or inject secret values without a separate
 native binding contract.
 
 A private last-applied receipt binds each managed name to `installationId`,
-version, schema, immutable source tuple, and content digest. A same-name native
-plugin without that receipt is unmanaged and is never replaced or removed.
-Repeat convergence is a no-op only after native JSON observation confirms the
-installed version and enabled state. Removal disables and uninstalls only a
-receipt-owned plugin. Replacement and removal participate in the main
-convergence transaction: native rollback restores the prior package and state
-if mutation or authority commit fails, and desired authority is committed only
+version, schema, immutable source tuple, content digest, and native id. Native
+id collisions are checked across desired packages and against installed state,
+so an OpenClaw slug collision cannot authorize `--force`. A same-name or
+same-native-id plugin without that receipt is unmanaged and is never replaced
+or removed. Repeat convergence is a no-op only after native JSON observation
+confirms the installed version and enabled state and the controlled install
+directory hashes to the receipt digest; Hermes hashing ignores only its
+top-level generated `.git` metadata. Removal disables and uninstalls only a
+receipt-owned plugin.
+
+Live package mutation precedes the runtime's official gateway installer and
+final systemd activation. Any package change forces the affected runtime user
+unit through restart and readiness even when its unit/config revision did not
+change. The exact native package directories, runtime plugin configuration,
+receipt, and other native command state are part of the runtime-user preimage.
+Native rollback errors remain visible, and filesystem plus systemd restoration
+still runs before the failed generation is returned; authority commits only
 after the native state and receipt converge.
+
+Online preparation stores verified archives in private ownership-keyed cache
+entries. Failed convergence removes entries first created by that attempt while
+retaining the previously committed rollback set. After authority commits, GC
+keeps only receipt-owned archives and ignores unknown or symlink entries.
+Offline convergence never fetches: it revalidates the retained archive and
+fails repair explicitly when that cache is missing or corrupt.
 
 The bundled `clawdi` Skill is platform infrastructure. Hosted constructs its
 private `skills.entries` runtime state internally, and capable CLIs reconcile

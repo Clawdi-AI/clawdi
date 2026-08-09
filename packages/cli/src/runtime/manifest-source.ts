@@ -57,6 +57,8 @@ export interface RuntimeManifestLoad {
 }
 
 export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
+export const HOSTED_RUNTIME_CAPABILITIES_HEADER = "x-clawdi-runtime-capabilities";
+export const HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1";
 
 export interface RuntimeBundleChannelBinding {
 	provider: "telegram" | "discord";
@@ -267,6 +269,7 @@ async function fetchRuntimeManifestPayload(
 			headers: {
 				accept: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 				authorization: `Bearer ${token}`,
+				[HOSTED_RUNTIME_CAPABILITIES_HEADER]: HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},
 			signal: controller.signal,
@@ -558,6 +561,9 @@ function validateManifestSemantics(
 	trustDomain: "generic" | "hosted" = "generic",
 ): string[] {
 	const errors: string[] = [];
+	const isHostedV2 =
+		trustDomain === "hosted" &&
+		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 	const expiryError = manifestExpiryError(manifest);
 	if (expiryError) errors.push(expiryError);
 	if (!isAbsolute(paths.userHome)) errors.push(`runtime HOME must be absolute: ${paths.userHome}`);
@@ -565,7 +571,7 @@ function validateManifestSemantics(
 		errors.push(`runtime workspaceRoot must be absolute: ${manifest.workspaceRoot}`);
 	}
 	if (trustDomain !== "generic") {
-		if (hasUnsupportedAgentPluginInstallations(manifest)) {
+		if (hasUnsupportedAgentPluginInstallations(manifest) && !isHostedV2) {
 			errors.push(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
 		}
 		const cliPolicy = hostedCliPayloadPolicySchema.safeParse(manifest.clawdiCli);
@@ -587,9 +593,6 @@ function validateManifestSemantics(
 		if (manifest.runtimes[runtime]?.enabled !== true) {
 			errors.push(`manifest runtime ${runtime} must be enabled`);
 		}
-		const isHostedV2 =
-			trustDomain !== "generic" &&
-			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 		if (runtime === "openclaw" && isHostedV2) {
 			const auth = manifest.openclawGatewayAuth;
 			if (!auth) {

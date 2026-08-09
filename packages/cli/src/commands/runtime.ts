@@ -47,14 +47,13 @@ import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
+	cleanupHostedAgentPluginTransientArchives,
+	gcHostedAgentPluginArchives,
 	type PreparedHostedAgentPlugins,
 	prepareHostedAgentPluginPackages,
+	readHostedAgentPluginReceipt,
 } from "../runtime/hosted-agent-plugin-package";
-import {
-	type HostedAgentPluginCommandRunner,
-	hostedAgentPluginCommands,
-	proveHostedAgentPluginCapabilities,
-} from "../runtime/hosted-agent-plugin-runtime";
+import type { HostedAgentPluginCommandRunner } from "../runtime/hosted-agent-plugin-runtime";
 import {
 	assertHostedRuntimeContract,
 	type HostedRuntimeContractOptions,
@@ -78,7 +77,6 @@ import {
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
-import { hostedRuntimeProjectionHome } from "../runtime/projection-home";
 import {
 	buildNumericUserCommand,
 	buildRuntimeUserCommand,
@@ -2553,153 +2551,172 @@ async function applyRuntimeDesiredState(
 ): Promise<RuntimeApplyResult> {
 	const preparedHostedAgentPlugins =
 		opts.preparedHostedAgentPlugins === undefined
-			? await prepareHostedAgentPluginPackages(load.manifest, paths)
+			? await prepareHostedAgentPluginPackages(load.manifest, paths, { offline: load.offline })
 			: opts.preparedHostedAgentPlugins;
-	const agentPluginCapabilityProof = preparedHostedAgentPlugins
-		? proveHostedAgentPluginCapabilities({
-				prepared: preparedHostedAgentPlugins,
-				commands: hostedAgentPluginCommands(hostedRuntimeProjectionHome(load.manifest, paths)),
-				...(opts.hostedAgentPluginCommandRunner
-					? { runner: opts.hostedAgentPluginCommandRunner }
-					: {}),
-			})
-		: null;
-	let cliUpdate: RuntimeCliUpdateResult;
+	let preservePreparedAgentPluginArchives = false;
 	try {
-		cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
-			deferInstall: opts.deferCliInstall,
-			deferReason: opts.deferCliInstallReason,
-			rollbackEligible: opts.manifestIdentity?.previouslyApplied,
-			runningVersion: getCliVersion(),
-		});
-	} catch (error) {
-		if (!opts.continueOnCliUpdateError) throw error;
-		return {
-			kind: "cli_update_failed",
-			cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
+		let cliUpdate: RuntimeCliUpdateResult;
+		try {
+			cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
+				deferInstall: opts.deferCliInstall,
+				deferReason: opts.deferCliInstallReason,
+				rollbackEligible: opts.manifestIdentity?.previouslyApplied,
+				runningVersion: getCliVersion(),
+			});
+		} catch (error) {
+			if (!opts.continueOnCliUpdateError) throw error;
+			return {
+				kind: "cli_update_failed",
+				cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
+			};
+		}
+		if (cliUpdate.selfReexec) {
+			return { kind: "cli_handoff", cliUpdate };
+		}
+		const preparedHostedSourcedSkills =
+			opts.preparedHostedSourcedSkills ??
+			(await prepareHostedSourcedSkillArchives(load.manifest, paths, {
+				authToken: load.applyContext?.manifestSource.auth.token,
+			}));
+		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
+		let failedSystemdUnits: SystemdUnitSnapshot | null = null;
+		let systemdApply = {
+			applied: false,
+			systemUnitsChanged: [] as string[],
+			userUnitsChanged: [] as string[],
 		};
-	}
-	if (cliUpdate.selfReexec) {
-		return { kind: "cli_handoff", cliUpdate };
-	}
-	const preparedHostedSourcedSkills =
-		opts.preparedHostedSourcedSkills ??
-		(await prepareHostedSourcedSkillArchives(load.manifest, paths, {
-			authToken: load.applyContext?.manifestSource.auth.token,
-		}));
-	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
-	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
-	let systemdApply = {
-		applied: false,
-		systemUnitsChanged: [] as string[],
-		userUnitsChanged: [] as string[],
-	};
-	let egressPrerequisiteActivated = false;
-	const convergence = convergeRuntimeManifest(load, paths, {
-		cacheLastGood: false,
-		hostedRuntimeContract: opts.hostedRuntimeContract,
-		preparedHostedSourcedSkills,
-		...(preparedHostedAgentPlugins ? { preparedHostedAgentPlugins } : {}),
-		...(agentPluginCapabilityProof
-			? { hostedAgentPluginCapabilityProof: agentPluginCapabilityProof }
-			: {}),
-		...(opts.hostedAgentPluginCommandRunner
-			? { hostedAgentPluginCommandRunner: opts.hostedAgentPluginCommandRunner }
-			: {}),
-		commitAuthority: (committedConvergence, authority) => {
-			if (opts.requireSystemdApplied && !systemdApply.applied) {
-				throw new Error("systemd apply did not activate the rendered runtime manifest");
-			}
-			opts.authorityCommit?.(committedConvergence, authority);
-		},
-		systemdApply: {
-			activateEgressPrerequisite: ({ restartEgressSidecar }) => {
-				failedSystemdUnits = readSystemdUnitSnapshot(paths);
-				try {
-					const prerequisite = applySystemdRuntimeUpdate(
-						paths,
-						previousSystemdUnits,
-						failedSystemdUnits,
-						{
-							activationScope: {
-								systemUnits: [RUNTIME_SIDECAR_SYSTEM_UNIT],
-								userUnits: [],
-							},
-							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
-							recoverFailedUnits: opts.recoverFailedSystemdUnits,
-						},
-					);
-					if (prerequisite.applied) {
-						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
-						egressPrerequisiteActivated = true;
-					}
-					return prerequisite;
-				} catch (error) {
-					throw new Error(
-						`transparent-egress prerequisite activation failed: ${
-							error instanceof Error ? error.message : String(error)
-						}`,
-					);
+		let egressPrerequisiteActivated = false;
+		const convergence = convergeRuntimeManifest(load, paths, {
+			cacheLastGood: false,
+			hostedRuntimeContract: opts.hostedRuntimeContract,
+			preparedHostedSourcedSkills,
+			...(preparedHostedAgentPlugins ? { preparedHostedAgentPlugins } : {}),
+			...(opts.hostedAgentPluginCommandRunner
+				? { hostedAgentPluginCommandRunner: opts.hostedAgentPluginCommandRunner }
+				: {}),
+			commitAuthority: (committedConvergence, authority) => {
+				if (opts.requireSystemdApplied && !systemdApply.applied) {
+					throw new Error("systemd apply did not activate the rendered runtime manifest");
 				}
+				opts.authorityCommit?.(committedConvergence, authority);
 			},
-			activate: ({ restartDaemon, restartEgressSidecar, staleSystemUnits, staleUserUnits }) => {
-				// Official installers run after the prerequisite phase and add their
-				// base units, so final reconciliation must observe a fresh rendered state.
-				failedSystemdUnits = readSystemdUnitSnapshot(paths);
-				try {
-					const activationTarget = withoutStaleSystemdUnits(
-						failedSystemdUnits,
-						staleSystemUnits,
-						staleUserUnits,
-					);
-					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, activationTarget, {
+			systemdApply: {
+				activateEgressPrerequisite: ({ restartEgressSidecar }) => {
+					failedSystemdUnits = readSystemdUnitSnapshot(paths);
+					try {
+						const prerequisite = applySystemdRuntimeUpdate(
+							paths,
+							previousSystemdUnits,
+							failedSystemdUnits,
+							{
+								activationScope: {
+									systemUnits: [RUNTIME_SIDECAR_SYSTEM_UNIT],
+									userUnits: [],
+								},
+								forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+								recoverFailedUnits: opts.recoverFailedSystemdUnits,
+							},
+						);
+						if (prerequisite.applied) {
+							assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
+							egressPrerequisiteActivated = true;
+						}
+						return prerequisite;
+					} catch (error) {
+						throw new Error(
+							`transparent-egress prerequisite activation failed: ${
+								error instanceof Error ? error.message : String(error)
+							}`,
+						);
+					}
+				},
+				activate: ({
+					restartDaemon,
+					restartEgressSidecar,
+					restartUserUnits,
+					staleSystemUnits,
+					staleUserUnits,
+				}) => {
+					// Official installers run after the prerequisite phase and add their
+					// base units, so final reconciliation must observe a fresh rendered state.
+					failedSystemdUnits = readSystemdUnitSnapshot(paths);
+					try {
+						const activationTarget = withoutStaleSystemdUnits(
+							failedSystemdUnits,
+							staleSystemUnits,
+							staleUserUnits,
+						);
+						systemdApply = applySystemdRuntimeUpdate(
+							paths,
+							previousSystemdUnits,
+							activationTarget,
+							{
+								forceRestartSystemUnits: [
+									...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
+									...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+								],
+								forceRestartUserUnits: restartUserUnits,
+								recoverFailedUnits: opts.recoverFailedSystemdUnits,
+								skipActivatedSystemUnits: egressPrerequisiteActivated
+									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
+									: [],
+							},
+						);
+						return systemdApply;
+					} catch (error) {
+						throw new Error(
+							`systemd apply failed: ${error instanceof Error ? error.message : String(error)}`,
+						);
+					}
+				},
+				rollback: ({
+					restartDaemon,
+					restartEgressSidecar,
+					stopEgressSidecar,
+					reconcileUserUnits,
+					staleSystemUnits,
+				}) => {
+					const restoredSystemdUnits = readSystemdUnitSnapshot(paths);
+					const rollbackSource = failedSystemdUnits ?? {
+						system: new Map(previousSystemdUnits.system),
+						user: new Map(previousSystemdUnits.user),
+					};
+					for (const unit of reconcileUserUnits) {
+						if (!rollbackSource.user.has(unit)) {
+							rollbackSource.user.set(unit, "# failed runtime apply candidate\n");
+						}
+					}
+					applySystemdRuntimeUpdate(paths, rollbackSource, restoredSystemdUnits, {
 						forceRestartSystemUnits: [
 							...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
 							...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+							...staleSystemUnits,
 						],
-						recoverFailedUnits: opts.recoverFailedSystemdUnits,
-						skipActivatedSystemUnits: egressPrerequisiteActivated
-							? [RUNTIME_SIDECAR_SYSTEM_UNIT]
-							: [],
+						forceStopSystemUnits: stopEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+						forceRestartUserUnits: [...previousSystemdUnits.user.keys()],
+						recoverFailedUnits: false,
 					});
-					return systemdApply;
-				} catch (error) {
-					throw new Error(
-						`systemd apply failed: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
+				},
 			},
-			rollback: ({
-				restartDaemon,
-				restartEgressSidecar,
-				stopEgressSidecar,
-				reconcileUserUnits,
-				staleSystemUnits,
-			}) => {
-				const restoredSystemdUnits = readSystemdUnitSnapshot(paths);
-				const rollbackSource = failedSystemdUnits ?? {
-					system: new Map(previousSystemdUnits.system),
-					user: new Map(previousSystemdUnits.user),
-				};
-				for (const unit of reconcileUserUnits) {
-					if (!rollbackSource.user.has(unit)) {
-						rollbackSource.user.set(unit, "# failed runtime apply candidate\n");
-					}
-				}
-				applySystemdRuntimeUpdate(paths, rollbackSource, restoredSystemdUnits, {
-					forceRestartSystemUnits: [
-						...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
-						...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
-						...staleSystemUnits,
-					],
-					forceStopSystemUnits: stopEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
-					forceRestartUserUnits: [...previousSystemdUnits.user.keys()],
-					recoverFailedUnits: false,
-				});
-			},
-		},
-	});
-	return { kind: "converged", cliUpdate, convergence, systemdApply };
+		});
+		if (convergence.installErrors.length === 0) {
+			preservePreparedAgentPluginArchives = true;
+			try {
+				gcHostedAgentPluginArchives(readHostedAgentPluginReceipt(paths), paths);
+			} catch (error) {
+				console.warn(
+					`post-commit Agent Plugin archive cleanup deferred: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+		}
+		return { kind: "converged", cliUpdate, convergence, systemdApply };
+	} finally {
+		if (!preservePreparedAgentPluginArchives) {
+			cleanupHostedAgentPluginTransientArchives(preparedHostedAgentPlugins, paths);
+		}
+	}
 }
 
 function runtimeCliUpdateError(

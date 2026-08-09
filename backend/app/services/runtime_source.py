@@ -79,6 +79,8 @@ from app.services.vault_crypto import decrypt
 
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
+RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
+RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
@@ -370,6 +372,7 @@ def render_runtime_source(
     public_api_url: str,
     vault_key_identity: str,
     decrypt_secrets: bool,
+    project_agent_plugins: bool = True,
 ) -> RenderedRuntimeSource:
     row = batch.rows.get(environment_id)
     if row is None:
@@ -675,7 +678,7 @@ def render_runtime_source(
         manifest["mcp"] = mcp
     if skills is not None:
         manifest["skills"] = skills
-    if agent_plugins is not None:
+    if project_agent_plugins and agent_plugins is not None:
         manifest["agentPlugins"] = agent_plugins
     if tool_projection:
         manifest["tools"] = tool_projection

@@ -38,7 +38,9 @@ from app.services.project_runtime_skills import (
     project_skill_file_signature,
 )
 from app.services.runtime_source import (
+    RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+    RUNTIME_CAPABILITIES_HEADER,
     RuntimeSourceError,
     RuntimeSourceNotFoundError,
     expected_runtime_bundle_v2_etag,
@@ -51,6 +53,7 @@ from app.services.tar_utils import tar_from_content
 
 router = APIRouter(prefix="/runtime", tags=["runtime"])
 _RUNTIME_MANIFEST_CACHE_CONTROL = "no-store, no-transform"
+_RUNTIME_MANIFEST_VARY = f"Accept, {RUNTIME_CAPABILITIES_HEADER}"
 _PROJECT_SKILL_SUPPORT_DIRS = {"references", "templates", "scripts", "assets", "examples"}
 _MAX_PROJECT_SKILL_FILE_BYTES = 16 * 1024 * 1024
 _MAX_PROJECT_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024
@@ -77,6 +80,11 @@ async def get_runtime_manifest(
         environment_ids=[environment_id],
         owner_user_id=auth.user_id,
     )
+    capabilities = {
+        capability.strip()
+        for capability in request.headers.get(RUNTIME_CAPABILITIES_HEADER, "").split(",")
+        if capability.strip()
+    }
     try:
         source = render_runtime_source(
             batch,
@@ -84,6 +92,7 @@ async def get_runtime_manifest(
             public_api_url=settings.public_api_url,
             vault_key_identity=vault_key_identity(settings.vault_encryption_key),
             decrypt_secrets=True,
+            project_agent_plugins=(RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY in capabilities),
         )
     except RuntimeSourceNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
@@ -95,7 +104,7 @@ async def get_runtime_manifest(
     headers = {
         "ETag": etag,
         "Cache-Control": _RUNTIME_MANIFEST_CACHE_CONTROL,
-        "Vary": "Accept",
+        "Vary": _RUNTIME_MANIFEST_VARY,
         "Content-Type": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     }
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
