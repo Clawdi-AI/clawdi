@@ -788,7 +788,7 @@ describe("ai-provider commands", () => {
 
 		const patch = projection.files[0]?.content ?? "";
 		expect(patch).toContain('provider: "openai-codex"');
-		expect(patch).toContain("https://chatgpt.com/backend-api/codex");
+		expect(patch).not.toContain("base_url");
 		expect(patch).not.toContain("key_env");
 		expect(patch).not.toContain("OPENAI_API_KEY");
 	});

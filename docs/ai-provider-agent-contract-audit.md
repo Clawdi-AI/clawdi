@@ -28,6 +28,31 @@ rotation is preserved, and a logout or revoke is not silently recreated.
 One credential family may be owned by only one Agent runtime. This is an
 ownership fence across runtimes, not a multi-provider pool feature.
 
+## Hosted Terminal Codex
+
+Hosted Codex remains terminal tooling, separate from runtime providers and
+from supervised service `companions`. Its dynamic consumer inputs are the
+selected model and managed provider endpoint. Cloud therefore omits the
+provider model catalog from `terminalTooling.codex`; OpenClaw and Hermes runtime
+providers still receive their complete model metadata and opaque `compat`
+facts.
+
+The remaining fixed terminal fields are intentionally repeated under
+`clawdi.hosted-runtime.manifest.v1`. The running CLI strictly parses that shape
+before it can install and re-exec `clawdiCli.packageSpec`, so removing a v1
+required field would prevent an older CLI from reaching its upgrade. The CLI
+validates those invariants, then derives its local provider id, Responses
+transport, API-key environment name, and secret ownership contract.
+
+The dedicated Hosted install pins `@openai/codex` `0.146.0`. In that version,
+[`ModelProviderInfo`](https://github.com/openai/codex/blob/e363b08c9175ac1cbe5893615dd2cb9ddf95043b/codex-rs/model-provider-info/src/lib.rs#L86-L144)
+defaults `name` to the empty display value and `wire_api` to `responses`.
+Generated Hosted `config.toml` therefore contains only the selected model,
+custom provider selection, managed `base_url`, and `env_key`. The generic Codex
+profile projection keeps an explicit display name and `wire_api` because it can
+target an independently installed Codex without the Hosted minimum-version
+contract.
+
 ## Hermes
 
 Verified upstream behavior:
@@ -37,6 +62,11 @@ Verified upstream behavior:
   custom providers through that dictionary.
 - The native `openai-codex` provider reads namespaced entries from
   `credential_pool.openai-codex`.
+- The native provider owns its Responses transport and endpoint: the supported
+  source registers
+  [`base_url="https://chatgpt.com/backend-api/codex"`](https://github.com/NousResearch/hermes-agent/blob/9eec86923c777f5c26092c0b3e0f657ca18f2d98/plugins/model-providers/openai-codex/__init__.py#L6-L13),
+  and runtime resolution falls back to that registered default. A Clawdi
+  `model.base_url` override would only duplicate upstream configuration.
 - Native credential mutation is serialized by Hermes' `auth.lock` protocol.
 
 Core Hosted convergence:

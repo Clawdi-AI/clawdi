@@ -647,9 +647,10 @@ class HostedCodexTool(BaseModel):
 class HostedCodexProviderProjection(BaseModel):
     """Typed Cloud-owned provider projection for the fixed Hosted Codex tool."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     kind: Literal["openai-compatible"]
+    type: str = Field(min_length=1, max_length=100)
     baseUrl: str = Field(min_length=1, max_length=1000)
     apiMode: Literal["openai_responses"]
     managed_by: Literal["clawdi"]

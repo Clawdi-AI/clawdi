@@ -4904,6 +4904,7 @@ async def test_admin_managed_provider_models_project_exact_hosted_wire_contract(
         "cost",
         "capabilities",
     }
+    assert "models" not in response.json()["manifest"]["terminalTooling"]["codex"]["provider"]
 
 
 @pytest.mark.asyncio
