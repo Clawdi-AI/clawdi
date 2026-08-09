@@ -148,6 +148,7 @@ import {
 	reserveManagedSkill,
 } from "./managed-skill-reservation";
 import {
+	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	hasUnsupportedAgentPluginInstallations,
 	type LiveSyncAgent,
@@ -5315,6 +5316,12 @@ export function convergeRuntimeManifest(
 	} = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
+	if (
+		(hasUnsupportedAgentPluginInstallations(manifest) || opts.preparedHostedAgentPlugins) &&
+		manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2"
+	) {
+		throw new Error(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
+	}
 	if (hasUnsupportedAgentPluginInstallations(manifest) && !opts.preparedHostedAgentPlugins) {
 		throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
 	}

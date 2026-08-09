@@ -50,6 +50,7 @@ import {
 	runtimeUserMutationTargets,
 } from "./manifest";
 import {
+	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	FILE_BROWSER_AMD64_SHA256,
 	FILE_BROWSER_ARM64_SHA256,
@@ -962,7 +963,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toBe(false);
 	});
 
-	test("fails closed before converging non-empty Agent Plugins installations", () => {
+	test("fails closed before converging unsupported Agent Plugins installations", () => {
 		const paths = tempRuntimePaths();
 		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
@@ -975,6 +976,21 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths,
 			),
 		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+
+		const desired = preparedTestAgentPlugin("acme.tools", "1.2.3", "a".repeat(64));
+		const nonHosted: RuntimeManifest = {
+			...normalized,
+			projection: { agentPlugins: testAgentPluginDesiredState(desired) },
+		};
+		expect(() =>
+			convergeRuntimeManifestWithContract(
+				manifestLoad(nonHosted, "inline-generic-agent-plugins"),
+				paths,
+				{
+					preparedHostedAgentPlugins: preparedTestAgentPluginState(desired),
+				},
+			),
+		).toThrow(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
 	});
 
 	test("orders cold native plugin activation and restores the full preimage after rollback failure", () => {
@@ -1005,6 +1021,11 @@ if [[ "$plugin_enabled" == true ]]; then plugin_status=loaded; fi
 case "\${1:-}" in
   --version)
     printf '%s\\n' 'OpenClaw test-version'
+    ;;
+  config)
+    [[ "\${2:-}" == patch && "\${3:-}" == --stdin ]] || exit 2
+    cat >/dev/null
+    printf '%s\\n' '{"ok":true}'
     ;;
   gateway)
     [[ "\${2:-}" == install && "\${3:-}" == --force && "\${4:-}" == --json ]] || exit 2
@@ -1093,7 +1114,11 @@ chmod 0755 '${commandPath}'
 			},
 			{
 				runtime: "openclaw",
-				projection: { agentPlugins: testAgentPluginDesiredState(previous) },
+				openclawGatewayAuth: hostedOpenClawNativeAuth(),
+				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					agentPlugins: testAgentPluginDesiredState(previous),
+				},
 			},
 		);
 		let firstRestartUnits: string[] = [];
@@ -1143,7 +1168,10 @@ chmod 0755 '${commandPath}'
 			...manifest,
 			generation: 2,
 			issuedAt: "2026-07-01T00:02:00.000Z",
-			projection: { agentPlugins: testAgentPluginDesiredState(desired) },
+			projection: {
+				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+				agentPlugins: testAgentPluginDesiredState(desired),
+			},
 		};
 		writeFileSync(eventLog, "");
 		writeFileSync(join(paths.userHome, ".openclaw", "fail-rollback"), "1\n");

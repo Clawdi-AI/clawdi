@@ -973,6 +973,8 @@ export type LiveSyncAgent = z.infer<typeof liveSyncAgentSchema>;
 
 export const AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR =
 	"Agent Plugin installations require a newer Clawdi runtime capability";
+export const AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR =
+	"Agent Plugin reconciliation requires a hosted v2 bundle";
 
 export function hasUnsupportedAgentPluginInstallations(
 	manifest: Pick<RuntimeManifest, "projection">,

@@ -29,6 +29,7 @@ import {
 	proveHostedAgentPluginCapabilities,
 } from "./hosted-agent-plugin-runtime";
 import {
+	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	type RuntimeManifest,
 } from "./manifest-contract";
@@ -168,6 +169,24 @@ function permissiveNativeRunner(onCommand: () => void): HostedAgentPluginCommand
 }
 
 describe("Hosted Agent Plugin package preparation", () => {
+	test("rejects installations outside a hosted v2 bundle before fetching", async () => {
+		const runtimePaths = paths();
+		const invalidManifest = manifest("openclaw", `sha256-tree-v1:${"f".repeat(64)}`);
+		if (!invalidManifest.projection) throw new Error("missing Agent Plugin fixture projection");
+		delete invalidManifest.projection.sourceBundleVersion;
+		let fetches = 0;
+
+		await expect(
+			prepareHostedAgentPluginPackages(invalidManifest, runtimePaths, {
+				fetcher: async () => {
+					fetches += 1;
+					throw new Error("unexpected fetch");
+				},
+			}),
+		).rejects.toThrow(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
+		expect(fetches).toBe(0);
+	});
+
 	test("rejects a digest mismatch before native commands can run", async () => {
 		const runtimePaths = paths();
 		const bytes = await archive(pluginFiles());

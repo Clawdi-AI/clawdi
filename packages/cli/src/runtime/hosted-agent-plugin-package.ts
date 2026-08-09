@@ -22,7 +22,7 @@ import {
 	parseCanonicalGithubRepositoryUrl,
 	readBoundedResponseBytes,
 } from "../lib/github-skill-archive";
-import type { RuntimeManifest } from "./manifest-contract";
+import { AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR, type RuntimeManifest } from "./manifest-contract";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
 	agentPluginNameSchema,
@@ -908,6 +908,13 @@ export async function prepareHostedAgentPluginPackages(
 	options: { fetcher?: GithubArchiveFetcher; offline?: boolean } = {},
 ): Promise<PreparedHostedAgentPlugins | null> {
 	const desiredInstallations = manifest.projection?.agentPlugins?.installations ?? {};
+	const isHostedV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+	if (!isHostedV2) {
+		if (Object.keys(desiredInstallations).length > 0) {
+			throw new Error(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
+		}
+		return null;
+	}
 	for (const installation of Object.values(desiredInstallations)) {
 		if (Object.keys(installation.secretRefs).length > 0) {
 			throw new Error(AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR);
