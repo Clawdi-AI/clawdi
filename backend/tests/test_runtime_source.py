@@ -613,6 +613,7 @@ def test_codex_tool_projection_pydantic_contract_rejects_openai_chat() -> None:
         HostedCodexProviderProjection.model_validate(
             {
                 "kind": "openai-compatible",
+                "type": "custom_openai_compatible",
                 "baseUrl": "https://provider.test/v1",
                 "apiMode": "openai_chat",
                 "managed_by": "clawdi",
@@ -626,9 +627,16 @@ def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None
     source = _render(_batch())
 
     assert source.manifest["providers"]["managed"]["apiMode"] == "openai_chat"
-    assert source.manifest["terminalTooling"]["codex"]["provider"]["apiMode"] == (
-        "openai_responses"
-    )
+    codex_provider = source.manifest["terminalTooling"]["codex"]["provider"]
+    assert codex_provider == {
+        "kind": "openai-compatible",
+        "type": "custom_openai_compatible",
+        "baseUrl": "https://provider.test/v1",
+        "apiMode": "openai_responses",
+        "managed_by": "clawdi",
+        "runtimeEnvName": "OPENAI_API_KEY",
+        "apiKeySecretRef": "secret://tool.codex.apiKey",
+    }
 
 
 @pytest.mark.parametrize(
@@ -728,6 +736,7 @@ def test_bare_managed_alias_prefers_deployment_source_over_fallback_rows() -> No
         "missing_payload",
         "payload_kind",
         "payload_source",
+        "provider_auth_type",
         "api_mode",
     ],
 )
@@ -743,6 +752,8 @@ def test_codex_tool_provider_fails_closed_without_platform_credential(failure: s
         batch.auth_payloads[(USER_ID, "managed", "default")].kind = "oauth_profile"
     elif failure == "payload_source":
         batch.auth_payloads[(USER_ID, "managed", "default")].source = "vault"
+    elif failure == "provider_auth_type":
+        batch.providers[(USER_ID, "managed")].auth_type = "agent_profile"
     else:
         batch.providers[(USER_ID, "managed")].api_mode = "anthropic_messages"
 

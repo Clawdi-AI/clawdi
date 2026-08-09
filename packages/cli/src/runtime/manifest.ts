@@ -1661,11 +1661,8 @@ const CODEX_NPM_PACKAGE_VERSION = "0.146.0";
 const CODEX_NPM_PACKAGE_SPEC = `@openai/codex@${CODEX_NPM_PACKAGE_VERSION}`;
 
 interface HostedCodexManagedProvider {
-	providerId: string;
 	baseUrl: string;
-	model: string | null;
-	apiMode: string | null;
-	apiKeySecretRef: string | null;
+	model: string;
 }
 
 export type HostedAiProviderProjectionInput = {
@@ -2565,6 +2562,7 @@ function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManag
 	const providerId = stringValue(codex?.provider_id);
 	const baseUrl = stringValue(provider?.baseUrl);
 	const apiMode = stringValue(provider?.apiMode);
+	const model = stringValue(primaryModel?.model);
 	if (
 		codex?.enabled !== true ||
 		!provider ||
@@ -2574,16 +2572,14 @@ function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManag
 		normalizeSecretRef(stringValue(provider.apiKeySecretRef)) !== "secret://tool.codex.apiKey" ||
 		!providerId ||
 		stringValue(primaryModel?.provider_id) !== providerId ||
-		!baseUrl
+		!baseUrl ||
+		!model
 	) {
 		return null;
 	}
 	return {
-		providerId,
 		baseUrl,
-		model: stringValue(primaryModel?.model),
-		apiMode,
-		apiKeySecretRef: stringValue(provider.apiKeySecretRef),
+		model,
 	};
 }
 
@@ -2593,15 +2589,12 @@ function hostedCodexHome(home: string): string {
 
 function hostedCodexManagedConfigToml(provider: HostedCodexManagedProvider): string {
 	const lines = ["# Managed by Clawdi hosted runtime. Do not put API keys in this file."];
-	const model = provider.model?.trim();
-	if (model) lines.push(`model = ${quoteTomlString(model)}`);
 	lines.push(
+		`model = ${quoteTomlString(provider.model)}`,
 		`model_provider = ${quoteTomlString(CODEX_MANAGED_PROVIDER_ID)}`,
 		"",
 		`[model_providers.${CODEX_MANAGED_PROVIDER_ID}]`,
-		'name = "Clawdi Managed OpenAI"',
 		`base_url = ${quoteTomlString(provider.baseUrl)}`,
-		'wire_api = "responses"',
 		`env_key = ${quoteTomlString(CODEX_MANAGED_ENV_KEY)}`,
 		"",
 	);

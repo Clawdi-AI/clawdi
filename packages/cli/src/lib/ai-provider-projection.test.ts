@@ -312,7 +312,7 @@ describe("AI provider projection", () => {
 		const hermes = buildAgentTargetProjection("hermes", codexOAuthCatalog);
 		expect(hermes.files[0]?.content).toContain('provider: "openai-codex"');
 		expect(hermes.files[0]?.content).toContain('default: "gpt-5.6-sol"');
-		expect(hermes.files[0]?.content).toContain('base_url: "https://chatgpt.com/backend-api/codex"');
+		expect(hermes.files[0]?.content).not.toContain("base_url:");
 
 		const codex = buildAgentTargetProjection("codex", codexOAuthCatalog);
 		expect(codex.files[0]?.content).toContain('model = "gpt-5.6-sol"');
