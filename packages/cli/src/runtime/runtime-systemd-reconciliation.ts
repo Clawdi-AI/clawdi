@@ -292,6 +292,7 @@ function systemdUnitFileName(name: string): string {
 }
 
 const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
+const FILE_BROWSER_SYSTEMD_CREDENTIAL = "/run/credentials/clawdi-files.service/filebrowser.yaml";
 
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
@@ -317,7 +318,7 @@ function systemdExec(command: string, args: string[]): string {
 }
 
 function fileBrowserSystemdExec(command: string): string {
-	return `${systemdQuote(command)} "-c" "\${CREDENTIALS_DIRECTORY}/filebrowser.yaml"`;
+	return systemdExec(command, ["-c", FILE_BROWSER_SYSTEMD_CREDENTIAL]);
 }
 
 function fileBrowserVersionProbeExec(command: string, version: string, commit: string): string {

@@ -1204,6 +1204,7 @@ describe("runtime manifest services", () => {
 			paths,
 			{
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => {
 						prerequisiteActivations += 1;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
@@ -1287,6 +1288,7 @@ describe("runtime manifest services", () => {
 				paths,
 				{
 					systemdApply: {
+						quiesce: () => {},
 						activateEgressPrerequisite: () => ({
 							applied: true,
 							systemUnitsChanged: [],
@@ -1506,6 +1508,7 @@ describe("runtime manifest services", () => {
 					authorityCommits += 1;
 				},
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
@@ -1548,6 +1551,7 @@ describe("runtime manifest services", () => {
 			paths,
 			{
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
@@ -1665,6 +1669,7 @@ describe("runtime manifest services", () => {
 				authorityCommits += 1;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
@@ -1691,6 +1696,7 @@ describe("runtime manifest services", () => {
 
 		const retried = convergeRuntimeManifest(load, paths, {
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
@@ -1741,6 +1747,7 @@ describe("runtime manifest services", () => {
 			paths,
 			{
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
@@ -1805,6 +1812,7 @@ describe("runtime manifest services", () => {
 					authorityCommits += 1;
 				},
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
@@ -2256,6 +2264,7 @@ esac
 				authorityCommits += 1;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
