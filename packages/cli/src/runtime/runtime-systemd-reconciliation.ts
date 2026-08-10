@@ -25,6 +25,7 @@ import {
 	DEFAULT_RUN_ROOT,
 	DEFAULT_SERVICE_STATE_ROOT,
 	type RuntimePaths,
+	SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN,
 	SYSTEMD_FILE_BROWSER_STATE_DIRECTORY,
 	SYSTEMD_PLATFORM_DIRECTORY,
 } from "./paths";
@@ -292,7 +293,7 @@ function systemdUnitFileName(name: string): string {
 }
 
 const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
-const FILE_BROWSER_SYSTEMD_CREDENTIAL = "/run/credentials/clawdi-files.service/filebrowser.yaml";
+const FILE_BROWSER_SYSTEMD_CREDENTIAL = `\${CREDENTIALS_DIRECTORY}/filebrowser.yaml`;
 
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
@@ -318,7 +319,7 @@ function systemdExec(command: string, args: string[]): string {
 }
 
 function fileBrowserSystemdExec(command: string): string {
-	return systemdExec(command, ["-c", FILE_BROWSER_SYSTEMD_CREDENTIAL]);
+	return `${systemdQuote(command)} "-c" "${FILE_BROWSER_SYSTEMD_CREDENTIAL}"`;
 }
 
 function fileBrowserVersionProbeExec(command: string, version: string, commit: string): string {
@@ -1347,9 +1348,16 @@ function planStaleRuntimeSystemdFiles(
 	]);
 	if (existsSync(paths.systemdSystemRoot)) {
 		for (const entry of readdirSync(paths.systemdSystemRoot)) {
-			if (!managedSystem.has(entry) || desiredSystem.has(entry)) continue;
-			files.add(join(paths.systemdSystemRoot, entry));
-			systemUnits.add(entry);
+			if (managedSystem.has(entry) && !desiredSystem.has(entry)) {
+				files.add(join(paths.systemdSystemRoot, entry));
+				systemUnits.add(entry);
+				continue;
+			}
+			if (entry !== "clawdi-files.service.d" || desiredSystem.has("clawdi-files.service")) continue;
+			const dropIn = join(paths.systemdSystemRoot, entry, SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN);
+			if (!isGeneratedSystemdFile(dropIn)) continue;
+			files.add(dropIn);
+			systemUnits.add("clawdi-files.service");
 		}
 	}
 	if (existsSync(paths.systemdUserRoot)) {
@@ -1502,7 +1510,7 @@ function writeFileBrowserSystemdUnit(input: {
 }): string {
 	const companion = input.manifest.companions?.filebrowser;
 	if (!companion) throw new Error("Files systemd unit requires a companion manifest");
-	return writeSystemdSystemUnit({
+	const unit = writeSystemdSystemUnit({
 		paths: input.paths,
 		name: "clawdi-files",
 		description: "Clawdi hosted Files companion",
@@ -1521,7 +1529,6 @@ function writeFileBrowserSystemdUnit(input: {
 		extraServiceLines: [
 			`User=${FILE_BROWSER_SERVICE_USER}`,
 			`Group=${FILE_BROWSER_SERVICE_GROUP}`,
-			`LoadCredential=filebrowser.yaml:${systemdPath(input.paths.fileBrowserConfig)}`,
 			// Publish only this verified executable into the component service's
 			// private runtime directory; the platform state root stays untraversable.
 			`BindReadOnlyPaths=${systemdPath(input.program.command)}:${systemdPath(input.paths.fileBrowserServiceBinary)}:norbind`,
@@ -1560,6 +1567,23 @@ function writeFileBrowserSystemdUnit(input: {
 			"TasksMax=128",
 		],
 	});
+	const dropIn = join(
+		input.paths.systemdSystemRoot,
+		"clawdi-files.service.d",
+		SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN,
+	);
+	// Incus' service.d/zzz-lxc-service.conf clears LoadCredential globally;
+	// this later name-specific drop-in restores the credential only for Files.
+	writePrivateFileAtomic(
+		dropIn,
+		`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nLoadCredential=filebrowser.yaml:${systemdPath(input.paths.fileBrowserConfig)}\n`,
+		{
+			mode: 0o644,
+			dirMode: 0o755,
+			trustedRoot: input.paths.systemdSystemRoot,
+		},
+	);
+	return unit;
 }
 
 function officialRuntimeSystemdPrograms(

@@ -68,7 +68,12 @@ import {
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
-import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
+import {
+	detectRuntimeMode,
+	getRuntimePaths,
+	type RuntimePaths,
+	SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN,
+} from "../runtime/paths";
 import {
 	buildNumericUserCommand,
 	buildRuntimeUserCommand,
@@ -1389,7 +1394,7 @@ export function readSystemdUnitSnapshot(
 function readManagedSystemdUnits(root: string): Map<string, string> {
 	const units = new Map<string, string>();
 	if (!existsSync(root)) return units;
-	for (const entry of readdirSync(root)) {
+	for (const entry of readdirSync(root).sort()) {
 		if (entry.endsWith(".service")) {
 			const path = join(root, entry);
 			const contents = readFileIfExists(path);
@@ -1406,7 +1411,13 @@ function readManagedSystemdUnits(root: string): Map<string, string> {
 			continue;
 		}
 		const unitName = entry.slice(0, -".d".length);
-		const dropInPath = join(root, entry, "10-clawdi-hosted.conf");
+		const dropInPath = join(
+			root,
+			entry,
+			unitName === "clawdi-files.service"
+				? SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN
+				: "10-clawdi-hosted.conf",
+		);
 		const dropIn = readFileIfExists(dropInPath);
 		if (!dropIn || !isGeneratedRuntimeSystemdFile(dropIn)) continue;
 		const base = readFileIfExists(join(root, unitName)) ?? "";

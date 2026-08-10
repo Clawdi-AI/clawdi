@@ -6,6 +6,7 @@ export type RuntimeMode = "local" | "hosted";
 
 export const SYSTEMD_PLATFORM_DIRECTORY = "clawdi";
 export const SYSTEMD_FILE_BROWSER_STATE_DIRECTORY = "clawdi-files";
+export const SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN = "zzzz-clawdi-files-credential.conf";
 
 export const DEFAULT_CONFIGURATION_ROOT = "/etc/clawdi";
 export const DEFAULT_SERVICE_STATE_ROOT = "/var/lib/clawdi";
