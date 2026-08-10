@@ -17,6 +17,7 @@ import {
 	AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR,
 	cleanupHostedAgentPluginTransientArchives,
 	gcHostedAgentPluginArchives,
+	HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR,
 	HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR,
 	type PreparedHostedAgentPluginInstallation,
 	type PreparedHostedAgentPlugins,
@@ -279,6 +280,25 @@ describe("Hosted Agent Plugin package preparation", () => {
 		).rejects.toThrow("Agent Plugin remote MCP URL must use HTTPS");
 	});
 
+	test("rejects remote MCP header values with HTTP control characters", async () => {
+		const runtimePaths = paths();
+		const files = pluginFiles({
+			$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+			mcpServers: {
+				remote: {
+					type: "streamable-http",
+					url: "https://mcp.example.test",
+					headers: { "X-Public-Metadata": "invalid\0value" },
+				},
+			},
+		});
+		await expect(
+			prepareHostedAgentPluginPackages(manifest("openclaw", treeDigest(files)), runtimePaths, {
+				fetcher: async () => archiveResponse(await archive(files)),
+			}),
+		).rejects.toThrow("Agent Plugin remote MCP headers are invalid");
+	});
+
 	test("validates repo-root packages and excludes sibling files for a subpath source", async () => {
 		const rootPaths = paths();
 		const rootFiles = pluginFiles();
@@ -415,6 +435,50 @@ describe("Hosted Agent Plugin package preparation", () => {
 				fetcher: offlineFetcher,
 			}),
 		).rejects.toThrow("offline Agent Plugin cache is missing");
+		expect(fetches).toBe(0);
+	});
+
+	test("preserves receipt-owned cache when another runtime rejects its package policy", async () => {
+		const runtimePaths = paths();
+		const files = {
+			...pluginFiles(),
+			".gitattributes": Buffer.from("* text=auto\n"),
+		};
+		const bytes = await archive(files);
+		const openClawManifest = manifest("openclaw", treeDigest(files));
+		const prepared = await prepareHostedAgentPluginPackages(openClawManifest, runtimePaths, {
+			fetcher: async () => archiveResponse(bytes),
+		});
+		const installation = prepared?.desired.get("acme.tools")?.installation;
+		if (!installation) throw new Error("missing prepared Agent Plugin fixture");
+		writeHostedAgentPluginReceipt(
+			{
+				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
+				runtime: "openclaw",
+				installations: {
+					"acme.tools": { ...installation, nativeId: "acme-tools" },
+				},
+			},
+			runtimePaths,
+		);
+		let fetches = 0;
+		const unexpectedFetcher = async (): Promise<Response> => {
+			fetches += 1;
+			throw new Error("receipt-owned cache must not be refetched");
+		};
+
+		await expect(
+			prepareHostedAgentPluginPackages(manifest("hermes", treeDigest(files)), runtimePaths, {
+				fetcher: unexpectedFetcher,
+			}),
+		).rejects.toThrow(HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR);
+		const rollback = await prepareHostedAgentPluginPackages(openClawManifest, runtimePaths, {
+			offline: true,
+			fetcher: unexpectedFetcher,
+		});
+		expect(rollback?.rollback.get("acme.tools")?.installation.ownershipIdentity).toBe(
+			installation.ownershipIdentity,
+		);
 		expect(fetches).toBe(0);
 	});
 

@@ -10,6 +10,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { validateHeaderName, validateHeaderValue } from "node:http";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -764,12 +765,13 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 	const headerNames = new Set<string>();
 	for (const [name, value] of Object.entries(server.headers ?? {})) {
 		const foldedName = name.toLowerCase();
-		if (
-			!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) ||
-			value.includes("\r") ||
-			value.includes("\n") ||
-			headerNames.has(foldedName)
-		) {
+		try {
+			validateHeaderName(name);
+			validateHeaderValue(name, value);
+		} catch {
+			throw new Error("Agent Plugin remote MCP headers are invalid");
+		}
+		if (headerNames.has(foldedName)) {
 			throw new Error("Agent Plugin remote MCP headers are invalid");
 		}
 		headerNames.add(foldedName);
@@ -900,13 +902,15 @@ async function preparePackage(
 	paths: RuntimePaths,
 	fetcher: GithubArchiveFetcher,
 	offline: boolean,
+	receiptOwned: boolean,
 ): Promise<{ plugin: PreparedHostedAgentPlugin; cacheCreated: boolean }> {
 	const cached = readCachedArchive(paths, descriptor.installation.ownershipIdentity);
 	if (cached) {
 		try {
 			return { plugin: await validateArchive(cached, descriptor), cacheCreated: false };
-		} catch {
+		} catch (error) {
 			if (offline) throw new Error("offline Agent Plugin cache is invalid");
+			if (receiptOwned) throw error;
 		}
 	}
 	if (offline) {
@@ -964,12 +968,23 @@ export async function prepareHostedAgentPluginPackages(
 		Promise<{ plugin: PreparedHostedAgentPlugin; cacheCreated: boolean }>
 	>();
 	const createdOwnerships = new Set<string>();
+	const previousOwnerships = new Set(
+		Object.values(previousReceipt?.installations ?? {}).map(
+			(installation) => installation.ownershipIdentity,
+		),
+	);
 	const load = async (descriptor: PackageDescriptor): Promise<PreparedHostedAgentPlugin> => {
 		const ownership = descriptor.installation.ownershipIdentity;
 		const key = `${descriptor.runtime}\0${ownership}`;
 		const existing = preparedPackages.get(key);
 		if (existing) return (await existing).plugin;
-		const pending = preparePackage(descriptor, paths, fetcher, options.offline === true);
+		const pending = preparePackage(
+			descriptor,
+			paths,
+			fetcher,
+			options.offline === true,
+			previousOwnerships.has(ownership),
+		);
 		preparedPackages.set(key, pending);
 		const result = await pending;
 		if (result.cacheCreated) createdOwnerships.add(ownership);
@@ -1003,11 +1018,6 @@ export async function prepareHostedAgentPluginPackages(
 				rollback.set(name, { ...plugin, receiptNativeId: nativeId });
 			}
 		}
-		const previousOwnerships = new Set(
-			Object.values(previousReceipt?.installations ?? {}).map(
-				(installation) => installation.ownershipIdentity,
-			),
-		);
 		return {
 			runtime,
 			desired,
@@ -1018,11 +1028,6 @@ export async function prepareHostedAgentPluginPackages(
 			),
 		};
 	} catch (error) {
-		const previousOwnerships = new Set(
-			Object.values(previousReceipt?.installations ?? {}).map(
-				(installation) => installation.ownershipIdentity,
-			),
-		);
 		for (const ownership of createdOwnerships) {
 			if (!previousOwnerships.has(ownership)) {
 				removeCacheOwnership(paths, ownership, { allowIncomplete: true });

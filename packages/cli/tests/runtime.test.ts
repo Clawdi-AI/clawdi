@@ -10889,7 +10889,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			logs.push(String(value));
 		};
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
-		const { restore } = mockFetch([
+		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
 				path: "/v1/runtime/manifest",
@@ -10912,6 +10912,25 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 									source: "npm:clawdi",
 									packageSpec: "clawdi@1.3.0-test.1",
 									registry: "https://registry.npmjs.org",
+								},
+								agentPlugins: {
+									schemaVersion: 1,
+									installations: {
+										"unavailable.plugin": {
+											installationId: "install_unavailable_plugin",
+											version: "1.0.0",
+											agentPluginsSchema:
+												"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+											source: {
+												type: "github",
+												url: "https://github.com/acme/unavailable-agent-plugin",
+												path: "plugin",
+												commit: "d".repeat(40),
+											},
+											contentDigest: `sha256-tree-v1:${"e".repeat(64)}`,
+											secretRefs: {},
+										},
+									},
 								},
 								runtimes: {
 									openclaw: hostedOpenClawRuntime({}),
@@ -10947,6 +10966,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			expect(event.cliUpdate.status).toBe("installed");
 			expect(event.selfReexec).toBe(true);
 			expect(event.errors).toBeUndefined();
+			expect(captured.map((request) => request.path)).toEqual(["/v1/runtime/manifest"]);
 			expect(existsSync(join(home, ".openclaw", "bin", "openclaw"))).toBe(false);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
 			expect(existsSync(getRuntimePaths().appliedState)).toBe(false);

@@ -2564,10 +2564,7 @@ async function applyRuntimeDesiredState(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: RuntimeApplyOptions = {},
 ): Promise<RuntimeApplyResult> {
-	const preparedHostedAgentPlugins =
-		opts.preparedHostedAgentPlugins === undefined
-			? await prepareHostedAgentPluginPackages(load.manifest, paths, { offline: load.offline })
-			: opts.preparedHostedAgentPlugins;
+	let preparedHostedAgentPlugins = opts.preparedHostedAgentPlugins;
 	let preservePreparedAgentPluginArchives = false;
 	try {
 		let cliUpdate: RuntimeCliUpdateResult;
@@ -2587,6 +2584,11 @@ async function applyRuntimeDesiredState(
 		}
 		if (cliUpdate.selfReexec) {
 			return { kind: "cli_handoff", cliUpdate };
+		}
+		if (preparedHostedAgentPlugins === undefined) {
+			preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(load.manifest, paths, {
+				offline: load.offline,
+			});
 		}
 		const preparedHostedSourcedSkills =
 			opts.preparedHostedSourcedSkills ??
@@ -2732,7 +2734,7 @@ async function applyRuntimeDesiredState(
 		return { kind: "converged", cliUpdate, convergence, systemdApply };
 	} finally {
 		if (!preservePreparedAgentPluginArchives) {
-			cleanupHostedAgentPluginTransientArchives(preparedHostedAgentPlugins, paths);
+			cleanupHostedAgentPluginTransientArchives(preparedHostedAgentPlugins ?? null, paths);
 		}
 	}
 }

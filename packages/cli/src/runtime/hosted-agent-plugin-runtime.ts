@@ -104,7 +104,7 @@ const defaultCommandRunner: HostedAgentPluginCommandRunner = {
 };
 
 // `hermes plugins list --json` emits this array at
-// https://github.com/NousResearch/hermes-agent/blob/255e6987b6150341a732d227a3e4d39d665752ca/hermes_cli/plugins_cmd.py
+// https://github.com/NousResearch/hermes-agent/blob/8cb066404e3edc3501a07a408c59834dc745cc74/hermes_cli/plugins_cmd.py
 const hermesPluginListSchema = z.array(
 	z
 		.object({
