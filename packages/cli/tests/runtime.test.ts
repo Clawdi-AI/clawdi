@@ -51,13 +51,13 @@ import {
 	rollbackPendingRuntimeCliUpgrade,
 } from "../src/runtime/cli-update";
 import { withRuntimeConvergeLock } from "../src/runtime/converge-lock";
-import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "../src/runtime/egress-env";
 import {
 	deniedCommandReason,
 	evaluateHostPolicyForCommand,
 	readHostPolicy,
 } from "../src/runtime/host-policy";
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
+import { hostedOpenClawSkillDriver } from "../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
@@ -230,6 +230,10 @@ function convergeRuntimeManifest(
 		paths,
 		{
 			...opts,
+			hostedOpenClawSkillDriver: opts?.hostedOpenClawSkillDriver ?? {
+				...hostedOpenClawSkillDriver,
+				resolveWorkspace: () => join(paths.userHome, ".openclaw", "workspace"),
+			},
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 		},
 	);
@@ -1065,12 +1069,17 @@ function cachedHostedCliDesiredState(home: string, packageSpec: string): Runtime
 function seedOpenClawBinary(home: string): void {
 	const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
+	const workspace = join(home, ".openclaw", "workspace");
 	mkdirSync(dirname(openclawBin), { recursive: true });
 	writeFileSync(
 		openclawBin,
 		`#!/bin/sh
 if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\n'
+  exit 0
+fi
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${workspace}"}]\n'
   exit 0
 fi
 if [ "$*" = "gateway install --force --json" ]; then
@@ -1134,6 +1143,7 @@ function openClawWhatsAppPluginInspectFixture(pluginSource: string): Record<stri
 function seedOfficialOpenClawServiceInstaller(home: string): void {
 	const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
+	const workspace = join(home, ".openclaw", "workspace");
 	mkdirSync(dirname(openclawBin), { recursive: true });
 	writeFileSync(
 		openclawBin,
@@ -1141,6 +1151,10 @@ function seedOfficialOpenClawServiceInstaller(home: string): void {
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
+  exit 0
+fi
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${workspace}"}]\\n'
   exit 0
 fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
@@ -1597,6 +1611,7 @@ function writeFakeOpenClawMcpBinary(
 ): { commandPath: string; configPath: string } {
 	const commandPath = join(home, ".openclaw", "bin", "openclaw");
 	const configPath = join(home, ".openclaw", "openclaw.json");
+	const workspace = join(home, ".openclaw", "workspace");
 	const logSet = options.callsPath
 		? `printf 'set %s\\n' "\${3:?missing server name}" >> '${options.callsPath}'`
 		: ":";
@@ -1618,7 +1633,7 @@ function writeFakeOpenClawMcpBinary(
 		`#!/usr/bin/env bash
 set -euo pipefail
 if [ "$*" = "agents list --json" ]; then
-  printf '[{"id":"main","workspace":"${home}/workspace"}]\n'
+  printf '[{"id":"main","workspace":"${workspace}"}]\n'
   exit 0
 fi
 if [ "\${1:-} \${2:-}" = "skills install" ]; then
@@ -1627,9 +1642,9 @@ if [ "\${1:-} \${2:-}" = "skills install" ]; then
     if [ "$1" = "--as" ]; then slug="\${2:?missing slug}"; shift; fi
     shift
   done
-  rm -rf "${home}/workspace/skills/$slug"
-  mkdir -p "${home}/workspace/skills/$slug"
-  cp -R "$source/." "${home}/workspace/skills/$slug/"
+  rm -rf "${workspace}/skills/$slug"
+  mkdir -p "${workspace}/skills/$slug"
+  cp -R "$source/." "${workspace}/skills/$slug/"
   exit 0
 fi
 if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ]; then
@@ -2873,7 +2888,7 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.source).toBe("remote-datasource");
 			expect(loaded.sourcePath).toBe("https://runtime.test/v1/runtime/manifest");
 			expect(loaded.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
-			expect(loaded.manifest.workspaceRoot).toBe(home);
+			expect(loaded.manifest.workspaceRoot).toBeUndefined();
 			expect(loaded.manifest.environmentId).toBe("env_test");
 			expect(loaded.manifest.controlPlane.apiUrl).toBe("https://cloud-api.test");
 			expect(loaded.manifest.clawdiCli?.source).toBe("npm:clawdi");
@@ -7081,6 +7096,10 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
   exit 0
 fi
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\\n'
+  exit 0
+fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat >> '${openclawPatch}'
   printf '\\n' >> '${openclawPatch}'
@@ -8984,6 +9003,8 @@ set -euo pipefail
 printf '%s\n' "$*" >> '${installerLog}'
 if [ "$*" = "--version" ]; then
   printf '%s\n' '${runtime}-test-version'
+elif [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\n'
 elif [ "$*" = "${installArgs}" ]; then
   printf '%s\n' 'official ${runtime} installer' >> '${systemctlLog}'
   test -r '${paths.egressSystemCaFile}'
@@ -11915,6 +11936,10 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
   exit 0
 fi
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\\n'
+  exit 0
+fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   printf '%s\n' "$*" >> '${openclawPatchArgs}'
   cat >> '${openclawPatch}'
@@ -13932,7 +13957,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		).toThrow("no bundled hosted skill clawdi version 2 is registered");
 		expect(existsSync(ledgerPath)).toBe(false);
 
-		const openclawSkill = join(home, "workspace", "skills", "clawdi");
+		const openclawSkill = join(home, ".openclaw", "workspace", "skills", "clawdi");
 		mkdirSync(openclawSkill, { recursive: true });
 		writeFileSync(join(openclawSkill, "SKILL.md"), "local setup skill\n");
 		reserveManagedSkill({
@@ -13966,9 +13991,9 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
 			runtimes: { openclaw: ["clawdi", "search-proxy"] },
 		});
-		expect(existsSync(join(workspace, "skills", ".clawdi-manifest-receipts", "clawdi.json"))).toBe(
-			true,
-		);
+		expect(
+			existsSync(join(dirname(openclawSkill), ".clawdi-manifest-receipts", "clawdi.json")),
+		).toBe(true);
 
 		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());
 		expect(updated.installErrors).toEqual([]);
@@ -15047,9 +15072,10 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
-		const soulPath = join(workspace, "SOUL.md");
+		const soulPath = join(home, ".openclaw", "workspace", "SOUL.md");
 		const userPath = join(workspace, "USER.md");
 		mkdirSync(workspace, { recursive: true });
+		mkdirSync(dirname(soulPath), { recursive: true });
 		writeFileSync(soulPath, "User preface.\n\nUser epilogue.\n");
 		writeFileSync(userPath, "User profile stays untouched.\n");
 		process.env.HOME = home;

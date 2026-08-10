@@ -37,7 +37,7 @@ if test "$1 $2 $3" = "agents list --json"; then
     printf '[{"id":"main","workspace":"${join(home, "different-workspace")}"}]\n'
     exit 0
   fi
-  printf '[{"id":"main","workspace":"%s"}]\n' "$PWD"
+  printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]'
   exit 0
 fi
 test "$1 $2" = "skills install"
@@ -49,11 +49,11 @@ test "$2" = "main"
 test "$3" = "--as"
 skill_id="$4"
 test "$5" = "--force"
-mkdir -p "$PWD/skills"
-rm -rf "$PWD/skills/$skill_id"
-cp -R "$source_dir" "$PWD/skills/$skill_id"
-mkdir -p "$PWD/skills/$skill_id/.openclaw"
-printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
+mkdir -p '${workspaceRoot}/skills'
+rm -rf '${workspaceRoot}/skills/'"$skill_id"
+cp -R "$source_dir" '${workspaceRoot}/skills/'"$skill_id"
+mkdir -p '${workspaceRoot}/skills/'"$skill_id"'/.openclaw'
+printf '{}\n' > '${workspaceRoot}/skills/'"$skill_id"'/.openclaw/source-origin.json'
 if test "\${FAKE_OPENCLAW_FAIL_AFTER_WRITE:-}" = "1"; then exit 45; fi
 if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDriftMarker}'; fi
 `,
@@ -73,8 +73,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 			path: "skills/review-pr",
 			commit: "a".repeat(40),
 		},
-		sourceIdentity:
-			"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" + "a".repeat(40),
+		sourceIdentity: `github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0${"a".repeat(40)}`,
 		archiveSha256: "b".repeat(64),
 		tarBytes: readFileSync(archive),
 	};
@@ -111,7 +110,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 			sourceDir,
 			ownershipIdentity: `${skill.sourceIdentity}-v2`,
 		}),
-	).toThrow("does not match");
+	).toThrow("changed during Skill reconciliation");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
 	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(true);
 	delete process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE;
@@ -146,7 +145,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	expect(existsSync(receipt)).toBe(false);
 });
 
-test("fails before official install when the OpenClaw main workspace differs", async () => {
+test("fails before official install when the OpenClaw workspace changes during reconciliation", async () => {
 	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-workspace-mismatch-"));
 	const home = join(root, "home");
 	const workspaceRoot = join(home, "desired-workspace");
@@ -179,7 +178,7 @@ exit 0
 				"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
 				"a".repeat(40),
 		}),
-	).toThrow("does not match");
+	).toThrow("changed during Skill reconciliation");
 	expect(existsSync(installMarker)).toBe(false);
 	expect(existsSync(join(workspaceRoot, "skills", "review-pr"))).toBe(false);
 });

@@ -1398,12 +1398,14 @@ function applyHostedLocaleProjection(
 	runtime: string,
 	manifest: RuntimeManifest,
 	home: string,
-	workspaceRoot: string,
+	openClawWorkspaceRoot: string | null,
 ): string | null {
+	if (manifest.runtimes[runtime]?.enabled !== true) return null;
 	const locale = manifest.locale;
 	if (runtime === "openclaw") {
+		if (!openClawWorkspaceRoot) throw new Error("OpenClaw official agent workspace is unavailable");
 		return locale
-			? updateManagedLocaleFile(join(workspaceRoot, "SOUL.md"), managedLocaleBlock(locale))
+			? updateManagedLocaleFile(join(openClawWorkspaceRoot, "SOUL.md"), managedLocaleBlock(locale))
 			: null;
 	}
 	if (runtime === "hermes") {
@@ -3464,12 +3466,13 @@ function hostedBundledSkillTargetDir(
 	name: string,
 	skillName: string,
 	home: string,
-	workspaceRoot?: string,
+	openClawWorkspaceRoot?: string,
 ): string | null {
 	if (name !== "openclaw" && name !== "hermes") return null;
-	if (name === "openclaw" && workspaceRoot) return join(workspaceRoot, "skills", skillName);
-	const agentHome = name === "openclaw" ? join(home, ".openclaw") : join(home, ".hermes");
-	return agentSkillTargetDir(name, skillName, agentHome);
+	if (name === "openclaw") {
+		return openClawWorkspaceRoot ? join(openClawWorkspaceRoot, "skills", skillName) : null;
+	}
+	return agentSkillTargetDir(name, skillName, join(home, ".hermes"));
 }
 
 function managedSkillReservationDigest(targetDir: string, skillId: string): string {
@@ -3494,15 +3497,23 @@ function validateHostedSkillsPlan(
 	name: string,
 	manifest: RuntimeManifest,
 	home: string,
-	workspaceRoot: string,
+	openClawWorkspaceRoot: string | null,
 	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): void {
 	if (!hostedBundledSkillsEnabled()) return;
+	if (name === "openclaw" && !openClawWorkspaceRoot) {
+		if (manifest.runtimes.openclaw?.enabled === true) {
+			throw new Error("OpenClaw official agent workspace is unavailable");
+		}
+		return;
+	}
 	for (const [skillName, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
-		const targetDir =
-			"source" in desired && name === "openclaw"
-				? join(workspaceRoot, "skills", skillName)
-				: hostedBundledSkillTargetDir(name, skillName, home, workspaceRoot);
+		const targetDir = hostedBundledSkillTargetDir(
+			name,
+			skillName,
+			home,
+			openClawWorkspaceRoot ?? undefined,
+		);
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
 		if ("source" in desired) {
 			if (hostedBundledSkillIds().includes(skillName)) {
@@ -3582,7 +3593,7 @@ function recoverHostedSourcedSkillReservations(
 
 function recoverHostedOpenClawSourcedSkillReservations(
 	manifest: RuntimeManifest,
-	workspaceRoot: string,
+	openClawWorkspaceRoot: string,
 	prepared: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 	driver: HostedOpenClawSkillDriver,
 ): void {
@@ -3594,14 +3605,14 @@ function recoverHostedOpenClawSourcedSkillReservations(
 			hostedBundledSkillIds().includes(skillId)
 		)
 			continue;
-		const targetDir = join(workspaceRoot, "skills", skillId);
+		const targetDir = join(openClawWorkspaceRoot, "skills", skillId);
 		if (!existsSync(targetDir) || managedSkillReservationOwner(targetDir, skillId) !== "unreserved")
 			continue;
 		const skill = prepared.get(skillId);
 		if (
 			!skill ||
 			JSON.stringify(skill.source) !== JSON.stringify(desired.source) ||
-			!driver.verifyOwned({ workspaceRoot, skill })
+			!driver.verifyOwned({ workspaceRoot: openClawWorkspaceRoot, skill })
 		)
 			continue;
 		reserveManagedSkill({
@@ -3618,15 +3629,25 @@ function applyHostedBundledSkills(
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
 	home: string,
-	workspaceRoot: string,
+	openClawWorkspaceRoot: string | null,
 	openClawDriver: HostedOpenClawSkillDriver,
 ): string[] {
 	// Reservation state is root-authoritative. Drop privilege only inside the
 	// callbacks that mutate runtime-user-owned Skill trees.
 	const installEnabled = hostedBundledSkillsEnabled();
+	if (name === "openclaw" && !openClawWorkspaceRoot) return [];
+	const requireOpenClawWorkspace = (): string => {
+		if (!openClawWorkspaceRoot) throw new Error("OpenClaw official agent workspace is unavailable");
+		return openClawWorkspaceRoot;
+	};
 	const targets: string[] = [];
 	for (const skillName of hostedBundledSkillIds()) {
-		const targetDir = hostedBundledSkillTargetDir(name, skillName, home, workspaceRoot);
+		const targetDir = hostedBundledSkillTargetDir(
+			name,
+			skillName,
+			home,
+			openClawWorkspaceRoot ?? undefined,
+		);
 		if (!targetDir) continue;
 		targets.push(targetDir);
 		const desired = manifest.projection?.skills?.entries[skillName];
@@ -3656,7 +3677,7 @@ function applyHostedBundledSkills(
 				removeTarget: () =>
 					name === "openclaw" && !legacyAdopted
 						? openClawDriver.cleanupManifestOwned({
-								workspaceRoot,
+								workspaceRoot: requireOpenClawWorkspace(),
 								skillId: skillName,
 								ownershipIdentity: `content-sha256\0${managedSkillReservationDigest(targetDir, skillName)}`,
 							})
@@ -3691,7 +3712,7 @@ function applyHostedBundledSkills(
 				name === "openclaw"
 					? openClawDriver.installDirectory({
 							home,
-							workspaceRoot,
+							workspaceRoot: requireOpenClawWorkspace(),
 							skillId: skillName,
 							sourceDir,
 							ownershipIdentity: `content-sha256\0${bundled.digest}`,
@@ -3784,11 +3805,11 @@ function applyHostedOpenClawSourcedSkills(
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
 	home: string,
-	workspaceRoot: string,
+	openClawWorkspaceRoot: string,
 	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 	driver: HostedOpenClawSkillDriver,
 ): string[] {
-	const skillsRoot = join(workspaceRoot, "skills");
+	const skillsRoot = join(openClawWorkspaceRoot, "skills");
 	const desiredEntries = manifest.projection?.skills?.entries ?? {};
 	const desiredIds = Object.entries(desiredEntries).flatMap(([id, desired]) =>
 		"source" in desired ? [id] : [],
@@ -3820,7 +3841,7 @@ function applyHostedOpenClawSourcedSkills(
 				manager: "hosted-manifest",
 				removeTarget: () =>
 					driver.cleanupManifestOwned({
-						workspaceRoot,
+						workspaceRoot: openClawWorkspaceRoot,
 						skillId,
 						ownershipIdentity: managedSkillReservationSourceIdentity(targetDir, skillId),
 					}),
@@ -3840,7 +3861,7 @@ function applyHostedOpenClawSourcedSkills(
 				manager: "hosted-manifest",
 				sourceIdentity: prepared.sourceIdentity,
 			},
-			() => driver.install({ home, workspaceRoot, skill: prepared }),
+			() => driver.install({ home, workspaceRoot: openClawWorkspaceRoot, skill: prepared }),
 		);
 	}
 	return ids.map((id) => join(skillsRoot, id));
@@ -4595,12 +4616,12 @@ function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> 
 function validateRuntimeManifestPlan(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
+	openClawWorkspaceRoot: string | null,
 	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): void {
-	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	for (const name of HOSTED_RUNTIME_TARGETS) {
-		validateHostedSkillsPlan(name, manifest, home, workspaceRoot, preparedSourcedSkills);
+		validateHostedSkillsPlan(name, manifest, home, openClawWorkspaceRoot, preparedSourcedSkills);
 	}
 	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
 		const runtimeName = runtimeNameSchema.parse(name);
@@ -4624,10 +4645,12 @@ function validateRuntimeManifestPlan(
 			);
 			if (runtime.enabled) mergeRuntimeServiceSecretEnv(name, service, settings, secretEnv);
 		}
-		if (!manifest.locale) continue;
+		if (!runtime.enabled || !manifest.locale) continue;
 		const block = managedLocaleBlock(manifest.locale);
 		if (runtimeName === "openclaw") {
-			nextManagedLocaleFileContent(join(workspaceRoot, "SOUL.md"), block);
+			if (!openClawWorkspaceRoot)
+				throw new Error("OpenClaw official agent workspace is unavailable");
+			nextManagedLocaleFileContent(join(openClawWorkspaceRoot, "SOUL.md"), block);
 		} else if (runtimeName === "hermes") {
 			nextManagedLocaleFileContent(join(home, ".hermes", "SOUL.md"), block);
 		}
@@ -4845,7 +4868,7 @@ function runtimeConvergenceWithoutApply(input: {
 function validateRuntimeProjectionPlan(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
-	workspaceRoot: string;
+	openClawWorkspaceRoot: string | null;
 	secretValues: Record<string, string> | undefined;
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
@@ -4853,7 +4876,7 @@ function validateRuntimeProjectionPlan(input: {
 	const {
 		manifest,
 		paths,
-		workspaceRoot,
+		openClawWorkspaceRoot,
 		secretValues,
 		observations,
 		previousProjectedProviderIds,
@@ -4862,8 +4885,11 @@ function validateRuntimeProjectionPlan(input: {
 	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
 	if (localeBlock) {
 		for (const name of Object.keys(manifest.runtimes)) {
+			if (manifest.runtimes[name]?.enabled !== true) continue;
 			if (name === "openclaw") {
-				nextManagedLocaleFileContent(join(workspaceRoot, "SOUL.md"), localeBlock);
+				if (!openClawWorkspaceRoot)
+					throw new Error("OpenClaw official agent workspace is unavailable");
+				nextManagedLocaleFileContent(join(openClawWorkspaceRoot, "SOUL.md"), localeBlock);
 			}
 			if (name === "hermes") {
 				nextManagedLocaleFileContent(join(home, ".hermes", "SOUL.md"), localeBlock);
@@ -4962,13 +4988,15 @@ export function runtimeInstallerMutationTargets(
 	manifest: RuntimeManifest,
 	home: string,
 	observations: ReadonlyMap<string, Pick<RuntimeInstallObservation, "status">>,
+	options: { includeOAuthRefresh?: boolean } = {},
 ): string[] {
 	const targets = new Set<string>();
 	const openclawObservation = observations.get("openclaw");
 	if (
 		manifest.runtimes.openclaw?.enabled &&
 		manifest.runtimes.openclaw.install &&
-		(openclawObservation?.status !== "present" || hostedRuntimeOAuthDeclared(manifest, "openclaw"))
+		(openclawObservation?.status !== "present" ||
+			(options.includeOAuthRefresh !== false && hostedRuntimeOAuthDeclared(manifest, "openclaw")))
 	) {
 		targets.add(join(home, ".openclaw", "bin"));
 		targets.add(join(home, ".openclaw", "tools"));
@@ -4996,6 +5024,48 @@ export function runtimeInstallerMutationTargets(
 		}
 	}
 	return [...targets];
+}
+
+function runtimeColdInstallMutationPlan(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	observations: ReadonlyMap<string, RuntimeInstallObservation>,
+): { snapshot: RuntimeManagedMutationPlan; runtimeUserOwnershipTargets: string[] } | null {
+	const pending = Object.entries(manifest.runtimes).some(([name, runtime]) => {
+		if (!runtime.enabled || !runtime.install) return false;
+		return observations.get(name)?.status !== "present";
+	});
+	if (!pending) return null;
+	const home = hostedRuntimeProjectionHome(manifest, paths);
+	const runtimeUserTargets = runtimeInstallerMutationTargets(manifest, home, observations, {
+		includeOAuthRefresh: false,
+	}).sort();
+	if (runtimeUserTargets.length === 0) return null;
+	const runtimeUserTrustedRoots = [paths.userHome, paths.clawdiHome];
+	const metadataTargets = [
+		...new Set([
+			paths.userHome,
+			paths.clawdiHome,
+			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserTrustedRoots),
+		]),
+	].sort();
+	const runtimeCommandTargets = Object.keys(manifest.runtimes).flatMap((name) => {
+		const command = runtimeCommandPath(name, home);
+		return command && runtimeUserTargets.includes(command) ? [command] : [];
+	});
+	return {
+		snapshot: {
+			rootTargets: [],
+			trustedRootDirectories: [],
+			runtimeUserTargets,
+			runtimeUserTrustedRoots,
+			runtimeUserSymlinkTargets: runtimeCommandTargets,
+			metadataTargets,
+		},
+		runtimeUserOwnershipTargets: [...new Set([...metadataTargets, ...runtimeUserTargets])].sort(
+			(left, right) => left.length - right.length || left.localeCompare(right),
+		),
+	};
 }
 
 function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home: string): string[] {
@@ -5032,7 +5102,7 @@ function managedWhatsAppCompatibilityRuntime(
 export function runtimeUserMutationTargets(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
-	workspaceRoot: string,
+	openClawWorkspaceRoot: string | null,
 	observations: ReadonlyMap<string, Pick<RuntimeInstallObservation, "status">>,
 ): string[] {
 	const home = hostedRuntimeProjectionHome(manifest, paths);
@@ -5055,13 +5125,13 @@ export function runtimeUserMutationTargets(
 		openClawDatabase,
 		`${openClawDatabase}-wal`,
 		`${openClawDatabase}-shm`,
-		join(workspaceRoot, "SOUL.md"),
 		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
 		legacyHermesModelProviderPluginDir(home),
 		...installerTargets,
 		...hostedChannelCredentialMutationTargets(manifest, home),
 		...channelPluginTargets,
 	]);
+	if (openClawWorkspaceRoot) targets.add(join(openClawWorkspaceRoot, "SOUL.md"));
 	if (
 		hostedCodexManagedProvider(manifest) ||
 		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
@@ -5122,12 +5192,17 @@ export function runtimeUserMutationTargets(
 	}
 	for (const runtime of HOSTED_RUNTIME_TARGETS) {
 		for (const skillId of hostedBundledSkillIds()) {
-			const target = hostedBundledSkillTargetDir(runtime, skillId, home, workspaceRoot);
+			const target = hostedBundledSkillTargetDir(
+				runtime,
+				skillId,
+				home,
+				openClawWorkspaceRoot ?? undefined,
+			);
 			if (target) targets.add(target);
 		}
 	}
 	const hermesSkillsRoot = join(home, ".hermes", "skills");
-	const openClawSkillsRoot = join(workspaceRoot, "skills");
+	const openClawSkillsRoot = openClawWorkspaceRoot ? join(openClawWorkspaceRoot, "skills") : null;
 	let managesHermesSourcedSkill = false;
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
 		if (!("source" in desired)) continue;
@@ -5135,7 +5210,7 @@ export function runtimeUserMutationTargets(
 			managesHermesSourcedSkill = true;
 			targets.add(join(hermesSkillsRoot, skillId));
 		}
-		if (manifest.runtimes.openclaw?.enabled === true)
+		if (manifest.runtimes.openclaw?.enabled === true && openClawSkillsRoot)
 			targets.add(join(openClawSkillsRoot, skillId));
 	}
 	for (const reservation of managedSkillReservations("hosted-manifest")) {
@@ -5147,6 +5222,7 @@ export function runtimeUserMutationTargets(
 			targets.add(reservation.targetDir);
 		}
 		if (
+			openClawSkillsRoot &&
 			dirname(reservation.targetDir) === openClawSkillsRoot &&
 			!hostedBundledSkillIds().includes(reservation.id)
 		)
@@ -5186,7 +5262,7 @@ function mutationAncestorMetadataTargets(
 function runtimeManagedMutationPlan(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
-	workspaceRoot: string;
+	openClawWorkspaceRoot: string | null;
 	programs: RuntimeSystemdUserProgram[];
 	observations: ReadonlyMap<string, RuntimeInstallObservation>;
 }): {
@@ -5221,7 +5297,7 @@ function runtimeManagedMutationPlan(input: {
 			...runtimeUserMutationTargets(
 				input.manifest,
 				input.paths,
-				input.workspaceRoot,
+				input.openClawWorkspaceRoot,
 				input.observations,
 			),
 			...systemd.targets,
@@ -5391,32 +5467,11 @@ export function convergeRuntimeManifest(
 	const hermesSkillNativeReconciler =
 		opts.hostedHermesSkillExactSourceDriver ?? hostedHermesSkillExactSourceDriver;
 	const openClawSkillDriver = opts.hostedOpenClawSkillDriver ?? hostedOpenClawSkillDriver;
-	recoverHostedSourcedSkillReservations(
-		manifest,
-		projectionHome,
-		preparedHostedSourcedSkills,
-		hermesSkillNativeReconciler,
-	);
-	recoverHostedOpenClawSourcedSkillReservations(
-		manifest,
-		workspaceRoot,
-		preparedHostedSourcedSkills,
-		openClawSkillDriver,
-	);
-	validateRuntimeManifestPlan(manifest, paths, preparedHostedSourcedSkills);
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = planRuntimeInstallObservation(name, runtime, projectionHome);
 		observations.set(name, observation);
 		if (observation.error) installErrors.push(observation.error);
 	}
-	validateRuntimeProjectionPlan({
-		manifest,
-		paths,
-		workspaceRoot,
-		secretValues,
-		observations,
-		previousProjectedProviderIds,
-	});
 	if (installErrors.length > 0) {
 		return runtimeConvergenceWithoutApply({
 			load,
@@ -5450,25 +5505,115 @@ export function convergeRuntimeManifest(
 			),
 		});
 	}
-	const plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
-		manifest,
-		paths,
-		workspaceRoot,
-		generatedAt,
-		secretValues,
-		observations,
-		egressProfileBundlePath: plannedEgressProfileBundlePath,
-		egress: null,
-	});
-	validateRuntimeSystemdPlan(plannedRuntimePrograms);
-	const mutationPlan = runtimeManagedMutationPlan({
-		manifest,
-		paths,
-		workspaceRoot,
-		programs: plannedRuntimePrograms,
-		observations,
-	});
+
+	const coldInstallPlan = runtimeColdInstallMutationPlan(manifest, paths, observations);
+	const coldInstallSnapshot = coldInstallPlan
+		? captureRuntimeLiveSnapshot(coldInstallPlan.snapshot)
+		: null;
+	try {
+		if (coldInstallPlan) {
+			hostedRuntimeContract.assertPlatformRoots();
+			ensureRuntimeUserOwnershipBoundaries(coldInstallPlan.runtimeUserOwnershipTargets);
+		}
+		observations.clear();
+		for (const [name, runtime] of runtimeEntries) {
+			const observation = observeRuntimeInstall(name, runtime, projectionHome);
+			observations.set(name, observation);
+			if (observation.error) installErrors.push(observation.error);
+		}
+		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
+	} catch (error) {
+		if (coldInstallSnapshot) {
+			try {
+				restoreRuntimeLiveSnapshot(coldInstallSnapshot);
+			} catch (rollbackError) {
+				installErrors.push(
+					`runtime installer rollback failed: ${
+						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+					}`,
+				);
+			}
+		}
+		const message = error instanceof Error ? error.message : String(error);
+		if (installErrors.length === 0) installErrors.push(message);
+		return runtimeConvergenceWithoutApply({
+			load,
+			paths,
+			workspaceRoot,
+			enabledRuntimes,
+			installErrors,
+			projectedProviderIds: Object.fromEntries(
+				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
+					runtime,
+					[...providerIds],
+				]),
+			),
+		});
+	}
+
+	let openClawWorkspaceRoot: string | null;
+	let plannedRuntimePrograms: RuntimeSystemdUserProgram[];
+	let mutationPlan: ReturnType<typeof runtimeManagedMutationPlan>;
+	try {
+		const openClawCommand = runtimeCommandPath("openclaw", projectionHome);
+		const shouldResolveOpenClawWorkspace =
+			manifest.runtimes.openclaw?.enabled === true ||
+			Boolean(openClawCommand && executableExists(openClawCommand));
+		openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
+			? openClawSkillDriver.resolveWorkspace({ home: projectionHome })
+			: null;
+		recoverHostedSourcedSkillReservations(
+			manifest,
+			projectionHome,
+			preparedHostedSourcedSkills,
+			hermesSkillNativeReconciler,
+		);
+		if (openClawWorkspaceRoot) {
+			recoverHostedOpenClawSourcedSkillReservations(
+				manifest,
+				openClawWorkspaceRoot,
+				preparedHostedSourcedSkills,
+				openClawSkillDriver,
+			);
+		}
+		validateRuntimeManifestPlan(
+			manifest,
+			paths,
+			openClawWorkspaceRoot,
+			preparedHostedSourcedSkills,
+		);
+		validateRuntimeProjectionPlan({
+			manifest,
+			paths,
+			openClawWorkspaceRoot,
+			secretValues,
+			observations,
+			previousProjectedProviderIds,
+		});
+		plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
+			manifest,
+			paths,
+			workspaceRoot,
+			generatedAt,
+			secretValues,
+			observations,
+			egressProfileBundlePath: plannedEgressProfileBundlePath,
+			egress: null,
+		});
+		validateRuntimeSystemdPlan(plannedRuntimePrograms);
+		mutationPlan = runtimeManagedMutationPlan({
+			manifest,
+			paths,
+			openClawWorkspaceRoot,
+			programs: plannedRuntimePrograms,
+			observations,
+		});
+	} catch (error) {
+		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
+		throw error;
+	}
 	if (mutationPlan.systemdDriftErrors.length > 0) {
+		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
 		installErrors.push(...mutationPlan.systemdDriftErrors);
 		return runtimeConvergenceWithoutApply({
 			load,
@@ -5485,7 +5630,18 @@ export function convergeRuntimeManifest(
 		});
 	}
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
-	const liveSnapshot = captureRuntimeLiveSnapshot(mutationPlan.snapshot);
+	let liveSnapshot: ReturnType<typeof captureRuntimeLiveSnapshot>;
+	try {
+		liveSnapshot = captureRuntimeLiveSnapshot(mutationPlan.snapshot);
+		if (coldInstallSnapshot) {
+			for (const [path, node] of coldInstallSnapshot.entries) {
+				liveSnapshot.entries.set(path, node);
+			}
+		}
+	} catch (error) {
+		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
+		throw error;
+	}
 	let systemdActivationApplied = false;
 	let restartDaemon = false;
 	let desiredDaemonAuthTokenRevision: string | undefined;
@@ -5518,13 +5674,6 @@ export function convergeRuntimeManifest(
 				fileBrowserInstall.receiptTarget,
 			);
 		}
-		observations.clear();
-		for (const [name, runtime] of runtimeEntries) {
-			const observation = observeRuntimeInstall(name, runtime, projectionHome);
-			observations.set(name, observation);
-			if (observation.error) installErrors.push(observation.error);
-		}
-		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 		const openClawObservation = observations.get("openclaw");
 		if (openClawObservation) {
 			try {
@@ -5546,6 +5695,13 @@ export function convergeRuntimeManifest(
 			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
+		if (
+			openClawWorkspaceRoot &&
+			resolve(openClawSkillDriver.resolveWorkspace({ home: projectionHome })) !==
+				resolve(openClawWorkspaceRoot)
+		) {
+			throw new Error("OpenClaw official agent workspace changed during runtime reconciliation");
+		}
 
 		hostedRuntimeContract.assertPlatformRoots();
 		let codexCli: Record<string, string> | null = null;
@@ -5812,7 +5968,7 @@ export function convergeRuntimeManifest(
 		validateRuntimeProjectionPlan({
 			manifest,
 			paths,
-			workspaceRoot,
+			openClawWorkspaceRoot,
 			secretValues,
 			observations,
 			previousProjectedProviderIds,
@@ -5852,7 +6008,7 @@ export function convergeRuntimeManifest(
 					observations.get(name),
 					manifest,
 					projectionHome,
-					workspaceRoot,
+					openClawWorkspaceRoot,
 					openClawSkillDriver,
 				);
 			} catch (error) {
@@ -5878,19 +6034,21 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 		}
-		try {
-			applyHostedOpenClawSourcedSkills(
-				observations.get("openclaw"),
-				manifest,
-				projectionHome,
-				workspaceRoot,
-				preparedHostedSourcedSkills,
-				openClawSkillDriver,
-			);
-		} catch (error) {
-			installErrors.push(
-				`runtime openclaw sourced Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`,
-			);
+		if (openClawWorkspaceRoot) {
+			try {
+				applyHostedOpenClawSourcedSkills(
+					observations.get("openclaw"),
+					manifest,
+					projectionHome,
+					openClawWorkspaceRoot,
+					preparedHostedSourcedSkills,
+					openClawSkillDriver,
+				);
+			} catch (error) {
+				installErrors.push(
+					`runtime openclaw sourced Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
 		}
 		try {
 			applyHostedMcpProjections(manifest, paths, observations, workspaceRoot);
@@ -5984,7 +6142,7 @@ export function convergeRuntimeManifest(
 			}
 			try {
 				const localeFile = withRuntimeUserFileAccess(() =>
-					applyHostedLocaleProjection(name, manifest, projectionHome, workspaceRoot),
+					applyHostedLocaleProjection(name, manifest, projectionHome, openClawWorkspaceRoot),
 				);
 				if (localeFile) managedLocaleFiles.push(localeFile);
 			} catch (error) {
