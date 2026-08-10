@@ -1635,6 +1635,21 @@ export function applySystemdRuntimeUpdate(
 	};
 }
 
+export function quiesceSystemdRuntimeCandidate(
+	paths: ReturnType<typeof getRuntimePaths>,
+	candidate: SystemdUnitSnapshot,
+): void {
+	if (!shouldApplySystemdRuntimeUpdate(paths)) return;
+	const userUnits = [...candidate.user.keys()]
+		.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT)
+		.sort();
+	if (userUnits.length > 0) runtimeUserSystemctl(paths, ["stop", ...userUnits]);
+	const systemUnits = [...candidate.system.keys()]
+		.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT)
+		.sort();
+	if (systemUnits.length > 0) systemctl(["stop", ...systemUnits]);
+}
+
 function systemdUnitManagerState(
 	paths: ReturnType<typeof getRuntimePaths>,
 	scope: "system" | "user",
@@ -2636,6 +2651,9 @@ async function applyRuntimeDesiredState(
 						`systemd apply failed: ${error instanceof Error ? error.message : String(error)}`,
 					);
 				}
+			},
+			quiesce: () => {
+				quiesceSystemdRuntimeCandidate(paths, readSystemdUnitSnapshot(paths));
 			},
 			rollback: ({
 				restartDaemon,

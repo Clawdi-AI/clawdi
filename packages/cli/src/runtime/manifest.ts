@@ -290,6 +290,7 @@ interface RuntimeSystemdApplySignal {
 interface RuntimeSystemdApplyHooks {
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
+	quiesce: () => void;
 	rollback: (signal: RuntimeSystemdApplySignal) => void;
 }
 
@@ -5646,6 +5647,7 @@ export function convergeRuntimeManifest(
 		throw error;
 	}
 	let systemdActivationApplied = false;
+	let systemdActivationAttempted = false;
 	let restartDaemon = false;
 	let desiredDaemonAuthTokenRevision: string | undefined;
 	let restartEgressSidecar = false;
@@ -6262,6 +6264,7 @@ export function convergeRuntimeManifest(
 			systemdUnits.egressSidecarActive &&
 			opts.systemdApply
 		) {
+			systemdActivationAttempted = true;
 			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 				restartDaemon,
 				restartEgressSidecar,
@@ -6291,6 +6294,7 @@ export function convergeRuntimeManifest(
 		const bootFinished = join(instanceRoot, "boot-finished");
 		writeRuntimePrivateFileAtomic(paths, bootFinished, `${generatedAt}\n`);
 		if (opts.systemdApply) {
+			systemdActivationAttempted = true;
 			const activation = opts.systemdApply.activate({
 				restartDaemon,
 				restartEgressSidecar,
@@ -6402,32 +6406,52 @@ export function convergeRuntimeManifest(
 		return convergence;
 	} catch (error) {
 		const applyError = error instanceof Error ? error.message : String(error);
+		let candidateQuiesced = !systemdActivationAttempted;
+		if (systemdActivationAttempted) {
+			try {
+				opts.systemdApply?.quiesce();
+				candidateQuiesced = true;
+			} catch (quiesceError) {
+				installErrors.push(
+					`runtime candidate service quiesce failed: ${
+						quiesceError instanceof Error ? quiesceError.message : String(quiesceError)
+					}`,
+				);
+			}
+		}
 		let filesystemRollbackSucceeded = false;
-		try {
-			hostedRuntimeContract.assertPlatformRoots();
-			restoreRuntimeLiveSnapshot(liveSnapshot);
-			if (rollbackEgressSecretOverride) {
-				writeEgressSecretMaterial(rollbackEgressSecretOverride, paths);
-			} else if (rollbackEgressSecretRevision) {
-				const committedMaterial = verifiedCommittedEgressSecretMaterial(paths, applyContext);
-				if (committedMaterial?.revision === rollbackEgressSecretRevision) {
-					writeEgressSecretMaterial(committedMaterial, paths);
-				} else {
-					egressRollbackAuthorityVerified = false;
+		if (candidateQuiesced) {
+			try {
+				hostedRuntimeContract.assertPlatformRoots();
+				restoreRuntimeLiveSnapshot(liveSnapshot);
+				if (rollbackEgressSecretOverride) {
+					writeEgressSecretMaterial(rollbackEgressSecretOverride, paths);
+				} else if (rollbackEgressSecretRevision) {
+					const committedMaterial = verifiedCommittedEgressSecretMaterial(paths, applyContext);
+					if (committedMaterial?.revision === rollbackEgressSecretRevision) {
+						writeEgressSecretMaterial(committedMaterial, paths);
+					} else {
+						egressRollbackAuthorityVerified = false;
+						rmSync(egressSecretFilePath(paths), { force: true });
+					}
+				} else if (!egressRollbackAuthorityVerified) {
 					rmSync(egressSecretFilePath(paths), { force: true });
 				}
-			} else if (!egressRollbackAuthorityVerified) {
-				rmSync(egressSecretFilePath(paths), { force: true });
+				filesystemRollbackSucceeded = true;
+			} catch (rollbackError) {
+				installErrors.push(
+					`runtime filesystem rollback failed: ${
+						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+					}`,
+				);
 			}
-			filesystemRollbackSucceeded = true;
-		} catch (rollbackError) {
+		} else {
 			installErrors.push(
-				`runtime filesystem rollback failed: ${
-					rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-				}`,
+				"runtime filesystem rollback skipped because candidate services did not quiesce",
 			);
 		}
 		if (
+			filesystemRollbackSucceeded &&
 			!workspaceExistedBeforeApply &&
 			resolve(workspaceRoot) !== resolve(paths.userHome) &&
 			existsSync(workspaceRoot)
@@ -6463,9 +6487,13 @@ export function convergeRuntimeManifest(
 					}`,
 				);
 			}
-		} else if (opts.systemdApply) {
+		} else if (opts.systemdApply && candidateQuiesced) {
 			installErrors.push(
 				"runtime systemd rollback skipped because filesystem authority restoration failed",
+			);
+		} else if (opts.systemdApply) {
+			installErrors.push(
+				"runtime systemd reconciliation skipped because candidate services did not quiesce",
 			);
 		}
 		if (!egressRollbackAuthorityVerified) {

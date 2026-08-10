@@ -20,6 +20,7 @@ import { parse as parseYaml } from "yaml";
 import {
 	applySystemdRuntimeUpdate,
 	commitRuntimeAppliedState,
+	quiesceSystemdRuntimeCandidate,
 	readSystemdUnitSnapshot,
 	runtimeAppliedContentIdentity,
 	runtimeInit as runtimeInitWithContext,
@@ -6081,6 +6082,7 @@ exit 64
 			const apply = (load: RuntimeManifestLoad) =>
 				convergeRuntimeManifest(load, paths, {
 					systemdApply: {
+						quiesce: () => {},
 						activateEgressPrerequisite: () => ({
 							applied: true,
 							systemUnitsChanged: [],
@@ -7721,17 +7723,28 @@ fi
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
+		const failNextSidecarActivation = join(root, "fail-next-sidecar-activation");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		seedOpenClawBinary(home);
+		writeFileSync(failNextSidecarActivation, "fail\n");
 		writeFileSync(
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
-printf 'systemctl failed\\n' >&2
-exit 42
+set -euo pipefail
+if [ "\${1:-}" = "--user" ]; then shift; fi
+if [ "\${1:-}" = "show" ]; then
+  printf 'LoadState=loaded\\nActiveState=active\\n'
+elif [ "\${1:-}" = "is-enabled" ]; then
+  printf 'enabled\\n'
+elif { [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; } && [[ " $* " = *" clawdi-runtime-sidecar.service "* ]] && [ -f '${failNextSidecarActivation}' ]; then
+  rm -f '${failNextSidecarActivation}'
+  printf 'injected sidecar activation failure\\n' >&2
+  exit 42
+fi
 `,
 		);
 		chmodSync(join(bin, "systemctl"), 0o700);
@@ -8779,6 +8792,53 @@ fi
 		expect(readFileSync(sidecarState, "utf-8")).toBe("inactive\n");
 	});
 
+	it("quiesces candidate services before their transparent-egress handoff is removed", () => {
+		const home = join(root, "home", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const systemctlPath = join(root, "bin", "systemctl");
+		const systemctlLog = join(root, "systemctl-quiesce.log");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		const paths = getRuntimePaths();
+		mkdirSync(dirname(systemctlPath), { recursive: true });
+		mkdirSync(dirname(paths.egressTransparentEnv), { recursive: true });
+		writeFileSync(paths.egressTransparentEnv, "CLAWDI_EGRESS_TRANSPARENT_PORT=27212\n");
+		writeFileSync(
+			systemctlPath,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${systemctlLog}'
+if [ "\${1:-}" = "stop" ] && [[ " $* " = *" clawdi-runtime-sidecar.service "* ]]; then
+  test -f '${paths.egressTransparentEnv}'
+  printf 'sidecar-env-present\\n' >> '${systemctlLog}'
+fi
+`,
+		);
+		chmodSync(systemctlPath, 0o700);
+		const candidate: Parameters<typeof quiesceSystemdRuntimeCandidate>[1] = {
+			system: new Map([
+				["clawdi-runtime-watch.service", "watch"],
+				["clawdi-daemon.service", "daemon"],
+				["clawdi-runtime-sidecar.service", "sidecar"],
+				["clawdi-files.service", "files"],
+			]),
+			user: new Map([["openclaw-gateway.service", "gateway"]]),
+		};
+
+		quiesceSystemdRuntimeCandidate(paths, candidate);
+		rmSync(paths.egressTransparentEnv);
+
+		expect(readFileSync(systemctlLog, "utf-8").trim().split("\n")).toEqual([
+			"--user stop openclaw-gateway.service",
+			"stop clawdi-daemon.service clawdi-files.service clawdi-runtime-sidecar.service",
+			"sidecar-env-present",
+		]);
+	});
+
 	it("runtime watch hands off before convergence and the new CLI completes the transaction", async () => {
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
@@ -9420,9 +9480,21 @@ fi
 			expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedSecretCache);
 			const rollbackSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
 			expect(rollbackSystemctlCalls).not.toContain("official openclaw installer");
-			expect(
-				rollbackSystemctlCalls.filter((call) => call === "restart clawdi-runtime-sidecar.service"),
-			).toHaveLength(2);
+			const failedRestart = rollbackSystemctlCalls.indexOf(
+				"restart clawdi-runtime-sidecar.service",
+			);
+			const quiesce = rollbackSystemctlCalls.findIndex(
+				(call) => call.startsWith("stop ") && call.includes("clawdi-runtime-sidecar.service"),
+			);
+			const priorStart = rollbackSystemctlCalls.findIndex(
+				(call, index) =>
+					index > quiesce &&
+					(call.startsWith("start ") || call.startsWith("restart ")) &&
+					call.includes("clawdi-runtime-sidecar.service"),
+			);
+			expect(failedRestart).toBeGreaterThanOrEqual(0);
+			expect(quiesce).toBeGreaterThan(failedRestart);
+			expect(priorStart).toBeGreaterThan(quiesce);
 
 			writeFileSync(systemctlLog, "");
 			logs.length = 0;

@@ -680,9 +680,15 @@ function fileBrowserManifestLoad(manifest: RuntimeManifest): RuntimeManifestLoad
 }
 
 function fileBrowserApplyHooks(
-	input: { activationApplied?: boolean; onActivate?: () => void; onRollback?: () => void } = {},
+	input: {
+		activationApplied?: boolean;
+		onActivate?: () => void;
+		onQuiesce?: () => void;
+		onRollback?: () => void;
+	} = {},
 ) {
 	return {
+		quiesce: () => input.onQuiesce?.(),
 		activateEgressPrerequisite: successfulPrerequisiteActivation,
 		activate: () => {
 			input.onActivate?.();
@@ -2576,6 +2582,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			egressEngineEnsureOptions: { downloadCommand: curl.commandPath },
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: successfulPrerequisiteActivation,
 				rollback: () => {},
@@ -2613,6 +2620,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			{
 				cacheLastGood: false,
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: successfulPrerequisiteActivation,
 					rollback: () => {},
@@ -2745,6 +2753,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						);
 					},
 					systemdApply: {
+						quiesce: () => {},
 						activateEgressPrerequisite: successfulPrerequisiteActivation,
 						activate: ({ restartEgressSidecar }) => {
 							signals.push(restartEgressSidecar);
@@ -2946,6 +2955,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				revisionA = authority.egressSidecarSecretRevision;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
 				rollback: () => {},
@@ -2967,6 +2977,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				commit("000001", revisionB);
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					recoverySignals.push(restartEgressSidecar);
@@ -2997,6 +3008,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				throw new Error("restart failure must not commit authority");
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3026,6 +3038,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				throw new Error("injected authority commit failure");
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3057,6 +3070,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				commit("000002", revisionC);
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3093,6 +3107,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				mixedFailureCommits++;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3138,6 +3153,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				legacyFailureCommits++;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3182,6 +3198,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				legacyMissingCacheRestartCommits++;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3230,6 +3247,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				throw new Error("injected legacy authority commit failure");
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3277,6 +3295,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				commitAuthority: (_convergence, authority) =>
 					writeAuthority("000001", authority.egressSidecarSecretRevision),
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: ({ restartEgressSidecar }) => {
 						legacySignals.push(restartEgressSidecar);
@@ -3401,6 +3420,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			commitAuthority: (committedConvergence, authority) =>
 				commitTestRuntimeAuthority(currentLoad, paths, committedConvergence, authority),
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -4021,6 +4041,7 @@ echo spawned > '${installerLog}'
 		let rollbackCalls = 0;
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-patch-failure"), paths, {
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => {
 					activateCalls += 1;
@@ -4114,6 +4135,7 @@ echo spawned > '${installerLog}'
 					committed = true;
 				},
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: (signal) => {
 						expect(signal.staleSystemUnits).toEqual(["clawdi-runtime-sidecar.service"]);
@@ -4657,6 +4679,7 @@ exit 42
 		let rollbackCalls = 0;
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "installer-failure"), paths, {
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => {
 					activateCalls += 1;
@@ -4948,8 +4971,10 @@ exit 42
 		expect(unit).toContain(FILE_BROWSER_VERSION);
 		expect(unit).toContain(FILE_BROWSER_COMMIT.slice(0, 7));
 		expect(unit).not.toContain(`ReadOnlyPaths=${paths.fileBrowserConfig}`);
-		expect(unit).toContain(`ExecStart="${paths.fileBrowserServiceBinary}"`);
-		expect(unit).toContain(`"-c" "\${CREDENTIALS_DIRECTORY}/filebrowser.yaml"`);
+		expect(unit.match(/^ExecStart=.*$/m)?.[0]).toBe(
+			`ExecStart="${paths.fileBrowserServiceBinary}" "-c" "/run/credentials/clawdi-files.service/filebrowser.yaml"`,
+		);
+		expect(unit).not.toContain("CREDENTIALS_DIRECTORY");
 		expect(unit).toContain(`NoExecPaths=${paths.userHome} ${paths.fileBrowserStateRoot}`);
 		expect(unit).toContain("ProtectSystem=strict");
 		expect(unit).toContain("CapabilityBoundingSet=");
@@ -5036,13 +5061,24 @@ exit 42
 		});
 		let readinessCommits = 0;
 		let rollbacks = 0;
+		const rollbackLifecycle: string[] = [];
 		const readinessFailure = convergeRuntimeManifest(
 			fileBrowserManifestLoad(readinessManifest),
 			paths,
 			{
 				...readyOptions,
 				fileBrowserReadinessProbe: () => false,
-				systemdApply: fileBrowserApplyHooks({ onRollback: () => rollbacks++ }),
+				systemdApply: fileBrowserApplyHooks({
+					onQuiesce: () => {
+						rollbackLifecycle.push("quiesce");
+						expect(readFileSync(paths.fileBrowserConfig, "utf8")).not.toBe(originalConfig);
+					},
+					onRollback: () => {
+						rollbackLifecycle.push("reconcile");
+						expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(originalConfig);
+						rollbacks++;
+					},
+				}),
 				commitAuthority: () => readinessCommits++,
 			},
 		);
@@ -5051,12 +5087,76 @@ exit 42
 		);
 		expect(readinessCommits).toBe(0);
 		expect(rollbacks).toBe(1);
+		expect(rollbackLifecycle).toEqual(["quiesce", "reconcile"]);
 		expect(readFileSync(active, "utf8")).toBe(originalBinary);
 		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(originalConfig);
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
 			originalUnit,
 		);
 		expect(readFileSync(paths.installReceipts, "utf8")).toBe(originalReceipts);
+	});
+
+	test("preserves candidate inputs when service quiesce fails", () => {
+		const paths = tempRuntimePaths();
+		const binary = "Files rollback ordering binary\n";
+		const installOptions = {
+			serviceIsolation: testFileBrowserServiceIsolation,
+			download: (_url: string, destination: string) => writeFileSync(destination, binary),
+			versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+		};
+		const initial = convergeRuntimeManifest(
+			fileBrowserManifestLoad(fileBrowserManifest(paths, { generation: 1, binary })),
+			paths,
+			{
+				fileBrowserInstallOptions: installOptions,
+				fileBrowserReadinessProbe: () => true,
+				systemdApply: fileBrowserApplyHooks(),
+			},
+		);
+		expect(initial.installErrors).toEqual([]);
+		const originalConfig = readFileSync(paths.fileBrowserConfig, "utf8");
+		const candidateEgressEnv = "CLAWDI_EGRESS_TRANSPARENT_PORT=27212\n";
+		let candidateConfig: string | null = null;
+		let reconciles = 0;
+
+		const failed = convergeRuntimeManifest(
+			fileBrowserManifestLoad(
+				fileBrowserManifest(paths, {
+					generation: 2,
+					binary,
+					accessRevision: "c".repeat(64),
+				}),
+			),
+			paths,
+			{
+				fileBrowserInstallOptions: installOptions,
+				fileBrowserReadinessProbe: () => true,
+				systemdApply: fileBrowserApplyHooks({
+					onActivate: () => {
+						mkdirSync(dirname(paths.egressTransparentEnv), { recursive: true });
+						writeFileSync(paths.egressTransparentEnv, candidateEgressEnv);
+						throw new Error("injected candidate activation failure");
+					},
+					onQuiesce: () => {
+						candidateConfig = readFileSync(paths.fileBrowserConfig, "utf8");
+						throw new Error("injected candidate quiesce failure");
+					},
+					onRollback: () => reconciles++,
+				}),
+			},
+		);
+
+		expect(failed.installErrors.join("\n")).toContain("injected candidate activation failure");
+		expect(failed.installErrors.join("\n")).toContain("injected candidate quiesce failure");
+		expect(failed.installErrors).toContain(
+			"runtime filesystem rollback skipped because candidate services did not quiesce",
+		);
+		expect(reconciles).toBe(0);
+		expect(candidateConfig).not.toBeNull();
+		if (candidateConfig === null) throw new Error("candidate Files config was not observed");
+		expect(candidateConfig).not.toBe(originalConfig);
+		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(candidateConfig);
+		expect(readFileSync(paths.egressTransparentEnv, "utf8")).toBe(candidateEgressEnv);
 	});
 
 	test("retains only the desired Files candidate after authority commit", () => {
@@ -5121,6 +5221,7 @@ exit 42
 		let staleSystemUnits: string[] = [];
 		const result = convergeRuntimeManifest(fileBrowserManifestLoad(withoutFileBrowser), paths, {
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: (signal) => {
 					staleSystemUnits = signal.staleSystemUnits;
@@ -5266,6 +5367,7 @@ exit 42
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "missing-late-run-root"), paths, {
 			cacheLastGood: false,
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => {
 					rmSync(paths.runRoot, { recursive: true });
