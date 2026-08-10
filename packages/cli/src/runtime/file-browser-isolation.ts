@@ -177,7 +177,7 @@ function ensureWorkspaceAcl(
 			"d:m::rwx",
 		].join(",");
 		const fileAcl = [`u:${runtimeUid}:rw-`, `g:${identity.gid}:rw-`, "m::rwx"].join(",");
-		const contents = workspaceAclEntries(sourceRoot)
+		const contents = workspaceAclEntries(sourceRoot, runtimeUid, identity.uid)
 			.map(
 				(entry) =>
 					`a+ ${tmpfilesPath(entry.path)} - - - - ${entry.directory ? directoryAcl : fileAcl}`,
@@ -208,10 +208,17 @@ function ensureWorkspaceAcl(
 	}
 }
 
-function workspaceAclEntries(sourceRoot: string): Array<{ path: string; directory: boolean }> {
+function workspaceAclEntries(
+	sourceRoot: string,
+	runtimeUid: number,
+	serviceUid: number,
+): Array<{ path: string; directory: boolean }> {
 	const root = lstatSync(sourceRoot);
 	if (!root.isDirectory() || root.isSymbolicLink()) {
 		throw new Error("Files source root must be a trusted directory");
+	}
+	if (root.uid !== runtimeUid) {
+		throw new Error("Files source root must be owned by the tenant runtime user");
 	}
 	const entries: Array<{ path: string; directory: boolean }> = [
 		{ path: sourceRoot, directory: true },
@@ -230,6 +237,10 @@ function workspaceAclEntries(sourceRoot: string): Array<{ path: string; director
 				throw error;
 			}
 			if (stat.isSymbolicLink()) continue;
+			// Service-owned paths already grant Files access and inherit the
+			// tenant ACL. Do not cross that ownership boundary with tmpfiles.
+			if (stat.uid === serviceUid) continue;
+			if (stat.uid !== runtimeUid) continue;
 			if (stat.isFile()) {
 				entries.push({ path, directory: false });
 				continue;
