@@ -204,6 +204,42 @@ const fileBrowserAssetSchema = z
 	})
 	.strict();
 
+const FILE_BROWSER_AUDIENCE_PREFIX = "clawdi-files:";
+
+const fileBrowserAuthSchema = z
+	.object({
+		method: z.literal("jwt"),
+		algorithm: z.literal("HS256"),
+		header: z.literal("X-JWT-Assertion"),
+		userIdentifier: z.literal("sub"),
+		groupsClaim: z.literal("groups"),
+		secret: z
+			.string()
+			.min(43)
+			.max(128)
+			.regex(/^[A-Za-z0-9_-]+$/),
+		audience: z.string().min(1).max(256),
+		subject: z.string().min(1).max(256),
+		requiredGroup: z.string().min(1).max(256),
+		accessRevision: z.string().regex(/^[a-f0-9]{64}$/),
+	})
+	.strict()
+	.superRefine((auth, ctx) => {
+		const deploymentId = auth.audience.startsWith(FILE_BROWSER_AUDIENCE_PREFIX)
+			? auth.audience.slice(FILE_BROWSER_AUDIENCE_PREFIX.length)
+			: "";
+		if (
+			!deploymentId ||
+			auth.subject !== `deployment:${deploymentId}:owner` ||
+			auth.requiredGroup !== `${auth.audience}:${auth.accessRevision}`
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Files authentication fields must reference one deployment revision",
+			});
+		}
+	});
+
 export const fileBrowserCompanionSchema = z
 	.object({
 		version: z.literal(FILE_BROWSER_VERSION),
@@ -229,24 +265,7 @@ export const fileBrowserCompanionSchema = z
 				}),
 			})
 			.strict(),
-		auth: z
-			.object({
-				method: z.literal("jwt"),
-				algorithm: z.literal("HS256"),
-				header: z.literal("X-JWT-Assertion"),
-				userIdentifier: z.literal("sub"),
-				groupsClaim: z.literal("groups"),
-				secret: z
-					.string()
-					.min(43)
-					.max(128)
-					.regex(/^[A-Za-z0-9_-]+$/),
-				audience: z.string().min(1).max(256),
-				subject: z.string().min(1).max(256),
-				requiredGroup: z.string().min(1).max(256),
-				accessRevision: z.string().regex(/^[a-f0-9]{64}$/),
-			})
-			.strict(),
+		auth: fileBrowserAuthSchema,
 	})
 	.strict();
 
@@ -711,25 +730,6 @@ function validateHostedRuntimeManifest(
 	manifest: HostedRuntimeManifestBase,
 	ctx: z.RefinementCtx,
 ): void {
-	const filebrowser = manifest.companions?.filebrowser;
-	if (filebrowser) {
-		const expectedAudience = `clawdi-files:${manifest.deploymentId}`;
-		const expectedSubject = `deployment:${manifest.deploymentId}:owner`;
-		const expectedGroup = `${expectedAudience}:${filebrowser.auth.accessRevision}`;
-		for (const [field, actual, expected] of [
-			["audience", filebrowser.auth.audience, expectedAudience],
-			["subject", filebrowser.auth.subject, expectedSubject],
-			["requiredGroup", filebrowser.auth.requiredGroup, expectedGroup],
-		] as const) {
-			if (actual !== expected) {
-				ctx.addIssue({
-					code: "custom",
-					message: `Files ${field} must be bound to this deployment and access revision`,
-					path: ["companions", "filebrowser", "auth", field],
-				});
-			}
-		}
-	}
 	const runtimeKeys = Object.keys(manifest.runtimes);
 	const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
 	if (!manifest.runtimes[manifest.runtime]) {

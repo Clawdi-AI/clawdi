@@ -590,7 +590,7 @@ esac
 type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
 
 function fileBrowserCompanion(accessRevision = "a".repeat(64)): FileBrowserCompanion {
-	const audience = "clawdi-files:hdep_reconcile";
+	const audience = "clawdi-files:hdep_files_reconcile";
 	return {
 		version: FILE_BROWSER_VERSION,
 		commit: FILE_BROWSER_COMMIT,
@@ -617,7 +617,7 @@ function fileBrowserCompanion(accessRevision = "a".repeat(64)): FileBrowserCompa
 			groupsClaim: "groups",
 			secret: accessRevision.slice(0, 43),
 			audience,
-			subject: "deployment:hdep_reconcile:owner",
+			subject: "deployment:hdep_files_reconcile:owner",
 			requiredGroup: `${audience}:${accessRevision}`,
 			accessRevision,
 		},
@@ -5092,7 +5092,7 @@ exit 42
 		);
 	});
 
-	test("rejects user-overridden Files contracts", () => {
+	test("enforces pinned and internally bound Files contracts", () => {
 		const paths = tempRuntimePaths();
 		const binary = "Files gate fixture\n";
 		const manifest = fileBrowserManifest(paths, { generation: 1, binary });
@@ -5104,6 +5104,19 @@ exit 42
 
 		const pinned = fileBrowserCompanion();
 		expect(fileBrowserCompanionSchema.safeParse(pinned).success).toBe(true);
+		expect(manifest.deploymentId).not.toBe("hdep_files_reconcile");
+		for (const [field, value] of [
+			["audience", "clawdi-files:hdep_other"],
+			["subject", "deployment:hdep_other:owner"],
+			["requiredGroup", `clawdi-files:hdep_files_reconcile:${"b".repeat(64)}`],
+		] as const) {
+			expect(
+				fileBrowserCompanionSchema.safeParse({
+					...pinned,
+					auth: { ...pinned.auth, [field]: value },
+				}).success,
+			).toBe(false);
+		}
 		expect(
 			hostedRuntimeBundleV2ManifestSchema.safeParse({
 				...manifest,
