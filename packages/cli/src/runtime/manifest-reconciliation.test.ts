@@ -63,11 +63,7 @@ import {
 	loadCommittedRuntimeManifest,
 	type RuntimeManifestLoad,
 } from "./manifest-source";
-import {
-	getRuntimePaths,
-	type RuntimePaths,
-	SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN,
-} from "./paths";
+import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 import { ensureRuntimeStateDirs } from "./state";
@@ -4278,7 +4274,9 @@ echo spawned > '${installerLog}'
 
 		for (const key of ["runConfigRoot", "systemdEnvRoot"] as const) {
 			const unsafePaths = tempRuntimePaths();
+			ensureRuntimeStateDirs(unsafePaths);
 			chmodSync(dirname(unsafePaths.serviceStateRoot), 0o755);
+			chmodSync(unsafePaths.configurationRoot, 0o755);
 			mkdirSync(unsafePaths[key], { recursive: true });
 			chmodSync(unsafePaths[key], 0o777);
 			expect(() =>
@@ -4954,7 +4952,6 @@ exit 42
 		expect(config).toContain("share: false");
 		const unitPath = join(paths.systemdSystemRoot, "clawdi-files.service");
 		const unit = readFileSync(unitPath, "utf8");
-		const credentialDropIn = join(`${unitPath}.d`, SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN);
 		expect(first.outputs.systemdSystemUnits).toContain(unitPath);
 		expect(first.outputs.systemdUserUnits).not.toContain(
 			join(paths.systemdUserRoot, "clawdi-files.service"),
@@ -4968,10 +4965,8 @@ exit 42
 		expect(unit).toContain("StateDirectoryMode=0700");
 		expect(unit).toContain("RuntimeDirectory=clawdi-files");
 		expect(unit).toContain("RuntimeDirectoryMode=0700");
+		expect(unit).not.toContain("OpenFile=");
 		expect(unit).not.toContain("LoadCredential=");
-		expect(readFileSync(credentialDropIn, "utf8")).toContain(
-			`LoadCredential=filebrowser.yaml:${paths.fileBrowserConfig}`,
-		);
 		expect(unit).toContain(`ReadWritePaths=${paths.userHome}`);
 		expect(unit).toContain(`BindReadOnlyPaths=${active}:${paths.fileBrowserServiceBinary}:norbind`);
 		expect(unit).toContain('ExecStartPre="/bin/sh" "-c"');
@@ -4980,7 +4975,7 @@ exit 42
 		expect(unit).toContain(FILE_BROWSER_COMMIT.slice(0, 7));
 		expect(unit).not.toContain(`ReadOnlyPaths=${paths.fileBrowserConfig}`);
 		expect(unit.match(/^ExecStart=.*$/m)?.[0]).toBe(
-			`ExecStart="${paths.fileBrowserServiceBinary}" "-c" "\${CREDENTIALS_DIRECTORY}/filebrowser.yaml"`,
+			`ExecStart="${paths.fileBrowserServiceBinary}" "-c" "${paths.fileBrowserConfig}"`,
 		);
 		expect(unit).toContain(`NoExecPaths=${paths.userHome} ${paths.fileBrowserStateRoot}`);
 		expect(unit).toContain("ProtectSystem=strict");
@@ -5030,12 +5025,6 @@ exit 42
 			join(paths.systemdSystemRoot, "clawdi-files.service"),
 			"utf8",
 		);
-		const credentialDropIn = join(
-			paths.systemdSystemRoot,
-			"clawdi-files.service.d",
-			SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN,
-		);
-		const originalCredentialDropIn = readFileSync(credentialDropIn, "utf8");
 		const originalReceipts = readFileSync(paths.installReceipts, "utf8");
 
 		const desiredBinary = "desired Files binary\n";
@@ -5065,9 +5054,7 @@ exit 42
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
 			originalUnit,
 		);
-		expect(readFileSync(credentialDropIn, "utf8")).toBe(originalCredentialDropIn);
 		expect(readFileSync(paths.installReceipts, "utf8")).toBe(originalReceipts);
-		rmSync(dirname(credentialDropIn), { recursive: true });
 
 		const readinessManifest = fileBrowserManifest(paths, {
 			generation: 3,
@@ -5103,7 +5090,6 @@ exit 42
 		expect(readinessCommits).toBe(0);
 		expect(rollbacks).toBe(1);
 		expect(rollbackLifecycle).toEqual(["quiesce", "reconcile"]);
-		expect(existsSync(dirname(credentialDropIn))).toBe(false);
 		expect(readFileSync(active, "utf8")).toBe(originalBinary);
 		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(originalConfig);
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
@@ -5225,10 +5211,8 @@ exit 42
 		).toEqual([]);
 
 		const fileBrowserUnit = join(paths.systemdSystemRoot, "clawdi-files.service");
-		const credentialDropIn = join(`${fileBrowserUnit}.d`, SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN);
 		const runtimeUnit = join(paths.systemdUserRoot, "openclaw-gateway.service");
 		expect(existsSync(fileBrowserUnit)).toBe(true);
-		expect(existsSync(credentialDropIn)).toBe(true);
 		expect(existsSync(runtimeUnit)).toBe(true);
 		const withoutFileBrowser: RuntimeManifest = {
 			...manifest,
@@ -5252,8 +5236,6 @@ exit 42
 		expect(result.installErrors).toEqual([]);
 		expect(staleSystemUnits).toEqual(["clawdi-files.service"]);
 		expect(existsSync(fileBrowserUnit)).toBe(false);
-		expect(existsSync(credentialDropIn)).toBe(false);
-		expect(existsSync(dirname(credentialDropIn))).toBe(false);
 		expect(existsSync(runtimeUnit)).toBe(true);
 	});
 

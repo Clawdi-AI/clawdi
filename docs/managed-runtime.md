@@ -329,19 +329,20 @@ private `.staging-*` directory, verifies the exact SHA256, then atomically renam
 or non-directories. The service's unit-private bind mount runs the pinned
 version/commit probe in `ExecStartPre=` before executing the content-addressed candidate, and
 garbage-collects older candidates only after applied authority commits. The
-existing manifest snapshot covers the desired candidate, root-only `0600`
-configuration, install receipt, systemd unit/environment file, and applied
+existing manifest snapshot covers the desired candidate, root-authored
+configuration handoff, install receipt, systemd unit/environment file, and applied
 state, so a download, verification, systemd, or readiness failure restores the
 previous exact pre-image. There is no separate active/previous link state or
 hand-built chroot.
 
 `clawdi-files.service` runs as the dedicated non-login `clawdi-files` system
 UID/GID, never as the tenant runtime user. CLI/root reconciliation is the only
-identity, installer, updater, ACL, and unit controller. Candidate
-directories and binaries are root-owned; systemd copies the root-only config
-into the unit through `LoadCredential=` and publishes only the verified binary
-through a unit-private `BindReadOnlyPaths=` mount. DB/cache state lives in the
-service-owned `0700` `StateDirectory=clawdi-files`; install
+identity, installer, updater, ACL, and unit controller. Candidate directories
+and binaries are root-owned; the service reads its root-authored
+`root:clawdi-files` `0440` per-boot config handoff directly, and systemd
+publishes only the verified binary through a unit-private `BindReadOnlyPaths=`
+mount. DB/cache state lives in the service-owned `0700`
+`StateDirectory=clawdi-files`; install
 receipts remain root-only `0600`. The tenant cannot replace those assets, read
 the derived JWT secret or state, signal the distinct-UID process, or control
 the system unit.
@@ -1048,7 +1049,7 @@ and ephemeral runtime handoffs. Important outputs include:
 | Output | Purpose |
 | --- | --- |
 | `/etc/clawdi/clawdi.json` | Redacted managed runtime config |
-| `/etc/clawdi/filebrowser.yaml` | Root-only `0600` File Browser configuration loaded through systemd credentials |
+| `/run/clawdi/files/filebrowser.yaml` | `root:clawdi-files` `0440` per-boot Files config handoff read directly by the existing service |
 | `/etc/clawdi/projections/*` and `/etc/clawdi/run/*` | Managed projections and `clawdi run` launch config |
 | `/var/lib/clawdi/sync/runtimes.json` | Runtime sync state |
 | `/var/lib/clawdi/status/*` | Boot, apply, upgrade, provider, egress, watch, and receipt status/result files |

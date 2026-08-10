@@ -11,7 +11,7 @@ import {
 	rmSync,
 	statSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
@@ -25,7 +25,6 @@ import {
 	DEFAULT_RUN_ROOT,
 	DEFAULT_SERVICE_STATE_ROOT,
 	type RuntimePaths,
-	SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN,
 	SYSTEMD_FILE_BROWSER_STATE_DIRECTORY,
 	SYSTEMD_PLATFORM_DIRECTORY,
 } from "./paths";
@@ -293,8 +292,6 @@ function systemdUnitFileName(name: string): string {
 }
 
 const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
-const FILE_BROWSER_SYSTEMD_CREDENTIAL = `\${CREDENTIALS_DIRECTORY}/filebrowser.yaml`;
-
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
 		paths.systemdUserRoot,
@@ -318,8 +315,8 @@ function systemdExec(command: string, args: string[]): string {
 	return [command, ...args].map(systemdQuote).join(" ");
 }
 
-function fileBrowserSystemdExec(command: string): string {
-	return `${systemdQuote(command)} "-c" "${FILE_BROWSER_SYSTEMD_CREDENTIAL}"`;
+function fileBrowserSystemdExec(command: string, config: string): string {
+	return systemdExec(command, ["-c", config]);
 }
 
 function fileBrowserVersionProbeExec(command: string, version: string, commit: string): string {
@@ -1348,16 +1345,9 @@ function planStaleRuntimeSystemdFiles(
 	]);
 	if (existsSync(paths.systemdSystemRoot)) {
 		for (const entry of readdirSync(paths.systemdSystemRoot)) {
-			if (managedSystem.has(entry) && !desiredSystem.has(entry)) {
-				files.add(join(paths.systemdSystemRoot, entry));
-				systemUnits.add(entry);
-				continue;
-			}
-			if (entry !== "clawdi-files.service.d" || desiredSystem.has("clawdi-files.service")) continue;
-			const dropIn = join(paths.systemdSystemRoot, entry, SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN);
-			if (!isGeneratedSystemdFile(dropIn)) continue;
-			files.add(dropIn);
-			systemUnits.add("clawdi-files.service");
+			if (!managedSystem.has(entry) || desiredSystem.has(entry)) continue;
+			files.add(join(paths.systemdSystemRoot, entry));
+			systemUnits.add(entry);
 		}
 	}
 	if (existsSync(paths.systemdUserRoot)) {
@@ -1406,12 +1396,7 @@ export function removeStaleRuntimeSystemdFiles(
 	for (const path of plan.files) {
 		try {
 			rmSync(path, { force: true });
-			if (
-				[RUNTIME_SYSTEMD_DROP_IN_FILE, SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN].includes(
-					basename(path),
-				) &&
-				existsSync(dirname(path))
-			) {
+			if (path.endsWith(`/${RUNTIME_SYSTEMD_DROP_IN_FILE}`) && existsSync(dirname(path))) {
 				if (readdirSync(dirname(path)).length === 0) rmdirSync(dirname(path));
 			}
 		} catch (error) {
@@ -1515,13 +1500,16 @@ function writeFileBrowserSystemdUnit(input: {
 }): string {
 	const companion = input.manifest.companions?.filebrowser;
 	if (!companion) throw new Error("Files systemd unit requires a companion manifest");
-	const unit = writeSystemdSystemUnit({
+	return writeSystemdSystemUnit({
 		paths: input.paths,
 		name: "clawdi-files",
 		description: "Clawdi hosted Files companion",
 		command: input.program.command,
 		args: input.program.args,
-		execStart: fileBrowserSystemdExec(input.paths.fileBrowserServiceBinary),
+		execStart: fileBrowserSystemdExec(
+			input.paths.fileBrowserServiceBinary,
+			input.paths.fileBrowserConfig,
+		),
 		cwd: input.program.cwd,
 		directoryKind: "file-browser",
 		env: {
@@ -1572,23 +1560,6 @@ function writeFileBrowserSystemdUnit(input: {
 			"TasksMax=128",
 		],
 	});
-	const dropIn = join(
-		input.paths.systemdSystemRoot,
-		"clawdi-files.service.d",
-		SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN,
-	);
-	// Incus' service.d/zzz-lxc-service.conf clears LoadCredential globally;
-	// this later name-specific drop-in restores the credential only for Files.
-	writePrivateFileAtomic(
-		dropIn,
-		`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nLoadCredential=filebrowser.yaml:${systemdPath(input.paths.fileBrowserConfig)}\n`,
-		{
-			mode: 0o644,
-			dirMode: 0o755,
-			trustedRoot: input.paths.systemdSystemRoot,
-		},
-	);
-	return unit;
 }
 
 function officialRuntimeSystemdPrograms(

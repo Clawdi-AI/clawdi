@@ -15,7 +15,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { runtimeInstallReceiptsPath } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
-import { type RuntimePaths, SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN } from "./paths";
+import type { RuntimePaths } from "./paths";
 import { runningAsRoot } from "./runtime-user-command";
 import { isGeneratedRuntimeSystemdFile } from "./systemd-user";
 
@@ -81,13 +81,6 @@ export function runtimeRootLiveMutationTargets(
 	}
 	if (manifest.companions?.filebrowser) {
 		result.add(join(paths.systemdSystemRoot, "clawdi-files.service"));
-		result.add(
-			join(
-				paths.systemdSystemRoot,
-				"clawdi-files.service.d",
-				SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN,
-			),
-		);
 		result.add(join(paths.systemdEnvRoot, "clawdi-files.service.env"));
 	}
 	addExistingManagedSystemdSystemPaths(paths, result);
@@ -255,10 +248,8 @@ function addExistingManagedSystemdSystemPaths(paths: RuntimePaths, result: Set<s
 			result.add(path);
 		}
 		if (!entry.endsWith(".service.d")) continue;
-		for (const name of ["10-clawdi-hosted.conf", SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN]) {
-			const dropIn = join(path, name);
-			if (isGeneratedSystemdFile(dropIn)) result.add(dropIn);
-		}
+		const dropIn = join(path, "10-clawdi-hosted.conf");
+		if (isGeneratedSystemdFile(dropIn)) result.add(dropIn);
 	}
 }
 
@@ -274,11 +265,7 @@ function runtimeLiveSnapshotMetadataPaths(snapshotPaths: readonly string[]): str
 	return [
 		...new Set(
 			snapshotPaths
-				.filter((path) =>
-					["10-clawdi-hosted.conf", SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN].includes(
-						basename(path),
-					),
-				)
+				.filter((path) => basename(path) === "10-clawdi-hosted.conf")
 				.map((path) => dirname(path)),
 		),
 	].sort();
