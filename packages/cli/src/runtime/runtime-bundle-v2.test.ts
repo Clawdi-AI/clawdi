@@ -494,7 +494,9 @@ describe("hosted runtime bundle v2", () => {
 			[
 				"#!/usr/bin/env bash",
 				"set -euo pipefail",
-				'if [[ "$1 $2 $3" == "config patch --stdin" ]]; then',
+				'if [[ "$1 $2 $3" == "agents list --json" ]]; then',
+				'  printf \'[{"id":"main","workspace":"%s"}]\\n\' "$HOME/.openclaw/workspace"',
+				'elif [[ "$1 $2 $3" == "config patch --stdin" ]]; then',
 				"  payload=$(cat)",
 				`  if [[ "$payload" == *'"channels"'* && "$payload" == *'"telegram"'* ]]; then`,
 				`    printf '%s\\n' "$payload" > '${channelPatchPath}'`,
@@ -1199,7 +1201,17 @@ describe("hosted runtime bundle v2", () => {
 		chmodSync(goldenMitmdump, 0o755);
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		mkdirSync(dirname(openclawBin), { recursive: true });
-		writeFileSync(openclawBin, "#!/usr/bin/env sh\ncat >/dev/null || true\nexit 0\n");
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env sh
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
+  exit 0
+fi
+cat >/dev/null || true
+exit 0
+`,
+		);
 		chmodSync(openclawBin, 0o700);
 
 		let networkAvailable = true;

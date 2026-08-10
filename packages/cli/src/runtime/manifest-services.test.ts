@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import {
 	readRuntimeInstallReceipts,
 	runtimeInstallReceiptsPath,
@@ -66,6 +67,10 @@ function convergeRuntimeManifest(
 		paths,
 		{
 			...opts,
+			hostedOpenClawSkillDriver: opts?.hostedOpenClawSkillDriver ?? {
+				...hostedOpenClawSkillDriver,
+				resolveWorkspace: () => join(paths.userHome, ".openclaw", "workspace"),
+			},
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? {
 				expectedIdentity: {
 					home: paths.userHome,

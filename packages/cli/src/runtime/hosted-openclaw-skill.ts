@@ -1,5 +1,9 @@
 import { existsSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import {
+	type OpenClawAgentWorkspace,
+	parseOpenClawAgentWorkspaces,
+} from "../adapters/openclaw-workspace";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
@@ -18,6 +22,7 @@ const EXCLUDED_NATIVE_FILES = new Set([SOURCE_RECEIPT]);
 const RECEIPT_SCHEMA = "clawdi.openclawManifestSkillReceipt.v2";
 
 export interface HostedOpenClawSkillDriver {
+	resolveWorkspace(input: { home: string }): string;
 	installDirectory(input: {
 		home: string;
 		workspaceRoot: string;
@@ -38,12 +43,18 @@ export interface HostedOpenClawSkillDriver {
 	}): "absent" | "removed";
 }
 
-function commandPath(home: string): string {
+function installedCommandPath(home: string): string | null {
 	for (const candidate of [
 		join(home, ".local", "bin", "openclaw"),
 		join(home, ".openclaw", "bin", "openclaw"),
 	])
 		if (executableExists(candidate)) return candidate;
+	return null;
+}
+
+function commandPath(home: string): string {
+	const command = installedCommandPath(home);
+	if (command) return command;
 	throw new Error("installed OpenClaw Skill CLI is unavailable");
 }
 const targetDir = (workspaceRoot: string, skillId: string) =>
@@ -61,38 +72,29 @@ function receiptInput(workspaceRoot: string, skillId: string, ownershipIdentity:
 	};
 }
 
-function assertOfficialWorkspace(input: { home: string; workspaceRoot: string }): void {
-	const result = spawnRuntimeUserCommand(
-		commandPath(input.home),
-		["agents", "list", "--json"],
-		input.home,
-		input.workspaceRoot,
-		{ timeoutMs: 15_000, maxBufferBytes: 1024 * 1024 },
-	);
+function resolveOfficialWorkspace(home: string): string {
+	const command = commandPath(home);
+	const result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
+		timeoutMs: 15_000,
+		maxBufferBytes: 1024 * 1024,
+	});
 	if (result.status !== 0)
 		throw new Error("OpenClaw official agent workspace roster is unavailable");
-	let roster: unknown;
+	let roster: OpenClawAgentWorkspace[];
 	try {
-		roster = JSON.parse(String(result.stdout));
+		roster = parseOpenClawAgentWorkspaces(String(result.stdout));
 	} catch {
 		throw new Error("OpenClaw official agent workspace roster is malformed");
 	}
-	if (!Array.isArray(roster))
+	const main = roster.filter((entry) => entry.id === OPENCLAW_AGENT_ID);
+	if (main.length !== 1 || !isAbsolute(main[0].workspace))
 		throw new Error("OpenClaw official agent workspace roster is malformed");
-	const main = roster.filter((entry): entry is Record<string, unknown> =>
-		Boolean(
-			entry &&
-				typeof entry === "object" &&
-				!Array.isArray(entry) &&
-				(entry as Record<string, unknown>).id === OPENCLAW_AGENT_ID,
-		),
-	);
-	if (main.length !== 1 || typeof main[0].workspace !== "string" || !isAbsolute(main[0].workspace))
-		throw new Error("OpenClaw official agent workspace roster is malformed");
-	if (resolve(main[0].workspace) !== resolve(input.workspaceRoot))
-		throw new Error(
-			"OpenClaw official agent workspace does not match the desired manifest workspace",
-		);
+	return resolve(main[0].workspace);
+}
+
+function assertOfficialWorkspace(input: { home: string; workspaceRoot: string }): void {
+	if (resolveOfficialWorkspace(input.home) !== resolve(input.workspaceRoot))
+		throw new Error("OpenClaw official agent workspace changed during Skill reconciliation");
 }
 
 function nativeResultMatches(sourceDir: string, target: string): boolean {
@@ -103,6 +105,9 @@ function nativeResultMatches(sourceDir: string, target: string): boolean {
 }
 
 export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
+	resolveWorkspace(input) {
+		return resolveOfficialWorkspace(input.home);
+	},
 	installDirectory(input) {
 		const target = targetDir(input.workspaceRoot, input.skillId);
 		const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
