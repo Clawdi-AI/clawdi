@@ -250,7 +250,9 @@ const fs = require("fs");
 const http = require("http");
 const existing = fs.readFileSync(${JSON.stringify(tenantExisting)}, "utf8");
 fs.writeFileSync(${JSON.stringify(serviceCreated)}, existing);
-fs.mkdirSync(${JSON.stringify(join(paths.fileBrowserStateRoot, "cache"))});
+fs.mkdirSync(${JSON.stringify(join(runtimeHome, "tmp", "thumbnails"))}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(runtimeHome, "tmp", "thumbnails", "preview.jpg"))}, "preview\\n");
+fs.mkdirSync(${JSON.stringify(join(paths.fileBrowserStateRoot, "cache"))}, { recursive: true });
 fs.writeFileSync(${JSON.stringify(join(paths.fileBrowserStateRoot, "filebrowser.db"))}, "service-state\\n");
 http.createServer((request, response) => {
   if (request.url === "/read-new") {
@@ -347,33 +349,36 @@ http.createServer((request, response) => {
 			},
 		},
 	};
-	const before = readSystemdUnitSnapshot(paths);
-	let failed = before;
-	const result = convergeRuntimeManifest(load, paths, {
-		fileBrowserInstallOptions: {
-			download: (_url, destination) => writeFileSync(destination, binary),
-		},
-		systemdApply: {
-			quiesce: () => {
-				failed = readSystemdUnitSnapshot(paths);
-				quiesceSystemdRuntimeCandidate(paths, failed);
+	const converge = () => {
+		const before = readSystemdUnitSnapshot(paths);
+		let failed = before;
+		return convergeRuntimeManifest(load, paths, {
+			fileBrowserInstallOptions: {
+				download: (_url, destination) => writeFileSync(destination, binary),
 			},
-			activateEgressPrerequisite: () => ({
-				applied: true,
-				systemUnitsChanged: [],
-				userUnitsChanged: [],
-			}),
-			activate: () => {
-				failed = readSystemdUnitSnapshot(paths);
-				return applySystemdRuntimeUpdate(paths, before, failed);
+			systemdApply: {
+				quiesce: () => {
+					failed = readSystemdUnitSnapshot(paths);
+					quiesceSystemdRuntimeCandidate(paths, failed);
+				},
+				activateEgressPrerequisite: () => ({
+					applied: true,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+				}),
+				activate: () => {
+					failed = readSystemdUnitSnapshot(paths);
+					return applySystemdRuntimeUpdate(paths, before, failed);
+				},
+				rollback: () => {
+					applySystemdRuntimeUpdate(paths, failed, readSystemdUnitSnapshot(paths), {
+						recoverFailedUnits: false,
+					});
+				},
 			},
-			rollback: () => {
-				applySystemdRuntimeUpdate(paths, failed, readSystemdUnitSnapshot(paths), {
-					recoverFailedUnits: false,
-				});
-			},
-		},
-	});
+		});
+	};
+	const result = converge();
 	expect(result.installErrors).toEqual([]);
 
 	const serviceIdentity = spawnSync("getent", ["passwd", "clawdi-files"], {
@@ -491,6 +496,8 @@ http.createServer((request, response) => {
 		spawnSync("sleep", ["0.1"]);
 	}
 	expect(readinessStatus).toBe(0);
+	const reconverged = converge();
+	expect(reconverged.installErrors).toEqual([]);
 
 	const tenantWrite = spawnSync("runuser", [
 		"-u",
