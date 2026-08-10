@@ -18,23 +18,6 @@ export const openClawPluginInspectSchema = z
 				bundleFormat: z.string().min(1).optional(),
 			})
 			.passthrough(),
-		mcpServers: z.array(
-			z
-				.object({
-					name: z.string().min(1),
-					hasStdioTransport: z.boolean(),
-					unsupported: z.boolean().optional(),
-				})
-				.passthrough(),
-		),
-		diagnostics: z.array(
-			z
-				.object({
-					level: z.enum(["warn", "error"]),
-					message: z.string().min(1),
-				})
-				.passthrough(),
-		),
 		install: z
 			.object({
 				source: z.enum(["npm", "archive", "path", "clawhub", "git"]),
@@ -57,6 +40,26 @@ export const openClawPluginInspectSchema = z
 			.passthrough(),
 	})
 	.passthrough();
+
+const openClawMcpServerSchema = z
+	.object({
+		name: z.string().min(1),
+		hasStdioTransport: z.boolean(),
+		unsupported: z.boolean().optional(),
+	})
+	.passthrough();
+
+const openClawPluginDiagnosticSchema = z
+	.object({
+		level: z.enum(["warn", "error"]),
+		message: z.string().min(1),
+	})
+	.passthrough();
+
+export const openClawAgentPluginInspectSchema = openClawPluginInspectSchema.extend({
+	mcpServers: z.array(openClawMcpServerSchema),
+	diagnostics: z.array(openClawPluginDiagnosticSchema),
+});
 
 export const openClawPluginListSchema = z
 	.object({

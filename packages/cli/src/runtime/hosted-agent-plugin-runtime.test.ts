@@ -46,6 +46,7 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 		unsupported?: boolean;
 	}> | null = null;
 	openClawDiagnostics: Array<{ level: "warn" | "error"; message: string }> = [];
+	omitOpenClawComponentObservation = false;
 	readonly liveHome: string;
 
 	constructor() {
@@ -211,13 +212,17 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 						version: plugin.version,
 						installPath: this.installPath(input.home, runtime, plugin.nativeId),
 					},
-					mcpServers:
-						this.openClawMcpServersOverride ??
-						(plugin.mcpServerNames ?? []).map((name) => ({
-							name,
-							hasStdioTransport: true,
-						})),
-					diagnostics: this.openClawDiagnostics,
+					...(this.omitOpenClawComponentObservation
+						? {}
+						: {
+								mcpServers:
+									this.openClawMcpServersOverride ??
+									(plugin.mcpServerNames ?? []).map((name) => ({
+										name,
+										hasStdioTransport: true,
+									})),
+								diagnostics: this.openClawDiagnostics,
+							}),
 				}),
 				stderr: "",
 			};
@@ -455,6 +460,9 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		).not.toThrow();
 
 		for (const configure of [
+			(runner: FakeNativeRunner) => {
+				runner.omitOpenClawComponentObservation = true;
+			},
 			(runner: FakeNativeRunner) => {
 				runner.openClawMcpServersOverride = [{ name: "alpha", hasStdioTransport: true }];
 			},

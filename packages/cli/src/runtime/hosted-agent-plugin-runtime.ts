@@ -13,7 +13,7 @@ import {
 } from "./hosted-agent-plugin-package";
 import { AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR } from "./manifest-contract";
 import {
-	openClawPluginInspectSchema,
+	openClawAgentPluginInspectSchema,
 	openClawPluginListSchema,
 } from "./openclaw-plugin-observation";
 import {
@@ -271,7 +271,7 @@ function createOpenClawDriver(input: {
 		assertNativeId(listed.id);
 		const inspect = parseJson(
 			run(["plugins", "inspect", listed.id, "--json"]),
-			openClawPluginInspectSchema,
+			openClawAgentPluginInspectSchema,
 		);
 		const observedName = inspect.plugin.name ?? listed.name ?? "";
 		const version =
