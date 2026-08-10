@@ -20,6 +20,8 @@ const dockerfile = readFileSync(
 );
 const lockfile = readFileSync(resolve(repoRoot, "bun.lock"), "utf8");
 const cliPackage = readFileSync(resolve(repoRoot, "packages/cli/package.json"), "utf8");
+const cliVersion = (JSON.parse(cliPackage) as { version: string }).version;
+const cliRevisionProbeVersion = `${cliVersion}-revision-probe`;
 const sidecarPackage = readFileSync(
 	resolve(repoRoot, "packages/whatsapp-baileys-sidecar/package.json"),
 	"utf8",
@@ -144,9 +146,20 @@ describe("WhatsApp sidecar production deployment contract", () => {
 			new Map([
 				[
 					"packages/cli/package.json",
-					replaceOnce(cliPackage, '"version": "0.13.45"', '"version": "0.13.46"'),
+					replaceOnce(
+						cliPackage,
+						`"version": "${cliVersion}"`,
+						`"version": "${cliRevisionProbeVersion}"`,
+					),
 				],
-				["bun.lock", replaceOnce(lockfile, '"version": "0.13.45"', '"version": "0.13.46"')],
+				[
+					"bun.lock",
+					replaceOnce(
+						lockfile,
+						`"version": "${cliVersion}"`,
+						`"version": "${cliRevisionProbeVersion}"`,
+					),
+				],
 			]),
 		);
 		const unrelatedDeploy = calculateWhatsAppSidecarDeploymentRevision(

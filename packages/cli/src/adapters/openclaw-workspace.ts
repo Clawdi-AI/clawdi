@@ -10,6 +10,20 @@ export function openClawAgentId(): string {
 	return process.env.OPENCLAW_AGENT_ID?.trim() || "main";
 }
 
+export function parseOpenClawAgentWorkspaces(output: string): OpenClawAgentWorkspace[] {
+	const parsed = JSON.parse(output) as unknown;
+	if (!Array.isArray(parsed)) return [];
+	return parsed.flatMap((value): OpenClawAgentWorkspace[] => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+		const entry = value as Record<string, unknown>;
+		return typeof entry.id === "string" &&
+			typeof entry.workspace === "string" &&
+			isAbsolute(entry.workspace)
+			? [{ id: entry.id, workspace: entry.workspace }]
+			: [];
+	});
+}
+
 export function listOpenClawAgentWorkspaces(): OpenClawAgentWorkspace[] {
 	const result = spawnSync("openclaw", ["agents", "list", "--json"], {
 		encoding: "utf8",
@@ -19,19 +33,8 @@ export function listOpenClawAgentWorkspaces(): OpenClawAgentWorkspace[] {
 	});
 	if (result.status === 0) {
 		try {
-			const parsed = JSON.parse(result.stdout) as unknown;
-			if (Array.isArray(parsed)) {
-				const summaries = parsed.flatMap((value): OpenClawAgentWorkspace[] => {
-					if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-					const entry = value as Record<string, unknown>;
-					return typeof entry.id === "string" &&
-						typeof entry.workspace === "string" &&
-						isAbsolute(entry.workspace)
-						? [{ id: entry.id, workspace: entry.workspace }]
-						: [];
-				});
-				if (summaries.length > 0) return summaries;
-			}
+			const summaries = parseOpenClawAgentWorkspaces(result.stdout);
+			if (summaries.length > 0) return summaries;
 		} catch {
 			// Invalid public CLI output is reported below.
 		}

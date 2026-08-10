@@ -142,14 +142,15 @@ TEST_HERMES_DASHBOARD_AUTH = {
 }
 
 
-def test_hosted_filebrowser_companion_enforces_pins_and_deployment_binding() -> None:
-    deployment_id = "hdep_files_contract"
-    companion = _filebrowser_companion(deployment_id)
+def test_hosted_filebrowser_companion_enforces_pins_and_auth_binding() -> None:
+    files_deployment_id = "hdep_files_contract"
+    companion = _filebrowser_companion(files_deployment_id)
     body = _runtime_state_body(
         str(uuid4()),
-        deployment_id=deployment_id,
         companions=companion,
     )
+
+    assert body["deployment_id"] != files_deployment_id
 
     validated = AdminRuntimeStateUpsert.model_validate(body)
     assert validated.companions is not None
@@ -168,11 +169,11 @@ def test_hosted_filebrowser_companion_enforces_pins_and_deployment_binding() -> 
     for field, value in (
         ("audience", "clawdi-files:hdep_other"),
         ("subject", "deployment:hdep_other:owner"),
-        ("requiredGroup", f"clawdi-files:{deployment_id}:{'b' * 64}"),
+        ("requiredGroup", f"clawdi-files:{files_deployment_id}:{'b' * 64}"),
     ):
         invalid = json.loads(json.dumps(body))
         invalid["companions"]["filebrowser"]["auth"][field] = value
-        with pytest.raises(ValidationError, match="Files authentication must be bound"):
+        with pytest.raises(ValidationError, match="Files authentication fields must reference"):
             AdminRuntimeStateUpsert.model_validate(invalid)
 
     unpinned = json.loads(json.dumps(body))

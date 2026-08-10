@@ -256,6 +256,29 @@ describe("Hosted Agent Plugin package preparation", () => {
 		expect(nativeCommands).toBe(0);
 	});
 
+	test("allows explicit loopback HTTP MCP URLs but rejects 127-prefixed DNS names", async () => {
+		const runtimePaths = paths();
+		const filesFor = (url: string) =>
+			pluginFiles({
+				$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+				mcpServers: { remote: { type: "streamable-http", url } },
+			});
+		for (const url of ["http://127.42.0.1/mcp", "http://[::1]/mcp"]) {
+			const files = filesFor(url);
+			await expect(
+				prepareHostedAgentPluginPackages(manifest("openclaw", treeDigest(files)), runtimePaths, {
+					fetcher: async () => archiveResponse(await archive(files)),
+				}),
+			).resolves.not.toBeNull();
+		}
+		const invalid = filesFor("http://127.example.com/mcp");
+		await expect(
+			prepareHostedAgentPluginPackages(manifest("openclaw", treeDigest(invalid)), runtimePaths, {
+				fetcher: async () => archiveResponse(await archive(invalid)),
+			}),
+		).rejects.toThrow("Agent Plugin remote MCP URL must use HTTPS");
+	});
+
 	test("validates repo-root packages and excludes sibling files for a subpath source", async () => {
 		const rootPaths = paths();
 		const rootFiles = pluginFiles();

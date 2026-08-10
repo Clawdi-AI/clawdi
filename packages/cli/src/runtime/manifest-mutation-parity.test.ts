@@ -127,7 +127,11 @@ test("keeps real Hosted converge mutations inside its exact root and runtime-use
 	fsOriginals.writeFileSync(
 		openclaw,
 		`#!/bin/sh
-[ "\${1:-}" != "--version" ] || printf '%s\\n' '2026.7.1'
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
+elif [ "\${1:-}" = "--version" ]; then
+  printf '%s\\n' '2026.7.1'
+fi
 exit 0
 `,
 	);

@@ -714,17 +714,20 @@ explicitly cleared or replaced so inherited process state cannot redirect the
 probe into the live Hosted profile. The proof binds the command, injected
 runner identity, package ownership identity, and observed native id; one failed
 package prevents every live package mutation. Missing, old, or incompatible
-runtimes fail with the stable unsupported-capability error. This follows
-OpenClaw support commit
-`f4387b7a5effd63fe2c0f05495175b9eacd12cec` and Hermes support head
-`255e6987b6150341a732d227a3e4d39d665752ca`, neither of which is inferred from a
-published SemVer.
+runtimes fail with the stable unsupported-capability error. Native main-branch
+support is represented by OpenClaw commit
+`f4387b7a5effd63fe2c0f05495175b9eacd12cec` and the canonical Hermes Agent
+Plugins commit `8cb066404e3edc3501a07a408c59834dc745cc74`. Those commits do not
+establish a Hosted rollout or released runtime version; the CLI proves the
+installed binary's capability and never infers support from a published SemVer.
 
 Hermes support is limited to Agent Plugins Skills and stdio MCP servers.
-Hermes main added portable streamable-http mapping and cross-origin header
-stripping in commit `471baea520e89220c7a5306d6410b5c8ce7e34d5`, but the public
-native CLI observation still cannot distinguish a registered remote component
-from an install that succeeded while skipping that component diagnostically.
+Hermes main added portable streamable-http execution and cross-origin header
+stripping in commit `471baea520e89220c7a5306d6410b5c8ce7e34d5`, but that runtime
+capability is distinct from both Hosted rollout status and Clawdi's proof
+surface. The public native JSON observation still cannot distinguish a
+registered remote component from an install that succeeded while skipping that
+component diagnostically.
 Hosted therefore rejects streamable-http and SSE, as well as unknown or
 malformed transports, before the isolated probe. Package validation also
 checks Skill frontmatter and the complete supported stdio command, args, env,

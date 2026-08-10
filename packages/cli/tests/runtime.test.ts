@@ -20,6 +20,7 @@ import { parse as parseYaml } from "yaml";
 import {
 	applySystemdRuntimeUpdate,
 	commitRuntimeAppliedState,
+	quiesceSystemdRuntimeCandidate,
 	readSystemdUnitSnapshot,
 	runtimeAppliedContentIdentity,
 	runtimeInit as runtimeInitWithContext,
@@ -51,13 +52,13 @@ import {
 	rollbackPendingRuntimeCliUpgrade,
 } from "../src/runtime/cli-update";
 import { withRuntimeConvergeLock } from "../src/runtime/converge-lock";
-import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "../src/runtime/egress-env";
 import {
 	deniedCommandReason,
 	evaluateHostPolicyForCommand,
 	readHostPolicy,
 } from "../src/runtime/host-policy";
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
+import { hostedOpenClawSkillDriver } from "../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
@@ -92,6 +93,7 @@ import {
 	writeRuntimeWatchStatus,
 } from "../src/runtime/state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
+import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
 import { mockFetch } from "./commands/helpers";
 
@@ -229,6 +231,10 @@ function convergeRuntimeManifest(
 		paths,
 		{
 			...opts,
+			hostedOpenClawSkillDriver: opts?.hostedOpenClawSkillDriver ?? {
+				...hostedOpenClawSkillDriver,
+				resolveWorkspace: () => join(paths.userHome, ".openclaw", "workspace"),
+			},
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 		},
 	);
@@ -1064,12 +1070,17 @@ function cachedHostedCliDesiredState(home: string, packageSpec: string): Runtime
 function seedOpenClawBinary(home: string): void {
 	const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
+	const workspace = join(home, ".openclaw", "workspace");
 	mkdirSync(dirname(openclawBin), { recursive: true });
 	writeFileSync(
 		openclawBin,
 		`#!/bin/sh
 if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\n'
+  exit 0
+fi
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${workspace}"}]\n'
   exit 0
 fi
 if [ "$*" = "gateway install --force --json" ]; then
@@ -1133,6 +1144,7 @@ function openClawWhatsAppPluginInspectFixture(pluginSource: string): Record<stri
 function seedOfficialOpenClawServiceInstaller(home: string): void {
 	const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
+	const workspace = join(home, ".openclaw", "workspace");
 	mkdirSync(dirname(openclawBin), { recursive: true });
 	writeFileSync(
 		openclawBin,
@@ -1140,6 +1152,10 @@ function seedOfficialOpenClawServiceInstaller(home: string): void {
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
+  exit 0
+fi
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${workspace}"}]\\n'
   exit 0
 fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
@@ -1596,6 +1612,7 @@ function writeFakeOpenClawMcpBinary(
 ): { commandPath: string; configPath: string } {
 	const commandPath = join(home, ".openclaw", "bin", "openclaw");
 	const configPath = join(home, ".openclaw", "openclaw.json");
+	const workspace = join(home, ".openclaw", "workspace");
 	const logSet = options.callsPath
 		? `printf 'set %s\\n' "\${3:?missing server name}" >> '${options.callsPath}'`
 		: ":";
@@ -1617,7 +1634,7 @@ function writeFakeOpenClawMcpBinary(
 		`#!/usr/bin/env bash
 set -euo pipefail
 if [ "$*" = "agents list --json" ]; then
-  printf '[{"id":"main","workspace":"${home}/workspace"}]\n'
+  printf '[{"id":"main","workspace":"${workspace}"}]\n'
   exit 0
 fi
 if [ "\${1:-} \${2:-}" = "skills install" ]; then
@@ -1626,9 +1643,9 @@ if [ "\${1:-} \${2:-}" = "skills install" ]; then
     if [ "$1" = "--as" ]; then slug="\${2:?missing slug}"; shift; fi
     shift
   done
-  rm -rf "${home}/workspace/skills/$slug"
-  mkdir -p "${home}/workspace/skills/$slug"
-  cp -R "$source/." "${home}/workspace/skills/$slug/"
+  rm -rf "${workspace}/skills/$slug"
+  mkdir -p "${workspace}/skills/$slug"
+  cp -R "$source/." "${workspace}/skills/$slug/"
   exit 0
 fi
 if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ]; then
@@ -2872,7 +2889,7 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.source).toBe("remote-datasource");
 			expect(loaded.sourcePath).toBe("https://runtime.test/v1/runtime/manifest");
 			expect(loaded.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
-			expect(loaded.manifest.workspaceRoot).toBe(home);
+			expect(loaded.manifest.workspaceRoot).toBeUndefined();
 			expect(loaded.manifest.environmentId).toBe("env_test");
 			expect(loaded.manifest.controlPlane.apiUrl).toBe("https://cloud-api.test");
 			expect(loaded.manifest.clawdiCli?.source).toBe("npm:clawdi");
@@ -6065,6 +6082,7 @@ exit 64
 			const apply = (load: RuntimeManifestLoad) =>
 				convergeRuntimeManifest(load, paths, {
 					systemdApply: {
+						quiesce: () => {},
 						activateEgressPrerequisite: () => ({
 							applied: true,
 							systemUnitsChanged: [],
@@ -7080,6 +7098,10 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
   exit 0
 fi
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\\n'
+  exit 0
+fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat >> '${openclawPatch}'
   printf '\\n' >> '${openclawPatch}'
@@ -7701,17 +7723,28 @@ fi
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
+		const failNextSidecarActivation = join(root, "fail-next-sidecar-activation");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		seedOpenClawBinary(home);
+		writeFileSync(failNextSidecarActivation, "fail\n");
 		writeFileSync(
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
-printf 'systemctl failed\\n' >&2
-exit 42
+set -euo pipefail
+if [ "\${1:-}" = "--user" ]; then shift; fi
+if [ "\${1:-}" = "show" ]; then
+  printf 'LoadState=loaded\\nActiveState=active\\n'
+elif [ "\${1:-}" = "is-enabled" ]; then
+  printf 'enabled\\n'
+elif { [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; } && [[ " $* " = *" clawdi-runtime-sidecar.service "* ]] && [ -f '${failNextSidecarActivation}' ]; then
+  rm -f '${failNextSidecarActivation}'
+  printf 'injected sidecar activation failure\\n' >&2
+  exit 42
+fi
 `,
 		);
 		chmodSync(join(bin, "systemctl"), 0o700);
@@ -8759,6 +8792,53 @@ fi
 		expect(readFileSync(sidecarState, "utf-8")).toBe("inactive\n");
 	});
 
+	it("quiesces candidate services before their transparent-egress handoff is removed", () => {
+		const home = join(root, "home", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const systemctlPath = join(root, "bin", "systemctl");
+		const systemctlLog = join(root, "systemctl-quiesce.log");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		const paths = getRuntimePaths();
+		mkdirSync(dirname(systemctlPath), { recursive: true });
+		mkdirSync(dirname(paths.egressTransparentEnv), { recursive: true });
+		writeFileSync(paths.egressTransparentEnv, "CLAWDI_EGRESS_TRANSPARENT_PORT=27212\n");
+		writeFileSync(
+			systemctlPath,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${systemctlLog}'
+if [ "\${1:-}" = "stop" ] && [[ " $* " = *" clawdi-runtime-sidecar.service "* ]]; then
+  test -f '${paths.egressTransparentEnv}'
+  printf 'sidecar-env-present\\n' >> '${systemctlLog}'
+fi
+`,
+		);
+		chmodSync(systemctlPath, 0o700);
+		const candidate: Parameters<typeof quiesceSystemdRuntimeCandidate>[1] = {
+			system: new Map([
+				["clawdi-runtime-watch.service", "watch"],
+				["clawdi-daemon.service", "daemon"],
+				["clawdi-runtime-sidecar.service", "sidecar"],
+				["clawdi-files.service", "files"],
+			]),
+			user: new Map([["openclaw-gateway.service", "gateway"]]),
+		};
+
+		quiesceSystemdRuntimeCandidate(paths, candidate);
+		rmSync(paths.egressTransparentEnv);
+
+		expect(readFileSync(systemctlLog, "utf-8").trim().split("\n")).toEqual([
+			"--user stop openclaw-gateway.service",
+			"stop clawdi-daemon.service clawdi-files.service clawdi-runtime-sidecar.service",
+			"sidecar-env-present",
+		]);
+	});
+
 	it("runtime watch hands off before convergence and the new CLI completes the transaction", async () => {
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
@@ -8983,6 +9063,8 @@ set -euo pipefail
 printf '%s\n' "$*" >> '${installerLog}'
 if [ "$*" = "--version" ]; then
   printf '%s\n' '${runtime}-test-version'
+elif [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\n'
 elif [ "$*" = "${installArgs}" ]; then
   printf '%s\n' 'official ${runtime} installer' >> '${systemctlLog}'
   test -r '${paths.egressSystemCaFile}'
@@ -9398,9 +9480,21 @@ fi
 			expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedSecretCache);
 			const rollbackSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
 			expect(rollbackSystemctlCalls).not.toContain("official openclaw installer");
-			expect(
-				rollbackSystemctlCalls.filter((call) => call === "restart clawdi-runtime-sidecar.service"),
-			).toHaveLength(2);
+			const failedRestart = rollbackSystemctlCalls.indexOf(
+				"restart clawdi-runtime-sidecar.service",
+			);
+			const quiesce = rollbackSystemctlCalls.findIndex(
+				(call) => call.startsWith("stop ") && call.includes("clawdi-runtime-sidecar.service"),
+			);
+			const priorStart = rollbackSystemctlCalls.findIndex(
+				(call, index) =>
+					index > quiesce &&
+					(call.startsWith("start ") || call.startsWith("restart ")) &&
+					call.includes("clawdi-runtime-sidecar.service"),
+			);
+			expect(failedRestart).toBeGreaterThanOrEqual(0);
+			expect(quiesce).toBeGreaterThan(failedRestart);
+			expect(priorStart).toBeGreaterThan(quiesce);
 
 			writeFileSync(systemctlLog, "");
 			logs.length = 0;
@@ -11914,6 +12008,10 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
   exit 0
 fi
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\\n'
+  exit 0
+fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   printf '%s\n' "$*" >> '${openclawPatchArgs}'
   cat >> '${openclawPatch}'
@@ -13931,7 +14029,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		).toThrow("no bundled hosted skill clawdi version 2 is registered");
 		expect(existsSync(ledgerPath)).toBe(false);
 
-		const openclawSkill = join(home, "workspace", "skills", "clawdi");
+		const openclawSkill = join(home, ".openclaw", "workspace", "skills", "clawdi");
 		mkdirSync(openclawSkill, { recursive: true });
 		writeFileSync(join(openclawSkill, "SKILL.md"), "local setup skill\n");
 		reserveManagedSkill({
@@ -13965,9 +14063,9 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
 			runtimes: { openclaw: ["clawdi", "search-proxy"] },
 		});
-		expect(existsSync(join(workspace, "skills", ".clawdi-manifest-receipts", "clawdi.json"))).toBe(
-			true,
-		);
+		expect(
+			existsSync(join(dirname(openclawSkill), ".clawdi-manifest-receipts", "clawdi.json")),
+		).toBe(true);
 
 		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());
 		expect(updated.installErrors).toEqual([]);
@@ -14877,6 +14975,9 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		expect(transparentEgressEnv).toContain(
 			'CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"',
 		);
+		expect(transparentEgressEnv).toContain(
+			`CLAWDI_EGRESS_TRANSPARENT_PORT="${TRANSPARENT_EGRESS_PORT}"`,
+		);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_GID="10001"');
@@ -15043,9 +15144,10 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
-		const soulPath = join(workspace, "SOUL.md");
+		const soulPath = join(home, ".openclaw", "workspace", "SOUL.md");
 		const userPath = join(workspace, "USER.md");
 		mkdirSync(workspace, { recursive: true });
+		mkdirSync(dirname(soulPath), { recursive: true });
 		writeFileSync(soulPath, "User preface.\n\nUser epilogue.\n");
 		writeFileSync(userPath, "User profile stays untouched.\n");
 		process.env.HOME = home;

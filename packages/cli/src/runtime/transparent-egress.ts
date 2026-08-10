@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 export const TRANSPARENT_EGRESS_TRANSPORT_VERSION = "clawdi-transparent-egress-v1";
 export const TRANSPARENT_EGRESS_TABLE = "clawdi_transparent_egress";
+export const TRANSPARENT_EGRESS_PORT = 27_212;
 
 export interface TransparentEgressNftRulesInput {
 	table?: string;

@@ -45,7 +45,11 @@ test("never chmods the four platform roots that child writes touch", async () =>
 	writeFileSync(
 		openclaw,
 		`#!/bin/sh
-[ "\${1:-}" != "--version" ] || printf '%s\\n' '2026.7.1'
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
+elif [ "\${1:-}" = "--version" ]; then
+  printf '%s\\n' '2026.7.1'
+fi
 exit 0
 `,
 	);

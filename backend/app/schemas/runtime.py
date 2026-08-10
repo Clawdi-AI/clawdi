@@ -130,6 +130,19 @@ class HostedFileBrowserAuth(BaseModel):
     requiredGroup: str = Field(min_length=1, max_length=256)
     accessRevision: str = Field(pattern=r"^[0-9a-f]{64}$")
 
+    @model_validator(mode="after")
+    def validate_deployment_binding(self) -> "HostedFileBrowserAuth":
+        audience_prefix = "clawdi-files:"
+        deployment_id = self.audience.removeprefix(audience_prefix)
+        if (
+            not deployment_id
+            or self.audience != f"{audience_prefix}{deployment_id}"
+            or self.subject != f"deployment:{deployment_id}:owner"
+            or self.requiredGroup != f"{self.audience}:{self.accessRevision}"
+        ):
+            raise ValueError("Files authentication fields must reference one deployment revision")
+        return self
+
 
 class HostedFileBrowserCompanion(BaseModel):
     model_config = ConfigDict(extra="forbid")

@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import {
 	readRuntimeInstallReceipts,
 	runtimeInstallReceiptsPath,
@@ -66,6 +67,10 @@ function convergeRuntimeManifest(
 		paths,
 		{
 			...opts,
+			hostedOpenClawSkillDriver: opts?.hostedOpenClawSkillDriver ?? {
+				...hostedOpenClawSkillDriver,
+				resolveWorkspace: () => join(paths.userHome, ".openclaw", "workspace"),
+			},
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? {
 				expectedIdentity: {
 					home: paths.userHome,
@@ -1199,6 +1204,7 @@ describe("runtime manifest services", () => {
 			paths,
 			{
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => {
 						prerequisiteActivations += 1;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
@@ -1282,6 +1288,7 @@ describe("runtime manifest services", () => {
 				paths,
 				{
 					systemdApply: {
+						quiesce: () => {},
 						activateEgressPrerequisite: () => ({
 							applied: true,
 							systemUnitsChanged: [],
@@ -1501,6 +1508,7 @@ describe("runtime manifest services", () => {
 					authorityCommits += 1;
 				},
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
@@ -1543,6 +1551,7 @@ describe("runtime manifest services", () => {
 			paths,
 			{
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
@@ -1660,6 +1669,7 @@ describe("runtime manifest services", () => {
 				authorityCommits += 1;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
@@ -1686,6 +1696,7 @@ describe("runtime manifest services", () => {
 
 		const retried = convergeRuntimeManifest(load, paths, {
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
@@ -1736,6 +1747,7 @@ describe("runtime manifest services", () => {
 			paths,
 			{
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
@@ -1800,6 +1812,7 @@ describe("runtime manifest services", () => {
 					authorityCommits += 1;
 				},
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
@@ -2251,6 +2264,7 @@ esac
 				authorityCommits += 1;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],

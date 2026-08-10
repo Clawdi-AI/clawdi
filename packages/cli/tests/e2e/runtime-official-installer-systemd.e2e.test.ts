@@ -14,7 +14,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { applySystemdRuntimeUpdate, readSystemdUnitSnapshot } from "../../src/commands/runtime";
+import {
+	applySystemdRuntimeUpdate,
+	quiesceSystemdRuntimeCandidate,
+	readSystemdUnitSnapshot,
+} from "../../src/commands/runtime";
 import { convergeRuntimeManifest } from "../../src/runtime/manifest";
 import {
 	FILE_BROWSER_AMD64_SHA256,
@@ -350,6 +354,10 @@ http.createServer((request, response) => {
 			download: (_url, destination) => writeFileSync(destination, binary),
 		},
 		systemdApply: {
+			quiesce: () => {
+				failed = readSystemdUnitSnapshot(paths);
+				quiesceSystemdRuntimeCandidate(paths, failed);
+			},
 			activateEgressPrerequisite: () => ({
 				applied: true,
 				systemUnitsChanged: [],

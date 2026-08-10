@@ -438,7 +438,6 @@ export function hostedManifestToRuntimeManifest(
 	applyGeneration?: number,
 ): RuntimeManifest {
 	const paths = getRuntimePaths({ mode: "hosted" });
-	const workspaceRoot = paths.workspaceRoot;
 	const selectedRuntime = hosted.runtime;
 	const runtime = hosted.runtimes[selectedRuntime];
 	return {
@@ -451,7 +450,6 @@ export function hostedManifestToRuntimeManifest(
 		issuedAt: hosted.issuedAt,
 		expiresAt: hosted.expiresAt,
 		locale: hosted.locale,
-		workspaceRoot,
 		runtime: selectedRuntime,
 		controlPlane: {
 			apiUrl: hosted.controlPlane.cloudApiUrl,
@@ -470,11 +468,11 @@ export function hostedManifestToRuntimeManifest(
 					home: paths.userHome,
 					args: OFFICIAL_INSTALL_ARGS[selectedRuntime],
 				},
-				run: hostedRuntimeRunSettings(runtime.run, workspaceRoot),
+				run: hostedRuntimeRunSettings(runtime.run),
 				services: Object.fromEntries(
 					Object.entries(runtime.services ?? {}).map(([service, run]) => [
 						service,
-						hostedRuntimeServiceRunSettings(run, workspaceRoot),
+						hostedRuntimeServiceRunSettings(run),
 					]),
 				),
 				...hostedRuntimeProviderBinding(runtime),
@@ -511,27 +509,20 @@ function hostedRuntimeProviderBinding(
 	return { provider_ids: runtime.provider_ids, primary_model: runtime.primary_model };
 }
 
-function hostedRuntimeRunSettings(
-	run: RuntimeRunSettings | undefined,
-	runtimeWorkspace: string,
-): RuntimeRunSettings {
-	const cwd = run?.cwd ?? runtimeWorkspace;
+function hostedRuntimeRunSettings(run: RuntimeRunSettings | undefined): RuntimeRunSettings {
 	const settings: RuntimeRunSettings = {
 		env: run?.env ?? {},
-		cwd,
 		prependPath: run?.prependPath ?? [],
 	};
 	if (run?.command !== undefined) settings.command = run.command;
 	if (run?.args !== undefined) settings.args = run.args;
 	if (run?.secretEnv !== undefined) settings.secretEnv = run.secretEnv;
+	if (run?.cwd !== undefined) settings.cwd = run.cwd;
 	return settings;
 }
 
-function hostedRuntimeServiceRunSettings(
-	run: RuntimeRunSettings,
-	runtimeWorkspace: string,
-): RuntimeRunSettings {
-	return hostedRuntimeRunSettings(run, runtimeWorkspace);
+function hostedRuntimeServiceRunSettings(run: RuntimeRunSettings): RuntimeRunSettings {
+	return hostedRuntimeRunSettings(run);
 }
 
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {

@@ -10,6 +10,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createGunzip } from "node:zlib";
@@ -708,6 +709,37 @@ function assertScopedPortablePath(value: string): void {
 	}
 }
 
+function explicitUrlHostname(value: string): string | null {
+	const schemeEnd = value.indexOf("://");
+	if (schemeEnd < 0) return null;
+	const remainder = value.slice(schemeEnd + 3);
+	const authorityEnd = remainder.search(/[/?#]/);
+	const authority = authorityEnd < 0 ? remainder : remainder.slice(0, authorityEnd);
+	if (!authority) return null;
+	if (authority.startsWith("[")) {
+		const close = authority.indexOf("]");
+		if (close < 0 || !/^(?::[0-9]+)?$/.test(authority.slice(close + 1))) return null;
+		return authority.slice(1, close);
+	}
+	const colon = authority.lastIndexOf(":");
+	if (colon < 0) return authority;
+	if (authority.indexOf(":") !== colon || !/^[0-9]+$/.test(authority.slice(colon + 1))) {
+		return null;
+	}
+	return authority.slice(0, colon);
+}
+
+function isExplicitLoopbackHostname(value: string): boolean {
+	const hostname = explicitUrlHostname(value)?.toLowerCase();
+	if (!hostname) return false;
+	return (
+		hostname === "localhost" ||
+		hostname === "::1" ||
+		hostname === "0:0:0:0:0:0:0:1" ||
+		(isIP(hostname) === 4 && hostname.split(".")[0] === "127")
+	);
+}
+
 function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 	let url: URL;
 	try {
@@ -725,10 +757,9 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 		throw new Error("Agent Plugin remote MCP URL is invalid");
 	}
 	if (url.protocol === "http:") {
-		const host = url.hostname.toLowerCase();
-		const loopback =
-			host === "localhost" || host === "127.0.0.1" || host.startsWith("127.") || host === "[::1]";
-		if (!loopback) throw new Error("Agent Plugin remote MCP URL must use HTTPS");
+		if (!isExplicitLoopbackHostname(server.url)) {
+			throw new Error("Agent Plugin remote MCP URL must use HTTPS");
+		}
 	}
 	const headerNames = new Set<string>();
 	for (const [name, value] of Object.entries(server.headers ?? {})) {

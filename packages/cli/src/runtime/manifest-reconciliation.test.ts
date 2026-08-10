@@ -626,6 +626,7 @@ function writeFakeGatewayCli(input: {
 	unitPath: string;
 	configPatchPath?: string;
 	failInstall?: boolean;
+	skillInstallSourceLog?: string;
 }): void {
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
@@ -657,17 +658,19 @@ EOF
   "gateway uninstall")
     rm -f '${input.unitPath}'
     ;;
-  "agents list --json")
-    printf '[{"id":"main","workspace":"%s"}]\n' "$PWD"
-    ;;
-  "skills install "*)
-    source_dir="$3"
-    skill_id="$7"
-    mkdir -p "$PWD/skills"
-    rm -rf "$PWD/skills/$skill_id"
-    cp -R "$source_dir" "$PWD/skills/$skill_id"
-    mkdir -p "$PWD/skills/$skill_id/.openclaw"
-    printf '{}\n' > "$PWD/skills/$skill_id/.openclaw/source-origin.json"
+	  "agents list --json")
+	    printf '[{"id":"main","workspace":"%s"}]\n' "$HOME/.openclaw/workspace"
+	    ;;
+	  "skills install "*)
+	    source_dir="$3"
+	    skill_id="$7"
+	    ${input.skillInstallSourceLog ? `printf '%s\\n' "$source_dir" > '${input.skillInstallSourceLog}'` : ""}
+	    workspace="$HOME/.openclaw/workspace"
+	    mkdir -p "$workspace/skills"
+	    rm -rf "$workspace/skills/$skill_id"
+	    cp -R "$source_dir" "$workspace/skills/$skill_id"
+	    mkdir -p "$workspace/skills/$skill_id/.openclaw"
+	    printf '{}\n' > "$workspace/skills/$skill_id/.openclaw/source-origin.json"
     ;;
   *)
     printf 'unexpected ${input.runtime} command: %s\\n' "$*" >&2
@@ -682,7 +685,7 @@ esac
 type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
 
 function fileBrowserCompanion(accessRevision = "a".repeat(64)): FileBrowserCompanion {
-	const audience = "clawdi-files:hdep_reconcile";
+	const audience = "clawdi-files:hdep_files_reconcile";
 	return {
 		version: FILE_BROWSER_VERSION,
 		commit: FILE_BROWSER_COMMIT,
@@ -709,7 +712,7 @@ function fileBrowserCompanion(accessRevision = "a".repeat(64)): FileBrowserCompa
 			groupsClaim: "groups",
 			secret: accessRevision.slice(0, 43),
 			audience,
-			subject: "deployment:hdep_reconcile:owner",
+			subject: "deployment:hdep_files_reconcile:owner",
 			requiredGroup: `${audience}:${accessRevision}`,
 			accessRevision,
 		},
@@ -769,9 +772,15 @@ function fileBrowserManifestLoad(manifest: RuntimeManifest): RuntimeManifestLoad
 }
 
 function fileBrowserApplyHooks(
-	input: { activationApplied?: boolean; onActivate?: () => void; onRollback?: () => void } = {},
+	input: {
+		activationApplied?: boolean;
+		onActivate?: () => void;
+		onQuiesce?: () => void;
+		onRollback?: () => void;
+	} = {},
 ) {
 	return {
+		quiesce: () => input.onQuiesce?.(),
 		activateEgressPrerequisite: successfulPrerequisiteActivation,
 		activate: () => {
 			input.onActivate?.();
@@ -1022,6 +1031,10 @@ case "\${1:-}" in
   --version)
     printf '%s\\n' 'OpenClaw test-version'
     ;;
+  agents)
+    [[ "\${2:-}" == list && "\${3:-}" == --json ]] || exit 2
+    printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
+    ;;
   config)
     [[ "\${2:-}" == patch && "\${3:-}" == --stdin ]] || exit 2
     cat >/dev/null
@@ -1133,6 +1146,9 @@ chmod 0755 '${commandPath}'
 					writeFileSync(eventLog, "activation\n", { flag: "a" });
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 				},
+				quiesce: () => {
+					throw new Error("successful cold boot must not quiesce");
+				},
 				rollback: () => {
 					throw new Error("successful cold boot must not roll back");
 				},
@@ -1175,7 +1191,7 @@ chmod 0755 '${commandPath}'
 		};
 		writeFileSync(eventLog, "");
 		writeFileSync(join(paths.userHome, ".openclaw", "fail-rollback"), "1\n");
-		let rollbackCalled = false;
+		const rollbackLifecycle: string[] = [];
 		const failed = convergeRuntimeManifest(
 			manifestLoad(nextManifest, "agent-plugin-authority-failure"),
 			paths,
@@ -1191,8 +1207,11 @@ chmod 0755 '${commandPath}'
 						expect(signal.restartUserUnits).toEqual(["openclaw-gateway.service"]);
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 					},
+					quiesce: () => {
+						rollbackLifecycle.push("quiesce");
+					},
 					rollback: () => {
-						rollbackCalled = true;
+						rollbackLifecycle.push("systemd rollback");
 					},
 				},
 			},
@@ -1202,7 +1221,7 @@ chmod 0755 '${commandPath}'
 		expect(failed.installErrors.join("\n")).toContain(
 			"runtime openclaw Agent Plugin acme.tools rollback failed",
 		);
-		expect(rollbackCalled).toBe(true);
+		expect(rollbackLifecycle).toEqual(["quiesce", "systemd rollback"]);
 		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
 		expect(readFileSync(join(pluginRoot, "plugin.json"), "utf8")).toContain('"version":"1.0.0"');
 	});
@@ -1838,6 +1857,10 @@ chmod 0755 '${commandPath}'
 			openclawBin,
 			[
 				"#!/bin/sh",
+				'if [ "$1 $2 $3" = "agents list --json" ]; then',
+				'  printf \'[{"id":"main","workspace":"%s"}]\\n\' "$HOME/.openclaw/workspace"',
+				"  exit 0",
+				"fi",
 				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
 				`  cat > '${patchPath}'`,
 				"  exit 0",
@@ -1894,6 +1917,10 @@ chmod 0755 '${commandPath}'
 			openclawBin,
 			[
 				"#!/bin/sh",
+				'if [ "$1 $2 $3" = "agents list --json" ]; then',
+				'  printf \'[{"id":"main","workspace":"%s"}]\\n\' "$HOME/.openclaw/workspace"',
+				"  exit 0",
+				"fi",
 				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
 				`  cat > '${patchPath}'`,
 				"  exit 0",
@@ -2470,6 +2497,11 @@ chmod 0755 '${commandPath}'
 
 	test("converges OpenClaw native token auth from canonical bundle secret refs", () => {
 		const paths = tempRuntimePaths();
+		writeFakeGatewayCli({
+			path: join(paths.userHome, ".openclaw", "bin", "openclaw"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
 		const manifest = baseManifest(
 			paths,
 			{
@@ -2550,6 +2582,11 @@ chmod 0755 '${commandPath}'
 
 	test("keeps hosted managed provider key out of the agent env", () => {
 		const paths = tempRuntimePaths();
+		writeFakeGatewayCli({
+			path: join(paths.userHome, ".openclaw", "bin", "openclaw"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
 		const manifest = baseManifest(
 			paths,
 			{
@@ -2984,6 +3021,7 @@ chmod 0755 '${commandPath}'
 			},
 			egressEngineEnsureOptions: { downloadCommand: curl.commandPath },
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: successfulPrerequisiteActivation,
 				rollback: () => {},
@@ -3021,6 +3059,7 @@ chmod 0755 '${commandPath}'
 			{
 				cacheLastGood: false,
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: successfulPrerequisiteActivation,
 					rollback: () => {},
@@ -3153,6 +3192,7 @@ chmod 0755 '${commandPath}'
 						);
 					},
 					systemdApply: {
+						quiesce: () => {},
 						activateEgressPrerequisite: successfulPrerequisiteActivation,
 						activate: ({ restartEgressSidecar }) => {
 							signals.push(restartEgressSidecar);
@@ -3354,6 +3394,7 @@ chmod 0755 '${commandPath}'
 				revisionA = authority.egressSidecarSecretRevision;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
 				rollback: () => {},
@@ -3375,6 +3416,7 @@ chmod 0755 '${commandPath}'
 				commit("000001", revisionB);
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					recoverySignals.push(restartEgressSidecar);
@@ -3405,6 +3447,7 @@ chmod 0755 '${commandPath}'
 				throw new Error("restart failure must not commit authority");
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3434,6 +3477,7 @@ chmod 0755 '${commandPath}'
 				throw new Error("injected authority commit failure");
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3465,6 +3509,7 @@ chmod 0755 '${commandPath}'
 				commit("000002", revisionC);
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3501,6 +3546,7 @@ chmod 0755 '${commandPath}'
 				mixedFailureCommits++;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3546,6 +3592,7 @@ chmod 0755 '${commandPath}'
 				legacyFailureCommits++;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3590,6 +3637,7 @@ chmod 0755 '${commandPath}'
 				legacyMissingCacheRestartCommits++;
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3638,6 +3686,7 @@ chmod 0755 '${commandPath}'
 				throw new Error("injected legacy authority commit failure");
 			},
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3685,6 +3734,7 @@ chmod 0755 '${commandPath}'
 				commitAuthority: (_convergence, authority) =>
 					writeAuthority("000001", authority.egressSidecarSecretRevision),
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: ({ restartEgressSidecar }) => {
 						legacySignals.push(restartEgressSidecar);
@@ -3809,6 +3859,7 @@ chmod 0755 '${commandPath}'
 			commitAuthority: (committedConvergence, authority) =>
 				commitTestRuntimeAuthority(currentLoad, paths, committedConvergence, authority),
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
@@ -3903,17 +3954,34 @@ chmod 0755 '${commandPath}'
 
 	test("does not mutate live state when runtime planning fails", () => {
 		const paths = tempRuntimePaths();
-		const workspaceRoot = join(paths.userHome, "clawdi");
-		const soulPath = join(workspaceRoot, "SOUL.md");
+		const openClawWorkspaceRoot = join(paths.userHome, ".openclaw", "workspace");
+		const soulPath = join(openClawWorkspaceRoot, "SOUL.md");
 		const staleRunConfig = join(paths.runConfigRoot, "stale-runtime.json");
 		const systemdUnit = join(paths.systemdUserRoot, "clawdi-openclaw.service");
 		const installerPath = join(dirname(paths.userHome), "openclaw-installer.sh");
 		const installerLog = join(dirname(paths.userHome), "openclaw-installer.log");
-		writeFileSync(installerPath, `#!/usr/bin/env bash\necho spawned > '${installerLog}'\nexit 0\n`);
+		writeFileSync(
+			installerPath,
+			`#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$HOME/.openclaw/bin"
+cat > "$HOME/.openclaw/bin/openclaw" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
+  exit 0
+fi
+exit 64
+EOF
+chmod 0700 "$HOME/.openclaw/bin/openclaw"
+echo spawned > '${installerLog}'
+`,
+		);
 		chmodSync(installerPath, 0o700);
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = installerPath;
-		mkdirSync(workspaceRoot, { recursive: true });
+		mkdirSync(openClawWorkspaceRoot, { recursive: true });
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
@@ -3964,7 +4032,8 @@ chmod 0755 '${commandPath}'
 			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
 			expect(readFileSync(path)).toEqual(expected);
 		}
-		expect(existsSync(installerLog)).toBe(false);
+		expect(readFileSync(installerLog, "utf8")).toBe("spawned\n");
+		expect(existsSync(join(paths.userHome, ".openclaw", "bin", "openclaw"))).toBe(false);
 	});
 
 	test("keeps the hosted skill ledger root owned while mutating the runtime-user skill tree", () => {
@@ -4235,6 +4304,57 @@ chmod 0755 '${commandPath}'
 		expect(shouldIgnoreUserSkill(userOwnedSibling, "user-owned")).toBe(false);
 	});
 
+	test("installs a bundled OpenClaw Skill from cleaned runtime-readable staging", () => {
+		const paths = tempRuntimePaths();
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		const sourceLog = join(dirname(paths.serviceStateRoot), "openclaw-skill-source.log");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath,
+			skillInstallSourceLog: sourceLog,
+		});
+		const manifest = baseManifest(
+			paths,
+			{ openclaw: { enabled: true, run: runSettings(command, ["gateway"]), services: {} } },
+			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
+		);
+		const target = join(paths.userHome, ".openclaw", "workspace", "skills", "clawdi");
+		const packageSource = resolve(
+			import.meta.dir,
+			"../..",
+			"skills",
+			"hosted-versions",
+			"1",
+			"clawdi",
+		);
+
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "bundled-openclaw-skill"), paths);
+
+		expect(result.installErrors).toEqual([]);
+		const stagedSource = readFileSync(sourceLog, "utf8").trim();
+		expect(stagedSource).not.toBe(packageSource);
+		expect(stagedSource.startsWith(join(tmpdir(), "clawdi-hosted-bundled-skill-"))).toBe(true);
+		expect(existsSync(stagedSource)).toBe(false);
+		expect(readFileSync(join(target, "SKILL.md"))).toEqual(
+			readFileSync(join(packageSource, "SKILL.md")),
+		);
+		expect(
+			existsSync(
+				join(
+					paths.userHome,
+					".openclaw",
+					"workspace",
+					"skills",
+					".clawdi-manifest-receipts",
+					"clawdi.json",
+				),
+			),
+		).toBe(true);
+		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
+	});
+
 	test("removes only strictly identified legacy bundled OpenClaw Skills without requiring a new receipt", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -4244,8 +4364,8 @@ chmod 0755 '${commandPath}'
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		});
-		const workspaceRoot = join(paths.userHome, "clawdi");
-		const target = join(workspaceRoot, "skills", "clawdi");
+		const openClawWorkspaceRoot = join(paths.userHome, ".openclaw", "workspace");
+		const target = join(openClawWorkspaceRoot, "skills", "clawdi");
 		const source = resolve(import.meta.dir, "../..", "skills", "hosted-versions", "1", "clawdi");
 		const bundle = loadHostedBundledSkill("clawdi", 1, source);
 		reconcileHostedBundledSkill({ bundle, targetDir: target, reserved: true });
@@ -4260,6 +4380,7 @@ chmod 0755 '${commandPath}'
 			paths,
 			{
 				hostedOpenClawSkillDriver: {
+					resolveWorkspace: () => openClawWorkspaceRoot,
 					installDirectory: () => "installed",
 					install: () => "installed",
 					verifyOwned: () => false,
@@ -4359,6 +4480,7 @@ chmod 0755 '${commandPath}'
 		let rollbackCalls = 0;
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-patch-failure"), paths, {
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => {
 					activateCalls += 1;
@@ -4452,6 +4574,7 @@ chmod 0755 '${commandPath}'
 					committed = true;
 				},
 				systemdApply: {
+					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: (signal) => {
 						expect(signal.staleSystemUnits).toEqual(["clawdi-runtime-sidecar.service"]);
@@ -4478,6 +4601,7 @@ chmod 0755 '${commandPath}'
 	test("uses an explicit managed snapshot allowlist without broad runtime roots", () => {
 		const paths = tempRuntimePaths();
 		const workspaceRoot = join(paths.userHome, "clawdi");
+		const openClawWorkspaceRoot = join(paths.userHome, ".openclaw", "workspace");
 		const manifest = baseManifest(paths, {
 			openclaw: { enabled: true, run: runSettings("openclaw", []), services: {} },
 			hermes: { enabled: true, run: runSettings("hermes", []), services: {} },
@@ -4539,7 +4663,7 @@ chmod 0755 '${commandPath}'
 				existingSystemDropIn,
 			].sort(),
 		);
-		expect(runtimeUserMutationTargets(manifest, paths, workspaceRoot, new Map())).toEqual(
+		expect(runtimeUserMutationTargets(manifest, paths, openClawWorkspaceRoot, new Map())).toEqual(
 			expect.arrayContaining([
 				join(paths.userHome, ".hermes", "auth.json"),
 				join(paths.userHome, ".hermes", "auth.lock"),
@@ -4553,13 +4677,13 @@ chmod 0755 '${commandPath}'
 			paths.runRoot,
 			paths.userHome,
 			workspaceRoot,
-			join(workspaceRoot, "SOUL.md"),
+			join(openClawWorkspaceRoot, "SOUL.md"),
 			join(paths.userHome, ".openclaw", "openclaw.json"),
 			join(paths.userHome, ".hermes", "config.yaml"),
 			join(paths.userHome, ".hermes", "SOUL.md"),
 			join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi"),
 			join(paths.userHome, ".codex", "config.toml"),
-			join(workspaceRoot, "skills", "clawdi"),
+			join(openClawWorkspaceRoot, "skills", "clawdi"),
 			join(paths.userHome, ".hermes", "skills", "clawdi"),
 			join(paths.localEnvironments, "openclaw.json"),
 			join(paths.systemdUserRoot, "clawdi-openclaw.service"),
@@ -4746,7 +4870,15 @@ chmod 0755 '${commandPath}'
 		const commandPath = join(appRoot, "bin", "openclaw");
 		const commandTarget = join(appRoot, "openclaw-entrypoint");
 		mkdirSync(dirname(commandPath), { recursive: true });
-		writeFileSync(commandTarget, "#!/bin/sh\nexit 0\n");
+		writeFileSync(
+			commandTarget,
+			`#!/bin/sh
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
+fi
+exit 0
+`,
+		);
 		chmodSync(commandTarget, 0o755);
 		symlinkSync(commandTarget, commandPath);
 		const manifest = baseManifest(paths, {
@@ -4934,7 +5066,7 @@ printf '{"ok":true}\\n'
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
 	});
 
-	test("restores exact installer targets and reconciles the planned units after installer failure", () => {
+	test("restores exact installer targets before Apply when installation fails", () => {
 		const paths = tempRuntimePaths();
 		const home = paths.userHome;
 		const binDir = join(home, ".openclaw", "bin");
@@ -4984,32 +5116,23 @@ exit 42
 			},
 		});
 		let activateCalls = 0;
-		let rollbackSignal: {
-			reconcileUserUnits: string[];
-			staleSystemUnits: string[];
-			staleUserUnits: string[];
-		} | null = null;
+		let rollbackCalls = 0;
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "installer-failure"), paths, {
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => {
 					activateCalls += 1;
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 				},
-				rollback: (signal) => {
-					rollbackSignal = signal;
-				},
+				rollback: () => rollbackCalls++,
 			},
 		});
 
 		expect(result.installErrors.join("\n")).toContain("runtime openclaw installer exited 42");
 		expect(readFileSync(installerLog, "utf8")).toBe("ran\n");
 		expect(activateCalls).toBe(0);
-		expect(rollbackSignal).toMatchObject({
-			reconcileUserUnits: ["openclaw-gateway.service"],
-			staleSystemUnits: [],
-			staleUserUnits: [],
-		});
+		expect(rollbackCalls).toBe(0);
 		expect(readFileSync(existingBinFile, "utf8")).toBe("original-bin\n");
 		expect(readFileSync(existingToolFile, "utf8")).toBe("original-tool\n");
 		expect(existsSync(commandPath)).toBe(false);
@@ -5113,6 +5236,11 @@ exit 42
 
 	test("rolls back managed state when the authority commit fails", () => {
 		const paths = tempRuntimePaths();
+		writeFakeGatewayCli({
+			path: join(paths.userHome, ".openclaw", "bin", "openclaw"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(dirname(paths.appliedState), { recursive: true });
 		writeFileSync(paths.managedConfig, "old-managed\n");
@@ -5152,6 +5280,11 @@ exit 42
 
 	test("garbage collects stale run configs when a runtime is removed", () => {
 		const paths = tempRuntimePaths();
+		writeFakeGatewayCli({
+			path: join(paths.userHome, ".openclaw", "bin", "openclaw"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
 		const initialManifest = baseManifest(paths, {
 			hermes: {
 				enabled: true,
@@ -5278,8 +5411,10 @@ exit 42
 		expect(unit).toContain(FILE_BROWSER_VERSION);
 		expect(unit).toContain(FILE_BROWSER_COMMIT.slice(0, 7));
 		expect(unit).not.toContain(`ReadOnlyPaths=${paths.fileBrowserConfig}`);
-		expect(unit).toContain(`ExecStart="${paths.fileBrowserServiceBinary}"`);
-		expect(unit).toContain(`"-c" "\${CREDENTIALS_DIRECTORY}/filebrowser.yaml"`);
+		expect(unit.match(/^ExecStart=.*$/m)?.[0]).toBe(
+			`ExecStart="${paths.fileBrowserServiceBinary}" "-c" "/run/credentials/clawdi-files.service/filebrowser.yaml"`,
+		);
+		expect(unit).not.toContain("CREDENTIALS_DIRECTORY");
 		expect(unit).toContain(`NoExecPaths=${paths.userHome} ${paths.fileBrowserStateRoot}`);
 		expect(unit).toContain("ProtectSystem=strict");
 		expect(unit).toContain("CapabilityBoundingSet=");
@@ -5366,13 +5501,24 @@ exit 42
 		});
 		let readinessCommits = 0;
 		let rollbacks = 0;
+		const rollbackLifecycle: string[] = [];
 		const readinessFailure = convergeRuntimeManifest(
 			fileBrowserManifestLoad(readinessManifest),
 			paths,
 			{
 				...readyOptions,
 				fileBrowserReadinessProbe: () => false,
-				systemdApply: fileBrowserApplyHooks({ onRollback: () => rollbacks++ }),
+				systemdApply: fileBrowserApplyHooks({
+					onQuiesce: () => {
+						rollbackLifecycle.push("quiesce");
+						expect(readFileSync(paths.fileBrowserConfig, "utf8")).not.toBe(originalConfig);
+					},
+					onRollback: () => {
+						rollbackLifecycle.push("reconcile");
+						expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(originalConfig);
+						rollbacks++;
+					},
+				}),
 				commitAuthority: () => readinessCommits++,
 			},
 		);
@@ -5381,12 +5527,76 @@ exit 42
 		);
 		expect(readinessCommits).toBe(0);
 		expect(rollbacks).toBe(1);
+		expect(rollbackLifecycle).toEqual(["quiesce", "reconcile"]);
 		expect(readFileSync(active, "utf8")).toBe(originalBinary);
 		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(originalConfig);
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
 			originalUnit,
 		);
 		expect(readFileSync(paths.installReceipts, "utf8")).toBe(originalReceipts);
+	});
+
+	test("preserves candidate inputs when service quiesce fails", () => {
+		const paths = tempRuntimePaths();
+		const binary = "Files rollback ordering binary\n";
+		const installOptions = {
+			serviceIsolation: testFileBrowserServiceIsolation,
+			download: (_url: string, destination: string) => writeFileSync(destination, binary),
+			versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+		};
+		const initial = convergeRuntimeManifest(
+			fileBrowserManifestLoad(fileBrowserManifest(paths, { generation: 1, binary })),
+			paths,
+			{
+				fileBrowserInstallOptions: installOptions,
+				fileBrowserReadinessProbe: () => true,
+				systemdApply: fileBrowserApplyHooks(),
+			},
+		);
+		expect(initial.installErrors).toEqual([]);
+		const originalConfig = readFileSync(paths.fileBrowserConfig, "utf8");
+		const candidateEgressEnv = "CLAWDI_EGRESS_TRANSPARENT_PORT=27212\n";
+		let candidateConfig: string | null = null;
+		let reconciles = 0;
+
+		const failed = convergeRuntimeManifest(
+			fileBrowserManifestLoad(
+				fileBrowserManifest(paths, {
+					generation: 2,
+					binary,
+					accessRevision: "c".repeat(64),
+				}),
+			),
+			paths,
+			{
+				fileBrowserInstallOptions: installOptions,
+				fileBrowserReadinessProbe: () => true,
+				systemdApply: fileBrowserApplyHooks({
+					onActivate: () => {
+						mkdirSync(dirname(paths.egressTransparentEnv), { recursive: true });
+						writeFileSync(paths.egressTransparentEnv, candidateEgressEnv);
+						throw new Error("injected candidate activation failure");
+					},
+					onQuiesce: () => {
+						candidateConfig = readFileSync(paths.fileBrowserConfig, "utf8");
+						throw new Error("injected candidate quiesce failure");
+					},
+					onRollback: () => reconciles++,
+				}),
+			},
+		);
+
+		expect(failed.installErrors.join("\n")).toContain("injected candidate activation failure");
+		expect(failed.installErrors.join("\n")).toContain("injected candidate quiesce failure");
+		expect(failed.installErrors).toContain(
+			"runtime filesystem rollback skipped because candidate services did not quiesce",
+		);
+		expect(reconciles).toBe(0);
+		expect(candidateConfig).not.toBeNull();
+		if (candidateConfig === null) throw new Error("candidate Files config was not observed");
+		expect(candidateConfig).not.toBe(originalConfig);
+		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(candidateConfig);
+		expect(readFileSync(paths.egressTransparentEnv, "utf8")).toBe(candidateEgressEnv);
 	});
 
 	test("retains only the desired Files candidate after authority commit", () => {
@@ -5451,6 +5661,7 @@ exit 42
 		let staleSystemUnits: string[] = [];
 		const result = convergeRuntimeManifest(fileBrowserManifestLoad(withoutFileBrowser), paths, {
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: (signal) => {
 					staleSystemUnits = signal.staleSystemUnits;
@@ -5522,7 +5733,7 @@ exit 42
 		);
 	});
 
-	test("rejects user-overridden Files contracts", () => {
+	test("enforces pinned and internally bound Files contracts", () => {
 		const paths = tempRuntimePaths();
 		const binary = "Files gate fixture\n";
 		const manifest = fileBrowserManifest(paths, { generation: 1, binary });
@@ -5534,6 +5745,19 @@ exit 42
 
 		const pinned = fileBrowserCompanion();
 		expect(fileBrowserCompanionSchema.safeParse(pinned).success).toBe(true);
+		expect(manifest.deploymentId).not.toBe("hdep_files_reconcile");
+		for (const [field, value] of [
+			["audience", "clawdi-files:hdep_other"],
+			["subject", "deployment:hdep_other:owner"],
+			["requiredGroup", `clawdi-files:hdep_files_reconcile:${"b".repeat(64)}`],
+		] as const) {
+			expect(
+				fileBrowserCompanionSchema.safeParse({
+					...pinned,
+					auth: { ...pinned.auth, [field]: value },
+				}).success,
+			).toBe(false);
+		}
 		expect(
 			hostedRuntimeBundleV2ManifestSchema.safeParse({
 				...manifest,
@@ -5583,6 +5807,7 @@ exit 42
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "missing-late-run-root"), paths, {
 			cacheLastGood: false,
 			systemdApply: {
+				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => {
 					rmSync(paths.runRoot, { recursive: true });

@@ -177,8 +177,10 @@ function convergeHostedEgressFixture(): { paths: RuntimePaths; root: string } {
 	writeFileSync(
 		join(home, ".openclaw", "bin", "openclaw"),
 		`#!/bin/sh
-[ "\${1:-}" != "--version" ] || printf '%s\\n' '2026.7.1'
-exit 0
+case "$*" in
+  "--version") printf '%s\\n' '2026.7.1' ;;
+  "agents list --json") printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace" ;;
+esac
 `,
 	);
 	chmodSync(join(home, ".openclaw", "bin", "openclaw"), 0o755);
