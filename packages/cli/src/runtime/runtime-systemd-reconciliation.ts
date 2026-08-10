@@ -11,7 +11,7 @@ import {
 	rmSync,
 	statSync,
 } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
@@ -1406,7 +1406,12 @@ export function removeStaleRuntimeSystemdFiles(
 	for (const path of plan.files) {
 		try {
 			rmSync(path, { force: true });
-			if (path.endsWith(`/${RUNTIME_SYSTEMD_DROP_IN_FILE}`) && existsSync(dirname(path))) {
+			if (
+				[RUNTIME_SYSTEMD_DROP_IN_FILE, SYSTEMD_FILE_BROWSER_CREDENTIAL_DROP_IN].includes(
+					basename(path),
+				) &&
+				existsSync(dirname(path))
+			) {
 				if (readdirSync(dirname(path)).length === 0) rmdirSync(dirname(path));
 			}
 		} catch (error) {

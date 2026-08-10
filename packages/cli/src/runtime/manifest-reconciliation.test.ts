@@ -5253,6 +5253,7 @@ exit 42
 		expect(staleSystemUnits).toEqual(["clawdi-files.service"]);
 		expect(existsSync(fileBrowserUnit)).toBe(false);
 		expect(existsSync(credentialDropIn)).toBe(false);
+		expect(existsSync(dirname(credentialDropIn))).toBe(false);
 		expect(existsSync(runtimeUnit)).toBe(true);
 	});
 
