@@ -534,6 +534,7 @@ function writeFakeGatewayCli(input: {
 	unitPath: string;
 	configPatchPath?: string;
 	failInstall?: boolean;
+	skillInstallSourceLog?: string;
 }): void {
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
@@ -571,6 +572,7 @@ EOF
 	  "skills install "*)
 	    source_dir="$3"
 	    skill_id="$7"
+	    ${input.skillInstallSourceLog ? `printf '%s\\n' "$source_dir" > '${input.skillInstallSourceLog}'` : ""}
 	    workspace="$HOME/.openclaw/workspace"
 	    mkdir -p "$workspace/skills"
 	    rm -rf "$workspace/skills/$skill_id"
@@ -3841,6 +3843,57 @@ echo spawned > '${installerLog}'
 		expect(existsSync(skillDir)).toBe(false);
 		expect(readFileSync(join(userOwnedSibling, "SKILL.md"), "utf8")).toBe("keep me\n");
 		expect(shouldIgnoreUserSkill(userOwnedSibling, "user-owned")).toBe(false);
+	});
+
+	test("installs a bundled OpenClaw Skill from cleaned runtime-readable staging", () => {
+		const paths = tempRuntimePaths();
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		const sourceLog = join(dirname(paths.serviceStateRoot), "openclaw-skill-source.log");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath,
+			skillInstallSourceLog: sourceLog,
+		});
+		const manifest = baseManifest(
+			paths,
+			{ openclaw: { enabled: true, run: runSettings(command, ["gateway"]), services: {} } },
+			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
+		);
+		const target = join(paths.userHome, ".openclaw", "workspace", "skills", "clawdi");
+		const packageSource = resolve(
+			import.meta.dir,
+			"../..",
+			"skills",
+			"hosted-versions",
+			"1",
+			"clawdi",
+		);
+
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "bundled-openclaw-skill"), paths);
+
+		expect(result.installErrors).toEqual([]);
+		const stagedSource = readFileSync(sourceLog, "utf8").trim();
+		expect(stagedSource).not.toBe(packageSource);
+		expect(stagedSource.startsWith(join(tmpdir(), "clawdi-hosted-bundled-skill-"))).toBe(true);
+		expect(existsSync(stagedSource)).toBe(false);
+		expect(readFileSync(join(target, "SKILL.md"))).toEqual(
+			readFileSync(join(packageSource, "SKILL.md")),
+		);
+		expect(
+			existsSync(
+				join(
+					paths.userHome,
+					".openclaw",
+					"workspace",
+					"skills",
+					".clawdi-manifest-receipts",
+					"clawdi.json",
+				),
+			),
+		).toBe(true);
+		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
 	});
 
 	test("removes only strictly identified legacy bundled OpenClaw Skills without requiring a new receipt", () => {

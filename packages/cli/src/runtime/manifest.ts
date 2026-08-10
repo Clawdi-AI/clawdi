@@ -88,6 +88,7 @@ import {
 	loadHostedBundledSkill,
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
+	withStagedHostedBundledSkill,
 } from "./hosted-bundled-skill";
 import { managedMcpHeaderPlaceholder, normalizeSecretRef } from "./hosted-egress-profiles";
 import {
@@ -3710,13 +3711,15 @@ function applyHostedBundledSkills(
 			},
 			() =>
 				name === "openclaw"
-					? openClawDriver.installDirectory({
-							home,
-							workspaceRoot: requireOpenClawWorkspace(),
-							skillId: skillName,
-							sourceDir,
-							ownershipIdentity: `content-sha256\0${bundled.digest}`,
-						})
+					? withStagedHostedBundledSkill(bundle, (stagedSourceDir) =>
+							openClawDriver.installDirectory({
+								home,
+								workspaceRoot: requireOpenClawWorkspace(),
+								skillId: skillName,
+								sourceDir: stagedSourceDir,
+								ownershipIdentity: `content-sha256\0${bundled.digest}`,
+							}),
+						)
 					: withRuntimeUserFileAccess(() =>
 							reconcileHostedBundledSkill({ bundle, targetDir, reserved: true }),
 						),
