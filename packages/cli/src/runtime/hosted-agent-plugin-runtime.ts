@@ -104,7 +104,7 @@ const defaultCommandRunner: HostedAgentPluginCommandRunner = {
 };
 
 // `hermes plugins list --json` emits this array at
-// https://github.com/NousResearch/hermes-agent/blob/8cb066404e3edc3501a07a408c59834dc745cc74/hermes_cli/plugins_cmd.py
+// https://github.com/NousResearch/hermes-agent/blob/ee4bb75b532e932a1055d9a710802a7435163b6a/hermes_cli/plugins_cmd.py
 const hermesPluginListSchema = z.array(
 	z
 		.object({
@@ -117,11 +117,15 @@ const hermesPluginListSchema = z.array(
 );
 
 interface NativePluginObservation {
+	runtime: HostedAgentPluginRuntime;
 	name: string;
 	nativeId: string;
 	version: string;
 	enabled: boolean;
 	compatible: boolean;
+	mcpServerNames: readonly string[];
+	hasComponentDiagnostics: boolean;
+	hasUnsupportedComponents: boolean;
 	installPath: string | null;
 	contentDigest: string | null;
 }
@@ -291,11 +295,15 @@ function createOpenClawDriver(input: {
 			contentDigest = hostedAgentPluginDirectoryDigest(installPath);
 		}
 		return {
+			runtime: "openclaw",
 			name: observedName,
 			nativeId: inspect.plugin.id,
 			version,
 			enabled: inspect.plugin.enabled && inspect.plugin.status === "loaded",
 			compatible,
+			mcpServerNames: inspect.mcpServers.map((server) => server.name).sort(),
+			hasComponentDiagnostics: inspect.diagnostics.length > 0,
+			hasUnsupportedComponents: inspect.mcpServers.some((server) => server.unsupported === true),
 			installPath,
 			contentDigest,
 		};
@@ -393,11 +401,15 @@ function createHermesDriver(input: {
 			});
 		}
 		return {
+			runtime: "hermes",
 			name: plugin.name,
 			nativeId: plugin.name,
 			version: plugin.version,
 			enabled: plugin.status === "enabled",
 			compatible,
+			mcpServerNames: [],
+			hasComponentDiagnostics: false,
+			hasUnsupportedComponents: false,
 			installPath,
 			contentDigest,
 		};
@@ -480,13 +492,23 @@ function capabilityProbePackages(prepared: PreparedHostedAgentPlugins): Capabili
 	);
 }
 
+function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
+	return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function observationMatches(
 	observation: NativePluginObservation | null,
 	prepared: PreparedHostedAgentPlugin,
 	nativeId: string,
 ): observation is NativePluginObservation {
+	const openClawComponentsMatch =
+		observation?.runtime !== "openclaw" ||
+		(!observation.hasComponentDiagnostics &&
+			!observation.hasUnsupportedComponents &&
+			stringArraysEqual(observation.mcpServerNames, prepared.mcpServerNames));
 	return Boolean(
 		observation?.compatible &&
+			openClawComponentsMatch &&
 			observation.name === prepared.name &&
 			observation.nativeId === nativeId &&
 			observation.version === prepared.installation.version &&
@@ -500,11 +522,15 @@ function observationUnchanged(
 ): boolean {
 	if (!current || !previous) return current === previous;
 	return (
+		current.runtime === previous.runtime &&
 		current.name === previous.name &&
 		current.nativeId === previous.nativeId &&
 		current.version === previous.version &&
 		current.enabled === previous.enabled &&
 		current.compatible === previous.compatible &&
+		stringArraysEqual(current.mcpServerNames, previous.mcpServerNames) &&
+		current.hasComponentDiagnostics === previous.hasComponentDiagnostics &&
+		current.hasUnsupportedComponents === previous.hasUnsupportedComponents &&
 		current.installPath === previous.installPath &&
 		current.contentDigest === previous.contentDigest
 	);

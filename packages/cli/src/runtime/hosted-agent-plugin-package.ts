@@ -96,6 +96,7 @@ export interface PreparedHostedAgentPlugin {
 	name: string;
 	installation: PreparedHostedAgentPluginInstallation;
 	receiptNativeId: string | null;
+	mcpServerNames: readonly string[];
 	tree: readonly PreparedAgentPluginTreeFile[];
 }
 
@@ -781,9 +782,9 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 function assertMcpComponents(
 	tree: readonly PreparedAgentPluginTreeFile[],
 	runtime: HostedAgentPluginRuntime,
-): void {
+): string[] {
 	const file = tree.find((entry) => entry.path === "mcp.json");
-	if (!file) return;
+	if (!file) return [];
 	const parsed = mcpManifestSchema.safeParse(parseJsonObject(file, "Agent Plugin mcp.json"));
 	if (!parsed.success) throw new Error("Agent Plugin mcp.json does not match the 1.0.0 schema");
 	for (const server of Object.values(parsed.data.mcpServers)) {
@@ -815,6 +816,7 @@ function assertMcpComponents(
 		}
 		if (server.cwd !== undefined) assertScopedPortablePath(server.cwd);
 	}
+	return Object.keys(parsed.data.mcpServers).sort();
 }
 
 function assertPackageIdentity(
@@ -865,12 +867,13 @@ async function validateArchive(
 		}
 		assertPackageIdentity(descriptor, collected.tree);
 		assertSkillComponents(collected.tree);
-		assertMcpComponents(collected.tree, descriptor.runtime);
+		const mcpServerNames = assertMcpComponents(collected.tree, descriptor.runtime);
 		if (descriptor.runtime === "hermes") assertHermesSupportedPackage(collected.tree);
 		return {
 			name: descriptor.name,
 			installation: descriptor.installation,
 			receiptNativeId: null,
+			mcpServerNames,
 			tree: collected.tree,
 		};
 	} finally {

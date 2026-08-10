@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-// Cold JSON report shapes at OpenClaw f4387b7a5effd63fe2c0f05495175b9eacd12cec:
-// https://github.com/openclaw/openclaw/blob/f4387b7a5effd63fe2c0f05495175b9eacd12cec/src/cli/plugins-inspect-command.ts
-// https://github.com/openclaw/openclaw/blob/f4387b7a5effd63fe2c0f05495175b9eacd12cec/src/cli/plugins-list-command.ts
+// Cold JSON report shapes at OpenClaw cef6e690d5573d06f3feef5fdf103906e842c618:
+// https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/cli/plugins-inspect-command.ts
+// https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/cli/plugins-list-command.ts
 export const openClawPluginInspectSchema = z
 	.object({
 		plugin: z
@@ -18,6 +18,23 @@ export const openClawPluginInspectSchema = z
 				bundleFormat: z.string().min(1).optional(),
 			})
 			.passthrough(),
+		mcpServers: z.array(
+			z
+				.object({
+					name: z.string().min(1),
+					hasStdioTransport: z.boolean(),
+					unsupported: z.boolean().optional(),
+				})
+				.passthrough(),
+		),
+		diagnostics: z.array(
+			z
+				.object({
+					level: z.enum(["warn", "error"]),
+					message: z.string().min(1),
+				})
+				.passthrough(),
+		),
 		install: z
 			.object({
 				source: z.enum(["npm", "archive", "path", "clawhub", "git"]),

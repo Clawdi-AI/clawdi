@@ -221,6 +221,7 @@ describe("Hosted Agent Plugin package preparation", () => {
 		);
 		if (!prepared) throw new Error("missing prepared Agent Plugin fixture");
 		expect(prepared.desired.get("acme.tools")?.installation.contentDigest).toBe(treeDigest(files));
+		expect(prepared.desired.get("acme.tools")?.mcpServerNames).toEqual(["review"]);
 	});
 
 	test("rejects Hermes remote MCP before an isolated native probe", async () => {

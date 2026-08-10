@@ -26,6 +26,7 @@ interface FakePluginState {
 	version: string;
 	enabled: boolean;
 	compatible: boolean;
+	mcpServerNames?: string[];
 }
 
 const runtimeTestRoot = mkdtempSync(join(tmpdir(), "clawdi-agent-plugin-runtime-test-"));
@@ -39,6 +40,12 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 	failProbeInstallName: string | null = null;
 	failLiveEnableVersion: string | null = null;
 	failLiveInstallVersion: string | null = null;
+	openClawMcpServersOverride: Array<{
+		name: string;
+		hasStdioTransport: boolean;
+		unsupported?: boolean;
+	}> | null = null;
+	openClawDiagnostics: Array<{ level: "warn" | "error"; message: string }> = [];
 	readonly liveHome: string;
 
 	constructor() {
@@ -99,7 +106,11 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 		return this.states.get(`${this.liveHome}\0${runtime}\0${name}`);
 	}
 
-	private pluginFromSource(path: string): { name: string; version: string } {
+	private pluginFromSource(path: string): {
+		name: string;
+		version: string;
+		mcpServerNames: string[];
+	} {
 		const parsed: unknown = JSON.parse(readFileSync(join(path, "plugin.json"), "utf8"));
 		if (
 			typeof parsed !== "object" ||
@@ -111,7 +122,19 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 		) {
 			throw new Error("invalid fake plugin manifest");
 		}
-		return { name: parsed.name, version: parsed.version };
+		let mcpServerNames: string[] = [];
+		try {
+			const mcp: unknown = JSON.parse(readFileSync(join(path, "mcp.json"), "utf8"));
+			if (typeof mcp === "object" && mcp !== null && "mcpServers" in mcp) {
+				const servers = mcp.mcpServers;
+				if (typeof servers === "object" && servers !== null) {
+					mcpServerNames = Object.keys(servers).sort();
+				}
+			}
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+		}
+		return { name: parsed.name, version: parsed.version, mcpServerNames };
 	}
 
 	run(input: CommandInput) {
@@ -188,6 +211,13 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 						version: plugin.version,
 						installPath: this.installPath(input.home, runtime, plugin.nativeId),
 					},
+					mcpServers:
+						this.openClawMcpServersOverride ??
+						(plugin.mcpServerNames ?? []).map((name) => ({
+							name,
+							hasStdioTransport: true,
+						})),
+					diagnostics: this.openClawDiagnostics,
 				}),
 				stderr: "",
 			};
@@ -213,6 +243,7 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 				version: manifest.version,
 				enabled: false,
 				compatible: true,
+				mcpServerNames: manifest.mcpServerNames,
 			});
 			return { status: 0, stdout: "", stderr: "" };
 		}
@@ -265,14 +296,33 @@ function plugin(
 	name: string,
 	version: string,
 	ownershipIdentity: string,
+	mcpServerNames: readonly string[] = [],
 ): PreparedHostedAgentPlugin {
 	const manifest = Buffer.from(
 		JSON.stringify({ $schema: AGENT_PLUGINS_SCHEMA_1_0_0, name, version }),
 	);
-	const fileDigest = createHash("sha256").update(manifest).digest("hex");
-	const treeDigest = createHash("sha256")
-		.update(`100644\0plugin.json\0${manifest.byteLength}\0${fileDigest}\n`)
-		.digest("hex");
+	const mcp =
+		mcpServerNames.length === 0
+			? null
+			: Buffer.from(
+					JSON.stringify({
+						$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+						mcpServers: Object.fromEntries(
+							mcpServerNames.map((serverName) => [serverName, { type: "stdio", command: "node" }]),
+						),
+					}),
+				);
+	const tree = [
+		{ path: "plugin.json", mode: 0o100644 as const, bytes: manifest },
+		...(mcp ? [{ path: "mcp.json", mode: 0o100644 as const, bytes: mcp }] : []),
+	].sort((left, right) => left.path.localeCompare(right.path));
+	const treeDigest = createHash("sha256");
+	for (const file of tree) {
+		const fileDigest = createHash("sha256").update(file.bytes).digest("hex");
+		treeDigest.update(
+			`${file.mode.toString(8)}\0${file.path}\0${file.bytes.byteLength}\0${fileDigest}\n`,
+		);
+	}
 	return {
 		name,
 		installation: {
@@ -285,17 +335,12 @@ function plugin(
 				path: `plugins/${name}`,
 				commit: ownershipIdentity.slice(0, 40),
 			},
-			contentDigest: `sha256-tree-v1:${treeDigest}`,
+			contentDigest: `sha256-tree-v1:${treeDigest.digest("hex")}`,
 			ownershipIdentity,
 		},
 		receiptNativeId: null,
-		tree: [
-			{
-				path: "plugin.json",
-				mode: 0o100644,
-				bytes: manifest,
-			},
-		],
+		mcpServerNames: [...mcpServerNames].sort(),
+		tree,
 	};
 }
 
@@ -396,6 +441,39 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		);
 		repeat.apply();
 		expect(runner.liveMutations()).toHaveLength(liveMutations);
+	});
+
+	test("requires OpenClaw inspect to prove every MCP component without diagnostics", () => {
+		const desired = plugin("acme.tools", "1.2.3", "f".repeat(64), ["alpha", "zeta"]);
+		const prepared = desiredState("openclaw", desired);
+		expect(() =>
+			proveHostedAgentPluginCapabilities({
+				prepared,
+				commands,
+				runner: new FakeNativeRunner(),
+			}),
+		).not.toThrow();
+
+		for (const configure of [
+			(runner: FakeNativeRunner) => {
+				runner.openClawMcpServersOverride = [{ name: "alpha", hasStdioTransport: true }];
+			},
+			(runner: FakeNativeRunner) => {
+				runner.openClawMcpServersOverride = [
+					{ name: "alpha", hasStdioTransport: true },
+					{ name: "zeta", hasStdioTransport: false, unsupported: true },
+				];
+			},
+			(runner: FakeNativeRunner) => {
+				runner.openClawDiagnostics = [{ level: "error", message: "invalid MCP component" }];
+			},
+		]) {
+			const runner = new FakeNativeRunner();
+			configure(runner);
+			expect(() => proveHostedAgentPluginCapabilities({ prepared, commands, runner })).toThrow(
+				AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+			);
+		}
 	});
 
 	test("installs the Hermes stdio-capable package from a local file Git transport", () => {

@@ -158,6 +158,7 @@ function preparedTestAgentPlugin(
 			ownershipIdentity,
 		},
 		receiptNativeId: null,
+		mcpServerNames: [],
 		tree: [{ path: "plugin.json", mode: 0o100644, bytes }],
 	};
 }
@@ -1061,7 +1062,7 @@ case "\${1:-}" in
       inspect)
         [[ "\${3:-}" == acme-tools && "\${4:-}" == --json && -f "$plugin_root/plugin.json" ]] || exit 2
         version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
-        printf '{"plugin":{"id":"acme-tools","name":"acme.tools","source":"test","origin":"config","status":"%s","version":"%s","enabled":%s,"format":"bundle","bundleFormat":"agent"},"install":{"source":"path","installPath":"%s","resolvedVersion":"%s"}}\\n' "$plugin_status" "$version" "$plugin_enabled" "$plugin_root" "$version"
+	        printf '{"plugin":{"id":"acme-tools","name":"acme.tools","source":"test","origin":"config","status":"%s","version":"%s","enabled":%s,"format":"bundle","bundleFormat":"agent"},"mcpServers":[],"diagnostics":[],"install":{"source":"path","installPath":"%s","resolvedVersion":"%s"}}\\n' "$plugin_status" "$version" "$plugin_enabled" "$plugin_root" "$version"
         ;;
       install)
         [[ "\${4:-}" == --force && -f "\${3:-}/plugin.json" ]] || exit 2

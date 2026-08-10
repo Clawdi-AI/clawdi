@@ -714,29 +714,60 @@ explicitly cleared or replaced so inherited process state cannot redirect the
 probe into the live Hosted profile. The proof binds the command, injected
 runner identity, package ownership identity, and observed native id; one failed
 package prevents every live package mutation. Missing, old, or incompatible
-runtimes fail with the stable unsupported-capability error. Native main-branch
-support is represented by OpenClaw commit
-`f4387b7a5effd63fe2c0f05495175b9eacd12cec` and the canonical Hermes Agent
-Plugins commit `8cb066404e3edc3501a07a408c59834dc745cc74`. Those commits do not
-establish a Hosted rollout or released runtime version; the CLI proves the
-installed binary's capability and never infers support from a published SemVer.
+runtimes fail with the stable unsupported-capability error.
 
-Hermes support is limited to Agent Plugins Skills and stdio MCP servers.
-Hermes main added portable streamable-http execution and cross-origin header
-stripping in commit `471baea520e89220c7a5306d6410b5c8ce7e34d5`, but that runtime
-capability is distinct from both Hosted rollout status and Clawdi's proof
-surface. The public native JSON observation still cannot distinguish a
-registered remote component from an install that succeeded while skipping that
-component diagnostically.
-Hosted therefore rejects streamable-http and SSE, as well as unknown or
-malformed transports, before the isolated probe. Package validation also
-checks Skill frontmatter and the complete supported stdio command, args, env,
-and cwd shapes, so plugin identity plus a successful native list is never used
-as component proof.
-Agent Plugins URL and header strings are treated as literal package data.
-Non-empty Hosted `secretRefs` are rejected before download or probing; the CLI
-does not resolve, log, persist, or inject secret values without a separate
-native binding contract.
+Upstream capability evidence was refreshed on 2026-08-10. OpenClaw main was
+[`cef6e690d5573d06f3feef5fdf103906e842c618`](https://github.com/openclaw/openclaw/commit/cef6e690d5573d06f3feef5fdf103906e842c618).
+Agent Plugins support landed in
+[`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
+that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
+`PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/plugins/status.ts#L350-L502)
+exposes every MCP server name, unsupported state, and plugin diagnostics.
+Clawdi requires the reported names to equal the already-validated `mcp.json`
+names and requires no unsupported entry or diagnostic during every isolated and
+live observation. This is native component proof rather than a version guess.
+
+The latest OpenClaw GitHub release is
+[`v2026.7.1-2`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2),
+at commit
+[`0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c),
+which predates Agent Plugins support. Clawdi passes no `--version` to the
+official installer; the reviewed installer defaults to npm `latest`. A runtime
+at the current release therefore fails the native package probe instead of
+silently accepting components it cannot load. A future compatible release can
+pass without a Clawdi version-table change.
+
+Hermes main was
+[`ee4bb75b532e932a1055d9a710802a7435163b6a`](https://github.com/NousResearch/hermes-agent/commit/ee4bb75b532e932a1055d9a710802a7435163b6a).
+Portable Skills, stdio MCP, and component diagnostics landed by
+[`8cb066404e3edc3501a07a408c59834dc745cc74`](https://github.com/NousResearch/hermes-agent/commit/8cb066404e3edc3501a07a408c59834dc745cc74).
+Main added streamable-http execution and cross-origin header stripping in
+[`471baea520e89220c7a5306d6410b5c8ce7e34d5`](https://github.com/NousResearch/hermes-agent/commit/471baea520e89220c7a5306d6410b5c8ce7e34d5),
+while still reporting and skipping SSE. The latest release,
+[`v2026.8.3`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.3)
+at
+[`3c27eb6234bf91b8ceee9e9071591b31e9b148cb`](https://github.com/NousResearch/hermes-agent/commit/3c27eb6234bf91b8ceee9e9071591b31e9b148cb),
+predates both portable commits. Clawdi passes neither `--branch` nor `--commit`;
+the reviewed official Hermes installer defaults to `main`, so the installed
+checkout may be ahead of the latest release.
+
+Hermes nevertheless remains limited in Hosted to Agent Plugins Skills and
+stdio MCP servers. Current
+[`plugins list --json`](https://github.com/NousResearch/hermes-agent/blob/ee4bb75b532e932a1055d9a710802a7435163b6a/hermes_cli/plugins_cmd.py#L1221-L1249)
+reports only plugin identity, state, version, description, and source. It has no
+portable component or diagnostic inventory, and `hermes mcp list` is native MCP
+configuration inventory rather than proof that a portable component survived
+plugin translation. No stable binary gate can distinguish streamable-http
+support from an older binary that installs the plugin while skipping the
+component. Hosted therefore continues to reject streamable-http and SSE before
+the isolated probe. Package validation also checks Skill frontmatter and the
+complete supported stdio command, args, env, and cwd shapes.
+
+Neither runtime exposes a native Agent Plugins `secretRefs` binding contract.
+Agent Plugins URL and header strings remain literal package data, and non-empty
+Hosted `secretRefs` are rejected before download or probing; the CLI does not
+resolve, log, persist, or inject secret values.
 
 A private last-applied receipt binds each managed name to `installationId`,
 version, schema, immutable source tuple, content digest, and native id. Native
