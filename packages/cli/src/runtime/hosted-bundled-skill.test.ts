@@ -13,12 +13,13 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
 	adoptableLegacyHostedBundledSkill,
 	loadHostedBundledSkill,
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
+	withStagedHostedBundledSkill,
 } from "./hosted-bundled-skill";
 import {
 	installReservedManagedSkill,
@@ -244,6 +245,41 @@ describe("hosted bundled skill reconciliation", () => {
 		expect(readFileSync(join(targetDir, "SKILL.md"))).toEqual(
 			readFileSync(join(bundledSourceDir, "SKILL.md")),
 		);
+	});
+
+	it("stages exact captured bytes with canonical readable modes and always cleans up", () => {
+		const protectedRoot = join(root, "root-private");
+		const copiedSource = join(protectedRoot, "clawdi");
+		mkdirSync(protectedRoot, { mode: 0o700 });
+		cpSync(bundledSourceDir, copiedSource, { recursive: true });
+		chmodSync(protectedRoot, 0o700);
+		const expectedSkill = readFileSync(join(copiedSource, "SKILL.md"));
+		const bundle = loadHostedBundledSkill("clawdi", 1, copiedSource);
+		rmSync(copiedSource, { recursive: true });
+
+		let successfulStagingRoot = "";
+		expect(
+			withStagedHostedBundledSkill(bundle, (sourceDir) => {
+				successfulStagingRoot = dirname(sourceDir);
+				expect(sourceDir).not.toBe(copiedSource);
+				expect(statSync(successfulStagingRoot).mode & 0o777).toBe(0o755);
+				expect(statSync(sourceDir).mode & 0o777).toBe(0o755);
+				expect(statSync(join(sourceDir, "SKILL.md")).mode & 0o777).toBe(0o644);
+				expect(readFileSync(join(sourceDir, "SKILL.md"))).toEqual(expectedSkill);
+				return "installed";
+			}),
+		).toBe("installed");
+		expect(existsSync(successfulStagingRoot)).toBe(false);
+
+		let failedStagingRoot = "";
+		expect(() =>
+			withStagedHostedBundledSkill(bundle, (sourceDir) => {
+				failedStagingRoot = dirname(sourceDir);
+				throw new Error("official installer failed");
+			}),
+		).toThrow("official installer failed");
+		expect(existsSync(failedStagingRoot)).toBe(false);
+		expect(statSync(protectedRoot).mode & 0o777).toBe(0o700);
 	});
 
 	it("fails closed for unknown ids, unknown versions, and unmanaged targets", () => {

@@ -10,6 +10,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
 	canonicalManagedBundleFileMode,
@@ -313,6 +314,26 @@ function materializeHostedBundledSkill(bundle: HostedBundledSkillBundle, targetD
 		const path = join(targetDir, file.relativePath);
 		mkdirSync(dirname(path), { recursive: true, mode: HOSTED_BUNDLED_SKILL_DIRECTORY_MODE });
 		writeFileSync(path, Buffer.from(file.contentBase64, "base64"), { mode: file.mode });
+	}
+}
+
+export function withStagedHostedBundledSkill<T>(
+	bundle: HostedBundledSkillBundle,
+	operation: (sourceDir: string) => T,
+): T {
+	const stagingRoot = mkdtempSync(join(tmpdir(), "clawdi-hosted-bundled-skill-"));
+	const sourceDir = join(stagingRoot, bundle.catalogEntry.id);
+	try {
+		materializeHostedBundledSkill(bundle, sourceDir);
+		normalizeHostedBundledSkillModes(stagingRoot);
+		if (hostedBundledSkillDigest(sourceDir, false, true) !== bundle.catalogEntry.digest) {
+			throw new Error(
+				`bundled hosted skill catalog digest mismatch for ${bundle.catalogEntry.id} version ${bundle.catalogEntry.version}`,
+			);
+		}
+		return operation(sourceDir);
+	} finally {
+		rmSync(stagingRoot, { recursive: true, force: true });
 	}
 }
 
