@@ -104,6 +104,22 @@ function nativeResultMatches(sourceDir: string, target: string): boolean {
 	);
 }
 
+function commandFailureDetail(result: ReturnType<typeof spawnRuntimeUserCommand>): string {
+	const details: string[] = [];
+	if (result.error) details.push(`spawn error: ${result.error.message}`);
+	if (result.signal) details.push(`terminated by signal ${result.signal}`);
+	for (const output of [result.stderr, result.stdout]) {
+		if (typeof output === "string" && output.trim()) {
+			details.push(output.trim());
+			break;
+		}
+	}
+	if (details.length === 0 && typeof result.status === "number") {
+		details.push(`exit code ${result.status} without output`);
+	}
+	return details.join("; ") || "process failed without details";
+}
+
 export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 	resolveWorkspace(input) {
 		return resolveOfficialWorkspace(input.home);
@@ -122,6 +138,7 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 			target,
 			receipt: receipt.path,
 			operation: () => {
+				// The roster may reference a workspace OpenClaw has not created yet on first run.
 				const result = spawnRuntimeUserCommand(
 					commandPath(input.home),
 					[
@@ -135,12 +152,12 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 						"--force",
 					],
 					input.home,
-					input.workspaceRoot,
+					input.home,
 					{ timeoutMs: 120_000, maxBufferBytes: 1024 * 1024 },
 				);
 				if (result.status !== 0)
 					throw new Error(
-						`OpenClaw official Skill install failed: ${String(result.stderr || result.stdout).trim() || "unknown error"}`,
+						`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
 					);
 				if (!nativeResultMatches(input.sourceDir, target))
 					throw new Error(
