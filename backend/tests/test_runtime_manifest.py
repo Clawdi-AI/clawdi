@@ -88,6 +88,16 @@ pytestmark = pytest.mark.committed_db
 _ADMIN_KEY = "runtime-state-admin-secret"
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
 TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
+AGENT_FACING_CODEX_TOOLS = {
+    "codex": {
+        "enabled": True,
+        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+        "primary_model": {
+            "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+            "model": "gpt-5.5",
+        },
+    }
+}
 TEST_SYSTEM = {}
 TEST_EGRESS_ENGINE_PIN = {
     "type": "mitmproxy",
@@ -3167,7 +3177,7 @@ async def test_admin_runtime_state_clears_optional_state(
     assert state.egress_profiles is None
     assert state.mcp is None
     assert state.skills is None
-    assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
+    assert state.tools == {**AGENT_FACING_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
 @pytest.mark.asyncio
@@ -3213,7 +3223,7 @@ async def test_equal_generation_optional_state_clear_is_material_conflict(
     assert state.egress_profiles == TEST_EGRESS_PROFILES
     assert state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
     assert state.skills == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
-    assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
+    assert state.tools == {**AGENT_FACING_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
 def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
