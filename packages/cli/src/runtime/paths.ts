@@ -45,6 +45,7 @@ export interface RuntimePaths {
 	egressEngineStatus: string;
 	egressEngineMaintainedRoot: string;
 	fileBrowserInstallRoot: string;
+	fileBrowserConfigRoot: string;
 	fileBrowserStateRoot: string;
 	fileBrowserServiceBinary: string;
 	fileBrowserConfig: string;
@@ -162,6 +163,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	);
 	const cacheRoot = derivedPlatformRoot(serviceStateRoot, DEFAULT_CACHE_ROOT, "cache");
 	const runRoot = envPath("CLAWDI_RUN_DIR") ?? DEFAULT_RUN_ROOT;
+	const fileBrowserConfigRoot = join(runRoot, "files");
 	const statusRoot = join(serviceStateRoot, "status");
 	const maintainedRoot = join(serviceStateRoot, "maintained");
 	const managedCliRoot = join(maintainedRoot, "clawdi");
@@ -200,9 +202,10 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		egressEngineStatus: join(statusRoot, "egress-engine.json"),
 		egressEngineMaintainedRoot: join(maintainedRoot, "egress-engine", "mitmproxy"),
 		fileBrowserInstallRoot: join(maintainedRoot, "filebrowser"),
+		fileBrowserConfigRoot,
 		fileBrowserStateRoot: DEFAULT_FILE_BROWSER_STATE_ROOT,
 		fileBrowserServiceBinary: join(DEFAULT_FILE_BROWSER_RUNTIME_ROOT, "filebrowser"),
-		fileBrowserConfig: join(configurationRoot, "filebrowser.yaml"),
+		fileBrowserConfig: join(fileBrowserConfigRoot, "filebrowser.yaml"),
 		cacheRoot,
 		hostedSkillArchiveRoot: join(cacheRoot, "workspace-skills"),
 		channelsEtag: join(cacheRoot, "channels.etag"),

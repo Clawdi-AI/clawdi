@@ -4274,7 +4274,9 @@ echo spawned > '${installerLog}'
 
 		for (const key of ["runConfigRoot", "systemdEnvRoot"] as const) {
 			const unsafePaths = tempRuntimePaths();
+			ensureRuntimeStateDirs(unsafePaths);
 			chmodSync(dirname(unsafePaths.serviceStateRoot), 0o755);
+			chmodSync(unsafePaths.configurationRoot, 0o755);
 			mkdirSync(unsafePaths[key], { recursive: true });
 			chmodSync(unsafePaths[key], 0o777);
 			expect(() =>
@@ -4963,7 +4965,8 @@ exit 42
 		expect(unit).toContain("StateDirectoryMode=0700");
 		expect(unit).toContain("RuntimeDirectory=clawdi-files");
 		expect(unit).toContain("RuntimeDirectoryMode=0700");
-		expect(unit).toContain(`LoadCredential=filebrowser.yaml:${paths.fileBrowserConfig}`);
+		expect(unit).not.toContain("OpenFile=");
+		expect(unit).not.toContain("LoadCredential=");
 		expect(unit).toContain(`ReadWritePaths=${paths.userHome}`);
 		expect(unit).toContain(`BindReadOnlyPaths=${active}:${paths.fileBrowserServiceBinary}:norbind`);
 		expect(unit).toContain('ExecStartPre="/bin/sh" "-c"');
@@ -4972,9 +4975,8 @@ exit 42
 		expect(unit).toContain(FILE_BROWSER_COMMIT.slice(0, 7));
 		expect(unit).not.toContain(`ReadOnlyPaths=${paths.fileBrowserConfig}`);
 		expect(unit.match(/^ExecStart=.*$/m)?.[0]).toBe(
-			`ExecStart="${paths.fileBrowserServiceBinary}" "-c" "/run/credentials/clawdi-files.service/filebrowser.yaml"`,
+			`ExecStart="${paths.fileBrowserServiceBinary}" "-c" "${paths.fileBrowserConfig}"`,
 		);
-		expect(unit).not.toContain("CREDENTIALS_DIRECTORY");
 		expect(unit).toContain(`NoExecPaths=${paths.userHome} ${paths.fileBrowserStateRoot}`);
 		expect(unit).toContain("ProtectSystem=strict");
 		expect(unit).toContain("CapabilityBoundingSet=");

@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+import { writePrivateFileAtomic } from "../lib/private-file";
 import { runtimeContentSha256 } from "./applied-state";
 import {
 	ensureFileBrowserServiceIsolation,
@@ -25,7 +26,6 @@ import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import type { RuntimeSystemdUserProgram } from "./runtime-systemd-reconciliation";
 import { runningAsRoot } from "./runtime-user-command";
-import { writeRuntimePlatformFileAtomic } from "./state";
 
 const FILE_BROWSER_BINARY = "filebrowser";
 const FILE_BROWSER_CANDIDATES = "candidates";
@@ -318,11 +318,29 @@ function currentRevision(
 	paths: RuntimePaths,
 	assetSha256: string,
 	config: string,
+	identity: FileBrowserServiceIdentity,
 ): string | null {
 	if (!candidateIsValid(paths, assetSha256)) return null;
 	try {
+		const owner = managedRootIdentity();
+		const configRootStat = lstatSync(paths.fileBrowserConfigRoot);
+		if (
+			!configRootStat.isDirectory() ||
+			configRootStat.isSymbolicLink() ||
+			configRootStat.uid !== owner.uid ||
+			configRootStat.gid !== identity.gid ||
+			(configRootStat.mode & 0o777) !== 0o710
+		)
+			return null;
 		const configStat = lstatSync(paths.fileBrowserConfig);
-		if (!configStat.isFile() || configStat.isSymbolicLink()) return null;
+		if (
+			!configStat.isFile() ||
+			configStat.isSymbolicLink() ||
+			configStat.uid !== owner.uid ||
+			configStat.gid !== identity.gid ||
+			(configStat.mode & 0o777) !== 0o440
+		)
+			return null;
 		if (readFileSync(paths.fileBrowserConfig, "utf8") !== config) return null;
 	} catch {
 		return null;
@@ -341,24 +359,31 @@ export function ensureFileBrowserCompanion(
 	const asset = selectedAsset(companion, options.arch ?? process.arch);
 	const config = renderFileBrowserConfig(companion, paths);
 	const desired = desiredRevision(companion, config);
-	const before = currentRevision(companion, paths, asset.sha256, config);
+	const identity = (options.serviceIsolation ?? ensureFileBrowserServiceIsolation)(
+		paths,
+		companion.sourceRoot,
+	);
+	const before = currentRevision(companion, paths, asset.sha256, config, identity);
 	const candidateWasValid = candidateIsValid(paths, asset.sha256);
 	const verifiedReceipt =
 		previousReceipt?.desiredRevision === desired && previousReceipt.currentRevision === before;
-	(options.serviceIsolation ?? ensureFileBrowserServiceIsolation)(paths, companion.sourceRoot);
 	ensureOwnedDirectory(paths.fileBrowserInstallRoot, managedRootIdentity(), 0o755);
 	ensureOwnedDirectory(candidatesRoot(paths), managedRootIdentity(), 0o755);
+	ensureOwnedDirectory(
+		paths.fileBrowserConfigRoot,
+		{ uid: managedRootIdentity().uid, gid: identity.gid },
+		0o710,
+	);
 	cleanStaleStaging(paths);
 	if (!verifiedReceipt || before === null) {
 		installCandidate(companion, paths, asset, options);
-		writeRuntimePlatformFileAtomic(paths, paths.fileBrowserConfig, config, {
-			mode: 0o600,
-			// The parent is the configuration platform root; its mode is owned
-			// by the systemd ConfigurationDirectory directive, never by this
-			// writer.
+		writePrivateFileAtomic(paths.fileBrowserConfig, config, {
+			mode: 0o440,
+			trustedRoot: paths.runRoot,
 		});
+		chownSync(paths.fileBrowserConfig, managedRootIdentity().uid, identity.gid);
 	}
-	const current = () => currentRevision(companion, paths, asset.sha256, config);
+	const current = () => currentRevision(companion, paths, asset.sha256, config, identity);
 	const expected = current();
 	if (expected !== desired)
 		throw new Error("Files companion candidate did not pass activation verification");

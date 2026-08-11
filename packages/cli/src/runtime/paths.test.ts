@@ -19,6 +19,8 @@ describe("runtime paths", () => {
 		const paths = getRuntimePaths({ mode: "hosted" });
 
 		expect(paths.configurationRoot).toBe("/etc/clawdi");
+		expect(paths.fileBrowserConfigRoot).toBe("/run/clawdi/files");
+		expect(paths.fileBrowserConfig).toBe("/run/clawdi/files/filebrowser.yaml");
 		expect(paths.serviceStateRoot).toBe("/var/lib/clawdi");
 		expect(paths.cacheRoot).toBe("/var/cache/clawdi");
 		expect(paths.runRoot).toBe("/run/clawdi");
@@ -38,10 +40,13 @@ describe("runtime paths", () => {
 
 	test("derives isolated config and cache roots from a service-state fixture", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = "/tmp/runtime-fixture/var/lib/clawdi";
+		process.env.CLAWDI_RUN_DIR = "/tmp/runtime-fixture/run/clawdi";
 
 		const paths = getRuntimePaths({ mode: "hosted" });
 
 		expect(paths.configurationRoot).toBe("/tmp/runtime-fixture/etc/clawdi");
+		expect(paths.fileBrowserConfigRoot).toBe("/tmp/runtime-fixture/run/clawdi/files");
+		expect(paths.fileBrowserConfig).toBe("/tmp/runtime-fixture/run/clawdi/files/filebrowser.yaml");
 		expect(paths.cacheRoot).toBe("/tmp/runtime-fixture/var/cache/clawdi");
 		expect(paths.fileBrowserStateRoot).toBe("/var/lib/clawdi-files");
 	});

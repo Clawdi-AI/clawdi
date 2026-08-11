@@ -292,8 +292,6 @@ function systemdUnitFileName(name: string): string {
 }
 
 const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
-const FILE_BROWSER_SYSTEMD_CREDENTIAL = "/run/credentials/clawdi-files.service/filebrowser.yaml";
-
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
 		paths.systemdUserRoot,
@@ -317,8 +315,8 @@ function systemdExec(command: string, args: string[]): string {
 	return [command, ...args].map(systemdQuote).join(" ");
 }
 
-function fileBrowserSystemdExec(command: string): string {
-	return systemdExec(command, ["-c", FILE_BROWSER_SYSTEMD_CREDENTIAL]);
+function fileBrowserSystemdExec(command: string, config: string): string {
+	return systemdExec(command, ["-c", config]);
 }
 
 function fileBrowserVersionProbeExec(command: string, version: string, commit: string): string {
@@ -1508,7 +1506,10 @@ function writeFileBrowserSystemdUnit(input: {
 		description: "Clawdi hosted Files companion",
 		command: input.program.command,
 		args: input.program.args,
-		execStart: fileBrowserSystemdExec(input.paths.fileBrowserServiceBinary),
+		execStart: fileBrowserSystemdExec(
+			input.paths.fileBrowserServiceBinary,
+			input.paths.fileBrowserConfig,
+		),
 		cwd: input.program.cwd,
 		directoryKind: "file-browser",
 		env: {
@@ -1521,7 +1522,6 @@ function writeFileBrowserSystemdUnit(input: {
 		extraServiceLines: [
 			`User=${FILE_BROWSER_SERVICE_USER}`,
 			`Group=${FILE_BROWSER_SERVICE_GROUP}`,
-			`LoadCredential=filebrowser.yaml:${systemdPath(input.paths.fileBrowserConfig)}`,
 			// Publish only this verified executable into the component service's
 			// private runtime directory; the platform state root stays untraversable.
 			`BindReadOnlyPaths=${systemdPath(input.program.command)}:${systemdPath(input.paths.fileBrowserServiceBinary)}:norbind`,

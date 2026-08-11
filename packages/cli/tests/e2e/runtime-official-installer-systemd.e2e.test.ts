@@ -234,6 +234,12 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
+	const globalServiceDropInRoot = join(paths.systemdSystemRoot, "service.d");
+	mkdirSync(globalServiceDropInRoot, { recursive: true });
+	writeFileSync(
+		join(globalServiceDropInRoot, "zzz-lxc-service.conf"),
+		"[Service]\nProcSubset=all\nProtectProc=default\nProtectControlGroups=no\nProtectKernelTunables=no\nNoNewPrivileges=no\nLoadCredential=\nPrivateNetwork=no\nImportCredential=\n",
+	);
 	rmSync(join(paths.systemdUserRoot, "openclaw-gateway.service"), {
 		recursive: true,
 		force: true,
@@ -248,6 +254,10 @@ fi
 exec /usr/local/bin/node -e '
 const fs = require("fs");
 const http = require("http");
+const config = fs.readFileSync(process.argv[1], "utf8");
+const listen = config.match(/^\\s*listen:\\s*(\\S+)\\s*$/m)?.[1];
+const port = Number(config.match(/^\\s*port:\\s*(\\d+)\\s*$/m)?.[1]);
+if (!listen || !Number.isInteger(port)) process.exit(64);
 const existing = fs.readFileSync(${JSON.stringify(tenantExisting)}, "utf8");
 fs.writeFileSync(${JSON.stringify(serviceCreated)}, existing);
 fs.mkdirSync(${JSON.stringify(join(runtimeHome, "tmp", "thumbnails"))}, { recursive: true });
@@ -260,8 +270,8 @@ http.createServer((request, response) => {
     return;
   }
   response.end("ok");
-}).listen(9120, "0.0.0.0");
-'
+}).listen(port, listen);
+' "$2"
 `;
 	const binarySha256 = createHash("sha256").update(binary).digest("hex");
 	const release = `https://github.com/gtsteffaniak/filebrowser/releases/download/${FILE_BROWSER_VERSION}`;
@@ -415,9 +425,16 @@ http.createServer((request, response) => {
 		expect(statSync(path).uid).toBe(0);
 		expect(statSync(path).gid).toBe(0);
 	}
+	expect(statSync(paths.fileBrowserConfigRoot).uid).toBe(0);
+	expect(statSync(paths.fileBrowserConfigRoot).gid).toBe(serviceGid);
+	expect(statSync(paths.fileBrowserConfigRoot).mode & 0o777).toBe(0o710);
 	expect(statSync(paths.fileBrowserConfig).uid).toBe(0);
-	expect(statSync(paths.fileBrowserConfig).gid).toBe(0);
-	expect(statSync(paths.fileBrowserConfig).mode & 0o777).toBe(0o600);
+	expect(statSync(paths.fileBrowserConfig).gid).toBe(serviceGid);
+	expect(statSync(paths.fileBrowserConfig).mode & 0o777).toBe(0o440);
+	expect(
+		spawnSync("runuser", ["-u", "clawdi-files", "--", "test", "-r", paths.fileBrowserConfig])
+			.status,
+	).toBe(0);
 	expect(statSync(paths.fileBrowserStateRoot).uid).toBe(serviceUid);
 	expect(statSync(paths.fileBrowserStateRoot).gid).toBe(serviceGid);
 	expect(statSync(paths.fileBrowserStateRoot).mode & 0o777).toBe(0o700);
@@ -434,6 +451,7 @@ http.createServer((request, response) => {
 	expect(statSync(database).mode & 0o777).toBe(0o600);
 
 	for (const path of [
+		paths.fileBrowserConfigRoot,
 		paths.fileBrowserConfig,
 		paths.fileBrowserStateRoot,
 		database,
@@ -488,6 +506,13 @@ http.createServer((request, response) => {
 	);
 	expect(unitControl.status).not.toBe(0);
 	expect(spawnSync("systemctl", ["is-active", "--quiet", "clawdi-files.service"]).status).toBe(0);
+	const effectiveUnit = spawnSync("systemctl", ["cat", "clawdi-files.service"], {
+		encoding: "utf8",
+	});
+	expect(effectiveUnit.status).toBe(0);
+	expect(effectiveUnit.stdout).toContain("/run/systemd/system/service.d/zzz-lxc-service.conf");
+	expect(effectiveUnit.stdout).toContain("LoadCredential=");
+	expect(existsSync("/run/credentials/clawdi-files.service/filebrowser.yaml")).toBe(false);
 
 	let readinessStatus: number | null = null;
 	for (let attempt = 0; attempt < 50; attempt++) {
