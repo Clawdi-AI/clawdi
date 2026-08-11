@@ -30,6 +30,8 @@ import { runningAsRoot } from "./runtime-user-command";
 const FILE_BROWSER_BINARY = "filebrowser";
 const FILE_BROWSER_CANDIDATES = "candidates";
 const FILE_BROWSER_RECEIPT = "filebrowser";
+const FILE_BROWSER_CONFIG_ROOT_MODE = 0o750;
+const FILE_BROWSER_CONFIG_MODE = 0o440;
 
 type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
 type FileBrowserAsset = FileBrowserCompanion["assets"][keyof FileBrowserCompanion["assets"]];
@@ -329,7 +331,7 @@ function currentRevision(
 			configRootStat.isSymbolicLink() ||
 			configRootStat.uid !== owner.uid ||
 			configRootStat.gid !== identity.gid ||
-			(configRootStat.mode & 0o777) !== 0o710
+			(configRootStat.mode & 0o777) !== FILE_BROWSER_CONFIG_ROOT_MODE
 		)
 			return null;
 		const configStat = lstatSync(paths.fileBrowserConfig);
@@ -338,7 +340,7 @@ function currentRevision(
 			configStat.isSymbolicLink() ||
 			configStat.uid !== owner.uid ||
 			configStat.gid !== identity.gid ||
-			(configStat.mode & 0o777) !== 0o440
+			(configStat.mode & 0o777) !== FILE_BROWSER_CONFIG_MODE
 		)
 			return null;
 		if (readFileSync(paths.fileBrowserConfig, "utf8") !== config) return null;
@@ -372,13 +374,13 @@ export function ensureFileBrowserCompanion(
 	ensureOwnedDirectory(
 		paths.fileBrowserConfigRoot,
 		{ uid: managedRootIdentity().uid, gid: identity.gid },
-		0o710,
+		FILE_BROWSER_CONFIG_ROOT_MODE,
 	);
 	cleanStaleStaging(paths);
 	if (!verifiedReceipt || before === null) {
 		installCandidate(companion, paths, asset, options);
 		writePrivateFileAtomic(paths.fileBrowserConfig, config, {
-			mode: 0o440,
+			mode: FILE_BROWSER_CONFIG_MODE,
 			trustedRoot: paths.runRoot,
 		});
 		chownSync(paths.fileBrowserConfig, managedRootIdentity().uid, identity.gid);

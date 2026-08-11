@@ -115,9 +115,14 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	expect(existsSync(unitPath)).toBe(false);
 	expect(existsSync(openClawConfig)).toBe(false);
 	expect(existsSync(gatewayEnvironment)).toBe(false);
-	const previousOpenClawConfig = '{"gateway":{"mode":"local"}}\n';
+	const openClawWorkspaceRoot = join(runtimeHome, ".openclaw", "workspace");
+	const previousOpenClawConfig = `${JSON.stringify({
+		agents: { defaults: { workspace: openClawWorkspaceRoot } },
+		gateway: { mode: "local" },
+	})}\n`;
 	const previousGatewayEnvironment = "PRESERVED_ENV=before\n";
 	writeFileSync(openClawConfig, previousOpenClawConfig, { mode: 0o600 });
+	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	writeFileSync(gatewayEnvironment, previousGatewayEnvironment, { mode: 0o600 });
 	mkdirSync(dirname(unitPath), { recursive: true });
 	mkdirSync(unitPath, { recursive: false });
@@ -185,11 +190,13 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	expect(readFileSync(unitSentinel, "utf8")).toBe("preserve exact rollback target\n");
 	expect(readFileSync(openClawConfig, "utf8")).toBe(previousOpenClawConfig);
 	expect(readFileSync(gatewayEnvironment, "utf8")).toBe(previousGatewayEnvironment);
-	for (const path of [unitPath, openClawConfig, gatewayEnvironment]) {
+	for (const path of [unitPath, gatewayEnvironment]) {
 		const stat = statSync(path);
 		expect(stat.uid).toBe(0);
 		expect(stat.gid).toBe(0);
 	}
+	expect(statSync(openClawConfig).uid).toBe(runtimeUid);
+	expect(statSync(openClawConfig).gid).toBe(runtimeGid);
 	expect(statSync(openClawConfig).mode & 0o777).toBe(0o600);
 	expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
 	for (const path of [
@@ -232,6 +239,16 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = "/run/systemd/system";
 	process.env.CLAWDI_AUTH_TOKEN = "real-filebrowser-systemd-test-auth-token";
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
+	const openClawConfig = join(runtimeHome, ".openclaw", "openclaw.json");
+	const openClawWorkspaceRoot = join(runtimeHome, ".openclaw", "workspace");
+	writeFileSync(
+		openClawConfig,
+		`${JSON.stringify({
+			agents: { defaults: { workspace: openClawWorkspaceRoot } },
+		})}\n`,
+		{ mode: 0o600 },
+	);
+	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
 	const globalServiceDropInRoot = join(paths.systemdSystemRoot, "service.d");
@@ -427,10 +444,14 @@ http.createServer((request, response) => {
 	}
 	expect(statSync(paths.fileBrowserConfigRoot).uid).toBe(0);
 	expect(statSync(paths.fileBrowserConfigRoot).gid).toBe(serviceGid);
-	expect(statSync(paths.fileBrowserConfigRoot).mode & 0o777).toBe(0o710);
+	expect(statSync(paths.fileBrowserConfigRoot).mode & 0o777).toBe(0o750);
 	expect(statSync(paths.fileBrowserConfig).uid).toBe(0);
 	expect(statSync(paths.fileBrowserConfig).gid).toBe(serviceGid);
 	expect(statSync(paths.fileBrowserConfig).mode & 0o777).toBe(0o440);
+	expect(
+		spawnSync("runuser", ["-u", "clawdi-files", "--", "test", "-r", paths.fileBrowserConfigRoot])
+			.status,
+	).toBe(0);
 	expect(
 		spawnSync("runuser", ["-u", "clawdi-files", "--", "test", "-r", paths.fileBrowserConfig])
 			.status,

@@ -339,7 +339,8 @@ hand-built chroot.
 UID/GID, never as the tenant runtime user. CLI/root reconciliation is the only
 identity, installer, updater, ACL, and unit controller. Candidate directories
 and binaries are root-owned; the service reads its root-authored
-`root:clawdi-files` `0440` per-boot config handoff directly, and systemd
+per-boot config handoff from a `root:clawdi-files` `0750` directory containing
+a `root:clawdi-files` `0440` file, and systemd
 publishes only the verified binary through a unit-private `BindReadOnlyPaths=`
 mount. DB/cache state lives in the service-owned `0700`
 `StateDirectory=clawdi-files`; install
@@ -1049,7 +1050,8 @@ and ephemeral runtime handoffs. Important outputs include:
 | Output | Purpose |
 | --- | --- |
 | `/etc/clawdi/clawdi.json` | Redacted managed runtime config |
-| `/run/clawdi/files/filebrowser.yaml` | `root:clawdi-files` `0440` per-boot Files config handoff read directly by the existing service |
+| `/run/clawdi/files/` | `root:clawdi-files` `0750` per-boot Files config handoff directory |
+| `/run/clawdi/files/filebrowser.yaml` | `root:clawdi-files` `0440` Files config read directly by the existing service |
 | `/etc/clawdi/projections/*` and `/etc/clawdi/run/*` | Managed projections and `clawdi run` launch config |
 | `/var/lib/clawdi/sync/runtimes.json` | Runtime sync state |
 | `/var/lib/clawdi/status/*` | Boot, apply, upgrade, provider, egress, watch, and receipt status/result files |
