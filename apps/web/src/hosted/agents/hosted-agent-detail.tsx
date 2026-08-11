@@ -129,6 +129,10 @@ import {
 	runtimeUiLaunchTarget,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
+import {
+	useFilesGrantBootstrap,
+	useOpenFilesInNewTab,
+} from "@/hosted/agents/use-files-grant-bootstrap";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import {
 	type CheckoutReturnNavigationTarget,
@@ -1581,28 +1585,44 @@ function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: stri
 		);
 	}
 
+	return <FilesFrame url={url} />;
+}
+
+function FilesFrame({ url }: { url: string }) {
+	const bootstrap = useFilesGrantBootstrap(url);
+	const openInNewTab = useOpenFilesInNewTab(url);
+
 	return (
 		<LiveToolFrame
 			icon={FolderOpen}
 			title="Files"
 			action={
-				<Button
-					render={<a href={url} target="_blank" rel="noopener noreferrer" />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-				>
+				<Button nativeButton variant="outline" size="sm" onClick={() => void openInNewTab()}>
 					Open in new tab
 					<ExternalLink className="size-3.5" />
 				</Button>
 			}
 		>
-			<iframe
-				src={url}
-				title="Files"
-				className="min-h-[420px] flex-1 border-0 bg-background"
-				allow="clipboard-read; clipboard-write"
-			/>
+			{bootstrap === "error" ? (
+				<EmptyState
+					icon={FolderOpen}
+					title="Files could not be opened"
+					description="We could not authenticate your Files session. Refresh the page and try again."
+				/>
+			) : bootstrap === "pending" ? (
+				<EmptyState
+					icon={FolderOpen}
+					title="Opening Files…"
+					description="Authenticating your private Workspace session."
+				/>
+			) : (
+				<iframe
+					src={url}
+					title="Files"
+					className="min-h-[420px] flex-1 border-0 bg-background"
+					allow="clipboard-read; clipboard-write"
+				/>
+			)}
 		</LiveToolFrame>
 	);
 }
