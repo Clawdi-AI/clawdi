@@ -41,7 +41,11 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
-from app.routes.sessions import _runtime_observed_health
+from app.routes.sessions import (
+    _runtime_observed_desired,
+    _runtime_observed_health,
+    _runtime_observed_provider_health,
+)
 from app.schemas.admin import AdminRuntimeStateUpsert
 from app.schemas.runtime import (
     HostedEgressEngine,
@@ -797,6 +801,69 @@ def test_unmanaged_health_requires_exact_empty_applied_provider_set():
     assert "applied_provider_ids_extra" in stale.reasons
     assert malformed.status == "unknown"
     assert "desired_provider_contract_invalid" in malformed.reasons
+
+
+def test_managed_health_compares_agent_facing_provider_ids():
+    now = datetime.now(UTC)
+    source_revision = "e" * 64
+    etag = expected_runtime_bundle_v2_etag(source_revision)
+    internal_provider_id = "clawdi-v2-deployment-42"
+    state = SimpleNamespace(
+        deployment_id="42",
+        instance_id="hri-managed-health",
+        generation=3,
+        cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+        updated_at=now,
+        runtimes=_runtime_state(provider_ids=[internal_provider_id]),
+        mcp=None,
+        tools=None,
+    )
+    env = SimpleNamespace(last_sync_error=None, last_sync_at=now)
+    observation = SimpleNamespace(
+        observed_at=now,
+        observed_config_generation=3,
+        observed_manifest_etag=etag,
+        observed_source_revision=source_revision,
+        diagnostics={
+            "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+            "reportedAt": now.isoformat(),
+            "runtimeMode": "hosted",
+            "status": "ok",
+            "activeCliVersion": TEST_CLI_PACKAGE_SPEC.split("@", 1)[1],
+            "applied": {
+                "etag": etag,
+                "sourceRevision": source_revision,
+                "generation": 3,
+                "instanceId": "hri-managed-health",
+                "appliedProviderIds": [CLAWDI_MANAGED_PROVIDER_ID],
+            },
+            "boot": None,
+            "cli": None,
+            "providers": {
+                CLAWDI_MANAGED_PROVIDER_ID: {
+                    "status": "ok",
+                    "configured": True,
+                    "secretAvailable": True,
+                }
+            },
+        },
+    )
+
+    health = _runtime_observed_health(
+        env,
+        state,
+        observation,
+        desired_source_revision=source_revision,
+        desired_cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+    )
+    provider_health = _runtime_observed_provider_health(state, observation)
+
+    assert _runtime_observed_desired(state).provider_id == CLAWDI_MANAGED_PROVIDER_ID
+    assert health.status == "ok"
+    assert health.reasons == []
+    assert [provider.provider_id for provider in provider_health] == [CLAWDI_MANAGED_PROVIDER_ID]
+    assert provider_health[0].status == "ok"
+    assert provider_health[0].desired == {"selected": True, "primary": True}
 
 
 async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: str, **overrides):
