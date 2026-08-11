@@ -12396,6 +12396,48 @@ async def test_telegram_webhook_unpair_sends_user_reply(
 
 
 @pytest.mark.asyncio
+async def test_public_telegram_unpair_reply_uses_platform_unbound_send(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account = ChannelAccount(
+        id=uuid4(),
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        visibility=CHANNEL_VISIBILITY_PUBLIC,
+        user_id=None,
+    )
+    binding = ChannelBinding(bot_agent_link_id=uuid4())
+    binding_result = channel_service.InboundBindingResult(
+        binding=binding,
+        unpaired=True,
+        command_handled=True,
+    )
+    unbound_send = AsyncMock()
+    bound_send = AsyncMock(side_effect=AssertionError("archived binding must not authorize reply"))
+    monkeypatch.setattr(channel_service, "send_platform_unbound_channel_message", unbound_send)
+    monkeypatch.setattr(channel_service, "send_channel_outbound_message", bound_send)
+
+    reply = await channel_service.send_control_command_reply(
+        db_session,
+        account=account,
+        external_chat_id="987654323",
+        telegram_message_thread_id=324,
+        command=channel_service.ChannelControlCommand(kind="unpair"),
+        binding_result=binding_result,
+    )
+
+    assert reply is None
+    unbound_send.assert_awaited_once_with(
+        account=account,
+        external_chat_id="987654323",
+        text="Unpaired. This chat is no longer connected to an agent.",
+        telegram_message_thread_id=324,
+        telegram_direct_messages_topic_id=None,
+    )
+    bound_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_telegram_channel_direct_message_pairing_replies_stay_in_originating_topic(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -16725,7 +16767,10 @@ async def test_discord_guild_interaction_pair_denies_non_authoritative_permissio
 @pytest.mark.asyncio
 async def test_discord_guild_unpair_requires_current_authority_and_pairing_actor(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    provider_reply = AsyncMock()
+    monkeypatch.setattr(discord_router, "send_control_command_reply", provider_reply)
     created = await _create_paired_discord_channel(
         client,
         name="discord-unpair-two-part-authority",
@@ -16777,6 +16822,7 @@ async def test_discord_guild_unpair_requires_current_authority_and_pairing_actor
     )
     assert allowed.json()["data"]["content"].startswith("Server unpaired.")
     assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+    provider_reply.assert_not_awaited()
 
 
 @pytest.mark.asyncio

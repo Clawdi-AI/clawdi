@@ -14,6 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
+    CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_VISIBILITY_PRIVATE,
+    CHANNEL_VISIBILITY_PUBLIC,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
     ChannelAccount,
@@ -27,6 +30,7 @@ from app.models.channel import (
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channels import (
     archive_bot_agent_link,
+    build_channel_account,
     channel_control_help_reply,
     enqueue_channel_outbound_message,
     generate_agent_token,
@@ -1258,6 +1262,92 @@ async def test_whatsapp_unpaired_traffic_is_silent_and_replayed_command_replies_
     )
     assert len(unknown_messages) == 1
     assert unknown_messages[0].delivered_at is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("visibility", "expect_recorded_outbound"),
+    [
+        (CHANNEL_VISIBILITY_PUBLIC, False),
+        (CHANNEL_VISIBILITY_PRIVATE, True),
+    ],
+)
+async def test_whatsapp_unpair_ack_uses_post_unpair_account_send(
+    db_session: AsyncSession,
+    channel_agent,
+    visibility: str,
+    expect_recorded_outbound: bool,
+) -> None:
+    external_chat_id = "15551114444@s.whatsapp.net"
+    account = build_channel_account(
+        owner_user_id=(channel_agent.user_id if visibility == CHANNEL_VISIBILITY_PRIVATE else None),
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name=f"wa-{visibility}-unpair-ack",
+        visibility=visibility,
+        webhook_secret_hash=hash_token(uuid4().hex),
+    )
+    db_session.add(account)
+    await db_session.flush()
+    link = ChannelBotAgentLink(
+        account_id=account.id,
+        user_id=channel_agent.user_id,
+        agent_id=channel_agent.id,
+    )
+    store_agent_link_token(link, generate_agent_token(CHANNEL_PROVIDER_WHATSAPP))
+    db_session.add(link)
+    await db_session.flush()
+    binding = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=link.id,
+        user_id=channel_agent.user_id,
+        external_chat_id=external_chat_id,
+        external_chat_type="dm",
+        paired_external_user_id=external_chat_id,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    transport = _FakeProviderTransport()
+    register_whatsapp_provider_transport(account.id, transport)
+
+    try:
+        await persist_whatsapp_provider_event(
+            db_session,
+            account_id=account.id,
+            event=WhatsAppProviderMessageEvent(
+                sequence=1,
+                message_id=f"{visibility}-unpair",
+                remote_jid=external_chat_id,
+                remote_jid_alt=None,
+                participant=None,
+                participant_alt=None,
+                push_name=None,
+                message_timestamp=None,
+                message_proto=whatsapp_text_message_proto("/clawdi_unpair"),
+            ),
+        )
+    finally:
+        unregister_whatsapp_provider_transport(account.id)
+
+    await db_session.refresh(binding)
+    assert binding.status == BINDING_STATUS_ARCHIVED
+    assert [message.conversation for message in transport.outbound_messages] == [
+        "Unpaired. This chat is no longer connected to an agent."
+    ]
+    outbound_message = (
+        await db_session.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.account_id == account.id,
+                ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+            )
+        )
+    ).scalar_one_or_none()
+    if expect_recorded_outbound:
+        assert outbound_message is not None
+        assert outbound_message.user_id == channel_agent.user_id
+        assert outbound_message.bot_agent_link_id is None
+        assert outbound_message.binding_id is None
+    else:
+        assert outbound_message is None
 
 
 @pytest.mark.asyncio
