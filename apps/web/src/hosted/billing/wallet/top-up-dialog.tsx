@@ -189,7 +189,7 @@ export function TopUpDialog({
 	const description =
 		step === "amount"
 			? `Add a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL} to your Wallet.`
-			: `Enter your card details to pay ${formatCents(amountCents)}.`;
+			: `Choose a payment method to pay ${formatCents(amountCents)}.`;
 	const content =
 		step === "amount" ? (
 			<div className="space-y-4">
