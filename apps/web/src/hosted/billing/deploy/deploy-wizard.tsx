@@ -1023,22 +1023,6 @@ export function DeployWizard() {
 		: walletTopUpAction
 			? submitting || !wallet.data
 			: !canSubmit;
-	const primaryActionOnClick = acceptedDeploymentRecovery
-		? () =>
-				void acceptDeployment(acceptedDeploymentRecovery.target, acceptedDeploymentRecovery.replace)
-		: walletTopUpAction
-			? () => walletTopUp.show(walletShortfallUsd)
-			: undefined;
-	const PrimaryActionIcon = submitting
-		? Spinner
-		: acceptedDeploymentHydrationFailed
-			? RefreshCw
-			: Rocket;
-	const primaryActionLabel = submitting
-		? submitBusyLabel
-		: acceptedDeploymentHydrationFailed
-			? "Retry opening agent"
-			: deployLabel;
 	const amountExplainsBlocking =
 		paidSelection !== null &&
 		paymentMethod === "wallet" &&
@@ -1586,11 +1570,31 @@ export function DeployWizard() {
 									aria-describedby={
 										visibleSubmitBlockingReason ? "deploy-blocking-reason" : undefined
 									}
-									onClick={primaryActionOnClick}
+									onClick={
+										acceptedDeploymentHydrationFailed && acceptedDeploymentRecovery
+											? () =>
+													void acceptDeployment(
+														acceptedDeploymentRecovery.target,
+														acceptedDeploymentRecovery.replace,
+													)
+											: walletTopUpAction
+												? () => walletTopUp.show(walletShortfallUsd)
+												: undefined
+									}
 									className="w-full shrink-0 @2xl/main:w-auto"
 								>
-									<PrimaryActionIcon data-icon="inline-start" />
-									{primaryActionLabel}
+									{submitting ? (
+										<Spinner data-icon="inline-start" />
+									) : acceptedDeploymentHydrationFailed ? (
+										<RefreshCw data-icon="inline-start" />
+									) : (
+										<Rocket data-icon="inline-start" />
+									)}
+									{submitting
+										? submitBusyLabel
+										: acceptedDeploymentHydrationFailed
+											? "Retry opening agent"
+											: deployLabel}
 								</Button>
 								{submitTakingLong && submitTakingLongCopy ? (
 									<p
