@@ -59,6 +59,7 @@ from app.models.channel import (
     ChannelMessage,
     ChannelPairCode,
     ChannelSecret,
+    ChannelWhatsAppAuthCert,
 )
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
@@ -1796,146 +1797,30 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
 
 
 @pytest.mark.asyncio
-async def test_env_bound_list_channels_returns_runtime_agent_token(
+async def test_environment_bound_key_cannot_list_control_plane_channels(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
     channel_agent,
 ):
+    channel_name = f"unbound-only-{uuid4().hex}"
     created_response = await client.post(
         "/v1/channels",
         json={
             "provider": "telegram",
-            "name": f"runtime-list-{uuid4().hex}",
+            "name": channel_name,
             "provider_token": "123456:telegram-secret",
         },
     )
     assert created_response.status_code == 201, created_response.text
-    created = created_response.json()
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
     async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
         listed = await runtime_client.get("/v1/channels")
 
-    assert listed.status_code == 200, listed.text
-    payload = listed.json()
-    assert len(payload) == 1
-    assert payload[0]["id"] == created["id"]
-    assert payload[0]["runtime_links"] == [
-        {
-            "id": created["agent_link_id"],
-            "account_id": created["id"],
-            "agent_id": str(channel_agent.id),
-            "status": "active",
-            "created_at": payload[0]["runtime_links"][0]["created_at"],
-            "agent_token": created["agent_token"],
-        }
-    ]
+    assert listed.status_code == 403, listed.text
+    assert channel_name not in listed.text
     assert "telegram-secret" not in listed.text
-    assert "webhook_secret" not in listed.text
-
-
-@pytest.mark.asyncio
-async def test_account_level_managed_key_lists_runtime_channels_with_environment_query(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-    channel_agent,
-):
-    created_response = await client.post(
-        "/v1/channels",
-        json={
-            "provider": "telegram",
-            "name": f"runtime-managed-list-{uuid4().hex}",
-            "provider_token": "123456:telegram-secret",
-        },
-    )
-    assert created_response.status_code == 201, created_response.text
-    created = created_response.json()
-
-    api_key = ApiKey(
-        user_id=seed_user.id,
-        environment_id=None,
-        managed=True,
-        label="hosted",
-    )
-    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        listed = await runtime_client.get(f"/v1/channels?environment_id={channel_agent.id}")
-
-    assert listed.status_code == 200, listed.text
-    payload = listed.json()
-    assert len(payload) == 1
-    assert payload[0]["id"] == created["id"]
-    assert payload[0]["runtime_links"][0]["agent_id"] == str(channel_agent.id)
-    assert payload[0]["runtime_links"][0]["agent_token"] == created["agent_token"]
-    assert "telegram-secret" not in listed.text
-    assert "webhook_secret" not in listed.text
-
-
-@pytest.mark.asyncio
-async def test_env_bound_channel_etag_is_stable(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-    channel_agent,
-):
-    duplicate_name = f"Runtime Duplicate {uuid4().hex}"
-    created_response = await client.post(
-        "/v1/channels",
-        json={
-            "provider": "telegram",
-            "name": duplicate_name,
-            "provider_token": "123456:telegram-secret-0",
-        },
-    )
-    assert created_response.status_code == 201, created_response.text
-    api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
-    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        first = await runtime_client.get("/v1/channels")
-        assert first.status_code == 200, first.text
-        etag = first.headers["etag"]
-        second = await runtime_client.get("/v1/channels", headers={"If-None-Match": etag})
-
-    assert second.status_code == 304, second.text
-    assert [item["id"] for item in first.json()] == [created_response.json()["id"]]
-
-
-@pytest.mark.asyncio
-async def test_env_bound_channel_etag_changes_when_agent_token_rotates(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-    channel_agent,
-):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "telegram",
-                "name": f"runtime-etag-{uuid4().hex}",
-                "provider_token": "123456:telegram-secret",
-            },
-        )
-    ).json()
-
-    api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
-    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        first = await runtime_client.get("/v1/channels")
-    assert first.status_code == 200, first.text
-    etag = first.headers["etag"]
-
-    rotated = await client.post(
-        f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
-    )
-    assert rotated.status_code == 200, rotated.text
-    rotated_token = rotated.json()["agent_token"]
-
-    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        changed = await runtime_client.get("/v1/channels", headers={"If-None-Match": etag})
-
-    assert changed.status_code == 200, changed.text
-    assert changed.headers["etag"] != etag
-    assert changed.json()[0]["runtime_links"][0]["agent_token"] == rotated_token
 
 
 @pytest.mark.asyncio
@@ -2235,9 +2120,6 @@ async def test_hosted_agent_rejects_second_provider_account_but_keeps_existing_l
         rotated = await user_client.post(
             f"/v1/channels/{first_account.json()['id']}/agent-links/{first_link.json()['id']}/token"
         )
-        api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="multi-account")
-        async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-            runtime_channels = await runtime_client.get("/v1/channels")
     eligible_agent_ids = await channel_service.list_strict_v2_hosted_channel_agent_ids(
         db_session,
         user_id=user.id,
@@ -2258,8 +2140,6 @@ async def test_hosted_agent_rejects_second_provider_account_but_keeps_existing_l
     assert rotated.status_code == 200, rotated.text
     assert rotated.json()["agent_token"] != first_link.json()["agent_token"]
     assert agent.id not in eligible_agent_ids
-    assert runtime_channels.status_code == 200, runtime_channels.text
-    assert [item["id"] for item in runtime_channels.json()] == [first_account.json()["id"]]
 
 
 @pytest.mark.asyncio
@@ -2850,9 +2730,6 @@ async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed
         duplicate_rotate = await user_client.post(
             f"/v1/channels/{second.json()['id']}/agent-links/{second_link.id}/token"
         )
-    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="duplicate-runtime")
-    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-        runtime_channels = await runtime_client.get("/v1/channels")
     first_auth = await client.post(
         _telegram_bot_path(
             {"id": first.json()["id"], "agent_token": first_token},
@@ -2888,8 +2765,6 @@ async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed
     assert duplicate_pair.json()["detail"] == remediation
     assert duplicate_rotate.status_code == 409
     assert duplicate_rotate.json()["detail"] == remediation
-    assert runtime_channels.status_code == 409
-    assert runtime_channels.json()["detail"] == remediation
     assert first_auth.status_code == 409
     assert first_auth.json()["detail"] == remediation
     assert second_auth.status_code == 409
@@ -2907,14 +2782,9 @@ async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed
         rotated = await user_client.post(
             f"/v1/channels/{first.json()['id']}/agent-links/{first_link.id}/token"
         )
-    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-        recovered_runtime_channels = await runtime_client.get("/v1/channels")
-
     assert unlinked.status_code == 204
     assert [item["id"] for item in remaining_links.json()] == [str(first_link.id)]
     assert rotated.status_code == 200, rotated.text
-    assert recovered_runtime_channels.status_code == 200
-    assert [item["id"] for item in recovered_runtime_channels.json()] == [first.json()["id"]]
 
 
 @pytest.mark.asyncio
@@ -3368,9 +3238,6 @@ async def test_historical_local_link_remains_listable_and_cleanable_but_cannot_p
     db_session.add(binding)
     await db_session.commit()
 
-    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="historical-local-runtime")
-    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-        runtime_channels = await runtime_client.get("/v1/channels")
     bot_api = await client.post(
         _telegram_bot_path(
             {"id": str(account_id), "agent_token": historical_agent_token},
@@ -3422,9 +3289,6 @@ async def test_historical_local_link_remains_listable_and_cleanable_but_cannot_p
     assert rotate.status_code == 409
     assert pair_by_link.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
     assert rotate.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
-    assert runtime_channels.status_code == 200
-    assert runtime_channels.json() == []
-    assert historical_agent_token not in runtime_channels.text
     assert bot_api.status_code == 401
     assert inbound.status_code == 200
     assert inbound.json()["binding_id"] is None
@@ -3596,10 +3460,6 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
         assert active_link.encrypted_agent_token is not None
         assert active_link.agent_token_nonce is not None
         full_pool = await client_a.get("/v1/channels/bot-pool")
-        api_key = ApiKey(user_id=user_a.id, environment_id=agent_a.id, label="hosted")
-        async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
-            desired_before = await runtime_client.get("/v1/channels")
-
         deleted = await client_a.delete(f"/v1/channels/{account_id}/agent-links/{first_link_id}")
         second_delete = await client_a.delete(
             f"/v1/channels/{account_id}/agent-links/{first_link_id}"
@@ -3608,8 +3468,6 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
 
         links_after = await client_a.get(f"/v1/channels/{account_id}/agent-links")
         pool_after_delete = await client_a.get("/v1/channels/bot-pool")
-        async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
-            desired_after = await runtime_client.get("/v1/channels")
         audit_response = await client_a.get(
             "/v1/audit/events",
             params={"channel_account_id": account_id, "limit": 20},
@@ -3620,8 +3478,6 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
             json={"agent_id": str(agent_b.id)},
         )
 
-    assert desired_before.status_code == 200, desired_before.text
-    assert [item["id"] for item in desired_before.json()] == [account_id]
     before_item = next(
         item for item in full_pool.json()["providers"]["telegram"] if item["id"] == account_id
     )
@@ -3633,8 +3489,6 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
     assert missing_delete.status_code == 204, missing_delete.text
     assert links_after.status_code == 200, links_after.text
     assert links_after.json() == []
-    assert desired_after.status_code == 200, desired_after.text
-    assert desired_after.json() == []
     after_item = next(
         item
         for item in pool_after_delete.json()["providers"]["telegram"]
@@ -4488,7 +4342,7 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
 
 
 @pytest.mark.asyncio
-async def test_env_bound_list_channels_hides_historical_local_whatsapp_credentials(
+async def test_control_plane_list_hides_historical_credentials_and_unlink_revokes_them(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
 ):
@@ -4510,8 +4364,7 @@ async def test_env_bound_list_channels_hides_historical_local_whatsapp_credentia
     )
     account = await db_session.get(ChannelAccount, UUID(account_id))
     assert account is not None
-    # Seed historical persisted state directly to verify the env-bound read
-    # projection without reopening tenant-credential admission.
+    # Seed historical persisted state without reopening tenant-credential admission.
     await load_or_create_whatsapp_auth_cert(db_session, account=account)
     first = await mint_whatsapp_agent_credential(
         db_session,
@@ -4556,14 +4409,6 @@ async def test_env_bound_list_channels_hides_historical_local_whatsapp_credentia
         str(second.credential.id),
     }
 
-    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="hosted-wa-runtime")
-    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-        listed = await runtime_client.get("/v1/channels")
-
-    assert listed.status_code == 200, listed.text
-    assert str(first.credential.id) not in listed.text
-    assert listed.json() == []
-
     async with _client_for_user(db_session, user) as user_client:
         deleted = await user_client.delete(f"/v1/channels/{account_id}/agent-links/{link.id}")
     assert deleted.status_code == 204, deleted.text
@@ -4584,9 +4429,21 @@ async def test_env_bound_list_channels_hides_historical_local_whatsapp_credentia
 
 
 @pytest.mark.asyncio
-async def test_agent_bound_runtime_contract_issues_only_synthetic_whatsapp_state(
+async def test_whatsapp_agent_link_maintains_synthetic_credential_lifecycle(
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    runtime_signals: list[tuple[UUID, UUID]] = []
+
+    async def record_runtime_signal(_db, user_id: UUID, environment_id: UUID) -> bool:
+        runtime_signals.append((user_id, environment_id))
+        return True
+
+    monkeypatch.setattr(
+        public_router,
+        "queue_environment_runtime_manifest_changed",
+        record_runtime_signal,
+    )
     user, agent = await _create_user_with_channel_agent(
         db_session,
         label="runtime-wa-synthetic",
@@ -4605,50 +4462,72 @@ async def test_agent_bound_runtime_contract_issues_only_synthetic_whatsapp_state
             json={"agent_id": str(agent.id)},
         )
     assert linked.status_code == 201, linked.text
+    assert runtime_signals == [(user.id, agent.id)]
     link = await db_session.get(ChannelBotAgentLink, UUID(linked.json()["id"]))
     assert link is not None
-    agent_token = linked.json()["agent_token"]
-
-    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="hosted-wa-runtime")
-    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-        listed = await runtime_client.get("/v1/channels")
-        listed_again = await runtime_client.get("/v1/channels")
-
-    assert listed.status_code == 200, listed.text
-    assert listed_again.status_code == 200, listed_again.text
-    assert len(listed.json()) == 1
-    runtime_account = listed.json()[0]
-    assert runtime_account["id"] == created["id"]
-    assert runtime_account["runtime_links"] == [
-        {
-            "id": str(link.id),
-            "account_id": created["id"],
-            "agent_id": str(agent.id),
-            "status": "active",
-            "created_at": runtime_account["runtime_links"][0]["created_at"],
-            "agent_token": agent_token,
-        }
-    ]
-    assert len(runtime_account["runtime_credentials"]) == 1
-    credential = runtime_account["runtime_credentials"][0]
-    assert credential["agent_link_id"] == str(link.id)
-    assert credential["kind"] == "whatsapp_baileys_auth_state"
-    assert credential["material"]["schemaVersion"] == "clawdi.whatsappBaileysAuthState.v1"
-    assert credential["material"]["websocketUrl"].endswith("/v1/channels/whatsapp/baileys")
-    assert credential["material"]["authCert"]["ISSUER"] == "clawdi"
-    serialized = json.dumps(credential["material"])
-    assert "providerToken" not in serialized
-    assert "physicalAuthState" not in serialized
-    assert "phone_number_id" not in serialized
-    assert listed_again.json()[0]["runtime_credentials"][0]["id"] == credential["id"]
-    credential_count = await db_session.scalar(
-        select(func.count(ChannelAgentCredential.id)).where(
+    credential = await db_session.scalar(
+        select(ChannelAgentCredential).where(
             ChannelAgentCredential.account_id == UUID(created["id"]),
             ChannelAgentCredential.bot_agent_link_id == link.id,
             ChannelAgentCredential.revoked_at.is_(None),
         )
     )
-    assert credential_count == 1
+    assert credential is not None
+    credential.revoked_at = datetime.now(UTC)
+    await db_session.commit()
+
+    runtime_signals.clear()
+    async with _client_for_user(db_session, user) as user_client:
+        credential_repaired_pair_code = await user_client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": str(link.id), "ttl_seconds": 900},
+        )
+    assert credential_repaired_pair_code.status_code == 201, credential_repaired_pair_code.text
+    assert runtime_signals == [(user.id, agent.id)]
+    repaired_credential = await db_session.scalar(
+        select(ChannelAgentCredential).where(
+            ChannelAgentCredential.account_id == UUID(created["id"]),
+            ChannelAgentCredential.bot_agent_link_id == link.id,
+            ChannelAgentCredential.revoked_at.is_(None),
+        )
+    )
+    assert repaired_credential is not None
+    repaired_credential_id = repaired_credential.id
+    auth_cert = await db_session.scalar(
+        select(ChannelWhatsAppAuthCert).where(
+            ChannelWhatsAppAuthCert.account_id == UUID(created["id"])
+        )
+    )
+    assert auth_cert is not None
+    await db_session.delete(auth_cert)
+    await db_session.commit()
+
+    runtime_signals.clear()
+    async with _client_for_user(db_session, user) as user_client:
+        auth_cert_repaired_pair_code = await user_client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": str(link.id), "ttl_seconds": 900},
+        )
+    assert auth_cert_repaired_pair_code.status_code == 201, auth_cert_repaired_pair_code.text
+    assert runtime_signals == [(user.id, agent.id)]
+    active_credential_ids = set(
+        await db_session.scalars(
+            select(ChannelAgentCredential.id).where(
+                ChannelAgentCredential.account_id == UUID(created["id"]),
+                ChannelAgentCredential.bot_agent_link_id == link.id,
+                ChannelAgentCredential.revoked_at.is_(None),
+            )
+        )
+    )
+    assert active_credential_ids == {repaired_credential_id}
+    assert (
+        await db_session.scalar(
+            select(ChannelWhatsAppAuthCert.id).where(
+                ChannelWhatsAppAuthCert.account_id == UUID(created["id"])
+            )
+        )
+        is not None
+    )
 
     async with _client_for_user(db_session, user) as user_client:
         browser_list = await user_client.get("/v1/channels")
@@ -4663,11 +4542,14 @@ async def test_agent_bound_runtime_contract_issues_only_synthetic_whatsapp_state
         deleted = await user_client.delete(f"/v1/channels/{created['id']}/agent-links/{link.id}")
     assert deleted.status_code == 204, deleted.text
 
-    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-        listed_after_unlink = await runtime_client.get("/v1/channels")
-
-    assert listed_after_unlink.status_code == 200, listed_after_unlink.text
-    assert listed_after_unlink.json() == []
+    active_after_unlink = await db_session.scalar(
+        select(func.count(ChannelAgentCredential.id)).where(
+            ChannelAgentCredential.account_id == UUID(created["id"]),
+            ChannelAgentCredential.bot_agent_link_id == link.id,
+            ChannelAgentCredential.revoked_at.is_(None),
+        )
+    )
+    assert active_after_unlink == 0
 
 
 @pytest.mark.asyncio

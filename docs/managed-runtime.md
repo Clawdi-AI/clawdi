@@ -479,10 +479,10 @@ auth when exposing the official OpenClaw port directly.
 The control plane accepts only exact
 `Accept: application/vnd.clawdi.runtime-bundle.v2+json` and returns strict
 `clawdi.hosted-runtime.bundle.v2`. The response contains the hosted manifest,
-sanitized Telegram and Discord `channelBindings`, one merged `secretValues`
-map, and deterministic `sourceRevision`. Missing or unsupported media types
-return `406`; the CLI does not fall back to another representation or a second
-`/v1/channels` request.
+sanitized Telegram, Discord, and WhatsApp `channelBindings`, one merged
+`secretValues` map, and deterministic `sourceRevision`. Missing or unsupported
+media types return `406`; the CLI does not fall back to another representation
+or a second `/v1/channels` request.
 
 Bundle responses identify the vendor media type and return `Vary: Accept`.
 Negotiation `406` responses also return `Vary: Accept` and
@@ -493,16 +493,24 @@ validator without decrypting secrets in the health summary.
 
 ### Channel reconcile boundary
 
-Telegram and Discord `ChannelBotAgentLink` rows are runtime desired state. A
-link create or re-link, link delete, account archive, or link credential
-rotation changes the rendered channel projection and therefore
+Telegram, Discord, and WhatsApp `ChannelBotAgentLink` rows are runtime desired
+state. A link create or re-link, link delete, account archive, or link
+credential rotation changes the rendered channel projection and therefore
 `sourceRevision`. Those mutation transactions also enqueue the existing
 signal-only `runtime_manifest_changed` event for the linked Agent. The event is
 delivered only after commit; the runtime refetches the manifest and converges at
 the normal ETag/sourceRevision boundary. ETag polling remains the missed-event
 fallback, so no separate restart or channel-specific reconcile state machine is
 required. Creating a pair code emits this signal only when that request also
-creates an AgentLink.
+creates an AgentLink or repairs missing WhatsApp credential material.
+
+Each WhatsApp binding carries Link-scoped agent-token and egress-capability
+secret references plus a credential descriptor containing its id, explicit
+`credsSecretRef`, and public auth-certificate material. The matching serialized
+Baileys credentials are present in `secretValues` only under that declared
+reference. Healthy manifest reads use the repeatable-read snapshot directly;
+missing credential or auth-certificate rows enter a locked, idempotent repair
+path and then render from a fresh snapshot.
 
 `ChannelBinding` rows are provider routing state, not runtime identity. Pairing
 or unpairing a chat updates only the binding and provider-owned per-chat
@@ -1436,6 +1444,13 @@ CLI version that understands the new fields, then advance existing deployments
 through ordinary higher-generation runtime-state reconciliation. Database
 migrations backfill stored authority where required; operators do not patch
 individual production rows to advance deployments.
+
+The WhatsApp channel binding follows that same order: this producer change stays
+stacked and unmerged until `clawdi@0.13.56` is published, selected by Hosted, and
+verified on active runtimes. Only then may the Hosted producer emit WhatsApp
+bindings. This is operational release sequencing, not a code gate: the OSS
+consumer has no producer-version detection, feature flag, fallback datasource,
+or dual contract.
 
 For the optional v2 `applyGeneration` amendment, strict older consumers reject
 the new root field. This OSS consumer release must deploy before Hosted producer

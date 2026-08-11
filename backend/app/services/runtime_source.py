@@ -20,9 +20,12 @@ from app.models.channel import (
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelAgentCredential,
     ChannelBotAgentLink,
+    ChannelWhatsAppAuthCert,
 )
 from app.models.hosted_runtime import (
     HostedRuntimeConfigObservation,
@@ -75,6 +78,10 @@ from app.services.project_runtime_skills import (
 )
 from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 from app.services.vault_crypto import decrypt
+from app.services.whatsapp_baileys import (
+    buffer_json,
+    ensure_whatsapp_agent_credential,
+)
 
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
@@ -122,6 +129,8 @@ class RuntimeSourceBatch:
     providers: dict[tuple[UUID, str], AiProvider]
     auth_payloads: dict[tuple[UUID, str, str], AiProviderAuthPayload]
     channels: dict[UUID, tuple[tuple[ChannelAccount, ChannelBotAgentLink], ...]]
+    channel_credentials: dict[UUID, ChannelAgentCredential] = field(default_factory=dict)
+    whatsapp_auth_certs: dict[UUID, ChannelWhatsAppAuthCert] = field(default_factory=dict)
     runtime_secrets: dict[UUID, tuple[HostedRuntimeSecret, ...]] = field(default_factory=dict)
     project_skills: dict[UUID, tuple[RuntimeProjectSkill, ...]] = field(default_factory=dict)
 
@@ -129,7 +138,7 @@ class RuntimeSourceBatch:
 @dataclass(frozen=True)
 class RenderedRuntimeSource:
     manifest: dict[str, Any]
-    channel_bindings: list[dict[str, str]]
+    channel_bindings: list[dict[str, Any]]
     secret_values: dict[str, str]
     source_revision: str
     apply_generation: int | None
@@ -150,7 +159,7 @@ async def load_runtime_source_batch(
     owner_user_id: UUID | None = None,
 ) -> RuntimeSourceBatch:
     if not environment_ids:
-        return RuntimeSourceBatch({}, {}, {}, {}, {}, {})
+        return RuntimeSourceBatch(rows={}, providers={}, auth_payloads={}, channels={})
     env_filters: list[ColumnElement[bool]] = [
         AgentEnvironment.id.in_(environment_ids),
         AgentEnvironment.archived_at.is_(None),
@@ -178,7 +187,7 @@ async def load_runtime_source_batch(
     }
     user_ids = sorted({row.environment.user_id for row in rows.values()}, key=str)
     if not user_ids:
-        return RuntimeSourceBatch(rows, {}, {}, {}, {}, {})
+        return RuntimeSourceBatch(rows=rows, providers={}, auth_payloads={}, channels={})
     providers = list(
         (
             await db.execute(
@@ -210,7 +219,13 @@ async def load_runtime_source_batch(
                 ChannelBotAgentLink.archived_at.is_(None),
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
-                ChannelAccount.provider.in_((CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD)),
+                ChannelAccount.provider.in_(
+                    (
+                        CHANNEL_PROVIDER_TELEGRAM,
+                        CHANNEL_PROVIDER_DISCORD,
+                        CHANNEL_PROVIDER_WHATSAPP,
+                    )
+                ),
             )
             .order_by(
                 ChannelBotAgentLink.agent_id,
@@ -223,6 +238,52 @@ async def load_runtime_source_batch(
     channels: dict[UUID, list[tuple[ChannelAccount, ChannelBotAgentLink]]] = {}
     for environment_id, account, link in channel_rows:
         channels.setdefault(environment_id, []).append((account, link))
+    whatsapp_links = [
+        (account, link)
+        for _environment_id, account, link in channel_rows
+        if account.provider == CHANNEL_PROVIDER_WHATSAPP
+    ]
+    credential_rows = (
+        list(
+            (
+                await db.execute(
+                    select(ChannelAgentCredential)
+                    .where(
+                        ChannelAgentCredential.bot_agent_link_id.in_(
+                            [link.id for _account, link in whatsapp_links]
+                        ),
+                        ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
+                        ChannelAgentCredential.revoked_at.is_(None),
+                    )
+                    .order_by(
+                        ChannelAgentCredential.bot_agent_link_id,
+                        ChannelAgentCredential.created_at.desc(),
+                        ChannelAgentCredential.id.desc(),
+                    )
+                )
+            ).scalars()
+        )
+        if whatsapp_links
+        else []
+    )
+    channel_credentials: dict[UUID, ChannelAgentCredential] = {}
+    for credential in credential_rows:
+        channel_credentials.setdefault(credential.bot_agent_link_id, credential)
+    auth_cert_rows = (
+        list(
+            (
+                await db.execute(
+                    select(ChannelWhatsAppAuthCert).where(
+                        ChannelWhatsAppAuthCert.account_id.in_(
+                            [account.id for account, _link in whatsapp_links]
+                        )
+                    )
+                )
+            ).scalars()
+        )
+        if whatsapp_links
+        else []
+    )
     runtime_secret_rows = list(
         (
             await db.execute(
@@ -293,12 +354,65 @@ async def load_runtime_source_batch(
             )
         )
     return RuntimeSourceBatch(
-        rows,
-        {(item.owner_user_id, item.provider_id): item for item in providers},
-        {(item.owner_user_id, item.provider_id, item.auth_profile): item for item in auth_payloads},
-        {key: tuple(value) for key, value in channels.items()},
-        {key: tuple(value) for key, value in runtime_secrets.items()},
-        {key: tuple(value) for key, value in project_skills.items()},
+        rows=rows,
+        providers={(item.owner_user_id, item.provider_id): item for item in providers},
+        auth_payloads={
+            (item.owner_user_id, item.provider_id, item.auth_profile): item
+            for item in auth_payloads
+        },
+        channels={key: tuple(value) for key, value in channels.items()},
+        channel_credentials=channel_credentials,
+        whatsapp_auth_certs={item.account_id: item for item in auth_cert_rows},
+        runtime_secrets={key: tuple(value) for key, value in runtime_secrets.items()},
+        project_skills={key: tuple(value) for key, value in project_skills.items()},
+    )
+
+
+async def ensure_runtime_whatsapp_credentials(
+    db: AsyncSession,
+    *,
+    environment_id: UUID,
+    owner_user_id: UUID,
+    link_ids: tuple[UUID, ...],
+) -> None:
+    if not link_ids:
+        return
+    rows = (
+        await db.execute(
+            select(ChannelAccount, ChannelBotAgentLink)
+            .join(ChannelBotAgentLink, ChannelBotAgentLink.account_id == ChannelAccount.id)
+            .where(
+                ChannelBotAgentLink.id.in_(link_ids),
+                ChannelBotAgentLink.agent_id == environment_id,
+                ChannelBotAgentLink.user_id == owner_user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+                ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+            )
+            .order_by(ChannelAccount.id, ChannelBotAgentLink.id)
+        )
+    ).all()
+    try:
+        for account, link in rows:
+            await ensure_whatsapp_agent_credential(db, account=account, link=link)
+    except Exception as exc:
+        raise RuntimeSourceError("Hosted runtime WhatsApp credential source is invalid") from exc
+
+
+def missing_runtime_whatsapp_credential_link_ids(
+    batch: RuntimeSourceBatch,
+    *,
+    environment_id: UUID,
+) -> tuple[UUID, ...]:
+    return tuple(
+        link.id
+        for account, link in batch.channels.get(environment_id, ())
+        if account.provider == CHANNEL_PROVIDER_WHATSAPP
+        and (
+            link.id not in batch.channel_credentials or account.id not in batch.whatsapp_auth_certs
+        )
     )
 
 
@@ -670,7 +784,7 @@ def render_runtime_source(
         manifest["tools"] = tool_projection
     manifest["terminalTooling"] = terminal_tooling
 
-    bindings: list[dict[str, str]] = []
+    bindings: list[dict[str, Any]] = []
     channel_rows = batch.channels.get(environment_id, ())
     projected_providers: set[str] = set()
     for account, link in channel_rows:
@@ -685,16 +799,71 @@ def render_runtime_source(
         if not link.encrypted_agent_token or not link.agent_token_nonce:
             raise RuntimeSourceError("Active runtime channel link has no token material")
         account_key = channel_runtime_account_key(account.id)
-        agent_ref = f"secret://channels/{account.provider}/{account_key}/agent-token"
-        placeholder_ref = f"secret://channels/{account.provider}/{account_key}/placeholder-token"
-        bindings.append(
-            {
-                "provider": account.provider,
-                "accountKey": account_key,
-                "agentTokenSecretRef": agent_ref,
-                "placeholderTokenSecretRef": placeholder_ref,
-            }
-        )
+        if account.provider == CHANNEL_PROVIDER_WHATSAPP:
+            agent_ref = f"secret://channels/whatsapp/{account_key}/links/{link.id}/agent-token"
+            placeholder_ref = (
+                f"secret://channels/whatsapp/{account_key}/links/{link.id}/egress-capability"
+            )
+            credential = batch.channel_credentials.get(link.id)
+            auth_cert = batch.whatsapp_auth_certs.get(account.id)
+            if credential is None or auth_cert is None:
+                raise RuntimeSourceError(
+                    "Active runtime WhatsApp Link has no synthetic credential material"
+                )
+            credential_ref = (
+                f"secret://channels/whatsapp/{account_key}/credentials/{credential.id}/creds-json"
+            )
+            bindings.append(
+                {
+                    "provider": CHANNEL_PROVIDER_WHATSAPP,
+                    "accountId": str(account.id),
+                    "accountKey": account_key,
+                    "linkId": str(link.id),
+                    "agentTokenSecretRef": agent_ref,
+                    "placeholderTokenSecretRef": placeholder_ref,
+                    "credential": {
+                        "id": str(credential.id),
+                        "credsSecretRef": credential_ref,
+                        "authCert": {
+                            "SERIAL": auth_cert.serial,
+                            "ISSUER": "clawdi",
+                            "PUBLIC_KEY": buffer_json(auth_cert.root_public_key),
+                        },
+                    },
+                }
+            )
+            _add_secret_source(
+                secret_sources,
+                credential_ref,
+                _secret_identity(
+                    credential.id,
+                    credential.encrypted_credentials,
+                    credential.credential_nonce,
+                    vault_key_identity,
+                    "channel-whatsapp-synthetic-credential",
+                ),
+            )
+            secret_materials.append(
+                RuntimeSecretMaterial(
+                    secret_ref=credential_ref,
+                    ciphertext=credential.encrypted_credentials,
+                    nonce=credential.credential_nonce,
+                    error_message="Hosted runtime WhatsApp credential source is invalid",
+                )
+            )
+        else:
+            agent_ref = f"secret://channels/{account.provider}/{account_key}/agent-token"
+            placeholder_ref = (
+                f"secret://channels/{account.provider}/{account_key}/placeholder-token"
+            )
+            bindings.append(
+                {
+                    "provider": account.provider,
+                    "accountKey": account_key,
+                    "agentTokenSecretRef": agent_ref,
+                    "placeholderTokenSecretRef": placeholder_ref,
+                }
+            )
         _add_secret_source(
             secret_sources,
             agent_ref,
@@ -724,7 +893,13 @@ def render_runtime_source(
         for binding in bindings:
             placeholder_ref = binding["placeholderTokenSecretRef"]
             secrets[placeholder_ref] = channel_runtime_placeholder_token(
-                binding["provider"], binding["accountKey"]
+                binding["provider"],
+                binding["accountKey"],
+                link_id=(
+                    UUID(binding["linkId"])
+                    if binding["provider"] == CHANNEL_PROVIDER_WHATSAPP
+                    else None
+                ),
             )
 
     descriptor: dict[str, object] = {

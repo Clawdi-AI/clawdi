@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import (
     AuthContext,
     require_user_auth,
+    require_user_auth_unbound,
 )
 from app.core.database import get_session
 from app.models.channel import (
@@ -40,14 +41,12 @@ from app.models.channel import (
     DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_PENDING,
     ChannelAccount,
-    ChannelAgentCredential,
     ChannelBinding,
     ChannelBotAgentLink,
     ChannelDebugEvent,
     ChannelDelivery,
     ChannelMessage,
 )
-from app.models.session import AgentEnvironment
 from app.routes.channel_routers.shared import (
     account_response,
     binding_response,
@@ -77,9 +76,6 @@ from app.schemas.channel import (
     ChannelMessageResponse,
     ChannelPairCodeCreate,
     ChannelPairCodeResponse,
-    ChannelRuntimeAccountResponse,
-    ChannelRuntimeAgentLinkResponse,
-    ChannelRuntimeCredentialResponse,
     ChannelSendMessageRequest,
 )
 from app.services.agent_bindings import get_owned_agent_or_404
@@ -97,6 +93,7 @@ from app.services.channel_debug_events import (
 )
 from app.services.channels import (
     PAIR_COMMAND,
+    RUNTIME_CHANNEL_PROVIDERS,
     archive_bot_agent_link,
     archive_channel_account,
     bot_agent_link_has_strict_v2_authority,
@@ -107,7 +104,6 @@ from app.services.channels import (
     configure_telegram_provider_webhook,
     consume_pending_inbound_messages_for_bindings,
     create_pair_code,
-    decrypt_agent_link_token,
     discord_bot_install_url,
     discord_config_without_unverified_install_state,
     discord_install_config_is_current,
@@ -142,15 +138,7 @@ from app.services.channels import (
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.sync_events import queue_environment_runtime_manifest_changed
-from app.services.vault_crypto import decrypt
-from app.services.whatsapp_baileys import (
-    buffer_json,
-    deserialize_creds,
-    encode_buffer_json,
-    load_or_create_whatsapp_auth_cert,
-    mint_whatsapp_agent_credential,
-    whatsapp_agent_websocket_url,
-)
+from app.services.whatsapp_baileys import ensure_whatsapp_agent_credential
 from app.services.whatsapp_device_onboarding import (
     require_whatsapp_custom_link_ready,
     require_whatsapp_logout_for_archive,
@@ -163,12 +151,6 @@ from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_r
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
-RUNTIME_CHANNEL_PROVIDERS = (
-    CHANNEL_PROVIDER_TELEGRAM,
-    CHANNEL_PROVIDER_DISCORD,
-    CHANNEL_PROVIDER_WHATSAPP,
-)
-
 
 async def _queue_agent_link_runtime_changed(
     db: AsyncSession,
@@ -176,11 +158,22 @@ async def _queue_agent_link_runtime_changed(
     account: ChannelAccount,
     link: ChannelBotAgentLink,
 ) -> None:
-    # The strict v2 runtime source currently projects Telegram and Discord
-    # AgentLinks. Bindings are deliberately absent from that source identity.
-    if account.provider not in (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD):
+    if account.provider not in RUNTIME_CHANNEL_PROVIDERS:
         return
     await queue_environment_runtime_manifest_changed(db, link.user_id, link.agent_id)
+
+
+async def _ensure_whatsapp_runtime_material(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> bool:
+    if account.provider == CHANNEL_PROVIDER_WHATSAPP:
+        return (
+            await ensure_whatsapp_agent_credential(db, account=account, link=link)
+        ).material_changed
+    return False
 
 
 def _agent_link_response(
@@ -196,108 +189,6 @@ def _agent_link_response(
         created_at=link.created_at,
         agent_token=agent_token,
     )
-
-
-def _runtime_agent_link_response(
-    link: ChannelBotAgentLink,
-    *,
-    agent_token: str | None = None,
-) -> ChannelRuntimeAgentLinkResponse:
-    return ChannelRuntimeAgentLinkResponse(
-        id=link.id,
-        account_id=link.account_id,
-        agent_id=link.agent_id,
-        status=link.status,
-        created_at=link.created_at,
-        agent_token=agent_token,
-    )
-
-
-async def _runtime_account_response(
-    db: AsyncSession,
-    account: ChannelAccount,
-    link: ChannelBotAgentLink,
-) -> ChannelRuntimeAccountResponse:
-    runtime_link = _runtime_agent_link_response(
-        link,
-        agent_token=decrypt_agent_link_token(link),
-    )
-    return ChannelRuntimeAccountResponse(
-        **account_response(account).model_dump(),
-        runtime_links=[runtime_link],
-        runtime_credentials=await _runtime_credentials_response(db, account=account, link=link),
-    )
-
-
-async def _runtime_credentials_response(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    link: ChannelBotAgentLink,
-) -> list[ChannelRuntimeCredentialResponse]:
-    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
-        return []
-    await db.execute(
-        select(ChannelAccount.id)
-        .where(
-            ChannelAccount.id == account.id,
-        )
-        .with_for_update()
-    )
-    credential = (
-        await db.execute(
-            select(ChannelAgentCredential)
-            .where(
-                ChannelAgentCredential.account_id == account.id,
-                ChannelAgentCredential.bot_agent_link_id == link.id,
-                ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
-                ChannelAgentCredential.revoked_at.is_(None),
-            )
-            .order_by(ChannelAgentCredential.created_at.desc(), ChannelAgentCredential.id.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
-    if credential is None:
-        stored = await mint_whatsapp_agent_credential(
-            db,
-            account=account,
-            bot_agent_link_id=link.id,
-            user_id=link.user_id,
-        )
-        credential = stored.credential
-        creds = stored.minted.creds
-        await db.commit()
-        await db.refresh(credential)
-    else:
-        creds = deserialize_creds(
-            decrypt(credential.encrypted_credentials, credential.credential_nonce)
-        )
-        await db.commit()
-    material: dict[str, Any] = {
-        "schemaVersion": "clawdi.whatsappBaileysAuthState.v1",
-        "creds": encode_buffer_json(creds),
-        "websocketUrl": whatsapp_agent_websocket_url(),
-        "authCert": {
-            "SERIAL": auth_cert.serial,
-            "ISSUER": auth_cert.issuer,
-            "PUBLIC_KEY": buffer_json(auth_cert.root_public_key),
-        },
-    }
-    return [
-        ChannelRuntimeCredentialResponse(
-            id=credential.id,
-            account_id=credential.account_id,
-            agent_link_id=credential.bot_agent_link_id,
-            agent_id=link.agent_id,
-            provider=CHANNEL_PROVIDER_WHATSAPP,
-            kind="whatsapp_baileys_auth_state",
-            created_at=credential.created_at,
-            jid=credential.synthetic_jid,
-            identity_pub_key_hex=credential.identity_public_key.hex(),
-            material=material,
-        )
-    ]
 
 
 def _agent_link_with_account_response(
@@ -421,68 +312,12 @@ async def _active_bot_agent_link_counts(
     return {account_id: int(count) for account_id, count in result.all()}
 
 
-@router.get("", response_model=list[ChannelAccountResponse | ChannelRuntimeAccountResponse])
+@router.get("", response_model=list[ChannelAccountResponse])
 async def list_channels(
     request: Request,
-    requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> Response:
-    runtime_environment_id = await _runtime_channels_environment_id(
-        db,
-        auth=auth,
-        requested_environment_id=requested_environment_id,
-    )
-    if runtime_environment_id is not None:
-        try:
-            await get_strict_v2_hosted_channel_agent_or_409(
-                db,
-                user_id=auth.user_id,
-                agent_id=runtime_environment_id,
-            )
-        except HTTPException as exc:
-            if exc.status_code != status.HTTP_409_CONFLICT:
-                raise
-            runtime_rows: list[tuple[ChannelAccount, ChannelBotAgentLink]] = []
-        else:
-            result = await db.execute(
-                select(ChannelAccount, ChannelBotAgentLink)
-                .join(ChannelBotAgentLink, ChannelBotAgentLink.account_id == ChannelAccount.id)
-                .where(
-                    ChannelAccount.archived_at.is_(None),
-                    ChannelAccount.provider.in_(RUNTIME_CHANNEL_PROVIDERS),
-                    ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-                    ChannelBotAgentLink.archived_at.is_(None),
-                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                    ChannelBotAgentLink.user_id == auth.user_id,
-                    ChannelBotAgentLink.agent_id == runtime_environment_id,
-                )
-                .order_by(
-                    ChannelAccount.provider,
-                    ChannelAccount.visibility,
-                    ChannelAccount.name,
-                    ChannelAccount.id,
-                )
-            )
-            runtime_rows = list(result.tuples().all())
-        payload: list[object] = []
-        for account, link in runtime_rows:
-            if not await bot_agent_link_has_strict_v2_authority(db, link=link):
-                continue
-            await ensure_bot_agent_link_provider_cardinality_or_409(
-                db,
-                account=account,
-                link=link,
-            )
-            payload.append(
-                (await _runtime_account_response(db, account, link)).model_dump(mode="json")
-            )
-        etag = strong_json_etag(payload)
-        headers = {"ETag": etag, "Cache-Control": "no-store"}
-        if if_none_match_contains(request.headers.get("if-none-match"), etag):
-            return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
-        return JSONResponse(payload, headers=headers)
-
     result = await db.execute(
         select(ChannelAccount)
         .where(
@@ -505,44 +340,6 @@ async def list_channels(
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     return JSONResponse(payload, headers=headers)
-
-
-async def _runtime_channels_environment_id(
-    db: AsyncSession,
-    *,
-    auth: AuthContext,
-    requested_environment_id: UUID | None,
-) -> UUID | None:
-    if not auth.is_cli or auth.api_key is None:
-        return None
-
-    bound_environment_id = auth.api_key.environment_id
-    if bound_environment_id is not None:
-        if (
-            requested_environment_id is not None
-            and requested_environment_id != bound_environment_id
-        ):
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "api key bound to a different environment",
-            )
-        return bound_environment_id
-
-    if requested_environment_id is None:
-        return None
-
-    env = (
-        await db.execute(
-            select(AgentEnvironment.id).where(
-                AgentEnvironment.id == requested_environment_id,
-                AgentEnvironment.user_id == auth.user_id,
-                AgentEnvironment.archived_at.is_(None),
-            )
-        )
-    ).scalar_one_or_none()
-    if env is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
-    return requested_environment_id
 
 
 @router.get("/bot-pool")
@@ -702,6 +499,7 @@ async def create_channel(
                 replace_existing_provider_link=body.replace_existing_provider_link,
             )
             link_agent_token = created_token or link_agent_token
+            await _ensure_whatsapp_runtime_material(db, account=account, link=link)
             await _queue_agent_link_runtime_changed(db, account=account, link=link)
         await store_channel_secrets(db, account=account, secrets_by_name=body.secrets)
         record_control_plane_audit(
@@ -973,6 +771,7 @@ async def create_channel_pair_code(
             account.config = config
             mark_discord_reserved_commands_current(account)
     link, agent_token = await _resolve_pair_code_link(db, auth=auth, account=account, body=body)
+    material_changed = await _ensure_whatsapp_runtime_material(db, account=account, link=link)
     created = await create_pair_code(
         db,
         account=account,
@@ -980,7 +779,7 @@ async def create_channel_pair_code(
         ttl_seconds=body.ttl_seconds,
         agent_token=agent_token,
     )
-    if agent_token is not None:
+    if agent_token is not None or material_changed:
         await _queue_agent_link_runtime_changed(db, account=account, link=created.link)
     record_control_plane_audit(
         db,
@@ -1064,7 +863,8 @@ async def create_channel_agent_link(
         user_id=auth.user_id,
         replace_existing_provider_link=body.replace_existing_provider_link,
     )
-    if agent_token is not None:
+    material_changed = await _ensure_whatsapp_runtime_material(db, account=account, link=link)
+    if agent_token is not None or material_changed:
         await _queue_agent_link_runtime_changed(db, account=account, link=link)
     record_control_plane_audit(
         db,

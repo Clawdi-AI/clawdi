@@ -1,6 +1,6 @@
 # ADR-0003: Runtime Bundle Media Type Is the Render Contract
 
-**Status:** Accepted (amended 2026-07-30)
+**Status:** Accepted (amended 2026-08-11)
 **Date:** 2026-07-13
 **Deciders:** Clawdi maintainers
 
@@ -17,20 +17,35 @@ renderer setting would add invalidation paths that can be missed.
 `application/vnd.clawdi.runtime-bundle.v2+json` is the immutable renderer
 contract for Agent v2. A client requesting that exact representation receives
 one strict `clawdi.hosted-runtime.bundle.v2` response containing the hosted
-manifest, sanitized Telegram and Discord channel bindings, merged secret
-values, and a deterministic `sourceRevision`.
+manifest, sanitized Telegram, Discord, and WhatsApp channel bindings, merged
+secret values, and a deterministic `sourceRevision`.
 
 The v2 renderer and canonical JSON encoding are frozen except for the narrow
-consumer-first amendment below. Any other response-affecting behavior change
+consumer-first amendments below. Any other response-affecting behavior change
 requires a new media type and schema version. An unsupported
 or missing media type returns `406`; the CLI does not fall back to a legacy
 manifest representation or a separate `/v1/channels` flow. Agent v2 had no
 released client, so the endpoint has no unpublished compatibility response.
 
 The backend loads environment state, providers, selected encrypted auth
-payloads, and active Telegram/Discord links with set-based queries inside one
-`REPEATABLE READ READ ONLY` snapshot. The endpoint and runtime health summary
-use the same pure materializer. Summary rendering does not decrypt secrets.
+payloads, and active Telegram/Discord/WhatsApp links with set-based queries
+inside one `REPEATABLE READ READ ONLY` snapshot. The endpoint and runtime health
+summary use the same pure materializer. Summary rendering does not decrypt
+secrets.
+
+WhatsApp bindings scope agent-token and egress-capability references to the
+Agent Link. Their credential descriptor declares an id, `credsSecretRef`, and
+public auth-certificate material; the CLI consumes that declared reference
+rather than reconstructing a path. Missing persisted material is repaired only
+after a snapshot detects it, under one account lock with a locked recheck, then
+rendered from a new snapshot. Healthy polling performs no repair lookup, lock,
+or auth-certificate private-key decryption.
+
+This addition follows consumer-first release order: the CLI consumer that
+validates and projects the fields is published and selected before the Hosted
+producer emits them. The ordering is operational, not a code gate; v2 contains
+no producer-version detection, compatibility fallback, or alternate channel
+datasource.
 
 The runtime provider plane has an explicit `configured | unmanaged`
 discriminator. Runtime `providers` remains an exact projection of runtime
@@ -114,7 +129,8 @@ permanent dual-track protocol.
 - Missing or unsupported media-type `406` responses vary on `Accept` and are
   not cached.
 - Database mutation fan-out and cross-table revision triggers are unnecessary.
-- WhatsApp uses the same v2 render contract and Link-scoped CLI projection.
+- WhatsApp uses the same v2 render contract with Link-scoped agent-token and
+  capability references plus an explicit credential secret reference.
 - Offline recovery caches the effective projected manifest. Secret persistence
   remains limited to the existing root-only, reference-scoped secret cache; the
   plaintext bundle is never persisted as a whole.

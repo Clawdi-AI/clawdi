@@ -204,6 +204,13 @@ DELIVERY_ERROR_PROVIDER_UNREACHABLE = "channel_provider_unreachable"
 HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
+RUNTIME_CHANNEL_PROVIDERS = frozenset(
+    {
+        CHANNEL_PROVIDER_TELEGRAM,
+        CHANNEL_PROVIDER_DISCORD,
+        CHANNEL_PROVIDER_WHATSAPP,
+    }
+)
 HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS = frozenset(
     {
         CHANNEL_PROVIDER_TELEGRAM,
@@ -374,8 +381,20 @@ def channel_runtime_account_key(account_id: UUID) -> str:
     return f"clawdi_{account_id.hex}"
 
 
-def channel_runtime_placeholder_token(provider: str, account_key: str) -> str:
-    suffix = hashlib.sha256(f"{provider}:{account_key}".encode()).hexdigest()[:32]
+def channel_runtime_placeholder_token(
+    provider: str,
+    account_key: str,
+    *,
+    link_id: UUID | None = None,
+) -> str:
+    if provider == CHANNEL_PROVIDER_WHATSAPP and link_id is None:
+        raise ValueError("WhatsApp runtime capability requires a Link id")
+    identity = (
+        f"{provider}:{account_key}:{link_id}"
+        if provider == CHANNEL_PROVIDER_WHATSAPP
+        else f"{provider}:{account_key}"
+    )
+    suffix = hashlib.sha256(identity.encode()).hexdigest()[:32]
     if provider == CHANNEL_PROVIDER_TELEGRAM:
         return f"999999999:{suffix}"
     return f"clawdi_{suffix}"

@@ -21,7 +21,6 @@ from pydantic import JsonValue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
@@ -167,6 +166,13 @@ class WhatsAppAuthCert:
 class StoredWhatsAppCredential:
     credential: ChannelAgentCredential
     minted: MintedWhatsAppCreds
+
+
+@dataclass(frozen=True)
+class ResolvedWhatsAppCredential:
+    credential: ChannelAgentCredential
+    auth_cert: ChannelWhatsAppAuthCert
+    material_changed: bool
 
 
 @dataclass(frozen=True)
@@ -685,13 +691,6 @@ def decode_buffer_json(value: object) -> object:
 
 def serialize_creds(creds: Mapping[str, object]) -> str:
     return json.dumps(encode_buffer_json(creds), separators=(",", ":"), sort_keys=True)
-
-
-def deserialize_creds(serialized: str) -> dict[str, object]:
-    decoded = decode_buffer_json(json.loads(serialized))
-    if not _is_object_dict(decoded):
-        raise ValueError("stored WhatsApp credentials must be an object")
-    return decoded
 
 
 def serialize_agent_bundle(bundle: AgentBundle) -> dict[str, JsonValue]:
@@ -1570,54 +1569,75 @@ async def load_or_create_whatsapp_auth_cert(
     await db.execute(
         select(ChannelAccount.id).where(ChannelAccount.id == account.id).with_for_update()
     )
-    result = await db.execute(
-        select(ChannelWhatsAppAuthCert).where(ChannelWhatsAppAuthCert.account_id == account.id)
-    )
-    row = result.scalar_one_or_none()
+    row = await _load_whatsapp_auth_cert_row(db, account_id=account.id)
     if row is not None:
-        return WhatsAppAuthCert(
-            serial=row.serial,
-            issuer="clawdi",
-            root_public_key=row.root_public_key,
-            root_private_key=base64.b64decode(
-                decrypt(row.encrypted_root_private_key, row.root_private_key_nonce)
-            ),
-            intermediate_public_key=row.intermediate_public_key,
-            intermediate_private_key=base64.b64decode(
-                decrypt(
-                    row.encrypted_intermediate_private_key,
-                    row.intermediate_private_key_nonce,
-                )
-            ),
-        )
+        return _decrypt_whatsapp_auth_cert(row)
 
+    _, auth_cert = await _create_whatsapp_auth_cert(db, account=account)
+    return auth_cert
+
+
+async def _load_whatsapp_auth_cert_row(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+) -> ChannelWhatsAppAuthCert | None:
+    return (
+        await db.execute(
+            select(ChannelWhatsAppAuthCert).where(ChannelWhatsAppAuthCert.account_id == account_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def _create_whatsapp_auth_cert(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+) -> tuple[ChannelWhatsAppAuthCert, WhatsAppAuthCert]:
     root = _x25519_key_pair()
     intermediate = _x25519_key_pair()
     root_ciphertext, root_nonce = encrypt(base64.b64encode(root["private"]).decode("ascii"))
     intermediate_ciphertext, intermediate_nonce = encrypt(
         base64.b64encode(intermediate["private"]).decode("ascii")
     )
-    db.add(
-        ChannelWhatsAppAuthCert(
-            account_id=account.id,
-            user_id=account.user_id,
-            root_public_key=root["public"],
-            encrypted_root_private_key=root_ciphertext,
-            root_private_key_nonce=root_nonce,
-            intermediate_public_key=intermediate["public"],
-            encrypted_intermediate_private_key=intermediate_ciphertext,
-            intermediate_private_key_nonce=intermediate_nonce,
-            serial=0,
-        )
+    row = ChannelWhatsAppAuthCert(
+        account_id=account.id,
+        user_id=account.user_id,
+        root_public_key=root["public"],
+        encrypted_root_private_key=root_ciphertext,
+        root_private_key_nonce=root_nonce,
+        intermediate_public_key=intermediate["public"],
+        encrypted_intermediate_private_key=intermediate_ciphertext,
+        intermediate_private_key_nonce=intermediate_nonce,
+        serial=0,
     )
+    db.add(row)
     await db.flush()
-    return WhatsAppAuthCert(
+    return row, WhatsAppAuthCert(
         serial=0,
         issuer="clawdi",
         root_public_key=root["public"],
         root_private_key=root["private"],
         intermediate_public_key=intermediate["public"],
         intermediate_private_key=intermediate["private"],
+    )
+
+
+def _decrypt_whatsapp_auth_cert(row: ChannelWhatsAppAuthCert) -> WhatsAppAuthCert:
+    return WhatsAppAuthCert(
+        serial=row.serial,
+        issuer="clawdi",
+        root_public_key=row.root_public_key,
+        root_private_key=base64.b64decode(
+            decrypt(row.encrypted_root_private_key, row.root_private_key_nonce)
+        ),
+        intermediate_public_key=row.intermediate_public_key,
+        intermediate_private_key=base64.b64decode(
+            decrypt(
+                row.encrypted_intermediate_private_key,
+                row.intermediate_private_key_nonce,
+            )
+        ),
     )
 
 
@@ -1671,6 +1691,70 @@ async def mint_whatsapp_agent_credential(
     db.add(credential)
     await db.flush()
     return StoredWhatsAppCredential(credential=credential, minted=minted)
+
+
+async def ensure_whatsapp_agent_credential(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> ResolvedWhatsAppCredential:
+    if account.provider != CHANNEL_PROVIDER_WHATSAPP or link.account_id != account.id:
+        raise ValueError("WhatsApp runtime credential requires a matching WhatsApp Link")
+
+    async def load_credential() -> ChannelAgentCredential | None:
+        return (
+            await db.execute(
+                select(ChannelAgentCredential)
+                .where(
+                    ChannelAgentCredential.account_id == account.id,
+                    ChannelAgentCredential.bot_agent_link_id == link.id,
+                    ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+                .order_by(
+                    ChannelAgentCredential.created_at.desc(),
+                    ChannelAgentCredential.id.desc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    credential = await load_credential()
+    auth_cert = await _load_whatsapp_auth_cert_row(db, account_id=account.id)
+    if credential is not None and auth_cert is not None:
+        return ResolvedWhatsAppCredential(
+            credential=credential,
+            auth_cert=auth_cert,
+            material_changed=False,
+        )
+
+    await db.execute(
+        select(ChannelAccount.id).where(ChannelAccount.id == account.id).with_for_update()
+    )
+    credential = await load_credential()
+    auth_cert = await _load_whatsapp_auth_cert_row(db, account_id=account.id)
+    material_changed = False
+    if auth_cert is None:
+        auth_cert, _ = await _create_whatsapp_auth_cert(db, account=account)
+        material_changed = True
+
+    if credential is None:
+        credential = (
+            await mint_whatsapp_agent_credential(
+                db,
+                account=account,
+                bot_agent_link_id=link.id,
+                user_id=link.user_id,
+            )
+        ).credential
+        material_changed = True
+
+    return ResolvedWhatsAppCredential(
+        credential=credential,
+        auth_cert=auth_cert,
+        material_changed=material_changed,
+    )
 
 
 def whatsapp_agent_credential_config(
@@ -1734,10 +1818,6 @@ async def resolve_whatsapp_credential_by_identity(
         )
     )
     return result.scalar_one_or_none()
-
-
-def whatsapp_agent_websocket_url() -> str:
-    return _public_ws_url("/v1/channels/whatsapp/baileys")
 
 
 def _x25519_key_pair() -> dict[str, bytes]:
@@ -3079,12 +3159,3 @@ async def _find_binding_alias(
         )
     )
     return result.scalar_one_or_none()
-
-
-def _public_ws_url(path: str) -> str:
-    base = settings.public_api_url.rstrip("/")
-    if base.startswith("https://"):
-        return "wss://" + base.removeprefix("https://") + path
-    if base.startswith("http://"):
-        return "ws://" + base.removeprefix("http://") + path
-    return base + path

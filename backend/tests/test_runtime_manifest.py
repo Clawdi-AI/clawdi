@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
-from app.core.database import get_runtime_snapshot_session, get_session
+from app.core.database import engine as runtime_engine
+from app.core.database import get_session
 from app.main import app
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
@@ -28,8 +29,10 @@ from app.models.audit import ControlPlaneAuditEvent
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelAgentCredential,
     ChannelBinding,
     ChannelBotAgentLink,
+    ChannelWhatsAppAuthCert,
 )
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
@@ -49,6 +52,7 @@ from app.schemas.runtime import (
 )
 from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
+from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -430,7 +434,6 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
         return AuthContext(user=seed_user, api_key=api_key)
 
     app.dependency_overrides[get_session] = _override_get_session
-    app.dependency_overrides[get_runtime_snapshot_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
     transport = ASGITransport(app=app)
     return httpx.AsyncClient(
@@ -4224,12 +4227,124 @@ async def test_agent_link_lifecycle_advances_polled_source_but_chat_binding_does
 
 
 @pytest.mark.asyncio
+async def test_runtime_manifest_repairs_and_invalidates_an_existing_whatsapp_link(
+    admin_client,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env, _, _, account, link = await _create_bundle_runtime(
+        admin_client,
+        db_session,
+        seed_user,
+    )
+    account.provider = "whatsapp"
+    await db_session.commit()
+
+    def reject_auth_cert_private_key_decrypt(*_args) -> str:
+        raise AssertionError("runtime manifest must not decrypt WhatsApp auth-cert private keys")
+
+    monkeypatch.setattr(
+        "app.services.whatsapp_baileys.decrypt",
+        reject_auth_cert_private_key_decrypt,
+    )
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="whatsapp-repair")
+    target_queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=env.id,
+    )
+    try:
+        async with await _runtime_client(db_session, seed_user, api_key) as client:
+            repaired = await client.get("/v1/runtime/manifest")
+            assert repaired.status_code == 200, repaired.text
+            binding = repaired.json()["channelBindings"][0]
+            credential = await db_session.scalar(
+                select(ChannelAgentCredential).where(
+                    ChannelAgentCredential.bot_agent_link_id == link.id,
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+            )
+            assert credential is not None
+            assert (
+                await db_session.scalar(
+                    select(ChannelWhatsAppAuthCert).where(
+                        ChannelWhatsAppAuthCert.account_id == account.id
+                    )
+                )
+                is not None
+            )
+            account_key = channel_runtime_account_key(account.id)
+            capability_ref = (
+                f"secret://channels/whatsapp/{account_key}/links/{link.id}/egress-capability"
+            )
+            assert binding == {
+                "provider": "whatsapp",
+                "accountId": str(account.id),
+                "accountKey": account_key,
+                "linkId": str(link.id),
+                "agentTokenSecretRef": (
+                    f"secret://channels/whatsapp/{account_key}/links/{link.id}/agent-token"
+                ),
+                "placeholderTokenSecretRef": capability_ref,
+                "credential": {
+                    "id": str(credential.id),
+                    "credsSecretRef": (
+                        f"secret://channels/whatsapp/{account_key}/credentials/"
+                        f"{credential.id}/creds-json"
+                    ),
+                    "authCert": binding["credential"]["authCert"],
+                },
+            }
+            assert repaired.json()["secretValues"][capability_ref] == (
+                channel_runtime_placeholder_token("whatsapp", account_key, link_id=link.id)
+            )
+
+            repeated = await client.get("/v1/runtime/manifest")
+            assert repeated.status_code == 200, repeated.text
+            assert repeated.json()["sourceRevision"] == repaired.json()["sourceRevision"]
+            credential_count = await db_session.scalar(
+                select(func.count())
+                .select_from(ChannelAgentCredential)
+                .where(
+                    ChannelAgentCredential.bot_agent_link_id == link.id,
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+            )
+            assert credential_count == 1
+
+            rotated = await client.post(f"/v1/channels/{account.id}/agent-links/{link.id}/token")
+            assert rotated.status_code == 200, rotated.text
+            assert target_queue.get_nowait() == {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(env.id),
+            }
+            token_rotated = await client.get("/v1/runtime/manifest")
+            assert token_rotated.status_code == 200, token_rotated.text
+            assert token_rotated.json()["sourceRevision"] != repaired.json()["sourceRevision"]
+
+            deleted = await client.delete(f"/v1/channels/{account.id}/agent-links/{link.id}")
+            assert deleted.status_code == 204, deleted.text
+            assert target_queue.get_nowait() == {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(env.id),
+            }
+            removed = await client.get("/v1/runtime/manifest")
+            assert removed.status_code == 200, removed.text
+            assert removed.json()["channelBindings"] == []
+    finally:
+        app.dependency_overrides.clear()
+        sync_events.unsubscribe(seed_user.id, target_queue)
+
+
+@pytest.mark.asyncio
 async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_constant(
     admin_client, db_session, seed_user
 ):
     env, _, _, _, link = await _create_bundle_runtime(admin_client, db_session, seed_user)
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle")
-    engine = db_session.bind.sync_engine
+    observed_engines = {db_session.bind.sync_engine, runtime_engine.sync_engine}
     select_count = 0
 
     def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
@@ -4237,7 +4352,8 @@ async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_cons
         if statement.lstrip().upper().startswith("SELECT"):
             select_count += 1
 
-    event.listen(engine, "before_cursor_execute", count_selects)
+    for observed_engine in observed_engines:
+        event.listen(observed_engine, "before_cursor_execute", count_selects)
     try:
         async with await _runtime_client(db_session, seed_user, api_key) as client:
             select_count = 0
@@ -4255,7 +4371,8 @@ async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_cons
                 "/v1/runtime/manifest", headers={"Accept": "application/json"}
             )
     finally:
-        event.remove(engine, "before_cursor_execute", count_selects)
+        for observed_engine in observed_engines:
+            event.remove(observed_engine, "before_cursor_execute", count_selects)
         app.dependency_overrides.clear()
     assert healthy.status_code == 200
     # One bounded Project Skill graph query joins all requested Agents; the
