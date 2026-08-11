@@ -32,7 +32,7 @@ ownership fence across runtimes, not a multi-provider pool feature.
 
 Hosted Codex remains terminal tooling, separate from runtime providers and
 from supervised service `companions`. Its dynamic consumer inputs are the
-selected model and managed provider endpoint. Cloud therefore omits the
+selected model and Clawdi provider endpoint. Cloud therefore omits the
 provider model catalog from `terminalTooling.codex`; OpenClaw and Hermes runtime
 providers still receive their complete model metadata and opaque `compat`
 facts.
@@ -45,13 +45,12 @@ validates those invariants, then derives its local provider id, Responses
 transport, API-key environment name, and secret ownership contract.
 
 The dedicated Hosted install pins `@openai/codex` `0.146.0`. In that version,
-[`ModelProviderInfo`](https://github.com/openai/codex/blob/e363b08c9175ac1cbe5893615dd2cb9ddf95043b/codex-rs/model-provider-info/src/lib.rs#L86-L144)
-defaults `name` to the empty display value and `wire_api` to `responses`.
-Generated Hosted `config.toml` therefore contains only the selected model,
-custom provider selection, managed `base_url`, and `env_key`. The generic Codex
-profile projection keeps an explicit display name and `wire_api` because it can
-target an independently installed Codex without the Hosted minimum-version
-contract.
+[`ModelProviderInfo`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/model-provider-info/src/lib.rs#L86-L144)
+defaults `name` to the empty display value and `wire_api` to `responses`, but
+[`validate_model_providers`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/config/src/config_toml.rs#L924-L946)
+rejects an empty custom-provider name. Generated Hosted `config.toml` therefore
+includes an explicit display name and `wire_api = "responses"` alongside the
+selected model, custom provider selection, Clawdi `base_url`, and `env_key`.
 
 ## Hermes
 

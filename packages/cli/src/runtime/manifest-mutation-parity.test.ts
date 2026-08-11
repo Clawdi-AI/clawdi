@@ -122,8 +122,9 @@ test("keeps real Hosted converge mutations inside its exact root and runtime-use
 	const state = join(root, "state");
 	const run = join(root, "run");
 	const systemdSystemRoot = join(run, "systemd", "system");
-	const openclaw = join(home, ".openclaw", "bin", "openclaw");
+	const openclaw = join(home, ".local", "bin", "openclaw");
 	fsOriginals.mkdirSync(dirname(openclaw), { recursive: true });
+	fsOriginals.mkdirSync(join(home, ".openclaw"), { recursive: true });
 	fsOriginals.writeFileSync(
 		openclaw,
 		`#!/bin/sh

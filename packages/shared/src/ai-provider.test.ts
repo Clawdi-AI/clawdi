@@ -402,7 +402,7 @@ describe("validateAiProviderCatalog", () => {
 					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_OPENCLAW_API_KEY",
 				},
 			],
 			defaults: { chat_provider_id: "clawdi-managed" },

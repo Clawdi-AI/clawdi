@@ -23,8 +23,8 @@ import {
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	manifestSchema,
-	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
+	officialInstallArgs,
 	RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 	type RuntimeManifest,
 } from "./manifest-contract";
@@ -457,7 +457,7 @@ export function hostedManifestToRuntimeManifest(
 					method: "official-installer" as const,
 					url: OFFICIAL_INSTALL_URLS[selectedRuntime],
 					home: paths.userHome,
-					args: OFFICIAL_INSTALL_ARGS[selectedRuntime],
+					args: officialInstallArgs(selectedRuntime, paths.userHome),
 				},
 				run: hostedRuntimeRunSettings(runtime.run),
 				services: Object.fromEntries(
@@ -678,8 +678,24 @@ function validateManifestSemantics(
 		if (runtime.install.args.includes("--dir")) {
 			errors.push(`runtime ${name} install args must not include --dir`);
 		}
-		if (runtime.install.args.includes("--prefix")) {
-			errors.push(`runtime ${name} install args must not include --prefix`);
+		const prefixIndexes = runtime.install.args.flatMap((arg, index) =>
+			arg === "--prefix" ? [index] : [],
+		);
+		if (prefixIndexes.length > 0) {
+			const expectedArgs = officialInstallArgs(name, runtime.install.home);
+			const expectedPrefixIndex = expectedArgs.indexOf("--prefix");
+			const expectedPrefix =
+				expectedPrefixIndex >= 0 ? expectedArgs[expectedPrefixIndex + 1] : undefined;
+			const prefixIndex = prefixIndexes[0];
+			if (
+				prefixIndexes.length !== 1 ||
+				expectedPrefix === undefined ||
+				runtime.install.args[prefixIndex + 1] !== expectedPrefix
+			) {
+				errors.push(
+					`runtime ${name} install prefix must match the official launcher prefix ${expectedPrefix ?? "none"}`,
+				);
+			}
 		}
 	}
 	return errors;

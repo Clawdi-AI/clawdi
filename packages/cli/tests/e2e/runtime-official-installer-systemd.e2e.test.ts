@@ -40,7 +40,7 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	const runtimeHome = "/home/clawdi";
 	const runtimeUid = 10_001;
 	const runtimeGid = 10_001;
-	const commandPath = join(runtimeHome, ".openclaw", "bin", "openclaw");
+	const commandPath = join(runtimeHome, ".local", "bin", "openclaw");
 	const expectedVersion = process.env.CLAWDI_TEST_OPENCLAW_VERSION ?? "";
 	const expectedCommit = process.env.CLAWDI_TEST_OPENCLAW_COMMIT ?? "";
 	const version = spawnSync(commandPath, ["--version"], {
@@ -50,6 +50,23 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	expect(version.status).toBe(0);
 	expect(version.stdout).toContain(`OpenClaw ${expectedVersion}`);
 	expect(version.stdout).toContain(`(${expectedCommit.slice(0, 7)})`);
+	const loginShell = spawnSync(
+		"runuser",
+		[
+			"-u",
+			"clawdi",
+			"--",
+			"env",
+			`HOME=${runtimeHome}`,
+			"/bin/bash",
+			"-l",
+			"-c",
+			"command -v openclaw",
+		],
+		{ encoding: "utf8" },
+	);
+	expect(loginShell.status, loginShell.stderr).toBe(0);
+	expect(loginShell.stdout.trim()).toBe(commandPath);
 
 	const userManager = spawnSync("systemctl", ["is-active", `user@${runtimeUid}.service`], {
 		encoding: "utf8",
@@ -121,6 +138,8 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 		gateway: { mode: "local" },
 	})}\n`;
 	const previousGatewayEnvironment = "PRESERVED_ENV=before\n";
+	mkdirSync(dirname(openClawConfig), { recursive: true, mode: 0o700 });
+	chownSync(dirname(openClawConfig), runtimeUid, runtimeGid);
 	writeFileSync(openClawConfig, previousOpenClawConfig, { mode: 0o600 });
 	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	writeFileSync(gatewayEnvironment, previousGatewayEnvironment, { mode: 0o600 });
@@ -218,6 +237,7 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	const runtimeHome = "/home/clawdi";
 	const runtimeUid = 10_001;
 	const runtimeGid = 10_001;
+	const openClawCommand = join(runtimeHome, ".local", "bin", "openclaw");
 	const root = mkdtempSync("/var/lib/clawdi-real-filebrowser-systemd-");
 	chmodSync(root, 0o755);
 	const clawdiHome = join(root, "clawdi-home");
@@ -241,6 +261,8 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	const openClawConfig = join(runtimeHome, ".openclaw", "openclaw.json");
 	const openClawWorkspaceRoot = join(runtimeHome, ".openclaw", "workspace");
+	mkdirSync(dirname(openClawConfig), { recursive: true, mode: 0o700 });
+	chownSync(dirname(openClawConfig), runtimeUid, runtimeGid);
 	writeFileSync(
 		openClawConfig,
 		`${JSON.stringify({
@@ -300,7 +322,23 @@ http.createServer((request, response) => {
 		generation: 1,
 		issuedAt: "2026-08-06T00:00:00.000Z",
 		workspaceRoot: runtimeHome,
-		projection: { sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2" },
+		projection: {
+			sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+			system: {
+				openclawControlUiAllowedOrigins: ["https://app-v2-18789.example.test"],
+			},
+			providers: {
+				clawdi: {
+					type: "custom_openai_compatible",
+					managed_by: "clawdi",
+					baseUrl: "https://ai-gateway.example.test/v1",
+					model: "gpt-test",
+					apiMode: "openai_chat",
+					runtimeEnvName: "OPENAI_API_KEY",
+					apiKeySecretRef: "secret://providers/clawdi/api-key",
+				},
+			},
+		},
 		openclawGatewayAuth: {
 			mode: "token",
 			tokenRef: "secret://runtime/openclaw/gateway-token",
@@ -343,8 +381,28 @@ http.createServer((request, response) => {
 		},
 		runtimes: {
 			openclaw: {
-				enabled: false,
-				run: { command: "openclaw", args: [], env: {}, prependPath: [] },
+				enabled: true,
+				providerMode: "configured",
+				provider_ids: ["clawdi"],
+				primary_model: { provider_id: "clawdi", model: "gpt-test" },
+				run: {
+					command: openClawCommand,
+					args: [
+						"gateway",
+						"run",
+						"--allow-unconfigured",
+						"--port",
+						"18789",
+						"--bind",
+						"lan",
+						"--force",
+					],
+					env: {},
+					secretEnv: {
+						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
+					},
+					prependPath: [],
+				},
 				services: {},
 			},
 		},
@@ -358,7 +416,10 @@ http.createServer((request, response) => {
 		source: "remote-datasource",
 		sourcePath: "real-filebrowser-systemd-fixture",
 		offline: false,
-		secretValues: { "secret://runtime/openclaw/gateway-token": "fixture-gateway-token" },
+		secretValues: {
+			"secret://runtime/openclaw/gateway-token": "fixture-gateway-token",
+			"secret://providers/clawdi/api-key": "sk-clawdi-provider",
+		},
 		applyContext: {
 			kind: "context-file",
 			backend: "incus",
@@ -407,7 +468,20 @@ http.createServer((request, response) => {
 	};
 	const result = converge();
 	expect(result.installErrors).toEqual([]);
-
+	const gatewayEnv = readFileSync(
+		join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
+		"utf8",
+	);
+	expect(gatewayEnv).toContain('CLAWDI_OPENCLAW_API_KEY="clawdi-egress-placeholder"');
+	expect(gatewayEnv).not.toMatch(/^OPENAI_API_KEY=/m);
+	expect(gatewayEnv).not.toContain("sk-clawdi-provider");
+	const projectedOpenClawConfig = JSON.parse(readFileSync(openClawConfig, "utf8")) as {
+		models?: { providers?: Record<string, { baseUrl?: string; apiKey?: { id?: string } }> };
+	};
+	expect(projectedOpenClawConfig.models?.providers?.clawdi).toMatchObject({
+		baseUrl: "https://ai-gateway.example.test/v1",
+		apiKey: { id: "CLAWDI_OPENCLAW_API_KEY" },
+	});
 	const serviceIdentity = spawnSync("getent", ["passwd", "clawdi-files"], {
 		encoding: "utf8",
 	});
@@ -566,4 +640,4 @@ http.createServer((request, response) => {
 	});
 	expect(tenantRead.status).toBe(0);
 	expect(tenantRead.stdout).toBe("tenant-existing\n");
-});
+}, 90_000);

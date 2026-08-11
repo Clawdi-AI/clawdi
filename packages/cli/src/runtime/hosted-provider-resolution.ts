@@ -10,6 +10,8 @@ import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 
+const OPENCLAW_PROVIDER_RUNTIME_ENV_NAME = "CLAWDI_OPENCLAW_API_KEY";
+
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
@@ -27,7 +29,7 @@ export function hostedAiProviderCatalog(
 			const apiMode = hostedProviderApiMode(input);
 			const apiKeySecretRef =
 				typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
-			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input);
+			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input, runtimeName);
 			if (hostedProviderUnhealthy(input)) return null;
 			if (!baseUrl) return null;
 			const auth = hostedProviderAuth(input, Boolean(apiKeySecretRef));
@@ -179,7 +181,14 @@ export function hostedProviderRequiresApiKey(input: Record<string, unknown>): bo
 	return type === "api_key" || type === "secret_ref";
 }
 
-function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
+function hostedProviderRuntimeEnvName(
+	providerId: string,
+	input: Record<string, unknown>,
+	runtimeName?: string,
+): string {
+	if (runtimeName === "openclaw" && isClawdiManagedProviderProjection(input)) {
+		return OPENCLAW_PROVIDER_RUNTIME_ENV_NAME;
+	}
 	const raw = typeof input.runtimeEnvName === "string" ? input.runtimeEnvName : null;
 	if (raw && isEnvKey(raw)) return raw;
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
@@ -198,7 +207,7 @@ function hostedProviderPlaceholderEnv(
 		if (!isClawdiManagedProviderProjection(provider)) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
 		if (!apiKeySecretRef) continue;
-		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
+		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
 		if (!isEnvKey(runtimeEnvName)) continue;
 		env[runtimeEnvName] = MANAGED_EGRESS_PLACEHOLDER_VALUE;
 	}
@@ -218,7 +227,7 @@ function hostedProviderSecretEnv(
 		if (isClawdiManagedProviderProjection(provider)) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
 		if (!apiKeySecretRef) continue;
-		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
+		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
 		if (!isEnvKey(runtimeEnvName)) continue;
 		secretEnv[runtimeEnvName] = apiKeySecretRef;
 	}
