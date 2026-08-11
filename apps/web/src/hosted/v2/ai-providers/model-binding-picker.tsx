@@ -118,7 +118,7 @@ export function ModelBindingPicker({
 												aria-describedby={item.description ? descriptionId : undefined}
 												className="sr-only !absolute !size-px !border-0 !p-0"
 											/>
-											<EntityIcon kind="provider" id={item.providerId} size="sm" />
+											<EntityIcon kind="provider" id={item.iconId} size="sm" />
 											<span className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
 												<span
 													id={titleId}
@@ -173,7 +173,7 @@ export function ModelBindingPicker({
 										{compactManagedItems.overflow.map((item) => (
 											<SelectItem key={item.value} value={item.value} className="items-start py-2">
 												<span className="flex min-w-0 items-start gap-2 whitespace-normal">
-													<EntityIcon kind="provider" id={item.providerId} size="sm" />
+													<EntityIcon kind="provider" id={item.iconId} size="sm" />
 													<span className="flex min-w-0 flex-col items-start gap-0.5">
 														<span className="font-medium">{item.label}</span>
 														{item.description ? (
