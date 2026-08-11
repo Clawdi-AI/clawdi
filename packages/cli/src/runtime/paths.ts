@@ -77,7 +77,6 @@ export interface RuntimePaths {
 	projectionRoot: string;
 	runRoot: string;
 	convergeLock: string;
-	fileBrowserAclTempPrefix: string;
 	managedSecretRoot: string;
 	daemonStateRoot: string;
 	egressRoot: string;
@@ -240,7 +239,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		projectionRoot: join(configurationRoot, "projections"),
 		runRoot,
 		convergeLock: join(runRoot, "locks", "converge.lock"),
-		fileBrowserAclTempPrefix: join(runRoot, ".filebrowser-acl-"),
 		managedSecretRoot: join(runRoot, "secrets"),
 		daemonStateRoot: join(serviceStateRoot, "daemon"),
 		egressRoot: join(runRoot, "egress"),

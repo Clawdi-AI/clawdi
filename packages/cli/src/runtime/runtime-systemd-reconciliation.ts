@@ -17,7 +17,6 @@ import { stripTerminalEscapes } from "../lib/sanitize";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { runtimeContentSha256 } from "./applied-state";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
-import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-browser-isolation";
 import type { RuntimeInstallReceiptEntry, RuntimeInstallReceipts } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
@@ -1535,16 +1534,18 @@ function writeFileBrowserSystemdUnit(input: {
 }): string {
 	const companion = input.manifest.companions?.filebrowser;
 	if (!companion) throw new Error("Files systemd unit requires a companion manifest");
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	if (runtimeUser === "root" || runtimeUser === "0") {
+		throw new Error("Files systemd unit requires a non-root tenant runtime user");
+	}
+	const serviceConfig = join(dirname(input.paths.fileBrowserServiceBinary), "filebrowser.yaml");
 	return writeSystemdSystemUnit({
 		paths: input.paths,
 		name: "clawdi-files",
 		description: "Clawdi hosted Files companion",
 		command: input.program.command,
 		args: input.program.args,
-		execStart: fileBrowserSystemdExec(
-			input.paths.fileBrowserServiceBinary,
-			input.paths.fileBrowserConfig,
-		),
+		execStart: fileBrowserSystemdExec(input.paths.fileBrowserServiceBinary, serviceConfig),
 		cwd: input.program.cwd,
 		directoryKind: "file-browser",
 		env: {
@@ -1555,11 +1556,12 @@ function writeFileBrowserSystemdUnit(input: {
 		},
 		extraUnitLines: ["After=network-online.target", "Wants=network-online.target"],
 		extraServiceLines: [
-			`User=${FILE_BROWSER_SERVICE_USER}`,
-			`Group=${FILE_BROWSER_SERVICE_GROUP}`,
+			`User=${runtimeUser}`,
+			`Group=${runtimeUserGid(runtimeUser)}`,
 			// Publish only this verified executable into the component service's
 			// private runtime directory; the platform state root stays untraversable.
 			`BindReadOnlyPaths=${systemdPath(input.program.command)}:${systemdPath(input.paths.fileBrowserServiceBinary)}:norbind`,
+			`BindReadOnlyPaths=${systemdPath(input.paths.fileBrowserConfig)}:${systemdPath(serviceConfig)}:norbind`,
 			`ExecStartPre=${fileBrowserVersionProbeExec(
 				input.paths.fileBrowserServiceBinary,
 				companion.version,
@@ -1582,6 +1584,7 @@ function writeFileBrowserSystemdUnit(input: {
 			"ProtectHostname=true",
 			"ProtectProc=invisible",
 			"ProcSubset=pid",
+			"PrivatePIDs=true",
 			"LockPersonality=true",
 			"RestrictSUIDSGID=true",
 			"RestrictRealtime=true",
