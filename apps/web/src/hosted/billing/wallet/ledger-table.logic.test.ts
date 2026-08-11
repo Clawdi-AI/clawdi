@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { WalletLedgerEntry } from "@/hosted/billing/contracts";
+import { LedgerTable } from "./ledger-table";
 import {
 	filteredLedgerEntries,
 	ledgerEmptyStateCopy,
@@ -73,5 +76,18 @@ describe("ledgerEmptyStateCopy", () => {
 			title: "No activity yet",
 			description: "Top-ups, grants, and usage will show up here.",
 		});
+	});
+});
+
+describe("LedgerTable", () => {
+	test("labels receipts as top-up-only and renders missing desktop values", () => {
+		const markup = renderToStaticMarkup(
+			createElement(LedgerTable, {
+				entries: [entry({ operation: "compute_charge" })],
+			}),
+		);
+
+		expect(markup).toContain("Top-up receipt");
+		expect(markup).toContain(">—</span>");
 	});
 });

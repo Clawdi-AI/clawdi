@@ -74,7 +74,7 @@ function ledgerEntryKey(entry: WalletLedgerEntry): string {
 }
 
 function ReceiptLink({ entry }: { entry: WalletLedgerEntry }) {
-	if (!entry.receipt_url) return null;
+	if (!entry.receipt_url) return <span className="text-muted-foreground">—</span>;
 	return (
 		<Button
 			render={<a href={entry.receipt_url} target="_blank" rel="noopener noreferrer" />}
@@ -203,7 +203,7 @@ export function LedgerTable({
 													{relativeTime(entry.created_at)}
 												</span>
 											</div>
-											<ReceiptLink entry={entry} />
+											{entry.receipt_url ? <ReceiptLink entry={entry} /> : null}
 										</div>
 										<span
 											className={cn(
@@ -226,7 +226,7 @@ export function LedgerTable({
 										<TableHead>Status</TableHead>
 										<TableHead className="text-right">Amount</TableHead>
 										<TableHead className="text-right">When</TableHead>
-										<TableHead className="text-right">Receipt</TableHead>
+										<TableHead className="text-right">Top-up receipt</TableHead>
 									</TableRow>
 								</TableHeader>
 								<TableBody>
