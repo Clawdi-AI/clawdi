@@ -8,10 +8,19 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
-from app.models.channel import ChannelAccount, ChannelBotAgentLink
-from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
+from app.models.channel import (
+    ChannelAccount,
+    ChannelAgentCredential,
+    ChannelBotAgentLink,
+    ChannelWhatsAppAuthCert,
+)
+from app.models.hosted_runtime import (
+    HostedRuntimeSecret,
+    HostedRuntimeState,
+)
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import HostedCodexProviderProjection
+from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
@@ -250,6 +259,40 @@ def _add_prefix_colliding_channel(batch: RuntimeSourceBatch) -> None:
     batch.channels[ENV_ID] = (*batch.channels[ENV_ID], (account, link))
 
 
+def _use_whatsapp_channel(
+    batch: RuntimeSourceBatch,
+) -> tuple[ChannelAgentCredential, ChannelWhatsAppAuthCert]:
+    account, link = batch.channels[ENV_ID][0]
+    account.provider = "whatsapp"
+    credential = ChannelAgentCredential(
+        id=UUID("80000000-0000-0000-0000-000000000011"),
+        account_id=account.id,
+        bot_agent_link_id=link.id,
+        user_id=USER_ID,
+        provider="whatsapp",
+        identity_pub_key_hash="1" * 64,
+        identity_public_key=b"identity-public-key",
+        synthetic_jid="15551234567:1@s.whatsapp.net",
+        encrypted_credentials=b'{"advSecretKey":"managed-whatsapp"}',
+        credential_nonce=b"credential-nonce",
+    )
+    auth_cert = ChannelWhatsAppAuthCert(
+        id=UUID("90000000-0000-0000-0000-000000000012"),
+        account_id=account.id,
+        user_id=USER_ID,
+        root_public_key=b"r" * 32,
+        encrypted_root_private_key=b"root-private",
+        root_private_key_nonce=b"root-nonce",
+        intermediate_public_key=b"i" * 32,
+        encrypted_intermediate_private_key=b"intermediate-private",
+        intermediate_private_key_nonce=b"intermediate-nonce",
+        serial=7,
+    )
+    batch.channel_credentials[link.id] = credential
+    batch.whatsapp_auth_certs[account.id] = auth_cert
+    return credential, auth_cert
+
+
 def _use_managed_provider(
     batch: RuntimeSourceBatch,
     *,
@@ -317,6 +360,67 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
             ),
         }
     ]
+
+
+def test_runtime_source_binds_whatsapp_capability_and_revision_to_link_credential_and_cert(
+    monkeypatch,
+) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    credential, auth_cert = _use_whatsapp_channel(batch)
+    account, link = batch.channels[ENV_ID][0]
+    monkeypatch.setattr(runtime_source, "decrypt", lambda ciphertext, _nonce: ciphertext.decode())
+
+    source = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=True,
+    )
+    account_key = channel_runtime_account_key(account.id)
+    agent_ref = f"secret://channels/whatsapp/{account_key}/links/{link.id}/agent-token"
+    capability_ref = f"secret://channels/whatsapp/{account_key}/links/{link.id}/egress-capability"
+    credential_ref = (
+        f"secret://channels/whatsapp/{account_key}/credentials/{credential.id}/creds-json"
+    )
+    assert source.channel_bindings == [
+        {
+            "provider": "whatsapp",
+            "accountId": str(account.id),
+            "accountKey": account_key,
+            "linkId": str(link.id),
+            "agentTokenSecretRef": agent_ref,
+            "placeholderTokenSecretRef": capability_ref,
+            "credential": {
+                "id": str(credential.id),
+                "credsSecretRef": credential_ref,
+                "authCert": {
+                    "SERIAL": 7,
+                    "ISSUER": "clawdi",
+                    "PUBLIC_KEY": {
+                        "type": "Buffer",
+                        "data": "cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI=",
+                    },
+                },
+            },
+        }
+    ]
+    assert source.secret_values[capability_ref] == channel_runtime_placeholder_token(
+        "whatsapp", account_key, link_id=link.id
+    )
+    assert source.secret_values[credential_ref] == credential.encrypted_credentials.decode()
+
+    initial_revision = source.source_revision
+    credential.encrypted_credentials = b'{"advSecretKey":"rotated"}'
+    credential_rotated = _render(batch)
+    credential.encrypted_credentials = b'{"advSecretKey":"managed-whatsapp"}'
+    auth_cert.root_public_key = b"s" * 32
+    cert_rotated = _render(batch)
+
+    assert credential_rotated.source_revision != initial_revision
+    assert cert_rotated.source_revision != initial_revision
 
 
 def test_runtime_source_delivers_owned_oauth_only_to_selected_runtime(monkeypatch) -> None:

@@ -13,6 +13,10 @@ system map, read [`architecture.md`](architecture.md#api-and-identity).
 
 ## Canonical surface
 
+`/v1` is the canonical Clawdi Cloud API namespace. Hosted runtime “bundle v2” is
+a media-type and schema contract served by `GET /v1/runtime/manifest`; it is not
+a replacement `/v2` URL namespace.
+
 `/v1/agents` is the canonical first-party API for Agent identity. New dashboard
 and CLI code should use `/v1/agents` and `agent_id` path parameters for
 registration, listing, detail reads, updates, ordering, avatars, disconnect, and
@@ -21,6 +25,13 @@ sync heartbeat.
 `/v1/admin/agents` is the agent-first admin route family for local/admin callers
 that use `X-Admin-Key`. Admin routes are live but hidden from the public OpenAPI
 schema because `backend/app/routes/admin.py` sets `include_in_schema=False`.
+
+`GET /v1/channels` is the user control-plane channel list and rejects
+environment-bound Agent API keys. Managed runtimes receive channel desired state
+only through the strict bundle returned by `GET /v1/runtime/manifest`.
+The removed environment-bound response variant was not used by released Hosted
+init/watch consumers; unbound CLI control-plane channel operations remain
+supported.
 
 The stable agent id is still stored in `agent_environments.id`; code and older
 wire contracts still use `AgentEnvironment` and `environment_id` names in many

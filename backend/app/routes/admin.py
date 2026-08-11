@@ -122,6 +122,7 @@ from app.services.channel_config import (
     validate_required_discord_interactions_config,
 )
 from app.services.channels import (
+    RUNTIME_CHANNEL_PROVIDERS,
     archive_channel_account,
     build_channel_account,
     channel_webhook_url,
@@ -1584,7 +1585,7 @@ async def admin_delete_channel(
         registry=get_active_whatsapp_sidecar_registry(),
     )
     await archive_channel_account(db, account=account)
-    if account.provider in (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD):
+    if account.provider in RUNTIME_CHANNEL_PROVIDERS:
         for link in active_links:
             await queue_environment_runtime_manifest_changed(
                 db,

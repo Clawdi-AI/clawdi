@@ -19,7 +19,7 @@ from app.core.auth import (
     require_cli_auth,
 )
 from app.core.config import settings
-from app.core.database import get_runtime_snapshot_session, get_session
+from app.core.database import get_session, runtime_snapshot_session
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
@@ -39,10 +39,13 @@ from app.services.project_runtime_skills import (
 )
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+    RenderedRuntimeSource,
     RuntimeSourceError,
     RuntimeSourceNotFoundError,
+    ensure_runtime_whatsapp_credentials,
     expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
+    missing_runtime_whatsapp_credential_link_ids,
     render_runtime_bundle,
     render_runtime_source,
     vault_key_identity,
@@ -62,7 +65,7 @@ async def get_runtime_manifest(
     request: Request,
     requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
     auth: AuthContext = Depends(require_cli_auth),
-    db: AsyncSession = Depends(get_runtime_snapshot_session),
+    db: AsyncSession = Depends(get_session),
 ) -> Response:
     environment_id = _authorized_environment_id(auth, requested_environment_id)
     if request.headers.get("accept") != RUNTIME_BUNDLE_V2_MEDIA_TYPE:
@@ -72,19 +75,27 @@ async def get_runtime_manifest(
             headers={"Cache-Control": "no-store", "Vary": "Accept"},
         )
 
-    batch = await load_runtime_source_batch(
-        db,
-        environment_ids=[environment_id],
-        owner_user_id=auth.user_id,
-    )
     try:
-        source = render_runtime_source(
-            batch,
+        source, missing_link_ids = await _render_runtime_source_snapshot(
             environment_id=environment_id,
-            public_api_url=settings.public_api_url,
-            vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-            decrypt_secrets=True,
+            owner_user_id=auth.user_id,
         )
+        if missing_link_ids:
+            await ensure_runtime_whatsapp_credentials(
+                db,
+                environment_id=environment_id,
+                owner_user_id=auth.user_id,
+                link_ids=missing_link_ids,
+            )
+            await db.commit()
+            source, missing_link_ids = await _render_runtime_source_snapshot(
+                environment_id=environment_id,
+                owner_user_id=auth.user_id,
+            )
+        if source is None:
+            raise RuntimeSourceError(
+                "Active runtime WhatsApp Link has no synthetic credential material"
+            )
     except RuntimeSourceNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except RuntimeSourceError as exc:
@@ -101,6 +112,35 @@ async def get_runtime_manifest(
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     return JSONResponse(payload, headers=headers)
+
+
+async def _render_runtime_source_snapshot(
+    *,
+    environment_id: UUID,
+    owner_user_id: UUID,
+) -> tuple[RenderedRuntimeSource | None, tuple[UUID, ...]]:
+    async with runtime_snapshot_session() as source_db:
+        batch = await load_runtime_source_batch(
+            source_db,
+            environment_ids=[environment_id],
+            owner_user_id=owner_user_id,
+        )
+        missing_link_ids = missing_runtime_whatsapp_credential_link_ids(
+            batch,
+            environment_id=environment_id,
+        )
+        if missing_link_ids:
+            return None, missing_link_ids
+        return (
+            render_runtime_source(
+                batch,
+                environment_id=environment_id,
+                public_api_url=settings.public_api_url,
+                vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+                decrypt_secrets=True,
+            ),
+            (),
+        )
 
 
 def _authorized_environment_id(auth: AuthContext, requested_environment_id: UUID | None) -> UUID:

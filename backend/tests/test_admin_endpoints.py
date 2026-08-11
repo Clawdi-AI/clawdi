@@ -2942,10 +2942,15 @@ async def test_admin_endpoints_excluded_from_openapi_schema(admin_client, seed_u
 
 @pytest.mark.asyncio
 async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logout_is_fail_closed(
-    admin_client, db_session, monkeypatch
+    admin_client, db_session, seed_user, channel_agent, monkeypatch
 ):
     import app.routes.admin as admin_routes
-    from app.models.channel import ChannelAccount, ChannelWhatsAppOnboardingSession
+    from app.models.channel import (
+        ChannelAccount,
+        ChannelBotAgentLink,
+        ChannelWhatsAppOnboardingSession,
+    )
+    from app.services import sync_events
 
     account_id = uuid.uuid4()
     fake = _ManagedOnboardingSidecar()
@@ -2962,6 +2967,7 @@ async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logo
         "name": "Shared WhatsApp",
     }
     pairing_url = "/v1/admin/channels/whatsapp/pairing-sessions"
+    queue = None
     try:
         assert (await admin_client.post(pairing_url, json=payload)).status_code == 401
         started = await admin_client.post(pairing_url, json=payload, headers=_AUTH)
@@ -2997,17 +3003,39 @@ async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logo
         await registry.reconcile_managed_ownership(db_session)
         assert registry.managed_is_bound(account_id)
         monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_registry", lambda: registry)
+        db_session.add(
+            ChannelBotAgentLink(
+                account_id=account.id,
+                user_id=seed_user.id,
+                agent_id=channel_agent.id,
+                status="active",
+            )
+        )
+        await db_session.commit()
+        queue = sync_events.subscribe(
+            seed_user.id,
+            frozenset(),
+            environment_id=channel_agent.id,
+        )
         fake.logout_fails = True
         assert (
             await admin_client.delete(f"/v1/admin/channels/{account_id}", headers=_AUTH)
         ).status_code == 503
         await db_session.refresh(account)
         assert account.archived_at is None
+        assert queue.empty()
         fake.logout_fails = False
         assert (
             await admin_client.delete(f"/v1/admin/channels/{account_id}", headers=_AUTH)
         ).status_code == 204
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(channel_agent.id),
+        }
+        assert queue.empty()
     finally:
+        if queue is not None:
+            sync_events.unsubscribe(seed_user.id, queue)
         await registry.stop()
 
 

@@ -4539,106 +4539,6 @@ export interface components {
             /** Discord User Install Url */
             discord_user_install_url?: string | null;
         };
-        /** ChannelRuntimeAccountResponse */
-        ChannelRuntimeAccountResponse: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Provider */
-            provider: string;
-            /** Name */
-            name: string;
-            /** Status */
-            status: string;
-            /**
-             * Visibility
-             * @default private
-             * @enum {string}
-             */
-            visibility: "private" | "public";
-            /** Has Provider Token */
-            has_provider_token: boolean;
-            /** Webhook Url */
-            webhook_url: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Runtime Links */
-            runtime_links?: components["schemas"]["ChannelRuntimeAgentLinkResponse"][];
-            /** Runtime Credentials */
-            runtime_credentials?: components["schemas"]["ChannelRuntimeCredentialResponse"][];
-        };
-        /** ChannelRuntimeAgentLinkResponse */
-        ChannelRuntimeAgentLinkResponse: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * Account Id
-             * Format: uuid
-             */
-            account_id: string;
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
-            /** Status */
-            status: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Agent Token */
-            agent_token?: string | null;
-        };
-        /** ChannelRuntimeCredentialResponse */
-        ChannelRuntimeCredentialResponse: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * Account Id
-             * Format: uuid
-             */
-            account_id: string;
-            /**
-             * Agent Link Id
-             * Format: uuid
-             */
-            agent_link_id: string;
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
-            /** Provider */
-            provider: string;
-            /** Kind */
-            kind: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Jid */
-            jid?: string | null;
-            /** Identity Pub Key Hex */
-            identity_pub_key_hex?: string | null;
-            /** Material */
-            material?: {
-                [key: string]: unknown;
-            } | null;
-        };
         /** ChannelSendMessageRequest */
         ChannelSendMessageRequest: {
             /** Binding Id */
@@ -8859,9 +8759,7 @@ export interface operations {
     };
     list_channels_v1_channels_get: {
         parameters: {
-            query?: {
-                environment_id?: string | null;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -8874,16 +8772,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": (components["schemas"]["ChannelAccountResponse"] | components["schemas"]["ChannelRuntimeAccountResponse"])[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ChannelAccountResponse"][];
                 };
             };
         };
