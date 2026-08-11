@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
+	copyFileSync,
 	existsSync,
 	mkdirSync,
 	readdirSync,
@@ -15,7 +16,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
 	applySystemdRuntimeUpdate,
@@ -43,7 +44,6 @@ import {
 } from "../src/runtime/apply-identity";
 import {
 	applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsToManifestLoadWithContext,
-	applyRuntimeChannelsToManifestLoad,
 } from "../src/runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
@@ -60,6 +60,7 @@ import {
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
 import { hostedOpenClawSkillDriver } from "../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
+import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "../src/runtime/managed-baileys-compat";
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
 	buildOpenClawHostedProviderPatch,
@@ -80,7 +81,6 @@ import {
 	loadRemoteRuntimeManifest as loadRemoteRuntimeManifestWithContext,
 	manifestSecretRefs,
 	type RuntimeBundleChannelBinding,
-	type RuntimeChannelsLoad,
 	type RuntimeManifestLoad,
 } from "../src/runtime/manifest-source";
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
@@ -239,6 +239,25 @@ function convergeRuntimeManifest(
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 		},
 	);
+}
+
+function seedHermesManagedBaileys(home: string): void {
+	const sourceRoot = resolve(
+		import.meta.dir,
+		"../../whatsapp-baileys-sidecar/node_modules/baileys",
+	);
+	const bridgeRoot = join(home, ".hermes", "hermes-agent", "scripts", "whatsapp-bridge");
+	const baileysRoot = join(bridgeRoot, "node_modules", "@whiskeysockets", "baileys");
+	for (const relativePath of [
+		"package.json",
+		...MANAGED_BAILEYS_STATIC_PATCH_TARGETS.map((target) => target.relativePath),
+	]) {
+		const destination = join(baileysRoot, relativePath);
+		mkdirSync(dirname(destination), { recursive: true });
+		copyFileSync(join(sourceRoot, relativePath), destination);
+	}
+	writeFileSync(join(bridgeRoot, "package.json"), '{"name":"hermes-whatsapp-bridge"}\n');
+	writeFileSync(join(bridgeRoot, "package-lock.json"), '{"lockfileVersion":3}\n');
 }
 
 function applyRuntimeBundleChannelsToManifestLoad(
@@ -6375,45 +6394,6 @@ exit 64
 		}
 	});
 
-	it("projects an empty runtime channel list with the invalid WhatsApp capability deny rule", () => {
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				runtime: "openclaw",
-				deploymentId: "dep_empty_channels",
-				environmentId: "env_empty_channels",
-				instanceId: "iid_empty_channels",
-				generation: 3,
-				issuedAt: "2026-06-14T00:00:00Z",
-				system: { home: "/home/clawdi", workspace: "/home/clawdi" },
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: { enabled: true },
-				},
-			},
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/manifest",
-			secretValues: { "secret://provider.default.apiKey": "sk-provider" },
-		};
-		const channels: RuntimeChannelsLoad = {
-			channels: [],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("empty-channels"),
-		};
-
-		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
-
-		expect(projected.manifest.projection?.channels).toEqual({});
-		expect(projected.manifest.egressProfiles?.profiles ?? []).toEqual([
-			expect.objectContaining({
-				id: "native-whatsapp-baileys-invalid-capability",
-				kind: "deny",
-			}),
-		]);
-		expect(projected.secretValues).toEqual({ "secret://provider.default.apiKey": "sk-provider" });
-	});
-
 	it("fails closed instead of selecting a historical duplicate runtime account", () => {
 		for (const runtime of ["openclaw", "hermes"] as const) {
 			for (const provider of ["telegram", "discord"] as const) {
@@ -6525,253 +6505,6 @@ exit 64
 		expect(removed.secretValues).toEqual({});
 	});
 
-	it("merges channel secrets into source-level secretValues during pure projection", () => {
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				runtime: "openclaw",
-				deploymentId: "dep_channel_secret_boundary",
-				environmentId: "env_channel_secret_boundary",
-				instanceId: "iid_channel_secret_boundary",
-				generation: 6,
-				issuedAt: "2026-07-08T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: { enabled: true },
-					hermes: { enabled: true },
-				},
-			},
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/manifest",
-			offline: false,
-			secretValues: { "secret://provider.default.apiKey": "sk-provider" },
-		};
-		const channels: RuntimeChannelsLoad = {
-			channels: [
-				{
-					id: "acct-telegram-1",
-					provider: "telegram",
-					name: "Runtime Telegram",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: "link-telegram-1",
-							account_id: "acct-telegram-1",
-							agent_id: "env_channel_secret_boundary",
-							status: "active",
-							agent_token: "telegram-agent-token",
-						},
-					],
-					runtime_credentials: [],
-				},
-				{
-					id: "acct-discord-1",
-					provider: "discord",
-					name: "Runtime Discord",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: "link-discord-1",
-							account_id: "acct-discord-1",
-							agent_id: "env_channel_secret_boundary",
-							status: "active",
-							agent_token: "discord-agent-token",
-						},
-					],
-					runtime_credentials: [],
-				},
-			],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("channel-secret-boundary"),
-		};
-
-		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
-		expect(projected.secretValues).toMatchObject({
-			"secret://provider.default.apiKey": "sk-provider",
-			"secret://channels/telegram/clawdi_accttelegram/links/link-telegram-1/agent-token":
-				"telegram-agent-token",
-			"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token":
-				"discord-agent-token",
-		});
-		expect(projected.sourceManifest).toEqual(loaded.manifest);
-		expect(JSON.stringify(projected.sourceManifest)).not.toContain('"channels"');
-		expect(
-			projected.secretValues?.[
-				"secret://channels/telegram/clawdi_accttelegram/links/link-telegram-1/agent-token"
-			],
-		).toBe("telegram-agent-token");
-		expect(
-			projected.secretValues?.["secret://channels/telegram/clawdi_accttelegram/placeholder-token"],
-		).toBe("999999999:877c68b5e40fa4531f180a6a4842a8bf");
-		expect(
-			projected.secretValues?.[
-				"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token"
-			],
-		).toBe("discord-agent-token");
-		expect(
-			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/placeholder-token"],
-		).toBe("clawdi_5e99010fed052f9ee65e2764748fd451");
-		const discordGateway = projected.manifest.egressProfiles?.profiles.find(
-			(profile) => profile.id === "native-discord-clawdi_acctdiscord1-gateway-managed",
-		);
-		expect(discordGateway).toMatchObject({
-			kind: "websocket",
-			match: { scheme: "wss", host: "gateway.discord.gg", pathPrefix: "/" },
-			rewrite: {
-				upstreamBaseUrl: "wss://cloud-api.test/v1/channels/discord/gateway",
-				preservePath: false,
-				setHeaders: {
-					authorization: {
-						type: "secretRef",
-						secretRef:
-							"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token",
-						prefix: "Bearer ",
-					},
-				},
-			},
-			logging: { redactHeaders: ["authorization"] },
-		});
-		expect(projected.manifest.projection?.channels).toMatchObject({
-			telegram: { enabled: true },
-			discord: {
-				enabled: true,
-				accounts: {
-					clawdi_acctdiscord1: {
-						actions: {
-							stickers: false,
-							polls: false,
-							threads: false,
-							pins: false,
-							roles: false,
-							voiceStatus: false,
-							events: false,
-							moderation: false,
-							emojiUploads: false,
-							stickerUploads: false,
-							channels: false,
-							presence: false,
-						},
-					},
-				},
-			},
-		});
-	});
-
-	it("projects managed WhatsApp auth, Link-scoped egress, and stock OpenClaw config", () => {
-		const accountId = "00000000-0000-0000-0000-000000000001";
-		const linkId = "link-whatsapp-1";
-		const credentialId = "credential-whatsapp-1";
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				runtime: "openclaw",
-				deploymentId: "dep_whatsapp_creds_projection",
-				environmentId: "env_whatsapp_creds_projection",
-				instanceId: "iid_whatsapp_creds_projection",
-				generation: 5,
-				issuedAt: "2026-06-14T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: { enabled: true },
-				},
-				projection: {
-					system: { home: "/home/clawdi", workspace: "/home/clawdi" },
-				},
-			},
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/manifest",
-			secretValues: {},
-		};
-		const channels: RuntimeChannelsLoad = {
-			channels: [
-				{
-					id: accountId,
-					provider: "whatsapp",
-					name: "Hosted WhatsApp",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: linkId,
-							account_id: accountId,
-							agent_id: "env_whatsapp_creds_projection",
-							status: "active",
-							agent_token: "wa-agent-token",
-						},
-					],
-					runtime_credentials: [
-						{
-							id: credentialId,
-							account_id: accountId,
-							agent_link_id: linkId,
-							agent_id: "env_whatsapp_creds_projection",
-							provider: "whatsapp",
-							kind: "whatsapp_baileys_auth_state",
-							created_at: "2026-07-07T00:00:00Z",
-							jid: "15551234567:1@s.whatsapp.net",
-							identity_pub_key_hex: "aabbcc",
-							material: {
-								schemaVersion: "clawdi.whatsappBaileysAuthState.v1",
-								creds: {
-									advSecretKey: "wa-adv-secret",
-									me: { id: "15551234567:1@s.whatsapp.net" },
-								},
-								authCert: {
-									SERIAL: 7,
-									ISSUER: "clawdi",
-									PUBLIC_KEY: {
-										type: "Buffer",
-										data: Buffer.alloc(32, 7).toString("base64"),
-									},
-								},
-							},
-						},
-					],
-				},
-			],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("whatsapp-creds"),
-		};
-
-		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
-		const accountKey = "clawdi_000000000000";
-		expect(projected.manifest.projection?.channels).toMatchObject({
-			whatsapp: {
-				enabled: true,
-				defaultAccount: accountKey,
-				accounts: {
-					[accountKey]: {
-						enabled: true,
-						dmPolicy: "allowlist",
-						allowFrom: ["*"],
-					},
-				},
-			},
-		});
-		expect(projected.manifest.projection?.channelCredentials).toEqual([
-			expect.objectContaining({
-				provider: "whatsapp",
-				kind: "whatsapp_baileys_auth_state",
-				accountId,
-				accountKey,
-				linkId,
-				credentialId,
-			}),
-		]);
-		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
-			expect.stringMatching(/^native-whatsapp-baileys-[a-f0-9]{16}$/),
-			"native-whatsapp-baileys-invalid-capability",
-		]);
-		expect(JSON.stringify(projected.manifest)).not.toContain("wa-agent-token");
-		expect(JSON.stringify(projected.manifest)).not.toContain("wa-adv-secret");
-		expect(JSON.stringify(projected.secretValues ?? {})).toContain("wa-agent-token");
-		expect(JSON.stringify(projected.secretValues ?? {})).toContain("wa-adv-secret");
-	});
-
 	it("removes stale channel-driven egress profiles when runtime channels are disabled", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
@@ -6854,15 +6587,10 @@ exit 64
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/manifest",
 			secretValues: { "secret://provider.default.apiKey": "sk-provider" },
-		};
-		const channels: RuntimeChannelsLoad = {
-			channels: [],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("empty-channels"),
+			channelBindings: [],
 		};
 
-		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+		const projected = applyRuntimeBundleChannelsToManifestLoad(loaded);
 
 		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"explicit-provider-profile",
@@ -6871,6 +6599,9 @@ exit 64
 	});
 
 	it("keeps managed channels separate from provider projection profiles", () => {
+		const accountKey = "clawdi_accttelegram";
+		const agentTokenSecretRef = `secret://channels/telegram/${accountKey}/agent-token`;
+		const placeholderTokenSecretRef = `secret://channels/telegram/${accountKey}/placeholder-token`;
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -6905,33 +6636,20 @@ exit 64
 			secretValues: {
 				"secret://provider.openclaw.apiKey": "sk-openclaw-provider",
 				"secret://provider.hermes.apiKey": "sk-hermes-provider",
+				[agentTokenSecretRef]: "agent-token-runtime",
+				[placeholderTokenSecretRef]: "999999999:0123456789abcdef0123456789abcdef",
 			},
-		};
-		const channels: RuntimeChannelsLoad = {
-			channels: [
+			channelBindings: [
 				{
-					id: "acct-telegram-1",
 					provider: "telegram",
-					name: "Runtime Telegram",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: "link-telegram-1",
-							account_id: "acct-telegram-1",
-							agent_id: "env_channel_provider",
-							status: "active",
-							agent_token: "agent-token-runtime",
-						},
-					],
+					accountKey,
+					agentTokenSecretRef,
+					placeholderTokenSecretRef,
 				},
 			],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("channels"),
 		};
 
-		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+		const projected = applyRuntimeBundleChannelsToManifestLoad(loaded);
 
 		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"native-telegram-clawdi_accttelegram-managed",
@@ -12527,6 +12245,24 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		const paths = getRuntimePaths();
+		const telegramAccountKey = "clawdi_accttelegram";
+		const telegramAgentRef = `secret://channels/telegram/${telegramAccountKey}/agent-token`;
+		const telegramPlaceholderRef = `secret://channels/telegram/${telegramAccountKey}/placeholder-token`;
+		const discordAccountKey = "clawdi_acctdiscordh";
+		const discordAgentRef = `secret://channels/discord/${discordAccountKey}/agent-token`;
+		const discordPlaceholderRef = `secret://channels/discord/${discordAccountKey}/placeholder-token`;
+		const telegramBinding: RuntimeBundleChannelBinding = {
+			provider: "telegram",
+			accountKey: telegramAccountKey,
+			agentTokenSecretRef: telegramAgentRef,
+			placeholderTokenSecretRef: telegramPlaceholderRef,
+		};
+		const discordBinding: RuntimeBundleChannelBinding = {
+			provider: "discord",
+			accountKey: discordAccountKey,
+			agentTokenSecretRef: discordAgentRef,
+			placeholderTokenSecretRef: discordPlaceholderRef,
+		};
 
 		const load: RuntimeManifestLoad = {
 			manifest: {
@@ -12567,56 +12303,16 @@ exit 64
 			source: "remote-datasource",
 			sourcePath: "test://hermes-channels",
 			offline: false,
-			secretValues: {},
-		};
-		const channels: RuntimeChannelsLoad = {
-			channels: [
-				{
-					id: "acct-telegram-hermes",
-					provider: "telegram",
-					name: "Hermes Telegram",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: "link-telegram-hermes",
-							account_id: "acct-telegram-hermes",
-							agent_id: "env_hermes_channels",
-							status: "active",
-							agent_token: "123456789:telegram-agent-token",
-						},
-					],
-				},
-				{
-					id: "acct-discord-hermes",
-					provider: "discord",
-					name: "Hermes Discord",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: "link-discord-hermes",
-							account_id: "acct-discord-hermes",
-							agent_id: "env_hermes_channels",
-							status: "active",
-							agent_token: "discord-agent-token",
-						},
-					],
-				},
-			],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("hermes-channels"),
+			secretValues: {
+				[telegramAgentRef]: "123456789:telegram-agent-token",
+				[telegramPlaceholderRef]: `999999999:${"a".repeat(32)}`,
+				[discordAgentRef]: "discord-agent-token",
+				[discordPlaceholderRef]: `clawdi_${"b".repeat(32)}`,
+			},
+			channelBindings: [telegramBinding, discordBinding],
 		};
 
-		const projected = applyRuntimeChannelsToManifestLoad(load, channels, paths);
-		const projectedChannels = projected.manifest.projection?.channels;
-		if (!projectedChannels) throw new Error("missing managed channel projection");
-		projectedChannels.whatsapp = {
-			enabled: true,
-			defaultAccount: "clawdi_acctwhatsapp",
-			accounts: { clawdi_acctwhatsapp: { enabled: true } },
-		};
+		const projected = applyRuntimeBundleChannelsToManifestLoad(load, paths);
 		const convergence = convergeRuntimeManifest(projected, paths);
 
 		expect(convergence.installErrors).toEqual([]);
@@ -12637,32 +12333,6 @@ exit 64
 		expect(parsedHermesConfig.thread_sessions_per_user).toBe(false);
 		expect(parsedHermesConfig).not.toHaveProperty("discord.allow_from");
 		expect(parsedHermesConfig).not.toHaveProperty("discord.group_allow_from");
-		expect(parsedHermesConfig).toMatchObject({
-			whatsapp: {
-				enabled: true,
-				dm_policy: "allowlist",
-				group_policy: "open",
-				allow_from: ["*"],
-				group_allow_from: ["*"],
-			},
-			platforms: {
-				whatsapp: {
-					enabled: true,
-					extra: {
-						dm_policy: "allowlist",
-						group_policy: "open",
-						allow_from: ["*"],
-						group_allow_from: ["*"],
-					},
-				},
-			},
-		});
-		expect(
-			JSON.stringify({
-				whatsapp: parsedHermesConfig.whatsapp,
-				platformWhatsapp: parsedHermesConfig.platforms?.whatsapp,
-			}),
-		).not.toContain('"dm_policy":"open"');
 		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
 		expect(parsedHermesConfig).toMatchObject({
 			custom_root: "keep",
@@ -12712,14 +12382,8 @@ exit 64
 		expect(profileBundle).toContain("/v1/channels/discord");
 
 		const discordOnly = convergeRuntimeManifest(
-			applyRuntimeChannelsToManifestLoad(
-				load,
-				{
-					channels: [channels.channels[1]],
-					source: "remote-datasource",
-					sourcePath: "https://runtime.test/v1/channels",
-					etag: testBundleEtag("discord-only-hermes-channels"),
-				},
+			applyRuntimeBundleChannelsToManifestLoad(
+				{ ...load, channelBindings: [discordBinding] },
 				paths,
 			),
 			paths,
@@ -12736,14 +12400,8 @@ exit 64
 		);
 
 		const removed = convergeRuntimeManifest(
-			applyRuntimeChannelsToManifestLoad(
-				load,
-				{
-					channels: [],
-					source: "remote-datasource",
-					sourcePath: "https://runtime.test/v1/channels",
-					etag: testBundleEtag("empty-hermes-channels"),
-				},
+			applyRuntimeBundleChannelsToManifestLoad(
+				{ ...load, channelBindings: [] },
 				paths,
 			),
 			paths,
@@ -12788,9 +12446,18 @@ exit 64
 		const hermesBin = join(home, ".local", "bin", "hermes");
 		const accountId = "00000000-0000-0000-0000-000000000001";
 		const accountKey = "clawdi_000000000000";
-		const credentialId = "credential-whatsapp-hermes";
+		const linkId = "60000000-0000-4000-8000-000000000006";
+		const credentialId = "80000000-0000-4000-8000-000000000011";
+		const agentTokenSecretRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/agent-token`;
+		const capabilitySecretRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/egress-capability`;
 		const credentialSecretRef = `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
+		const capability = `clawdi_${createHash("sha256")
+			.update(`whatsapp:${accountKey}:${linkId}`)
+			.digest("hex")
+			.slice(0, 32)}`;
 		const sessionDir = join(home, ".hermes", "platforms", "whatsapp", "session");
+		const legacySessionDir = join(home, ".hermes", "whatsapp", "session");
+		const legacySentinel = join(legacySessionDir, "unmanaged-session-sentinel");
 		const creds = {
 			advSecretKey: "wa-hermes-secret",
 			me: { id: "15551234567:1@s.whatsapp.net" },
@@ -12799,11 +12466,15 @@ exit 64
 		mkdirSync(workspace, { recursive: true });
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
 		chmodSync(hermesBin, 0o700);
+		seedHermesManagedBaileys(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		const paths = getRuntimePaths();
+		mkdirSync(legacySessionDir, { recursive: true });
+		writeFileSync(legacySentinel, "preserved\n");
 
 		const load: RuntimeManifestLoad = {
 			manifest: {
@@ -12815,6 +12486,7 @@ exit 64
 				generation: 14,
 				issuedAt: "2026-07-07T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test/" },
+				egressEngine: seedMitmproxyCache(paths),
 				runtimes: {
 					hermes: {
 						enabled: true,
@@ -12841,58 +12513,36 @@ exit 64
 			source: "remote-datasource",
 			sourcePath: "test://hermes-whatsapp",
 			offline: false,
-			secretValues: {},
-		};
-		const channels: RuntimeChannelsLoad = {
-			channels: [
+			secretValues: {
+				[agentTokenSecretRef]: "wa-hermes-agent-token",
+				[capabilitySecretRef]: capability,
+				[credentialSecretRef]: JSON.stringify(creds),
+			},
+			channelBindings: [
 				{
-					id: accountId,
 					provider: "whatsapp",
-					name: "Hermes WhatsApp",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: "link-whatsapp-hermes",
-							account_id: accountId,
-							agent_id: "env_hermes_whatsapp",
-							status: "active",
-							agent_token: "wa-hermes-agent-token",
-						},
-					],
-					runtime_credentials: [
-						{
-							id: credentialId,
-							account_id: accountId,
-							agent_link_id: "link-whatsapp-hermes",
-							agent_id: "env_hermes_whatsapp",
-							provider: "whatsapp",
-							kind: "whatsapp_baileys_auth_state",
-							created_at: "2026-07-07T00:00:00Z",
-							jid: "15551234567:1@s.whatsapp.net",
-							identity_pub_key_hex: "aabbcc",
-							material: {
-								schemaVersion: "clawdi.whatsappBaileysAuthState.v1",
-								creds,
-								authCert: {
-									SERIAL: 7,
-									ISSUER: "clawdi",
-									PUBLIC_KEY: {
-										type: "Buffer",
-										data: Buffer.alloc(32, 7).toString("base64"),
-									},
-								},
+					accountId,
+					accountKey,
+					linkId,
+					agentTokenSecretRef,
+					placeholderTokenSecretRef: capabilitySecretRef,
+					credential: {
+						id: credentialId,
+						credsSecretRef: credentialSecretRef,
+						authCert: {
+							SERIAL: 7,
+							ISSUER: "clawdi",
+							PUBLIC_KEY: {
+								type: "Buffer",
+								data: Buffer.alloc(32, 7).toString("base64"),
 							},
 						},
-					],
+					},
 				},
 			],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("hermes-whatsapp"),
 		};
 
-		const projected = applyRuntimeChannelsToManifestLoad(load, channels);
+		const projected = applyRuntimeBundleChannelsToManifestLoad(load, paths);
 		const credentialProjection = projected.manifest.projection?.channelCredentials as unknown[];
 		expect(credentialProjection).toEqual([
 			expect.objectContaining({
@@ -12900,7 +12550,7 @@ exit 64
 				kind: "whatsapp_baileys_auth_state",
 				accountId,
 				accountKey,
-				linkId: "link-whatsapp-hermes",
+				linkId,
 				credentialId,
 				authDir: sessionDir,
 				targets: { hermes: { authDir: sessionDir } },
@@ -12924,15 +12574,19 @@ exit 64
 			WHATSAPP_MODE: "bot",
 			WHATSAPP_ALLOWED_USERS: "*",
 		});
-		materializeHostedChannelCredentials(projected.manifest, projected.secretValues, home);
+		const convergence = convergeRuntimeManifest(projected, paths);
+		expect(convergence.installErrors).toEqual([]);
 		expect(existsSync(sessionDir)).toBe(true);
+		expect(readFileSync(legacySentinel, "utf-8")).toBe("preserved\n");
+		expect(readHermesConfigYaml(home)).toHaveProperty(
+			"platforms.whatsapp.extra.session_path",
+			sessionDir,
+		);
 
-		const removed = applyRuntimeChannelsToManifestLoad(load, {
-			channels: [],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("empty-hermes-whatsapp"),
-		});
+		const removed = applyRuntimeBundleChannelsToManifestLoad(
+			{ ...load, channelBindings: [], secretValues: {} },
+			paths,
+		);
 		materializeHostedChannelCredentials(removed.manifest, removed.secretValues, home);
 		expect(existsSync(sessionDir)).toBe(false);
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
@@ -13028,13 +12682,9 @@ exit 64
 				"secret://channels/whatsapp/clawdi_stale/credentials/stale/creds-json":
 					'{"me":"user-owned"}',
 			},
+			channelBindings: [],
 		};
-		const projected = applyRuntimeChannelsToManifestLoad(load, {
-			channels: [],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: testBundleEtag("empty-hermes-channels"),
-		});
+		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		const convergence = convergeRuntimeManifest(projected, getRuntimePaths());
 
@@ -13191,6 +12841,9 @@ exit 0
 			.map((entry) => JSON.parse(entry));
 		expect(patches).toHaveLength(2);
 		expect(patches[0].channels.whatsapp.accounts).toHaveProperty("clawdi_whatsapp");
+		expect(patches[0].channels.whatsapp.accounts.clawdi_whatsapp.authDir).toBe(
+			join(home, ".openclaw", "credentials", "whatsapp"),
+		);
 		expect(patches[0].session).toEqual({ dmScope: "per-account-channel-peer" });
 		expect(patches[1].channels.whatsapp).toBeNull();
 		expect(patches[1].session).toEqual({ dmScope: null });
