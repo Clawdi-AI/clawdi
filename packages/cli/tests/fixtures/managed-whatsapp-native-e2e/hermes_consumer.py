@@ -27,6 +27,8 @@ async def main() -> None:
         os.environ[key] = value
     if os.environ.get("WHATSAPP_ALLOWED_USERS") != "*":
         raise RuntimeError("managed Hermes projection must use the stock wildcard allowlist")
+    if os.environ.get("WHATSAPP_ALLOW_ALL_USERS") != "true":
+        raise RuntimeError("managed Hermes projection must explicitly opt in to allow all users")
     discover_plugins()
 
     received: list[dict[str, Any]] = []
