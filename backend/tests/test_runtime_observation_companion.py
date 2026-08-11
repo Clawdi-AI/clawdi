@@ -277,6 +277,14 @@ async def test_authorized_successor_atomically_tombstones_predecessor(
     seed_user,
 ):
     environment, _ = await _provision_environment(db_session, seed_user)
+    owner_id = seed_user.id
+    registration = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=owner_id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="handoff-controller",
+    )
     base = datetime.now(UTC)
     predecessor = _payload(
         boot_session_id="boot-session-predecessor",
@@ -340,6 +348,20 @@ async def test_authorized_successor_atomically_tombstones_predecessor(
     assert heads["boot-session-successor"].authorized_successor_boot_session_id == (
         "boot-session-next"
     )
+    page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=owner_id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="handoff-controller",
+        expected_apply_identity=_expected_identity(),
+        after_cursor=registration["cursor"],
+        limit=100,
+    )
+    assert [head["runtimeIdentity"]["bootSessionId"] for head in page["heads"]] == [
+        "boot-session-successor"
+    ]
+    assert page["heads"][0]["state"] == "active"
 
     replay = await ingest_runtime_observation(
         db_session,
@@ -371,6 +393,14 @@ async def test_handoff_cannot_hide_an_unauthorized_active_head(
     seed_user,
 ):
     environment, _ = await _provision_environment(db_session, seed_user)
+    owner_id = seed_user.id
+    registration = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=owner_id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="ambiguous-handoff-controller",
+    )
     base = datetime.now(UTC)
     await ingest_runtime_observation(
         db_session,
@@ -430,6 +460,18 @@ async def test_handoff_cannot_hide_an_unauthorized_active_head(
         ).scalars()
     )
     assert active_sessions == {"boot-session-successor", "boot-session-unrelated"}
+    page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=owner_id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="ambiguous-handoff-controller",
+        expected_apply_identity=_expected_identity(),
+        after_cursor=registration["cursor"],
+        limit=100,
+    )
+    assert {head["runtimeIdentity"]["bootSessionId"] for head in page["heads"]} == active_sessions
+    assert {head["state"] for head in page["heads"]} == {"active"}
 
 
 @pytest.mark.committed_db

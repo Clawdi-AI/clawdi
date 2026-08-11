@@ -1169,6 +1169,7 @@ async def read_runtime_observations(
                 select(V2RuntimeObservationHead)
                 .where(
                     V2RuntimeObservationHead.environment_id == environment_id,
+                    V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
                     V2RuntimeObservationHead.generation == expected_apply_identity.generation,
                     V2RuntimeObservationHead.manifest_etag == expected_apply_identity.manifest_etag,
                     V2RuntimeObservationHead.apply_receipt_id
