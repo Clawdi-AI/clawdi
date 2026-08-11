@@ -13917,7 +13917,8 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const ledgerPath = join(getRuntimePaths().projectionRoot, "managed-mcp-servers.json");
+		const paths = getRuntimePaths();
+		const ledgerPath = join(paths.managedResourceRoot, "managed-mcp-servers.json");
 		mkdirSync(dirname(hermesBin), { recursive: true });
 		mkdirSync(dirname(openclawUserSkill), { recursive: true });
 		writeFileSync(
@@ -14067,6 +14068,14 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			existsSync(join(dirname(openclawSkill), ".clawdi-manifest-receipts", "clawdi.json")),
 		).toBe(true);
 
+		writeFileSync(join(openclawSkill, "SKILL.md"), "tenant mutation before restart\n");
+		rmSync(paths.configurationRoot, { recursive: true, force: true });
+		const restarted = convergeRuntimeManifest(load(1, "openclaw", initialServers), paths);
+		expect(restarted.installErrors).toEqual([]);
+		expect(readFileSync(join(openclawSkill, "SKILL.md"), "utf-8")).not.toContain("tenant mutation");
+		expect(readOpenClawMcpServers(home).clawdi).toEqual(initialServers.clawdi);
+		expect(existsSync(ledgerPath)).toBe(true);
+
 		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());
 		expect(updated.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home)["search-proxy"]).toEqual(updatedServers["search-proxy"]);
@@ -14164,7 +14173,9 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const ledgerPath = join(getRuntimePaths().projectionRoot, "managed-mcp-servers.json");
+		const paths = getRuntimePaths();
+		const legacyLedgerPath = join(paths.projectionRoot, "managed-mcp-servers.json");
+		const ledgerPath = join(paths.managedResourceRoot, "managed-mcp-servers.json");
 		const hermesConfigPath = join(home, ".hermes", "config.yaml");
 		const legacySecretRef = "env://REDACTED_LEGACY_NAME";
 		const legacyPrefix = "Bearer ";
@@ -14185,8 +14196,8 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			hermesConfigPath,
 			`${JSON.stringify({ mcp_servers: { clawdi: legacyServer } }, null, 2)}\n`,
 		);
-		mkdirSync(dirname(ledgerPath), { recursive: true });
-		writeFileSync(ledgerPath, `${JSON.stringify(retainedV1Ledger, null, 2)}\n`);
+		mkdirSync(dirname(legacyLedgerPath), { recursive: true });
+		writeFileSync(legacyLedgerPath, `${JSON.stringify(retainedV1Ledger, null, 2)}\n`);
 		expect(legacyPrefix).toHaveLength(7);
 		const load = (generation: number, includeServer: boolean): RuntimeManifestLoad => ({
 			manifest: {
@@ -14323,7 +14334,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const ledgerPath = join(getRuntimePaths().projectionRoot, "managed-mcp-servers.json");
+		const ledgerPath = join(getRuntimePaths().managedResourceRoot, "managed-mcp-servers.json");
 		const originalLedger = `${JSON.stringify(ledger, null, 2)}\n`;
 		mkdirSync(dirname(ledgerPath), { recursive: true });
 		writeFileSync(ledgerPath, originalLedger);
@@ -14371,7 +14382,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const ledgerPath = join(getRuntimePaths().projectionRoot, "managed-mcp-servers.json");
+		const ledgerPath = join(getRuntimePaths().managedResourceRoot, "managed-mcp-servers.json");
 		writeFileSync(
 			openclawConfigPath,
 			`${JSON.stringify(
@@ -14502,7 +14513,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			callsPath: calls,
 			failSetServer: "second",
 		});
-		const ledgerPath = join(getRuntimePaths().projectionRoot, "managed-mcp-servers.json");
+		const ledgerPath = join(getRuntimePaths().managedResourceRoot, "managed-mcp-servers.json");
 		const originalConfig = `${JSON.stringify(
 			{
 				custom: "keep",
@@ -14585,7 +14596,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const ledgerPath = join(getRuntimePaths().projectionRoot, "managed-mcp-servers.json");
+		const ledgerPath = join(getRuntimePaths().managedResourceRoot, "managed-mcp-servers.json");
 		const hermesConfig = join(home, ".hermes", "config.yaml");
 
 		const load = (

@@ -78,7 +78,7 @@ describe("managed Skill reservations", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
-		mkdirSync(join(root, "config"));
+		mkdirSync(join(root, "state"));
 		const path = target();
 		reserveManagedSkill({
 			targetDir: path,
@@ -152,7 +152,7 @@ describe("managed Skill reservations", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
-		mkdirSync(join(root, "config"));
+		mkdirSync(join(root, "state"));
 		const path = target();
 		const sourceIdentity = [
 			"project",

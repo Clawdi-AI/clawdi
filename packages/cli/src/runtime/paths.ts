@@ -71,6 +71,7 @@ export interface RuntimePaths {
 	instanceRoot: string;
 	installInventory: string;
 	installReceipts: string;
+	managedResourceRoot: string;
 	projectionRoot: string;
 	runRoot: string;
 	convergeLock: string;
@@ -229,6 +230,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		instanceRoot,
 		installInventory: join(serviceStateRoot, "install-inventory"),
 		installReceipts: join(statusRoot, "runtime-install-receipts.json"),
+		managedResourceRoot: join(serviceStateRoot, "managed-resources"),
 		projectionRoot: join(configurationRoot, "projections"),
 		runRoot,
 		convergeLock: join(runRoot, "locks", "converge.lock"),

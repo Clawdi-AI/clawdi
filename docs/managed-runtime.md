@@ -1056,6 +1056,7 @@ and ephemeral runtime handoffs. Important outputs include:
 | `/var/lib/clawdi/sync/runtimes.json` | Runtime sync state |
 | `/var/lib/clawdi/status/*` | Boot, apply, upgrade, provider, egress, watch, and receipt status/result files |
 | `/var/lib/clawdi/install-inventory/<runtime>.json` | Install/verify observation |
+| `/var/lib/clawdi/managed-resources/*.json` | Durable managed Skill and MCP ownership ledgers |
 | `/var/lib/clawdi/maintained/filebrowser/candidates/<sha256>/filebrowser` | Root-owned, verified Files executable |
 | `/var/lib/clawdi/maintained/clawdi/` | Root-only managed CLI activation and versioned package prefixes |
 | `/var/lib/clawdi-files/` | `clawdi-files`-owned `0700` DB and component cache state |
