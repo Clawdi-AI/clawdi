@@ -18,23 +18,33 @@ describe("hosted agent detail header", () => {
 		}
 	});
 
-	test("embeds owner SSO Files without credentials and keeps a top-level launch", () => {
+	test("primes the owner Files grant before embedding and launches via bootstrap", () => {
 		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+		const hookSource = readFileSync(
+			new URL("./use-files-grant-bootstrap.ts", import.meta.url),
+			"utf8",
+		);
 
-		expect(source).toContain("function FilesTab(");
+		// The Files iframe is only rendered after the deployment-scoped grant is
+		// primed; the new-tab launch bootstraps then navigates (no direct anchor).
+		expect(source).toContain("function FilesFrame(");
+		expect(source).toContain("useFilesGrantBootstrap(url)");
+		expect(source).toContain("useOpenFilesInNewTab(url)");
 		expect(source).toContain("src={url}");
 		expect(source).toContain('title="Files"');
-		expect(source).toContain('target="_blank"');
 		expect(source).toContain("Open in new tab");
-		expect(source).not.toContain("Opening Files…");
-		expect(source).not.toContain("Couldn’t open Files");
-		expect(source).not.toContain("onError=");
+		expect(source).toContain("Opening Files…");
+		expect(source).not.toContain('target="_blank"');
 		expect(source).toContain(
 			'const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;',
 		);
-		expect(source).not.toContain("The secure Files endpoint did not load");
-		expect(source).not.toContain("fileBrowserPassword");
-		expect(source).not.toContain("Files credentials");
+
+		// The Clerk token only ever travels in the HTTPS Authorization header —
+		// never URL, iframe src, DOM, or a persisted browser credential.
+		expect(hookSource).toContain("Authorization");
+		expect(hookSource).toContain('credentials: "include"');
+		expect(hookSource).not.toContain("fileBrowserPassword");
+		expect(hookSource).not.toContain("Files credentials");
 	});
 
 	test("shows Cloud origin only on the established Overview title", () => {
