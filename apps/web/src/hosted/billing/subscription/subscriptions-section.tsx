@@ -161,9 +161,44 @@ function SubscriptionActions({ subscription }: { subscription: ComputeSubscripti
 	);
 }
 
+export function SubscriptionAgentLink({
+	deploymentId,
+}: {
+	deploymentId: ComputeSubscriptionListItem["deployment_id"];
+}) {
+	return deploymentId ? (
+		<Link
+			{...agentSectionLink(deploymentId, "settings", {
+				source: "on-clawdi",
+				settings: "billing-plan",
+			})}
+			className="font-medium text-primary underline-offset-4 hover:underline"
+		>
+			View agent
+		</Link>
+	) : (
+		<span className="font-medium text-muted-foreground">Deleted agent</span>
+	);
+}
+
+export function SubscriptionLoadMore({
+	isLoading,
+	onLoadMore,
+}: {
+	isLoading: boolean;
+	onLoadMore: () => void;
+}) {
+	return (
+		<div className="flex justify-center">
+			<Button variant="outline" onClick={onLoadMore} disabled={isLoading}>
+				{isLoading ? "Loading…" : "Load more"}
+			</Button>
+		</div>
+	);
+}
+
 function SubscriptionRow({ subscription }: { subscription: ComputeSubscriptionListItem }) {
 	const status = STATUS_PRESENTATION[subscription.status];
-	const deploymentId = subscription.deployment_id;
 
 	return (
 		<li className={`${SUBSCRIPTION_GRID_CLASS} px-3 py-4`}>
@@ -177,19 +212,7 @@ function SubscriptionRow({ subscription }: { subscription: ComputeSubscriptionLi
 			</div>
 			<div className="min-w-0">
 				<FieldLabel>Agent</FieldLabel>
-				{deploymentId ? (
-					<Link
-						{...agentSectionLink(deploymentId, "settings", {
-							source: "on-clawdi",
-							settings: "billing-plan",
-						})}
-						className="font-medium text-primary underline-offset-4 hover:underline"
-					>
-						View agent
-					</Link>
-				) : (
-					<span className="font-medium text-muted-foreground">Deleted agent</span>
-				)}
+				<SubscriptionAgentLink deploymentId={subscription.deployment_id} />
 			</div>
 			<div>
 				<FieldLabel>Price</FieldLabel>
@@ -228,6 +251,7 @@ function SubscriptionListSkeleton() {
 
 export function SubscriptionsSection({ actions }: { actions?: ReactNode }) {
 	const subscriptions = useSubscriptions();
+	const rows = subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [];
 
 	return (
 		<SettingsSection
@@ -246,24 +270,40 @@ export function SubscriptionsSection({ actions }: { actions?: ReactNode }) {
 					onRetry={() => void subscriptions.refetch()}
 					title="Couldn't load subscriptions"
 				/>
-			) : subscriptions.data?.length ? (
-				<div className="overflow-hidden rounded-lg border">
-					<div
-						aria-hidden
-						className={`${SUBSCRIPTION_GRID_CLASS} hidden border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid`}
-					>
-						<span>Subscription</span>
-						<span>Agent</span>
-						<span>Price</span>
-						<span>Renewal / end</span>
-						<span className="text-right">Actions</span>
+			) : rows.length ? (
+				<>
+					<div className="overflow-hidden rounded-lg border">
+						<div
+							aria-hidden
+							className={`${SUBSCRIPTION_GRID_CLASS} hidden border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid`}
+						>
+							<span>Subscription</span>
+							<span>Agent</span>
+							<span>Price</span>
+							<span>Renewal / end</span>
+							<span className="text-right">Actions</span>
+						</div>
+						<ul className="divide-y">
+							{rows.map((subscription) => (
+								<SubscriptionRow key={subscription.subscription_id} subscription={subscription} />
+							))}
+						</ul>
 					</div>
-					<ul className="divide-y">
-						{subscriptions.data.map((subscription) => (
-							<SubscriptionRow key={subscription.subscription_id} subscription={subscription} />
-						))}
-					</ul>
-				</div>
+					{subscriptions.hasNextPage && !subscriptions.isFetchNextPageError ? (
+						<SubscriptionLoadMore
+							isLoading={subscriptions.isFetchingNextPage}
+							onLoadMore={() => void subscriptions.fetchNextPage()}
+						/>
+					) : null}
+					{subscriptions.isFetchNextPageError ? (
+						<ApiErrorPanel
+							normalizer={billingErrorNormalizer}
+							error={subscriptions.error}
+							onRetry={() => void subscriptions.fetchNextPage()}
+							title="Couldn't load more subscriptions"
+						/>
+					) : null}
+				</>
 			) : (
 				<EmptyState
 					variant="inset"

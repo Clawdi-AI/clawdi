@@ -891,20 +891,24 @@ describe("account compute subscriptions", () => {
 			requests.push(request.clone());
 			const path = new URL(request.url).pathname;
 			if (path === "/v2/subscriptions") {
-				return jsonResponse([
-					{
-						subscription_id: "csub_test",
-						plan_slug: "compute_performance",
-						status: "active",
-						price_cents: 2_000,
-						currency: "usd",
-						billing_term_months: 1,
-						current_period_end: "2026-08-22T00:00:00Z",
-						cancel_at_period_end: false,
-						deployment_id: null,
-						is_orphan: true,
-					},
-				]);
+				return jsonResponse({
+					items: [
+						{
+							subscription_id: "csub_test",
+							plan_slug: "compute_performance",
+							status: "active",
+							price_cents: 2_000,
+							currency: "usd",
+							billing_term_months: 1,
+							current_period_end: "2026-08-22T00:00:00Z",
+							cancel_at_period_end: false,
+							deployment_id: null,
+							is_orphan: true,
+						},
+					],
+					has_more: true,
+					next_cursor: "cursor-next",
+				});
 			}
 			return jsonResponse({
 				status: "active",
@@ -915,9 +919,11 @@ describe("account compute subscriptions", () => {
 			});
 		});
 
-		await expect(client.getSubscriptions()).resolves.toEqual([
-			expect.objectContaining({ subscription_id: "csub_test", is_orphan: true }),
-		]);
+		await expect(client.getSubscriptions(3, "cursor-current")).resolves.toEqual({
+			items: [expect.objectContaining({ subscription_id: "csub_test", is_orphan: true })],
+			has_more: true,
+			next_cursor: "cursor-next",
+		});
 		await client.cancelSubscription({ subscription_id: "csub_test" });
 		await client.resumeSubscription({ subscription_id: "csub_test" });
 
@@ -928,6 +934,9 @@ describe("account compute subscriptions", () => {
 		]);
 		expect(await requests[1]?.json()).toEqual({ subscription_id: "csub_test" });
 		expect(await requests[2]?.json()).toEqual({ subscription_id: "csub_test" });
+		expect(new URL(requests[0]?.url ?? "").searchParams).toEqual(
+			new URLSearchParams({ limit: "3", cursor: "cursor-current" }),
+		);
 		expect(
 			requests.every((request) => request.headers.get("Authorization") === "Bearer test-token"),
 		).toBe(true);

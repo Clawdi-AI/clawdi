@@ -115,6 +115,13 @@ function useBillingQuery<TData>(
 	return useQuery({ enabled: isDeployApiConfigured(), retry: billingQueryRetry, ...options });
 }
 
+export function billingNextPageParam(page: {
+	has_more: boolean;
+	next_cursor?: string | null;
+}): string | undefined {
+	return page.has_more && page.next_cursor ? page.next_cursor : undefined;
+}
+
 export function useHostedUser() {
 	const client = useBillingClient();
 	return useBillingQuery({
@@ -153,8 +160,7 @@ export function useWalletLedgerPages(limit = 50) {
 		queryKey: billingKeys.ledgerPages(limit),
 		queryFn: ({ pageParam }) => client.getLedger(limit, pageParam),
 		initialPageParam: null as string | null,
-		getNextPageParam: (lastPage) =>
-			lastPage.has_more && lastPage.next_cursor ? lastPage.next_cursor : undefined,
+		getNextPageParam: billingNextPageParam,
 		enabled: isDeployApiConfigured(),
 		retry: billingQueryRetry,
 	});
@@ -173,9 +179,13 @@ export function usePlans() {
 
 export function useSubscriptions() {
 	const client = useBillingClient();
-	return useBillingQuery({
+	return useInfiniteQuery({
 		queryKey: billingKeys.subscriptions,
-		queryFn: () => client.getSubscriptions(),
+		queryFn: ({ pageParam }) => client.getSubscriptions(20, pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: billingNextPageParam,
+		enabled: isDeployApiConfigured(),
+		retry: billingQueryRetry,
 	});
 }
 
@@ -258,8 +268,7 @@ export function useComputeBillingHistory(limit = 20) {
 		queryKey: billingKeys.billingHistory(limit),
 		queryFn: ({ pageParam }) => client.getBillingHistory(limit, pageParam),
 		initialPageParam: null as string | null,
-		getNextPageParam: (lastPage) =>
-			lastPage.has_more && lastPage.next_cursor ? lastPage.next_cursor : undefined,
+		getNextPageParam: billingNextPageParam,
 		enabled: isDeployApiConfigured(),
 		retry: billingQueryRetry,
 		staleTime: 60_000,
