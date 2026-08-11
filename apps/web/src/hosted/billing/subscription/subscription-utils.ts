@@ -3,6 +3,7 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	type ComputePlanSlug,
+	type ComputeSubscriptionListItem,
 	type HostedComputeSubscription,
 	type Plan,
 } from "@/hosted/billing/contracts";
@@ -33,6 +34,27 @@ export function isComputeSubscriptionTermChangeable(
 	subscription: ComputeSubscriptionStatusInput,
 ): boolean {
 	return COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES.has(subscription?.status ?? "");
+}
+
+type AccountSubscriptionActionState = Pick<
+	ComputeSubscriptionListItem,
+	"cancel_at_period_end" | "deployment_id" | "is_orphan" | "status"
+>;
+
+export function canCancelAccountSubscription(
+	subscription: AccountSubscriptionActionState,
+): boolean {
+	return !subscription.cancel_at_period_end && isComputeSubscriptionCancelable(subscription);
+}
+
+export function canResumeAccountSubscription(
+	subscription: AccountSubscriptionActionState,
+): boolean {
+	return (
+		!subscription.is_orphan &&
+		Boolean(subscription.deployment_id) &&
+		(subscription.cancel_at_period_end || subscription.status === "canceling")
+	);
 }
 
 export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {

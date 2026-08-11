@@ -125,6 +125,37 @@ describe("selectUnifiedAgentList", () => {
 		expect(selection.membershipResolved).toBe(false);
 	});
 
+	test("withholds connected classification when legacy access is unresolved but legacy tiles are hidden", () => {
+		const possibleLegacy = env("22222222-2222-4222-8222-222222222222", "possible-legacy-env");
+		const selection = selectUnifiedAgentList({
+			cloudEnvs: [possibleLegacy],
+			hostedTiles: [],
+			claimedEnvIds: new Set(),
+			legacyEnvIds: null,
+			hostedInventoryStatus: "resolved",
+			showLegacyAgents: false,
+		});
+
+		expect(selection.connectedTiles).toEqual([]);
+		expect(selection.membershipResolved).toBe(false);
+	});
+
+	test("uses resolved legacy ownership for deduplication even when legacy tiles are hidden", () => {
+		const legacy = env("22222222-2222-4222-8222-222222222222", "legacy-env");
+		const connected = env("33333333-3333-4333-8333-333333333333", "connected-env");
+		const selection = selectUnifiedAgentList({
+			cloudEnvs: [legacy, connected],
+			hostedTiles: [],
+			claimedEnvIds: new Set(),
+			legacyEnvIds: new Set([legacy.id]),
+			hostedInventoryStatus: "resolved",
+			showLegacyAgents: false,
+		});
+
+		expect(selection.connectedTiles.map((tile) => tile.id)).toEqual([connected.id]);
+		expect(selection.membershipResolved).toBe(true);
+	});
+
 	test("never reclassifies cloud projections while deployment membership is unresolved", () => {
 		const possibleHostedProjection = env(
 			"11111111-1111-4111-8111-111111111111",
@@ -214,6 +245,29 @@ describe("selectUnifiedAgentList", () => {
 });
 
 describe("legacy membership resolution", () => {
+	test("keeps loading and failed access unresolved", () => {
+		const error = new Error("access unavailable");
+
+		expect(resolveLegacyEnvIds("unresolved", ["cached-legacy-env"], null)).toEqual({
+			envIds: null,
+			error: null,
+			isLoading: true,
+		});
+		expect(resolveLegacyEnvIds("unresolved", ["cached-legacy-env"], error)).toEqual({
+			envIds: null,
+			error,
+			isLoading: false,
+		});
+	});
+
+	test("only treats an authoritative denial as empty legacy ownership", () => {
+		expect(resolveLegacyEnvIds("disabled", undefined, null)).toEqual({
+			envIds: new Set(),
+			error: null,
+			isLoading: false,
+		});
+	});
+
 	test("surfaces an initial endpoint failure instead of remaining in loading state", () => {
 		const error = new Error("legacy endpoint unavailable");
 		const unifiedSource = readFileSync(
@@ -225,14 +279,12 @@ describe("legacy membership resolution", () => {
 			"utf8",
 		);
 
-		expect(resolveLegacyEnvIds(true, undefined, error)).toEqual({
+		expect(resolveLegacyEnvIds("enabled", undefined, error)).toEqual({
 			envIds: null,
 			error,
 			isLoading: false,
 		});
-		expect(unifiedSource).toContain(
-			"error: hosted.error ?? (showLegacyAgents ? legacy.error : null)",
-		);
+		expect(unifiedSource).toContain("error: hosted.error ?? legacy.error");
 		expect(sectionSource).toContain("{unified.error ? (");
 		expect(sectionSource).toContain("<HostedUnavailableBanner");
 	});

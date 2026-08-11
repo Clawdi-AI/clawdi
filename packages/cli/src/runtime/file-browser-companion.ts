@@ -30,7 +30,7 @@ import { runningAsRoot } from "./runtime-user-command";
 const FILE_BROWSER_BINARY = "filebrowser";
 const FILE_BROWSER_CANDIDATES = "candidates";
 const FILE_BROWSER_RECEIPT = "filebrowser";
-const FILE_BROWSER_CONFIG_ROOT_MODE = 0o750;
+const FILE_BROWSER_CONFIG_ROOT_MODE = 0o700;
 const FILE_BROWSER_CONFIG_MODE = 0o440;
 
 type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
@@ -336,7 +336,7 @@ function currentRevision(
 			!configRootStat.isDirectory() ||
 			configRootStat.isSymbolicLink() ||
 			configRootStat.uid !== owner.uid ||
-			configRootStat.gid !== identity.gid ||
+			configRootStat.gid !== owner.gid ||
 			(configRootStat.mode & 0o777) !== FILE_BROWSER_CONFIG_ROOT_MODE
 		)
 			return null;
@@ -379,7 +379,7 @@ export function ensureFileBrowserCompanion(
 	ensureOwnedDirectory(candidatesRoot(paths), managedRootIdentity(), 0o755);
 	ensureOwnedDirectory(
 		paths.fileBrowserConfigRoot,
-		{ uid: managedRootIdentity().uid, gid: identity.gid },
+		managedRootIdentity(),
 		FILE_BROWSER_CONFIG_ROOT_MODE,
 	);
 	cleanStaleStaging(paths);

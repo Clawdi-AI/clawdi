@@ -7,8 +7,12 @@ export interface HostedProductAccessProfile {
 	capabilities?: HostedProductCapabilities | null;
 }
 
+/** `disabled` is authoritative only after a successful profile response. */
+export type LegacyHostedAccessStatus = "unresolved" | "enabled" | "disabled";
+
 export interface HostedProductAccess {
 	canUseLegacyHostedDashboard: boolean;
+	legacyHostedAccessStatus: LegacyHostedAccessStatus;
 	canCreateCloudAgents: boolean;
 	/**
 	 * Back-compat alias for the rollout flag. New code should choose the
@@ -46,9 +50,16 @@ export function hostedProductAccessFromProfile(
 	profile: HostedProductAccessProfile | undefined,
 ): HostedProductAccess {
 	const capabilities = profile?.capabilities;
+	const legacyHostedAccessStatus =
+		profile === undefined
+			? "unresolved"
+			: capabilities?.can_use_v1 === true
+				? "enabled"
+				: "disabled";
 	const canCreateCloudAgents = capabilities?.can_use_v2 === true;
 	return {
-		canUseLegacyHostedDashboard: capabilities?.can_use_v1 === true,
+		canUseLegacyHostedDashboard: legacyHostedAccessStatus === "enabled",
+		legacyHostedAccessStatus,
 		canCreateCloudAgents,
 		canUseCloudAgents: canCreateCloudAgents,
 	};

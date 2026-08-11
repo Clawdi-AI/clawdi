@@ -437,7 +437,7 @@ test("persists and serves the managed token through the real official OpenClaw g
 	}
 }, 60_000);
 
-test("isolates File Browser from the tenant while preserving workspace access", () => {
+test("runs Files as the tenant while preserving platform isolation", () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 
 	expect(process.geteuid?.()).toBe(0);
@@ -450,6 +450,13 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	const tenantExisting = join(runtimeHome, "files-tenant-existing.txt");
 	writeFileSync(tenantExisting, "tenant-existing\n", { mode: 0o600 });
 	chownSync(tenantExisting, runtimeUid, runtimeGid);
+	const rootOwnedControl = join(runtimeHome, "files-root-owned-control.txt");
+	writeFileSync(rootOwnedControl, "root-owned\n", { mode: 0o600 });
+	const hermesConfig = join(runtimeHome, ".hermes", "config.yaml");
+	mkdirSync(dirname(hermesConfig), { recursive: true, mode: 0o700 });
+	chownSync(dirname(hermesConfig), runtimeUid, runtimeGid);
+	writeFileSync(hermesConfig, "model: test\n", { mode: 0o600 });
+	chownSync(hermesConfig, runtimeUid, runtimeGid);
 
 	process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	process.env.CLAWDI_RUNTIME_USER = "clawdi";
@@ -532,6 +539,14 @@ const listen = config.match(/^\\s*listen:\\s*(\\S+)\\s*$/m)?.[1];
 const port = Number(config.match(/^\\s*port:\\s*(\\d+)\\s*$/m)?.[1]);
 if (!listen || !Number.isInteger(port)) process.exit(64);
 const existing = fs.readFileSync(${JSON.stringify(tenantExisting)}, "utf8");
+const hermes = fs.readFileSync(${JSON.stringify(hermesConfig)}, "utf8");
+fs.writeFileSync(${JSON.stringify(hermesConfig)}, hermes);
+try {
+  fs.readFileSync(${JSON.stringify(rootOwnedControl)});
+  process.exit(77);
+} catch (error) {
+  if (error?.code !== "EACCES") throw error;
+}
 fs.writeFileSync(${JSON.stringify(serviceCreated)}, existing);
 fs.mkdirSync(${JSON.stringify(join(runtimeHome, "tmp", "thumbnails"))}, { recursive: true });
 fs.writeFileSync(${JSON.stringify(join(runtimeHome, "tmp", "thumbnails", "preview.jpg"))}, "preview\\n");
@@ -724,24 +739,18 @@ http.createServer((request, response) => {
 	expect(tenantClawdiAfterConverge.status).not.toBe(0);
 	expect(tenantClawdiAfterConverge.stdout).toBe("");
 
-	const serviceIdentity = spawnSync("getent", ["passwd", "clawdi-files"], {
-		encoding: "utf8",
-	});
-	expect(serviceIdentity.status).toBe(0);
-	const serviceFields = serviceIdentity.stdout.trim().split(":");
-	const serviceUid = Number.parseInt(serviceFields[2] ?? "", 10);
-	const serviceGid = Number.parseInt(serviceFields[3] ?? "", 10);
-	expect(serviceUid).not.toBe(runtimeUid);
-	expect(serviceUid).not.toBe(0);
-	expect(serviceGid).not.toBe(runtimeGid);
-	expect(serviceFields[5]).toBe("/nonexistent");
-	expect(serviceFields[6]).toBe("/usr/sbin/nologin");
-	const tenantGroups = spawnSync("id", ["-G", "clawdi"], { encoding: "utf8" });
-	expect(tenantGroups.status).toBe(0);
-	expect(tenantGroups.stdout.trim().split(/\s+/)).not.toContain(String(serviceGid));
-	const serviceGroups = spawnSync("id", ["-G", "clawdi-files"], { encoding: "utf8" });
-	expect(serviceGroups.status).toBe(0);
-	expect(serviceGroups.stdout.trim().split(/\s+/)).toEqual([String(serviceGid)]);
+	expect(spawnSync("getent", ["passwd", "clawdi-files"]).status).not.toBe(0);
+	for (const config of [openClawConfig, hermesConfig]) {
+		for (const access of ["-r", "-w"] as const) {
+			expect(spawnSync("runuser", ["-u", "clawdi", "--", "test", access, config]).status).toBe(0);
+		}
+		expect(spawnSync("runuser", ["-u", "clawdi", "--", "test", "-x", dirname(config)]).status).toBe(
+			0,
+		);
+	}
+	expect(
+		spawnSync("runuser", ["-u", "clawdi", "--", "test", "!", "-r", rootOwnedControl]).status,
+	).toBe(0);
 
 	const candidatesRoot = join(paths.fileBrowserInstallRoot, "candidates");
 	const activeCandidate = join(candidatesRoot, binarySha256);
@@ -759,21 +768,13 @@ http.createServer((request, response) => {
 		expect(statSync(path).gid).toBe(0);
 	}
 	expect(statSync(paths.fileBrowserConfigRoot).uid).toBe(0);
-	expect(statSync(paths.fileBrowserConfigRoot).gid).toBe(serviceGid);
-	expect(statSync(paths.fileBrowserConfigRoot).mode & 0o777).toBe(0o750);
+	expect(statSync(paths.fileBrowserConfigRoot).gid).toBe(0);
+	expect(statSync(paths.fileBrowserConfigRoot).mode & 0o777).toBe(0o700);
 	expect(statSync(paths.fileBrowserConfig).uid).toBe(0);
-	expect(statSync(paths.fileBrowserConfig).gid).toBe(serviceGid);
+	expect(statSync(paths.fileBrowserConfig).gid).toBe(runtimeGid);
 	expect(statSync(paths.fileBrowserConfig).mode & 0o777).toBe(0o440);
-	expect(
-		spawnSync("runuser", ["-u", "clawdi-files", "--", "test", "-r", paths.fileBrowserConfigRoot])
-			.status,
-	).toBe(0);
-	expect(
-		spawnSync("runuser", ["-u", "clawdi-files", "--", "test", "-r", paths.fileBrowserConfig])
-			.status,
-	).toBe(0);
-	expect(statSync(paths.fileBrowserStateRoot).uid).toBe(serviceUid);
-	expect(statSync(paths.fileBrowserStateRoot).gid).toBe(serviceGid);
+	expect(statSync(paths.fileBrowserStateRoot).uid).toBe(runtimeUid);
+	expect(statSync(paths.fileBrowserStateRoot).gid).toBe(runtimeGid);
 	expect(statSync(paths.fileBrowserStateRoot).mode & 0o777).toBe(0o700);
 	expect(statSync(receipt).mode & 0o777).toBe(0o600);
 	expect(statSync(paths.manifestLastGood).mode & 0o777).toBe(0o600);
@@ -781,8 +782,8 @@ http.createServer((request, response) => {
 	const cache = join(paths.fileBrowserStateRoot, "cache");
 	const database = join(paths.fileBrowserStateRoot, "filebrowser.db");
 	for (const path of [cache, database]) {
-		expect(statSync(path).uid).toBe(serviceUid);
-		expect(statSync(path).gid).toBe(serviceGid);
+		expect(statSync(path).uid).toBe(runtimeUid);
+		expect(statSync(path).gid).toBe(runtimeGid);
 	}
 	expect(statSync(cache).mode & 0o777).toBe(0o700);
 	expect(statSync(database).mode & 0o777).toBe(0o600);
@@ -790,8 +791,6 @@ http.createServer((request, response) => {
 	for (const path of [
 		paths.fileBrowserConfigRoot,
 		paths.fileBrowserConfig,
-		paths.fileBrowserStateRoot,
-		database,
 		receipt,
 		paths.manifestLastGood,
 	]) {
@@ -804,8 +803,6 @@ http.createServer((request, response) => {
 		activeCandidate,
 		activeBinary,
 		paths.fileBrowserConfig,
-		paths.fileBrowserStateRoot,
-		database,
 		receipt,
 		paths.manifestLastGood,
 		join(paths.systemdSystemRoot, "clawdi-files.service"),
@@ -833,9 +830,7 @@ http.createServer((request, response) => {
 	expect(mainPidResult.status).toBe(0);
 	const mainPid = Number.parseInt(mainPidResult.stdout.trim(), 10);
 	expect(mainPid).toBeGreaterThan(1);
-	expect(statSync(`/proc/${mainPid}`).uid).toBe(serviceUid);
-	const signal = spawnSync("runuser", ["-u", "clawdi", "--", "kill", "-TERM", String(mainPid)]);
-	expect(signal.status).not.toBe(0);
+	expect(statSync(`/proc/${mainPid}`).uid).toBe(runtimeUid);
 	const unitControl = spawnSync(
 		"runuser",
 		["-u", "clawdi", "--", "systemctl", "stop", "clawdi-files.service"],
@@ -848,8 +843,15 @@ http.createServer((request, response) => {
 	});
 	expect(effectiveUnit.status).toBe(0);
 	expect(effectiveUnit.stdout).toContain("/run/systemd/system/service.d/zzz-lxc-service.conf");
+	expect(effectiveUnit.stdout).toContain("PrivatePIDs=true");
+	expect(effectiveUnit.stdout).toContain(
+		`BindReadOnlyPaths=${paths.fileBrowserConfig}:${dirname(paths.fileBrowserServiceBinary)}/filebrowser.yaml:norbind`,
+	);
 	expect(effectiveUnit.stdout).toContain("LoadCredential=");
 	expect(existsSync("/run/credentials/clawdi-files.service/filebrowser.yaml")).toBe(false);
+	const configMountPoint = join(dirname(paths.fileBrowserServiceBinary), "filebrowser.yaml");
+	expect(statSync(configMountPoint).isFile()).toBe(true);
+	expect(readFileSync(configMountPoint, "utf8")).toBe("");
 
 	let readinessStatus: number | null = null;
 	for (let attempt = 0; attempt < 50; attempt++) {

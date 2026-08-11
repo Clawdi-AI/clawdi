@@ -25,7 +25,6 @@ import {
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
-import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-browser-isolation";
 import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
@@ -5026,8 +5025,8 @@ exit 42
 			join(paths.systemdUserRoot, "clawdi-files.service"),
 		);
 		expect(unit).not.toContain("RootDirectory=");
-		expect(unit).toContain(`User=${FILE_BROWSER_SERVICE_USER}`);
-		expect(unit).toContain(`Group=${FILE_BROWSER_SERVICE_GROUP}`);
+		expect(unit).toContain(`User=${TEST_RUNTIME_USER}`);
+		expect(unit).toContain(`Group=${process.getegid?.() ?? 0}`);
 		expect(unit).toContain("ProtectHome=tmpfs");
 		expect(unit).toContain(`BindPaths=${paths.userHome}`);
 		expect(unit).toContain("StateDirectory=clawdi-files");
@@ -5038,16 +5037,20 @@ exit 42
 		expect(unit).not.toContain("LoadCredential=");
 		expect(unit).toContain(`ReadWritePaths=${paths.userHome}`);
 		expect(unit).toContain(`BindReadOnlyPaths=${active}:${paths.fileBrowserServiceBinary}:norbind`);
+		expect(unit).toContain(
+			`BindReadOnlyPaths=${paths.fileBrowserConfig}:${dirname(paths.fileBrowserServiceBinary)}/filebrowser.yaml:norbind`,
+		);
 		expect(unit).toContain('ExecStartPre="/bin/sh" "-c"');
 		expect(unit).toContain(paths.fileBrowserServiceBinary);
 		expect(unit).toContain(FILE_BROWSER_VERSION);
 		expect(unit).toContain(FILE_BROWSER_COMMIT.slice(0, 7));
-		expect(unit).not.toContain(`ReadOnlyPaths=${paths.fileBrowserConfig}`);
+		expect(unit.split("\n")).not.toContain(`ReadOnlyPaths=${paths.fileBrowserConfig}`);
 		expect(unit.match(/^ExecStart=.*$/m)?.[0]).toBe(
-			`ExecStart="${paths.fileBrowserServiceBinary}" "-c" "${paths.fileBrowserConfig}"`,
+			`ExecStart="${paths.fileBrowserServiceBinary}" "-c" "${dirname(paths.fileBrowserServiceBinary)}/filebrowser.yaml"`,
 		);
 		expect(unit).toContain(`NoExecPaths=${paths.userHome} ${paths.fileBrowserStateRoot}`);
 		expect(unit).toContain("ProtectSystem=strict");
+		expect(unit).toContain("PrivatePIDs=true");
 		expect(unit).toContain("CapabilityBoundingSet=");
 		expect(unit).toContain("TasksMax=128");
 		expect(unit).toContain(

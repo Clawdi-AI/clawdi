@@ -15,6 +15,7 @@ export const billingKeys = {
 	billingHistoryRoot,
 	billingHistory: (limit: number) => [...billingHistoryRoot, limit] as const,
 	plans: ["billing", "plans"] as const,
+	subscriptions: ["billing", "subscriptions"] as const,
 	deployments: ["billing", "deployments"] as const,
 	workspaceSkills: (deploymentId: string) =>
 		["hosted", "deployments", deploymentId, "skills"] as const,
