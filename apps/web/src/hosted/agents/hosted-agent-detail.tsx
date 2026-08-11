@@ -138,6 +138,7 @@ import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunnin
 import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
+	ComputePlanChangeResult,
 	DeploymentUpdateRequest,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
@@ -170,6 +171,7 @@ import {
 	useResumeSubscription,
 } from "@/hosted/billing/hooks";
 import {
+	activePlanChangeOperationName,
 	type PlanChangeSelection,
 	performanceUpgradeUnavailableReason,
 	planChangeUnavailableReason,
@@ -3551,8 +3553,10 @@ function ComputeSettingsSections({
 	const lifecycle = useDeploymentLifecycle();
 	const plans = usePlans();
 	const quotePlanChange = useQuotePlanChange();
-	const [pendingPlanChangeName, setPendingPlanChangeName] = useState<string | null>(null);
-	const changePlan = useChangePlan(setPendingPlanChangeName);
+	const projectedPlanChangeName = activePlanChangeOperationName(deployment);
+	const [acceptedPlanChangeName, setAcceptedPlanChangeName] = useState<string | null>(null);
+	const pendingPlanChangeName = projectedPlanChangeName ?? acceptedPlanChangeName;
+	const changePlan = useChangePlan(setAcceptedPlanChangeName);
 	const checkPlanChange = useCheckPlanChange();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
@@ -3687,7 +3691,7 @@ function ComputeSettingsSections({
 		if (hostedAccess.isLoading || hostedAccess.canCreateCloudAgents) return;
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
-		setPendingPlanChangeName(null);
+		setAcceptedPlanChangeName(null);
 		walletTopUp.reset();
 	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, walletTopUp.reset]);
 
@@ -3708,13 +3712,52 @@ function ComputeSettingsSections({
 				subscription_id: subscriptionId,
 				...selection,
 			});
-			setPendingPlanChangeName(null);
+			setAcceptedPlanChangeName(null);
 			setPlanChangeQuote(quote);
 		} catch (error) {
 			toast.error("Couldn’t quote plan change", {
 				description: normalizeBillingError(error),
 			});
 		}
+	}
+
+	function showPlanChangeResult(result: ComputePlanChangeResult) {
+		if (result.kind === "scheduled") {
+			toast.success("Downgrade scheduled", {
+				description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
+			});
+		} else if (result.kind === "complete") {
+			toast.success("Plan changed", {
+				description: "Your compute subscription has been updated.",
+			});
+		} else {
+			toast.info("Plan change in progress", {
+				description:
+					result.waitingFor === "payment"
+						? "We’re still waiting for payment confirmation. Your compute plan has not changed yet."
+						: "Your request was received, but the compute plan has not updated yet. You can watch its status here.",
+			});
+		}
+		setAcceptedPlanChangeName(null);
+		setPlanChangeDialogOpen(false);
+	}
+
+	function handlePlanChangeError(error: unknown) {
+		if (error instanceof PlanChangePendingError) {
+			setAcceptedPlanChangeName(error.operationName);
+			toast.info("Still waiting for confirmation", {
+				description:
+					"We don’t have a final result yet. Don’t submit another plan change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another charge.",
+			});
+			return;
+		}
+		if (error instanceof PlanChangeTerminalError) {
+			setAcceptedPlanChangeName(null);
+		}
+		if (walletTopUp.handleFundingError(error)) return;
+		toast.error("Couldn’t change plan", {
+			description: normalizeBillingError(error),
+		});
 	}
 
 	async function confirmPlanChange(operationId: string) {
@@ -3724,43 +3767,18 @@ function ComputeSettingsSections({
 				setPlanChangeDialogOpen(false);
 				return;
 			}
-			const result = pendingPlanChangeName
-				? await checkPlanChange.mutateAsync(pendingPlanChangeName)
-				: await changePlan.mutateAsync({ operation_id: operationId });
-			if (result.kind === "scheduled") {
-				toast.success("Downgrade scheduled", {
-					description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
-				});
-			} else if (result.kind === "complete") {
-				toast.success("Plan changed", {
-					description: "Your compute subscription has been updated.",
-				});
-			} else {
-				toast.info("Plan change in progress", {
-					description:
-						result.waitingFor === "payment"
-							? "We’re still waiting for payment confirmation. Your compute plan has not changed yet."
-							: "Your request was received, but the compute plan has not updated yet. You can watch its status here.",
-				});
-			}
-			setPendingPlanChangeName(null);
-			setPlanChangeDialogOpen(false);
+			showPlanChangeResult(await changePlan.mutateAsync({ operation_id: operationId }));
 		} catch (error) {
-			if (error instanceof PlanChangePendingError) {
-				setPendingPlanChangeName(error.operationName);
-				toast.info("Still waiting for confirmation", {
-					description:
-						"We don’t have a final result yet. Don’t submit another plan change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another charge.",
-				});
-				return;
-			}
-			if (error instanceof PlanChangeTerminalError) {
-				setPendingPlanChangeName(null);
-			}
-			if (walletTopUp.handleFundingError(error)) return;
-			toast.error("Couldn’t change plan", {
-				description: normalizeBillingError(error),
-			});
+			handlePlanChangeError(error);
+		}
+	}
+
+	async function checkAcceptedPlanChange() {
+		if (!pendingPlanChangeName) return;
+		try {
+			showPlanChangeResult(await checkPlanChange.mutateAsync(pendingPlanChangeName));
+		} catch (error) {
+			handlePlanChangeError(error);
 		}
 	}
 
@@ -3831,6 +3849,7 @@ function ComputeSettingsSections({
 					hasAcceptedChange={pendingPlanChangeName !== null}
 					onQuote={requestPlanChangeQuote}
 					onConfirm={confirmPlanChange}
+					onCheckStatus={checkAcceptedPlanChange}
 					onTopUp={() => walletTopUp.show()}
 					onExitComplete={() => {
 						if (pendingPlanChangeName === null) setPlanChangeQuote(null);
@@ -3914,9 +3933,11 @@ function ComputeSettingsSections({
 											(hasTerminalFallback ? !canStartNewSubscription : !canUpgrade || !perfPlan))
 									}
 									onClick={() =>
-										hasTerminalFallback
-											? setSubscriptionCreateOpen(true)
-											: setPlanChangeDialogOpen(true)
+										pendingPlanChangeName
+											? setPlanChangeDialogOpen(true)
+											: hasTerminalFallback
+												? setSubscriptionCreateOpen(true)
+												: setPlanChangeDialogOpen(true)
 									}
 								>
 									{hasTerminalFallback ? (
