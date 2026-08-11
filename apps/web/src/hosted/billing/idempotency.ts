@@ -21,7 +21,7 @@ export type IdempotencyAttempt = {
 
 type MintIdempotencyKey = (prefix: string) => string;
 
-export const IDEMPOTENCY_ATTEMPT_TTL_MS = 30 * 60_000;
+export const IDEMPOTENCY_ATTEMPT_TTL_MS = 24 * 60 * 60_000;
 
 const IDEMPOTENCY_STORAGE_KEY = "clawdi:idempotency-attempts";
 
