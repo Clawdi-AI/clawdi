@@ -12587,9 +12587,7 @@ exit 64
 		expect(existsSync(sessionDir)).toBe(false);
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
-		expect(
-			removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOW_ALL_USERS,
-		).toBeUndefined();
+		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOW_ALL_USERS).toBeUndefined();
 	});
 
 	it("clears managed Hermes channels without touching user-owned WhatsApp settings", () => {
