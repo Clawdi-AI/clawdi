@@ -3113,7 +3113,10 @@ function applyHostedChannelProjection(
 	if (name === "hermes") {
 		const configPath = join(home, ".hermes", "config.yaml");
 		withRuntimeUserFileAccess(() => {
-			mergeHermesChannelConfig(configPath, hermesManagedChannelsPatch(channels));
+			mergeHermesChannelConfig(
+				configPath,
+				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials),
+			);
 			makeRuntimeUserOwned(configPath);
 		});
 		return configPath;
@@ -3153,10 +3156,19 @@ function installHostedChannelProjectionDependencies(
 	});
 }
 
-function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
+function hermesManagedChannelsPatch(
+	channels: Record<string, unknown>,
+	channelCredentials: unknown,
+): Record<string, unknown> {
 	const telegramEnabled = channelHasAccounts(channels.telegram);
 	const discordEnabled = channelHasAccounts(channels.discord);
 	const whatsappEnabled = channelHasAccounts(channels.whatsapp);
+	const whatsappSessionPath = whatsappEnabled
+		? hermesManagedWhatsAppSessionPath(channelCredentials)
+		: null;
+	if (whatsappEnabled && !whatsappSessionPath) {
+		throw new Error("managed Hermes WhatsApp projection is missing its auth directory");
+	}
 	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled || whatsappEnabled;
 	return {
 		telegram: telegramEnabled
@@ -3209,6 +3221,7 @@ function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<s
 						whatsapp: {
 							enabled: true,
 							extra: {
+								session_path: whatsappSessionPath,
 								dm_policy: "allowlist",
 								group_policy: "open",
 								allow_from: ["*"],
@@ -3228,6 +3241,21 @@ function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<s
 			},
 		},
 	};
+}
+
+function hermesManagedWhatsAppSessionPath(channelCredentials: unknown): string | null {
+	if (!Array.isArray(channelCredentials)) return null;
+	for (const value of channelCredentials) {
+		const credential = recordValue(value);
+		if (credential?.provider !== "whatsapp" || credential.kind !== "whatsapp_baileys_auth_state") {
+			continue;
+		}
+		const targets = recordValue(credential.targets);
+		const hermes = recordValue(targets?.hermes);
+		const authDir = stringValue(hermes?.authDir);
+		if (authDir) return authDir;
+	}
+	return null;
 }
 
 function channelHasAccounts(channel: unknown): boolean {
@@ -4727,13 +4755,15 @@ function runtimeProgramRevisionForManifest(
 		: [];
 	const channels = hostedChannelProjection(manifest);
 	const hostedTarget = runtime === "openclaw" || runtime === "hermes";
-	const channelProjection = channels
-		? runtime === "openclaw"
-			? openClawManagedChannelsPatch(channels)
-			: runtime === "hermes"
-				? hermesManagedChannelsPatch(channels)
-				: null
-		: null;
+	let channelProjection: Record<string, unknown> | null = null;
+	if (channels && runtime === "openclaw") {
+		channelProjection = openClawManagedChannelsPatch(channels);
+	} else if (channels && runtime === "hermes" && desiredRuntime?.enabled) {
+		channelProjection = hermesManagedChannelsPatch(
+			channels,
+			manifest.projection?.channelCredentials,
+		);
+	}
 	return runtimeProgramRevision({
 		renderedProjection: {
 			channels: channelProjection,
@@ -5124,8 +5154,11 @@ function validateRuntimeProjectionPlan(input: {
 
 		const channels = hostedChannelProjection(manifest);
 		if (channels && name === "openclaw") JSON.stringify(openClawManagedChannelsPatch(channels));
-		if (channels && name === "hermes") {
-			hermesConfig = renderHermesChannelConfig(hermesConfig, hermesManagedChannelsPatch(channels));
+		if (channels && name === "hermes" && runtime.enabled) {
+			hermesConfig = renderHermesChannelConfig(
+				hermesConfig,
+				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials),
+			);
 		}
 	}
 	validateHostedMcpProjectionPlan(manifest, paths, observations);

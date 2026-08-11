@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -206,6 +207,154 @@ describe("hosted runtime bundle v2", () => {
 				},
 			},
 		});
+	});
+
+	test("strictly projects Link-scoped WhatsApp auth and capability for OpenClaw", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-whatsapp-"));
+		roots.push(root);
+		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+		const paths = getRuntimePaths({ mode: "hosted" });
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const accountId = "50000000-0000-4000-8000-000000000005";
+		const accountKey = "clawdi_50000000000040008000000000000005";
+		const linkId = "60000000-0000-4000-8000-000000000006";
+		const credentialId = "80000000-0000-4000-8000-000000000011";
+		const agentRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/agent-token`;
+		const capabilityRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/egress-capability`;
+		const credentialRef = `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
+		const capability = `clawdi_${createHash("sha256")
+			.update(`whatsapp:${accountKey}:${linkId}`)
+			.digest("hex")
+			.slice(0, 32)}`;
+		const secretValues = z.record(z.string(), z.string()).parse(raw.secretValues);
+		const bundle = {
+			...raw,
+			sourceRevision: "b".repeat(64),
+			channelBindings: [
+				{
+					provider: "whatsapp",
+					accountId,
+					accountKey,
+					linkId,
+					agentTokenSecretRef: agentRef,
+					placeholderTokenSecretRef: capabilityRef,
+					credential: {
+						id: credentialId,
+						credsSecretRef: credentialRef,
+						authCert: {
+							SERIAL: 7,
+							ISSUER: "clawdi",
+							PUBLIC_KEY: {
+								type: "Buffer",
+								data: Buffer.alloc(32, 7).toString("base64"),
+							},
+						},
+					},
+				},
+			],
+			secretValues: {
+				...secretValues,
+				[agentRef]: "whatsapp-agent-token",
+				[capabilityRef]: capability,
+				[credentialRef]: JSON.stringify({
+					advSecretKey: "managed-whatsapp",
+					me: { id: "15551234567:1@s.whatsapp.net" },
+				}),
+			},
+		};
+
+		const loaded = normalizeHostedRuntimeBundleV2(bundle);
+		const projected = applyRuntimeBundleChannelsToManifestLoadWithContext(loaded, paths);
+		const credentialProjection = z
+			.array(z.record(z.string(), z.unknown()))
+			.parse(projected.manifest.projection?.channelCredentials)[0];
+		if (!credentialProjection) throw new Error("missing WhatsApp credential projection");
+		const openclawAuthDir = join(
+			paths.userHome,
+			".openclaw",
+			"credentials",
+			"whatsapp",
+			accountKey,
+		);
+		expect(credentialProjection).toMatchObject({
+			accountId,
+			accountKey,
+			linkId,
+			credentialId,
+			targets: { openclaw: { authDir: openclawAuthDir } },
+		});
+		expect(projected.manifest.projection?.channels).toMatchObject({
+			whatsapp: {
+				accounts: { [accountKey]: { enabled: true, authDir: openclawAuthDir } },
+			},
+		});
+		const projectedCreds = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(projected.secretValues?.[credentialRef] ?? "null"));
+		expect(projectedCreds).toMatchObject({
+			additionalData: {
+				"clawdi.managedWhatsAppSocket": { capability },
+			},
+		});
+		const websocketProfile = projected.manifest.egressProfiles?.profiles.find(
+			(profile) => profile.owner === "clawdi-native-whatsapp" && profile.kind === "websocket",
+		);
+		expect(websocketProfile).toMatchObject({
+			match: {
+				headers: {
+					"x-clawdi-whatsapp-link-capability": {
+						type: "secretRefEquals",
+						secretRef: capabilityRef,
+					},
+				},
+			},
+			rewrite: {
+				setHeaders: {
+					authorization: { secretRef: agentRef },
+				},
+			},
+		});
+		expect(projected.secretValues?.[capabilityRef]).toBe(capability);
+
+		expect(() =>
+			applyRuntimeBundleChannelsToManifestLoadWithContext(
+				normalizeHostedRuntimeBundleV2({
+					...bundle,
+					secretValues: { ...bundle.secretValues, [capabilityRef]: `clawdi_${"0".repeat(32)}` },
+				}),
+				paths,
+			),
+		).toThrow("runtime bundle WhatsApp capability does not match its Link");
+
+		const binding = bundle.channelBindings[0];
+		if (!binding) throw new Error("missing WhatsApp binding");
+		expect(() =>
+			applyRuntimeBundleChannelsToManifestLoadWithContext(
+				normalizeHostedRuntimeBundleV2({
+					...bundle,
+					channelBindings: [
+						{
+							...binding,
+							credential: {
+								...binding.credential,
+								credsSecretRef: `secret://channels/whatsapp/${accountKey}/credentials/${linkId}/creds-json`,
+							},
+						},
+					],
+				}),
+				paths,
+			),
+		).toThrow("runtime bundle WhatsApp credential ref does not match its credential");
+		const incompleteCredential = z.record(z.string(), z.unknown()).parse(binding.credential);
+		delete incompleteCredential.credsSecretRef;
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...bundle,
+				channelBindings: [{ ...binding, credential: incompleteCredential }],
+			}),
+		).toThrow();
 	});
 
 	test("accepts generic hosted MCP and skill resource intent with a future CLI fixture", () => {
@@ -724,7 +873,7 @@ describe("hosted runtime bundle v2", () => {
 		expect(reconciledPersistentState).not.toContain("deployment-auth-token-rotated");
 	});
 
-	test("rejects unknown fields and dormant providers", () => {
+	test("rejects unknown fields and incomplete provider-swapped bindings", () => {
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as Record<string, unknown>;
 		expect(() =>
 			normalizeHostedRuntimeBundleV2({ ...raw, rendererIdentity: "forbidden" }),

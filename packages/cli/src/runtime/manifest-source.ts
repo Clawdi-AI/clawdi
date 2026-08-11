@@ -55,14 +55,7 @@ export interface RuntimeManifestLoad {
 
 export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
 
-export interface RuntimeBundleChannelBinding {
-	provider: "telegram" | "discord";
-	accountKey: string;
-	agentTokenSecretRef: string;
-	placeholderTokenSecretRef: string;
-}
-
-const runtimeBundleChannelBindingSchema = z
+const runtimeBundleTokenChannelBindingSchema = z
 	.object({
 		provider: z.enum(["telegram", "discord"]),
 		accountKey: z.string().min(1),
@@ -70,6 +63,42 @@ const runtimeBundleChannelBindingSchema = z
 		placeholderTokenSecretRef: canonicalSecretRefSchema,
 	})
 	.strict();
+
+const runtimeBundleWhatsAppBindingSchema = z
+	.object({
+		provider: z.literal("whatsapp"),
+		accountId: z.string().uuid(),
+		accountKey: z.string().min(1),
+		linkId: z.string().uuid(),
+		agentTokenSecretRef: canonicalSecretRefSchema,
+		placeholderTokenSecretRef: canonicalSecretRefSchema,
+		credential: z
+			.object({
+				id: z.string().uuid(),
+				credsSecretRef: canonicalSecretRefSchema,
+				authCert: z
+					.object({
+						SERIAL: z.number().int().nonnegative().safe(),
+						ISSUER: z.string().trim().min(1).max(256),
+						PUBLIC_KEY: z
+							.object({
+								type: z.literal("Buffer"),
+								data: z.string().min(1),
+							})
+							.strict(),
+					})
+					.strict(),
+			})
+			.strict(),
+	})
+	.strict();
+
+const runtimeBundleChannelBindingSchema = z.discriminatedUnion("provider", [
+	runtimeBundleTokenChannelBindingSchema,
+	runtimeBundleWhatsAppBindingSchema,
+]);
+
+export type RuntimeBundleChannelBinding = z.infer<typeof runtimeBundleChannelBindingSchema>;
 
 const hostedRuntimeBundleV2Schema = z
 	.object({
@@ -137,44 +166,6 @@ export interface RuntimeManifestFailure {
 	errors: string[];
 	rejectedGeneration?: number | null;
 	activeGeneration?: number | null;
-}
-
-export interface RuntimeChannelAgentLink {
-	id: string;
-	account_id: string;
-	agent_id: string;
-	status: string;
-	agent_token: string | null;
-}
-
-export interface RuntimeChannelCredential {
-	id: string;
-	account_id: string;
-	agent_link_id: string;
-	agent_id: string;
-	provider: string;
-	kind: string;
-	created_at?: string;
-	jid?: string | null;
-	identity_pub_key_hex?: string | null;
-	material?: unknown;
-}
-
-export interface RuntimeChannelAccount {
-	id: string;
-	provider: "telegram" | "discord" | "whatsapp";
-	name: string;
-	status: string;
-	visibility: "private" | "public";
-	runtime_links: RuntimeChannelAgentLink[];
-	runtime_credentials: RuntimeChannelCredential[];
-}
-
-export interface RuntimeChannelsLoad {
-	channels: RuntimeChannelAccount[];
-	source: "remote-datasource";
-	sourcePath: string;
-	etag?: string;
 }
 
 interface ExistingManifestState {
