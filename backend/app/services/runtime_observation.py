@@ -310,6 +310,19 @@ def _head_identity_matches(
     )
 
 
+def _retire_runtime_observation_head(
+    head: V2RuntimeObservationHead,
+    *,
+    tombstoned_at: datetime,
+) -> None:
+    head.state = RUNTIME_OBSERVATION_HEAD_RETIRED
+    head.latest_inbox_id = None
+    head.captured_at = None
+    head.freshness_deadline = None
+    head.health = None
+    head.tombstoned_at = tombstoned_at
+
+
 async def ingest_runtime_observation(
     db: AsyncSession,
     *,
@@ -369,13 +382,6 @@ async def ingest_runtime_observation(
             "runtime_observation_identity_conflict",
             "boot session is already bound to another apply identity",
         )
-    if head is not None:
-        if head.state != RUNTIME_OBSERVATION_HEAD_ACTIVE:
-            raise RuntimeObservationProtocolError(
-                409,
-                "runtime_environment_retired",
-                "retired boot-session tombstones are immutable",
-            )
 
     async def duplicate_or_conflict() -> RuntimeObservationIngestResult:
         existing_by_event = (
@@ -431,6 +437,55 @@ async def ingest_runtime_observation(
     if existing_by_event is not None or existing_by_sequence is not None:
         return await duplicate_or_conflict()
 
+    if head is not None and head.state != RUNTIME_OBSERVATION_HEAD_ACTIVE:
+        raise RuntimeObservationProtocolError(
+            409,
+            "runtime_environment_retired",
+            "retired boot-session tombstones are immutable",
+        )
+    if head is not None and value.predecessor_boot_session_id is not None:
+        raise RuntimeObservationProtocolError(
+            409,
+            "runtime_observation_handoff_conflict",
+            "boot-session handoff is only valid when creating its successor",
+        )
+    if (
+        head is not None
+        and value.successor_boot_session_id is not None
+        and head.authorized_successor_boot_session_id is not None
+        and head.authorized_successor_boot_session_id != value.successor_boot_session_id
+    ):
+        raise RuntimeObservationProtocolError(
+            409,
+            "runtime_observation_successor_conflict",
+            "boot session already authorizes another successor",
+        )
+
+    predecessor: V2RuntimeObservationHead | None = None
+    if head is None and value.predecessor_boot_session_id is not None:
+        predecessor = (
+            await db.execute(
+                select(V2RuntimeObservationHead)
+                .where(
+                    V2RuntimeObservationHead.environment_id == environment_id,
+                    V2RuntimeObservationHead.boot_session_id == value.predecessor_boot_session_id,
+                )
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if (
+            predecessor is None
+            or predecessor.state != RUNTIME_OBSERVATION_HEAD_ACTIVE
+            or not _head_identity_matches(predecessor, identity)
+            or predecessor.authorized_successor_boot_session_id != value.boot_session_id
+        ):
+            raise RuntimeObservationProtocolError(
+                409,
+                "runtime_observation_handoff_conflict",
+                "boot-session predecessor did not authorize this exact successor",
+            )
+
     inbox = V2RuntimeObservationInbox(
         environment_id=environment_id,
         deployment_id=fence.deployment_id,
@@ -462,6 +517,8 @@ async def ingest_runtime_observation(
     fence.stream_high_water = inbox.id
     if head is None:
         outcome = "accepted_head_created"
+        if predecessor is not None:
+            _retire_runtime_observation_head(predecessor, tombstoned_at=now)
         head = V2RuntimeObservationHead(
             environment_id=environment_id,
             deployment_id=fence.deployment_id,
@@ -470,6 +527,7 @@ async def ingest_runtime_observation(
             apply_receipt_id=identity.apply_receipt_id,
             boot_nonce=identity.boot_nonce,
             boot_session_id=value.boot_session_id,
+            authorized_successor_boot_session_id=value.successor_boot_session_id,
             highest_sequence=value.sequence,
             latest_inbox_id=inbox.id,
             latest_stream_position=inbox.id,
@@ -481,25 +539,28 @@ async def ingest_runtime_observation(
             state=RUNTIME_OBSERVATION_HEAD_ACTIVE,
         )
         db.add(head)
-    elif value.sequence > head.highest_sequence and (
-        head.captured_at is None or captured_at >= _utc(head.captured_at)
-    ):
-        outcome = "accepted_head_advanced"
-        # Every unique correctly-bound event is immutable inbox evidence. Only
-        # the compact head has a monotonic CAS rule; lower sequence or regressing
-        # capture time remains historical and cannot replace the current head.
-        head.highest_sequence = value.sequence
-        head.latest_inbox_id = inbox.id
-        head.latest_stream_position = inbox.id
-        head.latest_event_id = value.event_id
-        head.latest_payload_hash = payload_hash
-        head.captured_at = captured_at
-        head.freshness_deadline = freshness_deadline
-        head.health = value.status
-    elif value.sequence <= head.highest_sequence:
-        outcome = "accepted_non_advance_sequence"
     else:
-        outcome = "accepted_non_advance_captured_at"
+        if head.authorized_successor_boot_session_id is None:
+            head.authorized_successor_boot_session_id = value.successor_boot_session_id
+        if value.sequence > head.highest_sequence and (
+            head.captured_at is None or captured_at >= _utc(head.captured_at)
+        ):
+            outcome = "accepted_head_advanced"
+            # Every unique correctly-bound event is immutable inbox evidence. Only
+            # the compact head has a monotonic CAS rule; lower sequence or regressing
+            # capture time remains historical and cannot replace the current head.
+            head.highest_sequence = value.sequence
+            head.latest_inbox_id = inbox.id
+            head.latest_stream_position = inbox.id
+            head.latest_event_id = value.event_id
+            head.latest_payload_hash = payload_hash
+            head.captured_at = captured_at
+            head.freshness_deadline = freshness_deadline
+            head.health = value.status
+        elif value.sequence <= head.highest_sequence:
+            outcome = "accepted_non_advance_sequence"
+        else:
+            outcome = "accepted_non_advance_captured_at"
     await db.flush()
     return RuntimeObservationIngestResult(
         event_id=value.event_id,
@@ -628,12 +689,7 @@ async def retire_runtime_environment(
     fence.final_stream_position = final_position
     fence.final_session_high_waters = high_waters
     for head in heads:
-        head.state = RUNTIME_OBSERVATION_HEAD_RETIRED
-        head.latest_inbox_id = None
-        head.captured_at = None
-        head.freshness_deadline = None
-        head.health = None
-        head.tombstoned_at = now
+        _retire_runtime_observation_head(head, tombstoned_at=now)
     await db.flush()
     return RuntimeEnvironmentRetirementResult(
         receipt=receipt,

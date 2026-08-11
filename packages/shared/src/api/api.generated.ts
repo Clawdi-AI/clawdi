@@ -6567,6 +6567,10 @@ export interface components {
             bootNonce: string;
             /** Bootsessionid */
             bootSessionId: string;
+            /** Successorbootsessionid */
+            successorBootSessionId?: string | null;
+            /** Predecessorbootsessionid */
+            predecessorBootSessionId?: string | null;
             /** Sequence */
             sequence: number;
             /** Eventid */
