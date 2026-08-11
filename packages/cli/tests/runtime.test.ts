@@ -1279,6 +1279,7 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 
 function installSuccessfulSystemctlFixture(
 	sidecarReadyPath = join(root, "run", "clawdi", "egress", "systemd", "ca.pem"),
+	systemctlLog?: string,
 ): void {
 	const systemctlPath = join(root, "bin", "systemctl");
 	mkdirSync(dirname(systemctlPath), { recursive: true });
@@ -1286,6 +1287,7 @@ function installSuccessfulSystemctlFixture(
 		systemctlPath,
 		`#!/usr/bin/env bash
 set -euo pipefail
+${systemctlLog ? `printf '%s\\n' "$*" >> '${systemctlLog}'` : ""}
 if [ "\${1:-}" = "--user" ]; then shift; fi
 if [ "\${1:-}" = "show" ]; then
   printf 'LoadState=loaded\\nActiveState=active\\n'
@@ -8677,13 +8679,14 @@ fi
 		]);
 	});
 
-	it("runtime watch updates from the manifest without rewriting bootstrap context", async () => {
-		installSuccessfulSystemctlFixture();
+	it("runtime watch applies a CLI-only update by handoff without restarting existing units", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
 		const npmLog = join(root, "npm.log");
+		const systemctlLog = join(root, "systemctl-cli-update.log");
+		installSuccessfulSystemctlFixture(join(run, "egress", "systemd", "ca.pem"), systemctlLog);
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
@@ -8742,7 +8745,9 @@ chmod +x "$prefix/bin/clawdi"
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
+		seedCurrentCliInstall(state, "clawdi@1.2.3-test", "1.2.3-test", "https://registry.npmjs.org");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		let desiredCliPackageSpec = "clawdi@1.2.3-test";
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
@@ -8764,7 +8769,7 @@ chmod +x "$prefix/bin/clawdi"
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
-									packageSpec: `clawdi@${currentVersion}`,
+									packageSpec: desiredCliPackageSpec,
 									registry: "https://registry.npmjs.org",
 								},
 								runtimes: {
@@ -8773,20 +8778,37 @@ chmod +x "$prefix/bin/clawdi"
 							},
 							secretValues: {},
 						},
-						{ etag: testBundleEtag("etag-cli-update-13") },
+						{ etag: testBundleEtag(desiredCliPackageSpec) },
 					),
 			},
 		]);
 
 		try {
 			await runtimeWatch({ once: true, json: true });
+			if (process.exitCode !== undefined && process.exitCode !== 0) {
+				throw new Error(logs.join("\n"));
+			}
+			const paths = getRuntimePaths();
+			expect(JSON.parse(logs[0])).toMatchObject({ status: "applied" });
+			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"))).toBe(true);
+			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-daemon.service"))).toBe(true);
+			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(
+				true,
+			);
+			expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(true);
+			expect(existsSync(paths.daemonAuthToken)).toBe(true);
+
+			logs.length = 0;
+			writeFileSync(systemctlLog, "");
+			process.exitCode = undefined;
+			desiredCliPackageSpec = `clawdi@${currentVersion}`;
+			await runtimeWatch({ once: true, json: true });
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(1);
-			const paths = getRuntimePaths();
+			expect(captured).toHaveLength(2);
 			const active = paths.cliManagedBin;
 			const sharedPrefixTarget = join(paths.cliNpmPrefix, "bin", "clawdi");
 			const activeTarget = readlinkSync(active);
@@ -8814,10 +8836,8 @@ chmod +x "$prefix/bin/clawdi"
 				systemUnitsChanged: [],
 				userUnitsChanged: [],
 			});
-			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"))).toBe(false);
-			expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(false);
-			expect(existsSync(paths.manifestLastGood)).toBe(false);
-			expect(existsSync(paths.appliedState)).toBe(false);
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
+			expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 13 });
 			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toMatchObject({
 				transaction: { phase: "activated" },
 				badVersions: [],
@@ -8825,17 +8845,25 @@ chmod +x "$prefix/bin/clawdi"
 
 			logs.length = 0;
 			process.exitCode = undefined;
-			setRuntimeApplyGeneration(13, cliContext);
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(2);
+			expect(captured).toHaveLength(3);
 			const completedEvent = JSON.parse(logs[0]);
 			expect(completedEvent.status).toBe("applied");
 			expect(completedEvent.selfReexec).toBe(false);
 			expect(completedEvent.cliUpdate.status).toBe("current");
+			expect(completedEvent.systemdUnitsChanged).toBe(false);
+			expect(completedEvent.systemdApply).toEqual({
+				applied: true,
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
+			});
 			expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 13 });
 			expect(JSON.stringify(currentTestApplyContext)).toBe(runtimeContextBefore);
+			expect(readFileSync(systemctlLog, "utf-8")).not.toMatch(
+				/(?:^|\s)(?:daemon-reload|start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
+			);
 			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toMatchObject({
 				transaction: null,
 				badVersions: [],
@@ -9321,6 +9349,8 @@ fi
 			expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedSecretCache);
 			const rollbackSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
 			expect(rollbackSystemctlCalls).not.toContain("official openclaw installer");
+			expect(rollbackSystemctlCalls).not.toContain("restart openclaw-gateway.service");
+			expect(rollbackSystemctlCalls).not.toContain("restart clawdi-daemon.service");
 			const failedRestart = rollbackSystemctlCalls.indexOf(
 				"restart clawdi-runtime-sidecar.service",
 			);
@@ -9380,7 +9410,8 @@ fi
 			expect(readFileSync(paths.manifestLastGood, "utf-8")).toBe(committedLastGood);
 			expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedSecretCache);
 			const invalidEngineRollbackCalls = readFileSync(systemctlLog, "utf-8");
-			expect(invalidEngineRollbackCalls).toContain("--user restart openclaw-gateway.service");
+			expect(invalidEngineRollbackCalls).not.toContain("--user restart openclaw-gateway.service");
+			expect(invalidEngineRollbackCalls).not.toContain("restart clawdi-daemon.service");
 		} finally {
 			console.log = previousLog;
 			process.exitCode = previousExitCode;

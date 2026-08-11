@@ -7,7 +7,6 @@ import {
 } from "./runtime-impact-revision";
 
 const daemonManifest = {
-	clawdiCli: { packageSpec: "clawdi@1.0.0" },
 	controlPlane: { apiUrl: "https://cloud.test" },
 	liveSync: { enabled: false, agents: [] },
 };
@@ -52,6 +51,17 @@ describe("runtime impact revisions", () => {
 		expect(daemonProgramRevision({ ...daemonManifest })).toBe(
 			daemonProgramRevision(daemonManifest),
 		);
+		const cliOnlyChange = {
+			...daemonManifest,
+			clawdiCli: { packageSpec: "clawdi@2.0.0" },
+		};
+		expect(daemonProgramRevision(cliOnlyChange)).toBe(daemonProgramRevision(daemonManifest));
+		expect(
+			daemonProgramRevision({
+				...daemonManifest,
+				controlPlane: { apiUrl: "https://other.test" },
+			}),
+		).not.toBe(daemonProgramRevision(daemonManifest));
 		expect(runtimeSidecarProgramRevision({ ...sidecarManifest, instanceId: "other" })).not.toBe(
 			runtimeSidecarProgramRevision(sidecarManifest),
 		);

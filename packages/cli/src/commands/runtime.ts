@@ -522,7 +522,6 @@ export function applySystemdRuntimeUpdate(
 	opts: {
 		forceRestartSystemUnits?: readonly string[];
 		forceStopSystemUnits?: readonly string[];
-		forceRestartUserUnits?: readonly string[];
 		recoverFailedUnits?: boolean;
 		activationScope?: {
 			systemUnits: readonly string[];
@@ -560,9 +559,6 @@ export function applySystemdRuntimeUpdate(
 	const forcedSystemStops = (opts.forceStopSystemUnits ?? []).filter(
 		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
 	);
-	const forcedUserRestarts = (opts.forceRestartUserUnits ?? []).filter((unit) =>
-		after.user.has(unit),
-	);
 	const recoverFailedUnits = opts.recoverFailedUnits !== false;
 	const activationChanged =
 		system.added.length > 0 ||
@@ -572,8 +568,7 @@ export function applySystemdRuntimeUpdate(
 		user.changed.length > 0 ||
 		user.removed.length > 0 ||
 		forcedSystemRestarts.length > 0 ||
-		forcedSystemStops.length > 0 ||
-		forcedUserRestarts.length > 0;
+		forcedSystemStops.length > 0;
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
 		return { applied: !activationChanged, systemUnitsChanged, userUnitsChanged };
 	}
@@ -638,7 +633,6 @@ export function applySystemdRuntimeUpdate(
 	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 
 	const changedUserUnits = new Set(user.changed);
-	const forcedRestartUserUnits = new Set(forcedUserRestarts);
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
 	const enableUserUnits: string[] = [];
@@ -660,7 +654,7 @@ export function applySystemdRuntimeUpdate(
 		}
 		if (state.activeState !== "active") continue;
 		if (!enabled) enableUserUnits.push(unit);
-		if (changedUserUnits.has(unit) || forcedRestartUserUnits.has(unit)) {
+		if (changedUserUnits.has(unit)) {
 			restartUserUnits.push(unit);
 		}
 	}
@@ -1745,7 +1739,6 @@ async function applyRuntimeDesiredState(
 						...staleSystemUnits,
 					],
 					forceStopSystemUnits: stopEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
-					forceRestartUserUnits: [...previousSystemdUnits.user.keys()],
 					recoverFailedUnits: false,
 				});
 			},
