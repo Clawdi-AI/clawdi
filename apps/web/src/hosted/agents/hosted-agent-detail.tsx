@@ -382,7 +382,7 @@ function DeleteComputeAction({
 	label = "Delete",
 }: {
 	deployment: HostedDeployment;
-	onDeleteAccepted: (deploymentId: string) => void;
+	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 	variant?: React.ComponentProps<typeof Button>["variant"];
 	className?: string;
 	label?: string;
@@ -467,7 +467,7 @@ export function HostedAgentDetail({
 	runtime: Runtime;
 	section?: AgentSectionId;
 	routeSearch: AgentRouteSearch;
-	onDeleteAccepted: (deploymentId: string) => void;
+	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
 	isCheckingDeployment: boolean;
@@ -3417,7 +3417,7 @@ function HostedAgentSettingsTab({
 	environmentId: string;
 	deployment: HostedDeployment;
 	projectionAvailable: boolean;
-	onDeleteAccepted: (deploymentId: string) => void;
+	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
@@ -3528,7 +3528,7 @@ function ComputeSettingsSections({
 	onDeleteAccepted,
 }: {
 	deployment: HostedDeployment;
-	onDeleteAccepted: (deploymentId: string) => void;
+	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	const router = useRouter();
 	const queryClient = useQueryClient();

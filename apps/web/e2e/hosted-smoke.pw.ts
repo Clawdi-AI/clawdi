@@ -3419,6 +3419,16 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 	});
 	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
 	const historyLengthBeforeDelete = await page.evaluate(() => window.history.length);
+	await page.evaluate(() => {
+		document.documentElement.dataset.deleteNotFoundFlash = "false";
+		const observer = new MutationObserver(() => {
+			if (document.body.textContent?.includes("Clawdi Cloud agent not found")) {
+				document.documentElement.dataset.deleteNotFoundFlash = "true";
+			}
+			if (window.location.pathname === "/") observer.disconnect();
+		});
+		observer.observe(document.body, { childList: true, subtree: true });
+	});
 
 	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
 	await page
@@ -3427,10 +3437,11 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		.click();
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
-	await expect.poll(() => new URL(page.url()).pathname).toBe("/agents");
+	await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 	await expect
 		.poll(() => page.evaluate(() => window.history.length))
 		.toBe(historyLengthBeforeDelete);
+	await expect(page.locator("html")).toHaveAttribute("data-delete-not-found-flash", "false");
 	await expect(page.getByText("Agent removed", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("Cleanup continues in the background.", { exact: true }),

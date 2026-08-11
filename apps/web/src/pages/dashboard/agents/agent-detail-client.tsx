@@ -6,7 +6,6 @@ import {
 	ConnectedAgentDetailSkeleton,
 } from "@/components/dashboard/connected-agent-detail";
 import type { AgentRouteSearch, AgentSectionId } from "@/lib/agent-routes";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -27,10 +26,6 @@ export function AgentDetailClient({
 	section: AgentSectionId;
 	routeSearch: AgentRouteSearch;
 }) {
-	const hostedAccess = useHostedProductAccess();
-	if (AgentHome && hostedAccess.isLoading) {
-		return <ConnectedAgentDetailSkeleton hosted />;
-	}
 	if (AgentHome) {
 		return (
 			<Suspense fallback={<ConnectedAgentDetailSkeleton hosted />}>
@@ -38,15 +33,11 @@ export function AgentDetailClient({
 			</Suspense>
 		);
 	}
-	const showSourceBadge = IS_HOSTED_BUILD
-		? hostedAccess.canCreateCloudAgents || hostedAccess.canUseLegacyHostedDashboard
-		: true;
 	return (
 		<ConnectedAgentDetail
 			environmentId={environmentId}
 			section={section}
 			routeSearch={routeSearch}
-			showSourceBadge={showSourceBadge}
 		/>
 	);
 }

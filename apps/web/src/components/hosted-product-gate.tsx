@@ -23,7 +23,7 @@ export function HostedProductGate({
 			void router.navigate({ href: fallbackHref, replace: true });
 	}, [access.isDenied, fallbackHref, isLatestTarget, router]);
 
-	if (access.isLoading) return <HostedRouteSkeleton />;
+	if (access.isLoading || access.isDenied) return <HostedRouteSkeleton />;
 	if (access.isError) {
 		return (
 			<div className="mx-auto flex min-h-[50vh] w-full max-w-2xl items-center p-6">

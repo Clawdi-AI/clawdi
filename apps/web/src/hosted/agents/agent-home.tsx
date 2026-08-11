@@ -285,7 +285,7 @@ export function AgentHome({
 				runtime={runtime}
 				section={section}
 				routeSearch={deploymentRouteSearch}
-				onDeleteAccepted={() => router.navigate({ href: "/agents", replace: true })}
+				onDeleteAccepted={() => router.navigate({ href: "/", replace: true })}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 				deploymentTransitionEscalated={deploymentTransitionEscalated}
 				isCheckingDeployment={manualChecking}
