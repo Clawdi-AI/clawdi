@@ -374,7 +374,16 @@ controls. File Browser receives its official JWT header configuration with
 password, signup, passkey, sharing, admin, API-token management, realtime, and
 WebDAV disabled. It accepts only the manifest-bound external JWT assertion; no
 password, pairing code, access code, or URL token is part of this runtime
-contract. When a later manifest omits the companion, normal stale-unit
+contract. The non-admin profile settings remain available for safe display and
+file-viewing preferences, with dotfiles visible and the sidebar unpinned by
+default; those settings cannot elevate the separately disabled permissions or
+unlock password auth. Quantum applies those defaults when it first creates the
+external-JWT user and preserves that user's later preferences across config
+changes; reconciliation never rewrites or deletes the service database to force
+new defaults onto an existing account. Files still refuses symlinks rather than
+traversing them.
+
+When a later manifest omits the companion, normal stale-unit
 reconciliation stops and withdraws only `clawdi-files.service` while preserving
 the selected Hermes or OpenClaw unit.
 
@@ -395,6 +404,8 @@ The pinned upstream contracts are File Browser's
 [JWT verifier](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/auth/jwt.go),
 [JWT middleware](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/middleware.go),
 and [authentication settings](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/auth.go),
+the [user-default and permission fields](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/structs.go),
+and the [non-admin profile update boundary](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/users.go),
 plus the documented
 [systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)
 and [`systemd-tmpfiles` POSIX ACL types](https://www.freedesktop.org/software/systemd/man/latest/tmpfiles.d.html).

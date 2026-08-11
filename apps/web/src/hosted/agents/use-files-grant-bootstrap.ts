@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { openSecureRuntimeWindow } from "@/hosted/agents/runtime-ui-credentials";
 import { useAuthToken } from "@/lib/auth-client";
+import { toastError } from "@/lib/toast";
 
 export type FilesGrantBootstrapState = "pending" | "ready" | "error";
 
@@ -55,14 +57,29 @@ export function useFilesGrantBootstrap(url: string): FilesGrantBootstrapState {
 export function useOpenFilesInNewTab(url: string): () => Promise<void> {
 	const { getToken } = useAuthToken();
 	return useCallback(async () => {
-		const tab = window.open("about:blank", "_blank", "noopener,noreferrer");
+		const tab = openSecureRuntimeWindow(window.open.bind(window));
+		if (!tab) {
+			toastError("Couldn't open Files", {
+				id: "files-new-tab",
+				description: "Allow pop-ups for Clawdi, then try again.",
+			});
+			return;
+		}
 		try {
 			const token = await getToken();
 			if (!token) throw new Error("No Clerk session token");
 			await primeFilesGrant(url, token);
-			if (tab) tab.location.replace(url);
+			tab.location.replace(url);
 		} catch {
-			tab?.close();
+			try {
+				tab.close();
+			} catch {
+				// Browser isolation may have severed the WindowProxy.
+			}
+			toastError("Couldn't open Files", {
+				id: "files-new-tab",
+				description: "Files access couldn't be authenticated. Refresh the page and try again.",
+			});
 		}
 	}, [url, getToken]);
 }

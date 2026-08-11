@@ -43,6 +43,8 @@ describe("hosted agent detail header", () => {
 		// never URL, iframe src, DOM, or a persisted browser credential.
 		expect(hookSource).toContain("Authorization");
 		expect(hookSource).toContain('credentials: "include"');
+		expect(hookSource).toContain("openSecureRuntimeWindow(window.open.bind(window))");
+		expect(hookSource).not.toContain('"noopener,noreferrer"');
 		expect(hookSource).not.toContain("fileBrowserPassword");
 		expect(hookSource).not.toContain("Files credentials");
 	});
