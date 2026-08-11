@@ -3,6 +3,8 @@ import {
 	BillingApiError,
 	BillingNetworkError,
 	billingQueryRetry,
+	DeploymentRequestTerminalError,
+	deploymentRequestTerminalOutcome,
 	deploySubmissionErrorPresentation,
 	isAuthError,
 	isForbiddenError,
@@ -214,5 +216,48 @@ describe("deploySubmissionErrorPresentation", () => {
 		expect(presentation.title).toBe("Payment and creation didn’t start");
 		expect(presentation.description).toContain("No Wallet payment was made");
 		expect(presentation.description).not.toContain("internal validation trace");
+	});
+});
+
+describe("deployment request terminal outcome", () => {
+	test("distinguishes a new attempt, superseded review, and existing deployment", () => {
+		const withoutLineage = deploymentRequestTerminalOutcome(
+			new DeploymentRequestTerminalError(
+				{
+					deploy_request_id: "checkout-expired",
+					request_status: "expired",
+					lineage_tail: null,
+				},
+				"expired",
+			),
+		);
+		const superseded = deploymentRequestTerminalOutcome(
+			new DeploymentRequestTerminalError(
+				{
+					deploy_request_id: "checkout-superseded",
+					request_status: "superseded",
+					lineage_tail: null,
+				},
+				"superseded",
+			),
+		);
+		const withLineage = deploymentRequestTerminalOutcome(
+			new DeploymentRequestTerminalError(
+				{
+					deploy_request_id: "checkout-failed",
+					request_status: "failed",
+					lineage_tail: {
+						deployment_id: "hdep_failed",
+						lineage_version: 1,
+						lineage_state: "failed",
+					},
+				},
+				"failed",
+			),
+		);
+
+		expect(withoutLineage?.kind).toBe("new_attempt");
+		expect(superseded?.kind).toBe("review_agents");
+		expect(withLineage).toEqual({ kind: "open_deployment", deploymentId: "hdep_failed" });
 	});
 });

@@ -53,6 +53,7 @@ import {
 	checkoutRedirectUrl,
 	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
+	type StripeCheckoutPaymentStatus,
 } from "@/hosted/billing/components/stripe-checkout.logic";
 import {
 	StripeCheckoutDialog,
@@ -103,6 +104,7 @@ import {
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorNormalizer,
+	deploymentRequestTerminalOutcome,
 	deploySubmissionErrorPresentation,
 	isIdempotencyKeyReusedError,
 	normalizeBillingError,
@@ -117,6 +119,7 @@ import {
 } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
+	forgetIdempotencyAttemptByKey,
 	type IdempotencyAttempt,
 	idempotencyAttemptFor,
 	idempotencyFingerprint,
@@ -125,7 +128,6 @@ import {
 import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actions";
 import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 import {
-	type SubscriptionCreateRequestView,
 	type SubscriptionCreateSelection,
 	supportedBillingTerm,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
@@ -178,13 +180,17 @@ type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: CheckoutSessionClientSecret;
-	request: SubscriptionCreateRequestView;
+	requestKey: string;
 	summary: StripeCheckoutSummary;
 	tierLabel: "Basic" | "Performance";
 };
 type AcceptedDeploymentRecovery = {
 	replace: boolean;
 	target: CheckoutReturnNavigationTarget;
+};
+type DeploymentRequestProgress = {
+	busyLabel: string;
+	takingLongCopy: string;
 };
 type PaidDeploySelection = {
 	billingTermMonths: number;
@@ -196,6 +202,29 @@ type PaidDeploySelection = {
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
 const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
+const DEFAULT_DEPLOYMENT_REQUEST_PROGRESS: DeploymentRequestProgress = {
+	busyLabel: "Finishing checkout…",
+	takingLongCopy:
+		"Checkout is complete and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+};
+
+function checkoutDeploymentRequestProgress(
+	paymentStatus: StripeCheckoutPaymentStatus,
+): DeploymentRequestProgress {
+	if (paymentStatus === "unpaid") {
+		return {
+			busyLabel: "Waiting for payment…",
+			takingLongCopy:
+				"Stripe is still processing your payment. Agent creation will start after payment is confirmed.",
+		};
+	}
+	if (paymentStatus === "no_payment_required") return DEFAULT_DEPLOYMENT_REQUEST_PROGRESS;
+	return {
+		busyLabel: "Creating agent…",
+		takingLongCopy:
+			"Payment was confirmed and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+	};
+}
 
 function showWalletPaymentConfirmation(amount: string) {
 	toast.success("Wallet payment confirmed", {
@@ -315,28 +344,47 @@ export function DeployWizard() {
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
 	const resolveDeploymentRequest = useResolveDeploymentRequest().mutateAsync;
+	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const clearCheckoutAttempt = useCallback((requestKey: string) => {
+		forgetIdempotencyAttemptByKey("subscription-checkout", requestKey);
+		if (checkoutAttemptRef.current?.key === requestKey) checkoutAttemptRef.current = null;
+	}, []);
 	const [acceptedDeploymentRecovery, setAcceptedDeploymentRecovery] =
 		useState<AcceptedDeploymentRecovery | null>(null);
 	const acceptanceNavigatingRef = useRef(false);
 	const acceptDeployment = useCallback(
-		async (target: CheckoutReturnNavigationTarget, replace = false): Promise<boolean> => {
+		async (
+			target: CheckoutReturnNavigationTarget,
+			replace = false,
+			requestProgress: DeploymentRequestProgress = DEFAULT_DEPLOYMENT_REQUEST_PROGRESS,
+		): Promise<boolean> => {
 			setAcceptedDeploymentRecovery(null);
-			setSubmitBusyLabel("Loading agent details…");
-			setSubmitTakingLongCopy(null);
+			setSubmitBusyLabel(
+				target.kind === "deploy_request" ? requestProgress.busyLabel : "Loading agent details…",
+			);
+			setSubmitTakingLongCopy(
+				target.kind === "deploy_request" ? requestProgress.takingLongCopy : null,
+			);
 			setSubmitTakingLong(false);
 			setSubmitting(true);
 			acceptanceNavigatingRef.current = true;
+			const navigation = {
+				getDeployment: billingClient.getDeployment,
+				navigate: (options: { href: string; replace: boolean }) => router.navigate(options),
+				queryClient,
+				replace,
+			};
 			try {
-				const navigation = {
-					getDeployment: billingClient.getDeployment,
-					navigate: (options: { href: string; replace: boolean }) => router.navigate(options),
-					queryClient,
-					replace,
-				};
 				if (target.kind === "deploy_request") {
 					await navigateToAcceptedDeploymentRequest({
 						...navigation,
 						deployRequestId: target.deployRequestId,
+						onAccepted: () => {
+							clearCheckoutAttempt(target.deployRequestId);
+							setSubmitBusyLabel("Loading agent details…");
+							setSubmitTakingLongCopy(null);
+							setSubmitTakingLong(false);
+						},
 						resolveDeploymentRequest,
 					});
 				} else {
@@ -346,15 +394,56 @@ export function DeployWizard() {
 					});
 				}
 				return true;
-			} catch {
+			} catch (error) {
 				acceptanceNavigatingRef.current = false;
-				setAcceptedDeploymentRecovery({ replace, target });
+				const terminalOutcome = deploymentRequestTerminalOutcome(error);
+				if (target.kind === "deploy_request" && terminalOutcome) {
+					clearCheckoutAttempt(target.deployRequestId);
+					if (terminalOutcome.kind === "open_deployment") {
+						const deploymentTarget = {
+							kind: "deployment",
+							deploymentId: terminalOutcome.deploymentId,
+						} as const;
+						acceptanceNavigatingRef.current = true;
+						try {
+							await navigateToAcceptedDeployment({
+								...navigation,
+								deploymentId: deploymentTarget.deploymentId,
+							});
+							return true;
+						} catch {
+							acceptanceNavigatingRef.current = false;
+							setAcceptedDeploymentRecovery({ replace, target: deploymentTarget });
+						}
+					} else {
+						toast.error(terminalOutcome.title, {
+							description: terminalOutcome.description,
+						});
+						if (terminalOutcome.kind === "review_agents") {
+							acceptanceNavigatingRef.current = true;
+							try {
+								await router.navigate({ href: "/agents", replace });
+								return true;
+							} catch {
+								acceptanceNavigatingRef.current = false;
+							}
+						}
+					}
+				} else {
+					setAcceptedDeploymentRecovery({ replace, target });
+				}
 				setSubmitting(false);
 				setSubmitTakingLong(false);
 				return false;
 			}
 		},
-		[billingClient.getDeployment, queryClient, resolveDeploymentRequest, router],
+		[
+			billingClient.getDeployment,
+			clearCheckoutAttempt,
+			queryClient,
+			resolveDeploymentRequest,
+			router,
+		],
 	);
 	const navigateCheckoutReturn = useCallback(
 		async (target: CheckoutReturnNavigationTarget) => {
@@ -373,7 +462,6 @@ export function DeployWizard() {
 	const aiProviders = useUserAiProviders();
 	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
-	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const agentNameEditedRef = useRef(false);
@@ -704,35 +792,25 @@ export function DeployWizard() {
 		return false;
 	}
 
-	async function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
+	async function handleCheckoutComplete(
+		requestKey: string,
+		paymentStatus: StripeCheckoutPaymentStatus,
+	) {
 		setCheckoutSession(null);
-		await acceptDeployment({ kind: "deployment", deploymentId });
-	}
-	async function handleCheckoutComplete(request: SubscriptionCreateRequestView) {
-		setCheckoutSession(null);
-		setSubmitTakingLong(false);
-		setSubmitBusyLabel("Creating agent…");
-		setSubmitTakingLongCopy(
-			"Payment was confirmed and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+		await acceptDeployment(
+			{ kind: "deploy_request", deployRequestId: requestKey },
+			true,
+			checkoutDeploymentRequestProgress(paymentStatus),
 		);
-		setSubmitting(true);
-		try {
-			const requestFingerprint = idempotencyFingerprint({
-				selection: request.selection,
-				target: request.target,
-			});
-			const accepted = await acceptDeployment(
-				{ kind: "deploy_request", deployRequestId: request.idempotencyKey },
-				true,
-			);
-			if (accepted) {
-				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
-				checkoutAttemptRef.current = null;
-			}
-		} finally {
-			setSubmitting(false);
-			setSubmitTakingLong(false);
-		}
+	}
+
+	function handleCheckoutExpired(requestKey: string) {
+		setCheckoutSession(null);
+		clearCheckoutAttempt(requestKey);
+		setSubmitTakingLong(false);
+		toast.error("Checkout expired", {
+			description: "This secure checkout can no longer be used. Start a new checkout to try again.",
+		});
 	}
 
 	async function onDeploy() {
@@ -839,7 +917,7 @@ export function DeployWizard() {
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
-					await navigateToReusedSubscription(outcome);
+					await acceptDeployment({ kind: "deployment", deploymentId: outcome.deploymentId });
 					return;
 				}
 				const result = outcome.checkout;
@@ -847,13 +925,7 @@ export function DeployWizard() {
 				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && clientSecret) {
 					setCheckoutSession({
 						clientSecret,
-						request: {
-							selection,
-							target,
-							uiMode: cardCheckoutUiMode,
-							idempotencyKey: checkoutAttemptRef.current.key,
-							quote: lastSuccessfulSubscriptionQuote,
-						},
+						requestKey: checkoutAttemptRef.current.key,
 						summary: computeCheckoutSummary({
 							offer: paidSelection.offer,
 							plan: paidSelection.plan,
@@ -951,6 +1023,22 @@ export function DeployWizard() {
 		: walletTopUpAction
 			? submitting || !wallet.data
 			: !canSubmit;
+	const primaryActionOnClick = acceptedDeploymentRecovery
+		? () =>
+				void acceptDeployment(acceptedDeploymentRecovery.target, acceptedDeploymentRecovery.replace)
+		: walletTopUpAction
+			? () => walletTopUp.show(walletShortfallUsd)
+			: undefined;
+	const PrimaryActionIcon = submitting
+		? Spinner
+		: acceptedDeploymentHydrationFailed
+			? RefreshCw
+			: Rocket;
+	const primaryActionLabel = submitting
+		? submitBusyLabel
+		: acceptedDeploymentHydrationFailed
+			? "Retry opening agent"
+			: deployLabel;
 	const amountExplainsBlocking =
 		paidSelection !== null &&
 		paymentMethod === "wallet" &&
@@ -1498,31 +1586,11 @@ export function DeployWizard() {
 									aria-describedby={
 										visibleSubmitBlockingReason ? "deploy-blocking-reason" : undefined
 									}
-									onClick={
-										acceptedDeploymentHydrationFailed && acceptedDeploymentRecovery
-											? () =>
-													void acceptDeployment(
-														acceptedDeploymentRecovery.target,
-														acceptedDeploymentRecovery.replace,
-													)
-											: walletTopUpAction
-												? () => walletTopUp.show(walletShortfallUsd)
-												: undefined
-									}
+									onClick={primaryActionOnClick}
 									className="w-full shrink-0 @2xl/main:w-auto"
 								>
-									{submitting ? (
-										<Spinner data-icon="inline-start" />
-									) : acceptedDeploymentHydrationFailed ? (
-										<RefreshCw data-icon="inline-start" />
-									) : (
-										<Rocket data-icon="inline-start" />
-									)}
-									{submitting
-										? submitBusyLabel
-										: acceptedDeploymentHydrationFailed
-											? "Retry opening agent"
-											: deployLabel}
+									<PrimaryActionIcon data-icon="inline-start" />
+									{primaryActionLabel}
 								</Button>
 								{submitTakingLong && submitTakingLongCopy ? (
 									<p
@@ -1572,8 +1640,13 @@ export function DeployWizard() {
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
 				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
 				summary={checkoutSession?.summary ?? null}
-				onComplete={() => {
-					if (checkoutSession) void handleCheckoutComplete(checkoutSession.request);
+				onComplete={(paymentStatus) => {
+					if (checkoutSession) {
+						void handleCheckoutComplete(checkoutSession.requestKey, paymentStatus);
+					}
+				}}
+				onExpired={() => {
+					if (checkoutSession) handleCheckoutExpired(checkoutSession.requestKey);
 				}}
 			/>
 		</div>

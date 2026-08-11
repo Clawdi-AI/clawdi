@@ -241,18 +241,6 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).toContain("toast.dismiss(WALLET_PAYMENT_TOAST_ID)");
 	});
 
-	test("keeps accepted hydration quiet while preserving pre-acceptance long waits", () => {
-		expect(wizardSource).toContain('setSubmitBusyLabel("Loading agent details…");');
-		expect(wizardSource).toContain("setSubmitTakingLongCopy(null);");
-		expect(wizardSource).toContain("{submitTakingLong && submitTakingLongCopy ? (");
-		expect(wizardSource).not.toContain(
-			"Your deployment was accepted. Keep this page open while we load its committed details.",
-		);
-		expect(wizardSource).toContain(
-			"Secure checkout is still opening. No payment has been submitted yet; keep this page open to continue.",
-		);
-	});
-
 	test("keeps infrastructure vocabulary out of customer copy", () => {
 		expect(providerFieldsFormSource).toContain("Agent environment variable");
 		expect(providerFieldsFormSource).not.toContain("Runtime mapping");

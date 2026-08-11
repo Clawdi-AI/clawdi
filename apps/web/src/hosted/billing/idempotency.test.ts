@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	forgetIdempotencyAttempt,
+	forgetIdempotencyAttemptByKey,
 	IDEMPOTENCY_ATTEMPT_TTL_MS,
 	idempotencyAttemptFor,
 	idempotencyFingerprint,
@@ -200,5 +201,17 @@ describe("idempotencyAttemptFor", () => {
 
 		expect(first.key).toBe("wallet-deploy-1");
 		expect(next.key).toBe("wallet-deploy-2");
+	});
+
+	test("forgets a persisted attempt by its durable request key", () => {
+		const storage = new MemoryStorage();
+		let counter = 0;
+		const mint = (prefix: string) => `${prefix}-${++counter}`;
+		const first = idempotencyAttemptFor(null, "checkout", "same", mint, { storage });
+
+		forgetIdempotencyAttemptByKey("checkout", first.key, { storage });
+		const next = idempotencyAttemptFor(null, "checkout", "same", mint, { storage });
+
+		expect(next.key).toBe("checkout-2");
 	});
 });
