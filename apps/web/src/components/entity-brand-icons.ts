@@ -16,7 +16,7 @@ import Qwen from "@lobehub/icons/es/Qwen/components/Color.js";
 import Stepfun from "@lobehub/icons/es/Stepfun/components/Mono.js";
 import Together from "@lobehub/icons/es/Together/components/Color.js";
 import XAI from "@lobehub/icons/es/XAI/components/Mono.js";
-import Zhipu from "@lobehub/icons/es/Zhipu/components/Color.js";
+import ZAI from "@lobehub/icons/es/ZAI/components/Mono.js";
 import type { BrandIconComponent } from "@/components/brand-icon-tile";
 import type { FrameworkBrandIconId, ProviderBrandIconId } from "@/components/entity-brand-icon-ids";
 
@@ -66,7 +66,7 @@ const PROVIDER_BRAND_ICON_DEFINITIONS = {
 	stepfun: { icon: Stepfun, label: "StepFun" },
 	together: { icon: Together, label: "Together AI" },
 	xai: { icon: XAI, label: "xAI" },
-	zhipu: { icon: Zhipu, label: "Zhipu" },
+	zai: { icon: ZAI, label: "Z.ai" },
 } satisfies Readonly<Record<ProviderBrandIconId, BrandIconMetadata>>;
 
 const PROVIDER_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> =
@@ -81,7 +81,7 @@ const PROVIDER_ICON_ALIASES: Readonly<Record<string, string>> = {
 	"qwen-dashscope": "qwen",
 	"together-ai": "together",
 	"xai-grok": "grok",
-	"zhipu-glm": "zhipu",
+	"zhipu-glm": "zai",
 };
 
 export function frameworkBrandIcon(id: string | null | undefined): BrandIconMetadata | undefined {

@@ -166,7 +166,7 @@ describe("model binding", () => {
 				{
 					value: "glm-5.2",
 					label: "GLM-5.2",
-					iconId: "zhipu",
+					iconId: "zai",
 					description: "Variable cost for long, detailed work.",
 				},
 				{

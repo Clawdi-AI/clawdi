@@ -322,7 +322,7 @@ export function managedModelPickerItems(
 function managedModelBrandIconId(modelId: string, providerId: string): string {
 	const normalizedModelId = modelId.toLowerCase();
 	if (normalizedModelId.startsWith("deepseek-")) return "deepseek";
-	if (normalizedModelId.startsWith("glm-")) return "zhipu";
+	if (normalizedModelId.startsWith("glm-")) return "zai";
 	return providerId;
 }
 

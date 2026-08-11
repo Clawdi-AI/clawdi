@@ -47,7 +47,7 @@ describe("AI provider icon coverage", () => {
 			"qwen-dashscope": "qwen",
 			"together-ai": "together",
 			"xai-grok": "grok",
-			"zhipu-glm": "zhipu",
+			"zhipu-glm": "zai",
 		} as const;
 
 		for (const [alias, canonical] of Object.entries(aliases)) {

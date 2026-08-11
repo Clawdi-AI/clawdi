@@ -16,6 +16,6 @@ export const PROVIDER_BRAND_ICON_IDS = [
 	"stepfun",
 	"together",
 	"xai",
-	"zhipu",
+	"zai",
 ] as const;
 export type ProviderBrandIconId = (typeof PROVIDER_BRAND_ICON_IDS)[number];
