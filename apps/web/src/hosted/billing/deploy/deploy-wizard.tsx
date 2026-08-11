@@ -807,7 +807,6 @@ export function DeployWizard() {
 	function handleCheckoutExpired(requestKey: string) {
 		setCheckoutSession(null);
 		clearCheckoutAttempt(requestKey);
-		setSubmitTakingLong(false);
 		toast.error("Checkout expired", {
 			description: "This secure checkout can no longer be used. Start a new checkout to try again.",
 		});
