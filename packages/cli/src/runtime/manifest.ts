@@ -2978,7 +2978,7 @@ function openClawGatewayHostedPatch(
 							? {
 									auth: {
 										mode: "token",
-										...(nativeAuth ? { token: null } : { token: gatewayToken }),
+										token: gatewayToken,
 									},
 								}
 							: {}),
@@ -3003,6 +3003,28 @@ function openClawGatewayHostedPatch(
 	};
 }
 
+function jsonMergePatchIsApplied(current: unknown, patch: unknown): boolean {
+	if (!isPlainRecord(patch)) return canonicalJsonEqual(current, patch);
+	if (!isPlainRecord(current)) return false;
+	return Object.entries(patch).every(([key, value]) =>
+		value === null ? !Object.hasOwn(current, key) : jsonMergePatchIsApplied(current[key], value),
+	);
+}
+
+function openClawGatewayHostedPatchIsApplied(
+	home: string,
+	patch: Record<string, unknown>,
+): boolean {
+	try {
+		const current = JSON.parse(
+			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf-8"),
+		) as unknown;
+		return jsonMergePatchIsApplied(current, patch);
+	} catch {
+		return false;
+	}
+}
+
 function openClawControlUiBasePath(manifest: RuntimeManifest): string {
 	const system = manifest.projection?.system;
 	if (!isPlainRecord(system)) return "/";
@@ -3019,7 +3041,7 @@ function applyOpenClawGatewayHostedProjection(
 	workspaceRoot: string,
 ): void {
 	const patch = openClawGatewayHostedPatch(manifest, secretValues);
-	if (!patch) return;
+	if (!patch || openClawGatewayHostedPatchIsApplied(home, patch)) return;
 	runRuntimeUserCommand(
 		command,
 		["config", "patch", "--stdin"],

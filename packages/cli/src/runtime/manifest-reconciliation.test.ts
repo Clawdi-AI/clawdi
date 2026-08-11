@@ -1458,7 +1458,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			gateway: {
 				port: 18789,
 				bind: "lan",
-				auth: { mode: "token", token: null },
+				auth: { mode: "token", token: "gateway-token" },
 				controlUi: {
 					allowedOrigins,
 					allowInsecureAuth: false,
@@ -1525,7 +1525,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				bind: "lan",
 				auth: {
 					mode: "token",
-					token: null,
+					token: "gateway-token",
 				},
 				controlUi: {
 					basePath: "/control",
@@ -1536,12 +1536,13 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			},
 		});
-		expect(JSON.stringify(gatewayPatch)).not.toContain("gateway-token");
+		expect(JSON.stringify(gatewayPatch)).toContain("gateway-token");
 		const gatewayEnv = readFileSync(
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf8",
 		);
-		expect(gatewayEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token"');
+		expect(gatewayEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+		expect(gatewayEnv).not.toContain("gateway-token");
 		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1))).toContain(
 			"clawdi-runtime-sidecar.service",
 		);

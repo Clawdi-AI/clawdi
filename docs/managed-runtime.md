@@ -33,15 +33,17 @@ The public contract covers:
 - installing or verifying supported agent runtimes through their normal
   installers;
 - writing non-secret local run configuration;
-- projecting short-lived secrets only for the current runtime session;
+- projecting runtime secrets only onto their declared runtime surfaces,
+  including the OpenClaw gateway's official config and transient installer
+  environment;
 - running final hosted runtimes from direct process-manager entries that name
   official Hermes/OpenClaw binaries;
 - running Clawdi-owned support programs under the runtime process manager;
 - supporting explicit `clawdi run -- <command>` when a caller opts into Clawdi
   runtime env injection;
 - exposing strict-v2 OpenClaw directly on its native `18789` gateway with
-  official token and device authentication when the typed authorization
-  capability is active;
+  official shared-token authentication and no device-pairing step when the
+  typed authorization capability is active;
 - exposing a dashboard Terminal contract for one deployment shell;
 - reporting status and diagnostics through runtime commands.
 
@@ -532,7 +534,7 @@ Normalization maps hosted fields into the internal shape:
 | `runtime` | Required selected compute runtime; exactly one enabled `openclaw` or `hermes` entry must match it |
 | `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone |
 | `system.openclawControlUiAllowedOrigins` | Strict-v2 OpenClaw public origin allowlist |
-| `system.openclawGatewayAuth` | Strict-v2 OpenClaw token and required device-auth capability; the token itself is an environment secret reference |
+| `system.openclawGatewayAuth` | Strict-v2 OpenClaw token and required native shared-token capability; the token itself is an environment secret reference |
 | `system.hermesDashboardAuth` | Strict-v2 Hermes Basic provider settings, public URL, session TTL, and environment secret references; plaintext credentials are never part of the manifest |
 | `controlPlane.cloudApiUrl` | Required and only control-plane field; `appId`, `apiUrl`, and `manifestUrl` are not public manifest fields |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
@@ -846,23 +848,38 @@ enabled.
 ## Runtime UI Authentication
 
 Strict-v2 OpenClaw binds the official gateway directly to the pod network with
-`gateway run --allow-unconfigured --port 18789 --bind lan --force`, and provide
-`OPENCLAW_GATEWAY_TOKEN` only through `run.secretEnv`. The local config patch
-sets official shared-token auth, intentionally sets
+`gateway run --allow-unconfigured --port 18789 --bind lan --force`. Before the
+official service installer runs, Clawdi uses the official `openclaw config patch
+--stdin` flow to persist the managed token at `gateway.auth.token`, and passes
+that same value to the installer through its `OPENCLAW_GATEWAY_TOKEN`
+environment. The token never appears in installer argv. OpenClaw's installer
+resolves configured tokens before its environment fallback and only persists a
+token itself when it generated the token, so the preceding official config
+patch is required for caller-selected tokens:
+[`gateway-install-token.ts` lines 169-205](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/commands/gateway-install-token.ts#L169-L205),
+[`auth-token-resolution.ts` lines 38-60](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/gateway/auth-token-resolution.ts#L38-L60),
+and the official [`config patch --stdin` contract](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/docs/cli/config.md#L249-L263).
+
+The local config patch also sets official shared-token auth, intentionally sets
 `dangerouslyDisableDeviceAuth: true` for the managed v2 product, disables
 insecure and Host-header fallback modes, derives `gateway.controlUi.basePath`
 from the clean public URL, and includes that URL's origin in `allowedOrigins`.
-The patch writes `gateway.auth.token: null` to delete any stale durable token;
-OpenClaw documents this RFC 7396 behavior in
-[`merge-patch.ts` lines 88-113](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/config/merge-patch.ts#L88-L113),
-while the active token comes from the ephemeral service environment.
+The managed backend value, transient installer environment, and
+`openclaw.json` token must remain identical. The gateway unit does not receive
+an `OPENCLAW_GATEWAY_TOKEN` environment entry because runtime auth resolves the
+persisted config first, making `openclaw.json` the gateway's only at-rest token
+store. A config-patch failure aborts convergence before service installation or
+systemd activation. A changed token updates the official config and restarts the
+gateway; an unchanged token does not rewrite the config or restart the gateway.
 
 Direct OpenClaw exposure remains fail closed behind the typed
 `openclaw-native-auth-v1` capability and an available
-`OPENCLAW_GATEWAY_TOKEN`. Hosted returns a clean endpoint plus an explicit token
+managed gateway token. Hosted returns a clean endpoint plus an explicit token
 and `handoff_url` through an owner-checked, no-store credential endpoint. The
-handoff carries exactly one official `#token=` fragment. Device pairing and
-device-auth behavior are deliberately outside this managed token-only contract.
+handoff carries exactly one official `#token=` fragment. In hosted mode that
+managed token is the authentication, so device pairing is intentionally
+disabled to avoid an additional approval step in the iframe or new-window
+handoff. OpenClaw retains its normal device-auth behavior outside hosted mode.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
@@ -1129,12 +1146,16 @@ manifest.
 
 ## Command And Launch Model
 
-`clawdi run -- <command>` is a local vault-injection command and an interactive
-hosted shell boundary. In hosted mode, it first tries to resolve the command
-against a generated runtime run config. If a matching enabled config exists, it
-launches that runtime with the configured command, args, cwd, env, PATH, secret
-refs, and optional sidecar profile. If the config exists but is disabled,
-`clawdi run` exits with a disabled-runtime error.
+The tenant terminal runs official runtime commands directly. For OpenClaw, the
+product path is `openclaw agent`; OpenClaw resolves managed runtime credentials
+through its official config-first behavior and native config/credential stores.
+There is no Clawdi wrapper in that credential path.
+
+`clawdi run -- <command>` remains an explicit local vault-injection command. It
+is not the hosted tenant terminal boundary and does not mediate hosted managed
+credentials. When a caller opts into it, an enabled generated runtime run config
+can supply that command's configured args, cwd, env, PATH, secret refs, and
+optional sidecar profile. A disabled matching config is rejected.
 
 Interactive shell commands are not intercepted. `openclaw`, `hermes`, and
 future runtime names resolve to official binaries on PATH. Clawdi only
@@ -1144,8 +1165,9 @@ participates when the caller explicitly invokes `clawdi run` or when
 Hosted daemon startup avoids `clawdi run`. For OpenClaw/Hermes gateways,
 `runtime init` invokes the official service installer to create the base user
 unit, then writes a hosted drop-in with the minimum local environment needed by
-the Linux-like container. Sensitive env lives under `$CLAWDI_RUN_DIR/systemd/env`
-instead of durable unit files:
+the Linux-like container. Service environment that is still required at runtime
+lives under `$CLAWDI_RUN_DIR/systemd/env` instead of durable unit files; the
+OpenClaw gateway token is not part of that environment:
 
 ```ini
 # $HOME/.config/systemd/user/openclaw-gateway.service.d/10-clawdi-hosted.conf
@@ -1188,8 +1210,9 @@ official dashboard installer or claim the compatibility unit is upstream-owned.
 
 Strict-v2 OpenClaw uses the official gateway directly on native port `18789`.
 Clawdi patches `gateway.port=18789`, `gateway.bind=lan`, and
-`gateway.auth.mode=token` from `OPENCLAW_GATEWAY_TOKEN`; the launch command does
-not pass a conflicting `--auth` override:
+`gateway.auth.mode=token` with the managed token. The service receives no token
+environment entry, and the launch command does not pass a conflicting `--auth`
+override:
 
 ```bash
 openclaw gateway run --allow-unconfigured --port 18789 --bind lan --force
@@ -1197,9 +1220,11 @@ openclaw gateway run --allow-unconfigured --port 18789 --bind lan --force
 
 The strict manifest references the token only as
 `secret://runtime/openclaw/gateway-token`; its value comes only from the fetched
-bundle's `secretValues` map and is absent from manifest config and durable
-general config. Missing token, native-auth capability, deployment policy,
-public origin or exact command rejects the
+bundle's `secretValues` map. It is absent from manifest config and Clawdi's
+general managed config, but is deliberately persisted by the official config
+writer to the owner-only OpenClaw config. The installer receives the same value
+only through its transient subprocess environment. Missing token, native-auth
+capability, deployment policy, public origin or exact command rejects the
 strict-v2 configuration before exposure.
 
 ## Official Update Compatibility
@@ -1304,7 +1329,9 @@ fallback for environments that reject custom WebSocket subprotocols.
 ## Security Rules
 
 - Do not persist auth tokens, private keys, provider secrets, or resolved vault
-  values in durable runtime config.
+  values in Clawdi-owned durable runtime config. The managed OpenClaw gateway
+  token is deliberately persisted only through OpenClaw's official owner-only
+  config writer.
 - Keep non-secret desired state separate from secret values.
 - Treat runtime policy as an input to the CLI, not as hardcoded private logic.
 - Prefer official runtime configuration and installers before proxying or
@@ -1315,8 +1342,10 @@ fallback for environments that reject custom WebSocket subprotocols.
   channel descriptors, filesystem paths, and process launch arguments.
 - Remove `CLAWDI_AUTH_TOKEN` from agent child process environments unless that
   process is explicitly the Clawdi daemon or runtime reconciler.
-- Never disable OpenClaw device auth or enable its insecure/Host-header fallback
-  modes for strict v2.
+- Disable OpenClaw device auth only for hosted strict v2, where the managed
+  shared token authenticates the dashboard handoff without an additional
+  pairing approval. Keep device auth enabled outside hosted mode, and never
+  enable insecure or Host-header fallback modes.
 - Prefer WebSocket subprotocol auth for Terminal sessions so bearer tokens do
   not normally appear in URLs or proxy access logs.
 
