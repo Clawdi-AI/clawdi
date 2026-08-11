@@ -33,7 +33,9 @@ function listTsx(dir: string): string[] {
 			const full = join(current, entry);
 			const st = statSync(full);
 			if (st.isDirectory()) walk(full);
-			else if (entry.endsWith(".tsx")) out.push(full);
+			// Structural invariants apply to production UI components; test files
+			// (.test.tsx) render assertion fragments, not a hosted UI root.
+			else if (entry.endsWith(".tsx") && !entry.endsWith(".test.tsx")) out.push(full);
 		}
 	};
 	walk(dir);

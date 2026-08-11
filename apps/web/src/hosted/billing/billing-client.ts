@@ -591,7 +591,12 @@ export function createBillingClient(
 		setAutoReload: async (body: WalletAutoReloadRequest) =>
 			unwrapDeploy(await api.PUT("/v2/wallet/auto-reload", { body })),
 
-		getSubscriptions: async () => unwrapDeploy(await api.GET("/v2/subscriptions")),
+		getSubscriptions: async (limit = 20, cursor?: string | null) =>
+			unwrapDeploy(
+				await api.GET("/v2/subscriptions", {
+					params: { query: { limit, cursor } },
+				}),
+			),
 		getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
 		getBillingHistory: async (limit = 20, cursor?: string | null) =>
 			unwrapDeploy(

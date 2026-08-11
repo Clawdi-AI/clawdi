@@ -1414,6 +1414,18 @@ export interface components {
             /** Is Orphan */
             is_orphan: boolean;
         };
+        /** V2ComputeSubscriptionListResponse */
+        V2ComputeSubscriptionListResponse: {
+            /** Items */
+            items?: components["schemas"]["V2ComputeSubscriptionListItem"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
         /** V2ComputeSubscriptionQuoteRequest */
         V2ComputeSubscriptionQuoteRequest: {
             /**
@@ -3601,7 +3613,10 @@ export interface operations {
     };
     list_v2_subscriptions_v2_subscriptions_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3614,7 +3629,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2ComputeSubscriptionListItem"][];
+                    "application/json": components["schemas"]["V2ComputeSubscriptionListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
