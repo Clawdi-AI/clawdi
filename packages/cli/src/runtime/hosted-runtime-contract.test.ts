@@ -40,6 +40,34 @@ describe("hosted runtime convergence contract", () => {
 		).toThrow("hosted runtime HOME must resolve to /home/clawdi; resolved /root");
 	});
 
+	test("rejects a hosted CLI state root inside the tenant home", () => {
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
+		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_HOME = "/home/clawdi/.clawdi";
+
+		expect(() =>
+			assertHostedRuntimeContract(getRuntimePaths(), applyContext, {
+				platformRoots: "deferred",
+				resolveUserIdentity: () => ({ uid: 10_001, gid: 10_001 }),
+			}),
+		).toThrow("hosted CLAWDI_HOME must be outside the tenant home");
+	});
+
+	test("rejects a hosted CLI state root outside the service-state directory family", () => {
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
+		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_HOME = "/var/cache/clawdi-user";
+
+		expect(() =>
+			assertHostedRuntimeContract(getRuntimePaths(), applyContext, {
+				platformRoots: "deferred",
+				resolveUserIdentity: () => ({ uid: 10_001, gid: 10_001 }),
+			}),
+		).toThrow("hosted CLAWDI_HOME must be an absolute sibling of /var/lib/clawdi");
+	});
+
 	test("rejects a hosted convergence whose runtime user is wrong", () => {
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";

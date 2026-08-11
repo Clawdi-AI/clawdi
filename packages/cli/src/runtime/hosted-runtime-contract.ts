@@ -1,3 +1,4 @@
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { RuntimeApplyContext } from "./apply-identity";
 import type { RuntimePaths } from "./paths";
 import {
@@ -119,6 +120,23 @@ export function assertHostedRuntimeContract(
 		(check) => !check.ok,
 	)?.error;
 	if (error) throw new Error(error);
+	const stateRoot = resolve(paths.clawdiHome);
+	const serviceStateRoot = resolve(paths.serviceStateRoot);
+	const relativeState = relative(resolve(paths.userHome), stateRoot);
+	if (relativeState === "" || (!relativeState.startsWith("..") && !isAbsolute(relativeState))) {
+		throw new Error(
+			`hosted CLAWDI_HOME must be outside the tenant home; resolved ${paths.clawdiHome}`,
+		);
+	}
+	if (
+		!isAbsolute(paths.clawdiHome) ||
+		stateRoot === serviceStateRoot ||
+		dirname(stateRoot) !== dirname(serviceStateRoot)
+	) {
+		throw new Error(
+			`hosted CLAWDI_HOME must be an absolute sibling of ${paths.serviceStateRoot}; resolved ${paths.clawdiHome}`,
+		);
+	}
 	if (applyContext.backend !== "incus") {
 		throw new Error(
 			`hosted v2 convergence requires runtime context backend incus; resolved ${String(applyContext.backend ?? "missing")}`,

@@ -15814,15 +15814,15 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			const daemonUnit = readSystemdSystemUnit(paths, "clawdi-daemon");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
 			const openclawEnv = JSON.parse(
-				readFileSync(join(home, ".clawdi", "environments", "openclaw.json"), "utf-8"),
+				readFileSync(join(paths.localEnvironments, "openclaw.json"), "utf-8"),
 			);
 			const codexEnv = JSON.parse(
-				readFileSync(join(home, ".clawdi", "environments", "codex.json"), "utf-8"),
+				readFileSync(join(paths.localEnvironments, "codex.json"), "utf-8"),
 			);
 
 			expect(convergence.outputs.liveSyncEnvironments.sort()).toEqual([
-				join(home, ".clawdi", "environments", "codex.json"),
-				join(home, ".clawdi", "environments", "openclaw.json"),
+				join(paths.localEnvironments, "codex.json"),
+				join(paths.localEnvironments, "openclaw.json"),
 			]);
 			expect(convergence.outputs.daemonAuthTokenFile).toBe(join(run, "secrets", "auth-token"));
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(

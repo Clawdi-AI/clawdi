@@ -158,8 +158,14 @@ flowchart TB
     subgraph Durable["Durable non-secret state: /var/lib/clawdi"]
         Inventory[install-inventory/<runtime>.json]
         CliBin[root-only maintained/clawdi/bin/clawdi]
-        UserUnits[$HOME/.config/systemd/user/*.service]
     end
+
+    subgraph TenantState["Tenant-UID CLI state: /var/lib/clawdi-user"]
+        LiveSync[environments/<agent>.json]
+    end
+
+    Init --> TenantState
+    Init --> UserUnits[$HOME/.config/systemd/user/*.service]
 
     subgraph Cache["Disposable cache: /var/cache/clawdi"]
         LastGood[manifest and secret last-good fallbacks]
@@ -227,6 +233,10 @@ systemd-owned roots instead of recursively hardening their ownership. The run
 root is searchable only for the two explicit platform-to-tenant handoff
 classes: the egress CA and per-unit tenant environment files. All other
 platform files remain private or are exposed only to dedicated system services.
+Tenant-context CLI state has a separate durable root,
+`/var/lib/clawdi-user`, owned by `10001:10001` with mode `0750`. Hosted
+convergence sets `CLAWDI_HOME` to that path for every generated tenant user
+unit; `/var/lib/clawdi` remains the root-owned platform state root.
 Before directory preparation, lock acquisition, or any external runtime command,
 Hosted convergence requires the explicit process contract
 `CLAWDI_RUNTIME_MODE=hosted`, a resolved HOME of exactly `/home/clawdi`, and
@@ -790,6 +800,13 @@ its exact managed package is isolated under
 egress wrapper can delegate to it without replacing the tenant's general npm
 global tree.
 
+The hosted image's bootstrap package may expose
+`/usr/local/bin/clawdi -> ../lib/node_modules/clawdi/bin/clawdi.mjs` while root
+convergence starts. Reconciliation removes only that exact system-npm symlink
+and rejects any unexpected entry or target at the same path. All continuing
+platform invocations use `/var/lib/clawdi/maintained/clawdi/bin/clawdi`
+directly, so a tenant shell cannot discover `clawdi` through `PATH`.
+
 CLI self-upgrade verifies a new exact package before atomically switching the
 active link inside the root-only managed directory. There is no shared
 `/var/lib/clawdi/bin` compatibility path and no migration or dual-path read.
@@ -1076,6 +1093,7 @@ and ephemeral runtime handoffs. Important outputs include:
 | `/var/lib/clawdi/managed-resources/*.json` | Durable managed Skill and MCP ownership ledgers |
 | `/var/lib/clawdi/maintained/filebrowser/candidates/<sha256>/filebrowser` | Root-owned, verified Files executable |
 | `/var/lib/clawdi/maintained/clawdi/` | Root-only managed CLI activation and versioned package prefixes |
+| `/var/lib/clawdi-user/` | Tenant-owned `0750` hosted CLI state selected by `CLAWDI_HOME` |
 | `/var/lib/clawdi-files/` | `clawdi-files`-owned `0700` DB and component cache state |
 | `/var/cache/clawdi/manifest.last-good.json` | Refetchable last-good manifest fallback |
 | `/var/cache/clawdi/runtime-secrets.last-good.json` | Root-only refetchable secret fallback for offline recovery |
@@ -1086,6 +1104,11 @@ and ephemeral runtime handoffs. Important outputs include:
 | `$CLAWDI_RUN_DIR/systemd/system/*.service` or `/run/systemd/system/*.service` | Generated system units for root-owned Clawdi support programs |
 | `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units and direct runtime-user programs |
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
+
+Hosted convergence never writes `~/.clawdi`. Before launch it removes legacy
+`~/.clawdi/environments/*.json` files only when their `managedBy` value is
+exactly `clawdi runtime init`, then removes the directories only if empty.
+Unmarked files, non-regular files, and symlinks are never adopted or removed.
 
 Each reconciliation plan declares the exact managed root and runtime-user file
 targets it may mutate. Before any command that can change live state, Apply
@@ -1157,10 +1180,10 @@ credentials. When a caller opts into it, an enabled generated runtime run config
 can supply that command's configured args, cwd, env, PATH, secret refs, and
 optional sidecar profile. A disabled matching config is rejected.
 
-Interactive shell commands are not intercepted. `openclaw`, `hermes`, and
-future runtime names resolve to official binaries on PATH. Clawdi only
-participates when the caller explicitly invokes `clawdi run` or when
-`runtime init` projects manifest-selected config.
+Interactive tenant shell commands are not intercepted. `openclaw`, `hermes`,
+and future runtime names resolve to official binaries on PATH; `clawdi` does
+not. The platform invokes its root-only CLI by absolute path when it projects
+manifest-selected config.
 
 Hosted daemon startup avoids `clawdi run`. For OpenClaw/Hermes gateways,
 `runtime init` invokes the official service installer to create the base user
@@ -1178,6 +1201,9 @@ Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"
 EnvironmentFile="/run/clawdi/systemd/env/openclaw-gateway.service.env"
 ExecStart="/home/clawdi/.openclaw/bin/openclaw" "gateway" "run" "--allow-unconfigured" "--port" "18789" "--bind" "lan" "--force"
 ```
+
+The generated environment file includes
+`CLAWDI_HOME=/var/lib/clawdi-user`; it never points into the tenant home.
 
 When egress profiles are enabled, systemd runs the Clawdi sidecar. Egress
 interception uses a runtime-fetched `mitmdump` (mitmproxy) transparent gateway
