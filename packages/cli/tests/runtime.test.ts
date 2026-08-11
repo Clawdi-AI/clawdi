@@ -42,9 +42,7 @@ import {
 	type RuntimeApplyContext,
 	runtimeManifestSourceSchema,
 } from "../src/runtime/apply-identity";
-import {
-	applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsToManifestLoadWithContext,
-} from "../src/runtime/channels";
+import { applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsToManifestLoadWithContext } from "../src/runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
 	completePendingRuntimeCliUpgrade,
@@ -12400,10 +12398,7 @@ exit 64
 		);
 
 		const removed = convergeRuntimeManifest(
-			applyRuntimeBundleChannelsToManifestLoad(
-				{ ...load, channelBindings: [] },
-				paths,
-			),
+			applyRuntimeBundleChannelsToManifestLoad({ ...load, channelBindings: [] }, paths),
 			paths,
 		);
 		expect(removed.installErrors).toEqual([]);

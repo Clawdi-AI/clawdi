@@ -27,9 +27,7 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 				.object({
 					SERIAL: z.number().int().nonnegative(),
 					ISSUER: z.string().min(1),
-					PUBLIC_KEY: z
-						.object({ type: z.literal("Buffer"), data: z.string().min(1) })
-						.strict(),
+					PUBLIC_KEY: z.object({ type: z.literal("Buffer"), data: z.string().min(1) }).strict(),
 				})
 				.strict(),
 		})
