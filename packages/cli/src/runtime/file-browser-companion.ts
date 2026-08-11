@@ -166,7 +166,7 @@ function renderFileBrowserConfig(
 					config: {
 						defaultEnabled: true,
 						private: true,
-						rules: [{ folderPath: "/", ignoreHidden: true, ignoreSymlinks: true }],
+						rules: [{ folderPath: "/", ignoreSymlinks: true }],
 					},
 				},
 			],
@@ -193,9 +193,15 @@ function renderFileBrowserConfig(
 			},
 		},
 		userDefaults: {
+			sidebar: {
+				sticky: false,
+			},
+			listing: {
+				showHidden: true,
+			},
 			account: {
 				lockPassword: true,
-				disableSettings: true,
+				disableSettings: false,
 				disableUpdateNotifications: true,
 				loginMethod: "jwt",
 				permissions: {

@@ -4981,10 +4981,40 @@ exit 42
 		const active = fileBrowserBinaryPath(paths, binary);
 		expect(readFileSync(active, "utf8")).toBe(binary);
 		const config = readFileSync(paths.fileBrowserConfig, "utf8");
+		expect(parseYaml(config)).toMatchObject({
+			server: {
+				sources: [
+					{
+						config: {
+							rules: [{ folderPath: "/", ignoreSymlinks: true }],
+						},
+					},
+				],
+			},
+			userDefaults: {
+				sidebar: { sticky: false },
+				listing: { showHidden: true },
+				account: {
+					lockPassword: true,
+					disableSettings: false,
+					loginMethod: "jwt",
+					permissions: {
+						admin: false,
+						api: false,
+						modify: true,
+						share: false,
+						realtime: false,
+						delete: true,
+						create: true,
+						download: true,
+					},
+				},
+			},
+		});
 		expect(config).toContain("listen: 0.0.0.0");
 		expect(config).toContain("port: 9120");
 		expect(config).toContain("path: /home/clawdi");
-		expect(config).toContain("ignoreHidden: true");
+		expect(config).not.toContain("ignoreHidden");
 		expect(config).toContain("ignoreSymlinks: true");
 		expect(config).toContain("disableWebDAV: true");
 		expect(config).toContain("password:\n      enabled: false");
