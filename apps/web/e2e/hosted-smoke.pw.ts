@@ -1229,6 +1229,7 @@ type HostedApiStubOptions = {
 	canCreateCloudAgents?: boolean;
 	canUseLegacyHostedDashboard?: boolean;
 	productAccessRequests?: string[];
+	productAccessResponseGate?: Promise<void>;
 	cancelRequests?: string[];
 	cancelResponses?: StubResponse[];
 	checkoutRequests?: string[];
@@ -1278,7 +1279,7 @@ type HostedApiStubOptions = {
 	deploymentDetailResponses?: StubResponse[];
 	deploymentDetailResponseGates?: Array<Promise<void> | undefined>;
 	deploymentListRequests?: string[];
-	deploymentListResponses?: unknown[][];
+	deploymentListResponses?: Array<unknown[] | StubResponse>;
 	deploymentListResponseGates?: Array<Promise<void> | undefined>;
 	deploymentRequestReads?: string[];
 	deployments?: readonly unknown[];
@@ -1336,6 +1337,7 @@ type HostedApiStubOptions = {
 	walletState?: typeof walletState;
 	walletRequests?: string[];
 	walletResponses?: StubResponse[];
+	walletResponseGates?: Array<Promise<void> | undefined>;
 	onTopUpSuccess?: () => void;
 	onWalletCheckoutSuccess?: () => void;
 };
@@ -1459,6 +1461,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
+			await options.productAccessResponseGate;
 			return fulfillJson(
 				r,
 				hostedUser(
@@ -1486,6 +1489,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
 			options.walletRequests?.push(r.request().url());
 			const response = options.walletResponses?.shift();
+			await options.walletResponseGates?.shift();
 			if (response) {
 				if (response.status < 400) currentWallet = response.body as typeof walletState;
 				return fulfillJson(r, response.body, response.status);
@@ -1523,6 +1527,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			const deploymentListResponseGate = options.deploymentListResponseGates?.shift();
 			if (deploymentListResponse) {
 				await deploymentListResponseGate;
+				if (isStubResponse(deploymentListResponse)) {
+					return fulfillJson(r, deploymentListResponse.body, deploymentListResponse.status);
+				}
 				return fulfillJson(
 					r,
 					deploymentListResponse.map((deployment) =>
@@ -1939,6 +1946,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = url.pathname;
 		if (p === "/v1/me") {
 			options.productAccessRequests?.push(`CLOUD ${p}`);
+			await options.productAccessResponseGate;
 			return fulfillJson(
 				r,
 				hostedUser(
@@ -3203,6 +3211,270 @@ for (const projectionFailure of [
 		await expect(main).not.toContainText("projection gateway failed");
 	});
 }
+
+test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ page }) => {
+	let releaseDeploymentList: (() => void) | undefined;
+	const deploymentListGate = new Promise<void>((resolve) => {
+		releaseDeploymentList = resolve;
+	});
+	await stubHostedApi(page, {
+		cloudAgents: [railHostedCloudAgent],
+		deploymentListResponses: [[railHostedDeployment]],
+		deploymentListResponseGates: [deploymentListGate],
+	});
+
+	try {
+		await page.goto(
+			`/agents/${railHostedEnvironmentId}/console?source=on-clawdi&d=${railHostedDeployment.id}`,
+		);
+		const loadingShell = page.getByTestId("agent-live-tool-loading-shell");
+		await expect(loadingShell).toBeVisible();
+		await expect(page.getByTestId("overview-status-card-skeleton")).toHaveCount(0);
+		const loadingBox = await loadingShell.boundingBox();
+		if (!loadingBox) throw new Error("Live-tool loading shell should have stable geometry.");
+
+		releaseDeploymentList?.();
+		const liveSurface = page.getByTestId("hosted-agent-live-surface");
+		await expect(liveSurface).toBeVisible();
+		const liveBox = await liveSurface.boundingBox();
+		if (!liveBox) throw new Error("Hosted live-tool surface should have stable geometry.");
+		expect(Math.abs(liveBox.x - loadingBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(liveBox.width - loadingBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(liveBox.height - loadingBox.height)).toBeLessThanOrEqual(1);
+	} finally {
+		releaseDeploymentList?.();
+	}
+});
+
+test("agent rail keeps its command anchor stable with one agent and retains cache after list failure", async ({
+	page,
+}) => {
+	let releaseColdList: (() => void) | undefined;
+	let releaseFailedRefetch: (() => void) | undefined;
+	const coldListGate = new Promise<void>((resolve) => {
+		releaseColdList = resolve;
+	});
+	const failedRefetchGate = new Promise<void>((resolve) => {
+		releaseFailedRefetch = resolve;
+	});
+	const deploymentListRequests: string[] = [];
+	const failedList = { body: { detail: "projection failed" }, status: 500 };
+	await stubHostedApi(page, {
+		cloudAgents: [railHostedCloudAgent],
+		deploymentListRequests,
+		deploymentListResponses: [[railHostedDeployment], failedList, failedList, failedList],
+		deploymentListResponseGates: [coldListGate, failedRefetchGate],
+	});
+
+	try {
+		await page.goto("/agents");
+		const rail = page.getByTestId("app-sidebar-agent-rail");
+		const newAgent = rail.getByRole("button", { name: "New agent" });
+		await expect(rail.getByTestId("app-sidebar-agent-loading-slot")).toHaveCount(2);
+		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(0);
+		await expect(rail.getByRole("button", { name: "e2e-2", exact: true })).toHaveCount(0);
+		const coldNewAgentBox = await newAgent.boundingBox();
+		if (!coldNewAgentBox) throw new Error("Cold rail New agent control should be visible.");
+
+		releaseColdList?.();
+		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(1);
+		await expect(rail.getByTestId("app-sidebar-agent-loading-slot")).toHaveCount(0);
+		const loadedNewAgentBox = await newAgent.boundingBox();
+		if (!loadedNewAgentBox) throw new Error("Loaded rail New agent control should be visible.");
+		expect(Math.abs(loadedNewAgentBox.x - coldNewAgentBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(loadedNewAgentBox.y - coldNewAgentBox.y)).toBeLessThanOrEqual(1);
+		expect(Math.abs(loadedNewAgentBox.width - coldNewAgentBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(loadedNewAgentBox.height - coldNewAgentBox.height)).toBeLessThanOrEqual(1);
+
+		await rail.getByRole("button", { name: "e2e-2", exact: true }).click();
+		await expect(page.locator('[data-agent-overview="hosted"]')).toBeVisible();
+		const currentTime = await page.evaluate(() => Date.now());
+		await page.clock.setFixedTime(currentTime + 31_000);
+		await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+		await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
+		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(1);
+		await expect(page.locator('[data-agent-overview="hosted"]')).toBeVisible();
+
+		releaseFailedRefetch?.();
+		await expect.poll(() => deploymentListRequests.length).toBe(4);
+		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(1);
+		await expect(page.locator('[data-agent-overview="hosted"]')).toBeVisible();
+	} finally {
+		releaseColdList?.();
+		releaseFailedRefetch?.();
+	}
+});
+
+test("header Wallet slot stays stable from unresolved access through a long balance", async ({
+	page,
+	browser,
+	baseURL,
+}) => {
+	if (!baseURL) throw new Error("Playwright baseURL is required for the Wallet header test.");
+	let releaseProductAccess: (() => void) | undefined;
+	let releaseDeploymentList: (() => void) | undefined;
+	let releaseWalletChunk: (() => void) | undefined;
+	let releaseWalletResponse: (() => void) | undefined;
+	const productAccessGate = new Promise<void>((resolve) => {
+		releaseProductAccess = resolve;
+	});
+	const deploymentListGate = new Promise<void>((resolve) => {
+		releaseDeploymentList = resolve;
+	});
+	const walletChunkGate = new Promise<void>((resolve) => {
+		releaseWalletChunk = resolve;
+	});
+	const walletResponseGate = new Promise<void>((resolve) => {
+		releaseWalletResponse = resolve;
+	});
+	const productAccessRequests: string[] = [];
+	const deploymentListRequests: string[] = [];
+	const walletRequests: string[] = [];
+	const longBalance = "$12,345,678,901,234,567,890.12";
+	let walletChunkRequests = 0;
+	await page.route("**/src/hosted/global-wallet-balance.tsx*", async (route) => {
+		walletChunkRequests += 1;
+		await walletChunkGate;
+		await route.continue();
+	});
+	await stubHostedApi(page, {
+		productAccessRequests,
+		productAccessResponseGate: productAccessGate,
+		deploymentListRequests,
+		deploymentListResponses: [[railHostedDeployment]],
+		deploymentListResponseGates: [deploymentListGate],
+		walletRequests,
+		walletResponses: [
+			{
+				body: { ...walletState, balance_usd: "12345678901234567890.12" },
+				status: 200,
+			},
+		],
+		walletResponseGates: [walletResponseGate],
+	});
+
+	try {
+		await page.goto("/agents");
+		const walletSlot = page.getByTestId("global-wallet-balance-slot");
+		const walletControl = page.getByTestId("global-wallet-balance");
+		await expect(walletSlot).toBeVisible();
+		await expect.poll(() => productAccessRequests.length).toBeGreaterThan(0);
+		await expect.poll(() => deploymentListRequests.length).toBeGreaterThan(0);
+		await expect(walletSlot).toBeEmpty();
+		await expect(walletControl).toHaveCount(0);
+		expect(walletChunkRequests).toBe(0);
+		const unresolvedSlotBox = await walletSlot.boundingBox();
+		if (!unresolvedSlotBox) throw new Error("Unresolved Wallet slot should reserve geometry.");
+
+		releaseProductAccess?.();
+		releaseDeploymentList?.();
+		await expect(walletControl).toBeVisible();
+		await expect(walletControl).toBeDisabled();
+		await expect(walletControl.locator('[data-slot="skeleton"]')).toBeVisible();
+		const fallbackSlotBox = await walletSlot.boundingBox();
+		if (!fallbackSlotBox) throw new Error("Wallet chunk fallback should preserve slot geometry.");
+		expect(Math.abs(fallbackSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(fallbackSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
+		expect(Math.abs(fallbackSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(fallbackSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
+
+		releaseWalletChunk?.();
+		await expect.poll(() => walletRequests.length).toBe(1);
+		await expect(walletControl).toBeEnabled();
+
+		releaseWalletResponse?.();
+		await expect(walletControl).toContainText(longBalance);
+		await expect(walletControl).toHaveAttribute(
+			"aria-label",
+			`Wallet balance ${longBalance}. Open Wallet settings`,
+		);
+		await expect(walletControl).toHaveAttribute(
+			"title",
+			`Wallet balance ${longBalance}. Open Wallet settings`,
+		);
+		const finalSlotBox = await walletSlot.boundingBox();
+		if (!finalSlotBox) throw new Error("Loaded Wallet slot should preserve header geometry.");
+		expect(Math.abs(finalSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(finalSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
+		expect(Math.abs(finalSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(finalSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
+		const balanceText = walletControl.locator("span").filter({ hasText: longBalance });
+		await expect(balanceText).toBeVisible();
+		expect(
+			await balanceText.evaluate(
+				(element) => element.clientWidth > 0 && element.scrollWidth > element.clientWidth,
+			),
+		).toBe(true);
+		expect(walletChunkRequests).toBe(1);
+	} finally {
+		releaseProductAccess?.();
+		releaseDeploymentList?.();
+		releaseWalletChunk?.();
+		releaseWalletResponse?.();
+	}
+
+	const inapplicableContext = await browser.newContext({ baseURL });
+	const inapplicablePage = await inapplicableContext.newPage();
+	const inapplicableProductAccessRequests: string[] = [];
+	const inapplicableDeploymentListRequests: string[] = [];
+	let releaseInapplicableProductAccess: (() => void) | undefined;
+	let releaseInapplicableDeploymentList: (() => void) | undefined;
+	const inapplicableProductAccessGate = new Promise<void>((resolve) => {
+		releaseInapplicableProductAccess = resolve;
+	});
+	const inapplicableDeploymentListGate = new Promise<void>((resolve) => {
+		releaseInapplicableDeploymentList = resolve;
+	});
+	let inapplicableChunkRequests = 0;
+	try {
+		await inapplicablePage.route("**/src/hosted/global-wallet-balance.tsx*", async (route) => {
+			inapplicableChunkRequests += 1;
+			await route.continue();
+		});
+		await stubHostedApi(inapplicablePage, {
+			canCreateCloudAgents: false,
+			productAccessResponseGate: inapplicableProductAccessGate,
+			productAccessRequests: inapplicableProductAccessRequests,
+			deploymentListRequests: inapplicableDeploymentListRequests,
+			deploymentListResponses: [[]],
+			deploymentListResponseGates: [inapplicableDeploymentListGate],
+		});
+		await inapplicablePage.goto("/agents");
+		const walletSlot = inapplicablePage.getByTestId("global-wallet-balance-slot");
+		await expect(walletSlot).toBeVisible();
+		await expect.poll(() => inapplicableProductAccessRequests.length).toBeGreaterThan(0);
+		await expect.poll(() => inapplicableDeploymentListRequests.length).toBeGreaterThan(0);
+		await expect(walletSlot).toBeEmpty();
+		const unresolvedSlotBox = await walletSlot.boundingBox();
+		if (!unresolvedSlotBox) throw new Error("Inapplicable Wallet slot should reserve geometry.");
+
+		releaseInapplicableProductAccess?.();
+		releaseInapplicableDeploymentList?.();
+		await expect(
+			inapplicablePage
+				.getByTestId("app-sidebar-agent-rail")
+				.getByTestId("app-sidebar-agent-loading-slot"),
+		).toHaveCount(0);
+		await expect(
+			inapplicablePage
+				.getByTestId("app-sidebar-agent-rail")
+				.getByRole("button", { name: "New agent" }),
+		).toBeEnabled();
+		await expect(inapplicablePage.getByTestId("global-wallet-balance")).toHaveCount(0);
+		await expect(walletSlot).toBeEmpty();
+		const resolvedSlotBox = await walletSlot.boundingBox();
+		if (!resolvedSlotBox) throw new Error("Resolved Wallet slot should preserve geometry.");
+		expect(Math.abs(resolvedSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(resolvedSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
+		expect(Math.abs(resolvedSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(resolvedSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
+		expect(inapplicableChunkRequests).toBe(0);
+	} finally {
+		releaseInapplicableProductAccess?.();
+		releaseInapplicableDeploymentList?.();
+		await inapplicableContext.close();
+	}
+});
 
 test("hosted mixed agent rail uses whole semantic buttons for context switching", async ({
 	page,

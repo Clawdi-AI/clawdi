@@ -102,7 +102,7 @@ export function useLegacyEnvIds() {
 export function HostedAgentOwnershipSensor({
 	onChange,
 }: {
-	onChange: (ownership: AgentOwnership | null) => void;
+	onChange: (ownership: AgentOwnership | null, existingCloudDeploymentCount: number | null) => void;
 }) {
 	const cloudInventory = useHostedDeploymentInventory();
 	const legacy = useLegacyEnvIds();
@@ -122,9 +122,9 @@ export function HostedAgentOwnershipSensor({
 	);
 
 	useEffect(() => {
-		onChange(ownership);
-		return () => onChange(null);
-	}, [ownership, onChange]);
+		onChange(ownership, cloudInventory.deployments?.length ?? null);
+	}, [cloudInventory.deployments?.length, ownership, onChange]);
+	useEffect(() => () => onChange(null, null), [onChange]);
 
 	return null;
 }

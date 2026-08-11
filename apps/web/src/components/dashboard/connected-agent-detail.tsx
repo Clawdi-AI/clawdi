@@ -189,7 +189,7 @@ export function ConnectedAgentDetail({
 					/>
 				)
 			) : isLoading ? (
-				<AgentDetailContentSkeleton variant="connected" />
+				<AgentDetailContentSkeleton variant="connected" section={activeTab} />
 			) : agent ? (
 				<section className="flex flex-col gap-6">
 					{activeTab === "projects" ? null : (
@@ -357,20 +357,81 @@ export function ConnectedAgentDetail({
 	);
 }
 
-export function ConnectedAgentDetailSkeleton({ hosted = false }: { hosted?: boolean }) {
+export function ConnectedAgentDetailSkeleton({
+	hosted = false,
+	section = "overview",
+}: {
+	hosted?: boolean;
+	section?: AgentSectionId;
+}) {
+	if (section === "console" || section === "files" || section === "terminal") {
+		return (
+			<div
+				data-hosted={hosted ? "true" : undefined}
+				data-testid="agent-live-tool-loading-shell"
+				role="status"
+				aria-label={`${agentSectionLabel(section)} loading`}
+				className="-my-4 flex min-h-[calc(100svh-var(--header-height))] w-full flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
+			>
+				<div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+					<div className="flex h-12 shrink-0 items-center justify-between gap-3 px-4 lg:px-6">
+						<div className="flex min-w-0 items-center gap-2">
+							<Skeleton className="size-4 shrink-0 rounded-sm" />
+							<Skeleton className="h-4 w-32 max-w-[45vw]" />
+						</div>
+						<Skeleton className="h-8 w-20 shrink-0" />
+					</div>
+					<Skeleton className="min-h-0 flex-1 rounded-none" />
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div
 			data-hosted={hosted ? "true" : undefined}
 			className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}
 		>
-			<AgentDetailContentSkeleton variant={hosted ? "hosted" : "connected"} />
+			<AgentDetailContentSkeleton variant={hosted ? "hosted" : "connected"} section={section} />
 		</div>
 	);
 }
 
-function AgentDetailContentSkeleton({ variant }: { variant: "connected" | "hosted" }) {
+function AgentDetailContentSkeleton({
+	variant,
+	section = "overview",
+}: {
+	variant: "connected" | "hosted";
+	section?: AgentSectionId;
+}) {
+	if (section !== "overview") {
+		return (
+			<section
+				className="flex flex-col gap-6"
+				data-agent-detail-skeleton
+				data-agent-detail-section={section}
+			>
+				<PageHeaderSkeleton
+					icon
+					iconClassName="size-4 rounded-sm"
+					actions={variant === "hosted"}
+					description={false}
+				/>
+				<div className="space-y-4">
+					<Skeleton className="h-4 w-28" />
+					<Skeleton className="h-4 w-56 max-w-full" />
+					<Skeleton className="h-40 w-full" />
+				</div>
+			</section>
+		);
+	}
+
 	return (
-		<section className="flex flex-col gap-8" data-agent-detail-skeleton>
+		<section
+			className="flex flex-col gap-8"
+			data-agent-detail-skeleton
+			data-agent-detail-section="overview"
+		>
 			<PageHeaderSkeleton
 				icon
 				iconClassName="size-4 rounded-sm"

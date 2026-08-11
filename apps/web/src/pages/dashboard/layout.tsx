@@ -1,9 +1,14 @@
 "use client";
 
-import { lazy, type ReactNode, Suspense, useState } from "react";
+import { lazy, type ReactNode, Suspense, useCallback, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
 import { CommandPaletteProvider } from "@/components/command-palette";
+import {
+	HeaderWalletBalanceControl,
+	HeaderWalletBalanceSlot,
+	headerWalletBalanceApplicable,
+} from "@/components/header-wallet-balance";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
@@ -14,6 +19,7 @@ import {
 } from "@/lib/agent-ownership";
 import { IS_HOSTED } from "@/lib/hosted";
 import { isDeployApiConfigured } from "@/lib/hosted-api";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { useHydrated } from "@/lib/use-hydrated";
 
 // Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
@@ -44,7 +50,18 @@ const GlobalWalletBalance = IS_HOSTED_BUILD
 export default function DashboardLayout({ children }: { children: ReactNode }) {
 	const hydrated = useHydrated();
 	const [ownership, setOwnership] = useState<AgentOwnership | null>(null);
+	const [existingCloudDeploymentCount, setExistingCloudDeploymentCount] = useState<number | null>(
+		null,
+	);
+	const hostedAccess = useHostedProductAccess();
 	const showOwnershipSensor = hydrated && IS_HOSTED && isDeployApiConfigured();
+	const updateHostedOwnership = useCallback(
+		(nextOwnership: AgentOwnership | null, nextExistingCloudDeploymentCount: number | null) => {
+			setOwnership(nextOwnership);
+			setExistingCloudDeploymentCount(nextExistingCloudDeploymentCount);
+		},
+		[],
+	);
 	// `null` strictly means "resolving" (destructive actions wait on it), so
 	// the provider must decide when there is nothing to resolve: OSS builds,
 	// and hosted mirrors without a configured deploy API get resolved empty
@@ -53,6 +70,12 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 	// existing Cloud deployments remain manageable under rollback.
 	const noExternalControlPlane = !IS_HOSTED || !isDeployApiConfigured();
 	const providedOwnership = noExternalControlPlane ? EMPTY_AGENT_OWNERSHIP : ownership;
+	const showHeaderWallet =
+		IS_HOSTED &&
+		headerWalletBalanceApplicable({
+			canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
+			existingCloudDeploymentCount,
+		});
 
 	return (
 		<SidebarProvider
@@ -68,7 +91,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 			<AgentOwnershipProvider value={providedOwnership}>
 				{HostedAgentOwnershipSensor && showOwnershipSensor ? (
 					<Suspense fallback={null}>
-						<HostedAgentOwnershipSensor onChange={setOwnership} />
+						<HostedAgentOwnershipSensor onChange={updateHostedOwnership} />
 					</Suspense>
 				) : null}
 				<CommandPaletteProvider>
@@ -84,10 +107,14 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 						>
 							<SiteHeader
 								actions={
-									GlobalWalletBalance ? (
-										<Suspense fallback={null}>
-											<GlobalWalletBalance />
-										</Suspense>
+									IS_HOSTED_BUILD ? (
+										<HeaderWalletBalanceSlot>
+											{GlobalWalletBalance && showHeaderWallet ? (
+												<Suspense fallback={<HeaderWalletBalanceControl state="loading" />}>
+													<GlobalWalletBalance />
+												</Suspense>
+											) : null}
+										</HeaderWalletBalanceSlot>
 									) : null
 								}
 							/>
