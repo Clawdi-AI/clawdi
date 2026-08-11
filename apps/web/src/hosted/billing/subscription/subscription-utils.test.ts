@@ -3,6 +3,8 @@ import type { BillingOffer, HostedComputeSubscription, Plan } from "@/hosted/bil
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
+	canCancelAccountSubscription,
+	canResumeAccountSubscription,
 	commonExplicitBillingOffers,
 	computeFundingMode,
 	computeFundingSource,
@@ -343,6 +345,40 @@ describe("compute subscription action status gates", () => {
 		expect(isComputeSubscriptionTermChangeable({ status: "past_due" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable({ status: "unpaid" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable(undefined)).toBe(false);
+	});
+
+	test("offers account resume only for a canceling subscription bound to a live agent", () => {
+		const liveCanceling = {
+			status: "canceling" as const,
+			cancel_at_period_end: true,
+			deployment_id: "hdep_live",
+			is_orphan: false,
+		};
+
+		expect(canResumeAccountSubscription(liveCanceling)).toBe(true);
+		expect(canResumeAccountSubscription({ ...liveCanceling, deployment_id: null })).toBe(false);
+		expect(canResumeAccountSubscription({ ...liveCanceling, is_orphan: true })).toBe(false);
+		expect(
+			canResumeAccountSubscription({
+				...liveCanceling,
+				status: "active",
+				cancel_at_period_end: false,
+			}),
+		).toBe(false);
+	});
+
+	test("keeps cancellation available for active orphan subscriptions without repeating it", () => {
+		const orphan = {
+			status: "active" as const,
+			cancel_at_period_end: false,
+			deployment_id: null,
+			is_orphan: true,
+		};
+
+		expect(canCancelAccountSubscription(orphan)).toBe(true);
+		expect(canCancelAccountSubscription({ ...orphan, cancel_at_period_end: true })).toBe(false);
+		expect(canCancelAccountSubscription({ ...orphan, status: "canceling" })).toBe(false);
+		expect(canCancelAccountSubscription({ ...orphan, status: "canceled" })).toBe(false);
 	});
 });
 

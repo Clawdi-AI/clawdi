@@ -450,6 +450,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Subscriptions */
+        get: operations["list_v2_subscriptions_v2_subscriptions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/usage": {
         parameters: {
             query?: never;
@@ -986,6 +1003,7 @@ export interface components {
              * @default []
              */
             providers: components["schemas"]["RuntimeProviderConfiguration"][];
+            terminal_tooling?: components["schemas"]["TerminalToolingConfiguration"] | null;
             /**
              * Features
              * @default []
@@ -1021,6 +1039,15 @@ export interface components {
             name: string;
             /** Version */
             version?: string | null;
+        };
+        /** TerminalToolProviderConfiguration */
+        TerminalToolProviderConfiguration: {
+            provider: components["schemas"]["RuntimeProviderConfiguration"];
+            primary_model: components["schemas"]["ProviderModelReference"];
+        };
+        /** TerminalToolingConfiguration */
+        TerminalToolingConfiguration: {
+            codex: components["schemas"]["TerminalToolProviderConfiguration"];
         };
         /**
          * V1AgentEnvironmentsResponse
@@ -1346,12 +1373,46 @@ export interface components {
         };
         /** V2ComputeSubscriptionCancelRequest */
         V2ComputeSubscriptionCancelRequest: {
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Subscription Id */
+            subscription_id?: string | null;
+        };
+        /** V2ComputeSubscriptionListItem */
+        V2ComputeSubscriptionListItem: {
             /**
-             * Deployment Id
+             * Subscription Id
              * Format: sqid
-             * @example hdep_K8fJ3pQm
+             * @example csub_K8fJ3pQm
              */
-            deployment_id: string;
+            subscription_id: string;
+            /** Plan Slug */
+            plan_slug: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "canceling" | "past_due" | "canceled";
+            /** Price Cents */
+            price_cents?: number | null;
+            /**
+             * Currency
+             * @default usd
+             */
+            currency: string;
+            /**
+             * Billing Term Months
+             * @enum {integer}
+             */
+            billing_term_months: 1 | 12;
+            /** Current Period End */
+            current_period_end?: string | null;
+            /** Cancel At Period End */
+            cancel_at_period_end: boolean;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Is Orphan */
+            is_orphan: boolean;
         };
         /** V2ComputeSubscriptionQuoteRequest */
         V2ComputeSubscriptionQuoteRequest: {
@@ -1450,12 +1511,10 @@ export interface components {
         };
         /** V2ComputeSubscriptionResumeRequest */
         V2ComputeSubscriptionResumeRequest: {
-            /**
-             * Deployment Id
-             * Format: sqid
-             * @example hdep_K8fJ3pQm
-             */
-            deployment_id: string;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Subscription Id */
+            subscription_id?: string | null;
         };
         /** V2DeleteDeploymentConvergedResponse */
         V2DeleteDeploymentConvergedResponse: {
@@ -1905,7 +1964,7 @@ export interface components {
             is_featured: boolean;
             /**
              * Description
-             * @description Authoritative single-sentence choice guidance from the atomic Hosted setting.
+             * @description Authoritative single-sentence choice guidance from the curated Hosted managed catalog.
              */
             description: string | null;
             /** @description Factual metadata from the bundled Hosted model catalog. */
@@ -2521,7 +2580,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The deployment is definitively absent for the caller in both Hosted and Cloud. Repeating the delete returns the same response. */
+            /** @description The deployment is deleted for the caller. Repeating the delete returns the same response. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3536,6 +3595,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_v2_subscriptions_v2_subscriptions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeSubscriptionListItem"][];
                 };
             };
         };
