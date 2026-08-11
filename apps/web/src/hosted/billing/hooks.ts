@@ -171,6 +171,14 @@ export function usePlans() {
 	});
 }
 
+export function useSubscriptions() {
+	const client = useBillingClient();
+	return useBillingQuery({
+		queryKey: billingKeys.subscriptions,
+		queryFn: () => client.getSubscriptions(),
+	});
+}
+
 export function useSubscriptionCreateQuote(
 	selection: SubscriptionCreateSelection | null,
 	{ enabled = true }: { enabled?: boolean } = {},
@@ -236,7 +244,10 @@ export function useCancelSubscription() {
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionCancelRequest) => client.cancelSubscription(body),
 		onSuccess: (next, body) => {
-			applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
+			if (body.deployment_id) {
+				applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
+			}
+			qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
 		},
 	});
 }
@@ -261,7 +272,10 @@ export function useResumeSubscription() {
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionResumeRequest) => client.resumeSubscription(body),
 		onSuccess: (next, body) => {
-			applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
+			if (body.deployment_id) {
+				applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
+			}
+			qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
 		},
 	});
 }

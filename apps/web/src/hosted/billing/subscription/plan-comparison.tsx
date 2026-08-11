@@ -2,11 +2,14 @@
 
 import { Check, Cpu, Zap } from "lucide-react";
 import { useMemo } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsSection } from "@/components/settings-section";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
 import { computePricePresentation } from "@/hosted/billing/deploy/deploy-price-presentation";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { usePlans } from "@/hosted/billing/hooks";
 import {
 	commonExplicitBillingOffers,
@@ -14,6 +17,7 @@ import {
 	resolveBasicPlan,
 	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 function partitionPlans(plans: Plan[]): { basic?: Plan; performance?: Plan } {
 	return {
@@ -50,7 +54,29 @@ export function PlanComparison({
 		[plansQuery.data],
 	);
 
-	if (!plansQuery.data) return null;
+	if (plansQuery.isLoading) {
+		return (
+			<SettingsSection headingLevel={3} title="Plans" description="Compare hosted compute plans.">
+				<div className="grid gap-3 lg:grid-cols-2">
+					<Skeleton className="h-72 w-full rounded-lg" />
+					<Skeleton className="h-72 w-full rounded-lg" />
+				</div>
+			</SettingsSection>
+		);
+	}
+
+	if (shouldBlockQueryError(plansQuery.error, plansQuery.data)) {
+		return (
+			<SettingsSection headingLevel={3} title="Plans" description="Compare hosted compute plans.">
+				<ApiErrorPanel
+					normalizer={billingErrorNormalizer}
+					error={plansQuery.error}
+					onRetry={() => void plansQuery.refetch()}
+					title="Couldn't load plans"
+				/>
+			</SettingsSection>
+		);
+	}
 
 	const basicOffers = basic ? explicitPlanOffers(basic) : [];
 	const performanceOffers = performance ? explicitPlanOffers(performance) : [];
@@ -79,7 +105,7 @@ export function PlanComparison({
 		<SettingsSection
 			data-hosted="true"
 			headingLevel={3}
-			title="Compare compute plans"
+			title="Plans"
 			actions={
 				commonOffers.length > 1 && selectedTerm !== null ? (
 					<div className="w-56">
@@ -96,7 +122,7 @@ export function PlanComparison({
 			description={
 				sharedPricingUnavailable
 					? "A shared Basic and Performance billing term is not currently available."
-					: undefined
+					: "Compare hosted compute plans before starting another agent."
 			}
 		>
 			<div>

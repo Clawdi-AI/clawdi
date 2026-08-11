@@ -13,6 +13,7 @@ export type CheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
 export type ComputePlanSlug = Schemas["V2HostedDeployRequest"]["compute_plan_slug"];
 export type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActionResponse"];
 export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCancelRequest"];
+export type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
 export type ComputeBillingHistoryItem = Schemas["V2ComputeBillingHistoryItem"];
 export type ComputePlanChangeRequest = Schemas["V2ComputePlanChangeRequest"];

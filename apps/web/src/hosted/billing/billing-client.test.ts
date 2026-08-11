@@ -884,6 +884,56 @@ describe("declarative deployment mutations", () => {
 	});
 });
 
+describe("account compute subscriptions", () => {
+	it("lists subscriptions and targets cancel or resume by subscription id", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			const path = new URL(request.url).pathname;
+			if (path === "/v2/subscriptions") {
+				return jsonResponse([
+					{
+						subscription_id: "csub_test",
+						plan_slug: "compute_performance",
+						status: "active",
+						price_cents: 2_000,
+						currency: "usd",
+						billing_term_months: 1,
+						current_period_end: "2026-08-22T00:00:00Z",
+						cancel_at_period_end: false,
+						deployment_id: null,
+						is_orphan: true,
+					},
+				]);
+			}
+			return jsonResponse({
+				status: "active",
+				funding_source: "stripe",
+				billing_term_months: 1,
+				cancel_at_period_end: path.endsWith("/cancel"),
+				current_period_end: "2026-08-22T00:00:00Z",
+			});
+		});
+
+		await expect(client.getSubscriptions()).resolves.toEqual([
+			expect.objectContaining({ subscription_id: "csub_test", is_orphan: true }),
+		]);
+		await client.cancelSubscription({ subscription_id: "csub_test" });
+		await client.resumeSubscription({ subscription_id: "csub_test" });
+
+		expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+			["GET", "/v2/subscriptions"],
+			["POST", "/v2/subscription/cancel"],
+			["POST", "/v2/subscription/resume"],
+		]);
+		expect(await requests[1]?.json()).toEqual({ subscription_id: "csub_test" });
+		expect(await requests[2]?.json()).toEqual({ subscription_id: "csub_test" });
+		expect(
+			requests.every((request) => request.headers.get("Authorization") === "Bearer test-token"),
+		).toBe(true);
+	});
+});
+
 describe("compute plan changes", () => {
 	it("accepts once and waits through awaiting_payment for terminal success", async () => {
 		const requests: Request[] = [];
