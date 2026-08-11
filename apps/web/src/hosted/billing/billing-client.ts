@@ -65,6 +65,7 @@ export type BillingClientOptions = {
 	fetch?: BillingFetch;
 	operationPollIntervalMs?: number;
 	operationPollLimit?: number;
+	deploymentRequestTimeoutMs?: number;
 	sleep?: (delayMs: number) => Promise<void>;
 };
 
@@ -191,11 +192,10 @@ function isWorkspaceSkillResourceVersionConflict(error: unknown): error is Billi
 
 function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingApiError {
 	return new DeploymentRequestTerminalError(
-		409,
+		status,
 		status.request_status === "superseded"
 			? "This agent creation was superseded by a newer attempt."
 			: "The agent could not be created.",
-		status,
 	);
 }
 
@@ -309,8 +309,18 @@ export function createBillingClient(
 		},
 	});
 
-	const pollIntervalMs = options.operationPollIntervalMs ?? 1_000;
-	const pollLimit = options.operationPollLimit ?? 120;
+	const configuredPollIntervalMs = options.operationPollIntervalMs ?? 1_000;
+	const pollIntervalMs = Number.isFinite(configuredPollIntervalMs)
+		? Math.max(0, configuredPollIntervalMs)
+		: 1_000;
+	const configuredPollLimit = options.operationPollLimit ?? 120;
+	const pollLimit = Number.isFinite(configuredPollLimit)
+		? Math.max(0, Math.floor(configuredPollLimit))
+		: 120;
+	const configuredDeploymentRequestTimeoutMs = options.deploymentRequestTimeoutMs ?? 120_000;
+	const deploymentRequestTimeoutMs = Number.isFinite(configuredDeploymentRequestTimeoutMs)
+		? Math.max(0, configuredDeploymentRequestTimeoutMs)
+		: 120_000;
 	const sleep =
 		options.sleep ??
 		((delayMs: number) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)));
@@ -322,10 +332,14 @@ export function createBillingClient(
 			}),
 		);
 
-	const getOperation = async (operationId: string): Promise<DeploymentOperation> =>
+	const getOperation = async (
+		operationId: string,
+		signal?: AbortSignal,
+	): Promise<DeploymentOperation> =>
 		unwrapDeploy(
 			await api.GET("/v2/operations/{operation_id}", {
 				params: { path: { operation_id: operationId } },
+				signal,
 			}),
 		);
 
@@ -351,25 +365,38 @@ export function createBillingClient(
 
 	const getDeploymentByRequest = async (
 		deployRequestId: string,
+		signal?: AbortSignal,
 	): Promise<HostedDeployRequestStatus> =>
 		unwrapDeploy(
 			await api.GET("/v2/deployments/by-request/{deploy_request_id}", {
 				params: { path: { deploy_request_id: deployRequestId } },
+				signal,
 			}),
 		);
 
 	const waitForDeploymentRequest = async (deployRequestId: string) => {
 		let lastTransientError: unknown;
-		for (let poll = 0; poll <= pollLimit; poll += 1) {
+		const deadline = Date.now() + deploymentRequestTimeoutMs;
+		for (let poll = 0; poll <= pollLimit && Date.now() < deadline; poll += 1) {
+			const requestController = new AbortController();
+			const requestTimeoutId = globalThis.setTimeout(
+				() => requestController.abort(),
+				Math.max(0, deadline - Date.now()),
+			);
 			let status: HostedDeployRequestStatus;
 			try {
-				status = await getDeploymentByRequest(deployRequestId);
+				status = await getDeploymentByRequest(deployRequestId, requestController.signal);
 			} catch (error) {
+				if (requestController.signal.aborted) break;
 				if (!isTransientDeployRequestRead(error)) throw error;
 				lastTransientError = error;
 				if (poll === pollLimit) break;
-				await sleep(pollIntervalMs);
+				const remainingMs = deadline - Date.now();
+				if (remainingMs <= 0) break;
+				await sleep(Math.min(pollIntervalMs, remainingMs));
 				continue;
+			} finally {
+				globalThis.clearTimeout(requestTimeoutId);
 			}
 			const projection = projectHostedDeployRequest(status);
 			if (projection.kind === "terminal") {
@@ -382,8 +409,27 @@ export function createBillingClient(
 				});
 			}
 			if (projection.kind === "operation_name") {
+				const remainingMs = deadline - Date.now();
+				if (remainingMs <= 0) break;
+				const operationController = new AbortController();
+				const operationTimeoutId = globalThis.setTimeout(
+					() => operationController.abort(),
+					remainingMs,
+				);
+				let operation: DeploymentOperation;
+				try {
+					operation = await getOperation(
+						operationIdFromName(projection.operationName),
+						operationController.signal,
+					);
+				} catch (error) {
+					if (operationController.signal.aborted) break;
+					throw error;
+				} finally {
+					globalThis.clearTimeout(operationTimeoutId);
+				}
 				return acceptDeclarativeOperation({
-					operation: await getOperation(operationIdFromName(projection.operationName)),
+					operation,
 					deploymentId: projection.deploymentId,
 				});
 			}
@@ -398,7 +444,9 @@ export function createBillingClient(
 			}
 			lastTransientError = undefined;
 			if (poll === pollLimit) break;
-			await sleep(pollIntervalMs);
+			const remainingMs = deadline - Date.now();
+			if (remainingMs <= 0) break;
+			await sleep(Math.min(pollIntervalMs, remainingMs));
 		}
 		throw new BillingNetworkError("timeout", { cause: lastTransientError });
 	};

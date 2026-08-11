@@ -5,7 +5,11 @@ import {
 	PaymentElement,
 	useCheckoutElements,
 } from "@stripe/react-stripe-js/checkout";
-import type { Stripe, StripeCheckoutElementsSdkOptions } from "@stripe/stripe-js";
+import type {
+	Stripe,
+	StripeCheckoutElementsSdkOptions,
+	StripeCheckoutStatus,
+} from "@stripe/stripe-js";
 import { AlertCircle, CreditCard, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -23,6 +27,10 @@ import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycl
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
 import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 import { env } from "@/lib/env";
+import {
+	completedCheckoutPaymentStatus,
+	type StripeCheckoutPaymentStatus,
+} from "./stripe-checkout.logic";
 
 export type StripeCheckoutSummary = {
 	detail: string;
@@ -34,7 +42,8 @@ export type StripeCheckoutSummary = {
 type StripeCheckoutDialogProps = {
 	clientSecret: CheckoutSessionClientSecret | null;
 	description: string;
-	onComplete: () => void;
+	onComplete: (paymentStatus: StripeCheckoutPaymentStatus) => void;
+	onExpired: () => void;
 	onOpenChange: (open: boolean) => void;
 	open: boolean;
 	summary: StripeCheckoutSummary | null;
@@ -161,10 +170,12 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 
 function CheckoutElementForm({
 	onComplete,
+	onExpired,
 	onLoadError,
 	onSubmittingChange,
 }: {
-	onComplete: () => void;
+	onComplete: (paymentStatus: StripeCheckoutPaymentStatus) => void;
+	onExpired: () => void;
 	onLoadError: (message: string) => void;
 	onSubmittingChange: (submitting: boolean) => void;
 }) {
@@ -173,7 +184,21 @@ function CheckoutElementForm({
 	const [takingLong, setTakingLong] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const submittingRef = useRef(false);
+	const settledRef = useRef(false);
 	const loadErrorMessage = checkoutState.type === "error" ? checkoutState.error.message : null;
+	const checkout = checkoutState.type === "success" ? checkoutState.checkout : null;
+	const settleOnce = useCallback(
+		(status: StripeCheckoutStatus): boolean => {
+			if (settledRef.current) return true;
+			const paymentStatus = completedCheckoutPaymentStatus(status);
+			if (!paymentStatus && status.type !== "expired") return false;
+			settledRef.current = true;
+			if (paymentStatus) onComplete(paymentStatus);
+			else onExpired();
+			return true;
+		},
+		[onComplete, onExpired],
+	);
 
 	function finishSubmitting() {
 		submittingRef.current = false;
@@ -191,6 +216,10 @@ function CheckoutElementForm({
 	useEffect(() => {
 		if (loadErrorMessage) onLoadError(loadErrorMessage);
 	}, [loadErrorMessage, onLoadError]);
+
+	useEffect(() => {
+		if (checkout) settleOnce(checkout.status);
+	}, [checkout, settleOnce]);
 
 	if (checkoutState.type === "loading") {
 		return (
@@ -215,25 +244,22 @@ function CheckoutElementForm({
 		);
 	}
 
-	const { checkout } = checkoutState;
+	const { checkout: readyCheckout } = checkoutState;
 
 	async function confirmCheckout() {
-		if (submittingRef.current || !checkout.canConfirm) return;
+		if (submittingRef.current || !readyCheckout.canConfirm) return;
 		submittingRef.current = true;
 		setSubmitting(true);
 		onSubmittingChange(true);
 		setError(null);
 		try {
-			const result = await checkout.confirm({ redirect: "if_required" });
+			const result = await readyCheckout.confirm({ redirect: "if_required" });
 			if (result.type === "error") {
 				setError(result.error.message || "We could not confirm this payment. Please try again.");
 				finishSubmitting();
 				return;
 			}
-			if (result.session.status.type === "complete") {
-				onComplete();
-				return;
-			}
+			if (settleOnce(result.session.status)) return;
 			setError("Stripe needs another step before this checkout can finish.");
 			finishSubmitting();
 		} catch {
@@ -266,7 +292,7 @@ function CheckoutElementForm({
 				<Button
 					type="button"
 					onClick={confirmCheckout}
-					disabled={submitting || !checkout.canConfirm}
+					disabled={submitting || !readyCheckout.canConfirm}
 				>
 					{submitting ? (
 						<>
@@ -285,6 +311,7 @@ export function StripeCheckoutDialog({
 	clientSecret,
 	description,
 	onComplete,
+	onExpired,
 	onOpenChange,
 	open,
 	summary,
@@ -303,19 +330,21 @@ export function StripeCheckoutDialog({
 		emptyValue: { clientSecret: null, description: "", summary: null, title: "" },
 	});
 	const appearance = useCheckoutAppearance(open);
-	const onCompleteRef = useRef(onComplete);
-
-	useEffect(() => {
-		onCompleteRef.current = onComplete;
-	}, [onComplete]);
 
 	const renderedCheckout = exit.renderedValue;
 	const renderedClientSecret = renderedCheckout.clientSecret;
 
-	const completeCheckout = useCallback(() => {
+	const completeCheckout = useCallback(
+		(paymentStatus: StripeCheckoutPaymentStatus) => {
+			exit.beginClose();
+			onComplete(paymentStatus);
+		},
+		[exit.beginClose, onComplete],
+	);
+	const expireCheckout = useCallback(() => {
 		exit.beginClose();
-		onCompleteRef.current();
-	}, [exit.beginClose]);
+		onExpired();
+	}, [exit.beginClose, onExpired]);
 
 	const handleProviderLoadError = useCallback(() => {
 		setState("error");
@@ -413,6 +442,7 @@ export function StripeCheckoutDialog({
 					>
 						<CheckoutElementForm
 							onComplete={completeCheckout}
+							onExpired={expireCheckout}
 							onLoadError={handleProviderLoadError}
 							onSubmittingChange={setCheckoutSubmitting}
 						/>

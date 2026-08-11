@@ -10,6 +10,7 @@
  */
 
 import { toast } from "sonner";
+import type { HostedDeployRequestStatus } from "@/hosted/billing/contracts";
 
 export class BillingApiError extends Error {
 	constructor(
@@ -53,9 +54,49 @@ export class DeploymentConflictError extends Error {
 	}
 }
 
-/** A checkout-funded deploy request reached a terminal state before acceptance. */
+/** A checkout-funded deploy request reached an explicit terminal state. */
 export class DeploymentRequestTerminalError extends BillingApiError {
 	override name = "DeploymentRequestTerminalError";
+
+	constructor(
+		public readonly request: HostedDeployRequestStatus,
+		detail: string,
+	) {
+		super(409, detail, request);
+	}
+}
+
+export type DeploymentRequestTerminalOutcome =
+	| { kind: "open_deployment"; deploymentId: string }
+	| {
+			kind: "new_attempt" | "review_agents";
+			title: string;
+			description: string;
+	  };
+
+export function deploymentRequestTerminalOutcome(
+	error: unknown,
+): DeploymentRequestTerminalOutcome | null {
+	if (!(error instanceof DeploymentRequestTerminalError)) return null;
+	const requestStatus = error.request.request_status;
+	const deploymentId = error.request.lineage_tail?.deployment_id?.trim();
+	if (deploymentId) {
+		return { kind: "open_deployment", deploymentId };
+	}
+	if (requestStatus === "superseded") {
+		return {
+			kind: "review_agents",
+			title: "Checkout was replaced",
+			description:
+				"A newer checkout attempt replaced this agent request. Review your agents before starting another checkout.",
+		};
+	}
+	return {
+		kind: "new_attempt",
+		title: requestStatus === "expired" ? "Agent request expired" : "Agent creation failed",
+		description:
+			"No agent was accepted from this checkout. Review your choices and start a new checkout when you’re ready.",
+	};
 }
 
 /** A plan change remains nonterminal after the bounded foreground poll. */

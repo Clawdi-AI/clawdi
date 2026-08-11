@@ -11,7 +11,6 @@ import {
 	BillingNetworkError,
 	DEPLOYMENT_CONFLICT_MESSAGE,
 	DeploymentConflictError,
-	DeploymentRequestTerminalError,
 	PlanChangePendingError,
 	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
@@ -474,31 +473,51 @@ describe("declarative deployment mutations", () => {
 		]);
 	});
 
-	it("bounds an initial by-request not-found race", async () => {
+	it("stops an in-flight deployment request read at its wall-clock deadline", async () => {
 		const requests: Request[] = [];
 		const deployRequestId = "checkout/race:stable";
-		let sleeps = 0;
+		let requestWasAborted = false;
 		const client = createBillingClient(async () => "test-token", {
 			fetch: async (request) => {
 				requests.push(request.clone());
-				return jsonResponse({ detail: "Deploy request not visible yet" }, 404);
+				return await new Promise<Response>((_resolve, reject) => {
+					const rejectAbort = () => {
+						requestWasAborted = true;
+						reject(request.signal.reason ?? new DOMException("Aborted", "AbortError"));
+					};
+					if (request.signal.aborted) rejectAbort();
+					else request.signal.addEventListener("abort", rejectAbort, { once: true });
+				});
 			},
-			operationPollLimit: 2,
-			sleep: async () => {
-				sleeps += 1;
-			},
+			deploymentRequestTimeoutMs: 25,
 		});
 
+		const startedAt = Date.now();
 		await expect(client.waitForDeploymentRequest(deployRequestId)).rejects.toBeInstanceOf(
 			BillingNetworkError,
 		);
-		expect(requests.map((request) => new URL(request.url).pathname)).toEqual(
-			Array.from(
-				{ length: 3 },
-				() => `/v2/deployments/by-request/${encodeURIComponent(deployRequestId)}`,
-			),
+		expect(Date.now() - startedAt).toBeLessThan(1_000);
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+			`/v2/deployments/by-request/${encodeURIComponent(deployRequestId)}`,
+		]);
+		expect(requestWasAborted).toBe(true);
+	});
+
+	it("caps zero-delay transient reads independently of the deadline", async () => {
+		let requestCount = 0;
+		const client = createBillingClient(async () => "test-token", {
+			fetch: async () => {
+				requestCount += 1;
+				return jsonResponse({ detail: "Deploy request not visible yet" }, 404);
+			},
+			operationPollLimit: 2,
+			sleep: async () => undefined,
+		});
+
+		await expect(client.waitForDeploymentRequest("checkout-not-visible")).rejects.toBeInstanceOf(
+			BillingNetworkError,
 		);
-		expect(sleeps).toBe(2);
+		expect(requestCount).toBe(3);
 	});
 
 	it("surfaces a checkout deployment request that fails before acceptance", async () => {
@@ -522,9 +541,10 @@ describe("declarative deployment mutations", () => {
 			throw new Error(`Unexpected request: ${request.method} ${path}`);
 		});
 
-		await expect(client.waitForDeploymentRequest(intentKey)).rejects.toBeInstanceOf(
-			DeploymentRequestTerminalError,
-		);
+		await expect(client.waitForDeploymentRequest(intentKey)).rejects.toMatchObject({
+			name: "DeploymentRequestTerminalError",
+			request: { deploy_request_id: intentKey, request_status: "failed" },
+		});
 		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
 			`/v2/deployments/by-request/${intentKey}`,
 		]);

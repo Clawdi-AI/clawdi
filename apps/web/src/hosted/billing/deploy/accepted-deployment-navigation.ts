@@ -63,12 +63,15 @@ export async function navigateToAcceptedDeployment({
 /** Resolve the durable checkout lineage, then reuse the canonical deployment handoff. */
 export async function navigateToAcceptedDeploymentRequest({
 	deployRequestId,
+	onAccepted,
 	resolveDeploymentRequest,
 	...navigation
 }: Omit<Parameters<typeof navigateToAcceptedDeployment>[0], "deploymentId"> & {
 	deployRequestId: string;
+	onAccepted?: () => void;
 	resolveDeploymentRequest: AcceptedDeploymentRequestResolver;
 }): Promise<void> {
 	const { deploymentId } = await resolveDeploymentRequest(deployRequestId);
+	onAccepted?.();
 	await navigateToAcceptedDeployment({ ...navigation, deploymentId });
 }

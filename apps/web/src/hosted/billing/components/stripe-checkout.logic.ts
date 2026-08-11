@@ -1,9 +1,21 @@
+import type { StripeCheckoutStatus } from "@stripe/stripe-js";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 
 export { checkoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 
 export const CHECKOUT_ELEMENTS_UI_MODE = "custom";
 export const HOSTED_CHECKOUT_UI_MODE = "hosted";
+
+export type StripeCheckoutPaymentStatus = Extract<
+	StripeCheckoutStatus,
+	{ type: "complete" }
+>["paymentStatus"];
+
+export function completedCheckoutPaymentStatus(
+	status: StripeCheckoutStatus,
+): StripeCheckoutPaymentStatus | null {
+	return status.type === "complete" ? status.paymentStatus : null;
+}
 
 export function checkoutUiModeForPublishableKey(
 	publishableKey: string | undefined,

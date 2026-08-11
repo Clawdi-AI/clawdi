@@ -188,3 +188,24 @@ export function forgetIdempotencyAttempt(
 	delete attempts[entryKey];
 	writeStoredAttempts(storage, attempts);
 }
+
+/** Remove a finished attempt when only its durable request key is available. */
+export function forgetIdempotencyAttemptByKey(
+	prefix: string,
+	key: string,
+	options: IdempotencyPersistenceOptions = {},
+): void {
+	const storage = options.storage === undefined ? browserSessionStorage() : options.storage;
+	if (!storage) return;
+	const now = options.now?.() ?? Date.now();
+	const ttlMs = options.ttlMs ?? IDEMPOTENCY_ATTEMPT_TTL_MS;
+	const attempts = readStoredAttempts(storage, now, ttlMs);
+	if (!attempts) return;
+	const entryPrefix = `${prefix}:`;
+	const entry = Object.entries(attempts).find(
+		([entryKey, attempt]) => entryKey.startsWith(entryPrefix) && attempt.key === key,
+	);
+	if (!entry) return;
+	delete attempts[entry[0]];
+	writeStoredAttempts(storage, attempts);
+}

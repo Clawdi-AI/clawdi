@@ -108,6 +108,7 @@ describe("accepted deployment navigation", () => {
 				events.push(`get:${deploymentId}`);
 				return authoritative;
 			},
+			onAccepted: () => events.push("accepted"),
 			navigate: async () => {
 				events.push("navigate");
 				expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([
@@ -124,7 +125,12 @@ describe("accepted deployment navigation", () => {
 		for (let turn = 0; turn < 10 && !events.includes("navigate"); turn += 1) {
 			await Promise.resolve();
 		}
-		expect(events).toEqual(["resolve:checkout/stable:key", "get:hdep_from_request", "navigate"]);
+		expect(events).toEqual([
+			"resolve:checkout/stable:key",
+			"accepted",
+			"get:hdep_from_request",
+			"navigate",
+		]);
 		expect(settled).toBe(false);
 
 		navigationGate.resolve();

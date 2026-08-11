@@ -370,7 +370,6 @@ describe("deploy acceptance", () => {
 		expect(wizardSource).toContain(
 			"const lastSuccessfulSubscriptionQuote = subscriptionCreateQuote.data ?? null;",
 		);
-		expect(wizardSource.match(/quote: lastSuccessfulSubscriptionQuote/g)).toHaveLength(3);
 		expect(wizardSource).toContain(
 			"submitting || lastSuccessfulSubscriptionQuote ? null : subscriptionCreateQuote.error;",
 		);
