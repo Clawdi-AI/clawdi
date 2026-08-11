@@ -363,7 +363,7 @@ async def list_channel_bot_pool(
                 ),
             ),
         )
-        .order_by(ChannelAccount.provider, ChannelAccount.visibility.desc(), ChannelAccount.name)
+        .order_by(ChannelAccount.provider, ChannelAccount.created_at, ChannelAccount.id)
     )
     providers: dict[str, list[ChannelBotPoolItem]] = {
         provider: [] for provider in CHANNEL_PROVIDERS
@@ -390,8 +390,6 @@ async def list_channel_bot_pool(
                 link_count=link_counts.get(account.id, 0),
             )
         )
-    for items in providers.values():
-        items.sort(key=lambda item: (not item.available, item.link_count, item.name, str(item.id)))
     return ChannelBotPoolResponse(providers=providers)
 
 

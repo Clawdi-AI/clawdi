@@ -1905,11 +1905,22 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
         )
     ).scalar_one()
     disabled_whatsapp_account.status = CHANNEL_STATUS_DISABLED
+
+    private_account = await db_session.get(ChannelAccount, UUID(private["id"]))
+    public_account = await db_session.get(ChannelAccount, UUID(public_body["id"]))
+    assert private_account is not None
+    assert public_account is not None
+    public_account.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    private_account.created_at = datetime(2026, 1, 2, tzinfo=UTC)
     await db_session.flush()
 
     pool = await client.get("/v1/channels/bot-pool")
     assert pool.status_code == 200
     telegram = pool.json()["providers"]["telegram"]
+    relevant_ids = [
+        item["id"] for item in telegram if item["id"] in {private["id"], public_body["id"]}
+    ]
+    assert relevant_ids == [public_body["id"], private["id"]]
     pool_by_id = {item["id"]: item for item in telegram}
     assert pool_by_id[private["id"]]["visibility"] == "private"
     assert pool_by_id[private["id"]]["access"] == "owner"
