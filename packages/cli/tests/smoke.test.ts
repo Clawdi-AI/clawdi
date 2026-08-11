@@ -72,7 +72,7 @@ describe("CLI smoke — src entry", () => {
 		expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
 	});
 
-	it("--help lists every top-level command", async () => {
+	it("--help lists ordinary commands and hides Hosted operator surfaces", async () => {
 		const { stdout, code } = await runCli(["--help"]);
 		expect(code).toBe(0);
 		for (const cmd of [
@@ -87,16 +87,45 @@ describe("CLI smoke — src entry", () => {
 			"skill",
 			"memory",
 			"doctor",
-			"capabilities",
 			"update",
 			"mcp",
 			"read",
 			"inject",
 			"run",
-			"runtime",
 		]) {
 			expect(stdout).toContain(cmd);
 		}
+		expect(stdout).not.toMatch(/^\s+capabilities(?:\s|$)/m);
+		expect(stdout).not.toMatch(/^\s+runtime(?:\s|$)/m);
+		expect(stdout).not.toContain("clawdi runtime status");
+		expect(stdout).not.toContain("CLAWDI_RUNTIME_MODE");
+	});
+
+	it("keeps the hidden Hosted runtime command ABI callable through direct help", async () => {
+		const runtimeHelp = await runCli(["runtime", "--help"]);
+		expect(runtimeHelp.code).toBe(0);
+		for (const command of ["init", "watch", "verify", "sidecar", "status", "doctor"]) {
+			expect(runtimeHelp.stdout).not.toMatch(new RegExp(`^\\s+${command}(?:\\s|$)`, "m"));
+		}
+		expect(runtimeHelp.stdout).not.toMatch(/^\s+(?:plan|apply)(?:\s|$)/m);
+
+		const directHelpCases: Array<[string, string[]]> = [
+			["init", ["--non-interactive", "--json"]],
+			["watch", ["--interval-ms <ms>", "--self-heal-ms <ms>", "--once", "--json"]],
+			["verify", ["--json"]],
+			["sidecar", []],
+			["status", ["--json"]],
+			["doctor", ["--json"]],
+		];
+		for (const [command, options] of directHelpCases) {
+			const result = await runCli(["runtime", command, "--help"]);
+			expect(result.code).toBe(0);
+			expect(result.stdout).toContain(`Usage: clawdi runtime ${command}`);
+			for (const option of options) expect(result.stdout).toContain(option);
+		}
+
+		const statusHelp = await runCli(["runtime", "status", "--help"]);
+		expect(statusHelp.stdout).not.toContain("--file");
 	});
 
 	it("capabilities prints JSON without requiring auth", async () => {
@@ -166,6 +195,34 @@ describe("CLI smoke — src entry", () => {
 			expect(stdout).not.toContain("CLAWDI_AUTH_TOKEN");
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("hides config paths and --runtime-service while preserving both parsers", async () => {
+		const configHelp = await runCli(["config", "--help"]);
+		expect(configHelp.code).toBe(0);
+		expect(configHelp.stdout).not.toMatch(/^\s+paths(?:\s|$)/m);
+
+		const runHelp = await runCli(["run", "--help"]);
+		expect(runHelp.code).toBe(0);
+		expect(runHelp.stdout).not.toContain("--runtime-service");
+
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync } = await import("node:fs");
+		const root = join(tmpdir(), `clawdi-smoke-runtime-service-${Date.now()}`);
+		mkdirSync(root, { recursive: true });
+		try {
+			const parsed = await runCli(["run", "--runtime-service", "hermes+dashboard", "hermes"], {
+				HOME: join(root, "home"),
+				CLAWDI_RUNTIME_MODE: "hosted",
+				CLAWDI_SERVICE_STATE_DIR: join(root, "state"),
+				CLAWDI_RUN_DIR: join(root, "run"),
+			});
+			expect(parsed.code).toBe(1);
+			expect(parsed.stderr).not.toContain("unknown option");
+			expect(parsed.stdout).toContain("No hosted run config for hermes");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 

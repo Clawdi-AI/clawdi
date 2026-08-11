@@ -844,8 +844,9 @@ workload restart or replacement.
 Root runtime operators can use these commands in controlled environments:
 
 ```bash
-clawdi runtime init --non-interactive
-clawdi runtime watch
+clawdi runtime init --non-interactive --json
+clawdi runtime watch --once --json
+clawdi runtime verify --json
 clawdi runtime sidecar
 clawdi runtime status --json
 clawdi runtime doctor --json
@@ -853,8 +854,8 @@ clawdi run -- <command>
 ```
 
 Normal local onboarding still uses `clawdi setup`. Runtime commands are for
-managed environments where configuration is supplied by policy or a manifest,
-not by an interactive user setup flow.
+managed Hosted environments where configuration is supplied by policy and
+controller desired state, not by an interactive user setup flow or user file.
 
 `runtime watch` is the long-running reconciliation loop. It refreshes remote
 manifest state using ETags, applies changes, records status, and falls back to
@@ -1133,9 +1134,9 @@ derived from the current manifest. OpenClaw current state is the
 canonical `mcp.servers` object in `~/.openclaw/openclaw.json`; Hermes uses
 `mcp_servers` in `~/.hermes/config.yaml`. A desired name that already exists
 without ledger ownership fails closed. Native absence already satisfies a
-managed deletion. The runtime apply snapshots both complete native configs and
-the ledger, preserves unrelated entries, writes the ledger last, and restores
-the exact previous files and metadata if any later mutation fails.
+managed deletion. The convergence transaction snapshots both complete native
+configs and the ledger, preserves unrelated entries, writes the ledger last,
+and restores the exact previous files and metadata if any later mutation fails.
 These paths and transports are pinned to official fixed-commit sources:
 OpenClaw's
 [`mcp-config.ts` read path](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/mcp-config.ts#L51-L65),

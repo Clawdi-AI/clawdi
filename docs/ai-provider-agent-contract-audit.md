@@ -7,8 +7,9 @@ convergence. It does not describe a local Provider activation workflow.
 
 Core stores a multi-record Provider Catalog, while each configured Hosted
 Hermes or OpenClaw runtime binds exactly one provider. The controller emits the
-stable bootstrap and runtime manifest; the CLI runtime reconciler projects that
-single selection into the target-native configuration and credential store.
+stable bootstrap and Hosted desired-state bundle; the CLI runtime reconciler
+projects that single selection into the target-native configuration and
+credential store.
 
 Provider requests continue to flow directly from the runtime to the selected
 provider. Core does not proxy user BYOK model traffic.

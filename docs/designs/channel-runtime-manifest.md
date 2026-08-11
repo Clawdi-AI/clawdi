@@ -1,15 +1,22 @@
 # Channel Runtime Manifest
 
-Status: implemented baseline
+> HISTORICAL / RETIRED - The `clawdi.runtime.yaml` user-file CLI (`runtime
+> plan/apply` and `runtime status --file`) has been removed. See
+> [Managed Runtime](../managed-runtime.md) for Hosted desired-state convergence
+> and [Native Channels Product Model](native-channels-product-model.md) for the
+> ordinary channel CLI and APIs.
+
+Status: retired
 Date: 2026-06-08
 
-## Current State
+## Historical State at Retirement
 
-The CLI now has baseline runtime manifest support for Clawdi-native channels.
-It reconciles user-facing channel state through ordinary authenticated APIs and
-materializes agent-facing SDK config into explicit local runtime outputs.
+The CLI previously had baseline runtime manifest support for Clawdi-native
+channels.
+It reconciled user-facing channel state through ordinary authenticated APIs and
+materialized agent-facing SDK config into explicit local runtime outputs.
 
-What exists today:
+What existed at retirement:
 
 - `clawdi channel ...` manages the user-facing channel control plane through
   `/v1/channels`.
