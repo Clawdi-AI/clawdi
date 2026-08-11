@@ -3603,7 +3603,7 @@ echo spawned > '${installerLog}'
 		const fixtureRoot = dirname(paths.serviceStateRoot);
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const skillDir = join(paths.userHome, ".hermes", "skills", "clawdi");
-		const ledger = join(paths.projectionRoot, "managed-skills.json");
+		const ledger = join(paths.managedResourceRoot, "managed-skills.json");
 		const cliRoot = resolve(import.meta.dir, "../..");
 		const skillSource = join(cliRoot, "skills", "hosted-versions", "1", "clawdi");
 		const protectedSourceAncestors = [
@@ -3679,6 +3679,8 @@ echo spawned > '${installerLog}'
 			expect(statSync(join(skillDir, "SKILL.md")).uid).toBe(runtimeUid);
 			expect(statSync(paths.projectionRoot).uid).toBe(0);
 			expect(statSync(paths.projectionRoot).mode & 0o777).toBe(0o755);
+			expect(statSync(paths.managedResourceRoot).uid).toBe(0);
+			expect(statSync(paths.managedResourceRoot).mode & 0o777).toBe(0o755);
 			expect(statSync(ledger).uid).toBe(0);
 			expect(statSync(ledger).mode & 0o022).toBe(0);
 			for (const path of protectedSourceAncestors) {
@@ -3692,7 +3694,7 @@ echo spawned > '${installerLog}'
 					"--",
 					"test",
 					"-w",
-					paths.projectionRoot,
+					paths.managedResourceRoot,
 				]),
 			).toThrow();
 
@@ -3914,6 +3916,18 @@ echo spawned > '${installerLog}'
 			),
 		).toBe(true);
 		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
+
+		writeFileSync(join(target, "SKILL.md"), "tenant mutation\n");
+		rmSync(paths.managedResourceRoot, { recursive: true, force: true });
+		const reconverged = convergeRuntimeManifest(
+			manifestLoad({ ...manifest, generation: 2 }, "bundled-openclaw-skill-restart"),
+			paths,
+		);
+		expect(reconverged.installErrors).toEqual([]);
+		expect(readFileSync(join(target, "SKILL.md"))).toEqual(
+			readFileSync(join(packageSource, "SKILL.md")),
+		);
+		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
 	});
 
 	test("removes only strictly identified legacy bundled OpenClaw Skills without requiring a new receipt", () => {
@@ -3944,6 +3958,7 @@ echo spawned > '${installerLog}'
 					resolveWorkspace: () => openClawWorkspaceRoot,
 					installDirectory: () => "installed",
 					install: () => "installed",
+					hasOwnershipReceipt: () => false,
 					verifyOwned: () => false,
 					cleanupManifestOwned: () => {
 						guardedCleanupCalls += 1;
@@ -4203,6 +4218,7 @@ echo spawned > '${installerLog}'
 				paths.runConfigRoot,
 				paths.egressProfileBundle,
 				paths.installInventory,
+				paths.managedResourceRoot,
 				paths.projectionRoot,
 				join(paths.instanceRoot, manifest.instanceId),
 				paths.daemonAuthToken,

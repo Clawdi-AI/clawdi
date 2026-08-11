@@ -31,6 +31,7 @@ describe("runtime paths", () => {
 		expect(paths.cliNpmPrefix).toBe("/var/lib/clawdi/maintained/clawdi/npm");
 		expect(paths.cliNpmCache).toBe("/var/cache/clawdi/npm");
 		expect(paths.fileBrowserInstallRoot).toBe("/var/lib/clawdi/maintained/filebrowser");
+		expect(paths.managedResourceRoot).toBe("/var/lib/clawdi/managed-resources");
 		expect(paths.fileBrowserStateRoot).toBe("/var/lib/clawdi-files");
 		expect(paths.egressServiceBinary).toBe("/run/clawdi/egress/systemd/mitmdump");
 		expect(paths.fileBrowserServiceBinary).toBe("/run/clawdi-files/filebrowser");

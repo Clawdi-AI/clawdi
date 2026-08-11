@@ -7,8 +7,9 @@ import {
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
+	managedSkillMarkerMatchesIdentity,
+	managedSkillMarkerOwnsTarget,
 	managedSkillReceiptMatchesIdentity,
-	managedSkillReceiptOwnsTarget,
 	managedSkillTreesEqual,
 	withManagedTargetRollback,
 	withStagedManagedSkill,
@@ -35,6 +36,11 @@ export interface HostedOpenClawSkillDriver {
 		workspaceRoot: string;
 		skill: PreparedHostedSourcedSkill;
 	}): "installed" | "unchanged";
+	hasOwnershipReceipt(input: {
+		workspaceRoot: string;
+		skillId: string;
+		ownershipIdentity: string;
+	}): boolean;
 	verifyOwned(input: { workspaceRoot: string; skill: PreparedHostedSourcedSkill }): boolean;
 	cleanupManifestOwned(input: {
 		workspaceRoot: string;
@@ -129,7 +135,7 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 		const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
 		if (nativeResultMatches(input.sourceDir, target) && managedSkillReceiptMatchesIdentity(receipt))
 			return "unchanged";
-		if (existsSync(target) && !managedSkillReceiptOwnsTarget(receipt))
+		if (existsSync(target) && !managedSkillMarkerOwnsTarget(receipt))
 			throw new Error(
 				"refusing to replace an OpenClaw Skill without a matching Clawdi ownership receipt",
 			);
@@ -180,12 +186,17 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 			}),
 		);
 	},
+	hasOwnershipReceipt(input) {
+		return managedSkillMarkerMatchesIdentity(
+			receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity),
+		);
+	},
 	verifyOwned(input) {
 		return withStagedManagedSkill(
 			input.skill,
 			(sourceDir) =>
 				nativeResultMatches(sourceDir, targetDir(input.workspaceRoot, input.skill.skillId)) &&
-				managedSkillReceiptMatchesIdentity(
+				managedSkillMarkerMatchesIdentity(
 					receiptInput(input.workspaceRoot, input.skill.skillId, input.skill.sourceIdentity),
 				),
 		);

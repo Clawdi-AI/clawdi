@@ -3366,17 +3366,23 @@ function hostedMcpIntent(manifest: RuntimeManifest): HostedMcpIntent {
 }
 
 function hostedMcpLedgerPath(paths: RuntimePaths): string {
+	return join(paths.managedResourceRoot, HOSTED_MCP_LEDGER_FILE);
+}
+
+function legacyHostedMcpLedgerPath(paths: RuntimePaths): string {
 	return join(paths.projectionRoot, HOSTED_MCP_LEDGER_FILE);
 }
 
 function readHostedMcpManagedLedger(paths: RuntimePaths): HostedMcpManagedLedger {
 	const path = hostedMcpLedgerPath(paths);
-	if (!existsSync(path)) {
+	const legacyPath = legacyHostedMcpLedgerPath(paths);
+	const sourcePath = existsSync(path) ? path : existsSync(legacyPath) ? legacyPath : null;
+	if (!sourcePath) {
 		return { schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION, runtimes: {} };
 	}
 	let payload: unknown;
 	try {
-		payload = JSON.parse(readFileSync(path, "utf-8"));
+		payload = JSON.parse(readFileSync(sourcePath, "utf-8"));
 	} catch (error) {
 		throw new Error(
 			`hosted MCP last-applied ledger is invalid: ${
@@ -3622,6 +3628,36 @@ function recoverHostedOpenClawSourcedSkillReservations(
 			id: skillId,
 			manager: "hosted-manifest",
 			sourceIdentity: skill.sourceIdentity,
+		});
+	}
+}
+
+function recoverHostedOpenClawBundledSkillReservations(
+	manifest: RuntimeManifest,
+	openClawWorkspaceRoot: string,
+	driver: HostedOpenClawSkillDriver,
+): void {
+	if (!hostedBundledSkillsEnabled() || manifest.runtimes.openclaw?.enabled !== true) return;
+	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
+		if (desired.enabled !== true || "source" in desired) continue;
+		const targetDir = join(openClawWorkspaceRoot, "skills", skillId);
+		if (!existsSync(targetDir) || managedSkillReservationOwner(targetDir, skillId) !== "unreserved")
+			continue;
+		const bundled = resolveHostedBundledSkill(skillId, desired.version);
+		if (
+			!driver.hasOwnershipReceipt({
+				workspaceRoot: openClawWorkspaceRoot,
+				skillId,
+				ownershipIdentity: `content-sha256\0${bundled.digest}`,
+			})
+		)
+			continue;
+		reserveManagedSkill({
+			targetDir,
+			id: skillId,
+			manager: "hosted-manifest",
+			version: bundled.version,
+			digest: bundled.digest,
 		});
 	}
 }
@@ -3936,7 +3972,11 @@ function applyHostedMcpProjections(
 		outputs.add(runtime.commandPath);
 	}
 	// The last-applied ownership map advances only after every native target.
-	if (Object.keys(plan.nextLedger.runtimes).length > 0 || existsSync(ledgerPath)) {
+	if (
+		Object.keys(plan.nextLedger.runtimes).length > 0 ||
+		existsSync(ledgerPath) ||
+		existsSync(legacyHostedMcpLedgerPath(paths))
+	) {
 		writeHostedMcpManagedLedger(paths, plan.nextLedger);
 	}
 	return [...outputs];
@@ -5573,6 +5613,11 @@ export function convergeRuntimeManifest(
 			hermesSkillNativeReconciler,
 		);
 		if (openClawWorkspaceRoot) {
+			recoverHostedOpenClawBundledSkillReservations(
+				manifest,
+				openClawWorkspaceRoot,
+				openClawSkillDriver,
+			);
 			recoverHostedOpenClawSourcedSkillReservations(
 				manifest,
 				openClawWorkspaceRoot,
