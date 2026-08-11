@@ -909,14 +909,12 @@ const _cardPastDueDeployment = {
 	},
 };
 
-const _terminalFallbackDeployment = {
+const terminalFallbackDeployment: DeploymentMutationFixture = {
 	...includedBasicDeployment,
 	id: "hdep_terminal_fallback",
 	name: "Fallback Basic",
 	upgrade_available: false,
-	compute_subscription: { ...includedBasicDeployment.compute_subscription },
 	last_funding_event: {
-		type: "compute_subscription_fallback",
 		funding_source: "stripe",
 		reason: "payment_failure",
 		prior_plan_slug: "compute_performance",
@@ -1041,7 +1039,7 @@ function planChangeResponse({
 	targetBillingTermMonths: 1 | 12;
 	status: "awaiting_payment" | "awaiting_projection" | "scheduled" | "complete";
 	effectiveAt: string;
-}) {
+}): { body: NonNullable<DeploymentRead["accepted_operation"]>; status: number } {
 	return {
 		status: 202,
 		body: {
@@ -3648,6 +3646,73 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	await expect(page.getByRole("button", { name: "Check plan change status" })).toBeVisible();
 	await expect(page.getByText("Plan changed", { exact: true })).toBeVisible();
 	expect(errors, `paid card upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("accepted plan change recovers from the deployment projection after refresh", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const planChangeRequests: string[] = [];
+	const operation = (status: "awaiting_projection" | "complete") =>
+		planChangeResponse({
+			operationId: "op_recovered_card",
+			subscriptionId: 42,
+			fundingSource: "stripe",
+			currentPlanSlug: "compute_basic",
+			targetPlanSlug: "compute_performance",
+			targetBillingTermMonths: 12,
+			status,
+			effectiveAt: "2026-07-16T00:00:00Z",
+		});
+	const pendingOperation = operation("awaiting_projection").body;
+	const failedOperation = {
+		...pendingOperation,
+		done: true,
+		error: { code: 9, message: "Plan change failed", details: [] },
+	};
+	const projectedDeployment = mutationDeploymentReadFixture(terminalFallbackDeployment);
+	projectedDeployment.accepted_operation = {
+		...pendingOperation,
+		metadata: { ...pendingOperation.metadata, deploymentId: projectedDeployment.resource.id },
+	};
+	const terminalDeployment = {
+		...projectedDeployment,
+		accepted_operation: {
+			...failedOperation,
+			metadata: { ...failedOperation.metadata, deploymentId: projectedDeployment.resource.id },
+		},
+	};
+
+	await stubHostedApi(page, {
+		deployments: [terminalDeployment],
+		deploymentListResponses: [[projectedDeployment], [projectedDeployment]],
+		planChangeRequests,
+		planChangeOperationResponses: [{ body: terminalDeployment.accepted_operation, status: 200 }],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	await page.reload();
+
+	await page.getByRole("button", { name: "Check plan change status" }).click();
+	const recoveryDialog = page.getByRole("dialog", { name: "Check plan change status" });
+	await expect(
+		recoveryDialog.getByText(
+			"This plan change was already accepted. Checking its status will not submit another charge.",
+			{ exact: true },
+		),
+	).toBeVisible();
+	await recoveryDialog.getByRole("button", { name: "Check status", exact: true }).click();
+	await expect(page.getByText("Couldn’t change plan", { exact: true })).toBeVisible();
+	const retryDialog = page.getByRole("dialog", { name: "Change compute subscription" });
+	await expect(retryDialog).toBeVisible();
+	await retryDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(
+		page
+			.locator("#compute-plan-controls")
+			.getByRole("button", { name: "Start a new subscription" }),
+	).toBeVisible();
+	expect(planChangeRequests).toEqual([]);
+	expect(errors, `recovered plan change: ${errors.join(" | ")}`).toEqual([]);
 });
 
 for (const firstTimeViewport of [

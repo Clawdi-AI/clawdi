@@ -22,7 +22,7 @@ import type {
 	HostedComputeSubscription,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
-import { billingQueryRetry } from "@/hosted/billing/errors";
+import { billingQueryRetry, PlanChangeTerminalError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	type SubscriptionCreateQuoteView,
@@ -221,7 +221,8 @@ export function useCheckPlanChange() {
 	const qc = useQueryClient();
 	return useMutation<ComputePlanChangeResult, Error, string>({
 		mutationFn: (operationName) => client.checkPlanChange(operationName),
-		onSuccess: () => {
+		onSettled: (_result, error) => {
+			if (error && !(error instanceof PlanChangeTerminalError)) return;
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
 			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });

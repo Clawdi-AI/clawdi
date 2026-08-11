@@ -1,11 +1,50 @@
 import { describe, expect, test } from "bun:test";
+import { hostedDeploymentFixture } from "../../hosted-deployment.test-fixture";
+import type { HostedDeployment } from "../contracts";
 import {
+	activePlanChangeOperationName,
 	defaultPlanChangeSelection,
 	isSamePlanChangeSelection,
 	performanceUpgradeUnavailableReason,
 	planChangeUnavailableReason,
 	walletBalanceAfterDebit,
 } from "./plan-change.logic";
+
+describe("plan change recovery", () => {
+	type AcceptedOperation = NonNullable<HostedDeployment["accepted_operation"]>;
+	const acceptedPlanChange: AcceptedOperation = {
+		name: "operations/plan-change-pending",
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "dep_test",
+			verb: "plan_change",
+			targetGeneration: 2,
+			manifestETag: "etag_plan_change",
+			createTime: "2026-08-11T00:00:00Z",
+			updateTime: "2026-08-11T00:00:00Z",
+		},
+		done: false,
+	};
+	const recover = (operation: AcceptedOperation) =>
+		activePlanChangeOperationName(hostedDeploymentFixture({ acceptedOperation: operation }));
+
+	test("recovers only an active plan change belonging to the projected deployment", () => {
+		expect(recover(acceptedPlanChange)).toBe("operations/plan-change-pending");
+		expect(recover({ ...acceptedPlanChange, done: true })).toBeNull();
+		expect(
+			recover({
+				...acceptedPlanChange,
+				metadata: { ...acceptedPlanChange.metadata, verb: "restart" },
+			}),
+		).toBeNull();
+		expect(
+			recover({
+				...acceptedPlanChange,
+				metadata: { ...acceptedPlanChange.metadata, deploymentId: "dep_other" },
+			}),
+		).toBeNull();
+	});
+});
 
 describe("walletBalanceAfterDebit", () => {
 	test("preserves the exact quoted decimal debit", () => {

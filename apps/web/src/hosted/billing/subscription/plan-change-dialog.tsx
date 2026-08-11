@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, CreditCard, TriangleAlert, WalletCards } from "lucide-react";
+import { CalendarClock, CreditCard, RefreshCw, TriangleAlert, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,7 @@ export function PlanChangeDialog({
 	hasAcceptedChange,
 	onQuote,
 	onConfirm,
+	onCheckStatus,
 	onTopUp,
 	onExitComplete,
 }: {
@@ -89,6 +90,7 @@ export function PlanChangeDialog({
 	hasAcceptedChange: boolean;
 	onQuote: (selection: PlanChangeSelection) => void;
 	onConfirm: (operationId: string) => void;
+	onCheckStatus: () => void;
 	onTopUp?: () => void;
 	onExitComplete?: () => void;
 }) {
@@ -186,17 +188,54 @@ export function PlanChangeDialog({
 		>
 			<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!blocksClose}>
 				<DialogHeader>
-					<DialogTitle>{displayedQuote ? quoteTitle : "Change compute subscription"}</DialogTitle>
+					<DialogTitle>
+						{hasAcceptedChange
+							? "Check plan change status"
+							: displayedQuote
+								? quoteTitle
+								: "Change compute subscription"}
+					</DialogTitle>
 					<DialogDescription>
-						{displayedQuote
-							? displayedQuote.change_kind === "immediate_upgrade"
-								? "The quoted proration is charged now. Compute changes after payment is confirmed."
-								: `The current plan remains active until ${formatShortDate(displayedQuote.effective_at)}.`
-							: "Choose a compute plan and monthly or annual billing, then review the exact price and timing."}
+						{hasAcceptedChange
+							? "This plan change was already accepted. Checking its status will not submit another charge."
+							: displayedQuote
+								? displayedQuote.change_kind === "immediate_upgrade"
+									? "The quoted proration is charged now. Compute changes after payment is confirmed."
+									: `The current plan remains active until ${formatShortDate(displayedQuote.effective_at)}.`
+								: "Choose a compute plan and monthly or annual billing, then review the exact price and timing."}
 					</DialogDescription>
 				</DialogHeader>
 
-				{displayedQuote ? (
+				{hasAcceptedChange ? (
+					<div className="flex flex-col gap-4">
+						<Alert>
+							<CalendarClock aria-hidden />
+							<AlertTitle>Still waiting for confirmation</AlertTitle>
+							<AlertDescription>
+								We don’t have a final result yet. Don’t submit another plan change. You can close
+								this window and check again in a few minutes; if it still hasn’t finished, contact
+								support.
+							</AlertDescription>
+						</Alert>
+						<DialogFooter>
+							<Button
+								variant="ghost"
+								onClick={() => requestOpenChange(false)}
+								disabled={blocksClose}
+							>
+								Close
+							</Button>
+							<Button onClick={onCheckStatus} disabled={isConfirming}>
+								{isConfirming ? (
+									<Spinner data-icon="inline-start" />
+								) : (
+									<RefreshCw data-icon="inline-start" />
+								)}
+								{isConfirming ? "Checking status…" : "Check status"}
+							</Button>
+						</DialogFooter>
+					</div>
+				) : displayedQuote ? (
 					<div className="flex flex-col gap-4">
 						<div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
 							<dl>
@@ -267,24 +306,13 @@ export function PlanChangeDialog({
 								</AlertDescription>
 							</Alert>
 						) : null}
-						{hasAcceptedChange ? (
-							<Alert>
-								<CalendarClock aria-hidden />
-								<AlertTitle>Still waiting for confirmation</AlertTitle>
-								<AlertDescription>
-									We don’t have a final result yet. Don’t submit another plan change. You can close
-									this window and check again in a few minutes; if it still hasn’t finished, contact
-									support. Checking only reads the status and does not submit another charge.
-								</AlertDescription>
-							</Alert>
-						) : null}
 						<DialogFooter>
 							<Button
 								variant="ghost"
 								onClick={() => requestOpenChange(false)}
 								disabled={blocksClose}
 							>
-								{hasAcceptedChange ? "Close" : "Back"}
+								Back
 							</Button>
 							<Button
 								onClick={() => onConfirm(displayedQuote.operation_id)}
@@ -297,13 +325,7 @@ export function PlanChangeDialog({
 								) : (
 									<CreditCard data-icon="inline-start" />
 								)}
-								{isConfirming
-									? hasAcceptedChange
-										? "Checking status…"
-										: busyLabel
-									: hasAcceptedChange
-										? "Check status"
-										: confirmLabel}
+								{isConfirming ? busyLabel : confirmLabel}
 							</Button>
 						</DialogFooter>
 					</div>

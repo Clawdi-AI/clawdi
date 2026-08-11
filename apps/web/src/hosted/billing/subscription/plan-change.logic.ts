@@ -39,6 +39,21 @@ const PERFORMANCE_UPGRADE_UNAVAILABLE_COPY = {
 const UNKNOWN_PERFORMANCE_UPGRADE_UNAVAILABLE_COPY =
 	"Clawdi can’t confirm why this agent can’t be upgraded right now. Check again later, or contact support if this continues.";
 
+/** Recover an active plan change from the authoritative deployment projection. */
+export function activePlanChangeOperationName(
+	deployment: Pick<HostedDeployment, "accepted_operation" | "resource">,
+): string | null {
+	const operation = deployment.accepted_operation;
+	if (
+		operation?.done !== false ||
+		operation.metadata.verb !== "plan_change" ||
+		operation.metadata.deploymentId !== deployment.resource.id
+	) {
+		return null;
+	}
+	return operation.name.trim() || null;
+}
+
 function isHostedComputeUpgradeIneligibilityReason(
 	reason: string,
 ): reason is HostedComputeUpgradeIneligibilityReason {
