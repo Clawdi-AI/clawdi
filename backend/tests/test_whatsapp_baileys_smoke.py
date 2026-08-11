@@ -48,7 +48,7 @@ def _baileys_protocol_smoke_gate(env: Mapping[str, str]) -> tuple[bool, str | No
     if env.get("CLAWDI_BAILEYS_AUTH_CERT_SEAM_AVAILABLE") != "1":
         return (
             False,
-            "stock Baileys 7.0.0-rc13 has no authCert SocketConfig trust seam; "
+            "stock Baileys 7.0.0-rc14 has no authCert SocketConfig trust seam; "
             "CLAWDI_BAILEYS_AUTH_CERT_SEAM_AVAILABLE=1 must only describe a supplied seam",
         )
     return True, None
@@ -68,7 +68,7 @@ def test_real_baileys_protocol_smoke_gate_requires_opt_in_and_an_available_seam(
     )
     enabled, reason = _baileys_protocol_smoke_gate({"CLAWDI_RUN_BAILEYS_SMOKE": "1"})
     assert enabled is False
-    assert reason is not None and "stock Baileys 7.0.0-rc13" in reason
+    assert reason is not None and "stock Baileys 7.0.0-rc14" in reason
     assert _baileys_protocol_smoke_gate(
         {
             "CLAWDI_RUN_BAILEYS_SMOKE": "1",
@@ -96,6 +96,7 @@ async def test_whatsapp_baileys_websocket_reaches_open_with_real_baileys() -> No
         opened = json.loads(result.stdout)
         assert opened["status"] == "open"
         assert opened["user"]["id"] == seeded["jid"]
+        assert opened["user"]["lid"] == seeded["lid"]
 
 
 @real_baileys_protocol_smoke
@@ -114,8 +115,31 @@ async def test_whatsapp_baileys_websocket_delivers_inbox_to_real_baileys() -> No
         )
         opened = json.loads(result.stdout)
         assert opened["status"] == "open"
+        assert opened["user"]["lid"] == seeded["lid"]
         assert opened["inbound"] == seeded["expected_inbound"]
         assert ("inbound_message", "pushed") in {
+            (event["stage"], event["outcome"]) for event in debug_events
+        }
+
+
+@real_baileys_protocol_smoke
+@pytest.mark.asyncio
+async def test_whatsapp_baileys_websocket_round_trips_encrypted_reply() -> None:
+    baileys_cwd = _baileys_smoke_cwd()
+    _assert_baileys_available(baileys_cwd)
+    seeded = await _seed_whatsapp_smoke_account(
+        include_inbox=True,
+        expected_reply="encrypted reply from real Baileys",
+    )
+    async with _running_smoke_backend(seeded):
+        result = await _run_node_baileys_smoke(baileys_cwd=baileys_cwd, seeded=seeded)
+        debug_events = await _debug_events_for(seeded["account_id"])
+        assert result.returncode == 0, (result.stdout, result.stderr, debug_events)
+        opened = json.loads(result.stdout)
+        assert opened["status"] == "open"
+        assert opened["user"]["lid"] == seeded["lid"]
+        assert opened["reply"]["id"]
+        assert ("outbound_message", "decoded") in {
             (event["stage"], event["outcome"]) for event in debug_events
         }
 
@@ -314,6 +338,7 @@ async def _seed_whatsapp_smoke_account(
     inbox_payload: dict[str, Any] | None = None,
     expected_conversation: str | None = None,
     expected_message_hex: str | None = None,
+    expected_reply: str | None = None,
 ) -> dict[str, Any]:
     marker = f"wa-baileys-smoke-{uuid.uuid4().hex[:10]}"
     async with async_session_factory() as db:
@@ -471,12 +496,15 @@ async def _seed_whatsapp_smoke_account(
             "user_id": str(user.id),
             "account_id": str(account.id),
             "jid": stored.minted.jid,
+            "lid": "900000000000001:7@lid",
             "creds": encode_buffer_json(stored.minted.creds),
             "auth_cert": serialize_whatsapp_auth_cert(auth_cert),
             "agent_token": agent_token,
         }
         if expected_inbound is not None:
             seeded["expected_inbound"] = expected_inbound
+        if expected_reply is not None:
+            seeded["expected_reply"] = expected_reply
         return seeded
 
 
@@ -570,6 +598,8 @@ const sock = makeWASocket({
 const result = await new Promise((resolve) => {
   let openedUser = null;
   let inbound = null;
+  let reply = null;
+  let replyStarted = false;
   let resolved = false;
   const done = (value) => {
     if (resolved) return;
@@ -578,8 +608,8 @@ const result = await new Promise((resolve) => {
     resolve(value);
   };
   const maybeDone = () => {
-    if (openedUser && (!input.expected_inbound || inbound)) {
-      done({ status: "open", user: openedUser, inbound });
+    if (openedUser && (!input.expected_inbound || inbound) && (!input.expected_reply || reply)) {
+      done({ status: "open", user: openedUser, inbound, reply });
     }
   };
   const timer = setTimeout(() => done({ status: "timeout", inbound }), 8000);
@@ -591,7 +621,7 @@ const result = await new Promise((resolve) => {
       done({ status: "close", close: update.lastDisconnect, inbound });
     }
   });
-  sock.ev.on("messages.upsert", ({ messages }) => {
+  sock.ev.on("messages.upsert", async ({ messages }) => {
     for (const message of messages) {
       const conversation =
         message.message?.conversation ?? message.message?.extendedTextMessage?.text ?? null;
@@ -610,6 +640,14 @@ const result = await new Promise((resolve) => {
           inbound.messageHex = message.message
             ? Buffer.from(proto.Message.encode(message.message).finish()).toString("hex")
             : null;
+        }
+        if (input.expected_reply && !replyStarted) {
+          replyStarted = true;
+          const sent = await sock.sendMessage(
+            message.key.remoteJid,
+            { text: input.expected_reply },
+          );
+          reply = { id: sent?.key?.id ?? null };
         }
         maybeDone();
         return;

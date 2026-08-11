@@ -11985,6 +11985,7 @@ async def test_whatsapp_pair_code_never_links_to_a_private_custom_identity(
             connected=True,
             registered=True,
             account_jid="15559876543@s.whatsapp.net",
+            account_lid="900000000000001@lid",
         )
     )
     registry = _WhatsAppPairLinkRegistry(account_id=account.id, client=sidecar)
