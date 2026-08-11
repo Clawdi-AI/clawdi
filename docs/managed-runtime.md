@@ -347,33 +347,33 @@ state, so a download, verification, systemd, or readiness failure restores the
 previous exact pre-image. There is no separate active/previous link state or
 hand-built chroot.
 
-`clawdi-files.service` runs as the dedicated non-login `clawdi-files` system
-UID/GID, never as the tenant runtime user. CLI/root reconciliation is the only
-identity, installer, updater, ACL, and unit controller. Candidate directories
-and binaries are root-owned; the service reads its root-authored
-per-boot config handoff from a `root:clawdi-files` `0750` directory containing
-a `root:clawdi-files` `0440` file, and systemd
-publishes only the verified binary through a unit-private `BindReadOnlyPaths=`
-mount. DB/cache state lives in the service-owned `0700`
-`StateDirectory=clawdi-files`; install
-receipts remain root-only `0600`. The tenant cannot replace those assets, read
-the derived JWT secret or state, signal the distinct-UID process, or control
-the system unit.
+`clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
+native read/write access to the complete tenant home, including `0600` files,
+`0700` directories, and dotfiles. Reconciliation does not rewrite ownership,
+modes, or ACLs across the home. Candidate directories and binaries remain
+root-owned. The root-authored JWT configuration is a `root:<runtime group>`
+`0440` file below a root-only `0700` directory, so other tenant processes
+cannot traverse to it; systemd publishes that file and the verified binary only
+inside the Files mount namespace through `BindReadOnlyPaths=`. Install receipts
+remain root-only `0600`.
 
-The CLI grants the service only named-group `rwX` access to `/home/clawdi`
-using recursive access and default POSIX ACLs through the image's existing
-`systemd-tmpfiles` `+ACL` support. Symlinks are not followed, existing content
-is reconciled, and new content inherits reciprocal tenant/service access. The
-base runtime image remains unchanged and contains no File Browser binary,
-configuration, state, service identity, installer, or File Browser-specific
+DB/cache state lives in the tenant-owned `0700`
+`StateDirectory=clawdi-files`. The tenant can therefore inspect or alter its
+own Files state and can signal the same-UID Files process, but cannot replace
+the root-owned binary or configuration source, write receipts, or control the
+system unit. Systemd restarts a terminated Files process and readiness gates
+activation. The base runtime image remains unchanged and contains no File
+Browser binary, configuration, state, installer, or File Browser-specific
 package. The service reuses the generated system-unit and environment-file
 writer and applies systemd's native
 `ProtectSystem=strict`, `ProtectHome=tmpfs`, `BindPaths`, `ReadWritePaths`,
-`ReadOnlyPaths`, `NoExecPaths`, private device/tmp, capability, namespace, and task-limit
-controls. File Browser receives its official JWT header configuration with
-password, signup, passkey, sharing, admin, API-token management, realtime, and
-WebDAV disabled. It accepts only the manifest-bound external JWT assertion; no
-password, pairing code, access code, or URL token is part of this runtime
+`ReadOnlyPaths`, `NoExecPaths`, `PrivatePIDs`, private device/tmp, capability,
+namespace, and task-limit controls. `PrivatePIDs` prevents Files from observing
+or signaling the tenant's other runtime processes. File Browser receives its
+official JWT header configuration with password, signup, passkey, sharing,
+admin, API-token management, realtime, and WebDAV disabled. It accepts only the
+manifest-bound external JWT assertion; no password, pairing code, access code,
+or URL token is part of this runtime
 contract. The non-admin profile settings remain available for safe display and
 file-viewing preferences, with dotfiles visible and the sidebar unpinned by
 default; those settings cannot elevate the separately disabled permissions or
@@ -387,18 +387,14 @@ When a later manifest omits the companion, normal stale-unit
 reconciliation stops and withdraws only `clawdi-files.service` while preserving
 the selected Hermes or OpenClaw unit.
 
-The unavoidable workspace boundary is content-level: the tenant owns its
-workspace and can edit or delete its contents. It can also make an individual
-file or directory temporarily inaccessible to File Browser by changing its own
-permissions or ACL mask; the next CLI reconciliation repairs the managed ACL
-baseline. This does not grant the tenant control over the managed service,
-binary, configuration, secret, DB/cache state, receipts, unit, or active
-listener. Port 9120 has normal socket exclusivity rather than a separate
-tenant-slice reservation: the tenant cannot displace the running service, but
-can bind 9120 while it is not listening and thereby cause later service
-activation/systemd readiness proof to fail. That remaining availability/DoS
-boundary does not let reconciliation adopt the tenant process as the managed
-unit.
+The unavoidable workspace boundary is content-level: the tenant owns its home
+and can edit or delete its contents and Files state. This does not grant the
+tenant control over the root-owned binary, configuration secret source,
+receipts, unit, or listener authority. Port 9120 has normal socket exclusivity
+rather than a separate tenant-slice reservation: the tenant cannot displace the
+running service, but can bind 9120 while it is not listening and thereby cause
+later activation/readiness proof to fail. That remaining availability boundary
+does not let reconciliation adopt the tenant process as the managed unit.
 
 The pinned upstream contracts are File Browser's
 [JWT verifier](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/auth/jwt.go),
@@ -407,8 +403,7 @@ and [authentication settings](https://github.com/gtsteffaniak/filebrowser/blob/7
 the [user-default and permission fields](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/structs.go),
 and the [non-admin profile update boundary](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/users.go),
 plus the documented
-[systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)
-and [`systemd-tmpfiles` POSIX ACL types](https://www.freedesktop.org/software/systemd/man/latest/tmpfiles.d.html).
+[systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
 Repository tests verify the manifest, rollback, and systemd sandbox contracts.
 
 Done: `bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts`
@@ -1104,8 +1099,8 @@ and ephemeral runtime handoffs. Important outputs include:
 | Output | Purpose |
 | --- | --- |
 | `/etc/clawdi/clawdi.json` | Redacted managed runtime config |
-| `/run/clawdi/files/` | `root:clawdi-files` `0750` per-boot Files config handoff directory |
-| `/run/clawdi/files/filebrowser.yaml` | `root:clawdi-files` `0440` Files config read directly by the existing service |
+| `/run/clawdi/files/` | Root-only `0700` per-boot Files config source directory |
+| `/run/clawdi/files/filebrowser.yaml` | `root:<runtime group>` `0440` Files config published only through the unit-private bind mount |
 | `/etc/clawdi/projections/*` and `/etc/clawdi/run/*` | Managed projections and `clawdi run` launch config |
 | `/var/lib/clawdi/sync/runtimes.json` | Runtime sync state |
 | `/var/lib/clawdi/status/*` | Boot, apply, upgrade, provider, egress, watch, and receipt status/result files |
@@ -1114,7 +1109,7 @@ and ephemeral runtime handoffs. Important outputs include:
 | `/var/lib/clawdi/maintained/filebrowser/candidates/<sha256>/filebrowser` | Root-owned, verified Files executable |
 | `/var/lib/clawdi/maintained/clawdi/` | Root-only managed CLI activation and versioned package prefixes |
 | `/var/lib/clawdi-user/` | Tenant-owned `0750` hosted CLI state selected by `CLAWDI_HOME` |
-| `/var/lib/clawdi-files/` | `clawdi-files`-owned `0700` DB and component cache state |
+| `/var/lib/clawdi-files/` | Tenant-owned `0700` Files DB and component cache state |
 | `/var/cache/clawdi/manifest.last-good.json` | Refetchable last-good manifest fallback |
 | `/var/cache/clawdi/runtime-secrets.last-good.json` | Root-only refetchable secret fallback for offline recovery |
 | `/var/cache/clawdi/npm/` | Managed CLI npm download cache |

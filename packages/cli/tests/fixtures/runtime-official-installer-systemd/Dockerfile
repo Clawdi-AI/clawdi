@@ -2,7 +2,7 @@ ARG BUN_VERSION=1.3.14
 ARG NODE_VERSION=24.18.0
 
 FROM oven/bun:${BUN_VERSION} AS bun
-FROM node:${NODE_VERSION}-bookworm
+FROM node:${NODE_VERSION}-trixie
 
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=bun /usr/local/bin/bunx /usr/local/bin/bunx
