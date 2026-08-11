@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
+import { useStripeAppearance } from "@/hosted/billing/stripe-appearance";
 import type { PaymentIntentClientSecret } from "@/hosted/billing/stripe-client-secret";
 import {
 	type PaymentOutcome,
@@ -132,6 +133,7 @@ export function StripePaymentForm({
 	const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
 	const [stripe, setStripe] = useState<Stripe | null | undefined>(undefined);
 	const [attempt, setAttempt] = useState(0);
+	const appearance = useStripeAppearance();
 
 	useEffect(() => {
 		if (!key) return;
@@ -200,7 +202,7 @@ export function StripePaymentForm({
 
 	return (
 		<div data-hosted="true">
-			<Elements stripe={stripe} options={{ clientSecret, appearance: { theme: "stripe" } }}>
+			<Elements stripe={stripe} options={{ clientSecret, appearance }}>
 				<InnerForm
 					onComplete={onComplete}
 					onCancel={onCancel}

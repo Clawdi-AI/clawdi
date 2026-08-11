@@ -17,8 +17,7 @@ import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { confirmWalletTopup, TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { invalidateWalletData } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
-	cleanWalletTopupReturnUrl,
-	readWalletTopupReturn,
+	consumeWalletTopupReturn,
 	type WalletTopupReturnToast,
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
@@ -73,7 +72,11 @@ export function WalletPage() {
 	}
 
 	useEffect(() => {
-		const topupReturn = readWalletTopupReturn(window.location.search);
+		const topupReturn = consumeWalletTopupReturn(
+			window.location.href,
+			window.history.state,
+			window.history.replaceState.bind(window.history),
+		);
 		if (!topupReturn) return;
 		const { clientSecret } = topupReturn;
 		let cancelled = false;
@@ -114,10 +117,6 @@ export function WalletPage() {
 					toast.error("Couldn't refresh top-up", {
 						description: "Check your connection and reload Wallet.",
 					});
-				}
-			} finally {
-				if (!cancelled) {
-					window.history.replaceState(null, "", cleanWalletTopupReturnUrl(window.location.href));
 				}
 			}
 		}
