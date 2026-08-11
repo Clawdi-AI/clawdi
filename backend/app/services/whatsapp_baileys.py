@@ -1723,10 +1723,15 @@ async def ensure_whatsapp_agent_credential(
     credential = await load_credential()
     auth_cert = await _load_whatsapp_auth_cert_row(db, account_id=account.id)
     if credential is not None and auth_cert is not None:
+        material_changed = await save_whatsapp_credential_self_identity(
+            db,
+            credential=credential,
+            self_identity=whatsapp_self_identity_from_config(account.config),
+        )
         return ResolvedWhatsAppCredential(
             credential=credential,
             auth_cert=auth_cert,
-            material_changed=False,
+            material_changed=material_changed,
         )
 
     await db.execute(
@@ -1746,9 +1751,19 @@ async def ensure_whatsapp_agent_credential(
                 account=account,
                 bot_agent_link_id=link.id,
                 user_id=link.user_id,
+                self_identity=whatsapp_self_identity_from_config(account.config),
             )
         ).credential
         material_changed = True
+    else:
+        material_changed = (
+            await save_whatsapp_credential_self_identity(
+                db,
+                credential=credential,
+                self_identity=whatsapp_self_identity_from_config(account.config),
+            )
+            or material_changed
+        )
 
     return ResolvedWhatsAppCredential(
         credential=credential,
@@ -1783,6 +1798,52 @@ def whatsapp_agent_credential_config(
     if clean_self_identity:
         config["self_identity"] = clean_self_identity
     return config
+
+
+def whatsapp_self_identity_from_config(
+    config: Mapping[str, JsonValue] | None,
+) -> dict[str, str] | None:
+    if config is None:
+        return None
+    value = config.get("self_identity")
+    if not isinstance(value, dict):
+        return None
+    identity_id = _clean_optional_whatsapp_text(value.get("id"))
+    lid = _clean_optional_whatsapp_text(value.get("lid"))
+    if identity_id is None or lid is None:
+        return None
+    parsed_lid = parse_whatsapp_jid(lid)
+    if parsed_lid is None or parsed_lid.server != "lid":
+        return None
+    parsed_id = parse_whatsapp_jid(identity_id)
+    if parsed_id is None or parsed_id.server != "s.whatsapp.net":
+        return None
+    identity = {"id": identity_id, "lid": lid}
+    name = _clean_optional_whatsapp_text(value.get("name"))
+    if name is not None:
+        identity["name"] = name
+    return identity
+
+
+async def save_whatsapp_credential_self_identity(
+    db: AsyncSession,
+    *,
+    credential: ChannelAgentCredential,
+    self_identity: Mapping[str, str] | None,
+) -> bool:
+    if self_identity is None or credential.revoked_at is not None:
+        return False
+    validated = whatsapp_self_identity_from_config({"self_identity": dict(self_identity)})
+    if validated is None:
+        raise ValueError("WhatsApp self identity requires a valid PN and LID pair")
+    validated["id"] = credential.synthetic_jid
+    config = dict(credential.config or {})
+    if config.get("self_identity") == validated:
+        return False
+    config["self_identity"] = validated
+    credential.config = config
+    await db.flush()
+    return True
 
 
 def _clean_optional_whatsapp_text(value: object) -> str | None:

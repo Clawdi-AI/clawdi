@@ -14,12 +14,15 @@ from fastapi import (
 )
 from pydantic import JsonValue
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import async_session_factory
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
     MESSAGE_DIRECTION_INBOUND,
+    ChannelAccount,
+    ChannelAgentCredential,
     ChannelMessage,
 )
 from app.routes.channel_routers.shared import (
@@ -42,13 +45,20 @@ from app.services.whatsapp_baileys import (
     load_or_create_whatsapp_auth_cert,
     resolve_whatsapp_credential_by_identity,
     save_whatsapp_agent_bundle,
+    save_whatsapp_credential_self_identity,
     save_whatsapp_group_sender_keys,
     save_whatsapp_signal_senders,
     whatsapp_agent_bundle_from_config,
     whatsapp_agent_bundle_pre_key_count,
     whatsapp_group_sender_keys_from_config,
     whatsapp_message_proto_bytes,
+    whatsapp_self_identity_from_config,
     whatsapp_signal_senders_from_config,
+)
+from app.services.whatsapp_native_transport import (
+    WhatsAppSidecarHealth,
+    WhatsAppSidecarProtocolError,
+    whatsapp_phone_number_from_pn_jid,
 )
 from app.services.whatsapp_noise import (
     WhatsAppNoiseEmulatorSession,
@@ -59,6 +69,7 @@ from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderBridge,
 )
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
+from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
 router = APIRouter(prefix="/channels/whatsapp", tags=["channels"])
 
@@ -163,9 +174,17 @@ async def _run_whatsapp_baileys_websocket(
             bundle = whatsapp_agent_bundle_from_config(credential.config)
             signal_senders = whatsapp_signal_senders_from_config(credential.config)
             group_sender_keys = whatsapp_group_sender_keys_from_config(credential.config)
+            resolved_account = await db.get(ChannelAccount, account_id)
+            if resolved_account is None:
+                return None
+            lid = await _resolve_whatsapp_noise_lid(
+                db,
+                account=resolved_account,
+                credential=credential,
+            )
             return WhatsAppNoiseTenant(
                 tenant_id=str(credential.bot_agent_link_id),
-                lid=credential.synthetic_jid,
+                lid=lid,
                 pre_key_count=len(bundle.pre_keys)
                 if bundle is not None
                 else whatsapp_agent_bundle_pre_key_count(credential.config),
@@ -355,6 +374,71 @@ async def _run_whatsapp_baileys_websocket(
                 _WhatsAppSessionAuthorityRevoked,
             ):
                 await inbox_pump_task
+
+
+async def _resolve_whatsapp_noise_lid(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    credential: ChannelAgentCredential,
+) -> str:
+    account_changed = False
+    identity = whatsapp_self_identity_from_config(account.config)
+    if identity is None:
+        identity = whatsapp_self_identity_from_config(credential.config)
+    if identity is None:
+        health = await _authenticated_sidecar_health(account)
+        if health.account_jid is None or health.account_lid is None:
+            raise WhatsAppSidecarProtocolError("authenticated WhatsApp LID is unavailable")
+        identity = {"id": health.account_jid, "lid": health.account_lid}
+        account_config = dict(account.config) if isinstance(account.config, dict) else {}
+        account_config["self_identity"] = identity
+        account.config = account_config
+        account_changed = True
+    changed = await save_whatsapp_credential_self_identity(
+        db,
+        credential=credential,
+        self_identity=identity,
+    )
+    if changed or account_changed:
+        await db.commit()
+    return identity["lid"]
+
+
+async def _authenticated_sidecar_health(account: ChannelAccount) -> WhatsAppSidecarHealth:
+    registry = get_active_whatsapp_sidecar_registry()
+    config = account.config if isinstance(account.config, dict) else {}
+    revision = config.get("sidecar_config_revision")
+    if registry is None or not isinstance(revision, str):
+        raise WhatsAppSidecarProtocolError("WhatsApp sidecar identity is unavailable")
+    mode = config.get("connection_mode")
+    if mode == "baileys_managed":
+        if registry.managed_account_revision(account.id) != revision:
+            raise WhatsAppSidecarProtocolError("managed WhatsApp sidecar revision mismatch")
+        client = registry.get_managed_client(account.id)
+    elif mode == "baileys_custom":
+        raw_session_id = config.get("sidecar_account_id")
+        try:
+            session_id = UUID(raw_session_id) if isinstance(raw_session_id, str) else None
+        except ValueError:
+            session_id = None
+        client = (
+            registry.get_custom_lifecycle_client(session_id, config_revision=revision)
+            if session_id is not None
+            else None
+        )
+    else:
+        client = None
+    if client is None:
+        raise WhatsAppSidecarProtocolError("WhatsApp sidecar identity is unavailable")
+    health = await client.health()
+    phone_number = whatsapp_phone_number_from_pn_jid(health.account_jid)
+    if not health.registered or phone_number is None or health.account_lid is None:
+        raise WhatsAppSidecarProtocolError("authenticated WhatsApp PN/LID identity is unavailable")
+    configured_phone = config.get("phone_number")
+    if isinstance(configured_phone, str) and configured_phone != phone_number:
+        raise WhatsAppSidecarProtocolError("managed WhatsApp sidecar identity mismatch")
+    return health
 
 
 class _WhatsAppSessionAuthorityRevoked(RuntimeError):

@@ -5,6 +5,9 @@ import {
 	type CacheStore,
 	type ConnectionState,
 	DisconnectReason,
+	isLidUser,
+	jidDecode,
+	jidEncode,
 	makeWASocket,
 	proto,
 	type SignalKeyStore,
@@ -90,6 +93,13 @@ export type BaileysRuntimeDependencies = {
 };
 
 const defaultProviderSocketFactory: ProviderSocketFactory = (config) => makeWASocket(config);
+
+function validatedUserLid(lid: string | undefined): { lid: string } | Record<string, never> {
+	if (!isLidUser(lid)) return {};
+	const decoded = jidDecode(lid);
+	if (!decoded?.user || decoded.server !== "lid") return {};
+	return { lid: jidEncode(decoded.user, decoded.server, decoded.device) };
+}
 
 export class BaileysSocketRuntime implements BaileysRuntime {
 	private socket: ProviderSocket | null = null;
@@ -195,6 +205,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		const user = durableUser
 			? {
 					id: durableUser.id,
+					...validatedUserLid(durableUser.lid),
 					name: durableUser.name,
 				}
 			: undefined;

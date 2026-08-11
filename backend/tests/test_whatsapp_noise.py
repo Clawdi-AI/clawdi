@@ -5,7 +5,7 @@ import base64
 import hashlib
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import xeddsa
@@ -25,6 +25,7 @@ from app.models.channel import (
     ChannelDebugEvent,
     ChannelMessage,
 )
+from app.routes.channel_routers import whatsapp as whatsapp_router_module
 from app.routes.channel_routers.whatsapp import router as whatsapp_router
 from app.routes.channel_routers.whatsapp import whatsapp_baileys_managed_websocket
 from app.services.channels import generate_agent_token, store_agent_link_token
@@ -37,6 +38,7 @@ from app.services.whatsapp_baileys import (
     whatsapp_signal_senders_from_config,
     whatsapp_text_message_proto,
 )
+from app.services.whatsapp_native_transport import WhatsAppSidecarHealth
 from app.services.whatsapp_noise import (
     NOISE_MODE,
     NOISE_WA_HEADER,
@@ -116,10 +118,58 @@ async def _mint_synthetic_credential(
         account=account,
         bot_agent_link_id=selected_link_id,
         user_id=link.user_id,
-        self_identity=self_identity,
+        self_identity=self_identity
+        or {
+            "id": "16693773518:2@s.whatsapp.net",
+            "lid": "117901482786828:2@lid",
+        },
     )
     await db_session.commit()
     return stored
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_noise_prefers_current_account_identity(
+    client,
+    db_session,
+    channel_agent,
+):
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-current-self-identity",
+    )
+    stored = await _mint_synthetic_credential(
+        db_session,
+        created,
+        self_identity={
+            "id": "15550000001:1@s.whatsapp.net",
+            "lid": "900000000000001:1@lid",
+        },
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.config = {
+        "self_identity": {
+            "id": "15550000002:1@s.whatsapp.net",
+            "lid": "900000000000002:1@lid",
+        }
+    }
+    await db_session.commit()
+
+    lid = await whatsapp_router_module._resolve_whatsapp_noise_lid(
+        db_session,
+        account=account,
+        credential=stored.credential,
+    )
+
+    assert lid == "900000000000002:1@lid"
+    await db_session.refresh(stored.credential)
+    assert stored.credential.config["self_identity"] == {
+        "id": stored.credential.synthetic_jid,
+        "lid": "900000000000002:1@lid",
+    }
 
 
 def test_whatsapp_noise_pack_unpack_round_trips_partial_frames():
@@ -1397,6 +1447,7 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     client,
     db_session,
     channel_agent,
+    monkeypatch,
 ):
     created = await _create_whatsapp_channel_with_existing_link(
         client, db_session, channel_agent, name="wa-runtime-debug"
@@ -1406,7 +1457,6 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
         created,
         self_identity={
             "id": "16693773518:2@s.whatsapp.net",
-            "lid": "117901482786828:2@lid",
         },
     )
     credential_id = synthetic.credential.id
@@ -1417,6 +1467,38 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     )
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
+    sidecar_session_id = uuid4()
+    sidecar_revision = "self-heal-lid-revision"
+    account.config = {
+        "connection_mode": "baileys_custom",
+        "sidecar_account_id": str(sidecar_session_id),
+        "sidecar_config_revision": sidecar_revision,
+    }
+
+    class AuthenticatedSidecar:
+        async def health(self) -> WhatsAppSidecarHealth:
+            return WhatsAppSidecarHealth(
+                status="connected",
+                connected=True,
+                registered=True,
+                account_jid="15551234567:1@s.whatsapp.net",
+                account_lid="117901482786828:2@lid",
+            )
+
+    class AuthenticatedSidecarRegistry:
+        def custom_session_revision(self, session_id: UUID) -> str | None:
+            return sidecar_revision if session_id == sidecar_session_id else None
+
+        def get_custom_lifecycle_client(self, session_id: UUID, *, config_revision: str):
+            if session_id == sidecar_session_id and config_revision == sidecar_revision:
+                return AuthenticatedSidecar()
+            return None
+
+    monkeypatch.setattr(
+        whatsapp_router_module,
+        "get_active_whatsapp_sidecar_registry",
+        lambda: AuthenticatedSidecarRegistry(),
+    )
     binding = ChannelBinding(
         account_id=account.id,
         bot_agent_link_id=UUID(created["agent_link_id"]),
@@ -1459,7 +1541,7 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     success_ciphertext, _rest = unpack_frame(bootstrap_frames[0]) or (b"", b"")
     success = decode_binary_node_minimal(client_noise.transport.decrypt(success_ciphertext))
     assert success["tag"] == "success"
-    assert success["attrs"]["lid"] == "16693773518:2@s.whatsapp.net"
+    assert success["attrs"]["lid"] == "117901482786828:2@lid"
     offline_ciphertext, _rest = unpack_frame(bootstrap_frames[1]) or (b"", b"")
     offline = decode_binary_node_minimal(client_noise.transport.decrypt(offline_ciphertext))
     assert offline == {"tag": "offline", "attrs": {"count": "0"}}
@@ -1518,6 +1600,10 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     )
     assert credential is not None
     assert credential.config is not None
+    assert credential.config["self_identity"] == {
+        "id": "16693773518:2@s.whatsapp.net",
+        "lid": "117901482786828:2@lid",
+    }
     assert credential.config["agent_bundle"]["registrationId"] == 12345
     assert len(credential.config["agent_bundle"]["preKeys"]) == 1
     assert "15551112222:0@s.whatsapp.net" in credential.config["signal_senders"]
@@ -1565,9 +1651,9 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     bootstrap = next(event for event in events if event.stage == "bootstrap")
     assert bootstrap.provider == "whatsapp"
     assert bootstrap.direction == "agent"
-    assert bootstrap.external_chat_id == "16693773518:2@s.whatsapp.net"
+    assert bootstrap.external_chat_id == "117901482786828:2@lid"
     assert bootstrap.details["runtime"] == "baileys_websocket"
-    assert bootstrap.details["jidDescription"] == "server=s.whatsapp.net device=true"
+    assert bootstrap.details["jidDescription"] == "server=lid device=true"
     identity_pub_key_hex = synthetic.minted.identity_pub_key.hex()
     assert identity_pub_key_hex not in repr([event.details for event in events])
     tenant_event = next(event for event in events if event.stage == "tenant_resolution")

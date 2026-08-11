@@ -24,6 +24,7 @@ export type RuntimeHealth = {
 	uptimeSeconds: number;
 	user?: {
 		id?: string;
+		lid?: string;
 		name?: string;
 	};
 	lastDisconnectReason?: string;
