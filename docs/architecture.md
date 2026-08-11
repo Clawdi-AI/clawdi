@@ -330,8 +330,10 @@ Current behavior and the Hosted manifest/controller boundary are documented in
 Managed runtime mode is a public CLI/dashboard contract for controlled runtime
 environments. The CLI validates desired state, writes non-secret local
 projections, creates short-lived secret files under the runtime run directory,
-renders support/runtime service plans, and exposes `runtime init`, `watch`,
-`sidecar`, `status`, `doctor`, and explicit `clawdi run -- <command>`.
+renders support/runtime service plans, and exposes the managed operator ABI:
+`runtime init`, `watch`, `verify`, `sidecar`, `status`, `doctor`, and hidden
+`clawdi run --runtime-service ...` dispatch alongside explicit
+`clawdi run -- <command>`.
 
 Cloud API is the single desired-state composer for Skills. It merges Hosted V2
 Agent Workspace Skill intent with Cloud-owned Skills from linked Projects. The

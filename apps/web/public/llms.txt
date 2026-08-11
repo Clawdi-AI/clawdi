@@ -26,7 +26,6 @@ control planes when that boundary matters.
 - [Hosted AI Provider Native Contract Audit](https://github.com/Clawdi-AI/clawdi/blob/main/docs/ai-provider-agent-contract-audit.md): Verified native contracts for Hosted Hermes and OpenClaw provider convergence.
 - [Managed Runtime](https://github.com/Clawdi-AI/clawdi/blob/main/docs/managed-runtime.md): Public CLI/dashboard runtime contract without deployment-specific internals.
 - [Native Channels Product Model](https://github.com/Clawdi-AI/clawdi/blob/main/docs/designs/native-channels-product-model.md): Backend-owned channel accounts, bot-agent links, pair codes, bindings, and provider SDK emulation.
-- [Channel Runtime Manifest](https://github.com/Clawdi-AI/clawdi/blob/main/docs/designs/channel-runtime-manifest.md): `clawdi.runtime.yaml` channel projection contract and backend APIs used by the CLI.
 
 ## Optional
 - [Using Clawdi with Claude Code](https://github.com/Clawdi-AI/clawdi/blob/main/docs/using-clawdi-with-claude-code.md): End-to-end Claude Code usage guide for setup, vault, skills, memory, and session sync.
