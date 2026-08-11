@@ -1,4 +1,5 @@
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
+import { orderedProviderIds } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 
 export type AgentChannelCardItem = {
@@ -82,8 +83,8 @@ export function activeAgentLinkForAccount({
 	);
 }
 
-type MutableCard = Omit<AgentChannelCardItem, "link"> & {
-	link: AgentChannelLink | null;
+type MutableCard = AgentChannelCardItem & {
+	createdAt: string;
 	poolPriority: boolean;
 };
 
@@ -97,6 +98,7 @@ function fallbackCardFromLink(link: AgentChannelLink): MutableCard {
 		available: true,
 		canLink: true,
 		maxLinks: null,
+		createdAt: link.created_at,
 		link,
 		poolPriority: false,
 	};
@@ -112,6 +114,7 @@ function cardFromAccount(account: ChannelAccount, link: AgentChannelLink | null)
 		available: account.status.toLowerCase() === "active",
 		canLink: account.status.toLowerCase() === "active",
 		maxLinks: null,
+		createdAt: account.created_at,
 		link,
 		poolPriority: false,
 	};
@@ -127,17 +130,33 @@ function cardFromPool(bot: ChannelBotPoolItem, link: AgentChannelLink | null): M
 		available: bot.available,
 		canLink: bot.capabilities.link_agent,
 		maxLinks: bot.max_links ?? null,
+		createdAt: bot.created_at,
 		link,
 		poolPriority: true,
 	};
 }
 
-function compareCards(left: AgentChannelCardItem, right: AgentChannelCardItem): number {
+function compareCards(
+	left: MutableCard,
+	right: MutableCard,
+	providerRanks: ReadonlyMap<string, number>,
+): number {
+	const leftCreatedAt = Date.parse(left.createdAt);
+	const rightCreatedAt = Date.parse(right.createdAt);
+	const createdAtOrder =
+		Number.isFinite(leftCreatedAt) && Number.isFinite(rightCreatedAt)
+			? leftCreatedAt - rightCreatedAt
+			: left.createdAt.localeCompare(right.createdAt);
 	return (
-		left.provider.localeCompare(right.provider) ||
-		left.name.localeCompare(right.name) ||
+		(providerRanks.get(left.provider) ?? Number.MAX_SAFE_INTEGER) -
+			(providerRanks.get(right.provider) ?? Number.MAX_SAFE_INTEGER) ||
+		createdAtOrder ||
 		left.id.localeCompare(right.id)
 	);
+}
+
+function cardItem({ createdAt: _createdAt, poolPriority: _poolPriority, ...card }: MutableCard) {
+	return card;
 }
 
 /** Build the two Agent-page inventories while deduplicating every source by bot id. */
@@ -170,13 +189,20 @@ export function buildAgentChannelCardGroups({
 		}
 	}
 
-	const clawdiBots: AgentChannelCardItem[] = [];
-	const customBots: AgentChannelCardItem[] = [];
-	for (const { poolPriority: _poolPriority, ...card } of cards.values()) {
+	const clawdiBots: MutableCard[] = [];
+	const customBots: MutableCard[] = [];
+	for (const card of cards.values()) {
 		if (card.visibility === "public") clawdiBots.push(card);
 		else customBots.push(card);
 	}
-	clawdiBots.sort(compareCards);
-	customBots.sort(compareCards);
-	return { clawdiBots, customBots };
+	const providerRanks = new Map(
+		orderedProviderIds(Array.from(cards.values(), (card) => card.provider)).map(
+			(provider, index) => [provider, index],
+		),
+	);
+	const compare = (left: MutableCard, right: MutableCard) =>
+		compareCards(left, right, providerRanks);
+	clawdiBots.sort(compare);
+	customBots.sort(compare);
+	return { clawdiBots: clawdiBots.map(cardItem), customBots: customBots.map(cardItem) };
 }
