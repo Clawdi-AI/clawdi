@@ -988,7 +988,7 @@ def mint_whatsapp_synthetic_creds(
     phone_user: str | None = None,
     device: int = 1,
     name: str | None = None,
-    self_identity: dict[str, str | None] | None = None,
+    self_identity: Mapping[str, str | None] | None = None,
 ) -> MintedWhatsAppCreds:
     noise_key = _x25519_key_pair()
     signed_identity_key = _x25519_key_pair()
@@ -1660,7 +1660,7 @@ async def mint_whatsapp_agent_credential(
     phone_user: str | None = None,
     device: int = 1,
     name: str | None = None,
-    self_identity: dict[str, str | None] | None = None,
+    self_identity: Mapping[str, str | None] | None = None,
 ) -> StoredWhatsAppCredential:
     minted = mint_whatsapp_synthetic_creds(
         tenant_id=str(bot_agent_link_id),
@@ -1777,7 +1777,7 @@ def whatsapp_agent_credential_config(
     device: int,
     name: str | None,
     phone_user: str | None,
-    self_identity: dict[str, str | None] | None,
+    self_identity: Mapping[str, str | None] | None,
 ) -> dict[str, JsonValue]:
     config: dict[str, JsonValue] = {
         "device": device,
@@ -1836,11 +1836,16 @@ async def save_whatsapp_credential_self_identity(
     validated = whatsapp_self_identity_from_config({"self_identity": dict(self_identity)})
     if validated is None:
         raise ValueError("WhatsApp self identity requires a valid PN and LID pair")
-    validated["id"] = credential.synthetic_jid
+    stored_identity: dict[str, JsonValue] = {
+        "id": credential.synthetic_jid,
+        "lid": validated["lid"],
+    }
+    if name := validated.get("name"):
+        stored_identity["name"] = name
     config = dict(credential.config or {})
-    if config.get("self_identity") == validated:
+    if config.get("self_identity") == stored_identity:
         return False
-    config["self_identity"] = validated
+    config["self_identity"] = stored_identity
     credential.config = config
     await db.flush()
     return True
@@ -2603,7 +2608,7 @@ def _stamp_whatsapp_self_identity(
     phone_user: str | None,
     device: int,
     name: str | None,
-    self_identity: dict[str, str | None] | None,
+    self_identity: Mapping[str, str | None] | None,
 ) -> str:
     del name
     if self_identity and self_identity.get("id"):

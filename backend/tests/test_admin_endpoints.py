@@ -82,6 +82,7 @@ class _ManagedOnboardingSidecar:
             connected=self.connected,
             registered=self.registered,
             account_jid="15551234567:1@s.whatsapp.net" if self.registered else None,
+            account_lid="900000000000001:1@lid" if self.registered else None,
         )
 
     async def pairing_qr(self):

@@ -392,7 +392,11 @@ async def _resolve_whatsapp_noise_lid(
             raise WhatsAppSidecarProtocolError("authenticated WhatsApp LID is unavailable")
         identity = {"id": health.account_jid, "lid": health.account_lid}
         account_config = dict(account.config) if isinstance(account.config, dict) else {}
-        account_config["self_identity"] = identity
+        stored_identity: dict[str, JsonValue] = {
+            "id": identity["id"],
+            "lid": identity["lid"],
+        }
+        account_config["self_identity"] = stored_identity
         account.config = account_config
         account_changed = True
     changed = await save_whatsapp_credential_self_identity(
