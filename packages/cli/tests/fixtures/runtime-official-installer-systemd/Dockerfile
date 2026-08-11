@@ -30,12 +30,12 @@ RUN npm pack "openclaw@${OPENCLAW_VERSION}" --pack-destination /tmp --silent >/d
 		node --input-type=module --eval \
 			'import { createHash } from "node:crypto"; import { readFileSync } from "node:fs"; const actual = `sha512-${createHash("sha512").update(readFileSync(process.env.OPENCLAW_TARBALL)).digest("base64")}`; if (actual !== process.env.OPENCLAW_EXPECTED_INTEGRITY) { throw new Error(`OpenClaw package integrity mismatch: ${actual}`); }' \
 	&& runuser -u clawdi -- env HOME=/home/clawdi npm install --global \
-		--prefix /home/clawdi/.openclaw \
+		--prefix /home/clawdi/.local \
 		"/tmp/openclaw-${OPENCLAW_VERSION}.tgz" \
 		--ignore-scripts --no-audit --no-fund \
 	&& rm "/tmp/openclaw-${OPENCLAW_VERSION}.tgz" \
 	&& OPENCLAW_VERSION_OUTPUT="$(runuser -u clawdi -- env HOME=/home/clawdi \
-		/home/clawdi/.openclaw/bin/openclaw --version)" \
+		/home/clawdi/.local/bin/openclaw --version)" \
 	&& printf '%s\n' "$OPENCLAW_VERSION_OUTPUT" | grep -F "OpenClaw ${OPENCLAW_VERSION}" \
 	&& printf '%s\n' "$OPENCLAW_VERSION_OUTPUT" \
 		| grep -F "$(printf '%s' "$OPENCLAW_COMMIT" | cut -c1-7)"

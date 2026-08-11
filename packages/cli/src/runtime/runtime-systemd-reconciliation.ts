@@ -61,7 +61,7 @@ import {
 import { TRANSPARENT_EGRESS_PORT } from "./transparent-egress";
 
 function runtimeCommandPath(name: string, home: string): string | null {
-	if (name === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
+	if (name === "openclaw") return join(home, ".local", "bin", "openclaw");
 	if (name === "hermes") return join(home, ".local", "bin", "hermes");
 	return null;
 }

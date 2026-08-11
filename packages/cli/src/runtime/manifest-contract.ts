@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { z } from "zod";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
 import { hostedMcpDesiredStateSchema, hostedSkillsDesiredStateSchema } from "./manifest-resources";
@@ -15,10 +16,15 @@ export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 	hermes: "https://hermes-agent.nousresearch.com/install.sh",
 };
 
-export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
+const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 	openclaw: ["--json", "--no-onboard"],
 	hermes: ["--skip-setup", "--skip-browser", "--non-interactive"],
 };
+
+export function officialInstallArgs(runtime: string, home: string): string[] {
+	const args = [...(OFFICIAL_INSTALL_ARGS[runtime] ?? [])];
+	return runtime === "openclaw" ? [...args, "--prefix", join(home, ".local")] : args;
+}
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
 

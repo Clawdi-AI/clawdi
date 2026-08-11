@@ -468,7 +468,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.HOME = process.env.CLAWDI_RUNTIME_HOME;
 		process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 		const paths = getRuntimePaths({ mode: "hosted" });
-		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
 		const openclawConfigPath = join(paths.userHome, ".openclaw", "openclaw.json");
 		const channelPatchPath = join(root, "openclaw-channel-patch.json");
 		const mcpSecretRef = "secret://mcp/sidecar-only/token";
@@ -489,6 +489,7 @@ describe("hosted runtime bundle v2", () => {
 		writeFileSync(mitmdump, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(mitmdump, 0o755);
 		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(dirname(openclawConfigPath), { recursive: true });
 		writeFileSync(
 			openclawBin,
 			[
@@ -1199,8 +1200,9 @@ describe("hosted runtime bundle v2", () => {
 		mkdirSync(dirname(goldenMitmdump), { recursive: true });
 		writeFileSync(goldenMitmdump, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(goldenMitmdump, 0o755);
-		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
 		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(join(paths.userHome, ".openclaw"), { recursive: true });
 		writeFileSync(
 			openclawBin,
 			`#!/usr/bin/env sh

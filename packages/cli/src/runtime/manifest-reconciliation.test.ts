@@ -55,8 +55,8 @@ import {
 	hostedRuntimeManifestResponseSchema,
 	hostedRuntimeManifestSchema,
 	manifestSchema,
-	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
+	officialInstallArgs,
 } from "./manifest-contract";
 import {
 	hostedManifestToRuntimeManifest,
@@ -305,7 +305,7 @@ function egressRuntimeManifest(
 	},
 ): RuntimeManifest {
 	process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
-	const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+	const commandPath = join(paths.userHome, ".local", "bin", "openclaw");
 	writeFakeGatewayCli({
 		path: commandPath,
 		runtime: "openclaw",
@@ -545,9 +545,9 @@ case "$*" in
 	"--version")
 		printf '%s\\n' '${input.runtime === "openclaw" ? "OpenClaw test-version" : "Hermes test-version"}'
 		;;
-  "config patch --stdin")
-    ${input.configPatchPath ? `cat > '${input.configPatchPath}'` : "cat >/dev/null"}
-    ;;
+	"config patch --stdin"*)
+		${input.configPatchPath ? `cat > '${input.configPatchPath}'` : "cat >/dev/null"}
+		;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
 			input.failInstall
@@ -636,7 +636,7 @@ function fileBrowserManifest(
 	paths: RuntimePaths,
 	input: { generation: number; binary: string; accessRevision?: string },
 ): RuntimeManifest {
-	const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
+	const command = join(paths.userHome, ".local", "bin", "openclaw");
 	writeFakeGatewayCli({
 		path: command,
 		runtime: "openclaw",
@@ -1409,7 +1409,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("preserves canonical OpenClaw Control UI origins through gateway projection", () => {
 		const paths = tempRuntimePaths();
-		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-gateway-patch.json");
 		const allowedOrigins = ["https://app-v2-18789.k3s.example.test"];
 		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
@@ -1471,7 +1471,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("projects hosted OpenClaw v2 direct token auth with device auth disabled", () => {
 		const paths = tempRuntimePaths();
-		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-native-auth-patch.json");
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
@@ -1855,10 +1855,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(Object.keys(normalized.manifest.runtimes)).toEqual(["openclaw"]);
 		expect(normalized.manifest.runtimes.openclaw.enabled).toBe(true);
 		expect(normalized.manifest.runtimes.openclaw.updateChannel).toBeUndefined();
-		expect(normalized.manifest.runtimes.openclaw.install?.url).toBe(OFFICIAL_INSTALL_URLS.openclaw);
-		expect(normalized.manifest.runtimes.openclaw.install?.args).toEqual(
-			OFFICIAL_INSTALL_ARGS.openclaw,
-		);
+		const install = normalized.manifest.runtimes.openclaw.install;
+		expect(install?.url).toBe(OFFICIAL_INSTALL_URLS.openclaw);
+		expect(install?.args).toEqual(officialInstallArgs("openclaw", install?.home ?? ""));
 		expect(normalized.manifest.runtimes.openclaw.run?.args).toEqual([
 			"gateway",
 			"run",
@@ -2059,7 +2058,7 @@ describe("runtime manifest reconciliation invariants", () => {
 	test("converges OpenClaw native token auth from canonical bundle secret refs", () => {
 		const paths = tempRuntimePaths();
 		writeFakeGatewayCli({
-			path: join(paths.userHome, ".openclaw", "bin", "openclaw"),
+			path: join(paths.userHome, ".local", "bin", "openclaw"),
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		});
@@ -2143,16 +2142,26 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("keeps hosted managed provider key out of the agent env", () => {
 		const paths = tempRuntimePaths();
+		const providerPatchPath = join(paths.serviceStateRoot, "openclaw-provider-patch.json");
 		writeFakeGatewayCli({
-			path: join(paths.userHome, ".openclaw", "bin", "openclaw"),
+			path: join(paths.userHome, ".local", "bin", "openclaw"),
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			configPatchPath: providerPatchPath,
 		});
 		const manifest = baseManifest(
 			paths,
 			{
 				openclaw: {
 					enabled: true,
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: OFFICIAL_INSTALL_URLS.openclaw,
+						home: paths.userHome,
+						args: officialInstallArgs("openclaw", paths.userHome),
+					},
+					providerMode: "configured",
 					run: runSettings("openclaw", ["gateway", "run"]),
 					provider_ids: ["default"],
 					primary_model: { provider_id: "default", model: "gpt-test" },
@@ -2180,6 +2189,8 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			},
 		);
+		const provider = hostedAiProviderCatalog(manifest, "openclaw")?.catalog.providers[0];
+		expect(provider?.runtime_env_name).toBe("CLAWDI_OPENCLAW_API_KEY");
 
 		const result = convergeRuntimeManifest(
 			manifestLoad(manifest, "inline-managed-provider", {
@@ -2189,17 +2200,31 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 
 		expect(result.installErrors).toEqual([]);
+		expect(result.projectedProviderIds.openclaw).toEqual(["clawdi-managed"]);
+		expect(JSON.parse(readFileSync(providerPatchPath, "utf8"))).toMatchObject({
+			models: {
+				providers: {
+					"clawdi-managed": {
+						apiKey: {
+							source: "env",
+							provider: "default",
+							id: "CLAWDI_OPENCLAW_API_KEY",
+						},
+					},
+				},
+			},
+		});
 		const runConfig = JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", paths), "utf8")) as {
 			env?: Record<string, string>;
 		};
-		expect(runConfig.env?.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
-		expect(runConfig.env?.OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
+		expect(runConfig.env?.CLAWDI_OPENCLAW_API_KEY).toBe("clawdi-egress-placeholder");
+		expect(runConfig.env?.OPENAI_API_KEY).toBeUndefined();
 		const envFile = readFileSync(
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf8",
 		);
-		expect(envFile).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
-		expect(envFile).toContain('OPENAI_API_KEY="clawdi-egress-placeholder"');
+		expect(envFile).toContain('CLAWDI_OPENCLAW_API_KEY="clawdi-egress-placeholder"');
+		expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
 		expect(envFile).not.toContain("sk-managed");
 	});
 
@@ -2659,7 +2684,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("restarts only active sidecars for committed egress secret lifecycle changes", () => {
 		const paths = tempRuntimePaths();
-		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const commandPath = join(paths.userHome, ".local", "bin", "openclaw");
 		const egressEngine = {
 			type: "mitmproxy" as const,
 			version: "12.2.3",
@@ -2839,7 +2864,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("recovers committed egress secrets before retrying a crash-interrupted sidecar load", () => {
 		const paths = tempRuntimePaths();
-		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const commandPath = join(paths.userHome, ".local", "bin", "openclaw");
 		const egressEngine = {
 			type: "mitmproxy" as const,
 			version: "12.2.3",
@@ -3462,7 +3487,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("advances last-good manifest only after a clean converge", () => {
 		const paths = tempRuntimePaths();
-		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
 		const manifest = baseManifest(paths, {
 			openclaw: {
@@ -3525,8 +3550,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			installerPath,
 			`#!/usr/bin/env bash
 set -euo pipefail
-mkdir -p "$HOME/.openclaw/bin"
-cat > "$HOME/.openclaw/bin/openclaw" <<'EOF'
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/openclaw" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [ "$*" = "agents list --json" ]; then
@@ -3535,7 +3560,7 @@ if [ "$*" = "agents list --json" ]; then
 fi
 exit 64
 EOF
-chmod 0700 "$HOME/.openclaw/bin/openclaw"
+chmod 0700 "$HOME/.local/bin/openclaw"
 echo spawned > '${installerLog}'
 `,
 		);
@@ -3573,7 +3598,7 @@ echo spawned > '${installerLog}'
 						method: "official-installer",
 						url: OFFICIAL_INSTALL_URLS.openclaw,
 						home: paths.userHome,
-						args: [...OFFICIAL_INSTALL_ARGS.openclaw],
+						args: officialInstallArgs("openclaw", paths.userHome),
 					},
 					run: runSettings("openclaw", ["gateway", "run"]),
 					services: {},
@@ -3594,7 +3619,7 @@ echo spawned > '${installerLog}'
 			expect(readFileSync(path)).toEqual(expected);
 		}
 		expect(readFileSync(installerLog, "utf8")).toBe("spawned\n");
-		expect(existsSync(join(paths.userHome, ".openclaw", "bin", "openclaw"))).toBe(false);
+		expect(existsSync(join(paths.userHome, ".local", "bin", "openclaw"))).toBe(false);
 	});
 
 	test("keeps the hosted skill ledger root owned while mutating the runtime-user skill tree", () => {
@@ -3975,7 +4000,7 @@ echo spawned > '${installerLog}'
 	test("restores exact root and runtime-user targets before systemd rollback reconciliation", () => {
 		const paths = tempRuntimePaths();
 		const workspaceRoot = join(paths.userHome, "clawdi");
-		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const commandPath = join(paths.userHome, ".local", "bin", "openclaw");
 		const targetConfig = join(paths.userHome, ".openclaw", "openclaw.json");
 		const dropInRoot = join(paths.systemdUserRoot, "clawdi-stale.service.d");
 		const managedUserDropIn = join(dropInRoot, "10-clawdi-hosted.conf");
@@ -4324,7 +4349,7 @@ echo spawned > '${installerLog}'
 			method: "official-installer" as const,
 			url: OFFICIAL_INSTALL_URLS[runtime],
 			home,
-			args: OFFICIAL_INSTALL_ARGS[runtime] ?? [],
+			args: officialInstallArgs(runtime, home),
 		});
 		const manifest = baseManifest(
 			paths,
@@ -4439,15 +4464,16 @@ echo spawned > '${installerLog}'
 					["hermes", { status: "present" as const }],
 				]),
 			).sort(),
-		).toEqual([join(home, ".openclaw", "bin"), join(home, ".openclaw", "tools")].sort());
+		).toEqual([join(home, ".local", "bin", "openclaw"), join(home, ".local", "tools")].sort());
 	});
 
 	test("accepts an installed runtime command symlink as an exact transaction target", () => {
 		const paths = tempRuntimePaths();
 		const appRoot = join(paths.userHome, ".openclaw");
-		const commandPath = join(appRoot, "bin", "openclaw");
+		const commandPath = join(paths.userHome, ".local", "bin", "openclaw");
 		const commandTarget = join(appRoot, "openclaw-entrypoint");
 		mkdirSync(dirname(commandPath), { recursive: true });
+		mkdirSync(dirname(commandTarget), { recursive: true });
 		writeFileSync(
 			commandTarget,
 			`#!/bin/sh
@@ -4467,7 +4493,7 @@ exit 0
 					method: "official-installer",
 					url: OFFICIAL_INSTALL_URLS.openclaw,
 					home: paths.userHome,
-					args: [...OFFICIAL_INSTALL_ARGS.openclaw],
+					args: officialInstallArgs("openclaw", paths.userHome),
 				},
 				run: runSettings(commandPath, ["gateway", "run"]),
 				services: {},
@@ -4487,7 +4513,7 @@ exit 0
 		const runtimeUid = 10_001;
 		const runtimeGid = 10_001;
 		const appRoot = join(paths.userHome, ".openclaw");
-		const binDir = join(appRoot, "bin");
+		const binDir = join(paths.userHome, ".local", "bin");
 		const commandPath = join(binDir, "openclaw");
 		const gatewayEnvironment = join(appRoot, "gateway.systemd.env");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
@@ -4557,7 +4583,7 @@ printf '{"ok":true}\\n'
 					method: "official-installer",
 					url: OFFICIAL_INSTALL_URLS.openclaw,
 					home: paths.userHome,
-					args: [...OFFICIAL_INSTALL_ARGS.openclaw],
+					args: officialInstallArgs("openclaw", paths.userHome),
 				},
 				run: runSettings(commandPath, ["gateway", "run"]),
 				services: {},
@@ -4647,20 +4673,17 @@ printf '{"ok":true}\\n'
 	test("restores exact installer targets before Apply when installation fails", () => {
 		const paths = tempRuntimePaths();
 		const home = paths.userHome;
-		const binDir = join(home, ".openclaw", "bin");
-		const toolsDir = join(home, ".openclaw", "tools");
-		const existingBinFile = join(binDir, "keep.txt");
+		const binDir = join(home, ".local", "bin");
+		const toolsDir = join(home, ".local", "tools");
 		const existingToolFile = join(toolsDir, "cache", "keep.txt");
 		const commandPath = join(binDir, "openclaw");
 		const installerPath = join(dirname(home), "openclaw-failing-installer.sh");
 		const installerLog = join(dirname(home), "openclaw-failing-installer.log");
 		mkdirSync(binDir, { recursive: true });
 		mkdirSync(dirname(existingToolFile), { recursive: true });
-		writeFileSync(existingBinFile, "original-bin\n");
 		writeFileSync(existingToolFile, "original-tool\n");
 		chmodSync(binDir, 0o750);
 		chmodSync(toolsDir, 0o700);
-		chmodSync(existingBinFile, 0o640);
 		chmodSync(existingToolFile, 0o600);
 		writeFileSync(
 			installerPath,
@@ -4668,7 +4691,6 @@ printf '{"ok":true}\\n'
 set -euo pipefail
 printf 'ran\n' > '${installerLog}'
 chmod 0777 '${binDir}' '${toolsDir}'
-printf 'mutated-bin\n' > '${existingBinFile}'
 rm -f '${existingToolFile}'
 printf '#!/bin/sh\nexit 0\n' > '${commandPath}'
 chmod 0755 '${commandPath}'
@@ -4687,7 +4709,7 @@ exit 42
 					method: "official-installer",
 					url: OFFICIAL_INSTALL_URLS.openclaw,
 					home,
-					args: OFFICIAL_INSTALL_ARGS.openclaw ?? [],
+					args: officialInstallArgs("openclaw", home),
 				},
 				run: runSettings(commandPath, ["gateway", "run"]),
 				services: {},
@@ -4711,13 +4733,11 @@ exit 42
 		expect(readFileSync(installerLog, "utf8")).toBe("ran\n");
 		expect(activateCalls).toBe(0);
 		expect(rollbackCalls).toBe(0);
-		expect(readFileSync(existingBinFile, "utf8")).toBe("original-bin\n");
 		expect(readFileSync(existingToolFile, "utf8")).toBe("original-tool\n");
 		expect(existsSync(commandPath)).toBe(false);
 		expect(existsSync(join(toolsDir, "new.txt"))).toBe(false);
 		expect(statSync(binDir).mode & 0o777).toBe(0o750);
 		expect(statSync(toolsDir).mode & 0o777).toBe(0o700);
-		expect(statSync(existingBinFile).mode & 0o777).toBe(0o640);
 		expect(statSync(existingToolFile).mode & 0o777).toBe(0o600);
 	});
 
@@ -4748,13 +4768,15 @@ exit 42
 	test("rejects symlinked installer targets before running the external installer", () => {
 		const paths = tempRuntimePaths();
 		const home = paths.userHome;
-		const openclawRoot = join(home, ".openclaw");
+		const localRoot = join(home, ".local");
+		const toolsPath = join(localRoot, "tools");
+		const commandPath = join(localRoot, "bin", "openclaw");
 		const redirectedTools = join(dirname(home), "redirected-openclaw-tools");
 		const installerPath = join(dirname(home), "must-not-run-installer.sh");
 		const installerLog = join(dirname(home), "must-not-run-installer.log");
-		mkdirSync(openclawRoot, { recursive: true });
+		mkdirSync(localRoot, { recursive: true });
 		mkdirSync(redirectedTools, { recursive: true });
-		symlinkSync(redirectedTools, join(openclawRoot, "tools"));
+		symlinkSync(redirectedTools, toolsPath);
 		writeFileSync(installerPath, `#!/bin/sh\nprintf ran > '${installerLog}'\nexit 0\n`);
 		chmodSync(installerPath, 0o700);
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
@@ -4767,16 +4789,16 @@ exit 42
 					method: "official-installer",
 					url: OFFICIAL_INSTALL_URLS.openclaw,
 					home,
-					args: OFFICIAL_INSTALL_ARGS.openclaw ?? [],
+					args: officialInstallArgs("openclaw", home),
 				},
-				run: runSettings(join(openclawRoot, "bin", "openclaw"), ["gateway", "run"]),
+				run: runSettings(commandPath, ["gateway", "run"]),
 				services: {},
 			},
 		});
 
 		expect(() =>
 			convergeRuntimeManifest(manifestLoad(manifest, "symlinked-installer-target"), paths),
-		).toThrow(`runtime-user mutation path contains a symlink: ${join(openclawRoot, "tools")}`);
+		).toThrow(`runtime-user mutation path contains a symlink: ${toolsPath}`);
 		expect(existsSync(installerLog)).toBe(false);
 	});
 
@@ -4815,7 +4837,7 @@ exit 42
 	test("rolls back managed state when the authority commit fails", () => {
 		const paths = tempRuntimePaths();
 		writeFakeGatewayCli({
-			path: join(paths.userHome, ".openclaw", "bin", "openclaw"),
+			path: join(paths.userHome, ".local", "bin", "openclaw"),
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		});
@@ -4859,7 +4881,7 @@ exit 42
 	test("garbage collects stale run configs when a runtime is removed", () => {
 		const paths = tempRuntimePaths();
 		writeFakeGatewayCli({
-			path: join(paths.userHome, ".openclaw", "bin", "openclaw"),
+			path: join(paths.userHome, ".local", "bin", "openclaw"),
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		});
