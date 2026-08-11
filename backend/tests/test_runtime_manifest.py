@@ -41,7 +41,11 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
-from app.routes.sessions import _runtime_observed_health
+from app.routes.sessions import (
+    _runtime_observed_desired,
+    _runtime_observed_health,
+    _runtime_observed_provider_health,
+)
 from app.schemas.admin import AdminRuntimeStateUpsert
 from app.schemas.runtime import (
     HostedEgressEngine,
@@ -84,6 +88,16 @@ pytestmark = pytest.mark.committed_db
 _ADMIN_KEY = "runtime-state-admin-secret"
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
 TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
+AGENT_FACING_CODEX_TOOLS = {
+    "codex": {
+        "enabled": True,
+        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+        "primary_model": {
+            "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+            "model": "gpt-5.5",
+        },
+    }
+}
 TEST_SYSTEM = {}
 TEST_EGRESS_ENGINE_PIN = {
     "type": "mitmproxy",
@@ -797,6 +811,68 @@ def test_unmanaged_health_requires_exact_empty_applied_provider_set():
     assert "applied_provider_ids_extra" in stale.reasons
     assert malformed.status == "unknown"
     assert "desired_provider_contract_invalid" in malformed.reasons
+
+
+def test_managed_health_compares_agent_facing_provider_ids():
+    now = datetime.now(UTC)
+    source_revision = "e" * 64
+    etag = expected_runtime_bundle_v2_etag(source_revision)
+    state = SimpleNamespace(
+        deployment_id="42",
+        instance_id="hri-managed-health",
+        generation=3,
+        cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+        updated_at=now,
+        runtimes=_runtime_state(provider_ids=[CLAWDI_MANAGED_PROVIDER_ID]),
+        mcp=None,
+        tools=None,
+    )
+    env = SimpleNamespace(last_sync_error=None, last_sync_at=now)
+    observation = SimpleNamespace(
+        observed_at=now,
+        observed_config_generation=3,
+        observed_manifest_etag=etag,
+        observed_source_revision=source_revision,
+        diagnostics={
+            "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+            "reportedAt": now.isoformat(),
+            "runtimeMode": "hosted",
+            "status": "ok",
+            "activeCliVersion": TEST_CLI_PACKAGE_SPEC.split("@", 1)[1],
+            "applied": {
+                "etag": etag,
+                "sourceRevision": source_revision,
+                "generation": 3,
+                "instanceId": "hri-managed-health",
+                "appliedProviderIds": [CLAWDI_MANAGED_PROVIDER_ID],
+            },
+            "boot": None,
+            "cli": None,
+            "providers": {
+                CLAWDI_MANAGED_PROVIDER_ID: {
+                    "status": "ok",
+                    "configured": True,
+                    "secretAvailable": True,
+                }
+            },
+        },
+    )
+
+    health = _runtime_observed_health(
+        env,
+        state,
+        observation,
+        desired_source_revision=source_revision,
+        desired_cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+    )
+    provider_health = _runtime_observed_provider_health(state, observation)
+
+    assert _runtime_observed_desired(state).provider_id == CLAWDI_MANAGED_PROVIDER_ID
+    assert health.status == "ok"
+    assert health.reasons == []
+    assert [provider.provider_id for provider in provider_health] == [CLAWDI_MANAGED_PROVIDER_ID]
+    assert provider_health[0].status == "ok"
+    assert provider_health[0].desired == {"selected": True, "primary": True}
 
 
 async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: str, **overrides):
@@ -3101,7 +3177,7 @@ async def test_admin_runtime_state_clears_optional_state(
     assert state.egress_profiles is None
     assert state.mcp is None
     assert state.skills is None
-    assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
+    assert state.tools == {**AGENT_FACING_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
 @pytest.mark.asyncio
@@ -3147,7 +3223,7 @@ async def test_equal_generation_optional_state_clear_is_material_conflict(
     assert state.egress_profiles == TEST_EGRESS_PROFILES
     assert state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
     assert state.skills == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
-    assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
+    assert state.tools == {**AGENT_FACING_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
 def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
@@ -4800,7 +4876,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalog(
+async def test_runtime_state_normalizes_deployment_provider_and_resolves_its_catalog(
     admin_client,
     db_session,
     seed_user,
@@ -4841,8 +4917,8 @@ async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalo
         ]
     )
     await db_session.commit()
-    primary_model = {
-        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+    internal_primary_model = {
+        "provider_id": internal_provider_id,
         "model": "gpt-5.5",
     }
     await _write_runtime_state(
@@ -4850,17 +4926,28 @@ async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalo
         str(env.id),
         deployment_id="42",
         runtimes=_runtime_state(
-            provider_ids=[CLAWDI_MANAGED_PROVIDER_ID],
-            primary_model=primary_model,
+            provider_ids=[internal_provider_id],
+            primary_model=internal_primary_model,
         ),
         tools={
             "codex": {
                 "enabled": True,
-                "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
-                "primary_model": primary_model,
+                "provider_id": internal_provider_id,
+                "primary_model": internal_primary_model,
             }
         },
     )
+
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    primary_model = {
+        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+        "model": "gpt-5.5",
+    }
+    assert state.runtimes["openclaw"]["provider_ids"] == [CLAWDI_MANAGED_PROVIDER_ID]
+    assert state.runtimes["openclaw"]["primary_model"] == primary_model
+    assert state.tools["codex"]["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
+    assert state.tools["codex"]["primary_model"] == primary_model
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:

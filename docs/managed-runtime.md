@@ -842,16 +842,18 @@ installs and hands off to the selected package or fails before applying the new
 desired state.
 
 When only the exact CLI package changes and the capability image remains
-compatible, the substrate may atomically replace the single fixed runtime-context
-file without replacing the workload. The running watcher first requires the
-context `cliPackageSpec` to match the fetched manifest package, installs and
-verifies that exact package, atomically activates it, and exits cleanly. The
-`Restart=always` systemd unit then starts the watcher from the absolute managed
-CLI path. The new CLI performs the complete manifest and systemd convergence;
-the old applied authority remains current until that convergence commits the
-new Apply identity. A failed first convergence rolls back to the previously
-verified CLI. This is a process handoff inside the existing workload, not a
-workload restart or replacement.
+compatible, the runtime context and workload stay unchanged. The fetched
+manifest is the desired CLI authority. The running watcher installs and verifies
+that exact package, atomically activates it, and exits before manifest or systemd
+convergence. The `Restart=always` systemd unit then starts the watcher from the
+absolute managed CLI path. The new CLI completes convergence without restarting
+the daemon, sidecar, or runtime gateway; their independent program and secret
+revisions remain unchanged. The old applied authority remains current until the
+new watcher commits the manifest. A failed first convergence rolls back to the
+previously verified CLI. This is a watcher process handoff inside the existing
+workload: systemd launches the watcher's new `ExecStart` after its clean exit,
+without an explicit `systemctl restart`, an unrelated service restart, or a
+workload replacement.
 
 ## Commands
 
@@ -1054,7 +1056,7 @@ Strict-v2 workloads provide their bootstrap and apply authority through the
 single fixed file `/etc/clawdi/runtime-context.json`. The file
 is a strict `clawdi.runtimeContext.v2` object containing an `apply` tuple
 (`generation`, `manifestETag`, `applyReceiptId`, and `bootNonce`), an exact
-`backend: "incus"` attestation, an exact `cliPackageSpec`, and a typed HTTP
+`backend: "incus"` attestation, the exact bootstrap `cliPackageSpec`, and a typed HTTP
 `manifestSource` with bearer auth. `backend` is required for every Hosted v2
 context and is validated by the common precondition gate before convergence.
 Business secrets are not bootstrap context: the fetched bundle's `secretValues`
@@ -1063,10 +1065,12 @@ that are already in the manifest, auth selectors, paths, mode, runtime user, and
 process environment are not duplicated in the context. A missing or malformed
 context
 fails closed, and no field falls back to ambient process environment. The
-applied generation and exact CLI package must match the fetched manifest and
-are validated before CLI installation, systemd mutation, or applied-authority
-commit can occur. The paired-image local tarball exception exists only when the
-explicit test-installer gate is enabled. `manifestETag` names the
+applied generation must match the fetched manifest before CLI installation,
+systemd mutation, or applied-authority commit can occur. The context package is
+validated as bootstrap identity but is not desired-state authority and need not
+match a later exact package selected by the manifest. The paired-image local
+tarball exception exists only when the explicit test-installer gate is enabled.
+`manifestETag` names the
 Hosted control-plane snapshot and is persisted separately from the fetched
 bundle's HTTP ETag, which remains the strong validator derived from
 `sourceRevision`; the two values are intentionally independent. This lets one
