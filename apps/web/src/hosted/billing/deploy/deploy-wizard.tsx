@@ -322,9 +322,7 @@ export function DeployWizard() {
 		async (target: CheckoutReturnNavigationTarget, replace = false): Promise<boolean> => {
 			setAcceptedDeploymentRecovery(null);
 			setSubmitBusyLabel("Loading agent details…");
-			setSubmitTakingLongCopy(
-				"Your deployment was accepted. Keep this page open while we load its committed details.",
-			);
+			setSubmitTakingLongCopy(null);
 			setSubmitTakingLong(false);
 			setSubmitting(true);
 			acceptanceNavigatingRef.current = true;
@@ -391,7 +389,7 @@ export function DeployWizard() {
 	const [submitting, setSubmitting] = useState(false);
 	const [submitTakingLong, setSubmitTakingLong] = useState(false);
 	const [submitBusyLabel, setSubmitBusyLabel] = useState("Creating agent…");
-	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState(
+	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState<string | null>(
 		"Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
 	);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
@@ -1526,7 +1524,7 @@ export function DeployWizard() {
 											? "Retry opening agent"
 											: deployLabel}
 								</Button>
-								{submitTakingLong ? (
+								{submitTakingLong && submitTakingLongCopy ? (
 									<p
 										className="max-w-sm text-xs text-muted-foreground @2xl/main:text-right"
 										role="status"
