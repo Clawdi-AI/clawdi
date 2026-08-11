@@ -12568,6 +12568,7 @@ exit 64
 			HERMES_EXISTING_ENV: "kept",
 			WHATSAPP_MODE: "bot",
 			WHATSAPP_ALLOWED_USERS: "*",
+			WHATSAPP_ALLOW_ALL_USERS: "true",
 		});
 		const convergence = convergeRuntimeManifest(projected, paths);
 		expect(convergence.installErrors).toEqual([]);
@@ -12586,6 +12587,9 @@ exit 64
 		expect(existsSync(sessionDir)).toBe(false);
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
+		expect(
+			removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOW_ALL_USERS,
+		).toBeUndefined();
 	});
 
 	it("clears managed Hermes channels without touching user-owned WhatsApp settings", () => {
@@ -12653,6 +12657,7 @@ exit 64
 								WHATSAPP_ENABLED: "true",
 								WHATSAPP_MODE: "bot",
 								WHATSAPP_ALLOWED_USERS: "*",
+								WHATSAPP_ALLOW_ALL_USERS: "true",
 							},
 							secretEnv: {
 								TELEGRAM_BOT_TOKEN: "secret://channels/telegram/clawdi_stale/agent-token",
@@ -12711,6 +12716,7 @@ exit 64
 		expect(runConfig.env.WHATSAPP_ENABLED).toBe("true");
 		expect(runConfig.env.WHATSAPP_MODE).toBeUndefined();
 		expect(runConfig.env.WHATSAPP_ALLOWED_USERS).toBeUndefined();
+		expect(runConfig.env.WHATSAPP_ALLOW_ALL_USERS).toBeUndefined();
 		expect(runConfig.secretEnv.TELEGRAM_BOT_TOKEN).toBeUndefined();
 		expect(runConfig.secretEnv.DISCORD_BOT_TOKEN).toBeUndefined();
 		expect(runConfig.secretEnv.HERMES_WA_CREDS_JSON).toBe(
@@ -12723,6 +12729,7 @@ exit 64
 		expect(hermesEnv).toContain("WHATSAPP_ENABLED");
 		expect(hermesEnv).not.toContain("WHATSAPP_MODE");
 		expect(hermesEnv).not.toContain("WHATSAPP_ALLOWED_USERS");
+		expect(hermesEnv).not.toContain("WHATSAPP_ALLOW_ALL_USERS");
 	});
 
 	it("isolates OpenClaw WhatsApp DMs and clears stale managed config", () => {
