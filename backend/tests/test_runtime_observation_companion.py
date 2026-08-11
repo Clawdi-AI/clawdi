@@ -87,6 +87,8 @@ def _payload(
     manifest_etag: str = _MANIFEST_ETAG,
     apply_receipt_id: str = _APPLY_RECEIPT_ID,
     boot_nonce: str = _BOOT_NONCE,
+    successor_boot_session_id: str | None = None,
+    predecessor_boot_session_id: str | None = None,
     status: str = "ok",
     error: str | None = None,
 ) -> RuntimeObservationEventV2:
@@ -111,6 +113,16 @@ def _payload(
             "applyReceiptId": apply_receipt_id,
             "bootNonce": boot_nonce,
             "bootSessionId": boot_session_id,
+            **(
+                {"successorBootSessionId": successor_boot_session_id}
+                if successor_boot_session_id is not None
+                else {}
+            ),
+            **(
+                {"predecessorBootSessionId": predecessor_boot_session_id}
+                if predecessor_boot_session_id is not None
+                else {}
+            ),
             "sequence": sequence,
             "eventId": event_id or f"event-{uuid.uuid4()}",
             "capturedAt": captured.isoformat(),
@@ -259,6 +271,167 @@ async def test_unique_regressions_enter_inbox_without_regressing_head(
     assert head.captured_at == base + timedelta(seconds=3)
 
 
+@pytest.mark.asyncio
+async def test_authorized_successor_atomically_tombstones_predecessor(
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    base = datetime.now(UTC)
+    predecessor = _payload(
+        boot_session_id="boot-session-predecessor",
+        successor_boot_session_id="boot-session-successor",
+        captured_at=base,
+    )
+    successor = _payload(
+        boot_session_id="boot-session-successor",
+        successor_boot_session_id="boot-session-next",
+        predecessor_boot_session_id="boot-session-predecessor",
+        captured_at=base + timedelta(seconds=1),
+    )
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=predecessor,
+        received_at=base,
+    )
+    with pytest.raises(RuntimeObservationProtocolError) as rebound:
+        await ingest_runtime_observation(
+            db_session,
+            environment_id=environment.id,
+            value=_payload(
+                boot_session_id="boot-session-predecessor",
+                successor_boot_session_id="boot-session-other",
+                sequence=2,
+                captured_at=base + timedelta(seconds=1),
+            ),
+            received_at=base + timedelta(seconds=1),
+        )
+    assert rebound.value.code == "runtime_observation_successor_conflict"
+
+    accepted = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=successor,
+        received_at=base + timedelta(seconds=1),
+    )
+    await db_session.commit()
+
+    heads = {
+        head.boot_session_id: head
+        for head in (
+            (
+                await db_session.execute(
+                    select(V2RuntimeObservationHead).where(
+                        V2RuntimeObservationHead.environment_id == environment.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    }
+    assert heads["boot-session-predecessor"].state == "retired"
+    assert heads["boot-session-predecessor"].latest_inbox_id is None
+    assert heads["boot-session-predecessor"].authorized_successor_boot_session_id == (
+        "boot-session-successor"
+    )
+    assert heads["boot-session-successor"].state == "active"
+    assert heads["boot-session-successor"].authorized_successor_boot_session_id == (
+        "boot-session-next"
+    )
+
+    replay = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=successor,
+        received_at=base + timedelta(seconds=2),
+    )
+    assert replay.outcome == "duplicate_replay"
+    assert replay.stream_position == accepted.stream_position
+
+    with pytest.raises(RuntimeObservationProtocolError) as late_predecessor:
+        await ingest_runtime_observation(
+            db_session,
+            environment_id=environment.id,
+            value=_payload(
+                boot_session_id="boot-session-predecessor",
+                sequence=2,
+                successor_boot_session_id="boot-session-successor",
+                captured_at=base + timedelta(seconds=2),
+            ),
+            received_at=base + timedelta(seconds=2),
+        )
+    assert late_predecessor.value.code == "runtime_environment_retired"
+
+
+@pytest.mark.asyncio
+async def test_handoff_cannot_hide_an_unauthorized_active_head(
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    base = datetime.now(UTC)
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="boot-session-predecessor",
+            successor_boot_session_id="boot-session-successor",
+            captured_at=base,
+        ),
+        received_at=base,
+    )
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="boot-session-unrelated",
+            captured_at=base + timedelta(seconds=1),
+        ),
+        received_at=base + timedelta(seconds=1),
+    )
+    await db_session.commit()
+
+    with pytest.raises(RuntimeObservationProtocolError) as unauthorized:
+        await ingest_runtime_observation(
+            db_session,
+            environment_id=environment.id,
+            value=_payload(
+                boot_session_id="boot-session-not-authorized",
+                predecessor_boot_session_id="boot-session-predecessor",
+                captured_at=base + timedelta(seconds=2),
+            ),
+            received_at=base + timedelta(seconds=2),
+        )
+    assert unauthorized.value.code == "runtime_observation_handoff_conflict"
+    await db_session.rollback()
+
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="boot-session-successor",
+            predecessor_boot_session_id="boot-session-predecessor",
+            captured_at=base + timedelta(seconds=2),
+        ),
+        received_at=base + timedelta(seconds=2),
+    )
+    await db_session.commit()
+
+    active_sessions = set(
+        (
+            await db_session.execute(
+                select(V2RuntimeObservationHead.boot_session_id).where(
+                    V2RuntimeObservationHead.environment_id == environment.id,
+                    V2RuntimeObservationHead.state == "active",
+                )
+            )
+        ).scalars()
+    )
+    assert active_sessions == {"boot-session-successor", "boot-session-unrelated"}
+
+
 @pytest.mark.committed_db
 @pytest.mark.asyncio
 async def test_ingestion_and_retirement_serialize_on_the_environment_fence(
@@ -394,7 +567,7 @@ async def test_database_guards_reject_runtime_rebinding_regression_and_tombstone
     event = await ingest_runtime_observation(
         db_session,
         environment_id=environment.id,
-        value=_payload(),
+        value=_payload(successor_boot_session_id="boot-session-successor"),
     )
     page = await read_runtime_observations(
         db_session,
@@ -494,6 +667,15 @@ async def test_database_guards_reject_runtime_rebinding_regression_and_tombstone
             )
             .values(latest_event_id="rebound-event"),
             "head cannot rebind a sequence",
+        ),
+        (
+            update(V2RuntimeObservationHead)
+            .where(
+                V2RuntimeObservationHead.environment_id == environment.id,
+                V2RuntimeObservationHead.boot_session_id == "boot-session-0001",
+            )
+            .values(authorized_successor_boot_session_id="boot-session-rebound"),
+            "authorized successor is immutable",
         ),
         (
             update(V2RuntimeObservationConsumerCursor)
@@ -2208,6 +2390,8 @@ def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:
         "applyReceiptId",
         "bootNonce",
         "bootSessionId",
+        "successorBootSessionId",
+        "predecessorBootSessionId",
         "sequence",
         "eventId",
         "capturedAt",

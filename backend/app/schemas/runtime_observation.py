@@ -57,6 +57,18 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     apply_receipt_id: str = Field(alias="applyReceiptId", min_length=16, max_length=128)
     boot_nonce: str = Field(alias="bootNonce", min_length=16, max_length=128)
     boot_session_id: str = Field(alias="bootSessionId", min_length=1, max_length=128)
+    successor_boot_session_id: str | None = Field(
+        alias="successorBootSessionId",
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
+    predecessor_boot_session_id: str | None = Field(
+        alias="predecessorBootSessionId",
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
     sequence: int = Field(ge=1, le=9_007_199_254_740_991)
     event_id: str = Field(alias="eventId", min_length=1, max_length=128)
     captured_at: datetime = Field(alias="capturedAt")
@@ -83,6 +95,10 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
             raise ValueError("runtime observation generation must be at least 1")
         if self.reported_at != self.captured_at:
             raise ValueError("reportedAt must equal capturedAt")
+        if self.predecessor_boot_session_id == self.boot_session_id:
+            raise ValueError("predecessorBootSessionId must differ from bootSessionId")
+        if self.successor_boot_session_id == self.boot_session_id:
+            raise ValueError("successorBootSessionId must differ from bootSessionId")
         return self
 
 
