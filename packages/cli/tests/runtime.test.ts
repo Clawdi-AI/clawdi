@@ -7360,34 +7360,6 @@ fi
 					applyReceiptId: "apply-receipt-generation-0031",
 					bootNonce: "boot-nonce-generation-0001",
 				},
-				{
-					...CANONICAL_TEST_CONTEXT,
-					cliPackageSpec: "clawdi@1.2.4-test",
-				},
-			);
-			const committedBeforeMismatchedCliPackage = readFileSync(paths.appliedState, "utf-8");
-			writeFileSync(systemctlLog, "");
-			process.exitCode = undefined;
-			await runtimeWatch({ once: true, json: true });
-
-			expect(process.exitCode).toBe(1);
-			expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
-				status: "error",
-				mode: "manifest-rejected",
-			});
-			expect(JSON.parse(logs.at(-1) ?? "{}").error).toContain(
-				"runtime context CLI package clawdi@1.2.4-test does not match manifest CLI package clawdi@1.2.3-test",
-			);
-			expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedBeforeMismatchedCliPackage);
-			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
-
-			setRuntimeApplyContextFixture(
-				{
-					generation,
-					manifestETag: '"hosted-control-plane-generation-31"',
-					applyReceiptId: "apply-receipt-generation-0031",
-					bootNonce: "boot-nonce-generation-0001",
-				},
 				CANONICAL_TEST_CONTEXT,
 			);
 			process.exitCode = undefined;
@@ -7430,7 +7402,7 @@ fi
 				applyReceiptId: "apply-receipt-generation-0031",
 				bootNonce: "boot-nonce-generation-0001",
 			});
-			expect(watchFetch.captured).toHaveLength(12);
+			expect(watchFetch.captured).toHaveLength(10);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"--user restart openclaw-gateway.service",
 			);
@@ -8705,7 +8677,7 @@ fi
 		]);
 	});
 
-	it("runtime watch hands off before convergence and the new CLI completes the transaction", async () => {
+	it("runtime watch updates from the manifest without rewriting bootstrap context", async () => {
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -8718,9 +8690,10 @@ fi
 		const currentVersion = getCliVersion();
 		const cliContext = {
 			...CANONICAL_TEST_CONTEXT,
-			cliPackageSpec: `clawdi@${currentVersion}`,
+			cliPackageSpec: "clawdi@1.2.3-test",
 		};
 		setRuntimeApplyGeneration(13, cliContext);
+		const runtimeContextBefore = JSON.stringify(currentTestApplyContext);
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
@@ -8835,6 +8808,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.cliUpdate.status).toBe("installed");
 			expect(event.cliUpdate.packageSpec).toBe(`clawdi@${currentVersion}`);
 			expect(event.systemdUnitsChanged).toBe(false);
+			expect(JSON.stringify(currentTestApplyContext)).toBe(runtimeContextBefore);
 			expect(event.systemdApply).toEqual({
 				applied: false,
 				systemUnitsChanged: [],
@@ -8861,6 +8835,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(completedEvent.selfReexec).toBe(false);
 			expect(completedEvent.cliUpdate.status).toBe("current");
 			expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 13 });
+			expect(JSON.stringify(currentTestApplyContext)).toBe(runtimeContextBefore);
 			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toMatchObject({
 				transaction: null,
 				badVersions: [],

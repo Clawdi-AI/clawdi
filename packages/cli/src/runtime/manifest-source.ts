@@ -18,7 +18,6 @@ import {
 	isClawdiManagedProviderProjection,
 } from "./hosted-egress-profiles";
 import {
-	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	type HostedRuntimeManifest,
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
@@ -335,7 +334,7 @@ async function loadRemoteRuntimeManifestPipeline(
 	try {
 		normalized = normalizeRemoteManifestPayload(fetched.raw);
 		assertRemoteBundleAuthority(normalized.sourceRevision, fetched.etag);
-		assertRuntimeApplyContextMatchesManifest(normalized.manifest, applyContext);
+		assertRuntimeApplyIdentityMatchesManifest(normalized.manifest, applyContext);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
@@ -375,7 +374,7 @@ function runtimeApplyContextLoadFields(applyContext: RuntimeApplyContext): {
 	return { applyContext };
 }
 
-function assertRuntimeApplyContextMatchesManifest(
+function assertRuntimeApplyIdentityMatchesManifest(
 	manifest: RuntimeManifest,
 	applyContext: RuntimeApplyContext,
 ): void {
@@ -385,15 +384,6 @@ function assertRuntimeApplyContextMatchesManifest(
 	) {
 		throw new Error(
 			`runtime apply identity generation ${applyContext.identity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(manifest)}`,
-		);
-	}
-	const manifestCliPackageSpec = manifest.clawdiCli?.packageSpec;
-	const pairedFixtureMatch =
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS === "1" &&
-		applyContext.cliPackageSpec === HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE;
-	if (applyContext.cliPackageSpec !== manifestCliPackageSpec && !pairedFixtureMatch) {
-		throw new Error(
-			`runtime context CLI package ${applyContext.cliPackageSpec} does not match manifest CLI package ${manifestCliPackageSpec ?? "missing"}`,
 		);
 	}
 }

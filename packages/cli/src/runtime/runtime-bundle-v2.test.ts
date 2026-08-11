@@ -1243,6 +1243,43 @@ describe("hosted runtime bundle v2", () => {
 		expect(loaded.channelBindings).toHaveLength(1);
 	});
 
+	test("takes the desired CLI package from the runtime manifest", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-cli-update-"));
+		roots.push(root);
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		process.env.CLAWDI_RUN_DIR = join(root, "run");
+		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
+		const applyContext = setRuntimeApplyIdentityFile(
+			root,
+			{
+				generation: 1,
+				manifestETag: '"bundle-golden"',
+				applyReceiptId: "apply-receipt-golden-0001",
+				bootNonce: "boot-nonce-golden-000001",
+			},
+			"clawdi@1.2.2-test",
+		);
+		globalThis.fetch = Object.assign(
+			async () =>
+				new Response(readFileSync(goldenPath, "utf-8"), {
+					status: 200,
+					headers: {
+						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+						etag: `"sha256:${EXPECTED_GOLDEN_SOURCE_REVISION}"`,
+					},
+				}),
+			{ preconnect: () => undefined },
+		);
+
+		const loaded = await loadRemoteRuntimeManifest(getRuntimePaths({ mode: "hosted" }), {
+			applyContext,
+		});
+
+		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
+		expect(applyContext.cliPackageSpec).toBe("clawdi@1.2.2-test");
+		expect(loaded.manifest.clawdiCli?.packageSpec).toBe("clawdi@1.2.3-test");
+	});
+
 	test("rejects a bundle whose HTTP validator does not name its source revision", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-authority-"));
 		roots.push(root);
