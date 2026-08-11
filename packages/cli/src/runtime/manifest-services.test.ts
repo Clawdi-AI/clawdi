@@ -609,8 +609,10 @@ describe("runtime manifest services", () => {
 		expect(openclawEnv).toContain('CLAWDI_AUTH_TOKEN=""');
 		for (const name of ["openclaw-gateway", "hermes-gateway", "clawdi-hermes-dashboard"]) {
 			const env = readFileSync(join(paths.systemdEnvRoot, `${name}.service.env`), "utf8");
+			expect(env).toContain(`CLAWDI_HOME="${paths.clawdiHome}"`);
 			expect(env).not.toContain(dirname(paths.cliManagedBin));
 		}
+		expect(runtimeWatchEnv).toContain(`CLAWDI_HOME="${paths.clawdiHome}"`);
 
 		const serviceConfig = JSON.parse(
 			readFileSync(join(paths.runConfigRoot, "hermes+dashboard.json"), "utf8"),

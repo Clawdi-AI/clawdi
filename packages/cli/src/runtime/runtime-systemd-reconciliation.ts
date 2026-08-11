@@ -1453,6 +1453,7 @@ export function removeStaleRuntimeSystemdFiles(
 export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<string, string> {
 	const environment: Record<string, string> = {
 		HOME: paths.userHome,
+		CLAWDI_HOME: paths.clawdiHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_USER: "clawdi",
 		PATH: runtimeSystemdPath(paths),
@@ -1496,6 +1497,7 @@ function writeRuntimeSystemdUserProgram(input: {
 		...runtimeEnv,
 		...(input.manifest.locale ? { TZ: input.manifest.locale.timezone } : {}),
 		CLAWDI_AUTH_TOKEN: "",
+		CLAWDI_HOME: input.paths.clawdiHome,
 		CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
 			input.manifest,
 			program,

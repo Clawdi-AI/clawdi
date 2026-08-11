@@ -10,6 +10,7 @@ import {
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -446,10 +447,6 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	const openClawCommand = join(runtimeHome, ".local", "bin", "openclaw");
 	const root = mkdtempSync("/var/lib/clawdi-real-filebrowser-systemd-");
 	chmodSync(root, 0o755);
-	const clawdiHome = join(root, "clawdi-home");
-	mkdirSync(clawdiHome);
-	chownSync(clawdiHome, runtimeUid, runtimeGid);
-	chmodSync(clawdiHome, 0o700);
 	const tenantExisting = join(runtimeHome, "files-tenant-existing.txt");
 	writeFileSync(tenantExisting, "tenant-existing\n", { mode: 0o600 });
 	chownSync(tenantExisting, runtimeUid, runtimeGid);
@@ -459,7 +456,7 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
 	process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
 	process.env.CLAWDI_RUNTIME_HOME = runtimeHome;
-	process.env.CLAWDI_HOME = clawdiHome;
+	delete process.env.CLAWDI_HOME;
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = "/run/systemd/system";
@@ -479,6 +476,37 @@ test("isolates File Browser from the tenant while preserving workspace access", 
 	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
+	const legacyEnvironmentRoot = join(runtimeHome, ".clawdi", "environments");
+	mkdirSync(legacyEnvironmentRoot, { recursive: true });
+	writeFileSync(
+		join(legacyEnvironmentRoot, "openclaw.json"),
+		`${JSON.stringify({
+			id: "env_legacy_openclaw",
+			agentType: "openclaw",
+			managedBy: "clawdi runtime init",
+		})}\n`,
+	);
+	const systemNpmCli = "/usr/local/lib/node_modules/clawdi/bin/clawdi.mjs";
+	mkdirSync(dirname(systemNpmCli), { recursive: true });
+	writeFileSync(systemNpmCli, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+	symlinkSync("../lib/node_modules/clawdi/bin/clawdi.mjs", "/usr/local/bin/clawdi");
+	const tenantClawdi = () =>
+		spawnSync(
+			"runuser",
+			[
+				"-u",
+				"clawdi",
+				"--",
+				"env",
+				`HOME=${runtimeHome}`,
+				"PATH=/usr/local/bin:/usr/bin:/bin",
+				"/bin/sh",
+				"-c",
+				"command -v clawdi",
+			],
+			{ encoding: "utf8" },
+		);
+	expect(tenantClawdi().stdout.trim()).toBe("/usr/local/bin/clawdi");
 	const globalServiceDropInRoot = join(paths.systemdSystemRoot, "service.d");
 	mkdirSync(globalServiceDropInRoot, { recursive: true });
 	writeFileSync(
@@ -688,6 +716,14 @@ http.createServer((request, response) => {
 		baseUrl: "https://ai-gateway.example.test/v1",
 		apiKey: { id: "CLAWDI_OPENCLAW_API_KEY" },
 	});
+	expect(existsSync(join(runtimeHome, ".clawdi"))).toBe(false);
+	expect(statSync(paths.clawdiHome).uid).toBe(runtimeUid);
+	expect(statSync(paths.clawdiHome).gid).toBe(runtimeGid);
+	expect(statSync(paths.clawdiHome).mode & 0o777).toBe(0o750);
+	const tenantClawdiAfterConverge = tenantClawdi();
+	expect(tenantClawdiAfterConverge.status).not.toBe(0);
+	expect(tenantClawdiAfterConverge.stdout).toBe("");
+
 	const serviceIdentity = spawnSync("getent", ["passwd", "clawdi-files"], {
 		encoding: "utf8",
 	});

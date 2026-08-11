@@ -4,6 +4,7 @@ import {
 	accessSync,
 	constants,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
@@ -17,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { HOSTED_RUNTIME_HOME, HOSTED_RUNTIME_USER } from "./hosted-runtime-contract";
 import {
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	hostedCliPackageSpecSchema,
@@ -107,6 +109,36 @@ const NPM_INSTALL_TIMEOUT_MS = 180_000;
 const VERSION_SMOKE_TIMEOUT_MS = 20_000;
 const RUNTIME_VERIFY_TIMEOUT_MS = 20_000;
 const CLI_VERIFY_CACHE_MAX_AGE_MS = 300_000;
+const HOSTED_TENANT_PATH_CLI = "/usr/local/bin/clawdi";
+const HOSTED_SYSTEM_NPM_CLI = "/usr/local/lib/node_modules/clawdi/bin/clawdi.mjs";
+
+export function removeHostedCliPathExposure(paths: RuntimePaths): void {
+	if (
+		paths.mode !== "hosted" ||
+		paths.userHome !== HOSTED_RUNTIME_HOME ||
+		process.env.CLAWDI_RUNTIME_USER?.trim() !== HOSTED_RUNTIME_USER ||
+		(typeof process.geteuid === "function" && process.geteuid() !== 0)
+	) {
+		return;
+	}
+	let node: ReturnType<typeof lstatSync>;
+	try {
+		node = lstatSync(HOSTED_TENANT_PATH_CLI);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!node.isSymbolicLink()) {
+		throw new Error(
+			`hosted tenant PATH contains an unmanaged clawdi entrypoint: ${HOSTED_TENANT_PATH_CLI}`,
+		);
+	}
+	const target = resolve(dirname(HOSTED_TENANT_PATH_CLI), readlinkSync(HOSTED_TENANT_PATH_CLI));
+	if (target !== HOSTED_SYSTEM_NPM_CLI) {
+		throw new Error(`hosted tenant PATH contains an unmanaged clawdi symlink target: ${target}`);
+	}
+	rmSync(HOSTED_TENANT_PATH_CLI);
+}
 
 interface RuntimeCliReconciliationOptions {
 	runningVersion?: string;

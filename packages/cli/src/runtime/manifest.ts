@@ -11,6 +11,7 @@ import {
 	readdirSync,
 	readFileSync,
 	readlinkSync,
+	rmdirSync,
 	rmSync,
 	statSync,
 } from "node:fs";
@@ -73,6 +74,7 @@ import {
 	RUNTIME_AUTH_TOKEN_SECRET_REF,
 	readRuntimeAuthToken,
 } from "./auth-token";
+import { removeHostedCliPathExposure } from "./cli-update";
 import {
 	ensureFileBrowserCompanion,
 	type FileBrowserCompanionInstallOptions,
@@ -168,8 +170,7 @@ import {
 	ensureRuntimeMitmproxy,
 	type RuntimeMitmproxyEnsureResult,
 } from "./mitmproxy-fetch";
-import type { RuntimePaths } from "./paths";
-import { detectRuntimeMode } from "./paths";
+import { detectRuntimeMode, RUNTIME_USER_CLI_STATE_ROOT_MODE, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
 	buildRuntimeRunConfig,
@@ -955,6 +956,24 @@ function makeRuntimeUserPrivateDir(path: string, home: string): void {
 		chmodSync(path, 0o700);
 	} catch {
 		// Best effort for non-POSIX local development environments.
+	}
+}
+
+function ensureRuntimeUserCliStateRoot(path: string, identity: { uid: number; gid: number }): void {
+	mkdirSync(path, { recursive: true });
+	let node = lstatSync(path);
+	if (!node.isDirectory() || node.isSymbolicLink()) {
+		throw new Error(`hosted CLAWDI_HOME must be a real directory: ${path}`);
+	}
+	if (runningAsRoot()) chownSync(path, identity.uid, identity.gid);
+	chmodSync(path, RUNTIME_USER_CLI_STATE_ROOT_MODE);
+	node = lstatSync(path);
+	if (
+		(node.mode & 0o777) !== RUNTIME_USER_CLI_STATE_ROOT_MODE ||
+		node.uid !== identity.uid ||
+		node.gid !== identity.gid
+	) {
+		throw new Error(`hosted CLAWDI_HOME ownership or mode is invalid: ${path}`);
 	}
 }
 
@@ -4576,6 +4595,67 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 	return written;
 }
 
+function removeLegacyTenantClawdiState(paths: RuntimePaths): void {
+	const legacyRoot = join(paths.userHome, ".clawdi");
+	if (resolve(legacyRoot) === resolve(paths.clawdiHome)) return;
+	let root: ReturnType<typeof lstatSync>;
+	try {
+		root = lstatSync(legacyRoot);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!root.isDirectory() || root.isSymbolicLink()) return;
+	const environments = join(legacyRoot, "environments");
+	let directory: ReturnType<typeof lstatSync>;
+	try {
+		directory = lstatSync(environments);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!directory.isDirectory() || directory.isSymbolicLink()) return;
+	let removedManagedFile = false;
+	for (const entry of readdirSync(environments)) {
+		if (!entry.endsWith(".json")) continue;
+		const path = join(environments, entry);
+		try {
+			const node = lstatSync(path);
+			if (!node.isFile() || node.isSymbolicLink()) continue;
+			let value: unknown;
+			try {
+				value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+			} catch {
+				continue;
+			}
+			if (
+				typeof value !== "object" ||
+				value === null ||
+				Array.isArray(value) ||
+				(value as Record<string, unknown>).managedBy !== "clawdi runtime init"
+			) {
+				continue;
+			}
+			rmSync(path);
+			removedManagedFile = true;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+	}
+	if (!removedManagedFile) return;
+	removeEmptyLegacyDirectory(environments);
+	removeEmptyLegacyDirectory(legacyRoot);
+}
+
+function removeEmptyLegacyDirectory(path: string): void {
+	try {
+		rmdirSync(path);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "ENOENT" && code !== "ENOTEMPTY") throw error;
+	}
+}
+
 function liveSyncEnvironmentIndexPath(paths: RuntimePaths): string {
 	return paths.liveSyncEnvironmentIndex;
 }
@@ -5485,6 +5565,8 @@ export function convergeRuntimeManifest(
 		applyContext,
 		opts.hostedRuntimeContract,
 	);
+	removeHostedCliPathExposure(paths);
+	removeLegacyTenantClawdiState(paths);
 	if (manifest.companions?.filebrowser) {
 		if (manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2") {
 			throw new Error("Files companion requires a hosted v2 bundle");
@@ -5843,9 +5925,9 @@ export function convergeRuntimeManifest(
 
 		hostedRuntimeContract.assertPlatformRoots();
 		ensureRuntimeUserHome(paths.userHome);
+		ensureRuntimeUserCliStateRoot(paths.clawdiHome, hostedRuntimeContract.identity);
 		withRuntimeUserFileAccess(() => {
 			mkdirSync(workspaceRoot, { recursive: true });
-			makeRuntimeUserPrivateDir(paths.clawdiHome, paths.userHome);
 			makeRuntimeUserOwned(workspaceRoot);
 		});
 		for (const directory of [paths.installInventory, paths.projectionRoot, instanceRoot, semRoot]) {
