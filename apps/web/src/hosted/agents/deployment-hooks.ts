@@ -4,7 +4,11 @@ import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-q
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { retireRuntimeWindows } from "@/hosted/agents/runtime-window-lifecycle";
-import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
+import {
+	type AcceptedOperation,
+	type DeploymentDeleteResult,
+	useBillingClient,
+} from "@/hosted/billing/billing-client";
 import type {
 	DeploymentDeleteRequest,
 	DeploymentUpdateRequest,
@@ -86,6 +90,25 @@ export function projectAcceptedDeploymentTransition(
 		),
 	);
 	scheduleRefresh(qc);
+}
+
+/** Attempts to leave detail before accepted cache projection can hide it. */
+export async function settleAcceptedDeploymentDelete(
+	qc: QueryClient,
+	accepted: DeploymentDeleteResult,
+	dismissDetail: () => Promise<void> | void,
+	scheduleRefresh = scheduleDeploymentSettlingRefresh,
+): Promise<boolean> {
+	let detailDismissed = true;
+	try {
+		await dismissDetail();
+	} catch {
+		detailDismissed = false;
+	}
+	if (accepted.operation) {
+		projectAcceptedDeploymentTransition(qc, accepted, scheduleRefresh);
+	}
+	return detailDismissed;
 }
 
 async function runStableDeploymentIntent<T>(
@@ -232,7 +255,7 @@ export function useResetRuntimeUiAccess() {
 	});
 }
 
-export function useDeleteDeployment() {
+export function useDeleteDeployment(dismissDetail: () => Promise<void> | void) {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
@@ -242,8 +265,13 @@ export function useDeleteDeployment() {
 				{ action: "delete", id: vars.id, request: vars.request },
 				(key) => client.deleteDeployment(vars.id, vars.request, key, vars.resourceVersion),
 			),
-		onSuccess: (accepted) => {
-			if (accepted.operation) projectAcceptedDeploymentTransition(qc, accepted);
+		onSuccess: async (accepted) => {
+			const detailDismissed = await settleAcceptedDeploymentDelete(qc, accepted, dismissDetail);
+			if (!detailDismissed) {
+				toast.error("Agent removed, but navigation failed", {
+					description: "Use Overview in the sidebar to continue.",
+				});
+			}
 			retireRuntimeWindows(accepted.deploymentId);
 			toast.message("Agent removed", {
 				description: "Cleanup continues in the background.",

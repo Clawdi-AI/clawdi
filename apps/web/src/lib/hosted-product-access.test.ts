@@ -8,6 +8,7 @@ describe("hostedProductAccessFromProfile", () => {
 	it("keeps hosted product surfaces hidden by default", () => {
 		expect(hostedProductAccessFromProfile(undefined)).toEqual({
 			canUseLegacyHostedDashboard: false,
+			legacyHostedAccessStatus: "unresolved",
 			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
 		});
@@ -20,6 +21,7 @@ describe("hostedProductAccessFromProfile", () => {
 			}),
 		).toEqual({
 			canUseLegacyHostedDashboard: false,
+			legacyHostedAccessStatus: "disabled",
 			canCreateCloudAgents: true,
 			canUseCloudAgents: true,
 		});
@@ -32,6 +34,7 @@ describe("hostedProductAccessFromProfile", () => {
 			}),
 		).toEqual({
 			canUseLegacyHostedDashboard: true,
+			legacyHostedAccessStatus: "enabled",
 			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
 		});
@@ -47,6 +50,7 @@ describe("hostedProductAccessFromProfile", () => {
 			}),
 		).toEqual({
 			canUseLegacyHostedDashboard: false,
+			legacyHostedAccessStatus: "disabled",
 			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
 		});

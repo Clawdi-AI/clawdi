@@ -12,6 +12,7 @@ import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inv
 import type { AgentOwnership } from "@/lib/agent-ownership";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import type { LegacyHostedAccessStatus } from "@/lib/hosted-product-access-model";
 
 const EMPTY_ENV_IDS: ReadonlySet<string> = new Set();
 
@@ -25,7 +26,7 @@ function envIdSet(ids: readonly string[] | undefined): ReadonlySet<string> {
 }
 
 export function resolveLegacyEnvIds(
-	enabled: boolean,
+	accessStatus: LegacyHostedAccessStatus,
 	environmentIds: readonly string[] | undefined,
 	error: Error | null,
 ): {
@@ -33,7 +34,12 @@ export function resolveLegacyEnvIds(
 	error: Error | null;
 	isLoading: boolean;
 } {
-	if (!enabled) return { envIds: EMPTY_ENV_IDS, error: null, isLoading: false };
+	if (accessStatus === "disabled") {
+		return { envIds: EMPTY_ENV_IDS, error: null, isLoading: false };
+	}
+	if (accessStatus === "unresolved") {
+		return { envIds: null, error, isLoading: error === null };
+	}
 	if (environmentIds !== undefined) {
 		return { envIds: envIdSet(environmentIds), error: null, isLoading: false };
 	}
@@ -43,7 +49,8 @@ export function resolveLegacyEnvIds(
 export function useLegacyEnvIds() {
 	const access = useHostedProductAccess();
 	const client = useBillingClient();
-	const enabled = access.canUseLegacyHostedDashboard && isDeployApiConfigured();
+	const accessStatus = isDeployApiConfigured() ? access.legacyHostedAccessStatus : "disabled";
+	const enabled = accessStatus === "enabled";
 	const query = useQuery({
 		queryKey: billingKeys.legacyAgentEnvironments,
 		enabled,
@@ -56,15 +63,31 @@ export function useLegacyEnvIds() {
 	});
 
 	const resolution = useMemo(() => {
-		// Only data (fresh or stale cache) resolves the set. The endpoint has
-		// no 404 in its success contract — users without live v1 deployments
-		// get an empty list — so a 404 can only mean "route not deployed
-		// yet" (rollout skew) and, like every other error, stays UNRESOLVED:
-		// destructive consumers fail closed instead of treating live legacy
-		// agents as connected.
-		return resolveLegacyEnvIds(enabled, query.data?.environment_ids, query.error);
-	}, [enabled, query.data, query.error]);
-	return { ...resolution, refetch: query.refetch };
+		let error = query.error;
+		if (accessStatus === "unresolved") {
+			error =
+				access.error == null
+					? null
+					: access.error instanceof Error
+						? access.error
+						: new Error("Hosted product access check failed");
+		}
+		// A successful access profile can authoritatively disable v1. When it
+		// enables v1, only endpoint data (fresh or cached) resolves ownership;
+		// loading and every error stay unresolved so destructive consumers fail
+		// closed instead of treating a live legacy agent as connected.
+		return resolveLegacyEnvIds(accessStatus, query.data?.environment_ids, error);
+	}, [access.error, accessStatus, query.data, query.error]);
+	return {
+		...resolution,
+		refetch: async () => {
+			if (accessStatus === "unresolved") {
+				await access.refetch();
+			} else if (accessStatus === "enabled") {
+				await query.refetch();
+			}
+		},
+	};
 }
 
 /**

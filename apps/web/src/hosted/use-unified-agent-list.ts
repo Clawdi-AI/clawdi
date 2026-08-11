@@ -16,8 +16,6 @@ import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 
 type Env = components["schemas"]["AgentResponse"];
 
-const EMPTY_ENV_IDS: ReadonlySet<string> = new Set();
-
 export interface UnifiedAgentListSelection {
 	tiles: AgentTile[];
 	hostedTiles: AgentTile[];
@@ -31,6 +29,7 @@ export interface UnifiedAgentListSelection {
  * A Cloud deployment owns its configured environment even while that
  * environment is absent from the Cloud API response. Legacy environments are
  * bridged once, and every remaining environment is rendered as self-managed.
+ * `showLegacyAgents` controls their tiles, never whether ownership must resolve.
  */
 export function selectUnifiedAgentList({
 	cloudEnvs,
@@ -47,9 +46,7 @@ export function selectUnifiedAgentList({
 	hostedInventoryStatus: HostedInventoryStatus;
 	showLegacyAgents: boolean;
 }): UnifiedAgentListSelection {
-	const membershipResolved =
-		hostedInventoryStatus === "resolved" && (!showLegacyAgents || legacyEnvIds !== null);
-	if (!membershipResolved) {
+	if (hostedInventoryStatus !== "resolved" || legacyEnvIds === null) {
 		return {
 			tiles: hostedTiles,
 			hostedTiles,
@@ -58,13 +55,11 @@ export function selectUnifiedAgentList({
 		};
 	}
 
-	const legacyConnectedTiles =
-		showLegacyAgents && legacyEnvIds
-			? legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, claimedEnvIds)
-			: [];
+	const legacyConnectedTiles = showLegacyAgents
+		? legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, claimedEnvIds)
+		: [];
 	const dedupedSelfManaged = selfManagedAgentTiles(cloudEnvs).filter(
-		(tile) =>
-			!isOwnedEnvId(tile.id, claimedEnvIds, showLegacyAgents ? legacyEnvIds : EMPTY_ENV_IDS),
+		(tile) => !isOwnedEnvId(tile.id, claimedEnvIds, legacyEnvIds),
 	);
 	const connectedTiles = [...legacyConnectedTiles, ...dedupedSelfManaged];
 	return {
@@ -78,10 +73,10 @@ export function selectUnifiedAgentList({
 function isOwnedEnvId(
 	id: string,
 	claimedEnvIds: ReadonlySet<string>,
-	legacyEnvIds: ReadonlySet<string> | null,
+	legacyEnvIds: ReadonlySet<string>,
 ): boolean {
 	const envId = normalizeAgentEnvId(id);
-	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds?.has(envId)));
+	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds.has(envId)));
 }
 
 export function useUnifiedAgentList({
@@ -98,14 +93,13 @@ export function useUnifiedAgentList({
 		includeDeployments: showCloudDeployments,
 	});
 	const legacy = useLegacyEnvIds();
-	const legacyEnvIds = showLegacyAgents ? legacy.envIds : EMPTY_ENV_IDS;
 	const selection = useMemo(
 		() =>
 			selectUnifiedAgentList({
 				cloudEnvs,
 				hostedTiles: hosted.tiles,
 				claimedEnvIds: hosted.claimedEnvIds,
-				legacyEnvIds,
+				legacyEnvIds: legacy.envIds,
 				hostedInventoryStatus: hosted.inventoryStatus,
 				showLegacyAgents,
 			}),
@@ -114,7 +108,7 @@ export function useUnifiedAgentList({
 			hosted.claimedEnvIds,
 			hosted.inventoryStatus,
 			hosted.tiles,
-			legacyEnvIds,
+			legacy.envIds,
 			showLegacyAgents,
 		],
 	);
@@ -124,13 +118,10 @@ export function useUnifiedAgentList({
 		hasExistingDeployments: hosted.hasExistingDeployments,
 		inventoryStatus: hosted.inventoryStatus,
 		isFetching: hosted.isFetching,
-		isLoading: (showCloudDeployments && hosted.isLoading) || (showLegacyAgents && legacy.isLoading),
-		error: hosted.error ?? (showLegacyAgents ? legacy.error : null),
+		isLoading: (showCloudDeployments && hosted.isLoading) || legacy.isLoading,
+		error: hosted.error ?? legacy.error,
 		refetch: () =>
-			Promise.all([
-				...(showCloudDeployments ? [hosted.refetch()] : []),
-				...(showLegacyAgents ? [legacy.refetch()] : []),
-			]),
+			Promise.all([...(showCloudDeployments ? [hosted.refetch()] : []), legacy.refetch()]),
 	};
 }
 
