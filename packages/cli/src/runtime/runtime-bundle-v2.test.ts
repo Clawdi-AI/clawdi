@@ -610,7 +610,6 @@ describe("hosted runtime bundle v2", () => {
 		);
 		const watchEnvPath = join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env");
 		expect(watchUnit).toContain(`EnvironmentFile=${watchEnvPath}`);
-		const gatewayTokenLine = 'OPENCLAW_GATEWAY_TOKEN="openclaw-gateway-token-golden"';
 		const watchEnv = readFileSync(watchEnvPath, "utf-8");
 		expect(statSync(watchEnvPath).mode & 0o777).toBe(0o600);
 		const sidecarOnlySecrets = [
@@ -627,9 +626,12 @@ describe("hosted runtime bundle v2", () => {
 			expect(watchEnv).not.toContain(secret);
 		}
 		expect(watchEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
-		expect(
-			readFileSync(join(paths.systemdEnvRoot, "openclaw-gateway.service.env"), "utf-8"),
-		).toContain(gatewayTokenLine);
+		const gatewayEnv = readFileSync(
+			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
+			"utf-8",
+		);
+		expect(gatewayEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+		expect(gatewayEnv).not.toContain("openclaw-gateway-token-golden");
 		const persistentLastGood = [
 			readFileSync(paths.manifestLastGood, "utf-8"),
 			readFileSync(paths.managedSecretCacheFile, "utf-8"),

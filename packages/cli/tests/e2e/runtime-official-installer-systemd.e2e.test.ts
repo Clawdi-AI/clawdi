@@ -230,6 +230,212 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	expect(existsSync(workspaceRoot)).toBe(false);
 });
 
+test("persists and serves the managed token through the real official OpenClaw gateway", async () => {
+	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
+
+	expect(process.geteuid?.()).toBe(0);
+	const runtimeHome = "/home/clawdi";
+	const runtimeUid = 10_001;
+	const runtimeGid = 10_001;
+	const commandPath = join(runtimeHome, ".local", "bin", "openclaw");
+	const root = mkdtempSync(join(tmpdir(), "clawdi-real-openclaw-token-"));
+	chmodSync(root, 0o755);
+	const clawdiHome = join(root, "clawdi-home");
+	mkdirSync(clawdiHome);
+	chownSync(clawdiHome, runtimeUid, runtimeGid);
+	chmodSync(clawdiHome, 0o700);
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_RUNTIME_USER = "clawdi";
+	process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
+	process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
+	process.env.CLAWDI_RUNTIME_HOME = runtimeHome;
+	process.env.CLAWDI_HOME = clawdiHome;
+	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+	process.env.CLAWDI_RUN_DIR = join(root, "run");
+	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "run", "systemd", "system");
+	process.env.CLAWDI_AUTH_TOKEN = "real-token-test-auth-token";
+	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
+	const paths = getRuntimePaths({ mode: "hosted" });
+	ensureRuntimeStateDirs(paths);
+	const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+	const dropInRoot = join(paths.systemdUserRoot, "openclaw-gateway.service.d");
+	const enablementPath = join(
+		paths.systemdUserRoot,
+		"default.target.wants",
+		"openclaw-gateway.service",
+	);
+	const openClawConfig = join(runtimeHome, ".openclaw", "openclaw.json");
+	const officialGatewayEnvironment = join(runtimeHome, ".openclaw", "gateway.systemd.env");
+	const managedToken = "managed-gateway-token";
+	const staleToken = "stale-config-token";
+	const runUserSystemctl = (...args: string[]) =>
+		spawnSync(
+			"runuser",
+			[
+				"-u",
+				"clawdi",
+				"--",
+				"env",
+				`HOME=${runtimeHome}`,
+				`XDG_RUNTIME_DIR=/run/user/${runtimeUid}`,
+				`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${runtimeUid}/bus`,
+				"systemctl",
+				"--user",
+				...args,
+			],
+			{ encoding: "utf8" },
+		);
+
+	runUserSystemctl("disable", "--now", "openclaw-gateway.service");
+	rmSync(unitPath, { recursive: true, force: true });
+	rmSync(dropInRoot, { recursive: true, force: true });
+	rmSync(enablementPath, { force: true });
+	const workspaceRoot = join(runtimeHome, ".openclaw", "workspace");
+	writeFileSync(
+		openClawConfig,
+		`${JSON.stringify({
+			agents: { defaults: { workspace: workspaceRoot } },
+			gateway: { mode: "local", auth: { mode: "token", token: staleToken } },
+		})}\n`,
+		{ mode: 0o600 },
+	);
+	chownSync(openClawConfig, runtimeUid, runtimeGid);
+
+	const manifest: RuntimeManifest = {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "hdep_real_openclaw_token",
+		environmentId: "env_real_openclaw_token",
+		instanceId: "hri_real_openclaw_token",
+		generation: 1,
+		issuedAt: "2026-08-11T00:00:00.000Z",
+		workspaceRoot,
+		projection: {
+			sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+			system: {
+				openclawControlUiAllowedOrigins: ["https://agent.example.test"],
+			},
+		},
+		openclawGatewayAuth: {
+			mode: "token",
+			tokenRef: "secret://runtime/openclaw/gateway-token",
+			deviceAuthRequired: false,
+			activation: { enabled: true, capability: "openclaw-native-auth-v1" },
+		},
+		controlPlane: { apiUrl: "https://cloud-api.example.test" },
+		runtimes: {
+			openclaw: {
+				enabled: true,
+				run: {
+					command: commandPath,
+					args: [
+						"gateway",
+						"run",
+						"--allow-unconfigured",
+						"--port",
+						"18789",
+						"--bind",
+						"lan",
+						"--force",
+					],
+					env: {},
+					secretEnv: {
+						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
+					},
+					prependPath: [],
+				},
+				services: {},
+			},
+		},
+		recovery: {},
+	};
+	const load: RuntimeManifestLoad = {
+		manifest,
+		source: "remote-datasource",
+		sourcePath: "real-openclaw-token-fixture",
+		offline: false,
+		secretValues: { "secret://runtime/openclaw/gateway-token": managedToken },
+		applyContext: {
+			kind: "context-file",
+			backend: "incus",
+			identity: {
+				generation: manifest.generation,
+				manifestETag: '"real-token-test"',
+				applyReceiptId: "real-token-test-receipt",
+				bootNonce: "real-token-test-boot",
+			},
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_openclaw_token",
+				auth: { type: "bearer", token: "real-token-test-auth-token" },
+			},
+		},
+	};
+
+	try {
+		const result = convergeRuntimeManifest(load, paths, {
+			executeOfficialServiceInstallers: true,
+			cacheLastGood: false,
+		});
+		expect(result.installErrors).toEqual([]);
+		const config = JSON.parse(readFileSync(openClawConfig, "utf8")) as {
+			gateway?: { auth?: { token?: string } };
+		};
+		expect(config.gateway?.auth?.token).toBe(managedToken);
+		expect(readFileSync(unitPath, "utf8")).not.toContain(managedToken);
+		if (existsSync(officialGatewayEnvironment)) {
+			expect(readFileSync(officialGatewayEnvironment, "utf8")).not.toContain(managedToken);
+			expect(readFileSync(officialGatewayEnvironment, "utf8")).not.toContain(staleToken);
+		}
+		const managedEnvironment = join(paths.systemdEnvRoot, "openclaw-gateway.service.env");
+		expect(statSync(managedEnvironment).mode & 0o777).toBe(0o600);
+		expect(readFileSync(managedEnvironment, "utf8")).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+		expect(readFileSync(managedEnvironment, "utf8")).not.toContain(managedToken);
+		expect(readFileSync(managedEnvironment, "utf8")).not.toContain(staleToken);
+
+		expect(runUserSystemctl("daemon-reload").status).toBe(0);
+		expect(runUserSystemctl("enable", "--now", "openclaw-gateway.service").status).toBe(0);
+		expect(runUserSystemctl("restart", "openclaw-gateway.service").status).toBe(0);
+		const gatewayHealth = (token?: string, configPath = openClawConfig) => {
+			const env: NodeJS.ProcessEnv = {
+				...process.env,
+				HOME: runtimeHome,
+				OPENCLAW_CONFIG_PATH: configPath,
+			};
+			if (token === undefined) delete env.OPENCLAW_GATEWAY_TOKEN;
+			else env.OPENCLAW_GATEWAY_TOKEN = token;
+			return spawnSync(commandPath, ["gateway", "health", "--port", "18789", "--timeout", "1000"], {
+				encoding: "utf8",
+				env,
+			});
+		};
+		let managedHealth = gatewayHealth(managedToken);
+		for (let attempt = 0; attempt < 30 && managedHealth.status !== 0; attempt += 1) {
+			await Bun.sleep(100);
+			managedHealth = gatewayHealth(managedToken);
+		}
+		expect(`${managedHealth.stdout}\n${managedHealth.stderr}`).toContain("Gateway Health");
+		expect(managedHealth.status).toBe(0);
+		// With no env override, the official client resolves the persisted config token.
+		expect(gatewayHealth().status).toBe(0);
+
+		const staleClientConfig = join(root, "stale-openclaw-client.json");
+		writeFileSync(
+			staleClientConfig,
+			`${JSON.stringify({ gateway: { auth: { mode: "token", token: staleToken } } })}\n`,
+			{ mode: 0o600 },
+		);
+		const staleHealth = gatewayHealth(undefined, staleClientConfig);
+		expect(staleHealth.status).not.toBe(0);
+		expect(`${staleHealth.stdout}\n${staleHealth.stderr}`).toMatch(/unauthorized|token mismatch/i);
+	} finally {
+		runUserSystemctl("disable", "--now", "openclaw-gateway.service");
+		rmSync(unitPath, { recursive: true, force: true });
+		rmSync(dropInRoot, { recursive: true, force: true });
+		rmSync(enablementPath, { force: true });
+	}
+}, 60_000);
+
 test("isolates File Browser from the tenant while preserving workspace access", () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 

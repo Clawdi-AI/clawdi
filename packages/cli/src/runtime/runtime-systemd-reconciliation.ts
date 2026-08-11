@@ -362,6 +362,8 @@ type OfficialRuntimeServiceDescriptor = {
 	command: string;
 	installArgs: string[];
 	uninstallArgs: string[];
+	// Resolved in memory for the installer subprocess; strict native auth may omit it from the unit.
+	installSecretEnv?: readonly string[];
 	// Manifest `services` key the official unit corresponds to; used for
 	// program naming even when such an entry is not official for the runtime.
 	service: string;
@@ -381,6 +383,7 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		command: "openclaw",
 		installArgs: ["gateway", "install", "--force", "--json"],
 		uninstallArgs: ["gateway", "uninstall"],
+		installSecretEnv: ["OPENCLAW_GATEWAY_TOKEN"],
 		service: "gateway",
 		unitEnv: (unitName) => ({ OPENCLAW_SYSTEMD_UNIT: unitName }),
 		matchesProgram: (program) => !program.service,
@@ -743,11 +746,23 @@ function writeSystemdEnvironmentFile(input: {
 			}
 			return `${key}=${systemdEnvironmentFileQuote(value)}`;
 		});
-	writePrivateFileAtomic(path, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n${lines.join("\n")}\n`, {
-		mode: 0o600,
-		dirMode: 0o711,
-		trustedRoot: input.paths.runRoot,
-	});
+	const content = `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n${lines.join("\n")}\n`;
+	let unchanged = false;
+	try {
+		const current = lstatSync(path);
+		unchanged = current.isFile() && current.nlink === 1 && readFileSync(path, "utf8") === content;
+	} catch {
+		// A missing or unreadable target is replaced by the trusted atomic writer below.
+	}
+	if (!unchanged) {
+		writePrivateFileAtomic(path, content, {
+			mode: 0o600,
+			dirMode: 0o711,
+			trustedRoot: input.paths.runRoot,
+		});
+	} else {
+		chmodSync(path, 0o600);
+	}
 	if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
 	return path;
 }
@@ -1051,7 +1066,14 @@ function installOfficialRuntimeUserService(
 	}
 	try {
 		resetFailedRuntimeUserService(runtimeSystemdProgramName(program), paths, program.cwd);
+		const environment = Object.fromEntries(
+			(descriptor.installSecretEnv ?? []).flatMap((name) => {
+				const value = program.resolvedSecretEnv[name];
+				return value ? [[name, value]] : [];
+			}),
+		);
 		const result = spawnRuntimeUserCommand(program.command, args, paths.userHome, program.cwd, {
+			environment,
 			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
 			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
 		});
@@ -1458,9 +1480,20 @@ function writeRuntimeSystemdUserProgram(input: {
 			: program.args;
 	const name = runtimeSystemdProgramName(program);
 	const unitName = systemdUnitFileName(name);
+	const runtimeEnv = { ...program.env };
+	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
+	const installerOnlySecretEnv =
+		descriptor?.runtime === "openclaw" &&
+		input.manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		input.manifest.openclawGatewayAuth?.activation.enabled === true
+			? (descriptor.installSecretEnv ?? [])
+			: [];
+	for (const envName of installerOnlySecretEnv) {
+		delete runtimeEnv[envName];
+	}
 	const env = {
 		...input.commonEnvironment,
-		...program.env,
+		...runtimeEnv,
 		...(input.manifest.locale ? { TZ: input.manifest.locale.timezone } : {}),
 		CLAWDI_AUTH_TOKEN: "",
 		CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
@@ -1470,7 +1503,7 @@ function writeRuntimeSystemdUserProgram(input: {
 			input.providerProjectionRevisions,
 			input.runtimeRevision,
 		),
-		...(officialRuntimeServiceDescriptorForProgram(program)?.unitEnv?.(unitName) ?? {}),
+		...(descriptor?.unitEnv?.(unitName) ?? {}),
 	};
 	if (officialRuntimeServiceInstallArgs(program)) {
 		return writeSystemdUserDropIn({

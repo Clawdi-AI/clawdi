@@ -374,6 +374,7 @@ export function spawnRuntimeUserCommand(
 	cwd: string,
 	options: {
 		egressSystemCaFile?: string;
+		environment?: Record<string, string>;
 		input?: string;
 		maxBufferBytes?: number;
 		timeoutMs?: number;
@@ -399,6 +400,7 @@ export function spawnRuntimeUserCommand(
 		env: {
 			...runtimeUserCommandEnv(home, runtimeUid, options),
 			...child.env,
+			...options.environment,
 		},
 		cwd,
 		encoding: "utf8",

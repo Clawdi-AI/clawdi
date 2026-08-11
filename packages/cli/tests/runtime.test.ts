@@ -1145,6 +1145,7 @@ function openClawWhatsAppPluginInspectFixture(pluginSource: string): Record<stri
 
 function seedOfficialOpenClawServiceInstaller(home: string): void {
 	const openclawBin = join(home, ".local", "bin", "openclaw");
+	const openclawConfig = join(home, ".openclaw", "openclaw.json");
 	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
 	const workspace = join(home, ".openclaw", "workspace");
 	mkdirSync(dirname(openclawBin), { recursive: true });
@@ -1161,8 +1162,11 @@ if [ "$*" = "agents list --json" ]; then
   exit 0
 fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >/dev/null
-  exit 0
+	patch="$(cat)"
+	case "$patch" in
+	  *'"gateway"'*) printf '%s\n' "$patch" > '${openclawConfig}' ;;
+	esac
+	exit 0
 fi
 if [ "$*" = "gateway install --force --json" ]; then
   mkdir -p '${dirname(unitPath)}'
@@ -4378,8 +4382,12 @@ exit 0
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
 		const openclawCommand = join(root, "openclaw-command.log");
+		const openclawConfig = join(home, ".openclaw", "openclaw.json");
+		const installerToken = join(root, "openclaw-installer-token");
+		const configPatchFailure = join(root, "fail-openclaw-config-patch");
 		const patchCount = join(root, "openclaw-patch-count");
 		const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
+		const gatewayEnvPath = join(run, "systemd", "env", "openclaw-gateway.service.env");
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -4392,13 +4400,21 @@ exit 0
 				'if [ "$1" = "--version" ]; then printf "OpenClaw test-version\\n"; exit 0; fi',
 				`printf '%s\\n' "$*" >> '${openclawCommand}'`,
 				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`  [ ! -e '${configPatchFailure}' ] || exit 73`,
 				`  count=$(cat '${patchCount}' 2>/dev/null || printf '0')`,
 				"  count=$((count + 1))",
 				`  printf '%s' "$count" > '${patchCount}'`,
 				`  cat > '${root}'/openclaw-patch-"$count".json`,
+				`  if grep -F '"gateway"' '${root}'/openclaw-patch-"$count".json >/dev/null; then`,
+				`    mkdir -p '${dirname(openclawConfig)}'`,
+				`    cp '${root}'/openclaw-patch-"$count".json '${openclawConfig}'`,
+				"  fi",
 				"  exit 0",
 				"fi",
 				'if [ "$1 $2 $3 $4" = "gateway install --force --json" ]; then',
+				`  [ "\${OPENCLAW_GATEWAY_TOKEN:-}" = 'gateway-token' ] || exit 71`,
+				`  grep -F '"token": "gateway-token"' '${openclawConfig}' >/dev/null || exit 72`,
+				`  printf '%s\\n' "\${OPENCLAW_GATEWAY_TOKEN}" > '${installerToken}'`,
 				`  mkdir -p '${dirname(unitPath)}'`,
 				`  printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=${openclawBin} gateway run' > '${unitPath}'`,
 				"  printf '{\"ok\":true}\\n'",
@@ -4410,6 +4426,18 @@ exit 0
 			].join("\n"),
 		);
 		chmodSync(openclawBin, 0o700);
+		// Prior-generation state: a stale persisted gateway token in the official
+		// config location, exactly as a previous boot would have left it.
+		mkdirSync(dirname(openclawConfig), { recursive: true });
+		writeFileSync(
+			openclawConfig,
+			`${JSON.stringify({
+				gateway: {
+					mode: "local",
+					auth: { mode: "token", token: "stale-installer-token" },
+				},
+			})}\n`,
+		);
 
 		const loaded: RuntimeManifestLoad = {
 			source: "remote-datasource",
@@ -4437,6 +4465,24 @@ exit 0
 				runtimes: {
 					openclaw: {
 						enabled: true,
+						run: {
+							command: openclawBin,
+							args: [
+								"gateway",
+								"run",
+								"--allow-unconfigured",
+								"--port",
+								"18789",
+								"--bind",
+								"lan",
+								"--force",
+							],
+							env: {},
+							secretEnv: {
+								OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
+							},
+							prependPath: [],
+						},
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-5.4-mini" },
 						install: {
@@ -4449,6 +4495,7 @@ exit 0
 					},
 				},
 				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					system: {
 						...hostedSystemFixture(home),
@@ -4471,6 +4518,23 @@ exit 0
 			},
 		};
 
+		writeFileSync(configPatchFailure, "fail\n");
+		const failedConfigPatch = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+			executeOfficialServiceInstallers: true,
+		});
+		expect(failedConfigPatch.installErrors).toContainEqual(
+			expect.stringContaining("runtime openclaw provider projection failed"),
+		);
+		expect(failedConfigPatch.outputs.systemdUserUnits).toEqual([]);
+		expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
+			"stale-installer-token",
+		);
+		expect(readFileSync(openclawCommand, "utf8").trim()).toBe("config patch --stdin");
+		expect(existsSync(installerToken)).toBe(false);
+		expect(existsSync(unitPath)).toBe(false);
+		expect(existsSync(gatewayEnvPath)).toBe(false);
+		rmSync(configPatchFailure);
+
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
@@ -4478,27 +4542,93 @@ exit 0
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
 			"config patch --stdin",
+			"config patch --stdin",
 			'config patch --stdin --replace-path models.providers["default"].models',
 			"gateway install --force --json",
 		]);
 		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual({
 			gateway: {
 				mode: "local",
+				port: 18789,
+				bind: "lan",
 				auth: {
 					mode: "token",
 					token: "gateway-token",
 				},
 				controlUi: {
+					basePath: "/",
 					allowedOrigins: ["https://app-v2-18789.k3s.example.test"],
+					allowInsecureAuth: false,
+					dangerouslyAllowHostHeaderOriginFallback: false,
 					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});
+		expect(readFileSync(installerToken, "utf8")).toBe("gateway-token\n");
+		expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
+			"gateway-token",
+		);
+		expect(readFileSync(openclawCommand, "utf8")).not.toContain("gateway-token");
+		expect(readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway")).not.toContain(
+			"OPENCLAW_GATEWAY_TOKEN",
+		);
 		const openclawUnit = readSystemdUserServiceConfig(getRuntimePaths(), "openclaw-gateway");
 		expect(openclawUnit).toContain(
-			'"gateway" "run" "--allow-unconfigured" "--bind" "loopback" "--force"',
+			'"gateway" "run" "--allow-unconfigured" "--port" "18789" "--bind" "lan" "--force"',
 		);
 		expect(openclawUnit).not.toContain('"--auth"');
+
+		const fixedCredentialTime = new Date("2026-08-11T00:00:00.000Z");
+		utimesSync(openclawConfig, fixedCredentialTime, fixedCredentialTime);
+		utimesSync(gatewayEnvPath, fixedCredentialTime, fixedCredentialTime);
+		const configMtime = statSync(openclawConfig).mtimeMs;
+		const envMtime = statSync(gatewayEnvPath).mtimeMs;
+		const idempotent = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+			executeOfficialServiceInstallers: true,
+		});
+		expect(idempotent.installErrors).toEqual([]);
+		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-1)).toEqual([
+			'config patch --stdin --replace-path models.providers["default"].models',
+		]);
+		expect(statSync(openclawConfig).mtimeMs).toBe(configMtime);
+		expect(statSync(gatewayEnvPath).mtimeMs).toBe(envMtime);
+
+		rmSync(unitPath, { force: true });
+		const reinstalled = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+			executeOfficialServiceInstallers: true,
+		});
+		expect(reinstalled.installErrors).toEqual([]);
+		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-2)).toEqual([
+			'config patch --stdin --replace-path models.providers["default"].models',
+			"gateway install --force --json",
+		]);
+		expect(readFileSync(installerToken, "utf8")).toBe("gateway-token\n");
+		expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
+			"gateway-token",
+		);
+		expect(statSync(openclawConfig).mtimeMs).toBe(configMtime);
+		expect(statSync(gatewayEnvPath).mtimeMs).toBe(envMtime);
+
+		if (!loaded.secretValues) throw new Error("expected runtime secret fixture");
+		loaded.secretValues["secret://runtime/openclaw/gateway-token"] = "rotated-gateway-token";
+		const rotated = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+			executeOfficialServiceInstallers: true,
+		});
+		expect(rotated.installErrors).toEqual([]);
+		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-2)).toEqual([
+			"config patch --stdin",
+			'config patch --stdin --replace-path models.providers["default"].models',
+		]);
+		expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
+			"rotated-gateway-token",
+		);
+		expect(readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway")).not.toContain(
+			"OPENCLAW_GATEWAY_TOKEN",
+		);
+		expect(readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway")).not.toContain(
+			"rotated-gateway-token",
+		);
+		expect(readFileSync(openclawCommand, "utf8")).not.toContain("rotated-gateway-token");
 	});
 
 	it("projects runtime-scoped hosted providers into each enabled agent config", () => {
@@ -7312,7 +7442,8 @@ fi
 			const gatewayEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 			expect(watchEnv).not.toContain("gateway-token-watch");
 			expect(watchEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
-			expect(gatewayEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token-watch"');
+			expect(gatewayEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+			expect(gatewayEnv).not.toContain("gateway-token-watch");
 			expect(watchEnv).not.toContain("file-runtime-token");
 			const patchText = readFileSync(openclawPatch, "utf-8");
 			expect(patchText).toContain('"telegram"');
@@ -7339,6 +7470,7 @@ fi
 		const run = join(root, "run", "clawdi");
 		const systemctlPath = join(root, "bin", "systemctl");
 		const systemctlLog = join(root, "systemctl.log");
+		const openclawConfig = join(home, ".openclaw", "openclaw.json");
 		const sidecarReadyPath = join(run, "egress", "systemd", "ca.pem");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
@@ -7431,6 +7563,9 @@ fi
 			});
 			const initialDaemonAuthTokenRevision = initialAppliedState?.daemonAuthTokenRevision;
 			expect(initialDaemonAuthTokenRevision).toMatch(/^[a-f0-9]{64}$/);
+			expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
+				gatewayToken,
+			);
 			const initialDaemonUnit = readSystemdSystemUnit(paths, "clawdi-daemon");
 			const initialDaemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
 			const requestsBeforeMatchingTuple = watchFetch.captured.length;
@@ -7675,8 +7810,14 @@ fi
 				manifestETag: manifestEtag,
 				bootNonce: "boot-nonce-generation-0001",
 			});
-			expect(readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway")).toContain(
-				'OPENCLAW_GATEWAY_TOKEN="rotated-projected-gateway-token"',
+			expect(readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway")).not.toContain(
+				"OPENCLAW_GATEWAY_TOKEN",
+			);
+			expect(readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway")).not.toContain(
+				"rotated-projected-gateway-token",
+			);
+			expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
+				"rotated-projected-gateway-token",
 			);
 			expect(readFileSync(systemctlLog, "utf-8")).toContain(
 				"--user restart openclaw-gateway.service",
