@@ -163,6 +163,7 @@ from app.services.managed_ai_provider import (
     find_clawdi_managed_provider,
     is_v2_deployment_managed_provider_id,
     lock_deployment_managed_provider_mutation,
+    runtime_managed_provider_id,
     upsert_clawdi_managed_provider,
 )
 from app.services.principal_lifecycle import (
@@ -2194,6 +2195,23 @@ def _runtime_state_values(
             return None
         return value.model_dump(exclude_none=True, exclude_unset=True, mode="json")
 
+    runtimes: dict[str, dict[str, Any]] = {}
+    for name, runtime in body.runtimes.items():
+        value = runtime.model_dump(exclude_none=True, mode="json")
+        value["provider_ids"] = [
+            runtime_managed_provider_id(provider_id) for provider_id in runtime.provider_ids
+        ]
+        primary_model = value.get("primary_model")
+        if primary_model is not None:
+            primary_model["provider_id"] = runtime_managed_provider_id(primary_model["provider_id"])
+        runtimes[name] = value
+
+    tools = body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+    codex = tools["codex"]
+    codex_provider_id = runtime_managed_provider_id(codex["provider_id"])
+    codex["provider_id"] = codex_provider_id
+    codex["primary_model"]["provider_id"] = codex_provider_id
+
     return {
         "deployment_id": body.deployment_id,
         "instance_id": body.instance_id,
@@ -2204,16 +2222,13 @@ def _runtime_state_values(
         "system": body.system.model_dump(exclude_none=True, mode="json"),
         "egress_engine": optional_wire_value("egress_engine"),
         "companions": optional_wire_value("companions"),
-        "runtimes": {
-            name: runtime.model_dump(exclude_none=True, mode="json")
-            for name, runtime in body.runtimes.items()
-        },
+        "runtimes": runtimes,
         "live_sync": body.live_sync.model_dump(mode="json"),
         "recovery": body.recovery.model_dump(mode="json"),
         "egress_profiles": optional_wire_value("egress_profiles"),
         "mcp": optional_wire_value("mcp"),
         "skills": optional_wire_value("skills"),
-        "tools": body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json"),
+        "tools": tools,
     }
 
 

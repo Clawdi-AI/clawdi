@@ -807,14 +807,13 @@ def test_managed_health_compares_agent_facing_provider_ids():
     now = datetime.now(UTC)
     source_revision = "e" * 64
     etag = expected_runtime_bundle_v2_etag(source_revision)
-    internal_provider_id = "clawdi-v2-deployment-42"
     state = SimpleNamespace(
         deployment_id="42",
         instance_id="hri-managed-health",
         generation=3,
         cli_package_spec=TEST_CLI_PACKAGE_SPEC,
         updated_at=now,
-        runtimes=_runtime_state(provider_ids=[internal_provider_id]),
+        runtimes=_runtime_state(provider_ids=[CLAWDI_MANAGED_PROVIDER_ID]),
         mcp=None,
         tools=None,
     )
@@ -4867,7 +4866,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalog(
+async def test_runtime_state_normalizes_deployment_provider_and_resolves_its_catalog(
     admin_client,
     db_session,
     seed_user,
@@ -4908,8 +4907,8 @@ async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalo
         ]
     )
     await db_session.commit()
-    primary_model = {
-        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+    internal_primary_model = {
+        "provider_id": internal_provider_id,
         "model": "gpt-5.5",
     }
     await _write_runtime_state(
@@ -4917,17 +4916,28 @@ async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalo
         str(env.id),
         deployment_id="42",
         runtimes=_runtime_state(
-            provider_ids=[CLAWDI_MANAGED_PROVIDER_ID],
-            primary_model=primary_model,
+            provider_ids=[internal_provider_id],
+            primary_model=internal_primary_model,
         ),
         tools={
             "codex": {
                 "enabled": True,
-                "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
-                "primary_model": primary_model,
+                "provider_id": internal_provider_id,
+                "primary_model": internal_primary_model,
             }
         },
     )
+
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    primary_model = {
+        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+        "model": "gpt-5.5",
+    }
+    assert state.runtimes["openclaw"]["provider_ids"] == [CLAWDI_MANAGED_PROVIDER_ID]
+    assert state.runtimes["openclaw"]["primary_model"] == primary_model
+    assert state.tools["codex"]["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
+    assert state.tools["codex"]["primary_model"] == primary_model
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:

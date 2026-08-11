@@ -103,7 +103,6 @@ from app.services.agent_lifecycle import (
 )
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
-from app.services.managed_ai_provider import runtime_managed_provider_id
 from app.services.memory_provider import get_memory_provider
 from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.runtime_source import (
@@ -1621,15 +1620,8 @@ def _runtime_desired_provider_binding(
     except ValidationError:
         return None, [], None
     primary_model = getattr(runtime, "primary_model", None)
-    provider_ids = [
-        runtime_managed_provider_id(provider_id) for provider_id in runtime.provider_ids
-    ]
-    primary_provider_id = (
-        runtime_managed_provider_id(primary_model.provider_id)
-        if primary_model is not None
-        else None
-    )
-    return runtime.providerMode, provider_ids, primary_provider_id
+    primary_provider_id = primary_model.provider_id if primary_model is not None else None
+    return runtime.providerMode, runtime.provider_ids, primary_provider_id
 
 
 def _runtime_observed_provider_status(
