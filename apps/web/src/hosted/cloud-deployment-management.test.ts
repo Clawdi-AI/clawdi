@@ -51,6 +51,8 @@ describe("existing Cloud agent settings access", () => {
 
 		expect(sidebar).toContain("hasExistingCloudAgents={");
 		expect(sidebar).toContain('tile.source === "on-clawdi"');
+		expect(sidebar).toContain("hostedAgentTiles !== null && hostedMembershipResolved");
+		expect(sidebar).toContain("cloudInventoryResolved={agentsLoaded}");
 		expect(settings).toContain(
 			"hostedAccess.canCreateCloudAgents ||\n\t\t\thasExistingCloudAgents ||",
 		);
