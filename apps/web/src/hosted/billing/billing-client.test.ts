@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	acceptDeclarativeOperation,
 	createBillingClient,
+	retryIdempotentBillingTransport,
 	unwrapDeploy,
 } from "@/hosted/billing/billing-client";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
@@ -17,6 +18,55 @@ import {
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 const NOW = "2026-07-22T00:00:00Z";
+
+describe("idempotent billing transport", () => {
+	it("retries one network failure with the exact request", async () => {
+		const seen: Array<{ body: string; key: string | null; auth: string | null }> = [];
+		const transport = retryIdempotentBillingTransport(async (request) => {
+			seen.push({
+				body: await request.text(),
+				key: request.headers.get("Idempotency-Key"),
+				auth: request.headers.get("Authorization"),
+			});
+			if (seen.length === 1) throw new BillingNetworkError("offline");
+			return new Response(null, { status: 204 });
+		});
+		const response = await transport(
+			new Request("https://api.clawdi.ai/v2/wallet/topup", {
+				method: "POST",
+				headers: { "Idempotency-Key": "topup-1", Authorization: "Bearer token" },
+				body: '{"amount_usd":12}',
+			}),
+		);
+		expect(response.status).toBe(204);
+		expect(seen).toEqual([
+			{ body: '{"amount_usd":12}', key: "topup-1", auth: "Bearer token" },
+			{ body: '{"amount_usd":12}', key: "topup-1", auth: "Bearer token" },
+		]);
+	});
+
+	it("does not retry responses, aborts, or a second network failure", async () => {
+		for (const scenario of ["response", "abort", "other-endpoint", "second-failure"] as const) {
+			let calls = 0;
+			const controller = new AbortController();
+			const transport = retryIdempotentBillingTransport(async () => {
+				calls += 1;
+				if (scenario === "response") return new Response(null, { status: 502 });
+				if (scenario === "abort") controller.abort();
+				throw new BillingNetworkError("offline");
+			});
+			const path = scenario === "other-endpoint" ? "/v2/subscription/checkout" : "/v2/wallet/topup";
+			const request = new Request(`https://api.clawdi.ai${path}`, {
+				method: "POST",
+				headers: { "Idempotency-Key": "topup-1" },
+				signal: controller.signal,
+			});
+			if (scenario === "response") expect((await transport(request)).status).toBe(502);
+			else await expect(transport(request)).rejects.toBeInstanceOf(BillingNetworkError);
+			expect(calls).toBe(scenario === "second-failure" ? 2 : 1);
+		}
+	});
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {

@@ -411,6 +411,12 @@ describe("@xterm packages are hosted-only", () => {
 });
 
 describe("instrumentation-client hosted imports", () => {
+	test("server instrumentation is the first static import", () => {
+		const serverEntry = readFileSync(join(SRC_DIR, "server.ts"), "utf8");
+		expect(serverEntry.trimStart().startsWith('import "../instrument.server.mjs";')).toBe(true);
+		expect(serverEntry).not.toContain('await import("../instrument.server.mjs")');
+	});
+
 	test("hosted dynamic imports are gated by compile-time hosted checks", () => {
 		const instrumentationClient = join(SRC_DIR, "..", "instrumentation-client.ts");
 		if (!existsSync(instrumentationClient)) return;

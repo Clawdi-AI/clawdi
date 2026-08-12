@@ -25,6 +25,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
+import { useStripeAppearance } from "@/hosted/billing/stripe-appearance";
 import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 import { env } from "@/lib/env";
 import {
@@ -55,91 +56,6 @@ type RetainedCheckout = Pick<
 	StripeCheckoutDialogProps,
 	"clientSecret" | "description" | "summary" | "title"
 >;
-type CheckoutAppearance = NonNullable<
-	NonNullable<StripeCheckoutElementsSdkOptions["elementsOptions"]>["appearance"]
->;
-
-const FALLBACK_THEME = {
-	background: "oklch(0.175 0.004 95)",
-	border: "oklch(0.275 0.005 95)",
-	destructive: "oklch(0.62 0.19 27)",
-	foreground: "oklch(0.92 0.004 95)",
-	input: "oklch(0.33 0.006 95)",
-	muted: "oklch(0.245 0.005 95)",
-	mutedForeground: "oklch(0.63 0.006 95)",
-	primary: "oklch(0.6724 0.1308 38.7559)",
-	radius: "0.625rem",
-};
-
-function checkoutAppearanceFromTheme(): CheckoutAppearance {
-	const style =
-		typeof window === "undefined" ? null : window.getComputedStyle(document.documentElement);
-	const token = (name: string, fallback: string) =>
-		style?.getPropertyValue(name).trim() || fallback;
-	const isDark =
-		typeof document !== "undefined" && document.documentElement.classList.contains("dark");
-
-	return {
-		theme: isDark ? "night" : "stripe",
-		variables: {
-			borderRadius: token("--radius", FALLBACK_THEME.radius),
-			colorBackground: token("--background", FALLBACK_THEME.background),
-			colorDanger: token("--destructive", FALLBACK_THEME.destructive),
-			colorIconTab: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
-			colorIconTabSelected: token("--primary", FALLBACK_THEME.primary),
-			colorPrimary: token("--primary", FALLBACK_THEME.primary),
-			colorText: token("--foreground", FALLBACK_THEME.foreground),
-			colorTextPlaceholder: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
-			colorTextSecondary: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
-			fontFamily: token("--font-sans", '"Geist Sans", sans-serif'),
-			spacingUnit: "4px",
-		},
-		rules: {
-			".Block": {
-				backgroundColor: token("--muted", FALLBACK_THEME.muted),
-				borderColor: token("--border", FALLBACK_THEME.border),
-			},
-			".Input": {
-				backgroundColor: token("--background", FALLBACK_THEME.background),
-				borderColor: token("--input", FALLBACK_THEME.input),
-				boxShadow: "none",
-			},
-			".Input:focus": {
-				borderColor: token("--primary", FALLBACK_THEME.primary),
-				boxShadow: "none",
-			},
-			".Tab": {
-				backgroundColor: token("--muted", FALLBACK_THEME.muted),
-				borderColor: token("--border", FALLBACK_THEME.border),
-				boxShadow: "none",
-			},
-			".Tab--selected": {
-				borderColor: token("--primary", FALLBACK_THEME.primary),
-				boxShadow: "none",
-			},
-		},
-	};
-}
-
-function useCheckoutAppearance(open: boolean): CheckoutAppearance {
-	const [appearance, setAppearance] = useState<CheckoutAppearance>(() =>
-		checkoutAppearanceFromTheme(),
-	);
-
-	useEffect(() => {
-		if (!open || typeof MutationObserver === "undefined") return;
-		const update = () => setAppearance(checkoutAppearanceFromTheme());
-		update();
-		const observer = new MutationObserver(update);
-		observer.observe(document.documentElement, {
-			attributeFilter: ["class", "style"],
-			attributes: true,
-		});
-		return () => observer.disconnect();
-	}, [open]);
-
-	return appearance;
-}
 
 function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | null }) {
 	if (!summary) return null;
@@ -329,7 +245,7 @@ export function StripeCheckoutDialog({
 		value: checkout,
 		emptyValue: { clientSecret: null, description: "", summary: null, title: "" },
 	});
-	const appearance = useCheckoutAppearance(open);
+	const appearance = useStripeAppearance(open);
 
 	const renderedCheckout = exit.renderedValue;
 	const renderedClientSecret = renderedCheckout.clientSecret;

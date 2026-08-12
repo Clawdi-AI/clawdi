@@ -104,6 +104,28 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 		});
 }
 
+export function retryIdempotentBillingTransport(fetcher: BillingFetch): BillingFetch {
+	return async (request) => {
+		const retryRequest = request.clone();
+		try {
+			return await fetcher(request);
+		} catch (error) {
+			const idempotencyKey = request.headers.get("Idempotency-Key");
+			const url = new URL(request.url);
+			if (
+				!(error instanceof BillingNetworkError) ||
+				request.method !== "POST" ||
+				url.pathname !== "/v2/wallet/topup" ||
+				!idempotencyKey?.trim() ||
+				request.signal.aborted
+			) {
+				throw error;
+			}
+			return fetcher(retryRequest);
+		}
+	};
+}
+
 export function unwrapDeploy<T>(result: DeployResult<T>): T {
 	if (result.error !== undefined || !result.response.ok) {
 		const detail =
@@ -299,7 +321,7 @@ export function createBillingClient(
 ) {
 	const api = createClient<DeployPaths>({
 		baseUrl: ROOT_BASE_URL,
-		fetch: options.fetch ?? fetchWithTimeout,
+		fetch: retryIdempotentBillingTransport(options.fetch ?? fetchWithTimeout),
 	});
 	api.use({
 		async onRequest({ request }) {
