@@ -1064,7 +1064,6 @@ http.createServer((request, response) => {
 		{ timeout: 5000 },
 	);
 	expect(unitControl.status).not.toBe(0);
-	expect(spawnSync("systemctl", ["is-active", "--quiet", "clawdi-files.service"]).status).toBe(0);
 	const effectiveUnit = spawnSync("systemctl", ["cat", "clawdi-files.service"], {
 		encoding: "utf8",
 	});
@@ -1080,13 +1079,23 @@ http.createServer((request, response) => {
 	expect(statSync(configMountPoint).isFile()).toBe(true);
 	expect(readFileSync(configMountPoint, "utf8")).toBe("");
 
-	let readinessStatus: number | null = null;
+	let health = spawnSync("curl", ["-fsS", "http://127.0.0.1:9120/health"], {
+		encoding: "utf8",
+	});
 	for (let attempt = 0; attempt < 50; attempt++) {
-		readinessStatus = spawnSync("curl", ["-fsS", "http://127.0.0.1:9120/health"]).status;
-		if (readinessStatus === 0) break;
+		if (health.status === 0) break;
 		spawnSync("sleep", ["0.1"]);
+		health = spawnSync("curl", ["-fsS", "http://127.0.0.1:9120/health"], {
+			encoding: "utf8",
+		});
 	}
-	expect(readinessStatus).toBe(0);
+	expect({
+		unit: spawnSync("systemctl", ["is-active", "clawdi-files.service"], {
+			encoding: "utf8",
+		}).stdout.trim(),
+		healthStatus: health.status,
+		healthBody: health.stdout,
+	}).toEqual({ unit: "active", healthStatus: 0, healthBody: "ok" });
 	const reconverged = converge();
 	expect(reconverged.installErrors).toEqual([]);
 
