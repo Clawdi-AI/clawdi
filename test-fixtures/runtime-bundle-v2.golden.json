@@ -48,6 +48,11 @@
 				"baseUrl": "https://provider.test/v1",
 				"kind": "openai-compatible",
 				"managed_by": "clawdi",
+				"models": [
+					{
+						"id": "gpt-test"
+					}
+				],
 				"runtimeEnvName": "CLAWDI_AI_API_KEY",
 				"type": "custom_openai_compatible"
 			}
@@ -136,5 +141,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "764b225e72d3e539c099de4185901dfcf1fe62a1a884df1e48ed8f7c516308d2"
+	"sourceRevision": "2d0331a0dc7ef429482850b872ff43b0f5a5b8a3c3ddcb2648d1ef77d95a3918"
 }

@@ -720,7 +720,7 @@ def test_managed_v2_exact_provider_source_projects_bare_agent_identity() -> None
     batch = _batch()
     source_provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
     scoped_provider = batch.providers[(USER_ID, source_provider_id)]
-    scoped_provider.models = [{"id": "scoped-model"}]
+    scoped_provider.models = [{"id": "scoped-model", "label": "Scoped model"}]
     batch.providers[(USER_ID, V2_MANAGED_AI_PROVIDER_ID)] = AiProvider(
         id=uuid4(),
         owner_user_id=USER_ID,
@@ -744,7 +744,11 @@ def test_managed_v2_exact_provider_source_projects_bare_agent_identity() -> None
         "model": "gpt-test",
     }
     assert set(manifest["providers"]) == {CLAWDI_MANAGED_PROVIDER_ID}
-    assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == [{"id": "scoped-model"}]
+    assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == [
+        {"id": "gpt-test"},
+        {"id": "scoped-model", "label": "Scoped model"},
+    ]
+    assert scoped_provider.models == [{"id": "scoped-model", "label": "Scoped model"}]
     assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["apiKeySecretRef"] == (
         "secret://tool.codex.apiKey"
     )

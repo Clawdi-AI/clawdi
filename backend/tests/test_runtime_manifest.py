@@ -5298,7 +5298,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_uses_structured_primary_model_without_catalog_model(
+async def test_runtime_manifest_projects_primary_model_when_provider_models_is_null(
     admin_client,
     db_session,
     seed_user,
@@ -5321,6 +5321,7 @@ async def test_runtime_manifest_uses_structured_primary_model_without_catalog_mo
             auth_type="api_key",
             auth_metadata={"source": "managed"},
             managed_by="user",
+            models=None,
             runtime_env_name="CUSTOM_OPENAI_API_KEY",
         )
     )
@@ -5360,10 +5361,10 @@ async def test_runtime_manifest_uses_structured_primary_model_without_catalog_mo
         "type": "custom_openai_compatible",
         "baseUrl": "https://provider.test/v1",
         "apiMode": "openai_responses",
+        "models": [{"id": "gpt-5.5"}],
         "runtimeEnvName": "CUSTOM_OPENAI_API_KEY",
         "apiKeySecretRef": "secret://provider.custom-openai.apiKey",
     }
-    assert "models" not in payload["manifest"]["providers"]["custom-openai"]
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "custom-openai",
         "model": "gpt-5.5",
