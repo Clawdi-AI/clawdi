@@ -583,6 +583,7 @@ async def test_platform_runtime_state_persists_detects_and_projects_agent_plugin
 ):
     owner = _clerk_owner(seed_user)
     agent_id = uuid.uuid4()
+    provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
     await ensure_canonical_codex_tool_provider(db_session, seed_user)
     created = await _create_platform_agent(
         platform_client,
@@ -592,7 +593,7 @@ async def test_platform_runtime_state_persists_detects_and_projects_agent_plugin
     )
     assert created.status_code == 200, created.text
 
-    body = _runtime_body(owner, agent_id)
+    body = _runtime_body(owner, agent_id, provider_id=provider_id)
     body["agent_plugins"] = deepcopy(_TEST_AGENT_PLUGINS)
     written = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",

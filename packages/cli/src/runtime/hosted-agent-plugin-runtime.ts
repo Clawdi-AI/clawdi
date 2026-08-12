@@ -56,7 +56,7 @@ export type HostedAgentPluginCommands = Readonly<Record<HostedAgentPluginRuntime
 
 export function hostedAgentPluginCommands(home: string): HostedAgentPluginCommands {
 	return {
-		openclaw: join(home, ".openclaw", "bin", "openclaw"),
+		openclaw: join(home, ".local", "bin", "openclaw"),
 		hermes: join(home, ".local", "bin", "hermes"),
 	};
 }

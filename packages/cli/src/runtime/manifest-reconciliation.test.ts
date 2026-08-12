@@ -1006,7 +1006,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const paths = tempRuntimePaths();
 		const eventLog = join(dirname(paths.userHome), "agent-plugin-order.log");
 		const installerPath = join(dirname(paths.userHome), "openclaw-agent-plugin-installer.sh");
-		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const commandPath = join(paths.userHome, ".local", "bin", "openclaw");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
 		writeFileSync(
 			installerPath,

@@ -2036,6 +2036,7 @@ async function applyRuntimeDesiredState(
 					restartEgressSidecar,
 					stopEgressSidecar,
 					reconcileUserUnits,
+					restartUserUnits,
 					staleSystemUnits,
 				}) => {
 					const restoredSystemdUnits = readSystemdUnitSnapshot(paths);
@@ -2055,7 +2056,7 @@ async function applyRuntimeDesiredState(
 							...staleSystemUnits,
 						],
 						forceStopSystemUnits: stopEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
-						forceRestartUserUnits: [...previousSystemdUnits.user.keys()],
+						forceRestartUserUnits: restartUserUnits,
 						recoverFailedUnits: false,
 					});
 				},
