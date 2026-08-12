@@ -824,7 +824,7 @@ const TEST_HOSTED_CODEX_TERMINAL_TOOLING = {
 			baseUrl: "https://sub2api.test/v1",
 			apiMode: "openai_responses",
 			managed_by: "clawdi",
-			runtimeEnvName: "OPENAI_API_KEY",
+			runtimeEnvName: "CLAWDI_AI_API_KEY",
 			apiKeySecretRef: TEST_HOSTED_CODEX_SECRET_REF,
 		},
 	},
@@ -1974,17 +1974,26 @@ function hostedProviderSwitchModel(providerId: string): string {
 	return `${providerId}-model`;
 }
 
+function hostedCodexTerminalProvider(baseUrl: string): Record<string, unknown> {
+	return {
+		kind: "openai-compatible",
+		type: "openai",
+		baseUrl,
+		apiMode: "openai_responses",
+		managed_by: "clawdi",
+		runtimeEnvName: "CLAWDI_AI_API_KEY",
+		apiKeySecretRef: TEST_HOSTED_CODEX_SECRET_REF,
+	};
+}
+
 function hostedProviderSwitchLoad(
 	home: string,
 	selectedProviderId: string,
 	generation: number,
 ): RuntimeManifestLoad {
-	const codexProvider = {
-		...hostedProviderSwitchProvider("clawdi-managed", "clawdi"),
-		type: "openai",
-		runtimeEnvName: "OPENAI_API_KEY",
-		apiKeySecretRef: TEST_HOSTED_CODEX_SECRET_REF,
-	};
+	const codexProvider = hostedCodexTerminalProvider(
+		"https://clawdi-managed.provider.example.test/v1",
+	);
 	const terminalTooling = {
 		codex: {
 			enabled: true,
@@ -2118,12 +2127,9 @@ function hostedSingleProviderModeLoad(
 					},
 				}
 			: {};
-	const codexProvider = {
-		...hostedProviderSwitchProvider("clawdi-managed", "clawdi"),
-		type: "openai",
-		runtimeEnvName: "OPENAI_API_KEY",
-		apiKeySecretRef: TEST_HOSTED_CODEX_SECRET_REF,
-	};
+	const codexProvider = hostedCodexTerminalProvider(
+		"https://clawdi-managed.provider.example.test/v1",
+	);
 	const terminalTooling = {
 		codex: {
 			enabled: true,
@@ -3827,51 +3833,41 @@ export async function mutateConfigFile(options) {
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
-		const convergence = convergeRuntimeManifest(
-			{
-				source: "remote-datasource",
-				sourcePath: "https://runtime-source.test/desired-state",
-				offline: false,
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_codex_provider",
-					environmentId: "env_codex_provider",
-					instanceId: "iid_codex_provider",
-					generation: 1,
-					issuedAt: "2026-07-10T00:00:00Z",
-					workspaceRoot: join(home, "clawdi"),
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: { enabled: false },
-						hermes: { enabled: false },
-					},
-					projection: {
-						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-						system: { home },
-						providers: {},
-						terminalTooling: {
-							codex: {
-								enabled: true,
-								provider_id: "codex-managed",
-								primary_model: { provider_id: "codex-managed", model: "gpt-5.5" },
-								provider: {
-									kind: "openai-compatible",
-									type: "openai",
-									baseUrl: "https://codex-provider.example.test/v1",
-									apiMode: "openai_responses",
-									managed_by: "clawdi",
-									runtimeEnvName: "OPENAI_API_KEY",
-									apiKeySecretRef: "secret://tool.codex.apiKey",
-								},
-							},
-						},
-					},
-					egressProfiles: { profiles: [] },
-					recovery: { cacheManifest: true, allowOfflineBoot: true },
+		const legacyWireResponse = hostedCliManifestResponse(home, "clawdi@1.2.3-test");
+		const terminalTooling = expectRecord(
+			legacyWireResponse.manifest.terminalTooling,
+			"legacy terminal tooling",
+		);
+		const codex = expectRecord(terminalTooling.codex, "legacy terminal Codex");
+		const wireProvider = expectRecord(codex.provider, "legacy terminal Codex provider");
+		wireProvider.baseUrl = "https://codex-provider.example.test/v1";
+		wireProvider.runtimeEnvName = "OPENAI_API_KEY";
+		wireProvider.models = [{ id: "legacy-codex-model" }];
+		const normalized = normalizeHostedManifestFixture(legacyWireResponse);
+		const normalizedTerminalTooling = expectRecord(
+			normalized.manifest.projection?.terminalTooling,
+			"normalized terminal tooling",
+		);
+		const normalizedCodex = expectRecord(normalizedTerminalTooling.codex, "normalized Codex");
+		const normalizedProvider = expectRecord(normalizedCodex.provider, "normalized Codex provider");
+		expect(normalizedProvider.models).toBeUndefined();
+		const legacyWireLoad: RuntimeManifestLoad = {
+			...normalized,
+			source: "remote-datasource",
+			sourcePath: "https://runtime-source.test/desired-state",
+			offline: false,
+			manifest: {
+				...normalized.manifest,
+				locale: undefined,
+				openclawGatewayAuth: undefined,
+				projection: { terminalTooling: normalized.manifest.projection?.terminalTooling },
+				runtimes: {
+					openclaw: { enabled: false },
+					hermes: { enabled: false },
 				},
 			},
-			getRuntimePaths(),
-		);
+		};
+		const convergence = convergeRuntimeManifest(legacyWireLoad, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
 		expect(statSync(codexHome).mode & 0o777).toBe(0o700);
@@ -3880,17 +3876,17 @@ export async function mutateConfigFile(options) {
 		expect(readFileSync(configPath, "utf-8")).toBe(
 			[
 				"# Generated by Clawdi hosted runtime. Do not put API keys in this file.",
-				'model = "gpt-5.5"',
 				'model_provider = "clawdi"',
 				"",
 				"[model_providers.clawdi]",
 				'name = "clawdi"',
 				'base_url = "https://codex-provider.example.test/v1"',
-				'env_key = "OPENAI_API_KEY"',
+				'env_key = "CLAWDI_AI_API_KEY"',
 				'wire_api = "responses"',
 				"",
 			].join("\n"),
 		);
+		expect(readFileSync(configPath, "utf-8")).not.toMatch(/^model\s*=|model_catalog_json|models/m);
 		expect(readFileSync(configPath, "utf-8")).not.toMatch(/managed/i);
 	});
 
@@ -3929,7 +3925,7 @@ export async function mutateConfigFile(options) {
 				`printf '%s\\n' '{"version":"0.146.0"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
 				"cat > \"$prefix/bin/codex\" <<'SH'",
 				"#!/usr/bin/env sh",
-				"printf 'env=<%s>\\n' \"$" + '{OPENAI_API_KEY-unset}"',
+				"printf 'env=<%s>\\n' \"$" + '{CLAWDI_AI_API_KEY-unset}"',
 				'for arg in "$@"; do printf \'arg=<%s>\\n\' "$arg"; done',
 				"SH",
 				'chmod 755 "$prefix/bin/codex"',
@@ -4015,7 +4011,7 @@ export async function mutateConfigFile(options) {
 		const runShim = (args: string[]) => {
 			const result = spawnSync(commandShim, args, {
 				encoding: "utf8",
-				env: { ...process.env, OPENAI_API_KEY: "user-existing-key" },
+				env: { ...process.env, CLAWDI_AI_API_KEY: "user-existing-key" },
 			});
 			expect(result.status).toBe(0);
 			return result.stdout.trimEnd().split("\n");
@@ -4477,7 +4473,7 @@ exit 0
 		expect(configured.installErrors).toEqual([]);
 		writeTestRuntimeAppliedState(paths, configuredLoad, configured);
 		const codexConfig = join(home, ".codex", "config.toml");
-		expect(readFileSync(codexConfig, "utf-8")).toContain('env_key = "OPENAI_API_KEY"');
+		expect(readFileSync(codexConfig, "utf-8")).toContain('env_key = "CLAWDI_AI_API_KEY"');
 		const expectedCodexConfig = readFileSync(codexConfig, "utf-8");
 
 		const unmanaged = convergeRuntimeManifest(
@@ -5692,7 +5688,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"))).not.toBe(firstRevision);
 	});
 
-	it("removes stale Hermes hosted capability keys when later manifests omit them", () => {
+	it("replaces the frozen Hermes model catalog on each manifest generation", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5702,7 +5698,25 @@ cp '${sdkSource}' '${sdkTarget}'
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeHermesVersionBinary(home, "0.18.0");
-		const withCapabilities = hostedHermesProviderLoad(home);
+		const withCapabilities = hostedSingleProviderModeLoad(home, "hermes", "configured", 1);
+		const managedProvider = expectRecord(
+			expectRecord(withCapabilities.manifest.projection?.providers, "managed providers")[
+				"clawdi-managed"
+			],
+			"managed Hermes provider",
+		);
+		managedProvider.models = [
+			{
+				id: "gpt-5.5",
+				context_window: 262144,
+				max_tokens: 32768,
+				input_modalities: ["text", "image"],
+				supports_vision: true,
+				supports_tools: true,
+				supports_reasoning: true,
+			},
+			{ id: "stale-generation-model" },
+		];
 		const withoutCapabilities: RuntimeManifestLoad = {
 			...withCapabilities,
 			manifest: {
@@ -5711,9 +5725,9 @@ cp '${sdkSource}' '${sdkTarget}'
 					...withCapabilities.manifest.projection,
 					providers: {
 						...withCapabilities.manifest.projection?.providers,
-						hermes: {
-							...withCapabilities.manifest.projection?.providers?.hermes,
-							models: [{ id: "kimi/kimi-for-coding" }],
+						"clawdi-managed": {
+							...withCapabilities.manifest.projection?.providers?.["clawdi-managed"],
+							models: [{ id: "gpt-5.5" }],
 						},
 					},
 				},
@@ -5727,16 +5741,21 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(initialModelConfig.supports_vision).toBeUndefined();
 		const initialProviderModels = expectRecord(
 			expectRecord(
-				expectRecord(initialConfig.providers, "initial Hermes providers").hermes,
+				expectRecord(initialConfig.providers, "initial Hermes providers")["clawdi-managed"],
 				"initial Hermes provider",
 			).models,
 			"initial Hermes provider models",
 		);
 		expect(
 			expectRecord(
-				initialProviderModels["kimi/kimi-for-coding"],
-				"initial Hermes provider kimi model",
-			).supports_vision,
+				expectRecord(initialConfig.providers, "initial Hermes providers")["clawdi-managed"],
+				"initial Hermes provider",
+			).discover_models,
+		).toBe(false);
+		expect(initialProviderModels["stale-generation-model"]).toEqual({});
+		expect(
+			expectRecord(initialProviderModels["gpt-5.5"], "initial Hermes provider model")
+				.supports_vision,
 		).toBe(true);
 
 		const convergence = convergeRuntimeManifest(withoutCapabilities, getRuntimePaths());
@@ -5748,11 +5767,12 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(hermesModel.max_tokens).toBeUndefined();
 		expect(hermesModel.supports_vision).toBeUndefined();
 		const hermesProvider = expectRecord(
-			expectRecord(hermesConfig.providers, "Hermes providers config").hermes,
+			expectRecord(hermesConfig.providers, "Hermes providers config")["clawdi-managed"],
 			"Hermes provider config",
 		);
-		expect(hermesProvider.api).toBe("https://hermes-provider.example.test/v1");
-		expect(hermesProvider.models).toEqual({ "kimi/kimi-for-coding": {} });
+		expect(hermesProvider.api).toBe("https://managed.provider.example.test/v1");
+		expect(hermesProvider.discover_models).toBe(false);
+		expect(hermesProvider.models).toEqual({ "gpt-5.5": {} });
 	});
 
 	it("uses the same native Hermes projection before and after 0.18.0", () => {
@@ -10214,7 +10234,7 @@ chmod +x "$prefix/bin/clawdi"
 										baseUrl: "https://ai-gateway.example.test/v1",
 										models: [{ id: "gpt-5.5" }],
 										apiMode: "openai_responses",
-										runtimeEnvName: "OPENAI_API_KEY",
+										runtimeEnvName: "CLAWDI_AI_API_KEY",
 										apiKeySecretRef: "secret://provider.default.apiKey",
 									},
 								},

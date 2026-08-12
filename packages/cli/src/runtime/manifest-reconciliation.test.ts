@@ -97,7 +97,7 @@ const TEST_HOSTED_CODEX_TOOLING = {
 			baseUrl: "https://provider.test/v1",
 			apiMode: "openai_responses",
 			managed_by: "clawdi",
-			runtimeEnvName: "OPENAI_API_KEY",
+			runtimeEnvName: "CLAWDI_AI_API_KEY",
 			apiKeySecretRef: "secret://tool.codex.apiKey",
 		},
 	},
@@ -1039,13 +1039,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				hostedManifestFixture({ providers: {}, runtimes: { openclaw: runtime } }),
 			).success,
 		).toBe(true);
-	});
-
-	test("rejects terminal Codex without its fixed process env contract", () => {
-		const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
-		terminalTooling.codex.provider.runtimeEnvName = "CLAWDI_AI_API_KEY";
-		const manifest = hostedManifestFixture({ terminalTooling });
-		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
 	test("rejects the terminal Codex env name for managed runtime providers", () => {

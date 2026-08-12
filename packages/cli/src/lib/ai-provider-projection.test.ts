@@ -133,6 +133,7 @@ describe("AI provider projection", () => {
 					string,
 					{
 						api?: string;
+						discover_models?: boolean;
 						key_env?: string;
 						models?: Record<string, unknown>;
 						transport?: string;
@@ -151,6 +152,22 @@ describe("AI provider projection", () => {
 			});
 			expect(config.providers?.[testCase.providerId]).not.toHaveProperty("discover_models");
 			expect(content).not.toContain("sentinel-secret-value");
+		}
+
+		const frozen = buildAgentTargetProjection(
+			"hermes",
+			catalog,
+			{ provider_id: CLAWDI_MANAGED_PROVIDER_ID, model: "managed-model" },
+			{ freezeManagedModelCatalog: true },
+		);
+		const frozenProviders = (
+			parseYaml(frozen.files[0]?.content ?? "") as {
+				providers?: Record<string, { discover_models?: boolean }>;
+			}
+		).providers;
+		expect(frozenProviders?.[CLAWDI_MANAGED_PROVIDER_ID]?.discover_models).toBe(false);
+		for (const providerId of ["kimi-coding", "openai-responses", "anthropic-proxy"]) {
+			expect(frozenProviders?.[providerId]).not.toHaveProperty("discover_models");
 		}
 	});
 
