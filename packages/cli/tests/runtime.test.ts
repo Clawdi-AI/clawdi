@@ -25,6 +25,7 @@ import {
 	readSystemdUnitSnapshot,
 	runtimeAppliedContentIdentity,
 	runtimeInit as runtimeInitWithContext,
+	runtimeOnlyChangesCliPackage,
 	runtimePublicContentRevision,
 	runtimeWatch as runtimeWatchWithContext,
 } from "../src/commands/runtime";
@@ -827,6 +828,7 @@ function testBundleEtag(label: string): string {
 function hostedRuntimeBundleResponse(
 	payload: HostedRuntimeResponseFixture,
 	options: {
+		applyGeneration?: number;
 		etag?: string;
 		sourceRevision?: string;
 		includeRuntimeServiceSecrets?: boolean;
@@ -878,6 +880,9 @@ function hostedRuntimeBundleResponse(
 			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
 			sourceRevision,
 			manifest: payload.manifest,
+			...(options.applyGeneration === undefined
+				? {}
+				: { applyGeneration: options.applyGeneration }),
 			channelBindings,
 			secretValues,
 		}),
@@ -8495,6 +8500,53 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		});
 	});
 
+	it("classifies only a package-spec-only runtime checkpoint as CLI-only", () => {
+		const home = join(root, "home", "clawdi");
+		const previousManifest = {
+			...runtimeWatchLocaleManifest(home, 13),
+			applyGeneration: 13,
+		};
+		const nextManifest: RuntimeManifest = {
+			...previousManifest,
+			generation: 14,
+			clawdiCli: {
+				...previousManifest.clawdiCli,
+				packageSpec: "clawdi@1.2.4-test",
+			},
+		};
+		const previous = {
+			manifest: previousManifest,
+			secretValues: { "secret://runtime/openclaw/gateway-token": "gateway-token" },
+		};
+		const next = { manifest: nextManifest, secretValues: previous.secretValues };
+
+		expect(runtimeOnlyChangesCliPackage(previous, next)).toBe(true);
+		expect(
+			runtimeOnlyChangesCliPackage(previous, {
+				...next,
+				manifest: {
+					...nextManifest,
+					controlPlane: { apiUrl: "https://other-cloud-api.test" },
+				},
+			}),
+		).toBe(false);
+		expect(
+			runtimeOnlyChangesCliPackage(previous, {
+				...next,
+				secretValues: { "secret://runtime/openclaw/gateway-token": "rotated-token" },
+			}),
+		).toBe(false);
+		expect(
+			runtimeOnlyChangesCliPackage(previous, {
+				...next,
+				manifest: {
+					...nextManifest,
+					clawdiCli: { ...nextManifest.clawdiCli, source: "other-source" },
+				},
+			}),
+		).toBe(false);
+	});
+
 	it("does not restart runtime units when only the bootstrap CLI package pin changes", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -8621,7 +8673,7 @@ fi
 
 		expect(applied).toEqual({
 			applied: true,
-			systemUnitsChanged: [],
+			systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-sidecar.service"],
 			userUnitsChanged: [],
 		});
 		const calls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
@@ -8679,7 +8731,7 @@ fi
 		]);
 	});
 
-	it("runtime watch applies a CLI-only update by handoff without restarting existing units", async () => {
+	it("preserves active units across a CLI-only checkpoint with legacy renderer drift", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8747,6 +8799,7 @@ chmod +x "$prefix/bin/clawdi"
 		};
 		seedCurrentCliInstall(state, "clawdi@1.2.3-test", "1.2.3-test", "https://registry.npmjs.org");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		let runtimeGeneration = 13;
 		let desiredCliPackageSpec = "clawdi@1.2.3-test";
 		const { captured, restore } = mockFetch([
 			{
@@ -8762,7 +8815,7 @@ chmod +x "$prefix/bin/clawdi"
 								environmentId: "env_cli_update",
 								...hostedRequiredState(),
 								instanceId: "iid_cli_update",
-								generation: 13,
+								generation: runtimeGeneration,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
 								system: hostedSystemFixture(home),
@@ -8778,7 +8831,10 @@ chmod +x "$prefix/bin/clawdi"
 							},
 							secretValues: {},
 						},
-						{ etag: testBundleEtag(desiredCliPackageSpec) },
+						{
+							applyGeneration: 13,
+							etag: testBundleEtag(`${runtimeGeneration}:${desiredCliPackageSpec}`),
+						},
 					),
 			},
 		]);
@@ -8797,10 +8853,29 @@ chmod +x "$prefix/bin/clawdi"
 			);
 			expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(true);
 			expect(existsSync(paths.daemonAuthToken)).toBe(true);
+			const legacyUnitPaths = [
+				...readdirSync(paths.systemdSystemRoot)
+					.filter((entry) => entry.endsWith(".service"))
+					.map((entry) => join(paths.systemdSystemRoot, entry)),
+				...readdirSync(paths.systemdUserRoot).flatMap((entry) => {
+					if (entry.endsWith(".service")) {
+						const unitPath = join(paths.systemdUserRoot, entry);
+						return readFileSync(unitPath, "utf-8").includes(GENERATED_RUNTIME_SYSTEMD_FILE_HEADER)
+							? [unitPath]
+							: [];
+					}
+					const dropIn = join(paths.systemdUserRoot, entry, "10-clawdi-hosted.conf");
+					return entry.endsWith(".service.d") && existsSync(dropIn) ? [dropIn] : [];
+				}),
+			];
+			for (const unitPath of legacyUnitPaths) {
+				writeFileSync(unitPath, `${readFileSync(unitPath, "utf-8")}# legacy renderer drift\n`);
+			}
 
 			logs.length = 0;
 			writeFileSync(systemctlLog, "");
 			process.exitCode = undefined;
+			runtimeGeneration = 14;
 			desiredCliPackageSpec = `clawdi@${currentVersion}`;
 			await runtimeWatch({ once: true, json: true });
 
@@ -8837,7 +8912,10 @@ chmod +x "$prefix/bin/clawdi"
 				userUnitsChanged: [],
 			});
 			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
-			expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 13 });
+			expect(readRuntimeAppliedState(paths)).toMatchObject({
+				generation: 13,
+				applyGeneration: 13,
+			});
 			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toMatchObject({
 				transaction: { phase: "activated" },
 				badVersions: [],
@@ -8859,11 +8937,20 @@ chmod +x "$prefix/bin/clawdi"
 				systemUnitsChanged: [],
 				userUnitsChanged: [],
 			});
-			expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 13 });
+			expect(readRuntimeAppliedState(paths)).toMatchObject({
+				generation: 14,
+				applyGeneration: 13,
+			});
 			expect(JSON.stringify(currentTestApplyContext)).toBe(runtimeContextBefore);
-			expect(readFileSync(systemctlLog, "utf-8")).not.toMatch(
-				/(?:^|\s)(?:daemon-reload|start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
-			);
+			const activationCalls = readFileSync(systemctlLog, "utf-8")
+				.trim()
+				.split("\n")
+				.filter((call) =>
+					/(?:^|\s)(?:daemon-reload|start|restart|stop|enable|disable|reset-failed)(?:\s|$)/.test(
+						call,
+					),
+				);
+			expect(activationCalls).toEqual(["daemon-reload", "--user daemon-reload"]);
 			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toMatchObject({
 				transaction: null,
 				badVersions: [],
@@ -9245,10 +9332,10 @@ fi
 			const appliedEvent = JSON.parse(logs.at(-1) ?? "{}");
 			const appliedEventText = JSON.stringify(appliedEvent);
 			expect(appliedEvent.status).toBe("applied");
-			expect(appliedEvent.systemdUnitsChanged).toBe(false);
+			expect(appliedEvent.systemdUnitsChanged).toBe(true);
 			expect(appliedEvent.systemdApply).toEqual({
 				applied: true,
-				systemUnitsChanged: [],
+				systemUnitsChanged: ["clawdi-runtime-sidecar.service"],
 				userUnitsChanged: [],
 			});
 			expect(appliedEventText).not.toContain(initialSecret);

@@ -60,6 +60,7 @@ import {
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
 import {
+	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest,
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
@@ -209,6 +210,60 @@ export function runtimeAppliedContentIdentity(
 // Keep secret-dependent recoverability verification in the root-only applied state.
 export function runtimePublicContentRevision(load: RuntimeManifestLoad): string {
 	return runtimeContentSha256({ manifest: load.manifest });
+}
+
+function runtimeCheckpointContent(
+	load: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
+): unknown {
+	const {
+		generation: _generation,
+		applyGeneration: _applyGeneration,
+		clawdiCli,
+		...manifest
+	} = load.manifest;
+	const { packageSpec: _packageSpec, ...cliPolicy } = clawdiCli ?? {};
+	return {
+		manifest: {
+			...manifest,
+			...(clawdiCli === undefined ? {} : { clawdiCli: cliPolicy }),
+		},
+		secretValues: runtimeRecoverableSecretValues(load.manifest, load.secretValues),
+	};
+}
+
+export function runtimeOnlyChangesCliPackage(
+	previous: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
+	next: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
+): boolean {
+	const previousPackageSpec = previous.manifest.clawdiCli?.packageSpec?.trim();
+	const nextPackageSpec = next.manifest.clawdiCli?.packageSpec?.trim();
+	if (!previousPackageSpec || !nextPackageSpec || previousPackageSpec === nextPackageSpec) {
+		return false;
+	}
+	try {
+		return (
+			runtimeContentSha256(runtimeCheckpointContent(previous)) ===
+			runtimeContentSha256(runtimeCheckpointContent(next))
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isRuntimeCliOnlyCheckpoint(load: RuntimeManifestLoad, paths: RuntimePaths): boolean {
+	const activeAppliedState = readRuntimeAppliedState(paths);
+	const activeApplyIdentity = activeAppliedState
+		? runtimeAppliedApplyIdentity(activeAppliedState)
+		: null;
+	if (
+		!load.applyContext ||
+		!activeApplyIdentity ||
+		!runtimeApplyIdentitiesEqual(load.applyContext.identity, activeApplyIdentity)
+	) {
+		return false;
+	}
+	const committed = loadCommittedRuntimeManifest(paths, load.applyContext);
+	return "errors" in committed ? false : runtimeOnlyChangesCliPackage(committed, load);
 }
 
 export function commitRuntimeAppliedState(input: {
@@ -527,6 +582,7 @@ export function applySystemdRuntimeUpdate(
 			systemUnits: readonly string[];
 			userUnits: readonly string[];
 		};
+		preserveActiveUnits?: boolean;
 		skipActivatedSystemUnits?: readonly string[];
 	} = {},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
@@ -550,8 +606,8 @@ export function applySystemdRuntimeUpdate(
 	const user = opts.activationScope
 		? filterChanges(allUser, opts.activationScope.userUnits)
 		: allUser;
-	const systemUnitsChanged = [...system.added, ...system.changed].sort();
-	const userUnitsChanged = [...user.added, ...user.changed].sort();
+	const systemUnitsChanged = new Set([...system.added, ...system.removed]);
+	const userUnitsChanged = new Set([...user.added, ...user.removed]);
 	const scopedSystemUnits = opts.activationScope ? new Set(opts.activationScope.systemUnits) : null;
 	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
 		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
@@ -570,7 +626,11 @@ export function applySystemdRuntimeUpdate(
 		forcedSystemRestarts.length > 0 ||
 		forcedSystemStops.length > 0;
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
-		return { applied: !activationChanged, systemUnitsChanged, userUnitsChanged };
+		return {
+			applied: !activationChanged,
+			systemUnitsChanged: [...systemUnitsChanged].sort(),
+			userUnitsChanged: [...userUnitsChanged].sort(),
+		};
 	}
 
 	for (const unit of system.removed) {
@@ -585,7 +645,10 @@ export function applySystemdRuntimeUpdate(
 	}
 	for (const unit of forcedSystemStops) {
 		const state = systemdUnitManagerState(paths, "system", unit);
-		if (!systemdUnitAbsentOrInactive(state)) systemctl(["stop", unit]);
+		if (!systemdUnitAbsentOrInactive(state)) {
+			systemctl(["stop", unit]);
+			systemUnitsChanged.add(unit);
+		}
 	}
 
 	if (system.added.length > 0 || system.changed.length > 0 || system.removed.length > 0) {
@@ -610,20 +673,23 @@ export function applySystemdRuntimeUpdate(
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedSystemUnits.push(unit);
 			startSystemUnits.push(unit);
+			systemUnitsChanged.add(unit);
 			continue;
 		}
 		if (state.activeState === "inactive") {
 			startSystemUnits.push(unit);
+			systemUnitsChanged.add(unit);
 			continue;
 		}
 		if (
 			state.activeState === "active" &&
 			unit !== RUNTIME_WATCH_SYSTEM_UNIT &&
-			(changedSystemUnits.has(unit) ||
+			((changedSystemUnits.has(unit) && !opts.preserveActiveUnits) ||
 				(forcedRestartUnits.has(unit) &&
 					(!addedSystemUnits.has(unit) || unit === RUNTIME_SIDECAR_SYSTEM_UNIT)))
 		) {
 			restartSystemUnits.push(unit);
+			systemUnitsChanged.add(unit);
 		}
 	}
 	// Each reconciliation makes at most one recovery attempt per failed unit.
@@ -643,6 +709,7 @@ export function applySystemdRuntimeUpdate(
 		const enabled = systemdUnitEnabled(state);
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedUserUnits.push(unit);
+			userUnitsChanged.add(unit);
 		}
 		if (
 			state.activeState === "inactive" ||
@@ -650,12 +717,17 @@ export function applySystemdRuntimeUpdate(
 		) {
 			if (enabled) startUserUnits.push(unit);
 			else enableAndStartUserUnits.push(unit);
+			userUnitsChanged.add(unit);
 			continue;
 		}
 		if (state.activeState !== "active") continue;
-		if (!enabled) enableUserUnits.push(unit);
-		if (changedUserUnits.has(unit)) {
+		if (!enabled) {
+			enableUserUnits.push(unit);
+			userUnitsChanged.add(unit);
+		}
+		if (changedUserUnits.has(unit) && !opts.preserveActiveUnits) {
 			restartUserUnits.push(unit);
+			userUnitsChanged.add(unit);
 		}
 	}
 	if (resetFailedUserUnits.length > 0) {
@@ -690,8 +762,8 @@ export function applySystemdRuntimeUpdate(
 	});
 	return {
 		applied: systemConverged && userConverged && removedSystemConverged && removedUserConverged,
-		systemUnitsChanged,
-		userUnitsChanged,
+		systemUnitsChanged: [...systemUnitsChanged].sort(),
+		userUnitsChanged: [...userUnitsChanged].sort(),
 	};
 }
 
@@ -1632,6 +1704,7 @@ async function applyRuntimeDesiredState(
 	if (cliUpdate.selfReexec) {
 		return { kind: "cli_handoff", cliUpdate };
 	}
+	const preserveActiveUnits = isRuntimeCliOnlyCheckpoint(load, paths);
 	const preparedHostedSourcedSkills =
 		opts.preparedHostedSourcedSkills ??
 		(await prepareHostedSourcedSkillArchives(load.manifest, paths, {
@@ -1644,6 +1717,7 @@ async function applyRuntimeDesiredState(
 		systemUnitsChanged: [] as string[],
 		userUnitsChanged: [] as string[],
 	};
+	let egressPrerequisiteApply: typeof systemdApply | null = null;
 	let egressPrerequisiteActivated = false;
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
@@ -1669,6 +1743,7 @@ async function applyRuntimeDesiredState(
 								userUnits: [],
 							},
 							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+							preserveActiveUnits,
 							recoverFailedUnits: opts.recoverFailedSystemdUnits,
 						},
 					);
@@ -1676,6 +1751,7 @@ async function applyRuntimeDesiredState(
 						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
 						egressPrerequisiteActivated = true;
 					}
+					egressPrerequisiteApply = prerequisite;
 					return prerequisite;
 				} catch (error) {
 					throw new Error(
@@ -1695,16 +1771,37 @@ async function applyRuntimeDesiredState(
 						staleSystemUnits,
 						staleUserUnits,
 					);
-					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, activationTarget, {
-						forceRestartSystemUnits: [
-							...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
-							...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
-						],
-						recoverFailedUnits: opts.recoverFailedSystemdUnits,
-						skipActivatedSystemUnits: egressPrerequisiteActivated
-							? [RUNTIME_SIDECAR_SYSTEM_UNIT]
-							: [],
-					});
+					const activation = applySystemdRuntimeUpdate(
+						paths,
+						previousSystemdUnits,
+						activationTarget,
+						{
+							forceRestartSystemUnits: [
+								...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
+								...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+							],
+							preserveActiveUnits,
+							recoverFailedUnits: opts.recoverFailedSystemdUnits,
+							skipActivatedSystemUnits: egressPrerequisiteActivated
+								? [RUNTIME_SIDECAR_SYSTEM_UNIT]
+								: [],
+						},
+					);
+					systemdApply = {
+						applied: activation.applied && (egressPrerequisiteApply?.applied ?? true),
+						systemUnitsChanged: [
+							...new Set([
+								...(egressPrerequisiteApply?.systemUnitsChanged ?? []),
+								...activation.systemUnitsChanged,
+							]),
+						].sort(),
+						userUnitsChanged: [
+							...new Set([
+								...(egressPrerequisiteApply?.userUnitsChanged ?? []),
+								...activation.userUnitsChanged,
+							]),
+						].sort(),
+					};
 					return systemdApply;
 				} catch (error) {
 					throw new Error(
