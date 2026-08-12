@@ -933,10 +933,17 @@ function systemdProcessRevisionMatches(
 		const procDir = `/proc/${state.mainPid}`;
 		const owner = statSync(procDir);
 		const readEnvironment = () => readFileSync(join(procDir, "environ"));
-		const environment =
-			owner.uid === 0
-				? readEnvironment()
-				: withEffectiveFilesystemIdentity({ uid: owner.uid, gid: owner.gid }, readEnvironment);
+		let environment: Buffer;
+		try {
+			environment = readEnvironment();
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (owner.uid === 0 || (code !== "EACCES" && code !== "EPERM")) throw error;
+			environment = withEffectiveFilesystemIdentity(
+				{ uid: owner.uid, gid: owner.gid },
+				readEnvironment,
+			);
+		}
 		processRevision = runtimeRevisionFromProcessEnvironment(environment);
 	} catch (error) {
 		throw new Error(`could not prove active runtime revision for managed systemd unit ${unit}`, {
