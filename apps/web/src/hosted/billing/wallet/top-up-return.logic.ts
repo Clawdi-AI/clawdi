@@ -21,6 +21,15 @@ export interface WalletTopupReturnToast {
 	description: string;
 }
 
+export interface WalletTopupReturnResolution {
+	status: string | null;
+	paymentIntentId: string | null;
+	errorMessage: string | null;
+}
+
+let pendingWalletTopupReturn: WalletTopupReturnState | null = null;
+let walletTopupReturnResolution: Promise<WalletTopupReturnResolution> | null = null;
+
 export const WALLET_TOPUP_ACCEPTED_TOAST = {
 	title: "Payment accepted",
 	description: "We're confirming your Wallet credit now.",
@@ -43,6 +52,31 @@ export function consumeWalletTopupReturn(
 	const result = readWalletTopupReturn(url.search);
 	replaceState(historyState, "", cleanWalletTopupReturnUrl(currentHref));
 	return result;
+}
+
+export function bootstrapWalletTopupReturn(
+	currentHref: string,
+	historyState: unknown,
+	replaceState: (state: unknown, unused: string, url: string) => void,
+): void {
+	pendingWalletTopupReturn = consumeWalletTopupReturn(currentHref, historyState, replaceState);
+}
+
+export function coordinateWalletTopupReturn(
+	retrieve: (clientSecret: PaymentIntentClientSecret) => Promise<WalletTopupReturnResolution>,
+): Promise<WalletTopupReturnResolution> | null {
+	if (walletTopupReturnResolution) return walletTopupReturnResolution;
+	if (!pendingWalletTopupReturn) return null;
+	const { clientSecret } = pendingWalletTopupReturn;
+	pendingWalletTopupReturn = null;
+	walletTopupReturnResolution = retrieve(clientSecret);
+	return walletTopupReturnResolution;
+}
+
+export function cleanMarkedWalletTopupReturnRequest(request: Request): Request {
+	const url = new URL(request.url);
+	if (!url.searchParams.has(WALLET_TOPUP_RETURN_PARAM)) return request;
+	return new Request(cleanWalletTopupReturnUrl(request.url), request);
 }
 
 export function readWalletTopupReturn(search: string): WalletTopupReturnState | null {

@@ -5,7 +5,7 @@ type CheckoutAppearance = NonNullable<
 	NonNullable<StripeCheckoutElementsSdkOptions["elementsOptions"]>["appearance"]
 >;
 
-const FALLBACK_THEME = {
+const DARK_FALLBACK_THEME = {
 	background: "oklch(0.175 0.004 95)",
 	border: "oklch(0.275 0.005 95)",
 	destructive: "oklch(0.62 0.19 27)",
@@ -17,46 +17,59 @@ const FALLBACK_THEME = {
 	radius: "0.625rem",
 };
 
+const LIGHT_FALLBACK_THEME = {
+	background: "oklch(0.985 0.0025 95)",
+	border: "oklch(0.91 0.005 95)",
+	destructive: "oklch(0.55 0.19 27)",
+	foreground: "oklch(0.235 0.008 95)",
+	input: "oklch(0.87 0.006 95)",
+	muted: "oklch(0.955 0.004 95)",
+	mutedForeground: "oklch(0.51 0.008 95)",
+	primary: "oklch(0.6171 0.1375 39.0427)",
+	radius: "0.625rem",
+};
+
 export function stripeAppearanceForTheme(
 	isDark: boolean,
 	token: (name: string, fallback: string) => string = (_name, fallback) => fallback,
 ): Appearance & CheckoutAppearance {
+	const fallback = isDark ? DARK_FALLBACK_THEME : LIGHT_FALLBACK_THEME;
 	return {
 		theme: isDark ? "night" : "stripe",
 		variables: {
-			borderRadius: token("--radius", FALLBACK_THEME.radius),
-			colorBackground: token("--background", FALLBACK_THEME.background),
-			colorDanger: token("--destructive", FALLBACK_THEME.destructive),
-			colorIconTab: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
-			colorIconTabSelected: token("--primary", FALLBACK_THEME.primary),
-			colorPrimary: token("--primary", FALLBACK_THEME.primary),
-			colorText: token("--foreground", FALLBACK_THEME.foreground),
-			colorTextPlaceholder: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
-			colorTextSecondary: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
+			borderRadius: token("--radius", fallback.radius),
+			colorBackground: token("--background", fallback.background),
+			colorDanger: token("--destructive", fallback.destructive),
+			colorIconTab: token("--muted-foreground", fallback.mutedForeground),
+			colorIconTabSelected: token("--primary", fallback.primary),
+			colorPrimary: token("--primary", fallback.primary),
+			colorText: token("--foreground", fallback.foreground),
+			colorTextPlaceholder: token("--muted-foreground", fallback.mutedForeground),
+			colorTextSecondary: token("--muted-foreground", fallback.mutedForeground),
 			fontFamily: token("--font-sans", '"Geist Sans", sans-serif'),
 			spacingUnit: "4px",
 		},
 		rules: {
 			".Block": {
-				backgroundColor: token("--muted", FALLBACK_THEME.muted),
-				borderColor: token("--border", FALLBACK_THEME.border),
+				backgroundColor: token("--muted", fallback.muted),
+				borderColor: token("--border", fallback.border),
 			},
 			".Input": {
-				backgroundColor: token("--background", FALLBACK_THEME.background),
-				borderColor: token("--input", FALLBACK_THEME.input),
+				backgroundColor: token("--background", fallback.background),
+				borderColor: token("--input", fallback.input),
 				boxShadow: "none",
 			},
 			".Input:focus": {
-				borderColor: token("--primary", FALLBACK_THEME.primary),
+				borderColor: token("--primary", fallback.primary),
 				boxShadow: "none",
 			},
 			".Tab": {
-				backgroundColor: token("--muted", FALLBACK_THEME.muted),
-				borderColor: token("--border", FALLBACK_THEME.border),
+				backgroundColor: token("--muted", fallback.muted),
+				borderColor: token("--border", fallback.border),
 				boxShadow: "none",
 			},
 			".Tab--selected": {
-				borderColor: token("--primary", FALLBACK_THEME.primary),
+				borderColor: token("--primary", fallback.primary),
 				boxShadow: "none",
 			},
 		},

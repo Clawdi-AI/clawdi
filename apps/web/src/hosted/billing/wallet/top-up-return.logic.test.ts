@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+	bootstrapWalletTopupReturn,
 	buildWalletTopupReturnUrl,
+	cleanMarkedWalletTopupReturnRequest,
 	cleanWalletTopupReturnUrl,
 	consumeWalletTopupReturn,
+	coordinateWalletTopupReturn,
 	readWalletTopupReturn,
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
@@ -27,6 +30,43 @@ describe("wallet top-up return URL helpers", () => {
 
 		expect(result?.clientSecret === "pi_secret").toBe(true);
 		expect(calls).toEqual([[state, "", "https://cloud.clawdi.ai/?settings=billing-wallet&keep=1"]]);
+	});
+
+	test("bootstraps before consumers and coordinates retrieval across remounts", async () => {
+		const state = { key: "router-entry", __TSR_index: 4 };
+		const calls: unknown[][] = [];
+		bootstrapWalletTopupReturn(
+			"https://cloud.clawdi.ai/?keep=1&topup_return=1&payment_intent_client_secret=pi_secret#billing",
+			state,
+			(...args) => calls.push(args),
+		);
+
+		expect(calls).toEqual([[state, "", "https://cloud.clawdi.ai/?keep=1#billing"]]);
+		let retrievals = 0;
+		const retrieve = async () => {
+			retrievals += 1;
+			return { status: "succeeded", paymentIntentId: "pi_1", errorMessage: null };
+		};
+		const first = coordinateWalletTopupReturn(retrieve);
+		const remount = coordinateWalletTopupReturn(retrieve);
+		expect(remount).toBe(first);
+		expect(await remount).toEqual({
+			status: "succeeded",
+			paymentIntentId: "pi_1",
+			errorMessage: null,
+		});
+		expect(retrievals).toBe(1);
+	});
+
+	test("scrubs a marked server request before routing", async () => {
+		const request = new Request(
+			"https://cloud.clawdi.ai/?keep=1&topup_return=bad&payment_intent_client_secret=secret#billing",
+			{ method: "POST", headers: { Authorization: "Bearer token" }, body: "body" },
+		);
+		const clean = cleanMarkedWalletTopupReturnRequest(request);
+		expect(clean.url).toBe("https://cloud.clawdi.ai/?keep=1#billing");
+		expect(clean.headers.get("Authorization")).toBe("Bearer token");
+		expect(await clean.text()).toBe("body");
 	});
 
 	test("consumes malformed marked returns before returning null", () => {
