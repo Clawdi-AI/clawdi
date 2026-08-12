@@ -1095,6 +1095,16 @@ async def test_admin_fixed_managed_provider_invalidates_bound_runtime_on_manifes
             system={},
             live_sync={"enabled": False, "agents": []},
             recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            tools={
+                "codex": {
+                    "enabled": True,
+                    "provider_id": V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+                    "primary_model": {
+                        "provider_id": V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+                        "model": "gpt-5.5",
+                    },
+                }
+            },
             runtimes={
                 "openclaw": {
                     "enabled": True,
@@ -1358,6 +1368,16 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
                 system={},
                 live_sync={"enabled": False, "agents": []},
                 recovery={"cacheManifest": True, "allowOfflineBoot": True},
+                tools={
+                    "codex": {
+                        "enabled": True,
+                        "provider_id": V2_MANAGED_AI_PROVIDER_ID,
+                        "primary_model": {
+                            "provider_id": V2_MANAGED_AI_PROVIDER_ID,
+                            "model": "gpt-5.5",
+                        },
+                    }
+                },
                 runtimes={
                     "openclaw": {
                         "enabled": True,
