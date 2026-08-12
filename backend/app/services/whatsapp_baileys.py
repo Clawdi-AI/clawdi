@@ -1387,8 +1387,14 @@ async def respond_to_iq(
         return _iq_result(
             req,
             [
-                _recipient_bundle_node(jid, resolve_recipient_bundle(jid))
-                for jid in _extract_user_jids_from_key_request(req)
+                {
+                    "tag": "list",
+                    "attrs": {},
+                    "content": [
+                        _recipient_bundle_node(jid, resolve_recipient_bundle(jid))
+                        for jid in _extract_user_jids_from_key_request(req)
+                    ],
+                }
             ],
         )
 
@@ -1842,11 +1848,33 @@ async def save_whatsapp_credential_self_identity(
     }
     if name := validated.get("name"):
         stored_identity["name"] = name
+
+    creds = decode_buffer_json(
+        json.loads(decrypt(credential.encrypted_credentials, credential.credential_nonce))
+    )
+    if not _is_object_dict(creds):
+        raise ValueError("WhatsApp credential creds must be an object")
+    me = creds.get("me")
+    if not _is_object_dict(me):
+        raise ValueError("WhatsApp credential creds.me must be an object")
+
     config = dict(credential.config or {})
-    if config.get("self_identity") == stored_identity:
+    creds_changed = me.get("id") != credential.synthetic_jid or me.get("lid") != validated["lid"]
+    config_changed = config.get("self_identity") != stored_identity
+    if not creds_changed and not config_changed:
         return False
-    config["self_identity"] = stored_identity
-    credential.config = config
+    if creds_changed:
+        creds["me"] = {
+            **me,
+            "id": credential.synthetic_jid,
+            "lid": validated["lid"],
+        }
+        ciphertext, nonce = encrypt(serialize_creds(creds))
+        credential.encrypted_credentials = ciphertext
+        credential.credential_nonce = nonce
+    if config_changed:
+        config["self_identity"] = stored_identity
+        credential.config = config
     await db.flush()
     return True
 
@@ -2748,66 +2776,64 @@ def _recipient_bundle_node(jid: str, bundle: AgentBundle | None) -> BinaryNode:
             "attrs": {"jid": jid},
             "content": [{"tag": "error", "attrs": {"code": "404"}}],
         }
-    return {
-        "tag": "user",
-        "attrs": {"jid": jid},
-        "content": [
+    content: list[BinaryNode] = [
+        {
+            "tag": "registration",
+            "attrs": {},
+            "content": _encode_big_endian(bundle.registration_id, 4),
+        },
+        {"tag": "type", "attrs": {}, "content": b"\x05"},
+        {
+            "tag": "identity",
+            "attrs": {},
+            "content": _maybe_prefixed_key(bundle.identity_key),
+        },
+        {
+            "tag": "skey",
+            "attrs": {},
+            "content": [
+                {
+                    "tag": "id",
+                    "attrs": {},
+                    "content": _encode_big_endian(bundle.signed_pre_key.id, 3),
+                },
+                {
+                    "tag": "value",
+                    "attrs": {},
+                    "content": _maybe_prefixed_key(bundle.signed_pre_key.public_key),
+                },
+                {
+                    "tag": "signature",
+                    "attrs": {},
+                    "content": bundle.signed_pre_key.signature,
+                },
+            ],
+        },
+    ]
+    if bundle.pre_keys:
+        pre_key = bundle.pre_keys[0]
+        content.append(
             {
-                "tag": "registration",
-                "attrs": {},
-                "content": _encode_big_endian(bundle.registration_id, 4),
-            },
-            {"tag": "type", "attrs": {}, "content": b"\x05"},
-            {
-                "tag": "identity",
-                "attrs": {},
-                "content": _maybe_prefixed_key(bundle.identity_key),
-            },
-            {
-                "tag": "skey",
+                "tag": "key",
                 "attrs": {},
                 "content": [
                     {
                         "tag": "id",
                         "attrs": {},
-                        "content": _encode_big_endian(bundle.signed_pre_key.id, 3),
+                        "content": _encode_big_endian(pre_key.id, 3),
                     },
                     {
                         "tag": "value",
                         "attrs": {},
-                        "content": _maybe_prefixed_key(bundle.signed_pre_key.public_key),
-                    },
-                    {
-                        "tag": "signature",
-                        "attrs": {},
-                        "content": bundle.signed_pre_key.signature,
+                        "content": _maybe_prefixed_key(pre_key.public_key),
                     },
                 ],
-            },
-            {
-                "tag": "list",
-                "attrs": {},
-                "content": [
-                    {
-                        "tag": "key",
-                        "attrs": {},
-                        "content": [
-                            {
-                                "tag": "id",
-                                "attrs": {},
-                                "content": _encode_big_endian(pre_key.id, 3),
-                            },
-                            {
-                                "tag": "value",
-                                "attrs": {},
-                                "content": _maybe_prefixed_key(pre_key.public_key),
-                            },
-                        ],
-                    }
-                    for pre_key in bundle.pre_keys
-                ],
-            },
-        ],
+            }
+        )
+    return {
+        "tag": "user",
+        "attrs": {"jid": jid},
+        "content": content,
     }
 
 

@@ -12693,6 +12693,9 @@ exit 64
 		const sessionDir = join(home, ".hermes", "platforms", "whatsapp", "session");
 		const legacySessionDir = join(home, ".hermes", "whatsapp", "session");
 		const legacySentinel = join(legacySessionDir, "unmanaged-session-sentinel");
+		const systemctlPath = join(root, "bin", "systemctl");
+		const systemctlLog = join(root, "whatsapp-systemctl.log");
+		const systemctlStateRoot = join(root, "whatsapp-systemctl-state");
 		const creds = {
 			advSecretKey: "wa-hermes-secret",
 			me: { id: "15551234567:1@s.whatsapp.net" },
@@ -12702,11 +12705,19 @@ exit 64
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
 		chmodSync(hermesBin, 0o700);
 		seedHermesManagedBaileys(home);
+		seedOpenClawBinary(home);
+		writeFakeSystemdManager({
+			path: systemctlPath,
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+		});
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		const paths = getRuntimePaths();
 		mkdirSync(legacySessionDir, { recursive: true });
 		writeFileSync(legacySentinel, "preserved\n");
@@ -12778,6 +12789,15 @@ exit 64
 		};
 
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load, paths);
+		projected.manifest.runtimes.openclaw = {
+			enabled: true,
+			run: {
+				args: ["gateway", "run"],
+				env: {},
+				prependPath: [],
+			},
+			services: {},
+		};
 		const credentialProjection = projected.manifest.projection?.channelCredentials as unknown[];
 		expect(credentialProjection).toEqual([
 			expect.objectContaining({
@@ -12818,6 +12838,77 @@ exit 64
 			"platforms.whatsapp.extra.session_path",
 			sessionDir,
 		);
+		const initialHermesRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
+		const initialOpenClawRevision = systemdEnvRevision(
+			readSystemdEnvFile(paths, "openclaw-gateway"),
+		);
+		const initialUnits = readSystemdUnitSnapshot(paths);
+		for (const unit of initialUnits.system.keys()) {
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "system", unit, "active"), "\n");
+		}
+		for (const unit of initialUnits.user.keys()) {
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "active"), "\n");
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
+		}
+
+		const unrelatedSecret = convergeRuntimeManifest(
+			{
+				...projected,
+				secretValues: { ...projected.secretValues, "secret://unrelated": "changed" },
+			},
+			paths,
+		);
+		expect(unrelatedSecret.installErrors).toEqual([]);
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		expect(applySystemdRuntimeUpdate(paths, initialUnits, readSystemdUnitSnapshot(paths))).toEqual({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: [],
+		});
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
+			initialHermesRevision,
+		);
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
+			initialOpenClawRevision,
+		);
+
+		const projectedCreds = JSON.parse(
+			projected.secretValues?.[credentialSecretRef] ?? "null",
+		) as Record<string, unknown>;
+		const beforeCredentialChange = readSystemdUnitSnapshot(paths);
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		const changedCredential = convergeRuntimeManifest(
+			{
+				...projected,
+				secretValues: {
+					...projected.secretValues,
+					[credentialSecretRef]: JSON.stringify({
+						...projectedCreds,
+						advSecretKey: "wa-hermes-secret-rotated",
+					}),
+				},
+			},
+			paths,
+		);
+		expect(changedCredential.installErrors).toEqual([]);
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(
+			initialHermesRevision,
+		);
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
+			initialOpenClawRevision,
+		);
+		writeFileSync(systemctlLog, "");
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		expect(
+			applySystemdRuntimeUpdate(paths, beforeCredentialChange, readSystemdUnitSnapshot(paths)),
+		).toEqual({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: ["hermes-gateway.service"],
+		});
+		const systemctlCalls = readFileSync(systemctlLog, "utf-8");
+		expect(systemctlCalls).toContain("--user restart hermes-gateway.service");
+		expect(systemctlCalls).not.toContain("restart openclaw-gateway.service");
 
 		const removed = applyRuntimeBundleChannelsToManifestLoad(
 			{ ...load, channelBindings: [], secretValues: {} },

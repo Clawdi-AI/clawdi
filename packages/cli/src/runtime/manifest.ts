@@ -4834,13 +4834,22 @@ function runtimeProgramRevisionForManifest(
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
 	const runtimeSecretRefs = desiredRuntime
-		? Object.values(
-				mergeRuntimeSecretEnv(
-					runtime,
-					desiredRuntime,
-					hostedProviderEnvironment(manifest, runtime).secretEnv,
+		? [
+				...Object.values(
+					mergeRuntimeSecretEnv(
+						runtime,
+						desiredRuntime,
+						hostedProviderEnvironment(manifest, runtime).secretEnv,
+					),
 				),
-			)
+				...hostedWhatsAppAuthCredentials(manifest)
+					.filter(
+						(credential) =>
+							credential.target === runtime ||
+							(runtime === "openclaw" && credential.target === "legacy"),
+					)
+					.map((credential) => credential.credsJsonSecretRef),
+			]
 		: [];
 	const channels = hostedChannelProjection(manifest);
 	const hostedTarget = runtime === "openclaw" || runtime === "hermes";
