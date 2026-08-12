@@ -2969,7 +2969,7 @@ def parse_whatsapp_usync_device_targets(req: BinaryNode) -> tuple[str, ...] | No
         not attrs["id"]
         or attrs["type"] != "get"
         or attrs["xmlns"] != "usync"
-        or attrs["to"] != "s.whatsapp.net"
+        or attrs["to"] != "@s.whatsapp.net"
     ):
         return None
     content = req.get("content")
