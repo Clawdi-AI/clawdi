@@ -1,6 +1,6 @@
 # ADR-0003: Runtime Bundle Media Type Is the Render Contract
 
-**Status:** Accepted (amended 2026-08-11)
+**Status:** Accepted (amended 2026-08-12)
 **Date:** 2026-07-13
 **Deciders:** Clawdi maintainers
 
@@ -24,8 +24,9 @@ The v2 renderer and canonical JSON encoding are frozen except for the narrow
 consumer-first amendments below. Any other response-affecting behavior change
 requires a new media type and schema version. An unsupported
 or missing media type returns `406`; the CLI does not fall back to a legacy
-manifest representation or a separate `/v1/channels` flow. Agent v2 had no
-released client, so the endpoint has no unpublished compatibility response.
+manifest representation or a separate `/v1/channels` flow. At adoption, Agent
+v2 had no released client, so the endpoint needed no unpublished compatibility
+response.
 
 The backend loads environment state, providers, selected encrypted auth
 payloads, and active Telegram/Discord/WhatsApp links with set-based queries
@@ -72,6 +73,10 @@ with current desired provider IDs. SSE invalidation only reduces latency;
 conditional polling and the applied ETag/sourceRevision preserve correctness.
 
 ### 2026-07-30 generation identity amendment
+
+> HISTORICAL ROLLOUT RECORD - The pre-activation sequence below completed before
+> Agent v2 became publicly enabled on 2026-08-12. The resulting
+> `applyGeneration` compatibility contract remains current.
 
 The inner manifest `generation` permanently remains the checkpoint/content
 generation. The bundle root may additionally contain positive

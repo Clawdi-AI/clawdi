@@ -93,7 +93,7 @@ Clawdi is the shared layer underneath:
 
 - **Cross-agent memory** — Store durable preferences, decisions, facts, and project context once. Search them from any connected agent.
 - **Portable skills** — Author instructions in each Agent's guarded filesystem and project a read-only Cloud inventory; explicitly import Cloud-owned Project Skills when needed.
-- **Project sharing** — Share read-only Project access from the dashboard or CLI, accept it from a share page or CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
+- **Project sharing** — Share read-only Project access from the dashboard or CLI, accept it from a share page or CLI inbox, and explicitly link accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
 - **Vault secrets** — Store secrets server-side, commit only `clawdi://` references, and resolve them at runtime.
 - **AI Providers** — Keep a multi-record provider catalog and auth references while Core Hosted manifests bind at most one provider to Hermes or OpenClaw, without proxying BYOK model traffic.
@@ -248,7 +248,10 @@ Local self-hosting currently expects:
 - PostgreSQL 16 with `pg_trgm` and `pgvector`
 - Clerk keys for dashboard auth
 - Two generated encryption keys for vault data and backend security material
-- **One backend process** until v1.5. The `clawdi daemon` realtime SSE fan-out lives in process memory (`backend/app/services/sync_events.py`), so a broadcast on worker A doesn't reach a daemon attached to worker B. Run a single uvicorn worker (or one gunicorn worker with `--workers 1`) behind your reverse proxy. Multi-process fan-out via Postgres LISTEN/NOTIFY ships in v1.5.
+- PostgreSQL-backed realtime sync event delivery. Each API process listens for
+  committed events through PostgreSQL `LISTEN/NOTIFY`, so SSE subscribers receive
+  invalidations published by other API processes without Redis or a separate
+  message broker. Periodic reconciliation remains the missed-event fallback.
 
 See [`backend/.env.example`](backend/.env.example) and [`apps/web/.env.example`](apps/web/.env.example) for the exact environment variables.
 
@@ -303,7 +306,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi skill list/add/install/rm/init` | Manage portable skills |
 | `clawdi project create/list/show/share/share-links/invite/invites/members/leave/unshare` | Manage Projects and read-only sharing |
 | `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
-| `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
+| `clawdi agent projects list/link/unlink/move` | View the fixed Agent Project and manage linked Projects (`attach`/`detach` remain compatibility aliases) |
 | `clawdi agent credentials import/materialize` | Compatibility backup/restore for local CLI credential profiles; use `ai-provider import-auth/connect` for Codex provider auth |
 | `clawdi ai-provider list/add/edit/remove/validate/test/connect/complete-oauth/import-auth/export/import` | Manage local provider catalog records, auth refs, Codex OAuth/profile auth, direct tests, and provider-only export/import; Core Hosted activation comes from controller desired state |
 | `clawdi channel list/available/get/create/links/link/rotate-token/pair-code/send/bindings/sync-commands/delete` | Manage channel bots, bot-agent links, chat pairing, outbound messages, and provider slash-command sync |

@@ -1462,35 +1462,11 @@ through ordinary higher-generation runtime-state reconciliation. Database
 migrations backfill stored authority where required; operators do not patch
 individual production rows to advance deployments.
 
-The WhatsApp channel binding follows that same order: this producer change stays
-stacked and unmerged until `clawdi@0.13.56` is published, selected by Hosted, and
-verified on active runtimes. Only then may the Hosted producer emit WhatsApp
-bindings. This is operational release sequencing, not a code gate: the OSS
-consumer has no producer-version detection, feature flag, fallback datasource,
-or dual contract.
-
-For the optional v2 `applyGeneration` amendment, strict older consumers reject
-the new root field. This OSS consumer release must deploy before Hosted producer
-activation. The nullable database field is the default-closed receiving edge;
-Hosted must not write it until compatible CLI deployment is confirmed.
-
-The pre-activation sequence uses existing Hosted desired-state behavior. If a
-deployment is at metadata/apply `1` and checkpoint `2`, first leave the CLI pin
-unchanged and accept the existing
-`POST /v2/deployments/{deployment_id}/restart` mutation, whose desired-state
-change increments only `rollout_nonce`; while the producer gate is off, the
-legacy checkpoint floor aligns the deployment to `2/2` without a runtime-state
-content change. Next, select the exact compatible CLI and use its ordinary
-controlled rollout to advance metadata and the CLI-pin checkpoint together to
-`3/3`. A direct CLI pin from `1/2` would produce `2/3`, so it is not an
-alignment mechanism. Verify the online bundle, `runtime-applied.json`,
-last-good cache, offline boot, observation tuple, and canonical Agent health
-before enabling the Hosted producer gate. No direct database, Cloud state, Pod
-cache, or tenant filesystem mutation is part of this protocol.
-
-After every active CLI and stored applied state has explicit Apply identity, a
-narrow follow-up contract release removes the optionality, legacy fallback,
-null omission gate, temporary rollout text, and legacy compatibility tests.
+WhatsApp bindings and `applyGeneration` followed this consumer-first rollout
+order before their producers were enabled. They are now part of the released
+manifest contract; later changes must use the same additive sequencing and
+must not depend on producer-version detection, a fallback datasource, or
+direct mutation of Cloud state or tenant filesystems.
 
 Bundled-Skill versioning follows expand, migrate, contract ordering. During
 expand, the CLI accepts the prior enabled-only Skill entry and canonicalizes
