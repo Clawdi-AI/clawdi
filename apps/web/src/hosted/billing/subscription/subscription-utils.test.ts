@@ -319,7 +319,7 @@ describe("compute subscription action status gates", () => {
 			),
 		).toBe(false);
 		expect(isEndedAccountSubscription({ ...ended, status: "canceling" }, nowMs)).toBe(false);
-		expect(isEndedAccountSubscription({ ...ended, cancel_at_period_end: true }, nowMs)).toBe(false);
+		expect(isEndedAccountSubscription({ ...ended, cancel_at_period_end: true }, nowMs)).toBe(true);
 		expect(isEndedAccountSubscription({ ...ended, current_period_end: null }, nowMs)).toBe(false);
 		expect(isEndedAccountSubscription({ ...ended, current_period_end: "not-a-date" }, nowMs)).toBe(
 			false,

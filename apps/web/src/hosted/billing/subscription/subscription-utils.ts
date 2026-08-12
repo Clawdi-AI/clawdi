@@ -64,7 +64,7 @@ export function isEndedAccountSubscription(
 	>,
 	nowMs: number,
 ): boolean {
-	if (subscription.status !== "canceled" || subscription.cancel_at_period_end) return false;
+	if (subscription.status !== "canceled") return false;
 	if (!subscription.current_period_end) return false;
 	const periodEndMs = Date.parse(subscription.current_period_end);
 	return Number.isFinite(periodEndMs) && periodEndMs <= nowMs;

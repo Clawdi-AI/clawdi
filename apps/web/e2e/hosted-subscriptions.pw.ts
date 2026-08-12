@@ -136,12 +136,12 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Show history (2)" })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"] h3')).toHaveCount(2);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(2);
 	await expectCardsFit(dialog);
 
 	await dialog.getByRole("button", { name: "Show history (2)" }).click();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(4);
-	await expect(dialog.locator('[data-slot="compute-subscription-card"] h3')).toHaveCount(4);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(4);
 	await expect(dialog.getByText("Canceled", { exact: true })).toHaveCount(2);
 	await expect(dialog.getByText("ended_first", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("ended_second", { exact: true })).toBeVisible();
