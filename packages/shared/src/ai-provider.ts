@@ -231,7 +231,7 @@ export const CLAWDI_MANAGED_PROVIDER_IDS: ReadonlySet<string> = new Set([
 	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 ]);
-const CLAWDI_AI_RUNTIME_ENV = "CLAWDI_AI_API_KEY";
+export const MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY";
 
 export interface AiProviderManagedIdentity {
 	id?: string | null;
@@ -507,9 +507,9 @@ function validateManagedProviderContract(
 	if (expectedApiMode && provider.api_mode !== expectedApiMode) {
 		errors.push(`Provider ${publicPrefix} managed_by clawdi must use api_mode ${expectedApiMode}.`);
 	}
-	if (provider.runtime_env_name !== CLAWDI_AI_RUNTIME_ENV) {
+	if (provider.runtime_env_name !== MANAGED_AI_PROVIDER_RUNTIME_ENV) {
 		errors.push(
-			`Provider ${publicPrefix} managed_by clawdi must use runtime_env_name ${CLAWDI_AI_RUNTIME_ENV}.`,
+			`Provider ${publicPrefix} managed_by clawdi must use runtime_env_name ${MANAGED_AI_PROVIDER_RUNTIME_ENV}.`,
 		);
 	}
 	const auth = (provider as { auth?: unknown }).auth;

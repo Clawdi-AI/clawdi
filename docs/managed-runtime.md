@@ -630,21 +630,32 @@ BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the same
 terminal Codex default. Unmanaged OpenClaw or Hermes units receive no provider
 environment.
 
-For a Clawdi-managed runtime provider, the CLI gives OpenClaw and Hermes the
-same reserved local placeholder name: `CLAWDI_AI_API_KEY`. The runtime sends the
-fixed placeholder value through that env key; the endpoint-scoped egress profile
-matches the Authorization value and rewrites it from the provider secret
-reference. Terminal Codex continues to use `OPENAI_API_KEY`, and user-managed
-provider environment names are not remapped.
+For a Clawdi-managed provider, the CLI gives OpenClaw, Hermes, and terminal
+Codex the same reserved local placeholder name: `CLAWDI_AI_API_KEY`. Each
+consumer sends the fixed placeholder value through that env key; the
+endpoint-scoped egress profile matches the Authorization value and rewrites it
+from the provider secret reference. User-managed provider environment names are
+not remapped.
 
-Only the selected model and managed endpoint vary for the terminal consumer;
-the provider model catalog remains on runtime provider projections where
-OpenClaw and Hermes consume its capability and compatibility facts. Fixed v1
-terminal fields remain on the wire because strict manifest parsing precedes a
-`clawdiCli.packageSpec` self-upgrade. The versioned CLI validates those fields
-and derives the local Codex provider id, Responses transport, environment name,
-and secret wiring. This compatibility ordering rules out removing the fixed
-fields in place even though they are consumer invariants.
+The new CLI writes no Codex `model` or `model_catalog_json`; it writes only the
+custom provider selection, endpoint, canonical env key, and Responses transport.
+This plain `env_key` provider does not enable Codex's remote model refresh, so
+Codex selects its own default from its bundled catalog (`gpt-5.6-sol` in the
+locked `0.146.0` catalog). Clawdi does not encode that model choice. Manifest
+v1 `primary_model` remains required only because strict parsing precedes a
+`clawdiCli.packageSpec` self-upgrade; the new CLI validates and ignores it.
+Legacy terminal-Codex `OPENAI_API_KEY` and provider `models` are also read-only
+v1 compatibility inputs; local output always uses `CLAWDI_AI_API_KEY` and
+remains catalog-free. Removing those wire fields needs a new schema after older
+CLIs can reach this compatibility release.
+
+This change is Phase A: publish `clawdi@0.13.69`, which reads both legacy and
+canonical terminal-Codex env names while writing only the canonical local env.
+The backend still emits legacy `OPENAI_API_KEY`. Phase B must be a separate
+backend change after `0.13.69` is published, deployment desired package specs
+have advanced, and `activeCliVersion` has converged; only then may backend
+emission switch to `CLAWDI_AI_API_KEY`. Otherwise an older CLI can reject the
+manifest before installing and re-executing the requested CLI.
 
 This mode controls default configuration ownership, not pod-wide network
 isolation. Egress matching is domain based, so another pod process could call a

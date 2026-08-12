@@ -4,13 +4,15 @@ import type {
 	AiProviderCatalog,
 	AiProviderType,
 } from "@clawdi/shared";
-import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
+import {
+	isAiProviderApiMode,
+	isAiProviderType,
+	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+} from "@clawdi/shared";
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
-
-const CLAWDI_AI_PROVIDER_RUNTIME_ENV_NAME = "CLAWDI_AI_API_KEY";
 
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
@@ -190,7 +192,7 @@ function hostedProviderRuntimeEnvName(
 		(runtimeName === "openclaw" || runtimeName === "hermes") &&
 		isClawdiManagedProviderProjection(input)
 	) {
-		return CLAWDI_AI_PROVIDER_RUNTIME_ENV_NAME;
+		return MANAGED_AI_PROVIDER_RUNTIME_ENV;
 	}
 	const raw = typeof input.runtimeEnvName === "string" ? input.runtimeEnvName : null;
 	if (raw && isEnvKey(raw)) return raw;
