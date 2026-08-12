@@ -51,9 +51,7 @@ export function OnboardingCard({
 				<CardContent>
 					<div
 						className={
-							canDeployOnClawdi && !isAdditionalAgent
-								? "grid gap-2 xl:grid-cols-2"
-								: "grid gap-2"
+							canDeployOnClawdi && !isAdditionalAgent ? "grid gap-2 xl:grid-cols-2" : "grid gap-2"
 						}
 					>
 						{canDeployOnClawdi ? (
