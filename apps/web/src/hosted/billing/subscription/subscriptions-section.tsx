@@ -1,8 +1,8 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { CreditCard, Link2Off, RefreshCw } from "lucide-react";
-import type { ReactNode } from "react";
+import { CreditCard, History, Link2Off, RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
+import type { StatusTone } from "@/components/ui/status-badge";
 import type { ComputeSubscriptionListItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
@@ -21,18 +21,17 @@ import {
 	useResumeSubscription,
 	useSubscriptions,
 } from "@/hosted/billing/hooks";
+import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	canCancelAccountSubscription,
 	canResumeAccountSubscription,
 	computeTierLabel,
+	isEndedAccountSubscription,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { agentSectionLink } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
-
-const SUBSCRIPTION_GRID_CLASS =
-	"grid gap-4 lg:grid-cols-[minmax(10rem,1.35fr)_minmax(8rem,1fr)_minmax(7rem,.7fr)_minmax(7rem,.65fr)_minmax(8rem,.8fr)_minmax(9rem,auto)] lg:items-center";
 
 const STATUS_PRESENTATION: Record<
 	ComputeSubscriptionListItem["status"],
@@ -85,10 +84,6 @@ function periodLabel(subscription: ComputeSubscriptionListItem): string {
 	return `Renews ${date}`;
 }
 
-function FieldLabel({ children }: { children: ReactNode }) {
-	return <div className="mb-1 text-xs font-medium text-muted-foreground lg:hidden">{children}</div>;
-}
-
 function SubscriptionActions({ subscription }: { subscription: ComputeSubscriptionListItem }) {
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
@@ -127,11 +122,11 @@ function SubscriptionActions({ subscription }: { subscription: ComputeSubscripti
 	}
 
 	if (!canCancel && !canResume) {
-		return <span className="hidden text-muted-foreground lg:inline">-</span>;
+		return null;
 	}
 
 	return (
-		<div className="flex flex-wrap gap-2 lg:justify-end">
+		<div className="flex flex-wrap gap-2 sm:justify-end">
 			{canResume ? (
 				<Button
 					type="button"
@@ -211,60 +206,69 @@ export function SubscriptionLoadMore({
 
 function SubscriptionRow({ subscription }: { subscription: ComputeSubscriptionListItem }) {
 	const status = STATUS_PRESENTATION[subscription.status];
+	const hasActions =
+		canCancelAccountSubscription(subscription) || canResumeAccountSubscription(subscription);
 
 	return (
-		<li className={`${SUBSCRIPTION_GRID_CLASS} px-3 py-4`}>
-			<div className="min-w-0">
-				<FieldLabel>Subscription</FieldLabel>
-				<div className="font-medium capitalize">{planLabel(subscription.plan_slug)}</div>
-				<div className="mt-1 flex flex-wrap items-center gap-1.5">
-					<StatusBadge status={status.tone}>{status.label}</StatusBadge>
-					{subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
-				</div>
-			</div>
-			<div className="min-w-0">
-				<FieldLabel>Agent</FieldLabel>
-				<SubscriptionAgentLink
-					deploymentId={subscription.deployment_id}
-					agentName={subscription.agent_name}
-				/>
-			</div>
-			<div>
-				<FieldLabel>Payment source</FieldLabel>
-				<span className="text-sm font-medium">
-					{subscriptionPaymentSourceLabel(subscription.funding_source)}
-				</span>
-			</div>
-			<div>
-				<FieldLabel>Price</FieldLabel>
-				<div className="font-medium tabular-nums">{priceLabel(subscription)}</div>
-				<div className="mt-0.5 text-xs text-muted-foreground">
-					{billingTermLabel(subscription.billing_term_months)}
-				</div>
-			</div>
-			<div>
-				<FieldLabel>Renewal / end</FieldLabel>
-				<span className="text-sm text-muted-foreground">{periodLabel(subscription)}</span>
-			</div>
-			<div>
-				<FieldLabel>Actions</FieldLabel>
-				<SubscriptionActions subscription={subscription} />
-			</div>
+		<li className="min-w-0">
+			<ComputeSubscriptionCard
+				headingLevel={4}
+				title={planLabel(subscription.plan_slug)}
+				status={status}
+				badges={subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
+				details={[
+					{
+						label: "Agent",
+						value: (
+							<SubscriptionAgentLink
+								deploymentId={subscription.deployment_id}
+								agentName={subscription.agent_name}
+							/>
+						),
+					},
+					{
+						label: "Payment",
+						value: subscriptionPaymentSourceLabel(subscription.funding_source),
+					},
+					{
+						label: "Billing",
+						value: (
+							<>
+								<span className="tabular-nums">{priceLabel(subscription)}</span>
+								<span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+									{billingTermLabel(subscription.billing_term_months)}
+								</span>
+							</>
+						),
+					},
+					{ label: "Schedule", value: periodLabel(subscription) },
+				]}
+				actions={hasActions ? <SubscriptionActions subscription={subscription} /> : null}
+			/>
 		</li>
 	);
 }
 
 function SubscriptionListSkeleton() {
 	return (
-		<div className="divide-y overflow-hidden rounded-lg border">
+		<div className="space-y-3" role="status">
+			<span className="sr-only">Loading subscriptions</span>
 			{Array.from({ length: 3 }, (_, index) => `subscription-skeleton-${index}`).map((key) => (
-				<div key={key} className={`${SUBSCRIPTION_GRID_CLASS} px-3 py-4`}>
-					<Skeleton className="h-9 w-36" />
-					<Skeleton className="h-4 w-24" />
-					<Skeleton className="h-4 w-16" />
-					<Skeleton className="h-9 w-20" />
-					<Skeleton className="h-4 w-28" />
-					<Skeleton className="h-8 w-20 lg:justify-self-end" />
+				<div key={key} className="overflow-hidden rounded-lg border bg-card">
+					<div className="flex items-start justify-between gap-3 p-4">
+						<Skeleton className="h-5 w-36" />
+						<Skeleton className="h-5 w-16" />
+					</div>
+					<div className="grid grid-cols-2 gap-4 border-t px-4 py-3 sm:grid-cols-4">
+						{Array.from({ length: 4 }, (_, detailIndex) => `${key}-${detailIndex}`).map(
+							(detailKey) => (
+								<div key={detailKey} className="space-y-1.5">
+									<Skeleton className="h-3 w-12" />
+									<Skeleton className="h-4 w-20 max-w-full" />
+								</div>
+							),
+						)}
+					</div>
 				</div>
 			))}
 		</div>
@@ -273,7 +277,17 @@ function SubscriptionListSkeleton() {
 
 export function SubscriptionsSection() {
 	const subscriptions = useSubscriptions();
+	const [showHistory, setShowHistory] = useState(false);
+	const [historyCutoffMs] = useState(Date.now);
 	const rows = subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [];
+	const endedRows = rows.filter((subscription) =>
+		isEndedAccountSubscription(subscription, historyCutoffMs),
+	);
+	const visibleRows = showHistory
+		? rows
+		: rows.filter((subscription) => !isEndedAccountSubscription(subscription, historyCutoffMs));
+	const canLoadMore = subscriptions.hasNextPage && !subscriptions.isFetchNextPageError;
+	const historyControlVisible = endedRows.length > 0 || showHistory;
 
 	return (
 		<SettingsSection
@@ -291,27 +305,44 @@ export function SubscriptionsSection() {
 					onRetry={() => void subscriptions.refetch()}
 					title="Couldn't load subscriptions"
 				/>
-			) : rows.length ? (
+			) : rows.length || subscriptions.hasNextPage ? (
 				<>
-					<div className="overflow-hidden rounded-lg border">
-						<div
-							aria-hidden
-							className={`${SUBSCRIPTION_GRID_CLASS} hidden border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid`}
-						>
-							<span>Subscription</span>
-							<span>Agent</span>
-							<span>Payment source</span>
-							<span>Price</span>
-							<span>Renewal / end</span>
-							<span className="text-right">Actions</span>
+					{historyControlVisible ? (
+						<div className="flex justify-end">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								aria-pressed={showHistory}
+								onClick={() => setShowHistory((current) => !current)}
+							>
+								<History />
+								{showHistory
+									? "Hide history"
+									: `Show history${endedRows.length ? ` (${endedRows.length})` : ""}`}
+							</Button>
 						</div>
-						<ul className="divide-y">
-							{rows.map((subscription) => (
+					) : null}
+					{visibleRows.length ? (
+						<ul className="space-y-3">
+							{visibleRows.map((subscription) => (
 								<SubscriptionRow key={subscription.subscription_id} subscription={subscription} />
 							))}
 						</ul>
-					</div>
-					{subscriptions.hasNextPage && !subscriptions.isFetchNextPageError ? (
+					) : (
+						<EmptyState
+							variant="inset"
+							icon={CreditCard}
+							title="No current subscriptions"
+							description={
+								endedRows.length
+									? "Ended subscriptions are hidden. Show history to view them."
+									: "Load more records to find current subscriptions."
+							}
+							className="py-8 md:p-8"
+						/>
+					)}
+					{canLoadMore ? (
 						<SubscriptionLoadMore
 							isLoading={subscriptions.isFetchingNextPage}
 							onLoadMore={() => void subscriptions.fetchNextPage()}
