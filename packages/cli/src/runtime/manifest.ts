@@ -2827,6 +2827,9 @@ const applyMergePatch = (target, source, path = []) => {
     if (value === null) {
       delete target[key];
       unsetPaths.push(nextPath);
+    } else if (path.length === 2 && path[0] === "models" && path[1] === "providers") {
+      target[key] = structuredClone(value);
+      explicitSetPaths.push(nextPath);
     } else if (isRecord(value)) {
       if (!isRecord(target[key])) target[key] = {};
       if (Object.keys(value).length === 0) explicitSetPaths.push(nextPath);
@@ -2908,10 +2911,12 @@ export function buildOpenClawHostedProviderPatch(
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
 	const providerIds = [...openClawProviderIdsFromPatch(file.content)].sort();
 	const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set(providerIds));
+	const providerPatchContent =
+		providerIds.length > 0 ? withOpenClawProviderMode(file.content, "replace") : file.content;
 	return {
 		apply: true,
-		args: openClawProviderModelReplacementArgs(file.content),
-		content: mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
+		args: openClawProviderReplacementArgs(file.content),
+		content: mergeOpenClawProviderDeletes(providerPatchContent, deletedProviderIds),
 		providerIds,
 	};
 }
@@ -2929,7 +2934,7 @@ function openClawProviderIdsFromPatch(content: string): Set<string> {
 	);
 }
 
-function openClawProviderModelReplacementArgs(content: string): string[] {
+function openClawProviderReplacementArgs(content: string): string[] {
 	const parsed = JSON.parse(content) as unknown;
 	const root = recordValue(parsed);
 	const models = root ? recordValue(root.models) : null;
@@ -2937,9 +2942,19 @@ function openClawProviderModelReplacementArgs(content: string): string[] {
 	if (!providers) return [];
 	return Object.entries(providers).flatMap(([providerId, provider]) => {
 		const providerConfig = recordValue(provider);
-		if (!providerConfig || !Array.isArray(providerConfig.models)) return [];
-		return ["--replace-path", `models.providers[${JSON.stringify(providerId)}].models`];
+		if (!providerConfig) return [];
+		return ["--replace-path", `models.providers[${JSON.stringify(providerId)}]`];
 	});
+}
+
+function withOpenClawProviderMode(patchContent: string, mode: "merge" | "replace"): string {
+	const parsed = JSON.parse(patchContent) as unknown;
+	const root = recordValue(parsed);
+	if (!root) return patchContent;
+	const patch = { ...root };
+	const models = { ...(recordValue(patch.models) ?? {}), mode };
+	patch.models = models;
+	return `${JSON.stringify(patch, null, 2)}\n`;
 }
 
 function mergeOpenClawProviderDeletes(
@@ -2960,7 +2975,6 @@ function mergeOpenClawProviderDeletes(
 	for (const providerId of deletedProviderIds) {
 		providers[providerId] = null;
 	}
-	models.mode = "merge";
 	models.providers = providers;
 	patch.models = models;
 	return `${JSON.stringify(patch, null, 2)}\n`;
