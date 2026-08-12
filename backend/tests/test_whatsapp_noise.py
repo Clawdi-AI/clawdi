@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -29,12 +30,15 @@ from app.routes.channel_routers import whatsapp as whatsapp_router_module
 from app.routes.channel_routers.whatsapp import router as whatsapp_router
 from app.routes.channel_routers.whatsapp import whatsapp_baileys_managed_websocket
 from app.services.channels import generate_agent_token, store_agent_link_token
+from app.services.vault_crypto import decrypt, encrypt
 from app.services.whatsapp_baileys import (
     SignalSender,
     StoredWhatsAppCredential,
     WhatsAppAuthCert,
+    decode_buffer_json,
     encrypt_whatsapp_group_message_for_sender_key,
     mint_whatsapp_agent_credential,
+    serialize_creds,
     whatsapp_signal_senders_from_config,
     whatsapp_text_message_proto,
 )
@@ -156,6 +160,29 @@ async def test_whatsapp_noise_prefers_current_account_identity(
             "lid": "900000000000002:1@lid",
         }
     }
+    credential_config = dict(stored.credential.config or {})
+    credential_config["self_identity"] = {
+        "id": stored.credential.synthetic_jid,
+        "lid": "900000000000002:1@lid",
+    }
+    stored.credential.config = credential_config
+
+    legacy_creds = decode_buffer_json(
+        json.loads(
+            decrypt(
+                stored.credential.encrypted_credentials,
+                stored.credential.credential_nonce,
+            )
+        )
+    )
+    assert isinstance(legacy_creds, dict)
+    legacy_me = legacy_creds.get("me")
+    assert isinstance(legacy_me, dict)
+    legacy_me.pop("lid")
+    preserved_auth_state = {key: value for key, value in legacy_creds.items() if key != "me"}
+    ciphertext, nonce = encrypt(serialize_creds(legacy_creds))
+    stored.credential.encrypted_credentials = ciphertext
+    stored.credential.credential_nonce = nonce
     await db_session.commit()
 
     lid = await whatsapp_router_module._resolve_whatsapp_noise_lid(
@@ -167,6 +194,23 @@ async def test_whatsapp_noise_prefers_current_account_identity(
     assert lid == "900000000000002:1@lid"
     await db_session.refresh(stored.credential)
     assert stored.credential.config["self_identity"] == {
+        "id": stored.credential.synthetic_jid,
+        "lid": "900000000000002:1@lid",
+    }
+    repaired_creds = decode_buffer_json(
+        json.loads(
+            decrypt(
+                stored.credential.encrypted_credentials,
+                stored.credential.credential_nonce,
+            )
+        )
+    )
+    assert isinstance(repaired_creds, dict)
+    assert {key: value for key, value in repaired_creds.items() if key != "me"} == (
+        preserved_auth_state
+    )
+    assert repaired_creds["me"] == {
+        **legacy_me,
         "id": stored.credential.synthetic_jid,
         "lid": "900000000000002:1@lid",
     }

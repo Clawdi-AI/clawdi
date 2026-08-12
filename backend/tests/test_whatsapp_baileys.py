@@ -665,7 +665,25 @@ async def test_respond_to_iq_handles_key_usync_and_group_shapes():
         resolve_recipient_bundle=lambda _jid: bundle,
     )
     assert key_response["attrs"]["id"] == "keys"
-    assert key_response["content"][0]["content"][0]["tag"] == "registration"
+    key_list = key_response["content"][0]
+    assert key_list["tag"] == "list"
+    key_user = key_list["content"][0]
+    assert key_user["attrs"]["jid"] == "15551112222@s.whatsapp.net"
+    assert [child["tag"] for child in key_user["content"]] == [
+        "registration",
+        "type",
+        "identity",
+        "skey",
+        "key",
+    ]
+    assert key_user["content"][-1] == {
+        "tag": "key",
+        "attrs": {},
+        "content": [
+            {"tag": "id", "attrs": {}, "content": b"\x00\x00\x03"},
+            {"tag": "value", "attrs": {}, "content": b"\x05" + bytes(range(64, 96))},
+        ],
+    }
 
     usync_response = await respond_to_iq(
         {
