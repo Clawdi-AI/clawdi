@@ -199,10 +199,20 @@ modes to Hermes transport names, and writes only environment-variable names
 for API-key providers. Codex OAuth uses Hermes' native `openai-codex` selector
 and a reserved Clawdi-owned credential-pool entry.
 
-For OpenClaw, Hosted convergence sends a native config patch through
-`openclaw config patch --stdin`. API-key providers use env-backed `apiKey`
-references. Codex OAuth uses the native subscription route and the public
-provider-auth SDK with a namespaced Clawdi-owned profile.
+For OpenClaw, Hosted provider convergence uses the public
+`openclaw/plugin-sdk/config-mutation` export. The mutation starts from authored
+source config, exactly replaces Clawdi-owned provider model arrays, and leaves
+unrelated provider and user settings intact. It enables OpenClaw's targeted
+`allowConfigSizeDrop` write option because removing stale managed models is an
+intentional size reduction; schema, SecretRef preflight, config-path ownership,
+locking, and compare-and-swap guards remain active. Gateway and channel patches
+continue to use `openclaw config patch --stdin`.
+
+This contract is verified against `openclaw@2026.7.1-2`, official source commit
+[`0790d9f`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c).
+API-key providers use env-backed `apiKey` references. Codex OAuth uses the
+native subscription route and the public provider-auth SDK with a namespaced
+Clawdi-owned profile.
 
 OAuth reconcile is durable and target-native:
 

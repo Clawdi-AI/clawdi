@@ -5,9 +5,11 @@ import {
 	chmodSync,
 	chownSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -20,7 +22,11 @@ import {
 	quiesceSystemdRuntimeCandidate,
 	readSystemdUnitSnapshot,
 } from "../../src/commands/runtime";
-import { convergeRuntimeManifest } from "../../src/runtime/manifest";
+import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
+import {
+	buildOpenClawHostedProviderPatch,
+	convergeRuntimeManifest,
+} from "../../src/runtime/manifest";
 import {
 	FILE_BROWSER_AMD64_SHA256,
 	FILE_BROWSER_ARM64_SHA256,
@@ -230,6 +236,225 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	}
 	expect(existsSync(workspaceRoot)).toBe(false);
 });
+
+test("projects a large OpenClaw provider model-list reduction through the public mutation SDK", () => {
+	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
+
+	expect(process.geteuid?.()).toBe(0);
+	const runtimeHome = "/home/clawdi";
+	const runtimeUid = 10_001;
+	const runtimeGid = 10_001;
+	const commandPath = join(runtimeHome, ".local", "bin", "openclaw");
+	const expectedNodeVersion = process.env.CLAWDI_TEST_OPENCLAW_NODE_VERSION ?? "";
+	const commandStat = lstatSync(commandPath);
+	expect(commandStat.isFile()).toBe(true);
+	expect(commandStat.isSymbolicLink()).toBe(false);
+	expect(commandStat.size).toBe(172);
+	expect(realpathSync(join(runtimeHome, ".local", "tools", "node"))).toBe(
+		join(runtimeHome, ".local", "tools", `node-v${expectedNodeVersion}`),
+	);
+	const root = mkdtempSync(join(tmpdir(), "clawdi-real-openclaw-size-drop-"));
+	chmodSync(root, 0o755);
+	const clawdiHome = join(root, "clawdi-home");
+	mkdirSync(clawdiHome);
+	chownSync(clawdiHome, runtimeUid, runtimeGid);
+	chmodSync(clawdiHome, 0o700);
+	const configRoot = join(root, "openclaw");
+	mkdirSync(configRoot, { mode: 0o700 });
+	chownSync(configRoot, runtimeUid, runtimeGid);
+	const configPath = join(configRoot, "openclaw.json");
+	const staleModels = Array.from({ length: 18 }, (_, index) => ({
+		id: `legacy-managed-${index}`,
+		name: `Legacy managed responses model ${index}`,
+		api: "openai-completions",
+		input: ["text", "image"],
+		reasoning: true,
+		contextWindow: 200_000,
+		maxTokens: 64_000,
+		cost: { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 1.25 },
+	}));
+	const userProvider = {
+		baseUrl: "https://user-provider.example.test/v1",
+		api: "openai-completions",
+		models: [
+			{
+				id: "user-model",
+				name: "User-owned model",
+				api: "openai-completions",
+				input: ["text"],
+				contextWindow: 32_768,
+				maxTokens: 8_192,
+			},
+		],
+	};
+	const existingConfig = {
+		agents: { defaults: { workspace: join(runtimeHome, "user-workspace") } },
+		gateway: { mode: "local", port: 19_022 },
+		logging: { level: "debug" },
+		models: {
+			mode: "merge",
+			providers: {
+				"user-owned": userProvider,
+				clawdi: {
+					baseUrl: "https://ai-gateway.example.test/v1",
+					api: "openai-completions",
+					models: staleModels,
+				},
+			},
+		},
+	};
+	const originalConfig = `${JSON.stringify(existingConfig, null, 2)}\n`;
+	writeFileSync(configPath, originalConfig, { mode: 0o600 });
+	chownSync(configPath, runtimeUid, runtimeGid);
+
+	const previousConfigPath = process.env.OPENCLAW_CONFIG_PATH;
+	const previousProviderKey = process.env.CLAWDI_OPENCLAW_API_KEY;
+	process.env.OPENCLAW_CONFIG_PATH = configPath;
+	process.env.CLAWDI_OPENCLAW_API_KEY = "clawdi-egress-placeholder";
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_RUNTIME_USER = "clawdi";
+	process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
+	process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
+	process.env.CLAWDI_RUNTIME_HOME = runtimeHome;
+	process.env.CLAWDI_HOME = clawdiHome;
+	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+	process.env.CLAWDI_RUN_DIR = join(root, "run");
+	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "run", "systemd", "system");
+	process.env.CLAWDI_AUTH_TOKEN = "real-size-drop-test-auth-token";
+	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
+	const paths = getRuntimePaths({ mode: "hosted" });
+	ensureRuntimeStateDirs(paths);
+
+	const manifest: RuntimeManifest = {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "hdep_real_openclaw_size_drop",
+		environmentId: "env_real_openclaw_size_drop",
+		instanceId: "hri_real_openclaw_size_drop",
+		generation: 1,
+		issuedAt: "2026-08-11T23:08:17.000Z",
+		workspaceRoot: runtimeHome,
+		controlPlane: { apiUrl: "https://cloud-api.example.test" },
+		projection: {
+			providers: {
+				clawdi: {
+					type: "custom_openai_compatible",
+					managed_by: "clawdi",
+					baseUrl: "https://ai-gateway.example.test/v1",
+					models: [
+						{
+							id: "sol",
+							label: "Sol",
+							api_mode: "openai_chat",
+							input_modalities: ["text"],
+							supports_tools: true,
+							supports_reasoning: true,
+							context_window: 200_000,
+							max_tokens: 64_000,
+							cost: { input: 1.5, output: 12, cache_read: 0.15, cache_write: 1.5 },
+						},
+					],
+					apiMode: "openai_chat",
+					runtimeEnvName: "OPENAI_API_KEY",
+					apiKeySecretRef: "secret://providers/clawdi/api-key",
+				},
+			},
+		},
+		runtimes: {
+			openclaw: {
+				enabled: true,
+				providerMode: "configured",
+				provider_ids: ["clawdi"],
+				primary_model: { provider_id: "clawdi", model: "sol" },
+				run: { command: commandPath, args: ["gateway", "run"], env: {}, prependPath: [] },
+				services: {},
+			},
+		},
+		recovery: {},
+	};
+	const load: RuntimeManifestLoad = {
+		manifest,
+		source: "remote-datasource",
+		sourcePath: "real-openclaw-size-drop-fixture",
+		offline: false,
+		secretValues: { "secret://providers/clawdi/api-key": "sk-size-drop-fixture" },
+		applyContext: {
+			kind: "context-file",
+			backend: "incus",
+			identity: {
+				generation: manifest.generation,
+				manifestETag: '"real-size-drop-test"',
+				applyReceiptId: "real-size-drop-test-receipt",
+				bootNonce: "real-size-drop-test-boot",
+			},
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_openclaw_size_drop",
+				auth: { type: "bearer", token: "real-size-drop-test-auth-token" },
+			},
+		},
+	};
+
+	try {
+		const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
+		if (!projectionInput) throw new Error("expected OpenClaw provider projection");
+		const intendedPatch = buildOpenClawHostedProviderPatch(projectionInput, ["clawdi"]);
+		expect(intendedPatch.args).toEqual(["--replace-path", 'models.providers["clawdi"].models']);
+		const rejected = spawnSync(
+			"runuser",
+			[
+				"-u",
+				"clawdi",
+				"--",
+				"env",
+				`HOME=${runtimeHome}`,
+				`OPENCLAW_CONFIG_PATH=${configPath}`,
+				"CLAWDI_OPENCLAW_API_KEY=clawdi-egress-placeholder",
+				commandPath,
+				"config",
+				"patch",
+				"--stdin",
+				...intendedPatch.args,
+			],
+			{ encoding: "utf8", input: intendedPatch.content },
+		);
+		expect(rejected.status).not.toBe(0);
+		const rejectedOutput = `${rejected.stdout}\n${rejected.stderr}`;
+		const sizeDrop = rejectedOutput.match(/size-drop:(\d+)->(\d+)/);
+		expect(sizeDrop).not.toBeNull();
+		if (!sizeDrop) throw new Error(rejectedOutput);
+		const beforeBytes = Number(sizeDrop[1]);
+		const rejectedBytes = Number(sizeDrop[2]);
+		expect(beforeBytes).toBeGreaterThan(5_000);
+		expect(rejectedBytes).toBeLessThan(Math.floor(beforeBytes * 0.5));
+		expect(readFileSync(configPath, "utf8")).toBe(originalConfig);
+
+		const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
+		expect(convergence.installErrors).toEqual([]);
+		const intendedConfig = JSON.parse(intendedPatch.content);
+		const appliedConfig = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(appliedConfig.models.providers.clawdi.models).toEqual(
+			intendedConfig.models.providers.clawdi.models,
+		);
+		expect(appliedConfig.models.providers["user-owned"]).toEqual(userProvider);
+		expect(appliedConfig.agents.defaults.workspace).toBe(existingConfig.agents.defaults.workspace);
+		expect(appliedConfig.gateway).toEqual(existingConfig.gateway);
+		expect(appliedConfig.logging).toEqual(existingConfig.logging);
+		expect(JSON.stringify(appliedConfig)).not.toContain("legacy-managed-");
+		expect(Buffer.byteLength(readFileSync(configPath, "utf8"))).toBeLessThan(
+			Math.floor(beforeBytes * 0.5),
+		);
+		const configStat = statSync(configPath);
+		expect(configStat.uid).toBe(runtimeUid);
+		expect(configStat.gid).toBe(runtimeGid);
+		expect(configStat.mode & 0o777).toBe(0o600);
+	} finally {
+		if (previousConfigPath === undefined) delete process.env.OPENCLAW_CONFIG_PATH;
+		else process.env.OPENCLAW_CONFIG_PATH = previousConfigPath;
+		if (previousProviderKey === undefined) delete process.env.CLAWDI_OPENCLAW_API_KEY;
+		else process.env.CLAWDI_OPENCLAW_API_KEY = previousProviderKey;
+	}
+}, 60_000);
 
 test("persists and serves the managed token through the real official OpenClaw gateway", async () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
