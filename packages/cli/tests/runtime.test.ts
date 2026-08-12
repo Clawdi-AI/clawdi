@@ -3434,7 +3434,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
 			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"].models',
+			'config patch --stdin --replace-path models.providers["default"]',
 		]);
 		expect(JSON.parse(readFileSync(openclawPatch, "utf-8"))).toEqual({
 			agents: {
@@ -3529,9 +3529,10 @@ chmod +x "$HOME/.local/bin/hermes"
 							api: "openai-completions",
 							models: [{ id: "user-model", name: "User model" }],
 						},
-						"clawdi-managed": {
+						clawdi: {
 							baseUrl: "https://managed.provider.example.test/v1",
 							api: "openai-responses",
+							apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
 							models: legacyModels,
 						},
 					},
@@ -3590,11 +3591,13 @@ export async function mutateConfigFile(options) {
 		process.env.CLAWDI_RUN_DIR = run;
 
 		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "configured", 2);
+		const providerId = "clawdi-v2-deployment-42";
 		const providers = {
-			"clawdi-managed": {
+			[providerId]: {
 				...loaded.manifest.projection?.providers?.["clawdi-managed"],
 				model: "sol",
 				models: [{ id: "sol" }],
+				apiMode: "openai_chat",
 			},
 		};
 		loaded.manifest = {
@@ -3602,7 +3605,8 @@ export async function mutateConfigFile(options) {
 			runtimes: {
 				openclaw: {
 					...loaded.manifest.runtimes.openclaw,
-					primary_model: { provider_id: "clawdi-managed", model: "sol" },
+					provider_ids: [providerId],
+					primary_model: { provider_id: providerId, model: "sol" },
 				},
 			},
 			projection: {
@@ -3627,17 +3631,19 @@ export async function mutateConfigFile(options) {
 			allowConfigSizeDrop: true,
 		});
 		expect(mutation.nextBytes).toBeLessThan(Math.floor(mutation.beforeBytes * 0.5));
-		expect(mutation.explicitSetPaths).toContainEqual([
-			"models",
-			"providers",
-			"clawdi-managed",
-			"models",
-		]);
+		expect(mutation.explicitSetPaths).toContainEqual(["models", "providers", "clawdi"]);
 		const appliedConfig = JSON.parse(readFileSync(openclawConfig, "utf-8"));
-		expect(appliedConfig.agents.defaults.model.primary).toBe("clawdi-managed/sol");
-		expect(appliedConfig.models.providers["clawdi-managed"].models).toEqual([
+		expect(appliedConfig.agents.defaults.model.primary).toBe("clawdi/sol");
+		expect(appliedConfig.models.mode).toBe("replace");
+		expect(appliedConfig.models.providers.clawdi.models).toEqual([
 			expect.objectContaining({ id: "sol" }),
 		]);
+		expect(appliedConfig.models.providers.clawdi.api).toBeUndefined();
+		expect(appliedConfig.models.providers.clawdi.apiKey).toEqual({
+			source: "env",
+			provider: "default",
+			id: "CLAWDI_OPENCLAW_API_KEY",
+		});
 		expect(appliedConfig.models.providers["user-owned"].models).toEqual([
 			{ id: "user-model", name: "User model" },
 		]);
@@ -3652,9 +3658,10 @@ export async function mutateConfigFile(options) {
 		);
 		expect(unmanaged.installErrors).toEqual([]);
 		const deletionMutation = JSON.parse(readFileSync(mutationLog, "utf8"));
-		expect(deletionMutation.unsetPaths).toContainEqual(["models", "providers", "clawdi-managed"]);
+		expect(deletionMutation.unsetPaths).toContainEqual(["models", "providers", "clawdi"]);
 		const unmanagedConfig = JSON.parse(readFileSync(openclawConfig, "utf8"));
-		expect(unmanagedConfig.models.providers["clawdi-managed"]).toBeUndefined();
+		expect(unmanagedConfig.models.mode).toBe("merge");
+		expect(unmanagedConfig.models.providers.clawdi).toBeUndefined();
 		expect(unmanagedConfig.models.providers["user-owned"]).toEqual(
 			appliedConfig.models.providers["user-owned"],
 		);
@@ -4647,7 +4654,7 @@ exit 0
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
 			"config patch --stdin",
 			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"].models',
+			'config patch --stdin --replace-path models.providers["default"]',
 			"gateway install --force --json",
 		]);
 		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual({
@@ -4692,7 +4699,7 @@ exit 0
 		});
 		expect(idempotent.installErrors).toEqual([]);
 		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-1)).toEqual([
-			'config patch --stdin --replace-path models.providers["default"].models',
+			'config patch --stdin --replace-path models.providers["default"]',
 		]);
 		expect(statSync(openclawConfig).mtimeMs).toBe(configMtime);
 		expect(statSync(gatewayEnvPath).mtimeMs).toBe(envMtime);
@@ -4703,7 +4710,7 @@ exit 0
 		});
 		expect(reinstalled.installErrors).toEqual([]);
 		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-2)).toEqual([
-			'config patch --stdin --replace-path models.providers["default"].models',
+			'config patch --stdin --replace-path models.providers["default"]',
 			"gateway install --force --json",
 		]);
 		expect(readFileSync(installerToken, "utf8")).toBe("gateway-token\n");
@@ -4721,7 +4728,7 @@ exit 0
 		expect(rotated.installErrors).toEqual([]);
 		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-2)).toEqual([
 			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"].models',
+			'config patch --stdin --replace-path models.providers["default"]',
 		]);
 		expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
 			"rotated-gateway-token",

@@ -201,12 +201,16 @@ and a reserved Clawdi-owned credential-pool entry.
 
 For OpenClaw, Hosted provider convergence uses the public
 `openclaw/plugin-sdk/config-mutation` export. The mutation starts from authored
-source config, exactly replaces Clawdi-owned provider model arrays, and leaves
-unrelated provider and user settings intact. It enables OpenClaw's targeted
-`allowConfigSizeDrop` write option because removing stale managed models is an
-intentional size reduction; schema, SecretRef preflight, config-path ownership,
-locking, and compare-and-swap guards remain active. Gateway and channel patches
-continue to use `openclaw config patch --stdin`.
+source config, sets `models.mode` to `replace`, exactly replaces each selected
+provider object, and leaves unrelated provider and user settings intact. In the
+verified OpenClaw target, replace mode skips implicit provider discovery, so
+the active managed catalog comes only from the manifest projection; replacing
+the provider object also removes stale API modes and key references. The
+mutation enables OpenClaw's targeted `allowConfigSizeDrop` write option because
+removing stale managed models is an intentional size reduction; schema,
+SecretRef preflight, config-path ownership, locking, and compare-and-swap guards
+remain active. Gateway and channel patches continue to use `openclaw config
+patch --stdin`.
 
 This contract is verified against `openclaw@2026.7.1-2`, official source commit
 [`0790d9f`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c).

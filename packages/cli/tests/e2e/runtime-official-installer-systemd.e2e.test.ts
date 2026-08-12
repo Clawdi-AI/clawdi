@@ -399,7 +399,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
 		if (!projectionInput) throw new Error("expected OpenClaw provider projection");
 		const intendedPatch = buildOpenClawHostedProviderPatch(projectionInput, ["clawdi"]);
-		expect(intendedPatch.args).toEqual(["--replace-path", 'models.providers["clawdi"].models']);
+		expect(intendedPatch.args).toEqual(["--replace-path", 'models.providers["clawdi"]']);
 		const rejected = spawnSync(
 			"runuser",
 			[
@@ -433,6 +433,10 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		expect(convergence.installErrors).toEqual([]);
 		const intendedConfig = JSON.parse(intendedPatch.content);
 		const appliedConfig = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(appliedConfig.models.mode).toBe("replace");
+		expect(appliedConfig.models.providers.clawdi).toEqual(
+			intendedConfig.models.providers.clawdi,
+		);
 		expect(appliedConfig.models.providers.clawdi.models).toEqual(
 			intendedConfig.models.providers.clawdi.models,
 		);
