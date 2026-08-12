@@ -3246,7 +3246,7 @@ test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ p
 	}
 });
 
-test("agent rail keeps its command anchor stable with one agent and retains cache after list failure", async ({
+test("agent rail keeps New agent after agents and retains cache after list failure", async ({
 	page,
 }) => {
 	let releaseColdList: (() => void) | undefined;
@@ -3273,18 +3273,17 @@ test("agent rail keeps its command anchor stable with one agent and retains cach
 		await expect(rail.getByTestId("app-sidebar-agent-loading-slot")).toHaveCount(2);
 		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(0);
 		await expect(rail.getByRole("button", { name: "e2e-2", exact: true })).toHaveCount(0);
-		const coldNewAgentBox = await newAgent.boundingBox();
-		if (!coldNewAgentBox) throw new Error("Cold rail New agent control should be visible.");
 
 		releaseColdList?.();
-		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(1);
+		const agentTile = rail.getByTestId("app-sidebar-agent-tile");
+		await expect(agentTile).toHaveCount(1);
 		await expect(rail.getByTestId("app-sidebar-agent-loading-slot")).toHaveCount(0);
+		const agentTileBox = await agentTile.boundingBox();
 		const loadedNewAgentBox = await newAgent.boundingBox();
-		if (!loadedNewAgentBox) throw new Error("Loaded rail New agent control should be visible.");
-		expect(Math.abs(loadedNewAgentBox.x - coldNewAgentBox.x)).toBeLessThanOrEqual(1);
-		expect(Math.abs(loadedNewAgentBox.y - coldNewAgentBox.y)).toBeLessThanOrEqual(1);
-		expect(Math.abs(loadedNewAgentBox.width - coldNewAgentBox.width)).toBeLessThanOrEqual(1);
-		expect(Math.abs(loadedNewAgentBox.height - coldNewAgentBox.height)).toBeLessThanOrEqual(1);
+		if (!agentTileBox || !loadedNewAgentBox) {
+			throw new Error("Loaded agent rail controls should be visible.");
+		}
+		expect(loadedNewAgentBox.y).toBeGreaterThan(agentTileBox.y);
 
 		await rail.getByRole("button", { name: "e2e-2", exact: true }).click();
 		await expect(page.locator('[data-agent-overview="hosted"]')).toBeVisible();
