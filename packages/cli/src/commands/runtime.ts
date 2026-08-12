@@ -172,6 +172,38 @@ interface RuntimeManifestIdentity {
 	previouslyApplied?: boolean;
 }
 
+interface RuntimeWatchFailureBackoff {
+	attempt: number;
+	backoffMs: number;
+	desiredIdentity: string | null;
+	desiredEtag: string | null;
+	failureIdentity: string;
+	nextRetryAt: number;
+	notificationProbeAllowed: boolean;
+	event: Record<string, unknown>;
+}
+
+interface RuntimeWatchRetryMetadata {
+	attempt: number;
+	backoffMs: number;
+	desiredIdentity: string | null;
+	deferred: boolean;
+	failureIdentity: string;
+	nextRetryAt: string;
+}
+
+interface RuntimeWatchTickOptions {
+	forceRefresh: boolean;
+	deferCliInstall?: boolean;
+	deferCliInstallReason?: string;
+	deferManifestRetry?: boolean;
+	recoverFailedSystemdUnits?: boolean;
+	failureBackoff?: RuntimeWatchFailureBackoff;
+	now: number;
+	applyContext?: RuntimeApplyContext;
+	hostedRuntimeContract?: HostedRuntimeContractOptions;
+}
+
 function writable(path: string): boolean {
 	try {
 		accessSync(path, constants.W_OK);
@@ -341,6 +373,7 @@ function parsePositiveMs(
 }
 
 interface RuntimeWatchWakeSignal {
+	clear: () => void;
 	signal: () => void;
 	wait: (ms: number, abort?: AbortSignal) => Promise<"notification" | "poll" | "aborted">;
 }
@@ -349,6 +382,9 @@ function createRuntimeWatchWakeSignal(): RuntimeWatchWakeSignal {
 	let queued = false;
 	let wake: (() => void) | null = null;
 	return {
+		clear: () => {
+			queued = false;
+		},
 		signal: () => {
 			queued = true;
 			wake?.();
@@ -935,28 +971,36 @@ function assertCommandSucceeded(command: string, args: string[], result: Command
 	);
 }
 
-function emitRuntimeWatchEvent(value: unknown, json: boolean | undefined): void {
+function emitRuntimeWatchEvent(value: Record<string, unknown>, json: boolean | undefined): void {
+	if (runtimeWatchRetryDeferred(value)) {
+		if (json) {
+			console.log(
+				JSON.stringify({
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "error",
+					stage: "backoff",
+					retry: value.retry,
+				}),
+			);
+		} else {
+			console.error("runtime watch retry deferred");
+		}
+		return;
+	}
 	if (json) {
 		console.log(JSON.stringify(value));
 		return;
 	}
-	if (!value || typeof value !== "object") return;
-	const event = value as {
-		status?: string;
-		generation?: number;
-		error?: string;
-		errors?: string[];
-	};
-	if (event.status === "applied") {
-		console.log(`runtime watch applied generation ${event.generation ?? "unknown"}`);
+	if (value.status === "applied") {
+		console.log(`runtime watch applied generation ${value.generation ?? "unknown"}`);
 		return;
 	}
-	if (event.status === "cli_handoff") {
+	if (value.status === "cli_handoff") {
 		console.log("runtime watch handed off to the managed CLI");
 		return;
 	}
-	if (event.status === "error") {
-		console.error(`runtime watch error: ${event.error ?? event.errors?.[0] ?? "unknown error"}`);
+	if (value.status === "error") {
+		console.error(`runtime watch error: ${value.error ?? "unknown error"}`);
 	}
 }
 
@@ -1428,28 +1472,14 @@ async function runtimeInitLocked(
 
 async function runtimeWatchTick(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: {
-		forceRefresh: boolean;
-		deferCliInstall?: boolean;
-		deferCliInstallReason?: string;
-		recoverFailedSystemdUnits?: boolean;
-		applyContext?: RuntimeApplyContext;
-		hostedRuntimeContract?: HostedRuntimeContractOptions;
-	},
+	opts: RuntimeWatchTickOptions,
 ): Promise<Record<string, unknown>> {
 	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
 }
 
 async function runtimeWatchTickLocked(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: {
-		forceRefresh: boolean;
-		deferCliInstall?: boolean;
-		deferCliInstallReason?: string;
-		recoverFailedSystemdUnits?: boolean;
-		applyContext?: RuntimeApplyContext;
-		hostedRuntimeContract?: HostedRuntimeContractOptions;
-	},
+	opts: RuntimeWatchTickOptions,
 ): Promise<Record<string, unknown>> {
 	let reconciliation: RuntimeCliReconciliationResult;
 	try {
@@ -1475,6 +1505,9 @@ async function runtimeWatchTickLocked(
 			selfReexec: true,
 		};
 	}
+	if (opts.deferManifestRetry && opts.failureBackoff) {
+		return runtimeWatchDeferredFailureEvent(opts.failureBackoff);
+	}
 	const event = await runtimeWatchTickAfterCliReconciliation(paths, opts);
 	return {
 		...event,
@@ -1484,34 +1517,42 @@ async function runtimeWatchTickLocked(
 
 async function runtimeWatchTickAfterCliReconciliation(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: {
-		forceRefresh: boolean;
-		deferCliInstall?: boolean;
-		deferCliInstallReason?: string;
-		recoverFailedSystemdUnits?: boolean;
-		applyContext?: RuntimeApplyContext;
-		hostedRuntimeContract?: HostedRuntimeContractOptions;
-	},
+	opts: RuntimeWatchTickOptions,
 ): Promise<Record<string, unknown>> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
-	const manifestEtag = opts.forceRefresh ? undefined : (activeAppliedState?.etag ?? undefined);
+	let failureEtag: string | null = null;
+	let failureSourceRevision: string | null = null;
+	const retryDeferred =
+		opts.failureBackoff !== undefined && opts.now < opts.failureBackoff.nextRetryAt;
+	const manifestEtag =
+		retryDeferred && opts.failureBackoff?.desiredEtag
+			? opts.failureBackoff.desiredEtag
+			: opts.forceRefresh
+				? undefined
+				: (activeAppliedState?.etag ?? undefined);
 	const manifestLoad = await loadRemoteRuntimeManifest(paths, {
 		ifNoneMatch: manifestEtag,
 		applyContext: opts.applyContext,
 	});
 	if ("errors" in manifestLoad) {
-		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			mode: manifestLoad.mode,
-			stage: manifestLoad.stage,
-			errors: manifestLoad.errors,
-			error: manifestLoad.errors[0],
-			activeGeneration: manifestLoad.activeGeneration ?? null,
-			rejectedGeneration: manifestLoad.rejectedGeneration ?? null,
-		};
+		if (opts.failureBackoff?.desiredEtag && !manifestLoad.etag) {
+			return retryDeferred
+				? runtimeWatchDeferredFailureEvent(opts.failureBackoff)
+				: opts.failureBackoff.event;
+		}
+		if (runtimeWatchFailureIsDeferred(opts.failureBackoff, manifestLoad.etag, opts.now)) {
+			return runtimeWatchDeferredFailureEvent(opts.failureBackoff);
+		}
+		return runtimeManifestFailureWatchEvent(manifestLoad);
 	}
 	const responseManifestEtag = manifestLoad.etag ?? manifestEtag ?? null;
+	failureEtag = responseManifestEtag;
+	if (
+		"notModified" in manifestLoad &&
+		runtimeWatchFailureIsDeferred(opts.failureBackoff, responseManifestEtag, opts.now)
+	) {
+		return runtimeWatchDeferredFailureEvent(opts.failureBackoff);
+	}
 	if (
 		"notModified" in manifestLoad &&
 		activeAppliedState !== null &&
@@ -1540,22 +1581,23 @@ async function runtimeWatchTickAfterCliReconciliation(
 				? await loadFullRuntimeManifestForWatch(paths, opts.applyContext)
 				: manifestLoad;
 		if ("errors" in fresh) {
-			return {
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "error",
-				mode: fresh.mode,
-				stage: fresh.stage,
-				errors: fresh.errors,
-				error: fresh.errors[0],
-				activeGeneration: fresh.activeGeneration ?? null,
-				rejectedGeneration: fresh.rejectedGeneration ?? null,
-			};
+			if (runtimeWatchFailureIsDeferred(opts.failureBackoff, fresh.etag, opts.now)) {
+				return runtimeWatchDeferredFailureEvent(opts.failureBackoff);
+			}
+			return runtimeManifestFailureWatchEvent(fresh);
 		}
+		failureEtag = fresh.etag ?? failureEtag;
+		failureSourceRevision = fresh.sourceRevision ?? null;
 		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh, paths);
 		const bundleEtag = loaded.etag;
 		const sourceRevision = loaded.sourceRevision;
 		if (!bundleEtag || !sourceRevision) {
 			throw new Error("runtime bundle is missing applied authority identity");
+		}
+		failureEtag = bundleEtag;
+		failureSourceRevision = sourceRevision;
+		if (runtimeWatchFailureIsDeferred(opts.failureBackoff, bundleEtag, opts.now)) {
+			return runtimeWatchDeferredFailureEvent(opts.failureBackoff);
 		}
 		const manifestIdentity = runtimeManifestIdentityForWatch(
 			loaded.manifest.generation,
@@ -1615,6 +1657,8 @@ async function runtimeWatchTickAfterCliReconciliation(
 				activeGeneration: activeAppliedState?.generation ?? null,
 				rejectedGeneration: loaded.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
+				etag: bundleEtag,
+				sourceRevision,
 				cliUpdate: applyResult.cliUpdate,
 				selfReexec: applyResult.cliUpdate.selfReexec,
 				systemdUnitsChanged: false,
@@ -1646,6 +1690,8 @@ async function runtimeWatchTickAfterCliReconciliation(
 				activeGeneration: activeAppliedState?.generation ?? null,
 				rejectedGeneration: convergence.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
+				etag: bundleEtag,
+				sourceRevision,
 				cliUpdate,
 				cliRollback,
 				selfReexec,
@@ -1672,14 +1718,107 @@ async function runtimeWatchTickAfterCliReconciliation(
 			convergence: convergence.outputs,
 		};
 	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "error",
 			stage: "final",
-			errors: [error instanceof Error ? error.message : String(error)],
-			error: error instanceof Error ? error.message : String(error),
+			errors: [message],
+			error: message,
+			...(failureEtag ? { etag: failureEtag } : {}),
+			...(failureSourceRevision ? { sourceRevision: failureSourceRevision } : {}),
 		};
 	}
+}
+
+function runtimeManifestFailureWatchEvent(
+	failure: RuntimeManifestFailure,
+): Record<string, unknown> {
+	return {
+		schemaVersion: "clawdi.runtimeWatchEvent.v1",
+		status: "error",
+		mode: failure.mode,
+		stage: failure.stage,
+		errors: failure.errors,
+		error: failure.errors[0],
+		activeGeneration: failure.activeGeneration ?? null,
+		rejectedGeneration: failure.rejectedGeneration ?? null,
+		...(failure.etag ? { etag: failure.etag } : {}),
+		...(failure.sourceRevision ? { sourceRevision: failure.sourceRevision } : {}),
+	};
+}
+
+function runtimeWatchFailureIsDeferred(
+	backoff: RuntimeWatchFailureBackoff | undefined,
+	etag: string | null | undefined,
+	now: number,
+): backoff is RuntimeWatchFailureBackoff {
+	return Boolean(backoff?.desiredEtag && etag === backoff.desiredEtag && now < backoff.nextRetryAt);
+}
+
+function runtimeWatchRetryMetadata(
+	backoff: RuntimeWatchFailureBackoff,
+	deferred: boolean,
+): RuntimeWatchRetryMetadata {
+	return {
+		attempt: backoff.attempt,
+		backoffMs: backoff.backoffMs,
+		desiredIdentity: backoff.desiredIdentity,
+		deferred,
+		failureIdentity: backoff.failureIdentity,
+		nextRetryAt: new Date(backoff.nextRetryAt).toISOString(),
+	};
+}
+
+function runtimeWatchRetryDeferred(event: Record<string, unknown>): boolean {
+	const retry = event.retry;
+	return Boolean(
+		retry && typeof retry === "object" && "deferred" in retry && retry.deferred === true,
+	);
+}
+
+function runtimeWatchDeferredFailureEvent(
+	backoff: RuntimeWatchFailureBackoff | undefined,
+): Record<string, unknown> {
+	if (!backoff) throw new Error("runtime watch failure backoff is missing");
+	return {
+		...backoff.event,
+		retry: runtimeWatchRetryMetadata(backoff, true),
+	};
+}
+
+function runtimeWatchFailureBackoff(
+	previous: RuntimeWatchFailureBackoff | null,
+	event: Record<string, unknown>,
+	now: number,
+	notificationProbeAllowed: boolean,
+): RuntimeWatchFailureBackoff {
+	const etag = typeof event.etag === "string" ? event.etag : null;
+	const sourceRevision = typeof event.sourceRevision === "string" ? event.sourceRevision : null;
+	const desiredIdentity = sourceRevision
+		? `sourceRevision:${sourceRevision}`
+		: etag
+			? `etag:${etag}`
+			: typeof event.rejectedGeneration === "number"
+				? `generation:${event.rejectedGeneration}`
+				: null;
+	const failureIdentity = `sha256:${runtimeContentSha256({
+		stage: typeof event.stage === "string" ? event.stage : "unknown",
+		error: typeof event.error === "string" ? event.error : "runtime watch failed",
+	})}`;
+	const sameFailure =
+		previous?.desiredIdentity === desiredIdentity && previous.failureIdentity === failureIdentity;
+	const backoffMs = nextRuntimeWatchBackoffMs(sameFailure ? previous.backoffMs : 0);
+	return {
+		attempt: sameFailure ? previous.attempt + 1 : 1,
+		backoffMs,
+		desiredIdentity,
+		desiredEtag: etag,
+		failureIdentity,
+		nextRetryAt: now + backoffMs,
+		notificationProbeAllowed,
+		event,
+	};
 }
 
 async function applyRuntimeDesiredState(
@@ -1915,6 +2054,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	let cliInstallRetryPending = false;
 	let cliInstallBackoffMs = 0;
 	let nextCliInstallRetryAt = 0;
+	let failureBackoff: RuntimeWatchFailureBackoff | null = null;
 	const wakeSignal = createRuntimeWatchWakeSignal();
 	let notificationSubscription: RuntimeWatchNotificationSubscription | null = null;
 
@@ -1980,25 +2120,54 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		// tick should remain conditional, with full refresh timing measured from
 		// the point at which the polling loop is ready.
 		let lastFullFetchAt = Date.now();
+		let wakeReason: "notification" | "poll" = "poll";
 		for (;;) {
 			if (opts.abort?.aborted) return;
-			const now = Date.now();
-			const cliInstallRetryDue = cliInstallRetryPending && now >= nextCliInstallRetryAt;
+			if (wakeReason === "notification") wakeSignal.clear();
+			const tickNow = Date.now();
+			const cliInstallRetryDue = cliInstallRetryPending && tickNow >= nextCliInstallRetryAt;
 			const deferCliInstall = cliInstallRetryPending && !cliInstallRetryDue;
+			const failureRetryDeferred =
+				!opts.once && failureBackoff !== null && tickNow < failureBackoff.nextRetryAt;
+			const failureRetryDue = failureBackoff !== null && tickNow >= failureBackoff.nextRetryAt;
 			// Full refreshes also re-resolve floating CLI channels when manifest ETags are unchanged.
-			const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
-			const event = await runtimeWatchTick(paths, {
-				forceRefresh,
-				applyContext,
-				hostedRuntimeContract: opts.hostedRuntimeContract,
-				deferCliInstall,
-				// Conditional retries run every 15 seconds. Recover failed units
-				// only on the five-minute full refresh, or once in one-shot mode.
-				recoverFailedSystemdUnits: forceRefresh || opts.once === true,
-				deferCliInstallReason: deferCliInstall
-					? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
-					: undefined,
-			});
+			const forceRefresh =
+				tickNow - lastFullFetchAt >= selfHealMs || cliInstallRetryDue || failureRetryDue;
+			const deferManifestRetry =
+				failureRetryDeferred &&
+				failureBackoff?.desiredEtag === null &&
+				(wakeReason !== "notification" || failureBackoff.notificationProbeAllowed === false);
+			const fullFetchAttempted =
+				forceRefresh &&
+				!deferManifestRetry &&
+				!(failureRetryDeferred && failureBackoff?.desiredEtag);
+			let event: Record<string, unknown>;
+			try {
+				event = await runtimeWatchTick(paths, {
+					forceRefresh,
+					applyContext,
+					hostedRuntimeContract: opts.hostedRuntimeContract,
+					deferCliInstall,
+					deferManifestRetry,
+					failureBackoff: failureBackoff ?? undefined,
+					now: tickNow,
+					// Conditional retries run every 15 seconds. Recover failed units
+					// only on the five-minute full refresh, or once in one-shot mode.
+					recoverFailedSystemdUnits: forceRefresh || opts.once === true,
+					deferCliInstallReason: deferCliInstall
+						? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
+						: undefined,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				event = {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "error",
+					stage: "watch",
+					errors: [message],
+					error: message,
+				};
+			}
 			const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
 			if (cliUpdateStatus === "error") {
 				cliInstallRetryPending = true;
@@ -2013,7 +2182,25 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 				cliInstallBackoffMs = 0;
 				nextCliInstallRetryAt = 0;
 			}
-			if (event.status === "applied" || forceRefresh) lastFullFetchAt = Date.now();
+			if (
+				event.status === "error" &&
+				event.stage !== "cli-update" &&
+				!runtimeWatchRetryDeferred(event)
+			) {
+				failureBackoff = runtimeWatchFailureBackoff(
+					failureBackoff,
+					event,
+					Date.now(),
+					wakeReason !== "notification",
+				);
+				event = {
+					...event,
+					retry: runtimeWatchRetryMetadata(failureBackoff, false),
+				};
+			} else if (event.status !== "error" || event.stage === "cli-update") {
+				failureBackoff = null;
+			}
+			if (event.status === "applied" || fullFetchAttempted) lastFullFetchAt = Date.now();
 			writeRuntimeWatchStatus(event, paths);
 			emitRuntimeWatchEvent(event, opts.json);
 			notificationSubscription = ensureRuntimeWatchNotificationSubscription(
@@ -2030,8 +2217,9 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			if (event.selfReexec === true || opts.abort?.aborted) {
 				return;
 			}
-			const wakeReason = await wakeSignal.wait(intervalMs, opts.abort);
-			if (wakeReason === "aborted") return;
+			const nextWakeReason = await wakeSignal.wait(intervalMs, opts.abort);
+			if (nextWakeReason === "aborted") return;
+			wakeReason = nextWakeReason;
 		}
 	} finally {
 		notificationSubscription?.abort.abort();
@@ -2058,6 +2246,11 @@ function runtimeWatchCliUpdateStatus(
 }
 
 function nextCliInstallBackoffMs(previousMs: number): number {
+	if (previousMs <= 0) return 60_000;
+	return Math.min(previousMs * 2, 300_000);
+}
+
+function nextRuntimeWatchBackoffMs(previousMs: number): number {
 	if (previousMs <= 0) return 60_000;
 	return Math.min(previousMs * 2, 300_000);
 }
