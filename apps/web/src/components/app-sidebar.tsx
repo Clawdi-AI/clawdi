@@ -1096,9 +1096,6 @@ function FocusRailContent({
 						</IconChip>
 					</RailTileButton>
 				</SidebarMenu>
-				<SidebarMenu className="w-full items-center">
-					<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
-				</SidebarMenu>
 
 				<SidebarSeparator className="mx-auto w-8" />
 
@@ -1135,6 +1132,7 @@ function FocusRailContent({
 						</SortableContext>
 					</DndContext>
 					{loading ? <AgentRailLoadingSlots /> : null}
+					<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
 				</SidebarMenu>
 			</SidebarContent>
 		</>
