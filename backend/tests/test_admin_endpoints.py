@@ -1068,6 +1068,95 @@ async def test_admin_fixed_managed_ai_provider_preserves_null_models_wire_respon
 
 
 @pytest.mark.asyncio
+async def test_admin_fixed_managed_provider_invalidates_bound_runtime_on_manifest_changes(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from app.models.hosted_runtime import HostedRuntimeState
+    from app.services import sync_events
+    from tests.conftest import create_env_with_project
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"fixed-managed-provider-event-{uuid.uuid4().hex[:8]}",
+        machine_name="Fixed managed provider event",
+        agent_type="openclaw",
+    )
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=env.id,
+            deployment_id="fixed-managed-provider-event",
+            instance_id=f"instance-{uuid.uuid4().hex}",
+            generation=1,
+            cli_package_spec="clawdi@1.2.3-test",
+            locale={"language": "en", "timezone": "UTC"},
+            system={},
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes={
+                "openclaw": {
+                    "enabled": True,
+                    "providerMode": "configured",
+                    "provider_ids": [V2_LEGACY_MANAGED_AI_PROVIDER_ID],
+                    "primary_model": {
+                        "provider_id": V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+                        "model": "gpt-5.5",
+                    },
+                    "install": {"source": "official"},
+                }
+            },
+        )
+    )
+    await db_session.commit()
+
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    body = {
+        "target_clerk_id": seed_user.clerk_id,
+        "base_url": "https://ai-gateway.clawdi.ai/v1",
+        "api_key": "sk-fixed-initial",
+        "models": [{"id": "gpt-5.5"}],
+    }
+    expected_event = {
+        "type": "runtime_manifest_changed",
+        "environment_id": str(env.id),
+    }
+    try:
+        created = await admin_client.put(
+            f"/v1/admin/ai-providers/{V2_LEGACY_MANAGED_AI_PROVIDER_ID}",
+            headers=_AUTH,
+            json=body,
+        )
+        assert created.status_code == 200, created.text
+        assert queue.get_nowait() == expected_event
+        assert queue.empty()
+
+        credential_only = await admin_client.put(
+            f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
+            headers=_AUTH,
+            json={**body, "api_key": "sk-fixed-rotated"},
+        )
+        assert credential_only.status_code == 200, credential_only.text
+        assert queue.empty()
+
+        catalog_changed = await admin_client.put(
+            f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
+            headers=_AUTH,
+            json={
+                **body,
+                "api_key": "sk-fixed-rotated",
+                "models": [{"id": "gpt-5.6"}],
+            },
+        )
+        assert catalog_changed.status_code == 200, catalog_changed.text
+        assert queue.get_nowait() == expected_event
+        assert queue.empty()
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
 async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_and_audited(
     admin_client,
     db_session,
@@ -1225,6 +1314,129 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
         assert event.details["owner"] == expected_owners[event.target_user_id]
         assert event.details["owner_user_id"] == str(event.target_user_id)
         assert event.details["provider_id"] == provider_id
+
+
+@pytest.mark.asyncio
+async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manifest_changes(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from app.models.hosted_runtime import HostedRuntimeState
+    from app.models.user import User
+    from app.services import sync_events
+    from tests.conftest import create_env_with_project
+
+    deployment_id = "8403"
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}{deployment_id}"
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    other = User(clerk_id="managed_provider_manifest_event_other_owner")
+    db_session.add(other)
+    await db_session.flush()
+
+    environments = []
+    for user, state_deployment_id in (
+        (seed_user, deployment_id),
+        (seed_user, "unbound-deployment"),
+        (other, deployment_id),
+    ):
+        env = await create_env_with_project(
+            db_session,
+            user_id=user.id,
+            machine_id=f"managed-provider-event-{uuid.uuid4().hex[:8]}",
+            machine_name="Managed provider event",
+            agent_type="openclaw",
+        )
+        db_session.add(
+            HostedRuntimeState(
+                environment_id=env.id,
+                deployment_id=state_deployment_id,
+                instance_id=f"instance-{uuid.uuid4().hex}",
+                generation=1,
+                cli_package_spec="clawdi@1.2.3-test",
+                locale={"language": "en", "timezone": "UTC"},
+                system={},
+                live_sync={"enabled": False, "agents": []},
+                recovery={"cacheManifest": True, "allowOfflineBoot": True},
+                runtimes={
+                    "openclaw": {
+                        "enabled": True,
+                        "providerMode": "configured",
+                        "provider_ids": [V2_MANAGED_AI_PROVIDER_ID],
+                        "primary_model": {
+                            "provider_id": V2_MANAGED_AI_PROVIDER_ID,
+                            "model": "gpt-5.5",
+                        },
+                        "install": {"source": "official"},
+                    }
+                },
+            )
+        )
+        environments.append((user, env))
+    await db_session.commit()
+
+    queues = [
+        sync_events.subscribe(user.id, frozenset(), environment_id=env.id)
+        for user, env in environments
+    ]
+    request_body = {
+        "owner": owner,
+        "base_url": "https://ai-gateway.clawdi.ai/v1",
+        "api_key": "sk-initial",
+        "models": [{"id": "gpt-5.5"}],
+    }
+    expected_event = {
+        "type": "runtime_manifest_changed",
+        "environment_id": str(environments[0][1].id),
+    }
+    try:
+        created = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}", headers=_AUTH, json=request_body
+        )
+        assert created.status_code == 200, created.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
+
+        credential_only = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}",
+            headers=_AUTH,
+            json={**request_body, "api_key": "sk-rotated"},
+        )
+        assert credential_only.status_code == 200, credential_only.text
+        assert all(queue.empty() for queue in queues)
+
+        no_op = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}",
+            headers=_AUTH,
+            json={**request_body, "api_key": "sk-rotated"},
+        )
+        assert no_op.status_code == 200, no_op.text
+        assert all(queue.empty() for queue in queues)
+
+        catalog_changed = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}",
+            headers=_AUTH,
+            json={**request_body, "api_key": "sk-rotated", "models": [{"id": "gpt-5.6"}]},
+        )
+        assert catalog_changed.status_code == 200, catalog_changed.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
+
+        deleted = await admin_client.delete(
+            f"/v1/admin/ai-providers/{provider_id}", headers=_AUTH, params=owner
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
+    finally:
+        for (user, _), queue in zip(environments, queues, strict=True):
+            sync_events.unsubscribe(user.id, queue)
 
 
 @pytest.mark.asyncio

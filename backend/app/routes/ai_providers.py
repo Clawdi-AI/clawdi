@@ -128,7 +128,10 @@ from app.services.platform_contract import (
     store_platform_response,
 )
 from app.services.private_ip import is_private_hostname
-from app.services.sync_events import queue_provider_runtime_manifest_changed
+from app.services.sync_events import (
+    queue_provider_runtime_manifest_changed,
+    runtime_manifest_provider_non_auth_signature,
+)
 from app.services.url_security import is_public_https_url
 from app.services.vault_crypto import decrypt
 
@@ -246,7 +249,7 @@ async def upsert_ai_provider(
     existing = await _find_provider(db, auth, body.provider_id, include_archived=True)
     if existing is not None and existing.archived_at is None and not replace:
         raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider already exists")
-    previous_non_auth_signature = _runtime_manifest_provider_non_auth_signature(existing)
+    previous_non_auth_signature = runtime_manifest_provider_non_auth_signature(existing)
     auth_event_queued = False
     provider = existing or AiProvider(owner_user_id=auth.user_id, provider_id=body.provider_id)
     _apply_provider_body(provider, body, apply_auth=False)
@@ -280,7 +283,7 @@ async def upsert_ai_provider(
     provider.archived_at = None
     db.add(provider)
     if (
-        previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
+        previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider)
         and not auth_event_queued
     ):
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
@@ -661,7 +664,7 @@ async def patch_ai_provider(
 ) -> AiProviderResponse:
     await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
-    previous_non_auth_signature = _runtime_manifest_provider_non_auth_signature(provider)
+    previous_non_auth_signature = runtime_manifest_provider_non_auth_signature(provider)
     auth_event_queued = False
     merged = await _to_response(db, auth, provider)
     update = {field: getattr(body, field) for field in body.model_fields_set}
@@ -696,7 +699,7 @@ async def patch_ai_provider(
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         auth_event_queued = transition.manifest_event_queued
     if (
-        previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
+        previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider)
         and not auth_event_queued
     ):
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
@@ -1113,7 +1116,7 @@ async def _accept_ai_provider(
         if not body.replace and not can_resume:
             raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider already exists")
 
-    previous_non_auth_signature = _runtime_manifest_provider_non_auth_signature(existing)
+    previous_non_auth_signature = runtime_manifest_provider_non_auth_signature(existing)
     provider = existing or AiProvider(
         owner_user_id=auth.user_id,
         provider_id=provider_body.provider_id,
@@ -1160,7 +1163,7 @@ async def _accept_ai_provider(
             ),
         )
         if (
-            previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
+            previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider)
             and not transition.manifest_event_queued
         ):
             await queue_provider_runtime_manifest_changed(
@@ -1187,7 +1190,7 @@ async def _accept_ai_provider(
         oauth_provider=oauth_provider,
     )
     if (
-        previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
+        previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider)
         or existing is None
     ):
         await queue_provider_runtime_manifest_changed(
@@ -1704,38 +1707,6 @@ def _build_response(
             "updated_at": provider.updated_at,
         }
     )
-
-
-def _runtime_manifest_provider_signature(
-    provider: AiProvider | None,
-) -> dict[str, object] | None:
-    if provider is None:
-        return None
-    return {
-        "type": provider.type,
-        "base_url": provider.base_url,
-        "api_mode": provider.api_mode,
-        "models": provider.models,
-        "auth_type": provider.auth_type,
-        "auth_ref": provider.auth_ref,
-        "auth_metadata": provider.auth_metadata,
-        "managed_by": provider.managed_by,
-        "runtime_env_name": provider.runtime_env_name,
-        "archived_at": provider.archived_at,
-    }
-
-
-def _runtime_manifest_provider_non_auth_signature(
-    provider: AiProvider | None,
-) -> dict[str, object] | None:
-    signature = _runtime_manifest_provider_signature(provider)
-    if signature is None:
-        return None
-    return {
-        key: value
-        for key, value in signature.items()
-        if key not in {"auth_type", "auth_ref", "auth_metadata"}
-    }
 
 
 def _provider_capability_input(
