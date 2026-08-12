@@ -86,7 +86,8 @@ from app.services.whatsapp_baileys import (
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
-_MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
+_MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
+_CODEX_TOOL_RUNTIME_ENV = "OPENAI_API_KEY"
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
@@ -721,7 +722,7 @@ def render_runtime_source(
         "baseUrl": codex_provider_material.get("baseUrl"),
         "apiMode": _CODEX_TOOL_API_MODE,
         "managed_by": codex_provider_material.get("managed_by"),
-        "runtimeEnvName": codex_provider_material.get("runtimeEnvName"),
+        "runtimeEnvName": _CODEX_TOOL_RUNTIME_ENV,
         "apiKeySecretRef": codex_provider_material.get("apiKeySecretRef"),
     }
     try:

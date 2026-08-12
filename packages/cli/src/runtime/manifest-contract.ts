@@ -395,7 +395,7 @@ function validateUnmanagedRunSettings(
 	if (!settings) return;
 	const env = settings.env ?? {};
 	const secretEnv = settings.secretEnv ?? {};
-	for (const envName of ["CLAWDI_MANAGED_OPENAI_API_KEY", "OPENAI_API_KEY"]) {
+	for (const envName of ["CLAWDI_AI_API_KEY", "OPENAI_API_KEY"]) {
 		if (envName in env || envName in secretEnv) {
 			ctx.addIssue({
 				code: "custom",
@@ -605,14 +605,17 @@ const hostedProviderSchema = z
 				path: [],
 			});
 		}
-		if (provider.managed_by === "clawdi" && provider.runtimeEnvName !== "OPENAI_API_KEY") {
-			ctx.addIssue({
-				code: "custom",
-				message: "Clawdi-managed runtime providers require OPENAI_API_KEY",
-				path: ["runtimeEnvName"],
-			});
-		}
 	});
+
+const hostedRuntimeProviderSchema = hostedProviderSchema.superRefine((provider, ctx) => {
+	if (provider.managed_by === "clawdi" && provider.runtimeEnvName !== "CLAWDI_AI_API_KEY") {
+		ctx.addIssue({
+			code: "custom",
+			message: "Clawdi-managed runtime providers require CLAWDI_AI_API_KEY",
+			path: ["runtimeEnvName"],
+		});
+	}
+});
 
 const hostedCodexToolSchema = z
 	.object({
@@ -714,7 +717,7 @@ const hostedRuntimeManifestBaseSchema = z
 		egressEngine: egressEngineSchema.strict().optional(),
 		companions: runtimeCompanionsSchema.optional(),
 		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
-		providers: z.record(z.string().min(1), hostedProviderSchema),
+		providers: z.record(z.string().min(1), hostedRuntimeProviderSchema),
 		liveSync: hostedLiveSyncSchema,
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
 		mcp: hostedMcpDesiredStateSchema.optional(),

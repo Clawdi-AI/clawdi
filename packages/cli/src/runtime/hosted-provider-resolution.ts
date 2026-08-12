@@ -10,8 +10,7 @@ import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 
-const OPENCLAW_PROVIDER_RUNTIME_ENV_NAME = "CLAWDI_OPENCLAW_API_KEY";
-const HERMES_PROVIDER_RUNTIME_ENV_NAME = "CLAWDI_MANAGED_OPENAI_API_KEY";
+const CLAWDI_AI_PROVIDER_RUNTIME_ENV_NAME = "CLAWDI_AI_API_KEY";
 
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
@@ -187,11 +186,11 @@ function hostedProviderRuntimeEnvName(
 	input: Record<string, unknown>,
 	runtimeName?: string,
 ): string {
-	if (runtimeName === "openclaw" && isClawdiManagedProviderProjection(input)) {
-		return OPENCLAW_PROVIDER_RUNTIME_ENV_NAME;
-	}
-	if (runtimeName === "hermes" && isClawdiManagedProviderProjection(input)) {
-		return HERMES_PROVIDER_RUNTIME_ENV_NAME;
+	if (
+		(runtimeName === "openclaw" || runtimeName === "hermes") &&
+		isClawdiManagedProviderProjection(input)
+	) {
+		return CLAWDI_AI_PROVIDER_RUNTIME_ENV_NAME;
 	}
 	const raw = typeof input.runtimeEnvName === "string" ? input.runtimeEnvName : null;
 	if (raw && isEnvKey(raw)) return raw;

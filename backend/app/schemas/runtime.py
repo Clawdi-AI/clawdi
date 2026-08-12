@@ -71,7 +71,7 @@ _FORBIDDEN_TOOL_SECRET_KEYS = {
     "secretvalues",
     "token",
 }
-_UNMANAGED_PROVIDER_ENV_NAMES = {"CLAWDI_MANAGED_OPENAI_API_KEY", "OPENAI_API_KEY"}
+_UNMANAGED_PROVIDER_ENV_NAMES = {"CLAWDI_AI_API_KEY", "OPENAI_API_KEY"}
 _MANAGED_EGRESS_PLACEHOLDER_VALUE = "clawdi-egress-placeholder"
 
 HostedRuntimeSecretValues = dict[str, SecretStr]
