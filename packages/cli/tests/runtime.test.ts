@@ -7090,7 +7090,9 @@ exit 0
 		const run = join(root, "run", "clawdi");
 		const abort = new AbortController();
 		const previousLog = console.log;
+		const previousError = console.error;
 		const logs: string[] = [];
+		const errors: string[] = [];
 		const paths = seedRuntimeWatchLocaleBaseline(home, state, run);
 		setRuntimeApplyGeneration(2, CANONICAL_TEST_CONTEXT);
 		const badEtag = testBundleEtag("manifest-locale-bad-2");
@@ -7100,31 +7102,32 @@ exit 0
 		let manifestCalls = 0;
 		let fullResponses = 0;
 		let resolveFirstEvent: (() => void) | null = null;
-		let resolveThirdEvent: (() => void) | null = null;
+		let resolveThirdProbeStarted: (() => void) | null = null;
+		let releaseThirdProbe: (() => void) | null = null;
+		let deferredStatus: unknown = null;
 		const firstEvent = new Promise<void>((resolveEvent) => {
 			resolveFirstEvent = resolveEvent;
 		});
-		const thirdEvent = new Promise<void>((resolveEvent) => {
-			resolveThirdEvent = resolveEvent;
+		const thirdProbeStarted = new Promise<void>((resolveProbe) => {
+			resolveThirdProbeStarted = resolveProbe;
+		});
+		const thirdProbeReleased = new Promise<void>((resolveProbe) => {
+			releaseThirdProbe = resolveProbe;
 		});
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
-			if (logs.length === 1) resolveFirstEvent?.();
-			if (logs.length === 3) resolveThirdEvent?.();
+			abort.abort();
+		};
+		console.error = (value?: unknown) => {
+			errors.push(String(value));
+			resolveFirstEvent?.();
 		};
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
 				path: "/v1/runtime/manifest",
-				response: (request) => {
+				response: async (request) => {
 					manifestCalls += 1;
-					if (corrected) {
-						fullResponses += 1;
-						setTimeout(() => abort.abort(), 25);
-						return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
-							etag: goodEtag,
-						});
-					}
 					if (manifestCalls === 1) {
 						fullResponses += 1;
 						return hostedRuntimeBundleResponse(badPayload, {
@@ -7133,6 +7136,20 @@ exit 0
 						});
 					}
 					if (manifestCalls === 2) return new Response("temporary failure", { status: 503 });
+					if (manifestCalls === 3) {
+						resolveThirdProbeStarted?.();
+						await thirdProbeReleased;
+						return new Response(null, {
+							status: 304,
+							headers: { etag: request.headers["if-none-match"] ?? badEtag },
+						});
+					}
+					if (corrected) {
+						fullResponses += 1;
+						return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
+							etag: goodEtag,
+						});
+					}
 					return new Response(null, {
 						status: 304,
 						headers: { etag: request.headers["if-none-match"] ?? badEtag },
@@ -7145,7 +7162,6 @@ exit 0
 			await runtimeWatch({
 				intervalMs: 20,
 				selfHealMs: 300_000,
-				json: true,
 				abort: abort.signal,
 				notificationConsumer: async (options) => {
 					await firstEvent;
@@ -7153,18 +7169,17 @@ exit 0
 						type: "runtime_manifest_changed",
 						environment_id: "env_watch_locale",
 					});
-					await thirdEvent;
-					const deferredStatus = JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf-8"));
-					expect(deferredStatus.event).toMatchObject({
-						status: "error",
-						etag: badEtag,
-						retry: { deferred: true, attempt: 1 },
-					});
-					corrected = true;
-					await options.onEvent({
-						type: "runtime_manifest_changed",
-						environment_id: "env_watch_locale",
-					});
+					await thirdProbeStarted;
+					try {
+						deferredStatus = JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf-8"));
+						corrected = true;
+						await options.onEvent({
+							type: "runtime_manifest_changed",
+							environment_id: "env_watch_locale",
+						});
+					} finally {
+						releaseThirdProbe?.();
+					}
 					await new Promise<void>((resolveDone) => {
 						if (options.abort.aborted) return resolveDone();
 						options.abort.addEventListener("abort", () => resolveDone(), { once: true });
@@ -7179,23 +7194,23 @@ exit 0
 				badEtag,
 				badEtag,
 			]);
-			expect(logs.map((line) => JSON.parse(line).status)).toEqual([
-				"error",
-				"error",
-				"error",
-				"applied",
-			]);
-			expect(JSON.parse(logs[0]).retry).toMatchObject({ deferred: false, attempt: 1 });
-			expect(JSON.parse(logs[0]).error).toContain(
+			expect(errors).toHaveLength(1);
+			expect(errors[0]).toContain(
 				"Runtime secret secret://runtime/openclaw/gateway-token is unavailable.",
 			);
-			expect(JSON.parse(logs[1])).toMatchObject({ status: "error", stage: "backoff" });
-			expect(JSON.parse(logs[2])).toMatchObject({ status: "error", stage: "backoff" });
-			expect(JSON.parse(logs[3]).retry).toBeUndefined();
+			expect(logs).toEqual(["runtime watch applied generation 2"]);
+			expect(deferredStatus).toMatchObject({
+				event: {
+					status: "error",
+					etag: badEtag,
+					retry: { deferred: true, attempt: 1 },
+				},
+			});
 			expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 2, etag: goodEtag });
 		} finally {
 			restore();
 			console.log = previousLog;
+			console.error = previousError;
 		}
 	});
 
@@ -7215,8 +7230,10 @@ exit 0
 			resolveFailure = resolveEvent;
 		});
 		console.log = (value?: unknown) => {
-			logs.push(String(value));
+			const line = String(value);
+			logs.push(line);
 			if (logs.length === 1) resolveFailure?.();
+			if (JSON.parse(line).status === "applied") abort.abort();
 		};
 		const { captured, restore } = mockFetch([
 			{
@@ -7225,7 +7242,6 @@ exit 0
 				response: () => {
 					manifestCalls += 1;
 					if (manifestCalls === 1) return new Response("temporary failure", { status: 503 });
-					setTimeout(() => abort.abort(), 25);
 					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
 						etag: testBundleEtag("manifest-locale-recovered-2"),
 					});

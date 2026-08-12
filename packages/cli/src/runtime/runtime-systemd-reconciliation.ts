@@ -1714,7 +1714,7 @@ export function writeRuntimeSystemdState(input: {
 					...commonEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
 				},
-				extraServiceLines: ["TasksMax=infinity", "RestartSteps=4", "RestartMaxDelaySec=5min"],
+				extraServiceLines: ["TasksMax=infinity"],
 			}),
 		);
 	}

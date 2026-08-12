@@ -972,21 +972,7 @@ function assertCommandSucceeded(command: string, args: string[], result: Command
 }
 
 function emitRuntimeWatchEvent(value: Record<string, unknown>, json: boolean | undefined): void {
-	if (runtimeWatchRetryDeferred(value)) {
-		if (json) {
-			console.log(
-				JSON.stringify({
-					schemaVersion: "clawdi.runtimeWatchEvent.v1",
-					status: "error",
-					stage: "backoff",
-					retry: value.retry,
-				}),
-			);
-		} else {
-			console.error("runtime watch retry deferred");
-		}
-		return;
-	}
+	if (runtimeWatchRetryDeferred(value)) return;
 	if (json) {
 		console.log(JSON.stringify(value));
 		return;

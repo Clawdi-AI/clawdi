@@ -591,11 +591,6 @@ describe("runtime manifest services", () => {
 		expect(runtimeWatchUnit).toContain("TasksMax=infinity");
 		expect(runtimeWatchUnit).toContain("Restart=always");
 		expect(runtimeWatchUnit).toContain("RestartSec=2");
-		expect(runtimeWatchUnit).toContain("RestartSteps=4");
-		expect(runtimeWatchUnit).toContain("RestartMaxDelaySec=5min");
-		expect(
-			readFileSync(join(paths.systemdSystemRoot, "clawdi-daemon.service"), "utf8"),
-		).not.toContain("RestartSteps=");
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
 		expect(runtimeWatchEnv).not.toContain("runtime-byok-value");
 		expect(runtimeWatchEnv).not.toContain("service-byok-value");
