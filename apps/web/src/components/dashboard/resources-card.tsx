@@ -68,18 +68,6 @@ export function ResourcesCard({
 							: LIBRARY_ROW_IDS.map((id) => <ResourceRowSkeleton key={id} />)}
 					</div>
 				)}
-				{ready && stats.projects_count === 0 ? (
-					<div className="border-t px-6 py-3 text-xs text-muted-foreground">
-						Next:{" "}
-						<Link
-							to="/projects"
-							className="font-medium text-foreground underline-offset-4 hover:underline"
-						>
-							create your first Project
-						</Link>{" "}
-						to organize reusable skills and credentials for your agents.
-					</div>
-				) : null}
 			</CardContent>
 		</Card>
 	);
@@ -101,7 +89,6 @@ function ResourceRow({ resource }: { resource: Resource }) {
 	const Icon = resource.icon;
 	const { definition } = resource;
 	const scopeLabel = projectResourceScopeLabel(definition.projectScope);
-	const isProjectRow = definition.id === "projects";
 	const count = (
 		<span
 			className={cn(
@@ -113,17 +100,6 @@ function ResourceRow({ resource }: { resource: Resource }) {
 			{countUnavailable ? "—" : formatNumber(resource.count ?? 0)}
 		</span>
 	);
-	const countCluster =
-		isProjectRow && empty ? (
-			<span className="flex shrink-0 items-center gap-2" title={scopeLabel}>
-				{count}
-				<span className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground">
-					1. Create project
-				</span>
-			</span>
-		) : (
-			count
-		);
 	return (
 		<Link
 			to={definition.href}
@@ -142,7 +118,7 @@ function ResourceRow({ resource }: { resource: Resource }) {
 			<div className="min-w-0 flex-1">
 				<div className="text-sm font-medium">{definition.label}</div>
 			</div>
-			{countCluster}
+			{count}
 		</Link>
 	);
 }
