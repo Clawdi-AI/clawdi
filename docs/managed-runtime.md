@@ -655,11 +655,17 @@ CLIs can reach this compatibility release.
 
 This change is Phase A: publish `clawdi@0.13.69`, which reads both legacy and
 canonical terminal-Codex env names while writing only the canonical local env.
-The backend still emits legacy `OPENAI_API_KEY`. Phase B must be a separate
-backend change after `0.13.69` is published, deployment desired package specs
-have advanced, and `activeCliVersion` has converged; only then may backend
-emission switch to `CLAWDI_AI_API_KEY`. Otherwise an older CLI can reject the
-manifest before installing and re-executing the requested CLI.
+Phase B keeps backend emission deployment-scoped: terminal Codex receives
+`CLAWDI_AI_API_KEY` only when the desired CLI is `clawdi@0.13.69` or later and
+strict v2 diagnostics prove the exact desired version, current apply generation,
+and current instance. Observation generation, ETag, and source revision must
+agree with that applied record. Every missing, invalid, stale, or mismatched
+state retains `OPENAI_API_KEY`, including upgrades and rollbacks.
+Phase B may therefore deploy before the fleet upgrades: each deployment remains
+on the legacy env name until its own CLI and observation have converged.
+The gate does not compare that last applied revision with the revision currently
+being rendered: changing the env name creates a new revision, and the internally
+consistent applied record keeps the canonical projection stable while it catches up.
 
 This mode controls default configuration ownership, not pod-wide network
 isolation. Egress matching is domain based, so another pod process could call a

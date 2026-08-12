@@ -210,7 +210,7 @@ def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
     return _is_object_dict(value) and all(isinstance(key, str) for key in value)
 
 
-def _parse_exact_semver(value: str) -> tuple[int, int, int, tuple[str, ...]] | None:
+def parse_exact_semver(value: str) -> tuple[int, int, int, tuple[str, ...]] | None:
     match = _EXACT_SEMVER_PATTERN.fullmatch(value)
     if match is None:
         return None
@@ -227,7 +227,7 @@ def validate_clawdi_cli_package_spec(value: object) -> str:
     if not isinstance(value, str) or not value.startswith("clawdi@"):
         raise ValueError("cli_package_spec must be clawdi@<exact-semver> without build metadata")
     version = value.removeprefix("clawdi@")
-    if _parse_exact_semver(version) is None:
+    if parse_exact_semver(version) is None:
         raise ValueError("cli_package_spec must be clawdi@<exact-semver> without build metadata")
     return value
 
@@ -667,7 +667,7 @@ class HostedCodexProviderProjection(BaseModel):
     baseUrl: str = Field(min_length=1, max_length=1000)
     apiMode: Literal["openai_responses"]
     managed_by: Literal["clawdi"]
-    runtimeEnvName: Literal["OPENAI_API_KEY"]
+    runtimeEnvName: Literal["OPENAI_API_KEY", "CLAWDI_AI_API_KEY"]
     apiKeySecretRef: Literal["secret://tool.codex.apiKey"]
 
 

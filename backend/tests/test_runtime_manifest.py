@@ -2497,7 +2497,7 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
                     "reportedAt": "2026-06-11T00:00:00+00:00",
                     "runtimeMode": "hosted",
                     "status": "ok",
-                    "activeCliVersion": TEST_CLI_PACKAGE_SPEC.split("@", 1)[1],
+                    "activeCliVersion": "0.13.68",
                     "applied": {
                         "etag": etag,
                         "sourceRevision": bundle["sourceRevision"],
