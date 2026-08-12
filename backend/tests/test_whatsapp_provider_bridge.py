@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -9,9 +10,12 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from fastapi import HTTPException
+from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.services.whatsapp_sidecar_registry as sidecar_registry_module
+from app.core.config import settings
 from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_WHATSAPP,
@@ -43,11 +47,16 @@ from app.services.whatsapp_baileys import (
     resolve_whatsapp_binding_by_jids,
     whatsapp_text_message_proto,
 )
-from app.services.whatsapp_native_transport import WhatsAppProviderMessageEvent
+from app.services.whatsapp_native_transport import (
+    WhatsAppBaileysSidecarConfig,
+    WhatsAppBaileysSidecarService,
+    WhatsAppProviderMessageEvent,
+)
 from app.services.whatsapp_noise import WhatsAppOutboundMessage
 from app.services.whatsapp_provider_bridge import (
     WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
     WhatsAppProviderBridge,
+    get_whatsapp_provider_transport,
     persist_whatsapp_provider_event,
     register_whatsapp_provider_transport,
     relay_whatsapp_provider_payload,
@@ -84,6 +93,17 @@ class _FakeProviderTransport:
             "attrs": {"id": "provider-id", "type": "result", "from": "s.whatsapp.net"},
             "content": [{"tag": "props", "attrs": {"hash": "abc"}}],
         }
+
+
+def _use_delivery_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    transport: _FakeProviderTransport,
+) -> None:
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "resolve_whatsapp_delivery_transport",
+        lambda _account: transport,
+    )
 
 
 async def _seed_whatsapp_link_and_binding(
@@ -182,23 +202,23 @@ def test_whatsapp_provider_transport_registration_is_exclusive_per_account():
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_provider_payload_rejects_non_json_values_before_relay():
+async def test_whatsapp_provider_payload_rejects_non_json_values_before_relay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     account_id = uuid4()
     transport = _FakeProviderTransport()
-    register_whatsapp_provider_transport(account_id, transport)
-    try:
-        with pytest.raises(HTTPException) as exc_info:
-            await relay_whatsapp_provider_payload(
-                account=ChannelAccount(id=account_id),
-                external_chat_id="15551114444@s.whatsapp.net",
-                text="hello",
-                provider_payload={
-                    "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
-                    "messageId": object(),
-                },
-            )
-    finally:
-        unregister_whatsapp_provider_transport(account_id)
+    _use_delivery_transport(monkeypatch, transport)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await relay_whatsapp_provider_payload(
+            account=ChannelAccount(id=account_id),
+            external_chat_id="15551114444@s.whatsapp.net",
+            text="hello",
+            provider_payload={
+                "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
+                "messageId": object(),
+            },
+        )
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "invalid whatsapp provider payload"
@@ -218,7 +238,17 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         channel_agent,
         name="wa-provider-durable-outbox",
     )
-    transport = _FakeProviderTransport()
+    sidecar_url = "http://127.0.0.1:43191"
+    sidecar_config = WhatsAppBaileysSidecarConfig(
+        api_token="sidecar-secret",
+        base_url=sidecar_url,
+        account_id=account.id,
+    )
+    account.config = {
+        "connection_mode": "baileys_managed",
+        "sidecar_config_revision": sidecar_config.binding_revision,
+    }
+    await db_session.commit()
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     bridge = WhatsAppProviderBridge(sessionmaker, account_id=account.id)
     message_proto = b"\x32\x0c\x0a\x0aexact-edit"
@@ -236,12 +266,33 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         conversation="exact edit",
         additional_nodes=({"tag": "meta", "attrs": {"polltype": "creation"}},),
     )
+    requests: list[httpx.Request] = []
 
-    register_whatsapp_provider_transport(account.id, transport)
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["authorization"] == "Bearer sidecar-secret"
+        assert request.url.path == f"/v1/sessions/{account.id}/relay-message"
+        return httpx.Response(200, json={"ok": True, "messageId": "physical-agent-exact-1"})
+
+    http_client = httpx.AsyncClient(
+        base_url=sidecar_url,
+        transport=httpx.MockTransport(handler),
+    )
+    sidecar_service = WhatsAppBaileysSidecarService(
+        WhatsAppBaileysSidecarConfig(api_token="sidecar-secret", base_url=sidecar_url),
+        http_client=http_client,
+    )
+    original_token = settings.channel_whatsapp_baileys_sidecar_token
+    original_url = settings.channel_whatsapp_baileys_sidecar_url
+    settings.channel_whatsapp_baileys_sidecar_token = SecretStr("sidecar-secret")
+    settings.channel_whatsapp_baileys_sidecar_url = sidecar_url
+    monkeypatch.setattr(sidecar_registry_module, "_delivery_sidecar_service", sidecar_service)
+
     try:
+        assert get_whatsapp_provider_transport(account.id) is None
         queued = await bridge.store_outbound_message(message, bot_agent_link_id=link.id)
         assert queued.outcome == "queued"
-        assert transport.outbound_messages == []
+        assert requests == []
 
         async def allow_runtime_authority(
             _db: AsyncSession,
@@ -270,14 +321,20 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         )
         delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
     finally:
-        unregister_whatsapp_provider_transport(account.id)
+        settings.channel_whatsapp_baileys_sidecar_token = original_token
+        settings.channel_whatsapp_baileys_sidecar_url = original_url
+        await http_client.aclose()
 
     assert delivered_id == queued.delivery_id
-    assert len(transport.outbound_messages) == 1
-    relayed = transport.outbound_messages[0]
-    assert relayed.message_proto == message_proto
-    assert relayed.attrs == message.attrs
-    assert relayed.additional_nodes == message.additional_nodes
+    assert len(requests) == 1
+    relayed = json.loads(requests[0].content)
+    assert relayed == {
+        "jid": binding.external_chat_id,
+        "messageId": "agent-exact-1",
+        "messageProtoBase64": base64.b64encode(message_proto).decode("ascii"),
+        "additionalAttributes": {"edit": "8", "addressing_mode": "lid"},
+        "additionalNodes": [{"tag": "meta", "attrs": {"polltype": "creation"}}],
+    }
 
     await db_session.rollback()
     stored = await db_session.get(ChannelMessage, queued.channel_message_id)
@@ -295,6 +352,67 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
     }
     assert stored.provider_message_id == "physical-agent-exact-1"
     assert delivery.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_delivery_revision_mismatch_fails_without_sidecar_call(
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service_config = WhatsAppBaileysSidecarConfig(
+        api_token="sidecar-secret",
+        base_url="http://127.0.0.1:43191",
+    )
+    account = build_channel_account(
+        owner_user_id=channel_agent.user_id,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name="wa-stale-delivery-revision",
+        visibility=CHANNEL_VISIBILITY_PRIVATE,
+        webhook_secret_hash=hash_token("wa-stale-delivery-revision"),
+        config={
+            "connection_mode": "baileys_managed",
+            "sidecar_config_revision": "stale-revision",
+        },
+    )
+    db_session.add(account)
+    await db_session.flush()
+    _message, delivery = await enqueue_channel_outbound_message(
+        db_session,
+        account=account,
+        external_chat_id="15551114444@s.whatsapp.net",
+        text="must fail closed",
+    )
+    delivery.max_attempts = 1
+    await db_session.commit()
+    session_calls: list[UUID] = []
+
+    class FakeDeliveryService:
+        def session_client(self, session_id: UUID):
+            session_calls.append(session_id)
+            raise AssertionError("revision mismatch must not construct a session client")
+
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "_configured_delivery_service",
+        lambda: service_config,
+    )
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "_delivery_sidecar_service",
+        FakeDeliveryService(),
+    )
+
+    delivered_id = await ChannelDeliveryWorker(
+        async_sessionmaker(db_session.bind, expire_on_commit=False)
+    ).run_once()
+
+    assert delivered_id == delivery.id
+    await db_session.refresh(delivery)
+    assert delivery.status == "failed"
+    assert delivery.attempts == 1
+    assert delivery.last_error == "channel_provider_unreachable"
+    assert session_calls == []
 
 
 @pytest.mark.asyncio
@@ -1147,6 +1265,7 @@ async def test_whatsapp_unpaired_traffic_is_silent_and_replayed_command_replies_
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     account, _link, binding = await _seed_whatsapp_link_and_binding(
         client,
@@ -1157,6 +1276,7 @@ async def test_whatsapp_unpaired_traffic_is_silent_and_replayed_command_replies_
     binding.status = BINDING_STATUS_ARCHIVED
     await db_session.commit()
     transport = _FakeProviderTransport()
+    _use_delivery_transport(monkeypatch, transport)
     register_whatsapp_provider_transport(account.id, transport)
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
 
@@ -1283,6 +1403,7 @@ async def test_whatsapp_unpair_ack_uses_post_unpair_account_send(
     channel_agent,
     visibility: str,
     expect_recorded_outbound: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     external_chat_id = "15551114444@s.whatsapp.net"
     account = build_channel_account(
@@ -1313,6 +1434,7 @@ async def test_whatsapp_unpair_ack_uses_post_unpair_account_send(
     db_session.add(binding)
     await db_session.commit()
     transport = _FakeProviderTransport()
+    _use_delivery_transport(monkeypatch, transport)
     register_whatsapp_provider_transport(account.id, transport)
 
     try:
@@ -1361,6 +1483,7 @@ async def test_whatsapp_concurrent_replayed_pair_mutates_and_replies_once(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     account, link, binding = await _seed_whatsapp_link_and_binding(
         client,
@@ -1381,6 +1504,7 @@ async def test_whatsapp_concurrent_replayed_pair_mutates_and_replies_once(
     )
     await db_session.commit()
     transport = _FakeProviderTransport()
+    _use_delivery_transport(monkeypatch, transport)
     register_whatsapp_provider_transport(account.id, transport)
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     event = WhatsAppProviderMessageEvent(

@@ -14,7 +14,10 @@ from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderAccountRetired,
     whatsapp_provider_transport_status,
 )
-from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
+from app.services.whatsapp_sidecar_registry import (
+    ConfiguredWhatsAppSidecarRegistry,
+    resolve_whatsapp_delivery_transport,
+)
 
 
 class _FakeSidecarClient:
@@ -86,6 +89,55 @@ async def test_disabled_registry_is_inert():
         assert registry.get_custom_client(UUID(int=2)) is None
     finally:
         await registry.stop()
+
+
+def test_delivery_transport_resolves_custom_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_id = UUID("00000000-0000-4000-8000-000000000891")
+    session_id = UUID("00000000-0000-4000-8000-000000000892")
+    service_config = WhatsAppBaileysSidecarConfig(
+        api_token="secret",
+        base_url="http://127.0.0.1:43191",
+    )
+    session_config = WhatsAppBaileysSidecarConfig(
+        api_token="secret",
+        base_url="http://127.0.0.1:43191",
+        account_id=session_id,
+    )
+    clients: list[_FakeSidecarClient] = []
+
+    class FakeDeliveryService:
+        def session_client(self, resolved_session_id: UUID) -> _FakeSidecarClient:
+            assert resolved_session_id == session_id
+            client = _FakeSidecarClient(session_config)
+            clients.append(client)
+            return client
+
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "_configured_delivery_service",
+        lambda: service_config,
+    )
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "_delivery_sidecar_service",
+        FakeDeliveryService(),
+    )
+    account = sidecar_registry_module.ChannelAccount(
+        id=account_id,
+        provider="whatsapp",
+        config={
+            "connection_mode": "baileys_custom",
+            "sidecar_account_id": str(session_id),
+            "sidecar_config_revision": session_config.binding_revision,
+        },
+    )
+
+    transport = resolve_whatsapp_delivery_transport(account)
+
+    assert transport is not None
+    assert len(clients) == 1
 
 
 @pytest.mark.asyncio
