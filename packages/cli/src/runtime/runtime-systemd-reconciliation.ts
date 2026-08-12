@@ -346,7 +346,7 @@ function systemdUnitEnvironmentLines(values: Record<string, string>): string[] {
 	);
 }
 
-function systemdEnvironmentFilePath(paths: RuntimePaths, unitName: string): string {
+export function systemdEnvironmentFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(paths.systemdEnvRoot, `${systemdUnitFileName(unitName)}.env`);
 }
 
