@@ -1059,32 +1059,44 @@ async def wallet() -> dict[str, Any]:
     }
 
 
-@app.get("/v2/wallet/ledger")
-async def ledger() -> dict[str, Any]:
+@app.get("/v2/wallet/transactions")
+async def wallet_transactions() -> dict[str, Any]:
     now = _now()
     return {
         "items": [
             {
-                "id": "ledger_dev_topup",
-                "operation": "topup",
-                "request_id": "req_dev_topup",
-                "credits_amount": 5000,
+                "id": "wallet:txn_dev_topup",
+                "kind": "topup",
+                "occurred_at": _iso(now - timedelta(days=2)),
+                "amount": "50.00",
+                "currency": "usd",
+                "direction": "credit",
                 "status": "applied",
-                "notes": "Mock top-up",
-                "created_at": _iso(now - timedelta(days=2)),
-                "applied_at": _iso(now - timedelta(days=2)),
+                "funding": "wallet",
+                "payment_reference": "pi_dev_topup",
+                "receipt_url": "https://example.invalid/receipt/dev",
+                "context": None,
             },
             {
-                "id": "ledger_dev_usage",
-                "operation": "usage",
-                "request_id": "req_dev_usage",
-                "credits_amount": -800,
+                "id": "wallet:txn_dev_compute",
+                "kind": "compute_charge",
+                "occurred_at": _iso(now - timedelta(hours=4)),
+                "amount": "20.00",
+                "currency": "usd",
+                "direction": "debit",
                 "status": "applied",
-                "notes": "Hosted runtime usage",
-                "created_at": _iso(now - timedelta(hours=4)),
-                "applied_at": _iso(now - timedelta(hours=4)),
+                "funding": "wallet",
+                "context": {
+                    "plan": "compute_performance",
+                    "period_start": _iso(now - timedelta(hours=4)),
+                    "period_end": _iso(now + timedelta(days=30)),
+                    "agent_name": "Hermes",
+                    "deployment_id": "hdep_dev_mock",
+                },
             },
-        ]
+        ],
+        "has_more": False,
+        "next_cursor": None,
     }
 
 
