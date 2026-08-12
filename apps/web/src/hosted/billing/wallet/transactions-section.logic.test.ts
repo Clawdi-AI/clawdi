@@ -1,10 +1,26 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { WalletTransaction } from "@/hosted/billing/contracts";
 import {
 	transactionComputeDetails,
 	transactionKindLabel,
 	transactionSignedAmount,
 } from "./transactions-section.logic";
+
+// Billing-period dates render in the viewer's timezone; pin one so the
+// midnight-UTC fixtures assert the same calendar day on any runner.
+const originalTimezone = process.env.TZ;
+
+beforeAll(() => {
+	process.env.TZ = "UTC";
+});
+
+afterAll(() => {
+	if (originalTimezone === undefined) {
+		delete process.env.TZ;
+	} else {
+		process.env.TZ = originalTimezone;
+	}
+});
 
 function transaction(overrides: Partial<WalletTransaction> = {}): WalletTransaction {
 	return {
