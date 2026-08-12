@@ -218,6 +218,7 @@ function runtimeCheckpointContent(
 	const {
 		generation: _generation,
 		applyGeneration: _applyGeneration,
+		issuedAt: _issuedAt,
 		clawdiCli,
 		...manifest
 	} = load.manifest;
