@@ -1,10 +1,11 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { CreditCard, History, Link2Off, RefreshCw } from "lucide-react";
+import { CreditCard, History, Link2Off, RefreshCw, Settings } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
 import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
@@ -15,21 +16,23 @@ import { Spinner } from "@/components/ui/spinner";
 import type { StatusTone } from "@/components/ui/status-badge";
 import type { ComputeSubscriptionListItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import {
 	useCancelSubscription,
 	useResumeSubscription,
 	useSubscriptions,
 } from "@/hosted/billing/hooks";
-import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
+import {
+	ComputeSubscriptionCard,
+	computeSubscriptionCardView,
+	computeSubscriptionPlanLabel,
+} from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	canCancelAccountSubscription,
 	canResumeAccountSubscription,
-	computeTierLabel,
 	isEndedAccountSubscription,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { agentSectionLink } from "@/lib/agent-routes";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
@@ -43,37 +46,20 @@ const STATUS_PRESENTATION: Record<
 	canceled: { label: "Canceled", tone: "neutral" },
 };
 
-function planLabel(planSlug: string): string {
-	if (planSlug === "compute_basic" || planSlug === "compute_performance") {
-		return `Compute ${computeTierLabel(planSlug)}`;
-	}
-	return planSlug.replace(/^compute_/, "").replaceAll("_", " ");
+function subscriptionScheduleVerb(status: ComputeSubscriptionListItem["status"]): string {
+	if (status === "canceling") return "Ends";
+	if (status === "canceled") return "Ended";
+	if (status === "past_due") return "Due";
+	return "Renews";
 }
 
-export function subscriptionPaymentSourceLabel(
-	fundingSource: ComputeSubscriptionListItem["funding_source"],
-): string {
-	if (fundingSource === null) return "Included";
-	if (fundingSource === "stripe") return "Card";
-	if (fundingSource === "wallet") return "Wallet";
-	return "Unavailable";
-}
-
-function priceLabel(subscription: ComputeSubscriptionListItem): string {
-	if (subscription.price_cents == null) return "Unavailable";
-	return `${formatCurrencyCents(subscription.price_cents, subscription.currency)}${billingTermSuffix(subscription.billing_term_months)}`;
-}
-
-function periodLabel(subscription: ComputeSubscriptionListItem): string {
-	if (!subscription.current_period_end) return "Unavailable";
-	const date = formatShortDate(subscription.current_period_end);
-	if (subscription.status === "canceling") return `Ends ${date}`;
-	if (subscription.status === "canceled") return `Ended ${date}`;
-	if (subscription.status === "past_due") return `Due ${date}`;
-	return `Renews ${date}`;
-}
-
-function SubscriptionActions({ subscription }: { subscription: ComputeSubscriptionListItem }) {
+function SubscriptionActions({
+	subscription,
+	manageHref,
+}: {
+	subscription: ComputeSubscriptionListItem;
+	manageHref: string | null;
+}) {
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
@@ -110,12 +96,24 @@ function SubscriptionActions({ subscription }: { subscription: ComputeSubscripti
 		}
 	}
 
-	if (!canCancel && !canResume) {
+	if (!manageHref && !canCancel && !canResume) {
 		return null;
 	}
 
 	return (
-		<div className="flex flex-wrap gap-2 sm:justify-end">
+		<>
+			{manageHref ? (
+				<Button
+					render={<Link to={manageHref} />}
+					nativeButton={false}
+					type="button"
+					variant="outline"
+					size="sm"
+				>
+					<Settings data-icon="inline-start" />
+					Manage
+				</Button>
+			) : null}
 			{canResume ? (
 				<Button
 					type="button"
@@ -125,12 +123,12 @@ function SubscriptionActions({ subscription }: { subscription: ComputeSubscripti
 					onClick={() => void runAction(resume).catch(() => undefined)}
 				>
 					{resumeSubscription.isPending ? <Spinner /> : <RefreshCw />}
-					Resume
+					Resume subscription
 				</Button>
 			) : null}
 			{canCancel ? (
 				<ConfirmAction
-					title={`Cancel ${planLabel(subscription.plan_slug)} subscription?`}
+					title={`Cancel ${computeSubscriptionPlanLabel(subscription.plan_slug)} subscription?`}
 					description={
 						<p>
 							The subscription will stop renewing
@@ -146,35 +144,21 @@ function SubscriptionActions({ subscription }: { subscription: ComputeSubscripti
 				>
 					<Button type="button" variant="outline" size="sm" disabled={pending}>
 						{cancelSubscription.isPending ? <Spinner /> : <Link2Off />}
-						Cancel
+						Cancel subscription
 					</Button>
 				</ConfirmAction>
 			) : null}
-		</div>
+		</>
 	);
 }
 
-export function SubscriptionAgentLink({
-	deploymentId,
-	agentName,
-}: {
-	deploymentId: ComputeSubscriptionListItem["deployment_id"];
-	agentName: ComputeSubscriptionListItem["agent_name"];
-}) {
-	return deploymentId && agentName ? (
-		<Link
-			{...agentSectionLink(deploymentId, "settings", {
-				source: "on-clawdi",
-				settings: "billing-plan",
-			})}
-			className="block min-w-0 truncate font-medium text-primary underline-offset-4 hover:underline"
-			title={agentName}
-		>
-			{agentName}
-		</Link>
-	) : (
-		<span className="font-medium text-muted-foreground">Deleted agent</span>
-	);
+function subscriptionManageHref(subscription: ComputeSubscriptionListItem): string | null {
+	if (subscription.is_orphan || !subscription.deployment_id || !subscription.agent_name)
+		return null;
+	return agentSectionHref(subscription.deployment_id, "settings", {
+		source: "on-clawdi",
+		settings: "billing-plan",
+	});
 }
 
 export function SubscriptionLoadMore({
@@ -193,54 +177,78 @@ export function SubscriptionLoadMore({
 	);
 }
 
-function SubscriptionRow({ subscription }: { subscription: ComputeSubscriptionListItem }) {
+function SubscriptionRow({
+	subscription,
+	agentTile,
+}: {
+	subscription: ComputeSubscriptionListItem;
+	agentTile?: AgentTile;
+}) {
 	const status = STATUS_PRESENTATION[subscription.status];
+	const manageHref = subscriptionManageHref(subscription);
 	const hasActions =
-		canCancelAccountSubscription(subscription) || canResumeAccountSubscription(subscription);
+		manageHref !== null ||
+		canCancelAccountSubscription(subscription) ||
+		canResumeAccountSubscription(subscription);
+	const view = computeSubscriptionCardView({
+		identity: manageHref
+			? {
+					kind: "agent",
+					name: agentTile?.name ?? subscription.agent_name ?? "Agent",
+					agentType: agentTile?.agentType ?? null,
+					avatarUrl: agentTile?.avatarUrl,
+					href: manageHref,
+				}
+			: { kind: "unavailable", label: "Deleted agent" },
+		status,
+		planSlug: subscription.plan_slug,
+		fundingSource: subscription.funding_source === null ? "included" : subscription.funding_source,
+		priceCents: subscription.price_cents,
+		currency: subscription.currency,
+		billingTermMonths: subscription.billing_term_months,
+		scheduleVerb: subscriptionScheduleVerb(subscription.status),
+		scheduleAt: subscription.current_period_end,
+	});
 
 	return (
 		<li className="min-w-0">
 			<ComputeSubscriptionCard
 				headingLevel={4}
-				title={planLabel(subscription.plan_slug)}
-				status={status}
+				view={view}
 				badges={subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
-				details={[
-					{
-						label: "Agent",
-						value: (
-							<SubscriptionAgentLink
-								deploymentId={subscription.deployment_id}
-								agentName={subscription.agent_name}
-							/>
-						),
-					},
-					{
-						label: "Payment",
-						value: subscriptionPaymentSourceLabel(subscription.funding_source),
-					},
-					{
-						label: "Billing",
-						value: (
-							<>
-								<span className="tabular-nums">{priceLabel(subscription)}</span>
-								<span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-									{billingTermLabel(subscription.billing_term_months)}
-								</span>
-							</>
-						),
-					},
-					{ label: "Schedule", value: periodLabel(subscription) },
-				]}
-				actions={hasActions ? <SubscriptionActions subscription={subscription} /> : null}
+				actions={
+					hasActions ? (
+						<SubscriptionActions subscription={subscription} manageHref={manageHref} />
+					) : null
+				}
 			/>
 		</li>
 	);
 }
 
+const SUBSCRIPTION_STATUS_PRIORITY: Record<ComputeSubscriptionListItem["status"], number> = {
+	active: 0,
+	past_due: 1,
+	canceling: 2,
+	canceled: 3,
+};
+
+export function sortLoadedSubscriptions(
+	subscriptions: readonly ComputeSubscriptionListItem[],
+): ComputeSubscriptionListItem[] {
+	return subscriptions
+		.map((subscription, index) => ({ subscription, index }))
+		.sort(
+			(a, b) =>
+				SUBSCRIPTION_STATUS_PRIORITY[a.subscription.status] -
+					SUBSCRIPTION_STATUS_PRIORITY[b.subscription.status] || a.index - b.index,
+		)
+		.map(({ subscription }) => subscription);
+}
+
 function SubscriptionListSkeleton() {
 	return (
-		<div className="space-y-3" role="status">
+		<div className="grid gap-3 lg:grid-cols-2" role="status">
 			<span className="sr-only">Loading subscriptions</span>
 			{Array.from({ length: 3 }, (_, index) => `subscription-skeleton-${index}`).map((key) => (
 				<div key={key} className="overflow-hidden rounded-lg border bg-card">
@@ -248,7 +256,7 @@ function SubscriptionListSkeleton() {
 						<Skeleton className="h-5 w-36" />
 						<Skeleton className="h-5 w-16" />
 					</div>
-					<div className="grid grid-cols-2 gap-4 border-t px-4 py-3 sm:grid-cols-4">
+					<div className="grid grid-cols-2 gap-4 border-t px-4 py-3">
 						{Array.from({ length: 4 }, (_, detailIndex) => `${key}-${detailIndex}`).map(
 							(detailKey) => (
 								<div key={detailKey} className="space-y-1.5">
@@ -264,17 +272,25 @@ function SubscriptionListSkeleton() {
 	);
 }
 
-export function SubscriptionsSection() {
+export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly AgentTile[] }) {
 	const subscriptions = useSubscriptions();
 	const [showHistory, setShowHistory] = useState(false);
 	const [historyCutoffMs] = useState(Date.now);
 	const rows = subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [];
+	const orderedRows = sortLoadedSubscriptions(rows);
+	const agentTilesByDeploymentId = new Map(
+		agentTiles
+			.filter((tile) => tile.source === "on-clawdi")
+			.map((tile) => [tile.id.toLowerCase(), tile] as const),
+	);
 	const endedRows = rows.filter((subscription) =>
 		isEndedAccountSubscription(subscription, historyCutoffMs),
 	);
 	const visibleRows = showHistory
-		? rows
-		: rows.filter((subscription) => !isEndedAccountSubscription(subscription, historyCutoffMs));
+		? orderedRows
+		: orderedRows.filter(
+				(subscription) => !isEndedAccountSubscription(subscription, historyCutoffMs),
+			);
 	const canLoadMore = subscriptions.hasNextPage && !subscriptions.isFetchNextPageError;
 	const historyControlVisible = endedRows.length > 0 || showHistory;
 
@@ -313,9 +329,17 @@ export function SubscriptionsSection() {
 						</div>
 					) : null}
 					{visibleRows.length ? (
-						<ul className="space-y-3">
+						<ul className="grid gap-3 lg:grid-cols-2">
 							{visibleRows.map((subscription) => (
-								<SubscriptionRow key={subscription.subscription_id} subscription={subscription} />
+								<SubscriptionRow
+									key={subscription.subscription_id}
+									subscription={subscription}
+									agentTile={
+										subscription.deployment_id
+											? agentTilesByDeploymentId.get(subscription.deployment_id.toLowerCase())
+											: undefined
+									}
+								/>
 							))}
 						</ul>
 					) : (

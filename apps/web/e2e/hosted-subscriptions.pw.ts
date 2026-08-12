@@ -9,6 +9,7 @@ import {
 	gotoHostedSettingsDialog,
 	paidBasicDeployment,
 	performancePlan,
+	sharedLegacyCloudAgent,
 	stubHostedApi,
 	terminalFallbackDeployment,
 } from "./hosted-stub-api";
@@ -18,6 +19,47 @@ type ReusableSubscription = DeployComponents["schemas"]["V2ComputeReusableSubscr
 
 const longAgentName =
 	"Production research agent with an intentionally long name for compact subscription layouts";
+const testAvatarUrl =
+	"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Crect%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22%230f766e%22%2F%3E%3C%2Fsvg%3E";
+
+const activeEnvironmentId = "11111111-1111-4111-8111-111111111111";
+const cancelingEnvironmentId = "22222222-2222-4222-8222-222222222222";
+const paidEnvironmentId = "33333333-3333-4333-8333-333333333333";
+const accountActiveDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_active",
+	name: "Account active deployment",
+	config_info: {
+		...paidBasicDeployment.config_info,
+		clawdi_cloud_environments: { hermes: activeEnvironmentId },
+	},
+};
+const accountCancelingDeployment = {
+	...cancelPendingBasicDeployment,
+	id: "hdep_canceling",
+	name: "Account canceling deployment",
+	config_info: {
+		...cancelPendingBasicDeployment.config_info,
+		clawdi_cloud_environments: { hermes: cancelingEnvironmentId },
+	},
+};
+const accountCloudAgents = [
+	{
+		...sharedLegacyCloudAgent,
+		id: activeEnvironmentId,
+		name: "account-active",
+		default_name: "Account active",
+		display_name: longAgentName,
+		avatar_url: testAvatarUrl,
+	},
+	{
+		...sharedLegacyCloudAgent,
+		id: cancelingEnvironmentId,
+		name: "account-canceling",
+		default_name: "Canceling agent",
+		display_name: null,
+	},
+];
 
 function subscription(
 	subscriptionId: string,
@@ -51,11 +93,17 @@ async function expectCardsFit(container: Locator) {
 					'[data-slot="compute-subscription-actions"]',
 				);
 				const actionBox = action?.getBoundingClientRect();
+				const actionItemBoxes = Array.from(
+					card.querySelectorAll<HTMLElement>(
+						'[data-slot="compute-subscription-actions"] button, [data-slot="compute-subscription-actions"] a',
+					),
+				).map((item) => item.getBoundingClientRect().toJSON());
 				return {
 					clientWidth: card.clientWidth,
 					scrollWidth: card.scrollWidth,
 					box: box.toJSON(),
 					actionBox: actionBox?.toJSON() ?? null,
+					actionItemBoxes,
 					detailCount: card.querySelectorAll("dl > div").length,
 				};
 			}),
@@ -71,8 +119,36 @@ async function expectCardsFit(container: Locator) {
 				metric.box.x + metric.box.width + 1,
 			);
 			expect(metric.actionBox.y).toBeGreaterThanOrEqual(metric.box.y - 1);
+			for (const itemBox of metric.actionItemBoxes) {
+				expect(itemBox.x).toBeGreaterThanOrEqual(metric.actionBox.x - 1);
+				expect(itemBox.x + itemBox.width).toBeLessThanOrEqual(
+					metric.actionBox.x + metric.actionBox.width + 1,
+				);
+			}
+			for (let index = 1; index < metric.actionItemBoxes.length; index += 1) {
+				const previous = metric.actionItemBoxes[index - 1];
+				const current = metric.actionItemBoxes[index];
+				if (!previous || !current) continue;
+				const overlapWidth =
+					Math.min(previous.right, current.right) - Math.max(previous.left, current.left);
+				const overlapHeight =
+					Math.min(previous.bottom, current.bottom) - Math.max(previous.top, current.top);
+				expect(overlapWidth <= 0 || overlapHeight <= 0).toBe(true);
+			}
 		}
 	}
+}
+
+async function expectFactLabels(card: Locator) {
+	await expect(card.locator("dt")).toHaveText(["Plan", "Payment", "Price", "Schedule"]);
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+	const metrics = await page.evaluate(() => ({
+		clientWidth: document.documentElement.clientWidth,
+		scrollWidth: document.documentElement.scrollWidth,
+	}));
+	expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
 }
 
 async function openSubscriptions(page: Page) {
@@ -130,6 +206,8 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page, {
+		deployments: [accountActiveDeployment, accountCancelingDeployment],
+		cloudAgents: accountCloudAgents,
 		subscriptionPages: {
 			initial: {
 				items: [],
@@ -140,6 +218,9 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 				items: [
 					subscription("ended_first", "canceled", {
 						current_period_end: "2025-08-12T12:00:00Z",
+						agent_name: "Former deleted agent",
+						deployment_id: null,
+						is_orphan: true,
 					}),
 				],
 				has_more: true,
@@ -181,17 +262,53 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog.getByText("Active", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Canceling", { exact: true })).toBeVisible();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(2);
-	await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
-	await expect(dialog.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+	const accountManage = dialog.getByRole("button", { name: "Manage", exact: true }).first();
+	await expect(accountManage).toHaveAttribute(
+		"href",
+		/\/agents\/hdep_active\/settings.*settings=billing-plan/,
+	);
+	await expect(accountManage.locator("svg.lucide-settings")).toHaveCount(1);
+	await expect(dialog.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
+	await expect(dialog.getByRole("button", { name: "Resume subscription" })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Show history (2)" })).toBeVisible();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(2);
+	const currentCards = dialog.locator('[data-slot="compute-subscription-card"]');
+	const activeCard = currentCards.nth(0);
+	await expect(activeCard.locator("h4")).toHaveText(`${longAgentName}: Performance compute`);
+	await expect(activeCard.getByText(longAgentName, { exact: true })).toBeVisible();
+	await expect(activeCard.locator("img")).toHaveCount(1);
+	await expectFactLabels(activeCard);
+	const currentStatuses = await currentCards.evaluateAll((cards) =>
+		cards.map((card) => card.getAttribute("data-subscription-status")),
+	);
+	expect(currentStatuses).toEqual(["active", "canceling"]);
+	const desktopCardBoxes = await currentCards.evaluateAll((cards) =>
+		cards.map((card) => card.getBoundingClientRect().toJSON()),
+	);
+	expect(
+		Math.abs((desktopCardBoxes[0]?.y ?? 0) - (desktopCardBoxes[1]?.y ?? 1)),
+	).toBeLessThanOrEqual(1);
+	expect(Math.abs((desktopCardBoxes[0]?.x ?? 0) - (desktopCardBoxes[1]?.x ?? 0))).toBeGreaterThan(
+		100,
+	);
 	await expectCardsFit(dialog);
 
 	await dialog.getByRole("button", { name: "Show history (2)" }).click();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(4);
 	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(4);
 	await expect(dialog.getByText("Canceled", { exact: true })).toHaveCount(2);
-	await expect(dialog.getByText("ended_first", { exact: true })).toBeVisible();
+	const visibleStatuses = await dialog
+		.locator('[data-slot="compute-subscription-card"]')
+		.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-subscription-status")));
+	expect(visibleStatuses).toEqual(["active", "canceling", "canceled", "canceled"]);
+	const orphanCard = dialog
+		.locator('[data-slot="compute-subscription-card"]')
+		.filter({ hasText: "Deleted agent" });
+	await expect(orphanCard).toBeVisible();
+	await expect(orphanCard.getByText("Orphaned", { exact: true })).toBeVisible();
+	await expect(orphanCard.getByText("Former deleted agent", { exact: true })).toHaveCount(0);
+	await expect(orphanCard.getByText("Unknown", { exact: true })).toHaveCount(0);
+	await expect(orphanCard.getByText("No linked agent", { exact: true })).toHaveCount(0);
 	await expect(dialog.getByText("ended_second", { exact: true })).toBeVisible();
 	await expectCardsFit(dialog);
 
@@ -202,6 +319,11 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await page.setViewportSize({ width: 320, height: 568 });
 	await expect(dialog).toBeVisible();
 	await expectCardsFit(dialog);
+	await expectNoHorizontalOverflow(page);
+	const mobileCardBoxes = await dialog
+		.locator('[data-slot="compute-subscription-card"]')
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(mobileCardBoxes[1]?.y ?? 0).toBeGreaterThan(mobileCardBoxes[0]?.bottom ?? 0);
 	const longAgentStyle = await dialog
 		.getByText(longAgentName, { exact: true })
 		.evaluate((agent) => {
@@ -229,8 +351,18 @@ test("agent settings uses the subscription card without changing plan actions", 
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page, {
+		cloudAgentOverrides: {
+			display_name: "Paid research agent",
+			avatar_url: testAvatarUrl,
+		},
 		deployments: [
-			paidBasicDeployment,
+			{
+				...paidBasicDeployment,
+				config_info: {
+					...paidBasicDeployment.config_info,
+					clawdi_cloud_environments: { hermes: paidEnvironmentId },
+				},
+			},
 			cancelPendingBasicDeployment,
 			{
 				...paidBasicDeployment,
@@ -255,7 +387,7 @@ test("agent settings uses the subscription card without changing plan actions", 
 		plans: [basicPlan, performancePlan],
 	});
 
-	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+	await gotoHostedAgentSettings(page, paidEnvironmentId, "Basic", "?source=on-clawdi&d=hdep_paid");
 	const activeCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
@@ -265,14 +397,22 @@ test("agent settings uses the subscription card without changing plan actions", 
 		"success",
 	);
 	await expect(activeCard.locator("dl > div")).toHaveCount(4);
-	await expect(
-		activeCard.getByRole("button", { name: "Change plan, term, or payment source" }),
-	).toBeVisible();
+	await expect(activeCard.locator("h3")).toHaveText("Paid research agent: Basic compute");
+	await expect(activeCard.getByText("Paid research agent", { exact: true })).toBeVisible();
+	await expect(activeCard.locator("img")).toHaveCount(1);
+	await expectFactLabels(activeCard);
+	const agentManage = activeCard.getByRole("button", { name: "Manage", exact: true });
+	await expect(agentManage).toBeVisible();
+	await expect(agentManage.locator("svg.lucide-settings")).toHaveCount(1);
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
+	const activeCardWidth = await activeCard.evaluate((card) => card.getBoundingClientRect().width);
+	expect(activeCardWidth).toBeLessThanOrEqual(672);
 	await expectCardsFit(page.locator("body"));
 
 	await page.setViewportSize({ width: 320, height: 568 });
 	await expectCardsFit(page.locator("body"));
+	await expectNoHorizontalOverflow(page);
+	await expect(activeCard.getByRole("button", { name: "Manage", exact: true })).toBeVisible();
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
 
 	await gotoHostedAgentSettings(page, "hdep_cancel_pending", "Basic");
@@ -284,6 +424,8 @@ test("agent settings uses the subscription card without changing plan actions", 
 		"warning",
 	);
 	await expect(cancelingCard.locator("dl > div")).toHaveCount(4);
+	await expectFactLabels(cancelingCard);
+	await expect(cancelingCard.getByRole("button", { name: "Manage", exact: true })).toBeDisabled();
 	await expect(cancelingCard.getByRole("button", { name: "Resume subscription" })).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 
@@ -295,9 +437,7 @@ test("agent settings uses the subscription card without changing plan actions", 
 		"data-status",
 		"destructive",
 	);
-	await expect(
-		pastDueCard.getByRole("button", { name: "Change plan, term, or payment source" }),
-	).toBeVisible();
+	await expect(pastDueCard.getByRole("button", { name: "Manage", exact: true })).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, "hdep_card_action_required", "Basic");
@@ -308,7 +448,7 @@ test("agent settings uses the subscription card without changing plan actions", 
 		actionRequiredCard.getByText("Payment action required", { exact: true }),
 	).toHaveAttribute("data-status", "warning");
 	await expect(
-		actionRequiredCard.getByRole("button", { name: "Change plan, term, or payment source" }),
+		actionRequiredCard.getByRole("button", { name: "Manage", exact: true }),
 	).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 
@@ -320,7 +460,8 @@ test("agent settings uses the subscription card without changing plan actions", 
 		"data-status",
 		"success",
 	);
-	await expect(fallbackCard.getByText("Funding", { exact: true })).toBeVisible();
+	await expectFactLabels(fallbackCard);
+	await expect(fallbackCard.getByText("Payment", { exact: true })).toBeVisible();
 	await expect(fallbackCard.getByText("Included", { exact: true })).toBeVisible();
 	await expect(fallbackCard.getByRole("button", { name: "Choose a subscription" })).toBeVisible();
 	expect(errors, `agent subscription cards: ${errors.join(" | ")}`).toEqual([]);
