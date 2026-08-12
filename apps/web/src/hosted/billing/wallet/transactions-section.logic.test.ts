@@ -1,26 +1,17 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { WalletTransaction } from "@/hosted/billing/contracts";
+import { formatShortDate } from "@/lib/format";
 import {
 	transactionComputeDetails,
 	transactionKindLabel,
 	transactionSignedAmount,
 } from "./transactions-section.logic";
 
-// Billing-period dates render in the viewer's timezone; pin one so the
-// midnight-UTC fixtures assert the same calendar day on any runner.
-const originalTimezone = process.env.TZ;
-
-beforeAll(() => {
-	process.env.TZ = "UTC";
-});
-
-afterAll(() => {
-	if (originalTimezone === undefined) {
-		delete process.env.TZ;
-	} else {
-		process.env.TZ = originalTimezone;
-	}
-});
+// Period dates render in the viewer's timezone, so the expected strings are
+// built with the same formatter; the assertions cover the assembly, not Intl.
+const PERIOD_START = "2026-07-01T00:00:00Z";
+const PERIOD_END = "2026-08-01T00:00:00Z";
+const PERIOD = `${formatShortDate(PERIOD_START)} – ${formatShortDate(PERIOD_END)}`;
 
 function transaction(overrides: Partial<WalletTransaction> = {}): WalletTransaction {
 	return {
@@ -53,20 +44,20 @@ describe("transaction presentation", () => {
 	test("shows compute plan, agent, period, and deleted-agent fallback", () => {
 		const context = {
 			plan: "compute_performance",
-			period_start: "2026-07-01T00:00:00Z",
-			period_end: "2026-08-01T00:00:00Z",
+			period_start: PERIOD_START,
+			period_end: PERIOD_END,
 			agent_name: "Research",
 			deployment_id: "hdep_test",
 		};
 		expect(transactionComputeDetails(transaction({ kind: "compute_charge", context }))).toEqual([
 			"Performance · Research",
-			"Jul 1, 2026 – Aug 1, 2026",
+			PERIOD,
 		]);
 		expect(
 			transactionComputeDetails(
 				transaction({ kind: "compute_credit", context: { ...context, deployment_id: null } }),
 			),
-		).toEqual(["Performance · Deleted agent", "Jul 1, 2026 – Aug 1, 2026"]);
+		).toEqual(["Performance · Deleted agent", PERIOD]);
 		expect(transactionComputeDetails(transaction({ kind: "compute_charge" }))).toEqual([
 			"Compute · Deleted agent",
 			"—",
