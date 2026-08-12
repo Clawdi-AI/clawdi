@@ -250,17 +250,15 @@ discoverable from account state and should be reconciled separately with
    deliberately sends the public marker can opt in, and resulting usage is
    charged to that deployment user's wallet.
 
-   For the current direct-cut release, keep Agent v2 creation disabled until
-   `clawdi@0.13.36` is published and its exact registry identity and provenance
-   are verified, then set and read back the Hosted database AppSetting
-   `agent_v2_cli_package_spec` as exactly `clawdi@0.13.36`. Only after those
-   gates pass may any new Agent deployment be allowed. A missing setting fails
-   closed; if it still contains a previous valid exact spec, keep deployment
-   creation disabled until the operator updates it. There is no code default or
-   fallback to a previous package. Then validate one fresh deployment end to
-   end through persisted deployment state, `/v1/runtime/manifest`, exact CLI
-   handoff, SSE, and runtime services. Do not add version floors, compatibility
-   fields, aliases, or fallback package channels.
+   The one-time `clawdi@0.13.36` direct-cut gate completed before Agent v2
+   became publicly enabled on 2026-08-12; it is not a current release step.
+   Later Hosted CLI rollouts still require the exact artifact, registry
+   identity, and provenance checks above. A missing or invalid desired package
+   spec fails closed, with no version floor, code default, previous-package
+   fallback, or dist-tag resolution. The first-party Hosted repository's
+   current `docs/v2/ops/README.md` is the authority for selecting and rolling
+   out that exact package; this OSS runbook neither authorizes nor duplicates
+   Hosted operations.
 
 4. For app/backend/web releases, run `Release Clawdi` manually with the
    deployed commit SHA, then verify the GitHub release exists and has
