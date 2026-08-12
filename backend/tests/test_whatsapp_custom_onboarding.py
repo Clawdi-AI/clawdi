@@ -28,6 +28,7 @@ from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarClient,
     WhatsAppBaileysSidecarConfig,
     WhatsAppProviderMessageEvent,
+    WhatsAppProviderTransportAdapter,
     WhatsAppSidecarCapabilities,
     WhatsAppSidecarHealth,
     WhatsAppSidecarPairingStatus,
@@ -199,6 +200,11 @@ async def custom_sidecar(
         "test-internal-token",
         base_url="http://127.0.0.1:43191",
         client_factory=lambda _config: fake,
+    )
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "resolve_whatsapp_delivery_transport",
+        lambda _account: WhatsAppProviderTransportAdapter(fake),
     )
     await registry.start()
     try:
@@ -657,6 +663,11 @@ async def test_backend_restart_rehydrates_durable_account_transport_and_pump(
     )
     revision = registry.custom_session_revision(provider_session_id)
     assert revision is not None
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "resolve_whatsapp_delivery_transport",
+        lambda _account: WhatsAppProviderTransportAdapter(fake),
+    )
     account = ChannelAccount(
         user_id=seed_user.id,
         provider="whatsapp",

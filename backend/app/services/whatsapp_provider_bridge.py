@@ -416,8 +416,10 @@ async def relay_whatsapp_provider_payload(
     text: str,
     provider_payload: object | None,
 ) -> tuple[str | None, dict[str, JsonValue]]:
-    transport = get_whatsapp_provider_transport(account.id)
-    if transport is None or not _transport_connected(transport):
+    from app.services.whatsapp_sidecar_registry import resolve_whatsapp_delivery_transport
+
+    transport = resolve_whatsapp_delivery_transport(account)
+    if transport is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="whatsapp provider transport unavailable",
