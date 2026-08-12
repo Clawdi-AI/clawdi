@@ -661,6 +661,9 @@ strict v2 diagnostics prove the exact desired version, current apply generation,
 and current instance. Observation generation, ETag, and source revision must
 agree with that applied record. Every missing, invalid, stale, or mismatched
 state retains `OPENAI_API_KEY`, including upgrades and rollbacks.
+The gate does not compare that last applied revision with the revision currently
+being rendered: changing the env name creates a new revision, and the internally
+consistent applied record keeps the canonical projection stable while it catches up.
 
 This mode controls default configuration ownership, not pod-wide network
 isolation. Egress matching is domain based, so another pod process could call a

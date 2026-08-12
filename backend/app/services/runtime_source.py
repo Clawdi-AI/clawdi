@@ -49,8 +49,8 @@ from app.schemas.runtime import (
     HostedRuntimeSystem,
     HostedRuntimeTools,
     PersistedHostedRuntimeSkills,
-    exact_semver_is_at_least,
     is_canonical_secret_ref,
+    parse_exact_semver,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
     validate_hosted_runtime_mcp_desired_state,
@@ -91,7 +91,7 @@ RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
 _CODEX_TOOL_LEGACY_RUNTIME_ENV = "OPENAI_API_KEY"
-_CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION = "0.13.69"
+_CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION = (0, 13, 69)
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
@@ -118,9 +118,13 @@ def _codex_tool_runtime_env(
     observation: HostedRuntimeConfigObservation | None,
 ) -> str:
     desired_version = state.cli_package_spec.removeprefix("clawdi@")
-    if not exact_semver_is_at_least(
-        desired_version,
-        _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION,
+    parsed_version = parse_exact_semver(desired_version)
+    if parsed_version is None or (
+        parsed_version[:3] < _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION
+        or (
+            parsed_version[:3] == _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION
+            and parsed_version[3]
+        )
     ):
         return _CODEX_TOOL_LEGACY_RUNTIME_ENV
     if observation is None:
@@ -133,6 +137,8 @@ def _codex_tool_runtime_env(
         generation=state.generation,
         apply_generation=state.apply_generation,
     )
+    # The env-name change creates the next source revision, so gate only on the
+    # last applied record's internal identity instead of this render's revision.
     if not (
         observed.status == "ok"
         and observed.converge_error is None

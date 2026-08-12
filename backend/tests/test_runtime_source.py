@@ -311,66 +311,47 @@ def _render(batch: RuntimeSourceBatch):
     )
 
 
-def _set_cli_versions(
+def _set_healthy_cli_observation(
     batch: RuntimeSourceBatch,
     *,
     desired: str,
     active: str | None = None,
-    diagnostics: object | None = None,
-    applied_generation: int | None = None,
-    applied_instance_id: str | None = None,
-    observed_generation: int | None = None,
-    observed_etag: str | None = None,
-    observed_source_revision: str | None = None,
-    status: str = "ok",
-    converge_error: str | None = None,
-) -> None:
+    source_revision: str = "a" * 64,
+) -> HostedRuntimeConfigObservation:
     row = batch.rows[ENV_ID]
     assert row.state is not None
     row.state.cli_package_spec = desired
-    observation = None
-    if active is not None or diagnostics is not None:
-        expected_generation = (
-            row.state.apply_generation
-            if row.state.apply_generation is not None
-            else row.state.generation
-        )
-        source_revision = "a" * 64
-        etag = expected_runtime_bundle_v2_etag(source_revision)
-        observation = HostedRuntimeConfigObservation(
-            environment_id=ENV_ID,
-            observed_config_generation=(
-                observed_generation if observed_generation is not None else expected_generation
-            ),
-            observed_manifest_etag=observed_etag or etag,
-            observed_source_revision=observed_source_revision or source_revision,
-            diagnostics=(
-                diagnostics
-                if diagnostics is not None
-                else {
-                    "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
-                    "reportedAt": "2026-07-13T00:00:00Z",
-                    "runtimeMode": "hosted",
-                    "status": status,
-                    "activeCliVersion": active,
-                    "applied": {
-                        "etag": etag,
-                        "sourceRevision": source_revision,
-                        "generation": (
-                            applied_generation
-                            if applied_generation is not None
-                            else expected_generation
-                        ),
-                        "instanceId": applied_instance_id or row.state.instance_id,
-                        "appliedProviderIds": ["managed"],
-                    },
-                    "boot": None,
-                    "cli": None,
-                    "convergeError": converge_error,
-                }
-            ),
-        )
+    expected_generation = (
+        row.state.apply_generation
+        if row.state.apply_generation is not None
+        else row.state.generation
+    )
+    etag = expected_runtime_bundle_v2_etag(source_revision)
+    observation = HostedRuntimeConfigObservation(
+        environment_id=ENV_ID,
+        observed_config_generation=expected_generation,
+        observed_manifest_etag=etag,
+        observed_source_revision=source_revision,
+        diagnostics={
+            "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+            "reportedAt": "2026-07-13T00:00:00Z",
+            "runtimeMode": "hosted",
+            "status": "ok",
+            "activeCliVersion": active or desired.removeprefix("clawdi@"),
+            "applied": {
+                "etag": etag,
+                "sourceRevision": source_revision,
+                "generation": expected_generation,
+                "instanceId": row.state.instance_id,
+                "appliedProviderIds": ["managed"],
+            },
+            "boot": None,
+            "cli": None,
+            "convergeError": None,
+        },
+    )
     batch.rows[ENV_ID] = RuntimeSourceRow(row.environment, row.state, observation)
+    return observation
 
 
 def _codex_runtime_env(batch: RuntimeSourceBatch) -> str:
@@ -752,148 +733,136 @@ def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs
     assert "clawdi://" not in json.dumps(bundle)
 
 
-def test_codex_tool_projection_pydantic_contract_rejects_openai_chat() -> None:
-    with pytest.raises(ValueError):
-        HostedCodexProviderProjection.model_validate(
-            {
-                "kind": "openai-compatible",
-                "type": "custom_openai_compatible",
-                "baseUrl": "https://provider.test/v1",
-                "apiMode": "openai_chat",
-                "managed_by": "clawdi",
-                "runtimeEnvName": "OPENAI_API_KEY",
-                "apiKeySecretRef": "secret://tool.codex.apiKey",
-            }
-        )
-
-
-def test_codex_tool_projection_rejects_arbitrary_runtime_env_name() -> None:
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("apiMode", "openai_chat"),
+        ("runtimeEnvName", "CUSTOM_OPENAI_API_KEY"),
+    ],
+)
+def test_codex_tool_projection_rejects_invalid_fixed_fields(field: str, value: str) -> None:
     projection = {
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
         "baseUrl": "https://provider.test/v1",
         "apiMode": "openai_responses",
         "managed_by": "clawdi",
-        "runtimeEnvName": "CUSTOM_OPENAI_API_KEY",
+        "runtimeEnvName": "OPENAI_API_KEY",
         "apiKeySecretRef": "secret://tool.codex.apiKey",
     }
+    projection[field] = value
 
     with pytest.raises(ValueError):
         HostedCodexProviderProjection.model_validate(projection)
 
 
-def test_codex_tool_env_stays_legacy_for_old_cli_observations() -> None:
-    old = _batch()
-    _set_cli_versions(old, desired="clawdi@0.13.68", active="0.13.68")
-    prerelease = _batch()
-    _set_cli_versions(
-        prerelease,
-        desired="clawdi@0.13.69-rc.1",
-        active="0.13.69-rc.1",
+@pytest.mark.parametrize(
+    ("desired", "active", "expected"),
+    [
+        ("0.13.68", "0.13.68", "OPENAI_API_KEY"),
+        ("0.13.69-rc.1", "0.13.69-rc.1", "OPENAI_API_KEY"),
+        ("0.13.69", "0.13.68", "OPENAI_API_KEY"),
+        ("0.13.69", "0.13.69", "CLAWDI_AI_API_KEY"),
+        ("0.14.0-rc.1", "0.14.0-rc.1", "CLAWDI_AI_API_KEY"),
+        ("0.13.68", "0.14.0", "OPENAI_API_KEY"),
+    ],
+)
+def test_codex_tool_env_respects_cli_version_boundary(
+    desired: str,
+    active: str,
+    expected: str,
+) -> None:
+    batch = _batch()
+    _set_healthy_cli_observation(
+        batch,
+        desired=f"clawdi@{desired}",
+        active=active,
     )
 
-    assert _codex_runtime_env(old) == "OPENAI_API_KEY"
-    assert _codex_runtime_env(prerelease) == "OPENAI_API_KEY"
+    assert _codex_runtime_env(batch) == expected
 
 
 def test_codex_tool_env_stays_legacy_until_new_cli_is_observed() -> None:
-    old_active = _batch()
-    _set_cli_versions(old_active, desired="clawdi@0.13.69", active="0.13.68")
     missing = _batch()
-    _set_cli_versions(missing, desired="clawdi@0.13.69")
+    assert missing.rows[ENV_ID].state is not None
+    missing.rows[ENV_ID].state.cli_package_spec = "clawdi@0.13.69"
     invalid = _batch()
-    _set_cli_versions(
-        invalid,
-        desired="clawdi@0.13.69",
-        diagnostics={"schemaVersion": "clawdi.hostedRuntimeObserved.v2"},
-    )
+    invalid_observation = _set_healthy_cli_observation(invalid, desired="clawdi@0.13.69")
+    invalid_observation.diagnostics = {"schemaVersion": "clawdi.hostedRuntimeObserved.v2"}
 
-    assert [_codex_runtime_env(batch) for batch in (old_active, missing, invalid)] == [
-        "OPENAI_API_KEY",
+    assert [_codex_runtime_env(batch) for batch in (missing, invalid)] == [
         "OPENAI_API_KEY",
         "OPENAI_API_KEY",
     ]
 
 
-def test_codex_tool_env_is_canonical_for_exact_new_cli_observation() -> None:
+@pytest.mark.parametrize(
+    ("diagnostics_update", "applied_update", "observation_update"),
+    [
+        ({"status": "error"}, {}, {}),
+        ({"convergeError": "apply failed"}, {}, {}),
+        ({"applied": None}, {}, {}),
+        ({}, {"instanceId": "hri_previous"}, {}),
+        ({}, {"generation": 0}, {}),
+        ({}, {}, {"observed_config_generation": 0}),
+        ({}, {}, {"observed_manifest_etag": expected_runtime_bundle_v2_etag("b" * 64)}),
+        ({}, {}, {"observed_source_revision": "b" * 64}),
+    ],
+)
+def test_codex_tool_env_rejects_unhealthy_or_inconsistent_observations(
+    diagnostics_update: dict[str, object],
+    applied_update: dict[str, object],
+    observation_update: dict[str, object],
+) -> None:
     batch = _batch()
-    _set_cli_versions(batch, desired="clawdi@0.13.69", active="0.13.69")
-
-    assert _codex_runtime_env(batch) == "CLAWDI_AI_API_KEY"
-
-
-def test_codex_tool_env_rejects_stale_same_version_observations() -> None:
-    stale_generation = _batch(generation=4, apply_generation=3)
-    _set_cli_versions(
-        stale_generation,
-        desired="clawdi@0.13.69",
-        active="0.13.69",
-        applied_generation=2,
-        observed_generation=2,
-    )
-    stale_instance = _batch()
-    _set_cli_versions(
-        stale_instance,
-        desired="clawdi@0.13.69",
-        active="0.13.69",
-        applied_instance_id="hri_previous",
-    )
-
-    assert _codex_runtime_env(stale_generation) == "OPENAI_API_KEY"
-    assert _codex_runtime_env(stale_instance) == "OPENAI_API_KEY"
-
-
-def test_codex_tool_env_rejects_unhealthy_or_inconsistent_observations() -> None:
-    runtime_error = _batch()
-    _set_cli_versions(
-        runtime_error,
-        desired="clawdi@0.13.69",
-        active="0.13.69",
-        status="error",
-    )
-    converge_error = _batch()
-    _set_cli_versions(
-        converge_error,
-        desired="clawdi@0.13.69",
-        active="0.13.69",
-        converge_error="apply failed",
-    )
-    inconsistent = _batch()
-    _set_cli_versions(
-        inconsistent,
-        desired="clawdi@0.13.69",
-        active="0.13.69",
-        observed_etag=expected_runtime_bundle_v2_etag("b" * 64),
-        observed_source_revision="b" * 64,
-    )
-
-    assert [
-        _codex_runtime_env(batch) for batch in (runtime_error, converge_error, inconsistent)
-    ] == [
-        "OPENAI_API_KEY",
-        "OPENAI_API_KEY",
-        "OPENAI_API_KEY",
-    ]
-
-
-def test_codex_tool_env_is_canonical_for_matching_newer_prerelease() -> None:
-    batch = _batch()
-    _set_cli_versions(batch, desired="clawdi@0.14.0-rc.1", active="0.14.0-rc.1")
-
-    assert _codex_runtime_env(batch) == "CLAWDI_AI_API_KEY"
-
-
-def test_codex_tool_env_returns_to_legacy_during_rollback() -> None:
-    batch = _batch()
-    _set_cli_versions(batch, desired="clawdi@0.13.68", active="0.14.0")
+    observation = _set_healthy_cli_observation(batch, desired="clawdi@0.13.69")
+    assert isinstance(observation.diagnostics, dict)
+    applied = observation.diagnostics["applied"]
+    observation.diagnostics.update(diagnostics_update)
+    if applied_update:
+        assert isinstance(applied, dict)
+        applied.update(applied_update)
+    for field, value in observation_update.items():
+        setattr(observation, field, value)
 
     assert _codex_runtime_env(batch) == "OPENAI_API_KEY"
+
+
+def test_codex_tool_env_cutover_reaches_a_stable_source_revision() -> None:
+    batch = _batch()
+    assert batch.rows[ENV_ID].state is not None
+    batch.rows[ENV_ID].state.cli_package_spec = "clawdi@0.13.69"
+    legacy = _render(batch)
+    assert _codex_runtime_env(batch) == "OPENAI_API_KEY"
+
+    observation = _set_healthy_cli_observation(
+        batch,
+        desired="clawdi@0.13.69",
+        source_revision=legacy.source_revision,
+    )
+    canonical = _render(batch)
+    assert canonical.source_revision != legacy.source_revision
+    assert observation.observed_source_revision == legacy.source_revision
+    assert observation.observed_source_revision != canonical.source_revision
+    assert _codex_runtime_env(batch) == "CLAWDI_AI_API_KEY"
+    assert _render(batch).source_revision == canonical.source_revision
+
+    assert isinstance(observation.diagnostics, dict)
+    applied = observation.diagnostics["applied"]
+    assert isinstance(applied, dict)
+    canonical_etag = expected_runtime_bundle_v2_etag(canonical.source_revision)
+    applied.update({"etag": canonical_etag, "sourceRevision": canonical.source_revision})
+    observation.observed_manifest_etag = canonical_etag
+    observation.observed_source_revision = canonical.source_revision
+    assert _render(batch).source_revision == canonical.source_revision
 
 
 def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None:
     source = _render(_batch())
 
-    assert source.manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["apiMode"] == "openai_chat"
+    runtime_provider = source.manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]
+    assert runtime_provider["apiMode"] == "openai_chat"
+    assert runtime_provider["models"] == [{"id": "gpt-test"}]
     codex_provider = source.manifest["terminalTooling"]["codex"]["provider"]
     assert codex_provider == {
         "kind": "openai-compatible",
