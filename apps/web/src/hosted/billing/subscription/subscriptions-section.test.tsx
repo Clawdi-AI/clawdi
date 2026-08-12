@@ -40,9 +40,7 @@ describe("SubscriptionsSection", () => {
 
 		for (const deletedAgent of [
 			renderToStaticMarkup(<SubscriptionAgentLink deploymentId={null} agentName={null} />),
-			renderToStaticMarkup(
-				<SubscriptionAgentLink deploymentId="hdep_stale" agentName={null} />,
-			),
+			renderToStaticMarkup(<SubscriptionAgentLink deploymentId="hdep_stale" agentName={null} />),
 			renderToStaticMarkup(<SubscriptionAgentLink deploymentId={null} agentName="Stale agent" />),
 		]) {
 			expect(deletedAgent).toContain("Deleted agent");

@@ -165,11 +165,7 @@ describe("applySubscriptionActionSuccess", () => {
 		qc.setQueryData(billingKeys.deployments, { current: true });
 		qc.setQueryData(billingKeys.subscriptions, { current: true });
 
-		applySubscriptionActionSuccess(
-			qc,
-			{ subscription_id: "csub_test" },
-			subscriptionAction(true),
-		);
+		applySubscriptionActionSuccess(qc, { subscription_id: "csub_test" }, subscriptionAction(true));
 
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(true);
