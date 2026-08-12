@@ -187,7 +187,9 @@ from app.services.runtime_manifest_resources import (
 )
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
+    queue_provider_runtime_manifest_changed,
     queue_runtime_manifest_changed,
+    runtime_manifest_provider_non_auth_signature,
 )
 from app.services.user_provisioning import (
     lazy_create_partner_user_with_personal_project,
@@ -889,6 +891,14 @@ async def admin_upsert_clawdi_managed_ai_provider(
         # Legacy route ids remain accepted during the cross-service rollout,
         # but fixed managed-provider writes and responses are canonical.
         target = await _resolve_or_create_user(db, body.target_clerk_id)
+        await lock_ai_provider_owner(db, target.id)
+        existing = await find_clawdi_managed_provider(
+            db,
+            owner_user_id=target.id,
+            provider_id=V2_MANAGED_AI_PROVIDER_ID,
+            include_archived=True,
+        )
+        previous_non_auth_signature = runtime_manifest_provider_non_auth_signature(existing)
         try:
             provider = await upsert_clawdi_managed_provider(
                 db,
@@ -908,6 +918,8 @@ async def admin_upsert_clawdi_managed_ai_provider(
         except ValueError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from e
 
+        if previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider):
+            await queue_provider_runtime_manifest_changed(db, target.id, provider.provider_id)
         record_control_plane_audit(
             db,
             actor_type="admin",
@@ -957,6 +969,13 @@ async def admin_upsert_clawdi_managed_ai_provider(
         owner_user_id=target.id,
         provider_id=provider_id,
     )
+    existing = await find_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        include_archived=True,
+    )
+    previous_non_auth_signature = runtime_manifest_provider_non_auth_signature(existing)
     try:
         provider = await upsert_clawdi_managed_provider(
             db,
@@ -986,6 +1005,8 @@ async def admin_upsert_clawdi_managed_ai_provider(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
 
     await db.flush()
+    if previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider):
+        await queue_provider_runtime_manifest_changed(db, target.id, provider.provider_id)
     _record_deployment_managed_provider_audit(
         db,
         action="ai_provider.managed.upsert",
@@ -1093,6 +1114,7 @@ async def admin_delete_clawdi_managed_ai_provider(
             owner_user_id=target.id,
             provider_id=provider_id,
         )
+    await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
     _record_deployment_managed_provider_audit(
         db,
         action=action,
