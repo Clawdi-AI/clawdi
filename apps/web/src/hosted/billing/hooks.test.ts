@@ -181,6 +181,7 @@ describe("refreshCheckoutReturnQueries", () => {
 			},
 		});
 		qc.setQueryData(billingKeys.plans, [{ id: "plan_before_checkout" }]);
+		qc.setQueryData(billingKeys.transactions, { pages: [], pageParams: [] });
 		qc.setQueryData(["get", "/v1/agents"], [{ id: "agent_before_checkout" }]);
 
 		const result = await refreshCheckoutReturnQueries(qc);
@@ -192,6 +193,7 @@ describe("refreshCheckoutReturnQueries", () => {
 			5_000,
 		);
 		expect(qc.getQueryState(billingKeys.plans)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.transactions)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
 	});
 

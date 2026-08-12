@@ -15,7 +15,6 @@ export type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActi
 export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCancelRequest"];
 export type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
-export type ComputeBillingHistoryItem = Schemas["V2ComputeBillingHistoryItem"];
 export type ComputePlanChangeRequest = Schemas["V2ComputePlanChangeRequest"];
 export type ComputePlanChangeResult =
 	| { kind: "complete"; effectiveAt: string }
@@ -55,8 +54,7 @@ export type Plan = Schemas["V2PlanResponse"];
 export type PortalRequest = Schemas["V2ComputePortalRequest"];
 export type WalletAutoReloadAction = Schemas["V2WalletAutoReloadActionResponse"];
 export type WalletAutoReloadRequest = Schemas["V2WalletAutoReloadRequest"];
-export type WalletLedgerEntry = Schemas["V2WalletLedgerItemResponse"];
-export type WalletLedgerStatus = WalletLedgerEntry["status"];
 export type WalletState = Schemas["V2WalletResponse"];
 export type WalletTopupRequest = Schemas["V2WalletTopupRequest"];
 export type WalletTopupResult = Schemas["V2WalletTopupResponse"];
+export type WalletTransaction = Schemas["V2WalletTransactionItemResponse"];

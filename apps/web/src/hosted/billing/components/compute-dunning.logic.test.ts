@@ -237,7 +237,7 @@ describe("computeDunningState", () => {
 			{
 				reason: "refunded" as const,
 				tone: "neutral",
-				secondaryTarget: "billing_history",
+				secondaryTarget: "transactions",
 				title: "Compute payment refunded",
 			},
 			{
@@ -279,7 +279,7 @@ describe("computeDunningState", () => {
 			"you canceled the subscription",
 		);
 		expect(fallbackReasonSentence("refunded", "Performance compute", "Jul 18")).toContain(
-			"Review Billing history",
+			"Review Transactions",
 		);
 		expect(fallbackReasonSentence("disputed", "Performance compute", "Jul 18")).toContain(
 			"contact support",

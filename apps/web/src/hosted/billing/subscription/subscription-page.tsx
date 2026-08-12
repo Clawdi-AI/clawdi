@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
-import { BillingHistorySection } from "@/hosted/billing/subscription/billing-history-section";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { SubscriptionsSection } from "@/hosted/billing/subscription/subscriptions-section";
 
@@ -19,8 +18,6 @@ export function SubscriptionPage() {
 			<SubscriptionsSection />
 
 			<PlanComparison term={term} onTermChange={setTerm} />
-
-			<BillingHistorySection />
 		</div>
 	);
 }

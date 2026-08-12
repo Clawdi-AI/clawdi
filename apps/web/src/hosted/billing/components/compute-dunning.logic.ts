@@ -30,11 +30,11 @@ export type ComputeDunningState = {
 		| "fix_payment"
 		| "top_up"
 		| "start_new"
-		| "billing_history"
+		| "transactions"
 		| "support"
 		| "none";
 	invoiceUrl: string | null;
-	secondaryTarget: "billing_history" | "support" | null;
+	secondaryTarget: "transactions" | "support" | null;
 	fallbackOccurredAt: string | null;
 	fallbackPlanLabel: string | null;
 	fallbackReason: FundingRevocationReason | null;
@@ -52,9 +52,9 @@ export function fallbackReasonSentence(
 		case "canceled":
 			return `This agent fell back from ${planLabel} after you canceled the subscription on ${dateLabel}.`;
 		case "refunded":
-			return `This agent fell back from ${planLabel} after its payment was refunded on ${dateLabel}. Review Billing history for details.`;
+			return `This agent fell back from ${planLabel} after its payment was refunded on ${dateLabel}. Review Transactions for details.`;
 		case "disputed":
-			return `This agent fell back from ${planLabel} after its payment was disputed on ${dateLabel}. Review Billing history or contact support.`;
+			return `This agent fell back from ${planLabel} after its payment was disputed on ${dateLabel}. Review Transactions or contact support.`;
 		case "admin_forced":
 			return `This agent fell back from ${planLabel} after compute funding was changed by an administrator on ${dateLabel}. Contact support if this was unexpected.`;
 	}
@@ -99,7 +99,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 				return {
 					tone: "neutral" as const,
 					title: "Compute payment refunded",
-					secondaryTarget: "billing_history" as const,
+					secondaryTarget: "transactions" as const,
 				};
 			case "disputed":
 				return {

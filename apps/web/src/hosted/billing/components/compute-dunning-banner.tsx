@@ -36,8 +36,8 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	});
 	const [topUpOpen, setTopUpOpen] = useState(false);
 	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
-	const billingHistoryLink = (
-		<Link to="." search={{ ...routeSearch, settings: "billing-plan" }} hash="billing-history" />
+	const transactionsLink = (
+		<Link to="." search={{ ...routeSearch, settings: "billing-wallet" }} hash="transactions" />
 	);
 
 	if (!state) return null;
@@ -122,9 +122,9 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 						>
 							<Plus data-icon="inline-start" /> Start a new subscription
 						</Button>
-					) : state.ctaTarget === "billing_history" ? (
-						<Button render={billingHistoryLink} nativeButton={false} size="sm" variant="outline">
-							<History data-icon="inline-start" /> View billing history
+					) : state.ctaTarget === "transactions" ? (
+						<Button render={transactionsLink} nativeButton={false} size="sm" variant="outline">
+							<History data-icon="inline-start" /> View transactions
 						</Button>
 					) : state.ctaTarget === "support" ? (
 						<Button
@@ -152,9 +152,9 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 							Fix payment
 						</Button>
 					) : null}
-					{state.secondaryTarget === "billing_history" ? (
-						<Button render={billingHistoryLink} nativeButton={false} size="sm" variant="outline">
-							<History data-icon="inline-start" /> View billing history
+					{state.secondaryTarget === "transactions" ? (
+						<Button render={transactionsLink} nativeButton={false} size="sm" variant="outline">
+							<History data-icon="inline-start" /> View transactions
 						</Button>
 					) : state.secondaryTarget === "support" ? (
 						<Button

@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import type { WalletLedgerEntry, WalletTopupResult } from "@/hosted/billing/contracts";
+import type { WalletTopupResult, WalletTransaction } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	handleTopupStartResult,
@@ -21,15 +21,14 @@ function result(overrides: Partial<WalletTopupResult>): WalletTopupResult {
 	};
 }
 
-function queryClientWithWalletActivity(): QueryClient {
+function queryClientWithWalletData(): QueryClient {
 	const qc = new QueryClient();
 	qc.setQueryData(billingKeys.wallet, { balance_cents: 1_000 });
-	qc.setQueryData(billingKeys.ledger(50), { items: [] });
+	qc.setQueryData(billingKeys.transactions, { pages: [{ items: [] }], pageParams: [null] });
 	qc.setQueryData(billingKeys.subscriptionCreateQuote("compute_basic", 1, "wallet"), {
 		term_price_cents: 1_500,
 	});
 	qc.setQueryData(billingKeys.deployments, []);
-	qc.setQueryData(billingKeys.billingHistory(20), { pages: [] });
 	qc.setQueryData(["get", "/v1/agents"], []);
 	return qc;
 }
@@ -54,7 +53,7 @@ function setupControls(queryClient: QueryClient) {
 
 describe("handleTopupStartResult", () => {
 	test("treats synchronous success as terminal success and refreshes wallet activity", () => {
-		const qc = queryClientWithWalletActivity();
+		const qc = queryClientWithWalletData();
 		const setup = setupControls(qc);
 
 		handleTopupStartResult(
@@ -69,13 +68,12 @@ describe("handleTopupStartResult", () => {
 		);
 
 		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(true);
-		expect(qc.getQueryState(billingKeys.ledger(50))?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.transactions)?.isInvalidated).toBe(true);
 		expect(
 			qc.getQueryState(billingKeys.subscriptionCreateQuote("compute_basic", 1, "wallet"))
 				?.isInvalidated,
 		).toBe(true);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
-		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
 		expect(setup.resetAttempt).toHaveBeenCalledTimes(1);
 		expect(setup.closeDialog).toHaveBeenCalledTimes(1);
@@ -87,19 +85,19 @@ describe("handleTopupStartResult", () => {
 		expect(setup.onComplete).toHaveBeenCalledWith("succeeded");
 	});
 
-	test("keeps payment intents on the card step and refreshes only a visible ledger", async () => {
-		const qc = queryClientWithWalletActivity();
+	test("keeps payment intents on the card step and refreshes only visible transactions", async () => {
+		const qc = queryClientWithWalletData();
 		const setup = setupControls(qc);
-		let ledgerCalls = 0;
-		const ledgerObserver = new QueryObserver(qc, {
-			queryKey: billingKeys.ledger(50),
+		let transactionCalls = 0;
+		const transactionsObserver = new QueryObserver(qc, {
+			queryKey: billingKeys.transactions,
 			queryFn: async () => {
-				ledgerCalls += 1;
-				return { items: [{ id: "pending_topup" }] };
+				transactionCalls += 1;
+				return { pages: [{ items: [] }], pageParams: [null] };
 			},
 			staleTime: Number.POSITIVE_INFINITY,
 		});
-		const unsubscribe = ledgerObserver.subscribe(() => {});
+		const unsubscribe = transactionsObserver.subscribe(() => {});
 
 		handleTopupStartResult(
 			result({
@@ -115,15 +113,14 @@ describe("handleTopupStartResult", () => {
 		await Promise.resolve();
 
 		expect(setup.startPayment).toHaveBeenCalledWith("pi_123_secret_456");
-		expect(ledgerCalls).toBe(1);
+		expect(transactionCalls).toBe(1);
 		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(false);
-		expect(qc.getQueryState(billingKeys.ledger(50))?.isInvalidated).toBe(false);
+		expect(qc.getQueryState(billingKeys.transactions)?.isInvalidated).toBe(false);
 		expect(
 			qc.getQueryState(billingKeys.subscriptionCreateQuote("compute_basic", 1, "wallet"))
 				?.isInvalidated,
 		).toBe(false);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
-		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(false);
 		expect(setup.closeDialog).not.toHaveBeenCalled();
 		expect(setup.resetAttempt).not.toHaveBeenCalled();
 		expect(setup.toastInfo).not.toHaveBeenCalled();
@@ -133,44 +130,50 @@ describe("handleTopupStartResult", () => {
 });
 
 describe("walletTopupCreditIsApplied", () => {
-	const entry: WalletLedgerEntry = {
-		operation: "topup",
-		description: "Card top-up",
-		amount_usd: "25.00",
+	const transaction: WalletTransaction = {
+		id: "wallet:topup",
+		kind: "topup",
+		occurred_at: "2026-07-27T12:00:00Z",
+		amount: "25.00",
+		currency: "usd",
+		direction: "credit",
 		status: "applied",
+		funding: "wallet",
 		payment_reference: "pi_previous",
 		receipt_url: null,
-		created_at: "2026-07-27T12:00:00Z",
-		applied_at: "2026-07-27T12:00:01Z",
 	};
 
 	test("confirms only the exact applied top-up payment reference", () => {
-		expect(walletTopupCreditIsApplied("pi_current", [entry])).toBe(false);
-		expect(walletTopupCreditIsApplied(null, [{ ...entry, payment_reference: null }])).toBe(false);
+		expect(walletTopupCreditIsApplied("pi_current", [transaction])).toBe(false);
+		expect(walletTopupCreditIsApplied(null, [{ ...transaction, payment_reference: null }])).toBe(
+			false,
+		);
 		expect(
 			walletTopupCreditIsApplied("pi_current", [
-				{ ...entry, payment_reference: "pi_current", status: "pending" },
+				{ ...transaction, payment_reference: "pi_current", status: "pending" },
 			]),
 		).toBe(false);
 		expect(
 			walletTopupCreditIsApplied("pi_current", [
-				{ ...entry, payment_reference: "pi_current", operation: "x402" },
+				{ ...transaction, payment_reference: "pi_current", kind: "x402" },
 			]),
 		).toBe(false);
 		expect(
 			walletTopupCreditIsApplied("pi_current", [
-				{ ...entry, payment_reference: "pi_current", operation: "invoice" },
+				{ ...transaction, payment_reference: "pi_current", direction: "debit" },
 			]),
 		).toBe(false);
 		expect(
-			walletTopupCreditIsApplied("pi_current", [{ ...entry, payment_reference: "pi_current" }]),
+			walletTopupCreditIsApplied("pi_current", [
+				{ ...transaction, payment_reference: "pi_current" },
+			]),
 		).toBe(true);
 	});
 
-	test("reads the paginated Activity cache used by Wallet", async () => {
+	test("reads the paginated Transactions cache used by Wallet", async () => {
 		const qc = new QueryClient();
-		qc.setQueryData(billingKeys.ledgerPages(50), {
-			pages: [{ items: [{ ...entry, payment_reference: "pi_current" }] }],
+		qc.setQueryData(billingKeys.transactions, {
+			pages: [{ items: [{ ...transaction, payment_reference: "pi_current" }] }],
 			pageParams: [null],
 		});
 

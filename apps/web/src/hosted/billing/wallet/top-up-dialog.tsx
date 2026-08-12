@@ -49,19 +49,19 @@ export async function confirmWalletTopup(
 	if (!paymentReference) {
 		toast.warning("Wallet credit can’t be confirmed automatically", {
 			description:
-				"The payment did not include a link to Wallet Activity. The balance and Activity may take a moment to update.",
+				"The payment did not include a link to Wallet Transactions. The balance and Transactions may take a moment to update.",
 		});
 		return;
 	}
 	if (await waitForWalletTopupCredit(queryClient, paymentReference)) {
 		toast.success("Wallet credited", {
-			description: "Your balance and Activity now include the top-up.",
+			description: "Your balance and Transactions now include the top-up.",
 		});
 		return;
 	}
 	toast.info("Wallet credit not confirmed yet", {
 		description:
-			"The Wallet has not linked this payment to the displayed balance and Activity yet.",
+			"The Wallet has not linked this payment to the displayed balance and Transactions yet.",
 		action: {
 			label: "Check again",
 			onClick: () => void confirmWalletTopup(queryClient, paymentReference),

@@ -69,7 +69,6 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/subscription/checkout": {"post"},
     "/v2/subscription/cancel": {"post"},
     "/v2/subscription/fix-payment": {"post"},
-    "/v2/subscription/billing-history": {"get"},
     "/v2/subscription/plan/change": {"post"},
     "/v2/subscription/plan/quote": {"post"},
     "/v2/subscription/plans": {"get"},
@@ -80,7 +79,7 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/usage": {"get"},
     "/v2/wallet": {"get"},
     "/v2/wallet/auto-reload": {"put"},
-    "/v2/wallet/ledger": {"get"},
+    "/v2/wallet/transactions": {"get"},
     "/v2/wallet/topup": {"post"},
 }
 

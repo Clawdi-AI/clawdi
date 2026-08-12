@@ -21,7 +21,7 @@ function useInvalidateBillingAfterCheckout() {
 	return () => {
 		queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
 		queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
-		queryClient.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
+		queryClient.invalidateQueries({ queryKey: billingKeys.transactions });
 		queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 	};
 }
