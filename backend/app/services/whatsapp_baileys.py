@@ -2891,14 +2891,15 @@ def _usync_devices_result(
 def whatsapp_usync_device_result(
     req: BinaryNode,
     *,
-    recipient_lids: Mapping[str, str],
+    target_lids: Mapping[str, str],
+    self_lid: str | None = None,
 ) -> BinaryNode:
-    """Build the stock Baileys device/LID result from authorized durable mappings."""
+    """Build the stock Baileys device/LID result from authorized target mappings."""
     return _usync_devices_result(
         req,
         agent_user=None,
-        agent_lid=None,
-        resolve_recipient_lid=recipient_lids.get,
+        agent_lid=self_lid,
+        resolve_recipient_lid=target_lids.get,
     )
 
 

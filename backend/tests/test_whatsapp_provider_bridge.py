@@ -534,6 +534,8 @@ async def test_whatsapp_provider_usync_requires_link_binding_and_uses_durable_li
         external_chat_id="15551112222@s.whatsapp.net",
     )
     lid_jid = "184207372460253@lid"
+    self_lid_jid = "900000000000004:1@lid"
+    self_lid_target = "900000000000004@lid"
     await remember_whatsapp_binding_aliases(
         db_session,
         binding=binding,
@@ -586,10 +588,16 @@ async def test_whatsapp_provider_usync_requires_link_binding_and_uses_durable_li
         tenant_id=str(link.id),
         bot_agent_link_id=link.id,
     )
+    mixed = await bridge.forward_iq(
+        _stock_usync_device_iq(self_lid_target, binding.external_chat_id),
+        tenant_id=str(link.id),
+        bot_agent_link_id=link.id,
+        self_lid=self_lid_jid,
+    )
 
     assert unbound is None
     assert cross_link is None
-    assert len(transport.iq_queries) == 1
+    assert len(transport.iq_queries) == 2
     assert transport.iq_queries[0][0]["attrs"] == {
         "to": "s.whatsapp.net",
         "type": "get",
@@ -616,6 +624,14 @@ async def test_whatsapp_provider_usync_requires_link_binding_and_uses_durable_li
             },
         ],
     }
+    assert mixed is not None
+    mixed_users = mixed["content"][0]["content"][0]["content"]
+    assert [user["attrs"]["jid"] for user in mixed_users] == [
+        self_lid_target,
+        binding.external_chat_id,
+    ]
+    assert mixed_users[0]["content"][1]["content"][0]["content"] == []
+    assert mixed_users[1] == resolved_user
 
 
 @pytest.mark.asyncio

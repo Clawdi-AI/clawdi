@@ -287,6 +287,7 @@ async def _run_whatsapp_baileys_websocket(
             node,
             tenant_id,
             bot_agent_link_id=bot_agent_link_id,
+            self_lid=session.tenant.lid if session.tenant is not None else None,
         )
 
     async def resolve_outbound_signal_jid(jid: str) -> str | None:
