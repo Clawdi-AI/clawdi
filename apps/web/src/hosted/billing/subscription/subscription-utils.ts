@@ -57,6 +57,19 @@ export function canResumeAccountSubscription(
 	);
 }
 
+export function isEndedAccountSubscription(
+	subscription: Pick<
+		ComputeSubscriptionListItem,
+		"cancel_at_period_end" | "current_period_end" | "status"
+	>,
+	nowMs: number,
+): boolean {
+	if (subscription.status !== "canceled" || subscription.cancel_at_period_end) return false;
+	if (!subscription.current_period_end) return false;
+	const periodEndMs = Date.parse(subscription.current_period_end);
+	return Number.isFinite(periodEndMs) && periodEndMs <= nowMs;
+}
+
 export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {
 	return plans?.find((plan) => plan.slug === COMPUTE_BASIC_SLUG);
 }
@@ -181,7 +194,7 @@ export function computeSubscriptionLifecycle(
 	}
 	if (status === "active") {
 		return {
-			badgeLabel: "Current",
+			badgeLabel: "Active",
 			dateAt: subscription.current_period_end ?? null,
 			dateVerb: "Renews",
 			renews: true,
@@ -197,7 +210,7 @@ export function computeSubscriptionLifecycle(
 	}
 	if (status === "past_due") {
 		return {
-			badgeLabel: "Payment past due",
+			badgeLabel: "Past due",
 			dateAt: null,
 			dateVerb: null,
 			renews: true,

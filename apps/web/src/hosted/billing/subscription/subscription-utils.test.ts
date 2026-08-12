@@ -15,6 +15,7 @@ import {
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionRenewing,
 	isComputeSubscriptionTermChangeable,
+	isEndedAccountSubscription,
 	isIncludedBasicSubscription,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
@@ -302,6 +303,29 @@ describe("commonExplicitBillingOffers", () => {
 });
 
 describe("compute subscription action status gates", () => {
+	test("hides only canceled subscriptions whose service period has ended", () => {
+		const nowMs = Date.parse("2026-08-12T12:00:00Z");
+		const ended = {
+			status: "canceled" as const,
+			cancel_at_period_end: false,
+			current_period_end: "2026-08-12T12:00:00Z",
+		};
+
+		expect(isEndedAccountSubscription(ended, nowMs)).toBe(true);
+		expect(
+			isEndedAccountSubscription(
+				{ ...ended, current_period_end: "2026-08-12T12:00:00.001Z" },
+				nowMs,
+			),
+		).toBe(false);
+		expect(isEndedAccountSubscription({ ...ended, status: "canceling" }, nowMs)).toBe(false);
+		expect(isEndedAccountSubscription({ ...ended, cancel_at_period_end: true }, nowMs)).toBe(false);
+		expect(isEndedAccountSubscription({ ...ended, current_period_end: null }, nowMs)).toBe(false);
+		expect(isEndedAccountSubscription({ ...ended, current_period_end: "not-a-date" }, nowMs)).toBe(
+			false,
+		);
+	});
+
 	test("matches the backend cancel and resume status set", () => {
 		expect(isComputeSubscriptionCancelable({ status: "trialing" })).toBe(true);
 		expect(isComputeSubscriptionCancelable({ status: "active" })).toBe(true);
@@ -381,7 +405,7 @@ describe("compute subscription lifecycle presentation", () => {
 				status: "past_due",
 			}),
 		).toMatchObject({
-			badgeLabel: "Payment past due",
+			badgeLabel: "Past due",
 			dateAt: null,
 			dateVerb: null,
 			renews: true,

@@ -7,6 +7,7 @@ export type DeploymentComputeSubscription = NonNullable<
 
 type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress"];
 type PlanChangeKind = PlanChangeProgress["changeKind"];
+type SubscriptionListResponse = DeployComponents["schemas"]["V2ComputeSubscriptionListResponse"];
 type PlanChangeBillingEffect = PlanChangeProgress["billingEffect"];
 type PlanChangeQuote = DeployComponents["schemas"]["V2ComputePlanChangeQuoteResponse"];
 type PlanChangeOperation = DeployComponents["schemas"]["LongRunningOperation"];
@@ -774,6 +775,7 @@ export type HostedApiStubOptions = {
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
 	resumeRequests?: string[];
+	subscriptionPages?: Record<string, SubscriptionListResponse>;
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
 	startError?: { status: number; detail: string };
@@ -809,6 +811,17 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			);
 		}
 		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
+		if (p === "/v2/subscriptions" && r.request().method() === "GET") {
+			const cursor = new URL(r.request().url()).searchParams.get("cursor") ?? "initial";
+			return fulfillJson(
+				r,
+				options.subscriptionPages?.[cursor] ?? {
+					items: [],
+					has_more: false,
+					next_cursor: null,
+				},
+			);
+		}
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
 			return fulfillJson(r, currentWallet);
 		}

@@ -176,6 +176,7 @@ import {
 	useResumeSubscription,
 } from "@/hosted/billing/hooks";
 import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
+import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	activePlanChangeOperationName,
 	isCombinedPaidPlanChange,
@@ -3683,6 +3684,27 @@ function ComputeSettingsSections({
 		? computeSubscriptionLifecycle(currentSubscription)
 		: null;
 	const subscriptionLifecycleDateLabel = formatShortDate(subscriptionLifecycle?.dateAt);
+	const currentSubscriptionStatus = currentSubscription?.status.toLowerCase();
+	const computePlanStatusTone: StatusTone =
+		currentSubscriptionStatus === "past_due" ||
+		currentSubscriptionStatus === "unpaid" ||
+		currentSubscription?.payment_state === "past_due" ||
+		currentSubscription?.payment_state === "unpaid"
+			? "destructive"
+			: currentSubscriptionStatus === "canceling" ||
+					currentSubscription?.payment_state === "requires_action" ||
+					subscriptionCancelPending ||
+					pendingPlanSlug
+				? "warning"
+				: isIncludedBasic ||
+						currentSubscriptionStatus === "active" ||
+						currentSubscriptionStatus === "trialing"
+					? "success"
+					: "neutral";
+	const computePlanStatus = {
+		label: isPaidCompute && subscriptionLifecycle ? subscriptionLifecycle.badgeLabel : "Current",
+		tone: computePlanStatusTone,
+	};
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
 				pendingPlanSlug,
@@ -4026,187 +4048,193 @@ function ComputeSettingsSections({
 			) : null}
 
 			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
-				<div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-					<div className="min-w-0 flex-1">
-						<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+				<ComputeSubscriptionCard
+					headingLevel={3}
+					title={
+						<span className="flex min-w-0 items-center gap-1.5">
 							{tierLabel === "Performance" ? (
-								<Zap className="size-4" />
+								<Zap className="size-4 shrink-0" />
 							) : (
-								<Cpu className="size-4" />
+								<Cpu className="size-4 shrink-0" />
 							)}
 							<span>{tierLabel} compute</span>
+						</span>
+					}
+					status={computePlanStatus}
+					description="Basic includes one free active slot per user. Paid Basic and Performance each use one subscription per agent."
+					badges={
+						hasWalletFallback ? (
 							<Badge variant="outline" className="font-normal text-muted-foreground">
-								{isPaidCompute && subscriptionLifecycle
-									? subscriptionLifecycle.badgeLabel
-									: "Current"}
+								Wallet fallback
 							</Badge>
-							{isPaidCompute ? (
-								<Badge variant="outline" className="font-normal text-muted-foreground">
-									Payment source: {isWalletFunded ? "Wallet" : "Card"}
-								</Badge>
-							) : hasWalletFallback ? (
-								<Badge variant="outline" className="font-normal text-muted-foreground">
-									Wallet fallback
-								</Badge>
-							) : null}
-						</div>
-						<p className="mt-1 text-xs text-muted-foreground">
-							Basic includes one free active slot per user. Paid Basic and Performance each use one
-							subscription per agent.
-						</p>
-						{isPaidCompute && currentSubscription ? (
-							<div className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
-								<p>
-									{billingTermLabel(currentBillingTerm)}
-									{currentPriceCents !== null ? (
-										<>
-											{" "}
-											· {formatCents(currentPriceCents)}
-											{billingTermSuffix(currentBillingTerm)}
-										</>
-									) : null}
-									{subscriptionLifecycle?.dateVerb && subscriptionLifecycle.dateAt ? (
-										<>
-											{" · "}
-											{subscriptionLifecycle.dateVerb} {subscriptionLifecycleDateLabel}
-										</>
-									) : null}
-								</p>
-								{pendingPlanCopy ? (
-									<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
-								) : null}
-							</div>
-						) : null}
-					</div>
-					<div
-						id="compute-plan-controls"
-						className="flex w-full scroll-mt-6 flex-col gap-2 lg:w-auto lg:min-w-64 lg:items-end"
-					>
-						{(hasTerminalFallback || isIncludedBasic) && blockingPlansError ? (
-							<div className="w-full lg:w-72">
-								<ApiErrorPanel
-									normalizer={billingErrorNormalizer}
-									error={blockingPlansError}
-									onRetry={() => void plans.refetch()}
-									title="Couldn’t check paid compute availability"
-								/>
-							</div>
-						) : hasTerminalFallback || isIncludedBasic ? (
-							<div className="flex w-full flex-col gap-2 lg:w-64">
-								<Button
-									size="sm"
-									disabled={
-										pendingPlanChangeName === null &&
-										(plans.isLoading ||
-											(hasTerminalFallback ? !canStartNewSubscription : !canUpgrade || !perfPlan))
-									}
-									onClick={() =>
-										pendingPlanChangeName
-											? setPlanChangeDialogOpen(true)
-											: hasTerminalFallback
-												? setSubscriptionCreateOpen(true)
-												: setPlanChangeDialogOpen(true)
-									}
-								>
-									{hasTerminalFallback ? (
-										<Plus data-icon="inline-start" />
-									) : (
-										<Zap data-icon="inline-start" />
-									)}
-									{pendingPlanChangeName
-										? "Check subscription change status"
-										: hasTerminalFallback
-											? "Start a new subscription"
-											: "Upgrade to Performance"}
-								</Button>
-								{hasTerminalFallback ? (
-									canStartNewSubscription ? null : (
-										<p className="text-xs text-muted-foreground">{createUnavailableMessage}</p>
-									)
-								) : canUpgrade ? null : (
-									<p className="text-xs text-muted-foreground">{upgradeUnavailableMessage}</p>
-								)}
-							</div>
-						) : isPaidCompute && currentSubscription ? (
-							<div className="flex w-full flex-col gap-2 lg:w-72">
-								{subscriptionCancelPending ? (
-									<>
+						) : null
+					}
+					details={
+						isPaidCompute && currentSubscription
+							? [
+									{ label: "Payment", value: isWalletFunded ? "Wallet" : "Card" },
+									{ label: "Term", value: billingTermLabel(currentBillingTerm) },
+									{
+										label: "Price",
+										value:
+											currentPriceCents === null
+												? "Unavailable"
+												: `${formatCents(currentPriceCents)}${billingTermSuffix(currentBillingTerm)}`,
+									},
+									{
+										label: "Schedule",
+										value:
+											subscriptionLifecycle?.dateVerb && subscriptionLifecycle.dateAt
+												? `${subscriptionLifecycle.dateVerb} ${subscriptionLifecycleDateLabel}`
+												: "Unavailable",
+									},
+								]
+							: [
+									{ label: "Funding", value: "Included" },
+									{ label: "Billing", value: "No subscription charge" },
+								]
+					}
+					notice={
+						pendingPlanCopy ? (
+							<p className="text-xs font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
+						) : null
+					}
+					actions={
+						hasTerminalFallback || isIncludedBasic || (isPaidCompute && currentSubscription) ? (
+							<div
+								id="compute-plan-controls"
+								className="flex w-full scroll-mt-6 flex-col gap-2 sm:ml-auto sm:w-auto sm:min-w-64 sm:items-end"
+							>
+								{(hasTerminalFallback || isIncludedBasic) && blockingPlansError ? (
+									<div className="w-full sm:w-72">
+										<ApiErrorPanel
+											normalizer={billingErrorNormalizer}
+											error={blockingPlansError}
+											onRetry={() => void plans.refetch()}
+											title="Couldn’t check paid compute availability"
+										/>
+									</div>
+								) : hasTerminalFallback || isIncludedBasic ? (
+									<div className="flex w-full flex-col gap-2 sm:w-64">
 										<Button
-											type="button"
-											variant="outline"
-											size="sm"
-											disabled={resumeSubscription.isPending || !subscriptionCancelable}
-											onClick={() =>
-												void runAction(resumeComputeSubscription).catch(() => undefined)
-											}
-										>
-											{resumeSubscription.isPending ? (
-												<Spinner data-icon="inline-start" />
-											) : (
-												<RefreshCw data-icon="inline-start" />
-											)}
-											Resume subscription
-										</Button>
-										<p className="text-xs text-muted-foreground">{planChangeUnavailable}</p>
-									</>
-								) : (
-									<>
-										<Button
-											type="button"
-											variant="outline"
 											size="sm"
 											disabled={
 												pendingPlanChangeName === null &&
-												(planChangeUnavailable !== null || !!pendingPlanSlug)
+												(plans.isLoading ||
+													(hasTerminalFallback
+														? !canStartNewSubscription
+														: !canUpgrade || !perfPlan))
 											}
-											onClick={() => setPlanChangeDialogOpen(true)}
+											onClick={() =>
+												pendingPlanChangeName
+													? setPlanChangeDialogOpen(true)
+													: hasTerminalFallback
+														? setSubscriptionCreateOpen(true)
+														: setPlanChangeDialogOpen(true)
+											}
 										>
+											{hasTerminalFallback ? (
+												<Plus data-icon="inline-start" />
+											) : (
+												<Zap data-icon="inline-start" />
+											)}
 											{pendingPlanChangeName
 												? "Check subscription change status"
-												: paymentSourceOnly
-													? "Change payment source"
-													: "Change plan, term, or payment source"}
+												: hasTerminalFallback
+													? "Start a new subscription"
+													: "Upgrade to Performance"}
 										</Button>
-										<ConfirmAction
-											title={`Cancel ${tierLabel} subscription?`}
-											description={
-												<p>
-													Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls
-													back to included Basic funding if available; otherwise, it stops.
-												</p>
-											}
-											confirmLabel="Cancel at period end"
-											destructive
-											onConfirm={() => runAction(cancelComputeSubscription)}
-										>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled={cancelSubscription.isPending || !subscriptionCancelable}
-											>
-												{cancelSubscription.isPending ? (
-													<Spinner data-icon="inline-start" />
-												) : (
-													<Link2Off data-icon="inline-start" />
-												)}
-												Cancel subscription
-											</Button>
-										</ConfirmAction>
-										{pendingPlanSlug ? (
-											<p className="text-xs text-muted-foreground">
-												A plan change is already scheduled. It will apply on the effective date
-												shown above.
-											</p>
-										) : planChangeUnavailable ? (
-											<p className="text-xs text-muted-foreground">{planChangeUnavailable}</p>
-										) : null}
-									</>
-								)}
+										{hasTerminalFallback ? (
+											canStartNewSubscription ? null : (
+												<p className="text-xs text-muted-foreground">{createUnavailableMessage}</p>
+											)
+										) : canUpgrade ? null : (
+											<p className="text-xs text-muted-foreground">{upgradeUnavailableMessage}</p>
+										)}
+									</div>
+								) : isPaidCompute && currentSubscription ? (
+									<div className="flex w-full flex-col gap-2 sm:w-72">
+										{subscriptionCancelPending ? (
+											<>
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													disabled={resumeSubscription.isPending || !subscriptionCancelable}
+													onClick={() =>
+														void runAction(resumeComputeSubscription).catch(() => undefined)
+													}
+												>
+													{resumeSubscription.isPending ? (
+														<Spinner data-icon="inline-start" />
+													) : (
+														<RefreshCw data-icon="inline-start" />
+													)}
+													Resume subscription
+												</Button>
+												<p className="text-xs text-muted-foreground">{planChangeUnavailable}</p>
+											</>
+										) : (
+											<>
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													disabled={
+														pendingPlanChangeName === null &&
+														(planChangeUnavailable !== null || !!pendingPlanSlug)
+													}
+													onClick={() => setPlanChangeDialogOpen(true)}
+												>
+													{pendingPlanChangeName
+														? "Check subscription change status"
+														: paymentSourceOnly
+															? "Change payment source"
+															: "Change plan, term, or payment source"}
+												</Button>
+												<ConfirmAction
+													title={`Cancel ${tierLabel} subscription?`}
+													description={
+														<p>
+															Cancellation takes effect {subscriptionPeriodLabel}. The agent then
+															falls back to included Basic funding if available; otherwise, it
+															stops.
+														</p>
+													}
+													confirmLabel="Cancel at period end"
+													destructive
+													onConfirm={() => runAction(cancelComputeSubscription)}
+												>
+													<Button
+														type="button"
+														variant="outline"
+														size="sm"
+														disabled={cancelSubscription.isPending || !subscriptionCancelable}
+													>
+														{cancelSubscription.isPending ? (
+															<Spinner data-icon="inline-start" />
+														) : (
+															<Link2Off data-icon="inline-start" />
+														)}
+														Cancel subscription
+													</Button>
+												</ConfirmAction>
+												{pendingPlanSlug ? (
+													<p className="text-xs text-muted-foreground">
+														A plan change is already scheduled. It will apply on the effective date
+														shown above.
+													</p>
+												) : planChangeUnavailable ? (
+													<p className="text-xs text-muted-foreground">{planChangeUnavailable}</p>
+												) : null}
+											</>
+										)}
+									</div>
+								) : null}
 							</div>
-						) : null}
-					</div>
-				</div>
+						) : null
+					}
+				/>
 			</SettingsSection>
 
 			<SettingsSection title="Lifecycle" description="Restart, stop, or start this agent.">
