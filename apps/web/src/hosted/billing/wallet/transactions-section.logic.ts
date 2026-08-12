@@ -1,5 +1,6 @@
 import type { WalletTransaction } from "@/hosted/billing/contracts";
 import { formatUsdExact } from "@/hosted/billing/format";
+import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
 
 const KIND_LABELS: Record<string, string> = {
@@ -27,11 +28,9 @@ export function transactionComputeDetails(transaction: WalletTransaction): strin
 	const context = transaction.context;
 	if (!context) return ["Compute · Deleted agent", "—"];
 	const plan =
-		context.plan === "compute_basic"
-			? "Basic"
-			: context.plan === "compute_performance"
-				? "Performance"
-				: "Compute";
+		context.plan === "compute_basic" || context.plan === "compute_performance"
+			? computeTierLabel(context.plan)
+			: "Compute";
 	const agent = context.deployment_id && context.agent_name ? context.agent_name : "Deleted agent";
 	const period =
 		context.period_start || context.period_end
