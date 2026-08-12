@@ -176,6 +176,14 @@ class ResolvedWhatsAppCredential:
 
 
 @dataclass(frozen=True)
+class _WhatsAppCredentialSelfIdentityState:
+    creds: dict[str, object]
+    me: dict[str, object]
+    self_identity: dict[str, str]
+    needs_repair: bool
+
+
+@dataclass(frozen=True)
 class RelayDecision:
     action: Literal["relay", "drop"]
     node: BinaryNode | None = None
@@ -1831,6 +1839,20 @@ def whatsapp_self_identity_from_config(
     return identity
 
 
+def whatsapp_credential_needs_self_identity_repair(
+    credential: ChannelAgentCredential,
+    *,
+    self_identity: Mapping[str, str] | None,
+) -> bool:
+    if self_identity is None or credential.revoked_at is not None:
+        return False
+    state = _whatsapp_credential_self_identity_state(
+        credential,
+        self_identity=self_identity,
+    )
+    return state.needs_repair
+
+
 async def save_whatsapp_credential_self_identity(
     db: AsyncSession,
     *,
@@ -1839,16 +1861,45 @@ async def save_whatsapp_credential_self_identity(
 ) -> bool:
     if self_identity is None or credential.revoked_at is not None:
         return False
+    state = _whatsapp_credential_self_identity_state(
+        credential,
+        self_identity=self_identity,
+    )
+    stored_identity: dict[str, JsonValue] = {
+        "id": credential.synthetic_jid,
+        "lid": state.self_identity["lid"],
+    }
+    if name := state.self_identity.get("name"):
+        stored_identity["name"] = name
+
+    config = dict(credential.config or {})
+    config_changed = config.get("self_identity") != stored_identity
+    if not state.needs_repair and not config_changed:
+        return False
+    if state.needs_repair:
+        state.creds["me"] = {
+            **state.me,
+            "id": credential.synthetic_jid,
+            "lid": state.self_identity["lid"],
+        }
+        ciphertext, nonce = encrypt(serialize_creds(state.creds))
+        credential.encrypted_credentials = ciphertext
+        credential.credential_nonce = nonce
+    if config_changed:
+        config["self_identity"] = stored_identity
+        credential.config = config
+    await db.flush()
+    return True
+
+
+def _whatsapp_credential_self_identity_state(
+    credential: ChannelAgentCredential,
+    *,
+    self_identity: Mapping[str, str],
+) -> _WhatsAppCredentialSelfIdentityState:
     validated = whatsapp_self_identity_from_config({"self_identity": dict(self_identity)})
     if validated is None:
         raise ValueError("WhatsApp self identity requires a valid PN and LID pair")
-    stored_identity: dict[str, JsonValue] = {
-        "id": credential.synthetic_jid,
-        "lid": validated["lid"],
-    }
-    if name := validated.get("name"):
-        stored_identity["name"] = name
-
     creds = decode_buffer_json(
         json.loads(decrypt(credential.encrypted_credentials, credential.credential_nonce))
     )
@@ -1857,26 +1908,14 @@ async def save_whatsapp_credential_self_identity(
     me = creds.get("me")
     if not _is_object_dict(me):
         raise ValueError("WhatsApp credential creds.me must be an object")
-
-    config = dict(credential.config or {})
-    creds_changed = me.get("id") != credential.synthetic_jid or me.get("lid") != validated["lid"]
-    config_changed = config.get("self_identity") != stored_identity
-    if not creds_changed and not config_changed:
-        return False
-    if creds_changed:
-        creds["me"] = {
-            **me,
-            "id": credential.synthetic_jid,
-            "lid": validated["lid"],
-        }
-        ciphertext, nonce = encrypt(serialize_creds(creds))
-        credential.encrypted_credentials = ciphertext
-        credential.credential_nonce = nonce
-    if config_changed:
-        config["self_identity"] = stored_identity
-        credential.config = config
-    await db.flush()
-    return True
+    return _WhatsAppCredentialSelfIdentityState(
+        creds=creds,
+        me=me,
+        self_identity=validated,
+        needs_repair=(
+            me.get("id") != credential.synthetic_jid or me.get("lid") != validated["lid"]
+        ),
+    )
 
 
 def _clean_optional_whatsapp_text(value: object) -> str | None:

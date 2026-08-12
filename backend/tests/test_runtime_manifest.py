@@ -63,7 +63,7 @@ from app.services.runtime_source import (
     expected_runtime_bundle_v2_etag,
     runtime_manifest_issued_at,
 )
-from app.services.vault_crypto import encrypt
+from app.services.vault_crypto import decrypt, encrypt
 from scripts.seed_dashboard_dev import (
     _create_hosted_runtime_graph,
     _seed_ai_provider,
@@ -4315,15 +4315,14 @@ async def test_runtime_manifest_repairs_and_invalidates_an_existing_whatsapp_lin
         seed_user,
     )
     account.provider = "whatsapp"
+    account_lid = "900000000000001:1@lid"
+    account.config = {
+        "self_identity": {
+            "id": "15551234567:1@s.whatsapp.net",
+            "lid": account_lid,
+        }
+    }
     await db_session.commit()
-
-    def reject_auth_cert_private_key_decrypt(*_args) -> str:
-        raise AssertionError("runtime manifest must not decrypt WhatsApp auth-cert private keys")
-
-    monkeypatch.setattr(
-        "app.services.whatsapp_baileys.decrypt",
-        reject_auth_cert_private_key_decrypt,
-    )
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="whatsapp-repair")
     target_queue = sync_events.subscribe(
@@ -4343,14 +4342,35 @@ async def test_runtime_manifest_repairs_and_invalidates_an_existing_whatsapp_lin
                 )
             )
             assert credential is not None
-            assert (
-                await db_session.scalar(
-                    select(ChannelWhatsAppAuthCert).where(
-                        ChannelWhatsAppAuthCert.account_id == account.id
-                    )
+            auth_cert = await db_session.scalar(
+                select(ChannelWhatsAppAuthCert).where(
+                    ChannelWhatsAppAuthCert.account_id == account.id
                 )
-                is not None
             )
+            assert auth_cert is not None
+
+            def decrypt_credential_only(ciphertext: bytes, nonce: bytes) -> str:
+                if ciphertext in {
+                    auth_cert.encrypted_root_private_key,
+                    auth_cert.encrypted_intermediate_private_key,
+                }:
+                    raise AssertionError(
+                        "runtime manifest must not decrypt WhatsApp auth-cert private keys"
+                    )
+                return decrypt(ciphertext, nonce)
+
+            monkeypatch.setattr(
+                "app.services.whatsapp_baileys.decrypt",
+                decrypt_credential_only,
+            )
+
+            def load_credential_creds() -> dict:
+                value = json.loads(
+                    decrypt(credential.encrypted_credentials, credential.credential_nonce)
+                )
+                assert isinstance(value, dict)
+                return value
+
             account_key = channel_runtime_account_key(account.id)
             capability_ref = (
                 f"secret://channels/whatsapp/{account_key}/links/{link.id}/egress-capability"
@@ -4377,9 +4397,46 @@ async def test_runtime_manifest_repairs_and_invalidates_an_existing_whatsapp_lin
                 channel_runtime_placeholder_token("whatsapp", account_key, link_id=link.id)
             )
 
+            legacy_creds = load_credential_creds()
+            legacy_me = legacy_creds.get("me")
+            assert isinstance(legacy_me, dict)
+            legacy_me.pop("lid")
+            credential.encrypted_credentials, credential.credential_nonce = encrypt(
+                json.dumps(legacy_creds)
+            )
+            await db_session.commit()
+
+            identity_repaired = await client.get("/v1/runtime/manifest")
+            assert identity_repaired.status_code == 200, identity_repaired.text
+            assert identity_repaired.json()["sourceRevision"] != repaired.json()["sourceRevision"]
+            await db_session.refresh(credential)
+            repaired_creds = load_credential_creds()
+            repaired_me = repaired_creds.get("me")
+            assert isinstance(repaired_me, dict)
+            assert repaired_me["id"] == credential.synthetic_jid
+            assert repaired_me["lid"] == account_lid
+            healthy_material = (
+                credential.encrypted_credentials,
+                credential.credential_nonce,
+                credential.updated_at,
+            )
+
+            async def reject_healthy_credential_ensure(*_args, **_kwargs):
+                raise AssertionError("healthy WhatsApp credential must not enter repair")
+
+            monkeypatch.setattr(
+                "app.routes.runtime.ensure_runtime_whatsapp_credentials",
+                reject_healthy_credential_ensure,
+            )
             repeated = await client.get("/v1/runtime/manifest")
             assert repeated.status_code == 200, repeated.text
-            assert repeated.json()["sourceRevision"] == repaired.json()["sourceRevision"]
+            assert repeated.json()["sourceRevision"] == identity_repaired.json()["sourceRevision"]
+            await db_session.refresh(credential)
+            assert (
+                credential.encrypted_credentials,
+                credential.credential_nonce,
+                credential.updated_at,
+            ) == healthy_material
             credential_count = await db_session.scalar(
                 select(func.count())
                 .select_from(ChannelAgentCredential)
@@ -4398,7 +4455,9 @@ async def test_runtime_manifest_repairs_and_invalidates_an_existing_whatsapp_lin
             }
             token_rotated = await client.get("/v1/runtime/manifest")
             assert token_rotated.status_code == 200, token_rotated.text
-            assert token_rotated.json()["sourceRevision"] != repaired.json()["sourceRevision"]
+            assert (
+                token_rotated.json()["sourceRevision"] != identity_repaired.json()["sourceRevision"]
+            )
 
             deleted = await client.delete(f"/v1/channels/{account.id}/agent-links/{link.id}")
             assert deleted.status_code == 204, deleted.text

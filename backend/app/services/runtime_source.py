@@ -81,6 +81,8 @@ from app.services.vault_crypto import decrypt
 from app.services.whatsapp_baileys import (
     buffer_json,
     ensure_whatsapp_agent_credential,
+    whatsapp_credential_needs_self_identity_repair,
+    whatsapp_self_identity_from_config,
 )
 
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
@@ -402,19 +404,28 @@ async def ensure_runtime_whatsapp_credentials(
         raise RuntimeSourceError("Hosted runtime WhatsApp credential source is invalid") from exc
 
 
-def missing_runtime_whatsapp_credential_link_ids(
+def runtime_whatsapp_credential_repair_link_ids(
     batch: RuntimeSourceBatch,
     *,
     environment_id: UUID,
 ) -> tuple[UUID, ...]:
-    return tuple(
-        link.id
-        for account, link in batch.channels.get(environment_id, ())
-        if account.provider == CHANNEL_PROVIDER_WHATSAPP
-        and (
-            link.id not in batch.channel_credentials or account.id not in batch.whatsapp_auth_certs
-        )
-    )
+    repair_link_ids: list[UUID] = []
+    try:
+        for account, link in batch.channels.get(environment_id, ()):
+            if account.provider != CHANNEL_PROVIDER_WHATSAPP:
+                continue
+            credential = batch.channel_credentials.get(link.id)
+            if credential is None or account.id not in batch.whatsapp_auth_certs:
+                repair_link_ids.append(link.id)
+                continue
+            if whatsapp_credential_needs_self_identity_repair(
+                credential,
+                self_identity=whatsapp_self_identity_from_config(account.config),
+            ):
+                repair_link_ids.append(link.id)
+    except Exception as exc:
+        raise RuntimeSourceError("Hosted runtime WhatsApp credential source is invalid") from exc
+    return tuple(repair_link_ids)
 
 
 def _project_runtime_skills(
