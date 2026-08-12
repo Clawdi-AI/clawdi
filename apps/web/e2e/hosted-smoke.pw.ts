@@ -1220,8 +1220,6 @@ type HostedApiStubOptions = {
 	agentOrderRequests?: string[];
 	autoReloadRequests?: string[];
 	autoReloadResponses?: StubResponse[];
-	billingHistoryRequests?: string[];
-	billingHistoryResponses?: unknown[];
 	canCreateCloudAgents?: boolean;
 	canUseLegacyHostedDashboard?: boolean;
 	productAccessRequests?: string[];
@@ -1281,9 +1279,6 @@ type HostedApiStubOptions = {
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
-	ledgerResponseForRequest?: (limit: number, cursor: string | null) => unknown;
-	ledgerRequests?: string[];
-	ledgerResponses?: unknown[];
 	legacyAgentEnvironmentIds?: readonly string[];
 	managedModels?: typeof managedModelCatalog;
 	managedModelRequests?: string[];
@@ -1508,15 +1503,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			currentWallet = { ...currentWallet, ...request };
 			return fulfillJson(r, currentWallet);
 		}
-		if (p === "/v2/wallet/ledger" && r.request().method() === "GET") {
-			options.ledgerRequests?.push(r.request().url());
-			const url = new URL(r.request().url());
-			const limit = Number(url.searchParams.get("limit"));
-			const response = options.ledgerResponseForRequest?.(limit, url.searchParams.get("cursor")) ??
-				options.ledgerResponses?.shift() ?? { items: [], has_more: false };
-			return isStubResponse(response)
-				? fulfillJson(r, response.body, response.status)
-				: fulfillJson(r, response);
+		if (p === "/v2/wallet/transactions" && r.request().method() === "GET") {
+			return fulfillJson(r, { items: [], has_more: false, next_cursor: null });
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			options.deploymentListRequests?.push(p);
@@ -1796,17 +1784,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p === "/v2/subscription/fix-payment" && r.request().method() === "POST") {
 			options.fixPaymentRequests?.push(r.request().postData() ?? "");
 			return fulfillJson(r, { message: "Payment recovery started." });
-		}
-		if (p === "/v2/subscription/billing-history" && r.request().method() === "GET") {
-			options.billingHistoryRequests?.push(r.request().url());
-			const response = options.billingHistoryResponses?.shift() ?? {
-				data: [],
-				has_more: false,
-				next_cursor: null,
-			};
-			return isStubResponse(response)
-				? fulfillJson(r, response.body, response.status)
-				: fulfillJson(r, response);
 		}
 		if (p === "/v2/subscription/portal" && r.request().method() === "POST") {
 			options.portalRequests?.push(r.request().postData() ?? "");

@@ -693,8 +693,6 @@ function isStubResponse(value: unknown): value is StubResponse {
 export type HostedApiStubOptions = {
 	autoReloadRequests?: string[];
 	autoReloadResponses?: StubResponse[];
-	billingHistoryRequests?: string[];
-	billingHistoryResponses?: unknown[];
 	canUsePlanCBilling?: boolean;
 	planBillingCapability?: { enabled: boolean };
 	productAccessRequests?: string[];
@@ -712,9 +710,6 @@ export type HostedApiStubOptions = {
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
-	ledgerResponseForRequest?: (limit: number) => unknown;
-	ledgerRequests?: string[];
-	ledgerResponses?: unknown[];
 	plans?: readonly unknown[];
 	planCMutationRequests?: string[];
 	planChangeRequests?: string[];
@@ -778,14 +773,8 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			currentWallet = { ...currentWallet, ...request };
 			return fulfillJson(r, currentWallet);
 		}
-		if (p === "/v2/wallet/ledger" && r.request().method() === "GET") {
-			options.ledgerRequests?.push(r.request().url());
-			const limit = Number(new URL(r.request().url()).searchParams.get("limit"));
-			const response = options.ledgerResponseForRequest?.(limit) ??
-				options.ledgerResponses?.shift() ?? { items: [], has_more: false };
-			return isStubResponse(response)
-				? fulfillJson(r, response.body, response.status)
-				: fulfillJson(r, response);
+		if (p === "/v2/wallet/transactions" && r.request().method() === "GET") {
+			return fulfillJson(r, { items: [], has_more: false, next_cursor: null });
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			if (options.deploymentsResponse) {
@@ -925,17 +914,6 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		if (p === "/v2/subscription/fix-payment" && r.request().method() === "POST") {
 			options.fixPaymentRequests?.push(r.request().postData() ?? "");
 			return fulfillJson(r, { message: "Payment recovery started." });
-		}
-		if (p === "/v2/subscription/billing-history" && r.request().method() === "GET") {
-			options.billingHistoryRequests?.push(r.request().url());
-			const response = options.billingHistoryResponses?.shift() ?? {
-				data: [],
-				has_more: false,
-				next_cursor: null,
-			};
-			return isStubResponse(response)
-				? fulfillJson(r, response.body, response.status)
-				: fulfillJson(r, response);
 		}
 		if (p === "/v2/subscription/cancel" && r.request().method() === "POST") {
 			options.cancelRequests?.push(r.request().postData() ?? "");

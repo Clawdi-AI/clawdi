@@ -575,9 +575,9 @@ export function createBillingClient(
 		getManagedModelCatalog: async () =>
 			unwrapDeploy(await api.GET("/v2/ai-providers/managed/models")),
 		getWallet: async () => unwrapDeploy(await api.GET("/v2/wallet")),
-		getLedger: async (limit = 50, cursor?: string | null) =>
+		getTransactions: async (limit = 50, cursor?: string | null) =>
 			unwrapDeploy(
-				await api.GET("/v2/wallet/ledger", {
+				await api.GET("/v2/wallet/transactions", {
 					params: { query: { limit, cursor } },
 				}),
 			),
@@ -598,12 +598,6 @@ export function createBillingClient(
 				}),
 			),
 		getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
-		getBillingHistory: async (limit = 20, cursor?: string | null) =>
-			unwrapDeploy(
-				await api.GET("/v2/subscription/billing-history", {
-					params: { query: { limit, cursor } },
-				}),
-			),
 		checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/subscription/checkout", {

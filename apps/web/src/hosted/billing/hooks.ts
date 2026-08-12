@@ -143,22 +143,11 @@ export function useManagedModelCatalog({ enabled = true }: { enabled?: boolean }
 
 // ── Wallet ───────────────────────────────────────────────────────────────────
 
-export function useWalletLedger(limit = 50) {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.ledger(limit),
-		queryFn: () => client.getLedger(limit),
-		// Bumping the limit ("Show more") keeps the current rows on screen
-		// instead of flashing the skeleton while the larger page loads.
-		placeholderData: keepPreviousData,
-	});
-}
-
-export function useWalletLedgerPages(limit = 50) {
+export function useWalletTransactions() {
 	const client = useBillingClient();
 	return useInfiniteQuery({
-		queryKey: billingKeys.ledgerPages(limit),
-		queryFn: ({ pageParam }) => client.getLedger(limit, pageParam),
+		queryKey: billingKeys.transactions,
+		queryFn: ({ pageParam }) => client.getTransactions(50, pageParam),
 		initialPageParam: null as string | null,
 		getNextPageParam: billingNextPageParam,
 		enabled: isDeployApiConfigured(),
@@ -229,7 +218,7 @@ export function useChangePlan(onAccepted?: (operationName: string) => void) {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
+			qc.invalidateQueries({ queryKey: billingKeys.transactions });
 		},
 	});
 }
@@ -243,7 +232,7 @@ export function useCheckPlanChange() {
 			if (error && !(error instanceof PlanChangeTerminalError)) return;
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
+			qc.invalidateQueries({ queryKey: billingKeys.transactions });
 		},
 	});
 }
@@ -259,19 +248,6 @@ export function useCancelSubscription() {
 			}
 			qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
 		},
-	});
-}
-
-export function useComputeBillingHistory(limit = 20) {
-	const client = useBillingClient();
-	return useInfiniteQuery({
-		queryKey: billingKeys.billingHistory(limit),
-		queryFn: ({ pageParam }) => client.getBillingHistory(limit, pageParam),
-		initialPageParam: null as string | null,
-		getNextPageParam: billingNextPageParam,
-		enabled: isDeployApiConfigured(),
-		retry: billingQueryRetry,
-		staleTime: 60_000,
 	});
 }
 
@@ -317,6 +293,7 @@ export async function refreshCheckoutReturnQueries(
 	const results = await Promise.allSettled([
 		...requiredRefreshes,
 		qc.invalidateQueries({ queryKey: billingKeys.plans }),
+		qc.invalidateQueries({ queryKey: billingKeys.transactions }),
 		qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
 	]);
 	const requiredRefreshFailures = results

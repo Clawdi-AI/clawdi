@@ -10,7 +10,7 @@ function source(relativePath: string): string {
 
 describe("query refresh presentation contract", () => {
 	test("keeps known empty, count, and error surfaces data-aware", () => {
-		const billingHistory = source("hosted/billing/subscription/billing-history-section.tsx");
+		const transactions = source("hosted/billing/wallet/transactions-section.tsx");
 		const subscriptionDialog = source("hosted/billing/subscription/subscription-create-dialog.tsx");
 		const deployWizard = source("hosted/billing/deploy/deploy-wizard.tsx");
 		const providerDialog = source("hosted/v2/ai-providers/add-provider-dialog.tsx");
@@ -37,7 +37,7 @@ describe("query refresh presentation contract", () => {
 			),
 		);
 
-		expect(billingHistory).toContain("shouldBlockQueryError(history.error, history.data)");
+		expect(transactions).toContain("shouldBlockQueryError(transactions.error, transactions.data)");
 		expect(subscriptionDialog).toContain(
 			"shouldBlockQueryError(createQuote.error, createQuote.data)",
 		);

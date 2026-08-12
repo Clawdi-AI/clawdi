@@ -31,9 +31,6 @@ export const AUTORELOAD_AMOUNT_RANGE_LABEL = amountRangeLabel(
 // Low-balance warning trips below $2.
 export const LOW_BALANCE_USD = 2;
 
-// Ledger activity is fetched incrementally with an opaque server cursor.
-export const LEDGER_PAGE_SIZE = 50;
-
 export function isLowBalance(balanceUsd: string): boolean {
 	const balance = Number(balanceUsd);
 	return Number.isFinite(balance) && balance < LOW_BALANCE_USD;

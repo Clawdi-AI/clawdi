@@ -83,7 +83,7 @@ export function AutoReloadActionConfirm({
 		// The wallet snapshot resolves `auto_reload_action` once the PaymentIntent
 		// settles; refetch balance + activity so this control clears itself.
 		qc.invalidateQueries({ queryKey: billingKeys.wallet });
-		qc.invalidateQueries({ queryKey: billingKeys.ledgerRoot });
+		qc.invalidateQueries({ queryKey: billingKeys.transactions });
 		setPaymentSubmitting(false);
 		setConfirming(false);
 		setClientSecret(null);

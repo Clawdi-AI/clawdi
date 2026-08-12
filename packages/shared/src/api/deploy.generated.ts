@@ -331,23 +331,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/subscription/billing-history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List V2 Subscription Billing History */
-        get: operations["list_v2_subscription_billing_history_v2_subscription_billing_history_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/subscription/plan/change": {
         parameters: {
             query?: never;
@@ -518,15 +501,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/wallet/ledger": {
+    "/v2/wallet/transactions": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List V2 Wallet Ledger */
-        get: operations["list_v2_wallet_ledger_v2_wallet_ledger_get"];
+        /** List V2 Wallet Transactions */
+        get: operations["list_v2_wallet_transactions_v2_wallet_transactions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1172,58 +1155,6 @@ export interface components {
             current_period_end: null;
             /** Entitled Until */
             entitled_until: null;
-        };
-        /** V2ComputeBillingHistoryItem */
-        V2ComputeBillingHistoryItem: {
-            /** Id */
-            id: string;
-            /**
-             * Funding Source
-             * @enum {string}
-             */
-            funding_source: "stripe" | "wallet";
-            /** Compute Subscription Id */
-            compute_subscription_id: number;
-            /** Plan Slug */
-            plan_slug: string;
-            /** Status */
-            status: string;
-            /** Amount Cents */
-            amount_cents: number;
-            /**
-             * Currency
-             * @default usd
-             */
-            currency: string;
-            /** Amount Usd */
-            amount_usd?: string | null;
-            /** Period Start */
-            period_start?: string | null;
-            /** Period End */
-            period_end?: string | null;
-            /**
-             * Created
-             * Format: date-time
-             */
-            created: string;
-            /** Stripe Invoice Id */
-            stripe_invoice_id?: string | null;
-            /** Stripe Invoice Number */
-            stripe_invoice_number?: string | null;
-            /** Hosted Invoice Url */
-            hosted_invoice_url?: string | null;
-        };
-        /** V2ComputeBillingHistoryResponse */
-        V2ComputeBillingHistoryResponse: {
-            /** Data */
-            data?: components["schemas"]["V2ComputeBillingHistoryItem"][];
-            /**
-             * Has More
-             * @default false
-             */
-            has_more: boolean;
-            /** Next Cursor */
-            next_cursor?: string | null;
         };
         /** V2ComputeCheckoutRequest */
         V2ComputeCheckoutRequest: {
@@ -2178,37 +2109,6 @@ export interface components {
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents?: number | null;
         };
-        /** V2WalletLedgerItemResponse */
-        V2WalletLedgerItemResponse: {
-            /** Operation */
-            operation: string;
-            /** Description */
-            description: string;
-            /** Amount Usd */
-            amount_usd: string;
-            /** Status */
-            status: string;
-            /**
-             * Payment Reference
-             * @description Reference for matching a card payment to this wallet entry
-             */
-            payment_reference: string | null;
-            /** Receipt Url */
-            receipt_url?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Applied At */
-            applied_at?: string | null;
-        };
-        /** V2WalletLedgerResponse */
-        V2WalletLedgerResponse: {
-            /** Items */
-            items: components["schemas"]["V2WalletLedgerItemResponse"][];
-            /** Has More */
-            has_more: boolean;
-            /** Next Cursor */
-            next_cursor?: string | null;
-        };
         /** V2WalletResponse */
         V2WalletResponse: {
             /** Balance Usd */
@@ -2256,6 +2156,71 @@ export interface components {
             client_secret?: string | null;
             /** Amount Usd */
             amount_usd?: string | null;
+        };
+        /** V2WalletTransactionContext */
+        V2WalletTransactionContext: {
+            /** Plan */
+            plan: string;
+            /** Period Start */
+            period_start?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Deployment Id */
+            deployment_id?: string | null;
+        };
+        /** V2WalletTransactionItemResponse */
+        V2WalletTransactionItemResponse: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Amount */
+            amount: string;
+            /**
+             * Currency
+             * @default usd
+             * @constant
+             */
+            currency: "usd";
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "credit" | "debit";
+            /** Status */
+            status: string;
+            /**
+             * Funding
+             * @enum {string}
+             */
+            funding: "wallet" | "card";
+            /** Payment Reference */
+            payment_reference?: string | null;
+            /** Receipt Url */
+            receipt_url?: string | null;
+            /** Stripe Invoice Id */
+            stripe_invoice_id?: string | null;
+            /** Stripe Invoice Number */
+            stripe_invoice_number?: string | null;
+            /** Hosted Invoice Url */
+            hosted_invoice_url?: string | null;
+            context?: components["schemas"]["V2WalletTransactionContext"] | null;
+        };
+        /** V2WalletTransactionsResponse */
+        V2WalletTransactionsResponse: {
+            /** Items */
+            items: components["schemas"]["V2WalletTransactionItemResponse"][];
+            /** Has More */
+            has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** V2WorkspaceSkillCapability */
         V2WorkspaceSkillCapability: {
@@ -3400,38 +3365,6 @@ export interface operations {
             };
         };
     };
-    list_v2_subscription_billing_history_v2_subscription_billing_history_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                cursor?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2ComputeBillingHistoryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     change_v2_subscription_plan_v2_subscription_plan_change_post: {
         parameters: {
             query?: never;
@@ -3736,7 +3669,7 @@ export interface operations {
             };
         };
     };
-    list_v2_wallet_ledger_v2_wallet_ledger_get: {
+    list_v2_wallet_transactions_v2_wallet_transactions_get: {
         parameters: {
             query?: {
                 limit?: number;
@@ -3754,7 +3687,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2WalletLedgerResponse"];
+                    "application/json": components["schemas"]["V2WalletTransactionsResponse"];
                 };
             };
             /** @description Validation Error */
