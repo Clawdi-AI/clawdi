@@ -65,7 +65,6 @@ from app.services.channels import (  # noqa: E402
     generate_agent_token,
     hash_token,
 )
-from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID  # noqa: E402
 from app.services.vault_crypto import encrypt  # noqa: E402
 
 DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
@@ -73,7 +72,7 @@ DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
 DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
-DEV_V2_CODEX_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID
+DEV_V2_CODEX_PROVIDER_SOURCE_ID = "clawdi-v2-deployment-1"
 DEV_V2_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
 _STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
@@ -315,9 +314,9 @@ async def _create_hosted_runtime_graph(
                 tools={
                     "codex": {
                         "enabled": True,
-                        "provider_id": DEV_V2_CODEX_PROVIDER_ID,
+                        "provider_id": DEV_V2_CODEX_PROVIDER_SOURCE_ID,
                         "primary_model": {
-                            "provider_id": DEV_V2_CODEX_PROVIDER_ID,
+                            "provider_id": DEV_V2_CODEX_PROVIDER_SOURCE_ID,
                             "model": "gpt-5.5",
                         },
                     },
@@ -453,7 +452,7 @@ def _seed_codex_provider_graph(
     ciphertext, nonce = encrypt("dev-hosted-codex-platform-credential")
     provider = AiProvider(
         owner_user_id=user.id,
-        provider_id=DEV_V2_CODEX_PROVIDER_ID,
+        provider_id=DEV_V2_CODEX_PROVIDER_SOURCE_ID,
         type="custom_openai_compatible",
         label="Clawdi Managed Codex",
         base_url="https://ai-gateway.invalid/v1",
@@ -466,7 +465,7 @@ def _seed_codex_provider_graph(
     )
     payload = AiProviderAuthPayload(
         owner_user_id=user.id,
-        provider_id=DEV_V2_CODEX_PROVIDER_ID,
+        provider_id=DEV_V2_CODEX_PROVIDER_SOURCE_ID,
         auth_profile="default",
         kind="api_key",
         source="managed",

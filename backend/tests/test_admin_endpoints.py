@@ -2451,9 +2451,13 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     from app.models.session import AgentEnvironment
     from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
     from app.services.vault_crypto import decrypt
-    from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
+    from tests.hosted_runtime_fixtures import (
+        CANONICAL_CODEX_TOOL_PROVIDER_ID,
+        ensure_canonical_codex_tool_provider,
+    )
 
     agent_id = uuid.uuid4()
+    provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
     created = await admin_client.post(
         "/v1/admin/agents",
         headers=_AUTH,
@@ -2492,9 +2496,9 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
         "tools": {
             "codex": {
                 "enabled": True,
-                "provider_id": "clawdi-managed-v2",
+                "provider_id": provider_id,
                 "primary_model": {
-                    "provider_id": "clawdi-managed-v2",
+                    "provider_id": provider_id,
                     "model": "gpt-5.5",
                 },
             }
@@ -2507,9 +2511,9 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
             "openclaw": {
                 "enabled": True,
                 "providerMode": "configured",
-                "provider_ids": ["clawdi-managed-v2"],
+                "provider_ids": [provider_id],
                 "primary_model": {
-                    "provider_id": "clawdi-managed-v2",
+                    "provider_id": provider_id,
                     "model": "gpt-5.5",
                 },
                 "install": {"source": "official"},
@@ -2531,6 +2535,8 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     ).scalar_one_or_none()
     assert state is not None
     assert state.deployment_id == "dep-admin-agent-alias"
+    assert state.runtimes["openclaw"]["provider_ids"] == [provider_id]
+    assert state.tools["codex"]["provider_id"] == provider_id
     secret_rows = list(
         (
             await db_session.execute(
@@ -2562,6 +2568,8 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
         vault_key_identity="test-key-version",
         decrypt_secrets=False,
     )
+    assert first_source.manifest["runtimes"]["openclaw"]["provider_ids"] == ["clawdi"]
+    assert first_source.manifest["terminalTooling"]["codex"]["provider_id"] == "clawdi"
 
     repeated = await admin_client.put(
         f"/v1/admin/agents/{agent_id}/runtime-state",

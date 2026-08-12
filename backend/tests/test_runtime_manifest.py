@@ -71,13 +71,14 @@ from scripts.seed_dashboard_dev import (
 )
 from tests.conftest import create_env_with_project
 from tests.hosted_runtime_fixtures import (
+    CANONICAL_CODEX_TOOL_PROVIDER_ID,
+    canonical_hosted_runtime_state,
+)
+from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS as TEST_CODEX_TOOLS,
 )
 from tests.hosted_runtime_fixtures import (
     canonical_codex_tool_provider_graph as _managed_codex_provider_graph,
-)
-from tests.hosted_runtime_fixtures import (
-    canonical_hosted_runtime_state,
 )
 from tests.hosted_runtime_fixtures import (
     filebrowser_companion as _filebrowser_companion,
@@ -88,16 +89,6 @@ pytestmark = pytest.mark.committed_db
 _ADMIN_KEY = "runtime-state-admin-secret"
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
 TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
-AGENT_FACING_CODEX_TOOLS = {
-    "codex": {
-        "enabled": True,
-        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
-        "primary_model": {
-            "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
-            "model": "gpt-5.5",
-        },
-    }
-}
 TEST_SYSTEM = {}
 TEST_EGRESS_ENGINE_PIN = {
     "type": "mitmproxy",
@@ -430,7 +421,7 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     provider = await db_session.scalar(
         select(AiProvider).where(
             AiProvider.owner_user_id == seed_user.id,
-            AiProvider.provider_id == "clawdi-managed-v2",
+            AiProvider.provider_id == CANONICAL_CODEX_TOOL_PROVIDER_ID,
         )
     )
     if provider is None:
@@ -518,7 +509,7 @@ def _runtime_state(
     **overrides,
 ) -> dict:
     selected_provider_ids = (
-        ([] if provider_mode == "unmanaged" else ["clawdi-managed-v2"])
+        ([] if provider_mode == "unmanaged" else [CANONICAL_CODEX_TOOL_PROVIDER_ID])
         if provider_ids is None
         else provider_ids
     )
@@ -1211,7 +1202,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert set(manifest["locale"]) == {"language", "timezone"}
     assert manifest["system"] == TEST_SYSTEM
     expected_runtime = expected["runtimes"]["openclaw"]
-    assert expected_runtime["provider_ids"] == ["clawdi-managed-v2"]
+    assert expected_runtime["provider_ids"] == [CANONICAL_CODEX_TOOL_PROVIDER_ID]
     assert manifest["runtimes"]["openclaw"] == {
         **expected_runtime,
         "provider_ids": [CLAWDI_MANAGED_PROVIDER_ID],
@@ -3177,7 +3168,7 @@ async def test_admin_runtime_state_clears_optional_state(
     assert state.egress_profiles is None
     assert state.mcp is None
     assert state.skills is None
-    assert state.tools == {**AGENT_FACING_CODEX_TOOLS, "catalog": "clawdi-default"}
+    assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
 @pytest.mark.asyncio
@@ -3223,7 +3214,7 @@ async def test_equal_generation_optional_state_clear_is_material_conflict(
     assert state.egress_profiles == TEST_EGRESS_PROFILES
     assert state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
     assert state.skills == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
-    assert state.tools == {**AGENT_FACING_CODEX_TOOLS, "catalog": "clawdi-default"}
+    assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
 def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
@@ -3585,7 +3576,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
             ),
             AiProvider(
                 owner_user_id=seed_user.id,
-                provider_id="clawdi-managed-v2",
+                provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
                 type="custom_openai_compatible",
                 base_url="https://managed-provider.test/v1",
                 models=[{"id": "gpt-5.5"}],
@@ -3597,7 +3588,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
             ),
             AiProviderAuthPayload(
                 owner_user_id=seed_user.id,
-                provider_id="clawdi-managed-v2",
+                provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
                 auth_profile="default",
                 kind="api_key",
                 source="managed",
@@ -4826,12 +4817,11 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
     ]
     provider = AiProvider(
         owner_user_id=seed_user.id,
-        provider_id="clawdi-managed-v2",
+        provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
         type="custom_openai_compatible",
         base_url="https://sub2api.test/v1",
         models=managed_models,
-        # Simulate a stale v2 managed provider row from before the chat-completions contract.
-        api_mode="openai_responses",
+        api_mode="openai_chat",
         auth_type="api_key",
         auth_metadata={"source": "managed"},
         managed_by="clawdi",
@@ -4841,7 +4831,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
     db_session.add(
         AiProviderAuthPayload(
             owner_user_id=seed_user.id,
-            provider_id="clawdi-managed-v2",
+            provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
             auth_profile="default",
             kind="api_key",
             source="managed",
@@ -4902,7 +4892,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         await db_session.execute(
             AiProviderAuthPayload.__table__.select().where(
                 AiProviderAuthPayload.owner_user_id == seed_user.id,
-                AiProviderAuthPayload.provider_id == "clawdi-managed-v2",
+                AiProviderAuthPayload.provider_id == CANONICAL_CODEX_TOOL_PROVIDER_ID,
             )
         )
     ).first()
@@ -4911,7 +4901,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         AiProviderAuthPayload.__table__.update()
         .where(
             AiProviderAuthPayload.owner_user_id == seed_user.id,
-            AiProviderAuthPayload.provider_id == "clawdi-managed-v2",
+            AiProviderAuthPayload.provider_id == CANONICAL_CODEX_TOOL_PROVIDER_ID,
         )
         .values(encrypted_payload=ciphertext, nonce=nonce)
     )
@@ -4935,7 +4925,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
 
 
 @pytest.mark.asyncio
-async def test_runtime_state_normalizes_deployment_provider_and_resolves_its_catalog(
+async def test_runtime_state_preserves_deployment_provider_and_resolves_its_catalog(
     admin_client,
     db_session,
     seed_user,
@@ -4983,7 +4973,6 @@ async def test_runtime_state_normalizes_deployment_provider_and_resolves_its_cat
     await _write_runtime_state(
         admin_client,
         str(env.id),
-        deployment_id="42",
         runtimes=_runtime_state(
             provider_ids=[internal_provider_id],
             primary_model=internal_primary_model,
@@ -4999,14 +4988,14 @@ async def test_runtime_state_normalizes_deployment_provider_and_resolves_its_cat
 
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
-    primary_model = {
+    agent_primary_model = {
         "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
         "model": "gpt-5.5",
     }
-    assert state.runtimes["openclaw"]["provider_ids"] == [CLAWDI_MANAGED_PROVIDER_ID]
-    assert state.runtimes["openclaw"]["primary_model"] == primary_model
-    assert state.tools["codex"]["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
-    assert state.tools["codex"]["primary_model"] == primary_model
+    assert state.runtimes["openclaw"]["provider_ids"] == [internal_provider_id]
+    assert state.runtimes["openclaw"]["primary_model"] == internal_primary_model
+    assert state.tools["codex"]["provider_id"] == internal_provider_id
+    assert state.tools["codex"]["primary_model"] == internal_primary_model
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -5017,7 +5006,7 @@ async def test_runtime_state_normalizes_deployment_provider_and_resolves_its_cat
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["runtimes"]["openclaw"]["provider_ids"] == [CLAWDI_MANAGED_PROVIDER_ID]
-    assert manifest["runtimes"]["openclaw"]["primary_model"] == primary_model
+    assert manifest["runtimes"]["openclaw"]["primary_model"] == agent_primary_model
     assert set(manifest["providers"]) == {CLAWDI_MANAGED_PROVIDER_ID}
     assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == models
     assert manifest["terminalTooling"]["codex"]["provider_id"] == (CLAWDI_MANAGED_PROVIDER_ID)
@@ -5132,10 +5121,10 @@ async def test_admin_managed_provider_models_project_exact_hosted_wire_contract(
         },
     }
     upsert = await admin_client.put(
-        "/v1/admin/ai-providers/clawdi-managed-v2",
+        f"/v1/admin/ai-providers/{CANONICAL_CODEX_TOOL_PROVIDER_ID}",
         headers=_AUTH,
         json={
-            "target_clerk_id": seed_user.clerk_id,
+            "owner": {"kind": "clerk", "ref": seed_user.clerk_id},
             "base_url": "https://sub2api.test/v1",
             "api_key": "sk-complete-provider",
             "models": [model],

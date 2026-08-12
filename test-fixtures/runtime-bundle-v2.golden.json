@@ -42,7 +42,7 @@
 			"timezone": "UTC"
 		},
 		"providers": {
-			"managed": {
+			"clawdi": {
 				"apiKeySecretRef": "secret://tool.codex.apiKey",
 				"apiMode": "openai_chat",
 				"baseUrl": "https://provider.test/v1",
@@ -66,9 +66,9 @@
 				"providerMode": "configured",
 				"primary_model": {
 					"model": "gpt-test",
-					"provider_id": "managed"
+					"provider_id": "clawdi"
 				},
-				"provider_ids": ["managed"],
+				"provider_ids": ["clawdi"],
 				"run": {
 					"args": [
 						"gateway",
@@ -113,7 +113,7 @@
 				"enabled": true,
 				"primary_model": {
 					"model": "gpt-test",
-					"provider_id": "managed"
+					"provider_id": "clawdi"
 				},
 				"provider": {
 					"apiKeySecretRef": "secret://tool.codex.apiKey",
@@ -124,7 +124,7 @@
 					"runtimeEnvName": "OPENAI_API_KEY",
 					"type": "custom_openai_compatible"
 				},
-				"provider_id": "managed"
+				"provider_id": "clawdi"
 			}
 		}
 	},
@@ -136,5 +136,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "4f520b142dc64f7ebfcdedefc0cdc6ad587c097670cc5008154209b27a668070"
+	"sourceRevision": "764b225e72d3e539c099de4185901dfcf1fe62a1a884df1e48ed8f7c516308d2"
 }
