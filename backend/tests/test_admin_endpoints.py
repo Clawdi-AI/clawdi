@@ -1148,6 +1148,16 @@ async def test_admin_fixed_managed_provider_invalidates_bound_runtime_on_manifes
             json={**body, "api_key": "sk-fixed-rotated"},
         )
         assert credential_only.status_code == 200, credential_only.text
+        assert queue.get_nowait() == expected_event
+        assert queue.empty()
+
+        replayed_write = await admin_client.put(
+            f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
+            headers=_AUTH,
+            json={**body, "api_key": "sk-fixed-rotated"},
+        )
+        assert replayed_write.status_code == 200, replayed_write.text
+        assert queue.get_nowait() == expected_event
         assert queue.empty()
 
         catalog_changed = await admin_client.put(
@@ -1425,15 +1435,21 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
             json={**request_body, "api_key": "sk-rotated"},
         )
         assert credential_only.status_code == 200, credential_only.text
-        assert all(queue.empty() for queue in queues)
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
 
-        no_op = await admin_client.put(
+        replayed_write = await admin_client.put(
             f"/v1/admin/ai-providers/{provider_id}",
             headers=_AUTH,
             json={**request_body, "api_key": "sk-rotated"},
         )
-        assert no_op.status_code == 200, no_op.text
-        assert all(queue.empty() for queue in queues)
+        assert replayed_write.status_code == 200, replayed_write.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
 
         catalog_changed = await admin_client.put(
             f"/v1/admin/ai-providers/{provider_id}",
