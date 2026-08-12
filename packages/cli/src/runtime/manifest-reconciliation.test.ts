@@ -2142,51 +2142,32 @@ describe("runtime manifest reconciliation invariants", () => {
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 			configPatchPath: providerPatchPath,
 		});
-		const manifest = baseManifest(
-			paths,
-			{
-				openclaw: {
-					enabled: true,
-					install: {
-						authority: "official",
-						method: "official-installer",
-						url: OFFICIAL_INSTALL_URLS.openclaw,
-						home: paths.userHome,
-						args: officialInstallArgs("openclaw", paths.userHome),
-					},
-					providerMode: "configured",
-					run: runSettings("openclaw", ["gateway", "run"]),
-					provider_ids: ["default"],
-					primary_model: { provider_id: "default", model: "gpt-test" },
-					services: {},
-				},
-			},
-			{
-				runtime: "openclaw",
-				projection: {
-					providers: {
-						default: {
-							type: "custom_openai_compatible",
-							// managed_by:"clawdi" marks this as a Clawdi-managed provider
-							// (cloud-api emits it as `n:"clawdi"`), which routes the key
-							// through the egress placeholder path — the agent env gets the
-							// placeholder while the real key stays out of its env.
-							managed_by: "clawdi",
-							baseUrl: "https://api.example.test/v1",
-							model: "gpt-test",
-							apiMode: "openai_chat",
-							runtimeEnvName: "CLAWDI_AI_API_KEY",
-							apiKeySecretRef: "secret://providers/default/api-key",
-						},
+		const hosted = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						type: "custom_openai_compatible",
+						managed_by: "clawdi",
+						baseUrl: "https://api.example.test/v1",
+						models: [{ id: "gpt-test" }],
+						apiMode: "openai_chat",
+						runtimeEnvName: "CLAWDI_AI_API_KEY",
+						apiKeySecretRef: "secret://providers/default/api-key",
 					},
 				},
-			},
+			}),
 		);
+		const manifest = {
+			...hostedManifestToRuntimeManifest(hosted),
+			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-provider-model"),
+		};
 		const provider = hostedAiProviderCatalog(manifest, "openclaw")?.catalog.providers[0];
 		expect(provider?.runtime_env_name).toBe("CLAWDI_AI_API_KEY");
 
 		const result = convergeRuntimeManifest(
 			manifestLoad(manifest, "inline-managed-provider", {
+				...TEST_HOSTED_SECRET_VALUES,
 				"secret://providers/default/api-key": "sk-managed",
 			}),
 			paths,
@@ -2219,6 +2200,15 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 		expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
 		expect(envFile).not.toContain("sk-managed");
+		expect(JSON.parse(readFileSync(paths.providerHealthStatus, "utf8"))).toMatchObject({
+			providers: {
+				default: {
+					status: "ok",
+					models: [{ id: "gpt-test" }],
+					reasons: [],
+				},
+			},
+		});
 	});
 
 	test("replaces the selected Hermes provider with secret refs and stale cleanup", () => {

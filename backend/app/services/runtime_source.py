@@ -632,6 +632,10 @@ def render_runtime_source(
         provider_sources[agent_provider_id] = source_provider_id
     provider_material: dict[str, dict[str, Any]] = {}
     runtime_provider_ids = set(runtime["provider_ids"])
+    primary_model = runtime.get("primary_model")
+    selected_models = (
+        {primary_model["provider_id"]: primary_model["model"]} if primary_model else {}
+    )
     for agent_provider_id, source_provider_id in sorted(provider_sources.items()):
         provider = batch.providers.get((user_id, source_provider_id))
         is_codex_provider = agent_provider_id == codex_agent_provider_id
@@ -678,6 +682,7 @@ def render_runtime_source(
                 if payload is not None and payload.kind in {"agent_profile", "oauth_profile"}
                 else None
             ),
+            selected_model=selected_models.get(agent_provider_id),
         )
         if is_codex_provider and (
             provider_entry.get("apiMode") not in _CODEX_PROVIDER_SOURCE_API_MODES
@@ -1058,6 +1063,7 @@ def _provider_entry(
     *,
     secret_ref: str | None,
     credential_revision: str | None,
+    selected_model: str | None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "kind": "openai-compatible",
@@ -1079,6 +1085,7 @@ def _provider_entry(
         result["apiMode"] = api_mode
     if provider.managed_by == "clawdi":
         result["managed_by"] = provider.managed_by
+    models: list[dict[str, Any]] = []
     if provider.models is not None:
         try:
             models = [
@@ -1087,8 +1094,10 @@ def _provider_entry(
             ]
         except ValidationError as exc:
             raise RuntimeSourceError("Stored AI provider model metadata is invalid") from exc
-        if models:
-            result["models"] = models
+    if selected_model and not any(model["id"] == selected_model for model in models):
+        models.insert(0, {"id": selected_model})
+    if models:
+        result["models"] = models
     if runtime_env:
         result["runtimeEnvName"] = runtime_env
     if provider.auth_type in {"api_key", "secret_ref"} and not secret_ref:
