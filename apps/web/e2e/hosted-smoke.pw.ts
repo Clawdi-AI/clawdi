@@ -1,4 +1,4 @@
-import type { DeploymentRead } from "@clawdi/shared/api";
+import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
 import type { ManagedModelCatalogItem } from "../src/hosted/billing/contracts";
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
@@ -9,6 +9,22 @@ import {
 	mutationDeploymentReadFixture,
 	readDeploymentFixture,
 } from "./hosted-stub-api";
+
+type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress"];
+type PlanChangeKind = PlanChangeProgress["changeKind"];
+type PlanChangeBillingEffect = PlanChangeProgress["billingEffect"];
+type PlanChangeQuote = DeployComponents["schemas"]["V2ComputePlanChangeQuoteResponse"];
+
+function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingEffect {
+	switch (changeKind) {
+		case "immediate_upgrade":
+			return "immediate_proration";
+		case "scheduled_downgrade":
+			return "period_end";
+		case "funding_source_switch":
+			return "future_renewals";
+	}
+}
 
 declare global {
 	interface Window {
@@ -992,11 +1008,11 @@ function planChangeQuoteResponse({
 	targetPlanSlug: "compute_basic" | "compute_performance";
 	currentBillingTermMonths: 1 | 12;
 	targetBillingTermMonths: 1 | 12;
-	changeKind: "immediate_upgrade" | "scheduled_downgrade";
+	changeKind: PlanChangeKind;
 	effectiveAt: string;
 	amountCents: number;
 	amountUsd: string | null;
-}) {
+}): PlanChangeQuote {
 	return {
 		operation_id: operationId,
 		subscription_id: subscriptionId,
@@ -1006,6 +1022,7 @@ function planChangeQuoteResponse({
 		current_billing_term_months: currentBillingTermMonths,
 		target_billing_term_months: targetBillingTermMonths,
 		change_kind: changeKind,
+		billing_effect: planChangeBillingEffect(changeKind),
 		status: "quoted",
 		effective_at: effectiveAt,
 		proration_date: "2026-07-16T00:00:00Z",
@@ -1024,6 +1041,7 @@ function planChangeResponse({
 	currentPlanSlug,
 	targetPlanSlug,
 	targetBillingTermMonths,
+	changeKind,
 	status,
 	effectiveAt,
 }: {
@@ -1033,16 +1051,20 @@ function planChangeResponse({
 	currentPlanSlug: "compute_basic" | "compute_performance";
 	targetPlanSlug: "compute_basic" | "compute_performance";
 	targetBillingTermMonths: 1 | 12;
+	changeKind?: PlanChangeKind;
 	status: "awaiting_payment" | "awaiting_projection" | "scheduled" | "complete";
 	effectiveAt: string;
 }): { body: NonNullable<DeploymentRead["accepted_operation"]>; status: number } {
+	const resolvedChangeKind =
+		changeKind ?? (status === "scheduled" ? "scheduled_downgrade" : "immediate_upgrade");
+	const deploymentId = `hdep_plan_${subscriptionId}`;
 	return {
 		status: 202,
 		body: {
 			name: `operations/${operationId}`,
 			metadata: {
 				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
-				deploymentId: `hdep_plan_${subscriptionId}`,
+				deploymentId,
 				verb: "plan_change",
 				targetGeneration: 1,
 				manifestETag: `plan-change-${operationId}`,
@@ -1053,6 +1075,8 @@ function planChangeResponse({
 					operationId,
 					subscriptionId,
 					fundingSource,
+					changeKind: resolvedChangeKind,
+					billingEffect: planChangeBillingEffect(resolvedChangeKind),
 					sourcePlanSlug: currentPlanSlug,
 					targetPlanSlug,
 					targetBillingTermMonths,
@@ -1063,7 +1087,20 @@ function planChangeResponse({
 			},
 			done: status === "complete" || status === "scheduled",
 			error: null,
-			response: null,
+			response:
+				status === "complete" || status === "scheduled"
+					? {
+							"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+							deployment: mutationDeploymentReadFixture({
+								...paidBasicDeployment,
+								id: deploymentId,
+								config_info: {
+									...paidBasicDeployment.config_info,
+									compute_plan_slug: targetPlanSlug,
+								},
+							}).resource,
+						}
+					: null,
 		},
 	};
 }
@@ -3959,9 +3996,14 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	});
 	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
 
-	await page.getByRole("button", { name: "Change plan or billing term" }).click();
+	await page.getByRole("button", { name: "Change plan, term, or payment source" }).click();
 	const changeDialog = page.getByRole("dialog");
-	await expect(changeDialog.getByText("Funding source: Card", { exact: true })).toBeVisible();
+	await expect(changeDialog.getByRole("button", { name: "Card", exact: true })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+	await changeDialog.getByRole("combobox", { name: "Compute plan" }).click();
+	await page.getByRole("option", { name: "Performance", exact: true }).click();
 	await changeDialog.getByRole("button", { name: "Review change" }).click();
 	await expect.poll(() => planQuoteRequests.length).toBe(1);
 	await expect(changeDialog.getByText("$93.60", { exact: true })).toBeVisible();
@@ -3982,9 +4024,76 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	).toBeVisible();
 	await changeDialog.getByRole("button", { name: "Close", exact: true }).last().click();
 	await expect(changeDialog).not.toBeVisible();
-	await expect(page.getByRole("button", { name: "Check plan change status" })).toBeVisible();
+	await expect(
+		page.getByRole("button", { name: "Check subscription change status" }),
+	).toBeVisible();
 	await expect(page.getByText("Plan changed", { exact: true })).toBeVisible();
 	expect(errors, `paid card upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("paid card subscription switches future renewals to Wallet", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const planChangeRequests: string[] = [];
+	const planQuoteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [paidBasicDeployment],
+		planChangeRequests,
+		planChangeResponses: [
+			planChangeResponse({
+				operationId: "op_card_to_wallet",
+				subscriptionId: 42,
+				fundingSource: "wallet",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_basic",
+				targetBillingTermMonths: 12,
+				changeKind: "funding_source_switch",
+				status: "complete",
+				effectiveAt: "2026-07-16T00:00:00Z",
+			}),
+		],
+		planQuoteRequests,
+		planQuoteResponses: [
+			planChangeQuoteResponse({
+				operationId: "op_card_to_wallet",
+				subscriptionId: 42,
+				fundingSource: "wallet",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_basic",
+				currentBillingTermMonths: 12,
+				targetBillingTermMonths: 12,
+				changeKind: "funding_source_switch",
+				effectiveAt: "2026-07-16T00:00:00Z",
+				amountCents: 0,
+				amountUsd: "0.00",
+			}),
+		],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+
+	await page.getByRole("button", { name: "Change plan, term, or payment source" }).click();
+	const changeDialog = page.getByRole("dialog");
+	await changeDialog.getByRole("button", { name: "Wallet", exact: true }).click();
+	await changeDialog.getByRole("button", { name: "Review change" }).click();
+
+	await expect.poll(() => planQuoteRequests.length).toBe(1);
+	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
+		subscription_id: 42,
+		target_plan_slug: "compute_basic",
+		target_billing_term_months: 12,
+		funding_source: "wallet",
+	});
+	await expect(changeDialog.getByText("$0.00", { exact: true })).toBeVisible();
+	await expect(changeDialog.getByText("Future renewals use Wallet", { exact: true })).toBeVisible();
+	await changeDialog.getByRole("button", { name: "Update payment source" }).click();
+
+	await expect.poll(() => planChangeRequests.length).toBe(1);
+	expect(JSON.parse(planChangeRequests[0] ?? "{}")).toEqual({
+		operation_id: "op_card_to_wallet",
+	});
+	await expect(page.getByText("Payment method updated", { exact: true })).toBeVisible();
+	await expect(page.getByText("Future renewals will use Wallet.", { exact: true })).toBeVisible();
+	expect(errors, `card to Wallet switch: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("accepted plan change recovers from the deployment projection after refresh", async ({
@@ -4032,16 +4141,16 @@ test("accepted plan change recovers from the deployment projection after refresh
 	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
 	await page.reload();
 
-	await page.getByRole("button", { name: "Check plan change status" }).click();
-	const recoveryDialog = page.getByRole("dialog", { name: "Check plan change status" });
+	await page.getByRole("button", { name: "Check subscription change status" }).click();
+	const recoveryDialog = page.getByRole("dialog", { name: "Check subscription change status" });
 	await expect(
 		recoveryDialog.getByText(
-			"This plan change was already accepted. Checking its status will not submit another charge.",
+			"This subscription change was already accepted. Checking its status will not submit another request or charge.",
 			{ exact: true },
 		),
 	).toBeVisible();
 	await recoveryDialog.getByRole("button", { name: "Check status", exact: true }).click();
-	await expect(page.getByText("Couldn’t change plan", { exact: true })).toBeVisible();
+	await expect(page.getByText("Couldn’t update subscription", { exact: true })).toBeVisible();
 	const retryDialog = page.getByRole("dialog", { name: "Change compute subscription" });
 	await expect(retryDialog).toBeVisible();
 	await retryDialog.getByRole("button", { name: "Cancel", exact: true }).click();

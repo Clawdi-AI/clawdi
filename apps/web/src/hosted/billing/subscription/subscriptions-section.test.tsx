@@ -6,6 +6,9 @@ type SubscriptionsSectionModule =
 
 let SubscriptionAgentLink: SubscriptionsSectionModule["SubscriptionAgentLink"] | null = null;
 let SubscriptionLoadMore: SubscriptionsSectionModule["SubscriptionLoadMore"] | null = null;
+let subscriptionPaymentSourceLabel:
+	| SubscriptionsSectionModule["subscriptionPaymentSourceLabel"]
+	| null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -14,6 +17,7 @@ beforeAll(async () => {
 	const module = await import("@/hosted/billing/subscription/subscriptions-section");
 	SubscriptionAgentLink = module.SubscriptionAgentLink;
 	SubscriptionLoadMore = module.SubscriptionLoadMore;
+	subscriptionPaymentSourceLabel = module.subscriptionPaymentSourceLabel;
 });
 
 describe("SubscriptionsSection", () => {
@@ -30,5 +34,14 @@ describe("SubscriptionsSection", () => {
 			<SubscriptionLoadMore isLoading={false} onLoadMore={() => undefined} />,
 		);
 		expect(loadMore).toContain("Load more");
+	});
+
+	test("labels Included, Card, and Wallet from the generated funding source", () => {
+		if (!subscriptionPaymentSourceLabel) {
+			throw new Error("Subscription payment source helper was not loaded");
+		}
+		expect(subscriptionPaymentSourceLabel(null)).toBe("Included");
+		expect(subscriptionPaymentSourceLabel("stripe")).toBe("Card");
+		expect(subscriptionPaymentSourceLabel("wallet")).toBe("Wallet");
 	});
 });

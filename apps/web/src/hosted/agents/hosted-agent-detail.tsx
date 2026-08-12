@@ -159,6 +159,7 @@ import {
 import {
 	billingErrorNormalizer,
 	billingQueryRetry,
+	isPaymentMethodRequiredError,
 	normalizeBillingError,
 	PlanChangePendingError,
 	PlanChangeTerminalError,
@@ -174,11 +175,17 @@ import {
 	useQuotePlanChange,
 	useResumeSubscription,
 } from "@/hosted/billing/hooks";
+import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
 import {
 	activePlanChangeOperationName,
+	isCombinedPaidPlanChange,
+	isFundingSourceOnlySelection,
+	isValidPaidPlanChangeQuote,
 	type PlanChangeSelection,
 	performanceUpgradeUnavailableReason,
 	planChangeUnavailableReason,
+	shouldRecoverWalletToCardSwitch,
+	visiblePlanChangeOperationName,
 } from "@/hosted/billing/subscription/plan-change.logic";
 import { PlanChangeDialog } from "@/hosted/billing/subscription/plan-change-dialog";
 import { SubscriptionCreateDialog } from "@/hosted/billing/subscription/subscription-create-dialog";
@@ -3582,10 +3589,18 @@ function ComputeSettingsSections({
 	const lifecycle = useDeploymentLifecycle();
 	const plans = usePlans();
 	const quotePlanChange = useQuotePlanChange();
+	const billingPortal = useSensitiveBillingPortal();
 	const projectedPlanChangeName = activePlanChangeOperationName(deployment);
 	const [acceptedPlanChangeName, setAcceptedPlanChangeName] = useState<string | null>(null);
-	const pendingPlanChangeName = projectedPlanChangeName ?? acceptedPlanChangeName;
-	const changePlan = useChangePlan(setAcceptedPlanChangeName);
+	const [ignoredPlanChangeNames, setIgnoredPlanChangeNames] = useState<readonly string[]>([]);
+	const visibleProjectedPlanChangeName = visiblePlanChangeOperationName(
+		projectedPlanChangeName,
+		ignoredPlanChangeNames,
+	);
+	const pendingPlanChangeName = acceptedPlanChangeName ?? visibleProjectedPlanChangeName;
+	const changePlan = useChangePlan((operationName) => {
+		setAcceptedPlanChangeName(operationName);
+	});
 	const checkPlanChange = useCheckPlanChange();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
@@ -3632,6 +3647,7 @@ function ComputeSettingsSections({
 	const [planChangeQuote, setPlanChangeQuote] = useState<ComputePlanChangeQuoteResponse | null>(
 		null,
 	);
+	const [planChangePaymentMethodRequired, setPlanChangePaymentMethodRequired] = useState(false);
 	const walletTopUp = useWalletTopUpDialog(PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
@@ -3675,6 +3691,7 @@ function ComputeSettingsSections({
 			)
 		: null;
 	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
+	const paymentSourceOnly = currentSubscription?.status === "past_due";
 	const planChangeUnavailable = currentSubscription
 		? planChangeUnavailableReason({
 				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
@@ -3723,13 +3740,76 @@ function ComputeSettingsSections({
 		setAcceptedPlanChangeName(null);
 		walletTopUp.reset();
 	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, walletTopUp.reset]);
+	function ignorePlanChangeOperation(operationName: string | null) {
+		if (operationName === null) return;
+		setIgnoredPlanChangeNames((current) =>
+			current.includes(operationName) ? current : [...current, operationName],
+		);
+	}
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
 	}
 
+	async function openPaymentMethods() {
+		ignorePlanChangeOperation(pendingPlanChangeName);
+		setPlanChangeQuote(null);
+		setPlanChangePaymentMethodRequired(false);
+		setAcceptedPlanChangeName(null);
+		try {
+			const result = await billingPortal.execute({});
+			const url = result.url || result.portal_url;
+			if (url) {
+				window.location.href = url;
+				return;
+			}
+			toast.error("Billing portal unavailable", {
+				description: "Refresh this page and try again in a moment.",
+			});
+			setPlanChangePaymentMethodRequired(true);
+		} catch (error) {
+			setPlanChangePaymentMethodRequired(true);
+			toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
+		}
+	}
+
 	async function requestPlanChangeQuote(selection: PlanChangeSelection) {
-		if (!hostedAccess.canCreateCloudAgents || !subscriptionId || planChangeUnavailable !== null) {
+		if (
+			!hostedAccess.canCreateCloudAgents ||
+			!subscriptionId ||
+			!computePlanSlug ||
+			planChangeUnavailable !== null
+		) {
+			return;
+		}
+		if (
+			paymentSourceOnly &&
+			!isFundingSourceOnlySelection(
+				selection,
+				computePlanSlug,
+				currentBillingTerm,
+				isWalletFunded ? "wallet" : "stripe",
+			)
+		) {
+			toast.error("Only the payment source can be changed", {
+				description:
+					"This subscription can’t change plan or billing term while past due. Choose a different payment source to continue.",
+			});
+			return;
+		}
+		if (
+			isPaidCompute &&
+			isCombinedPaidPlanChange(
+				selection,
+				computePlanSlug,
+				currentBillingTerm,
+				isWalletFunded ? "wallet" : "stripe",
+			)
+		) {
+			toast.error("Choose one subscription change", {
+				description:
+					"Change the plan or billing term using the current payment source, or change only the payment source.",
+			});
 			return;
 		}
 		try {
@@ -3741,10 +3821,45 @@ function ComputeSettingsSections({
 				subscription_id: subscriptionId,
 				...selection,
 			});
+			const currentFundingSource = isWalletFunded ? "wallet" : "stripe";
+			const validPaidQuote =
+				!isPaidCompute ||
+				isValidPaidPlanChangeQuote(
+					quote,
+					selection,
+					computePlanSlug,
+					currentBillingTerm,
+					currentFundingSource,
+				);
+			if (!validPaidQuote) {
+				setPlanChangeQuote(null);
+				setAcceptedPlanChangeName(null);
+				setPlanChangePaymentMethodRequired(false);
+				toast.error("Couldn’t verify subscription change", {
+					description: "The quote did not match the requested change. Request a fresh quote.",
+				});
+				return;
+			}
 			setAcceptedPlanChangeName(null);
+			setPlanChangePaymentMethodRequired(false);
 			setPlanChangeQuote(quote);
 		} catch (error) {
-			toast.error("Couldn’t quote plan change", {
+			if (
+				isPaidCompute &&
+				shouldRecoverWalletToCardSwitch(
+					error,
+					selection,
+					computePlanSlug,
+					currentBillingTerm,
+					isWalletFunded ? "wallet" : "stripe",
+				)
+			) {
+				setPlanChangeQuote(null);
+				setAcceptedPlanChangeName(null);
+				setPlanChangePaymentMethodRequired(true);
+				return;
+			}
+			toast.error("Couldn’t quote subscription change", {
 				description: normalizeBillingError(error),
 			});
 		}
@@ -3755,19 +3870,24 @@ function ComputeSettingsSections({
 			toast.success("Downgrade scheduled", {
 				description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
 			});
-		} else if (result.kind === "complete") {
-			toast.success("Plan changed", {
-				description: "Your compute subscription has been updated.",
-			});
 		} else {
-			toast.info("Plan change in progress", {
-				description:
-					result.waitingFor === "payment"
-						? "We’re still waiting for payment confirmation. Your compute plan has not changed yet."
-						: "Your request was received, but the compute plan has not updated yet. You can watch its status here.",
-			});
+			if (result.changeKind === "funding_source_switch") {
+				toast.success("Payment method updated", {
+					description:
+						result.fundingSource === "wallet"
+							? "Future renewals will use Wallet."
+							: "Future renewals will use Card.",
+				});
+			} else {
+				toast.success("Plan changed", {
+					description: "Your compute subscription has been updated.",
+				});
+			}
 		}
 		setAcceptedPlanChangeName(null);
+		ignorePlanChangeOperation(result.operationName);
+		setPlanChangeQuote(null);
+		setPlanChangePaymentMethodRequired(false);
 		setPlanChangeDialogOpen(false);
 	}
 
@@ -3776,15 +3896,26 @@ function ComputeSettingsSections({
 			setAcceptedPlanChangeName(error.operationName);
 			toast.info("Still waiting for confirmation", {
 				description:
-					"We don’t have a final result yet. Don’t submit another plan change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another charge.",
+					"We don’t have a final result yet. Don’t submit another subscription change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another request or charge.",
 			});
 			return;
 		}
 		if (error instanceof PlanChangeTerminalError) {
 			setAcceptedPlanChangeName(null);
+			ignorePlanChangeOperation(error.operationName ?? pendingPlanChangeName);
+			setPlanChangeQuote(null);
+			setPlanChangePaymentMethodRequired(false);
+			if (
+				error.fundingSource === "stripe" &&
+				error.changeKind === "funding_source_switch" &&
+				isPaymentMethodRequiredError(error)
+			) {
+				setPlanChangePaymentMethodRequired(true);
+				return;
+			}
 		}
 		if (walletTopUp.handleFundingError(error)) return;
-		toast.error("Couldn’t change plan", {
+		toast.error("Couldn’t update subscription", {
 			description: normalizeBillingError(error),
 		});
 	}
@@ -3868,9 +3999,11 @@ function ComputeSettingsSections({
 					onOpenChange={setPlanChangeDialogOpen}
 					plans={plans.data ?? []}
 					currentPlanSlug={computePlanSlug}
+					initialPlanSlug={isIncludedBasic ? COMPUTE_PERFORMANCE_SLUG : computePlanSlug}
 					currentBillingTermMonths={currentBillingTerm}
-					defaultFundingSource={isWalletFunded ? "wallet" : "stripe"}
-					fundingSourceSelectable={isIncludedBasic}
+					currentFundingSource={isWalletFunded ? "wallet" : "stripe"}
+					allowCombinedChange={isIncludedBasic}
+					paymentSourceOnly={paymentSourceOnly}
 					quote={planChangeQuote}
 					walletBalanceUsd={wallet.data?.balance_usd ?? null}
 					isQuoting={quotePlanChange.isPending}
@@ -3880,8 +4013,14 @@ function ComputeSettingsSections({
 					onConfirm={confirmPlanChange}
 					onCheckStatus={checkAcceptedPlanChange}
 					onTopUp={() => walletTopUp.show()}
+					paymentMethodRequired={planChangePaymentMethodRequired}
+					isManagingPaymentMethods={billingPortal.isPending}
+					onManagePaymentMethods={() => void openPaymentMethods()}
 					onExitComplete={() => {
-						if (pendingPlanChangeName === null) setPlanChangeQuote(null);
+						if (pendingPlanChangeName === null) {
+							setPlanChangeQuote(null);
+							setPlanChangePaymentMethodRequired(false);
+						}
 					}}
 				/>
 			) : null}
@@ -3903,7 +4042,7 @@ function ComputeSettingsSections({
 							</Badge>
 							{isPaidCompute ? (
 								<Badge variant="outline" className="font-normal text-muted-foreground">
-									{isWalletFunded ? "Wallet" : "Card"}
+									Payment source: {isWalletFunded ? "Wallet" : "Card"}
 								</Badge>
 							) : hasWalletFallback ? (
 								<Badge variant="outline" className="font-normal text-muted-foreground">
@@ -3975,7 +4114,7 @@ function ComputeSettingsSections({
 										<Zap data-icon="inline-start" />
 									)}
 									{pendingPlanChangeName
-										? "Check plan change status"
+										? "Check subscription change status"
 										: hasTerminalFallback
 											? "Start a new subscription"
 											: "Upgrade to Performance"}
@@ -4023,8 +4162,10 @@ function ComputeSettingsSections({
 											onClick={() => setPlanChangeDialogOpen(true)}
 										>
 											{pendingPlanChangeName
-												? "Check plan change status"
-												: "Change plan or billing term"}
+												? "Check subscription change status"
+												: paymentSourceOnly
+													? "Change payment source"
+													: "Change plan, term, or payment source"}
 										</Button>
 										<ConfirmAction
 											title={`Cancel ${tierLabel} subscription?`}

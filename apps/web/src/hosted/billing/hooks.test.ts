@@ -12,12 +12,14 @@ import type {
 	HostedDeployment,
 	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
+import { BillingApiError, PlanChangeTerminalError } from "@/hosted/billing/errors";
 import {
 	applyDeploymentSubscriptionResult,
 	billingKeys,
 	billingNextPageParam,
 	billingRecoveryRefetchIntervalFor,
 	HOSTED_DEPLOYMENTS_REFRESH_POLICY,
+	invalidateSettledPlanChangeQueries,
 	reconcileDeploymentSnapshots,
 	refreshCheckoutReturnQueries,
 } from "@/hosted/billing/hooks";
@@ -87,6 +89,37 @@ describe("subscription pagination", () => {
 		);
 		expect(billingNextPageParam({ has_more: true, next_cursor: null })).toBeUndefined();
 		expect(billingNextPageParam({ has_more: false, next_cursor: "cursor-stale" })).toBeUndefined();
+	});
+});
+
+describe("plan change cache invalidation", () => {
+	test("invalidates all billing inventory only after success or a terminal outcome", () => {
+		const affectedKeys = [
+			billingKeys.deployments,
+			billingKeys.wallet,
+			billingKeys.transactions,
+			billingKeys.subscriptions,
+		] as const;
+		for (const error of [
+			null,
+			new PlanChangeTerminalError(409, "payment_method_required"),
+		] as const) {
+			const qc = new QueryClient();
+			for (const queryKey of affectedKeys) qc.setQueryData(queryKey, { current: true });
+
+			invalidateSettledPlanChangeQueries(qc, error);
+
+			for (const queryKey of affectedKeys) {
+				expect(qc.getQueryState(queryKey)?.isInvalidated).toBe(true);
+			}
+		}
+
+		const pending = new QueryClient();
+		for (const queryKey of affectedKeys) pending.setQueryData(queryKey, { current: true });
+		invalidateSettledPlanChangeQueries(pending, new BillingApiError(503, "still processing"));
+		for (const queryKey of affectedKeys) {
+			expect(pending.getQueryState(queryKey)?.isInvalidated).toBe(false);
+		}
 	});
 });
 

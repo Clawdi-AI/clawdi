@@ -581,6 +581,16 @@ export interface components {
              * @enum {string}
              */
             fundingSource: "stripe" | "wallet";
+            /**
+             * Changekind
+             * @enum {string}
+             */
+            changeKind: "immediate_upgrade" | "scheduled_downgrade" | "funding_source_switch";
+            /**
+             * Billingeffect
+             * @enum {string}
+             */
+            billingEffect: "immediate_proration" | "period_end" | "future_renewals";
             /** Sourceplanslug */
             sourcePlanSlug: string;
             /** Targetplanslug */
@@ -1237,7 +1247,12 @@ export interface components {
              * Change Kind
              * @enum {string}
              */
-            change_kind: "immediate_upgrade" | "scheduled_downgrade";
+            change_kind: "immediate_upgrade" | "scheduled_downgrade" | "funding_source_switch";
+            /**
+             * Billing Effect
+             * @enum {string}
+             */
+            billing_effect: "immediate_proration" | "period_end" | "future_renewals";
             /**
              * Status
              * @default quoted
@@ -1319,6 +1334,8 @@ export interface components {
             subscription_id: string;
             /** Plan Slug */
             plan_slug: string;
+            /** Funding Source */
+            funding_source: ("stripe" | "wallet") | null;
             /**
              * Status
              * @enum {string}

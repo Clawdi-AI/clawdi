@@ -10,7 +10,11 @@
  */
 
 import { toast } from "sonner";
-import type { HostedDeployRequestStatus } from "@/hosted/billing/contracts";
+import type {
+	ComputePlanChangeFundingSource,
+	ComputePlanChangeKind,
+	HostedDeployRequestStatus,
+} from "@/hosted/billing/contracts";
 
 export class BillingApiError extends Error {
 	constructor(
@@ -102,7 +106,7 @@ export function deploymentRequestTerminalOutcome(
 /** A plan change remains nonterminal after the bounded foreground poll. */
 export class PlanChangePendingError extends Error {
 	constructor(public readonly operationName: string) {
-		super("We're still waiting for the plan change to finish. Check the status again in a moment.");
+		super("We're still waiting for the subscription change to finish. Check again in a moment.");
 		this.name = "PlanChangePendingError";
 	}
 }
@@ -110,6 +114,17 @@ export class PlanChangePendingError extends Error {
 /** The accepted plan change reached an explicit failed terminal state. */
 export class PlanChangeTerminalError extends BillingApiError {
 	override name = "PlanChangeTerminalError";
+
+	constructor(
+		status: number,
+		detail: string,
+		payload?: unknown,
+		public readonly changeKind: ComputePlanChangeKind | null = null,
+		public readonly fundingSource: ComputePlanChangeFundingSource | null = null,
+		public readonly operationName: string | null = null,
+	) {
+		super(status, detail, payload);
+	}
 }
 
 function hasDetail(value: unknown): value is { detail: unknown } {
@@ -314,6 +329,14 @@ export function isInsufficientBalanceError(error: unknown): boolean {
 	if (!(error instanceof BillingApiError)) return false;
 	if (error.status !== 403 && error.status !== 402) return false;
 	return billingErrorDetail(error)?.code === INSUFFICIENT_WALLET_BALANCE_CODE;
+}
+
+export function isPaymentMethodRequiredError(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		(error.detail === "payment_method_required" ||
+			billingErrorDetail(error)?.code === "payment_method_required")
+	);
 }
 
 /**

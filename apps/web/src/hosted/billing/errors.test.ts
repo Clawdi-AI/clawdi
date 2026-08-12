@@ -10,6 +10,7 @@ import {
 	isForbiddenError,
 	isInsufficientBalanceError,
 	isNetworkError,
+	isPaymentMethodRequiredError,
 	isRetryableError,
 	isServerError,
 	normalizeBillingError,
@@ -134,9 +135,16 @@ describe("normalizeBillingError", () => {
 	});
 
 	test("snake_case codes stay internal while real sentences pass through", () => {
-		expect(normalizeBillingError(new BillingApiError(400, "payment_method_required"))).toBe(
+		const paymentMethodRequired = new BillingApiError(400, "payment_method_required");
+		expect(normalizeBillingError(paymentMethodRequired)).toBe(
 			"Add a payment method and try again.",
 		);
+		expect(isPaymentMethodRequiredError(paymentMethodRequired)).toBe(true);
+		expect(
+			isPaymentMethodRequiredError(
+				new BillingApiError(409, "Request failed", { detail: { code: "payment_method_required" } }),
+			),
+		).toBe(true);
 		expect(normalizeBillingError(new BillingApiError(400, "bridge_internal_17"))).not.toContain(
 			"bridge_internal_17",
 		);

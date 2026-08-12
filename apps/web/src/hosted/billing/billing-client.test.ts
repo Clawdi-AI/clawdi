@@ -6,7 +6,12 @@ import {
 	unwrapDeploy,
 } from "@/hosted/billing/billing-client";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
-import type { DeploymentOperation } from "@/hosted/billing/contracts";
+import type {
+	ComputePlanChangeBillingEffect,
+	ComputePlanChangeKind,
+	ComputePlanChangeProgress,
+	DeploymentOperation,
+} from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
 	BillingNetworkError,
@@ -109,9 +114,29 @@ function operation({
 }
 
 function planChangeOperation(
-	state: string,
-	{ done = false, error = null }: { done?: boolean; error?: unknown } = {},
-) {
+	state: ComputePlanChangeProgress["state"],
+	{
+		done = false,
+		error = null,
+		changeKind = "immediate_upgrade",
+		billingEffect = changeKind === "funding_source_switch"
+			? "future_renewals"
+			: "immediate_proration",
+		fundingSource = "wallet",
+		sourcePlanSlug = "compute_basic",
+		targetPlanSlug = changeKind === "funding_source_switch"
+			? sourcePlanSlug
+			: "compute_performance",
+	}: {
+		done?: boolean;
+		error?: DeploymentOperation["error"];
+		changeKind?: ComputePlanChangeKind;
+		billingEffect?: ComputePlanChangeBillingEffect;
+		fundingSource?: "stripe" | "wallet";
+		sourcePlanSlug?: string;
+		targetPlanSlug?: string;
+	} = {},
+): DeploymentOperation {
 	return {
 		name: "operations/plan-change-1",
 		metadata: {
@@ -126,9 +151,11 @@ function planChangeOperation(
 				"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
 				operationId: "plan-change-1",
 				subscriptionId: 42,
-				fundingSource: "wallet",
-				sourcePlanSlug: "compute_basic",
-				targetPlanSlug: "compute_performance",
+				fundingSource,
+				changeKind,
+				billingEffect,
+				sourcePlanSlug,
+				targetPlanSlug,
 				targetBillingTermMonths: 1,
 				state,
 				effectiveAt: NOW,
@@ -136,7 +163,13 @@ function planChangeOperation(
 		},
 		done,
 		error,
-		response: null,
+		response:
+			done && error === null
+				? {
+						"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+						deployment: hostedDeploymentFixture({ id: "hdep_test" }).resource,
+					}
+				: null,
 	};
 }
 
@@ -946,6 +979,7 @@ describe("account compute subscriptions", () => {
 						{
 							subscription_id: "csub_test",
 							plan_slug: "compute_performance",
+							funding_source: "stripe",
 							status: "active",
 							price_cents: 2_000,
 							currency: "usd",
@@ -1018,7 +1052,11 @@ describe("compute plan changes", () => {
 			}),
 		).resolves.toEqual({
 			kind: "complete",
+			operationName: "operations/plan-change-1",
 			effectiveAt: NOW,
+			changeKind: "immediate_upgrade",
+			billingEffect: "immediate_proration",
+			fundingSource: "wallet",
 		});
 		expect(acceptedOperations).toEqual(["operations/plan-change-1"]);
 		expect(requests.map((request) => request.method)).toEqual(["POST", "GET", "GET"]);
@@ -1063,7 +1101,11 @@ describe("compute plan changes", () => {
 		complete = true;
 		await expect(client.checkPlanChange(pending.operationName)).resolves.toEqual({
 			kind: "complete",
+			operationName: "operations/plan-change-1",
 			effectiveAt: NOW,
+			changeKind: "immediate_upgrade",
+			billingEffect: "immediate_proration",
+			fundingSource: "wallet",
 		});
 		expect(requests.map((request) => request.method)).toEqual(["GET"]);
 	});
@@ -1103,5 +1145,86 @@ describe("compute plan changes", () => {
 		const result = client.changePlan({ operation_id: "plan-change-1" });
 		await expect(result).rejects.toBeInstanceOf(PlanChangeTerminalError);
 		await expect(result).rejects.toThrow("The payment method was rejected");
+	});
+
+	it("keeps funding-source switch context on terminal outcomes", async () => {
+		const completed = planChangeOperation("complete", {
+			done: true,
+			changeKind: "funding_source_switch",
+			fundingSource: "stripe",
+		});
+		const completeClient = testClient(async () => jsonResponse(completed));
+
+		await expect(completeClient.checkPlanChange(completed.name)).resolves.toEqual({
+			kind: "complete",
+			operationName: "operations/plan-change-1",
+			effectiveAt: NOW,
+			changeKind: "funding_source_switch",
+			billingEffect: "future_renewals",
+			fundingSource: "stripe",
+		});
+
+		const failed = planChangeOperation("failed", {
+			done: true,
+			changeKind: "funding_source_switch",
+			fundingSource: "stripe",
+			error: {
+				code: 9,
+				message: "A card is required.",
+				details: [
+					{
+						"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+						type: "https://api.clawdi.ai/problems/payment-method-required",
+						title: "A card is required",
+						status: 409,
+						detail: "payment_method_required",
+						code: "payment_method_required",
+						phase: "plan_change",
+						retryable: false,
+						conditionReason: "PaymentMethodRequired",
+						conditionMessage: "Add a card and try again.",
+						observedGeneration: 2,
+					},
+				],
+			},
+		});
+		const failedClient = testClient(async () => jsonResponse(failed));
+
+		try {
+			await failedClient.checkPlanChange(failed.name);
+			throw new Error("Expected the plan change to fail");
+		} catch (error) {
+			expect(error).toBeInstanceOf(PlanChangeTerminalError);
+			if (!(error instanceof PlanChangeTerminalError)) throw error;
+			expect(error.changeKind).toBe("funding_source_switch");
+			expect(error.fundingSource).toBe("stripe");
+			expect(error.operationName).toBe("operations/plan-change-1");
+		}
+	});
+
+	it("rejects incomplete or mismatched plan-change metadata instead of reporting success", async () => {
+		const mismatched = planChangeOperation("complete", {
+			done: true,
+			changeKind: "funding_source_switch",
+			billingEffect: "immediate_proration",
+			fundingSource: "stripe",
+		});
+		const missingFundingSource = planChangeOperation("complete", { done: true });
+		if (missingFundingSource.metadata.planChange) {
+			Reflect.deleteProperty(missingFundingSource.metadata.planChange, "fundingSource");
+		}
+		const missingMetadata = {
+			...planChangeOperation("complete", { done: true }),
+			metadata: undefined,
+		};
+		const invalidResponse = {
+			...planChangeOperation("complete", { done: true }),
+			response: { "@type": "type.googleapis.com/google.protobuf.Empty" },
+		};
+
+		for (const operation of [mismatched, missingFundingSource, missingMetadata, invalidResponse]) {
+			const client = testClient(async () => jsonResponse(operation));
+			await expect(client.checkPlanChange(operation.name)).rejects.toMatchObject({ status: 502 });
+		}
 	});
 });
