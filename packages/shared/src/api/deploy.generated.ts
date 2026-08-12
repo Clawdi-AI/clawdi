@@ -450,6 +450,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscriptions/reusable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Reusable Subscriptions */
+        get: operations["list_v2_reusable_subscriptions_v2_subscriptions_reusable_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/usage": {
         parameters: {
             query?: never;
@@ -1033,9 +1050,19 @@ export interface components {
             /** Version */
             version?: string | null;
         };
+        /** TerminalProviderIdentity */
+        TerminalProviderIdentity: {
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Auth Kind
+             * @constant
+             */
+            auth_kind: "managed";
+        };
         /** TerminalToolProviderConfiguration */
         TerminalToolProviderConfiguration: {
-            provider: components["schemas"]["RuntimeProviderConfiguration"];
+            provider: components["schemas"]["TerminalProviderIdentity"];
             primary_model: components["schemas"]["ProviderModelReference"];
         };
         /** TerminalToolingConfiguration */
@@ -1196,6 +1223,16 @@ export interface components {
             /** Locale */
             locale?: string | null;
             quote?: components["schemas"]["V2ComputeSubscriptionQuoteResponse-Input"] | null;
+            /** Subscription Selection */
+            subscription_selection?: (components["schemas"]["V2ComputeUseExistingSubscription"] | components["schemas"]["V2ComputeCreateNewSubscription"]) | null;
+        };
+        /** V2ComputeCreateNewSubscription */
+        V2ComputeCreateNewSubscription: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "new";
         };
         /** V2ComputeFixPaymentRequest */
         V2ComputeFixPaymentRequest: {
@@ -1295,6 +1332,60 @@ export interface components {
         V2ComputePortalRequest: {
             /** Locale */
             locale?: string | null;
+        };
+        /** V2ComputeReusableSubscriptionItem */
+        V2ComputeReusableSubscriptionItem: {
+            /**
+             * Subscription Id
+             * Format: sqid
+             * @example csub_K8fJ3pQm
+             */
+            subscription_id: string;
+            /**
+             * Plan Slug
+             * @enum {string}
+             */
+            plan_slug: "compute_basic" | "compute_performance";
+            /**
+             * Billing Term Months
+             * @enum {integer}
+             */
+            billing_term_months: 1 | 12;
+            /**
+             * Funding Source
+             * @enum {string}
+             */
+            funding_source: "stripe" | "wallet";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "trialing" | "active" | "canceling";
+            /** Price Cents */
+            price_cents?: number | null;
+            /** Currency */
+            currency: string;
+            /** Current Period End */
+            current_period_end?: string | null;
+            /**
+             * Entitled Until
+             * Format: date-time
+             */
+            entitled_until: string;
+            /** Cancel At Period End */
+            cancel_at_period_end: boolean;
+        };
+        /** V2ComputeReusableSubscriptionsResponse */
+        V2ComputeReusableSubscriptionsResponse: {
+            /** Items */
+            items?: components["schemas"]["V2ComputeReusableSubscriptionItem"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** V2ComputeSubscriptionActionResponse */
         V2ComputeSubscriptionActionResponse: {
@@ -1478,6 +1569,20 @@ export interface components {
             /** Subscription Id */
             subscription_id?: string | null;
         };
+        /** V2ComputeUseExistingSubscription */
+        V2ComputeUseExistingSubscription: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "existing";
+            /**
+             * Subscription Id
+             * Format: sqid
+             * @example csub_K8fJ3pQm
+             */
+            subscription_id: string;
+        };
         /** V2DeleteDeploymentConvergedResponse */
         V2DeleteDeploymentConvergedResponse: {
             /** Deployment Id */
@@ -1492,7 +1597,7 @@ export interface components {
         V2DeleteDeploymentRequest: {
             /**
              * Subscription Choice
-             * @description Whether deletion keeps the paid subscription available for reuse or cancels it at the provider. Omission safely keeps the subscription.
+             * @description Whether deletion keeps the paid subscription so it becomes reusable after deletion completes, or cancels it at the provider. Omission safely keeps the subscription.
              * @default keep_subscription
              * @enum {string}
              */
@@ -3590,6 +3695,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2ComputeSubscriptionListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_v2_reusable_subscriptions_v2_subscriptions_reusable_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeReusableSubscriptionsResponse"];
                 };
             };
             /** @description Validation Error */

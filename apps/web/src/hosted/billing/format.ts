@@ -28,6 +28,19 @@ export function formatCents(cents: number): string {
 	return formatUsd(cents / 100);
 }
 
+/** Minor currency units -> a localized amount, with a safe ISO-code fallback. */
+export function formatCurrencyCents(cents: number, currency: string): string {
+	if (currency.toLowerCase() === "usd") return formatCents(cents);
+	try {
+		return new Intl.NumberFormat("en-US", {
+			style: "currency",
+			currency,
+		}).format(cents / 100);
+	} catch {
+		return `${(cents / 100).toFixed(2)} ${currency.toUpperCase()}`;
+	}
+}
+
 /** Dollars → "$10.00". */
 export function formatUsd(dollars: number): string {
 	if (!Number.isFinite(dollars)) return "—";

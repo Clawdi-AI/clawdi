@@ -343,6 +343,7 @@ describe("hosted deploy compute and payment contract", () => {
 		expect(
 			buildHostedDeployCheckoutRequest({
 				selection,
+				subscriptionSelection: { mode: "new" },
 				target: { kind: "new_deployment", deployRequest },
 				idempotencyKey: "request-stable",
 				quote,
@@ -352,6 +353,7 @@ describe("hosted deploy compute and payment contract", () => {
 			funding_source: "wallet",
 			ui_mode: "hosted",
 			quote,
+			subscription_selection: { mode: "new" },
 			deploy_config: { deploy_request_id: "request-stable" },
 		});
 	});

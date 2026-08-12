@@ -42,20 +42,31 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 			}),
 		});
 	});
+	await page.route(`${DEPLOY_API}/v2/subscriptions/reusable?*`, async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({ items: [], has_more: false, next_cursor: null }),
+		});
+	});
 
 	await page.goto("/deploy");
 	await expect(page.getByRole("heading", { name: "Deploy an Agent" })).toBeVisible();
 
-	await page.getByRole("button", { name: /OpenClaw/i }).click();
-	await expect(page.getByRole("button", { name: /OpenClaw/i })).toHaveAttribute(
+	const deployWizard = page.locator("main");
+	await deployWizard.getByRole("button", { name: /OpenClaw/i }).click();
+	await expect(deployWizard.getByRole("button", { name: /OpenClaw/i })).toHaveAttribute(
 		"aria-pressed",
 		"true",
 	);
-	await expect(page.getByRole("button", { name: /Hermes/i })).toHaveAttribute(
+	await expect(deployWizard.getByRole("button", { name: /Hermes/i })).toHaveAttribute(
 		"aria-pressed",
 		"false",
 	);
-	await expect(page.getByText("Free", { exact: true }).first()).toBeVisible();
+	const includedBasic = page.getByRole("button", { name: /Included Basic/ });
+	await expect(includedBasic).toBeVisible();
+	await includedBasic.click();
+	await expect(includedBasic).toHaveAttribute("aria-pressed", "true");
 
 	const createdResponse = page.waitForResponse(
 		(response) =>

@@ -197,7 +197,11 @@ describe("deploySubmissionErrorPresentation", () => {
 		expect(presentation.description).toContain("No payment was submitted");
 	});
 
-	test("keeps ambiguous wallet and create failures on the idempotent retry path", () => {
+	test("keeps ambiguous assignment, wallet, and create failures on the idempotent retry path", () => {
+		const assignment = deploySubmissionErrorPresentation(
+			new BillingNetworkError("offline"),
+			"subscription_assignment",
+		);
 		const wallet = deploySubmissionErrorPresentation(
 			new BillingNetworkError("timeout"),
 			"wallet_creation",
@@ -207,6 +211,9 @@ describe("deploySubmissionErrorPresentation", () => {
 			"included_creation",
 		);
 
+		expect(assignment.title).toBe("We couldn’t confirm this attempt");
+		expect(assignment.description).toContain("safely resume the same attempt");
+		expect(assignment.description).not.toMatch(/payment|wallet/i);
 		expect(wallet.title).toBe("We couldn’t confirm this attempt");
 		expect(wallet.description).toContain("safely resume the same attempt");
 		expect(wallet.description).not.toContain("No Wallet payment was made");

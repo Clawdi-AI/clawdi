@@ -11,6 +11,7 @@ export const billingKeys = {
 		[...subscriptionCreateQuotes, planSlug, billingTermMonths, fundingSource] as const,
 	plans: ["billing", "plans"] as const,
 	subscriptions: ["billing", "subscriptions"] as const,
+	reusableSubscriptions: ["billing", "reusable-subscriptions"] as const,
 	deployments: ["billing", "deployments"] as const,
 	workspaceSkills: (deploymentId: string) =>
 		["hosted", "deployments", deploymentId, "skills"] as const,

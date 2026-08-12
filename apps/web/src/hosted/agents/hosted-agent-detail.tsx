@@ -3734,7 +3734,7 @@ function ComputeSettingsSections({
 				status: currentSubscription.status,
 				subscriptionId,
 			})
-		: "Start a new subscription to change this agent’s paid compute.";
+		: "Choose a subscription to change this agent’s paid compute.";
 	const upgradeUnavailableMessage = performanceUpgradeUnavailableReason({
 		plansLoading: plans.isLoading,
 		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
@@ -3748,8 +3748,7 @@ function ComputeSettingsSections({
 		upgradeEligibilityReason: deployment.upgrade_eligibility.reason,
 	});
 	const canUpgrade = deployment.upgrade_available && upgradeUnavailableMessage === null;
-	const canStartNewSubscription =
-		hostedAccess.canCreateCloudAgents && hasTerminalFallback && !!(basicPlan || perfPlan);
+	const canStartNewSubscription = hostedAccess.canCreateCloudAgents && hasTerminalFallback;
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
 		terminalFundingFact?.prior_plan_slug,
 		{
@@ -4017,7 +4016,7 @@ function ComputeSettingsSections({
 			{wallet.data ? (
 				<TopUpDialog {...walletTopUp.dialogProps} onComplete={() => setPlanChangeQuote(null)} />
 			) : null}
-			{hasTerminalFallback && (basicPlan || perfPlan) ? (
+			{hasTerminalFallback ? (
 				<SubscriptionCreateDialog
 					open={subscriptionCreateOpen}
 					onOpenChange={setSubscriptionCreateOpen}
@@ -4118,7 +4117,7 @@ function ComputeSettingsSections({
 								id="compute-plan-controls"
 								className="flex w-full scroll-mt-6 flex-col gap-2 sm:ml-auto sm:w-auto sm:min-w-64 sm:items-end"
 							>
-								{(hasTerminalFallback || isIncludedBasic) && blockingPlansError ? (
+								{isIncludedBasic && blockingPlansError ? (
 									<div className="w-full sm:w-72">
 										<ApiErrorPanel
 											normalizer={billingErrorNormalizer}
@@ -4133,10 +4132,9 @@ function ComputeSettingsSections({
 											size="sm"
 											disabled={
 												pendingPlanChangeName === null &&
-												(plans.isLoading ||
-													(hasTerminalFallback
-														? !canStartNewSubscription
-														: !canUpgrade || !perfPlan))
+												(hasTerminalFallback
+													? !canStartNewSubscription
+													: plans.isLoading || !canUpgrade || !perfPlan)
 											}
 											onClick={() =>
 												pendingPlanChangeName
@@ -4154,7 +4152,7 @@ function ComputeSettingsSections({
 											{pendingPlanChangeName
 												? "Check subscription change status"
 												: hasTerminalFallback
-													? "Start a new subscription"
+													? "Choose a subscription"
 													: "Upgrade to Performance"}
 										</Button>
 										{hasTerminalFallback ? (

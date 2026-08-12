@@ -766,6 +766,7 @@ describe("deploy orchestration", () => {
 			body: {
 				funding_source: "wallet",
 				ui_mode: "hosted",
+				subscription_selection: { mode: "new" },
 				quote: {
 					debit_amount_usd: "290.000000",
 					balance_after_usd: "10.000000",
@@ -960,6 +961,7 @@ describe("deploy orchestration", () => {
 			body: {
 				funding_source: "stripe",
 				ui_mode: "hosted",
+				subscription_selection: { mode: "new" },
 				deploy_config: { deploy_request_id: requestId },
 			},
 		});

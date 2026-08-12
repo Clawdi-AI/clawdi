@@ -153,6 +153,14 @@ export function isIdempotencyKeyReusedError(error: unknown): boolean {
 	return billingErrorDetail(error)?.code === "idempotency_key_reused";
 }
 
+export function isReusableSubscriptionUnavailableError(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		error.status === 409 &&
+		billingErrorDetail(error)?.code === "reusable_subscription_unavailable"
+	);
+}
+
 /**
  * Transport-level failure (the request never produced an HTTP response):
  * the network is down, DNS failed, the API host is unreachable, or our
@@ -200,7 +208,11 @@ export function isRetryableError(error: unknown): boolean {
 	return isNetworkError(error) || isServerError(error);
 }
 
-export type DeploySubmissionContext = "card_checkout" | "included_creation" | "wallet_creation";
+export type DeploySubmissionContext =
+	| "card_checkout"
+	| "included_creation"
+	| "subscription_assignment"
+	| "wallet_creation";
 
 export type DeploySubmissionErrorPresentation = {
 	description: string;
@@ -261,6 +273,23 @@ export function deploySubmissionErrorPresentation(
 		return {
 			title: "Checkout didn’t open",
 			description: `${reason} No payment was submitted. Retry when you’re ready.`,
+		};
+	}
+	if (context === "subscription_assignment") {
+		if (isDefinitiveBillingRejection(error)) {
+			return {
+				title: "Subscription assignment didn’t start",
+				description: `${knownRecovery ?? "The request was rejected before it was accepted."} Review your choices and retry.`,
+			};
+		}
+		const reason = isNetworkError(error)
+			? error.kind === "timeout"
+				? "The request timed out before subscription assignment and agent creation were confirmed."
+				: "The connection dropped before subscription assignment and agent creation were confirmed."
+			: "The service didn’t confirm subscription assignment and agent creation.";
+		return {
+			title: "We couldn’t confirm this attempt",
+			description: `${reason} Retry to safely resume the same attempt.`,
 		};
 	}
 

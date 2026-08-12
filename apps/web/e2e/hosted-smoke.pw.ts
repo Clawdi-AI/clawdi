@@ -4155,9 +4155,7 @@ test("accepted plan change recovers from the deployment projection after refresh
 	await expect(retryDialog).toBeVisible();
 	await retryDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 	await expect(
-		page
-			.locator("#compute-plan-controls")
-			.getByRole("button", { name: "Start a new subscription" }),
+		page.locator("#compute-plan-controls").getByRole("button", { name: "Choose a subscription" }),
 	).toBeVisible();
 	expect(planChangeRequests).toEqual([]);
 	expect(errors, `recovered plan change: ${errors.join(" | ")}`).toEqual([]);

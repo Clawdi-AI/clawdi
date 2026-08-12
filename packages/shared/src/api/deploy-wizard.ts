@@ -21,6 +21,9 @@ export type HostedDeployManagedModel = Schemas["V2ManagedModelCatalogItem"];
 export type HostedDeploySubscriptionQuote = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
 export type HostedDeploySubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];
 export type HostedDeployCheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
+export type HostedDeployCheckoutSubscriptionSelection = NonNullable<
+	HostedDeployCheckoutRequest["subscription_selection"]
+>;
 export type HostedDeployOperation = Schemas["LongRunningOperation"];
 export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"];
 export type HostedDeployWallet = Schemas["V2WalletResponse"];
@@ -366,12 +369,14 @@ export function buildHostedDeploySubscriptionQuoteRequest(
 
 export function buildHostedDeployCheckoutRequest({
 	selection,
+	subscriptionSelection,
 	target,
 	idempotencyKey,
 	quote,
 	uiMode,
 }: {
 	selection: HostedDeploySubscriptionSelection;
+	subscriptionSelection: HostedDeployCheckoutSubscriptionSelection;
 	target: HostedDeployCheckoutTarget;
 	idempotencyKey: string;
 	quote: HostedDeploySubscriptionQuote | null;
@@ -382,6 +387,7 @@ export function buildHostedDeployCheckoutRequest({
 		billing_term_months: selection.billingTermMonths,
 		funding_source: selection.fundingSource,
 		ui_mode: uiMode,
+		subscription_selection: subscriptionSelection,
 		...(target.kind === "new_deployment"
 			? {
 					deploy_config: {
