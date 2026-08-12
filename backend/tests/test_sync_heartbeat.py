@@ -574,6 +574,23 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         applied_generation=4,
         applied_instance_id="iid-observed-api",
     )
+    heartbeat = await client.post(
+        f"/v1/agents/{env_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": observed},
+    )
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    transitioning = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()
+    canonical_source_revision = transitioning["desired"]["desired_source_revision"]
+    assert canonical_source_revision != desired_source_revision
+    assert transitioning["health"]["status"] == "unknown"
+
+    observed = _runtime_observed(
+        source_revision=canonical_source_revision,
+        active_cli_version="1.2.5-test",
+        applied_generation=4,
+        applied_instance_id="iid-observed-api",
+    )
     received_at_lower_bound = datetime.now(UTC)
     heartbeat = await client.post(
         f"/v1/agents/{env_id}/sync-heartbeat",
@@ -615,9 +632,9 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     ) == datetime.fromisoformat(observed["reportedAt"])
     assert payload["observed"]["observed_config_generation"] == 4
     assert payload["observed"]["observed_manifest_etag"] == expected_runtime_bundle_v2_etag(
-        desired_source_revision
+        canonical_source_revision
     )
-    assert payload["observed"]["observed_source_revision"] == desired_source_revision
+    assert payload["observed"]["observed_source_revision"] == canonical_source_revision
     assert payload["observed"]["diagnostics"]["schemaVersion"] == (
         "clawdi.hostedRuntimeObserved.v2"
     )
@@ -1008,6 +1025,25 @@ async def test_v2_applied_authority_persists_and_drives_health(
     assert observation.observed_manifest_etag == expected_runtime_bundle_v2_etag(source_revision)
     assert observation.observed_source_revision == source_revision
     assert observation.diagnostics["activeCliVersion"] == "1.2.3-test"
+
+    transitioning = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()
+    canonical_source_revision = transitioning["desired"]["desired_source_revision"]
+    assert canonical_source_revision != source_revision
+    heartbeat = await client.post(
+        f"/v1/agents/{env_id}/sync-heartbeat",
+        json={
+            "runtime_observed": _runtime_observed(
+                source_revision=canonical_source_revision,
+                applied_instance_id="iid-observed-v2",
+            )
+        },
+    )
+    assert heartbeat.status_code == 204, heartbeat.text
+    await db_session.refresh(observation)
+    assert observation.observed_manifest_etag == expected_runtime_bundle_v2_etag(
+        canonical_source_revision
+    )
+    assert observation.observed_source_revision == canonical_source_revision
     healthy = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()
     assert healthy["health"] == {
         "status": "ok",
@@ -1016,7 +1052,7 @@ async def test_v2_applied_authority_persists_and_drives_health(
     }
 
     mismatch = _runtime_observed(
-        source_revision=source_revision,
+        source_revision=canonical_source_revision,
         active_cli_version="1.2.1-test",
         applied_instance_id="iid-observed-v2",
         providers={},

@@ -76,6 +76,7 @@ from app.services.project_runtime_skills import (
     agent_supports_project_skills,
     project_skill_file_signature,
 )
+from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 from app.services.vault_crypto import decrypt
 from app.services.whatsapp_baileys import (
@@ -113,10 +114,10 @@ def expected_runtime_bundle_v2_etag(source_revision: str) -> str:
 
 
 def _codex_tool_runtime_env(
-    cli_package_spec: str,
+    state: HostedRuntimeState,
     observation: HostedRuntimeConfigObservation | None,
 ) -> str:
-    desired_version = cli_package_spec.removeprefix("clawdi@")
+    desired_version = state.cli_package_spec.removeprefix("clawdi@")
     if not exact_semver_is_at_least(
         desired_version,
         _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION,
@@ -128,7 +129,21 @@ def _codex_tool_runtime_env(
         observed = HostedRuntimeObservedV2.model_validate(observation.diagnostics)
     except ValidationError:
         return _CODEX_TOOL_LEGACY_RUNTIME_ENV
-    if observed.active_cli_version != desired_version:
+    expected_generation = resolve_runtime_apply_generation(
+        generation=state.generation,
+        apply_generation=state.apply_generation,
+    )
+    if not (
+        observed.status == "ok"
+        and observed.converge_error is None
+        and observed.active_cli_version == desired_version
+        and observed.applied is not None
+        and observed.applied.instance_id == state.instance_id
+        and observed.applied.generation == expected_generation
+        and observation.observed_config_generation == expected_generation
+        and observation.observed_manifest_etag == observed.applied.etag
+        and observation.observed_source_revision == observed.applied.source_revision
+    ):
         return _CODEX_TOOL_LEGACY_RUNTIME_ENV
     return _MANAGED_PROVIDER_RUNTIME_ENV
 
@@ -759,7 +774,7 @@ def render_runtime_source(
         "baseUrl": codex_provider_material.get("baseUrl"),
         "apiMode": _CODEX_TOOL_API_MODE,
         "managed_by": codex_provider_material.get("managed_by"),
-        "runtimeEnvName": _codex_tool_runtime_env(cli_package_spec, row.observation),
+        "runtimeEnvName": _codex_tool_runtime_env(state, row.observation),
         "apiKeySecretRef": codex_provider_material.get("apiKeySecretRef"),
     }
     try:
