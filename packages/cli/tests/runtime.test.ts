@@ -8419,6 +8419,7 @@ exit 64
 		const previousPath = process.env.PATH;
 		mkdirSync(run, { recursive: true });
 		mkdirSync(bin, { recursive: true });
+		const longJournalLine = `Gateway startup failed: ${"x".repeat(600)}`;
 		writeFileSync(
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
@@ -8432,8 +8433,11 @@ case "$unit" in
   clawdi-runtime-watch.service|clawdi-daemon.service)
     printf 'ActiveState=active\\nSubState=running\\n'
     ;;
+  clawdi-files.service)
+    printf 'ActiveState=failed\\nSubState=failed\\nResult=exit-code\\nExecMainCode=exited\\nExecMainStatus=78\\n'
+    ;;
   openclaw-gateway.service)
-    printf 'ActiveState=failed\\nSubState=failed\\n'
+    printf 'ActiveState=failed\\nSubState=failed\\nResult=exit-code\\nExecMainCode=exited\\nExecMainStatus=1\\n'
     ;;
   *)
     printf 'ActiveState=inactive\\nSubState=dead\\n'
@@ -8442,6 +8446,16 @@ esac
 `,
 		);
 		chmodSync(join(bin, "systemctl"), 0o700);
+		writeFileSync(
+			join(bin, "journalctl"),
+			`#!/usr/bin/env bash
+case "$*" in
+  *clawdi-files.service*) printf 'OPENAI_API_KEY=sk-must-not-leak\\n' ;;
+  *openclaw-gateway.service*) printf '\\033[31m%s\\033[0m\\nignored second line\\n' '${longJournalLine}' ;;
+esac
+		`,
+		);
+		chmodSync(join(bin, "journalctl"), 0o700);
 		process.env.PATH = `${bin}:${previousPath ?? ""}`;
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -8456,6 +8470,7 @@ esac
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		writeFileSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"), "[Service]\n");
 		writeFileSync(join(paths.systemdSystemRoot, "clawdi-daemon.service"), "[Service]\n");
+		writeFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "[Service]\n");
 		writeFileSync(
 			join(paths.systemdUserRoot, "openclaw-gateway.service"),
 			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n`,
@@ -8493,7 +8508,7 @@ esac
 			expect(observed?.status).toBe("error");
 			expect(observed?.systemd).toEqual({
 				status: "error",
-				unitCount: 3,
+				unitCount: 4,
 				units: [
 					{
 						scope: "system",
@@ -8502,6 +8517,14 @@ esac
 						subState: "running",
 						status: "ok",
 						error: null,
+					},
+					{
+						scope: "system",
+						name: "clawdi-files.service",
+						activeState: "failed",
+						subState: "failed",
+						status: "error",
+						error: "Result=exit-code; ExecMainCode=exited; ExecMainStatus=78",
 					},
 					{
 						scope: "system",
@@ -8517,10 +8540,11 @@ esac
 						activeState: "failed",
 						subState: "failed",
 						status: "error",
-						error: null,
+						error: longJournalLine.slice(0, 500),
 					},
 				],
 			});
+			expect(JSON.stringify(observed)).not.toContain("sk-must-not-leak");
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;

@@ -12,6 +12,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { AGENT_TYPES, type AgentType } from "../src/adapters/agent-types";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturesRoot = join(here, "..", "tests", "fixtures");
@@ -464,12 +465,14 @@ description: If this appears in test results, SKIP_DIRS is broken
 
 // ─────────────────────────────────────────────────────────────
 console.log("Generating fixtures into", fixturesRoot);
-generateClaudeCode();
-console.log("  ✓ claude-code");
-generateCodex();
-console.log("  ✓ codex");
-generateHermes();
-console.log("  ✓ hermes");
-generateOpenClaw();
-console.log("  ✓ openclaw");
+const generators: Record<AgentType, () => void> = {
+	claude_code: generateClaudeCode,
+	codex: generateCodex,
+	openclaw: generateOpenClaw,
+	hermes: generateHermes,
+};
+for (const agentType of AGENT_TYPES) {
+	generators[agentType]();
+	console.log(`  ✓ ${agentType === "claude_code" ? "claude-code" : agentType}`);
+}
 console.log("Done.");

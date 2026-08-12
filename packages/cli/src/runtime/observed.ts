@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
+import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import { getCliVersion } from "../lib/version";
 import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
@@ -23,6 +24,9 @@ type HostedRuntimeObservedSystemd = components["schemas"]["HostedRuntimeObserved
 type HostedRuntimeObservedSystemdUnit = components["schemas"]["HostedRuntimeObservedSystemdUnitV1"];
 
 const SYSTEMD_STATUS_TIMEOUT_MS = 1_000;
+const SYSTEMD_FAILURE_EVIDENCE_MAX_LENGTH = 500;
+const SENSITIVE_FAILURE_EVIDENCE =
+	/(?:^|[^a-z0-9])(?:api[_-]?key|key|token|secret|password|passwd|credential|authorization|bearer)(?:[^a-z0-9]|$)|(?:^|\s)[A-Z][A-Z0-9_]{1,}=|(?:^|[^a-z0-9])(?:sk-|gh[pousr]_|clawdi_)[a-z0-9_-]+/i;
 
 export function readHostedRuntimeObserved(
 	paths: RuntimePaths = getRuntimePaths(),
@@ -274,27 +278,98 @@ function systemdUnitStatus(
 ): HostedRuntimeObservedSystemdUnit {
 	const result =
 		scope === "system"
-			? runSystemctl(["show", unit, "--property=ActiveState", "--property=SubState"])
+			? runSystemctl([
+					"show",
+					unit,
+					"--property=ActiveState",
+					"--property=SubState",
+					"--property=Result",
+					"--property=ExecMainCode",
+					"--property=ExecMainStatus",
+				])
 			: runRuntimeUserSystemctl(paths, [
 					"show",
 					unit,
 					"--property=ActiveState",
 					"--property=SubState",
+					"--property=Result",
+					"--property=ExecMainCode",
+					"--property=ExecMainStatus",
 				]);
 	const parsed = parseSystemctlShow(result.output);
+	const status = systemdUnitObservedStatus(parsed.ActiveState, result.exitCode);
 	return {
 		scope,
 		name: unit,
 		activeState: parsed.ActiveState ?? "unknown",
 		subState: parsed.SubState ?? "unknown",
-		status: systemdUnitObservedStatus(parsed.ActiveState, result.exitCode),
-		error: result.exitCode === 0 ? null : result.output.slice(0, 500) || "systemctl show failed",
+		status,
+		error:
+			status === "error"
+				? systemdFailureEvidence(scope, unit, parsed)
+				: result.exitCode === 0
+					? null
+					: (nonSensitiveFailureEvidence(result.output) ?? "systemctl show failed"),
 	};
+}
+
+function systemdFailureEvidence(
+	scope: "system" | "user",
+	unit: string,
+	properties: Record<string, string>,
+): string {
+	const journal = runJournalctl([
+		"--quiet",
+		"--no-pager",
+		"--output=cat",
+		"--boot=0",
+		"--priority=err",
+		"--lines=20",
+		scope === "system" ? "--unit" : "--user-unit",
+		unit,
+	]);
+	if (journal.exitCode === 0) {
+		const firstLine = journal.output.split(/\r?\n/).find((line) => line.trim());
+		const evidence = firstLine ? nonSensitiveFailureEvidence(firstLine) : null;
+		if (evidence) return evidence;
+	}
+	return (
+		safeFailureEvidence(
+			[
+				`Result=${properties.Result || "unknown"}`,
+				`ExecMainCode=${properties.ExecMainCode || "unknown"}`,
+				`ExecMainStatus=${properties.ExecMainStatus || "unknown"}`,
+			].join("; "),
+		) ?? "Result=unknown; ExecMainCode=unknown; ExecMainStatus=unknown"
+	);
+}
+
+function safeFailureEvidence(value: string): string | null {
+	const line = sanitizeMetadata(value).replace(/\s+/g, " ").trim();
+	return line ? safeTruncate(line, SYSTEMD_FAILURE_EVIDENCE_MAX_LENGTH) : null;
+}
+
+function nonSensitiveFailureEvidence(value: string): string | null {
+	const evidence = safeFailureEvidence(value);
+	return evidence && !SENSITIVE_FAILURE_EVIDENCE.test(evidence) ? evidence : null;
 }
 
 function runSystemctl(args: string[]): { exitCode: number | null; output: string } {
 	const result = spawnSync(systemctlPath(), args, {
 		encoding: "utf8",
+		maxBuffer: 64 * 1024,
+		timeout: SYSTEMD_STATUS_TIMEOUT_MS,
+	});
+	return {
+		exitCode: result.status,
+		output: [result.stdout, result.stderr, result.error?.message].filter(Boolean).join("\n").trim(),
+	};
+}
+
+function runJournalctl(args: string[]): { exitCode: number | null; output: string } {
+	const result = spawnSync("journalctl", args, {
+		encoding: "utf8",
+		env: process.env,
 		maxBuffer: 64 * 1024,
 		timeout: SYSTEMD_STATUS_TIMEOUT_MS,
 	});
