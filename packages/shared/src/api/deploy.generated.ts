@@ -1359,6 +1359,8 @@ export interface components {
             cancel_at_period_end: boolean;
             /** Deployment Id */
             deployment_id?: string | null;
+            /** Agent Name */
+            agent_name: string | null;
             /** Is Orphan */
             is_orphan: boolean;
         };

@@ -103,6 +103,19 @@ export function applyDeploymentSubscriptionResult(
 	);
 }
 
+export function applySubscriptionActionSuccess(
+	qc: QueryClient,
+	body: ComputeSubscriptionCancelRequest | ComputeSubscriptionResumeRequest,
+	next: ComputeSubscriptionActionResult,
+): void {
+	if (body.deployment_id) {
+		applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
+	} else if (body.subscription_id) {
+		qc.invalidateQueries({ queryKey: billingKeys.deployments });
+	}
+	qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
+}
+
 /**
  * Shared billing read: gates fetches on `isDeployApiConfigured()` and applies
  * the transient-only `billingQueryRetry` so deterministic 4xx (auth,
@@ -245,12 +258,7 @@ export function useCancelSubscription() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionCancelRequest) => client.cancelSubscription(body),
-		onSuccess: (next, body) => {
-			if (body.deployment_id) {
-				applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
-			}
-			qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
-		},
+		onSuccess: (next, body) => applySubscriptionActionSuccess(qc, body, next),
 	});
 }
 
@@ -259,12 +267,7 @@ export function useResumeSubscription() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionResumeRequest) => client.resumeSubscription(body),
-		onSuccess: (next, body) => {
-			if (body.deployment_id) {
-				applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
-			}
-			qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
-		},
+		onSuccess: (next, body) => applySubscriptionActionSuccess(qc, body, next),
 	});
 }
 

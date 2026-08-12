@@ -15,6 +15,7 @@ import type {
 import { BillingApiError, PlanChangeTerminalError } from "@/hosted/billing/errors";
 import {
 	applyDeploymentSubscriptionResult,
+	applySubscriptionActionSuccess,
 	billingKeys,
 	billingNextPageParam,
 	billingRecoveryRefetchIntervalFor,
@@ -155,6 +156,23 @@ describe("applyDeploymentSubscriptionResult", () => {
 		);
 		expect(patched?.[0]?.commercial_display?.compute_subscription?.cancel_at).toBeNull();
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
+	});
+});
+
+describe("applySubscriptionActionSuccess", () => {
+	test("invalidates deployments and subscriptions when targeting a subscription id", () => {
+		const qc = new QueryClient();
+		qc.setQueryData(billingKeys.deployments, { current: true });
+		qc.setQueryData(billingKeys.subscriptions, { current: true });
+
+		applySubscriptionActionSuccess(
+			qc,
+			{ subscription_id: "csub_test" },
+			subscriptionAction(true),
+		);
+
+		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(true);
 	});
 });
 

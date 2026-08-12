@@ -986,8 +986,9 @@ describe("account compute subscriptions", () => {
 							billing_term_months: 1,
 							current_period_end: "2026-08-22T00:00:00Z",
 							cancel_at_period_end: false,
-							deployment_id: null,
-							is_orphan: true,
+							deployment_id: "hdep_test",
+							agent_name: "Performance agent",
+							is_orphan: false,
 						},
 					],
 					has_more: true,
@@ -1004,7 +1005,13 @@ describe("account compute subscriptions", () => {
 		});
 
 		await expect(client.getSubscriptions(3, "cursor-current")).resolves.toEqual({
-			items: [expect.objectContaining({ subscription_id: "csub_test", is_orphan: true })],
+			items: [
+				expect.objectContaining({
+					subscription_id: "csub_test",
+					agent_name: "Performance agent",
+					is_orphan: false,
+				}),
+			],
 			has_more: true,
 			next_cursor: "cursor-next",
 		});

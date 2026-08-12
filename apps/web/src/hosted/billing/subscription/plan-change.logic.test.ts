@@ -7,7 +7,6 @@ import {
 	defaultPlanChangeSelection,
 	isCombinedPaidPlanChange,
 	isFundingSourceOnlySelection,
-	isFundingSourceSwitchChangeKind,
 	isSamePlanChangeSelection,
 	isValidFundingSourceSwitchQuote,
 	isValidPaidPlanChangeQuote,
@@ -260,11 +259,6 @@ describe("plan change selection", () => {
 				"wallet",
 			),
 		).toBe(false);
-	});
-
-	test("recognizes the additive funding-source switch quote kind", () => {
-		expect(isFundingSourceSwitchChangeKind("funding_source_switch")).toBe(true);
-		expect(isFundingSourceSwitchChangeKind("immediate_upgrade")).toBe(false);
 	});
 
 	test("accepts only the exact zero-due future-renewal rail switch contract", () => {

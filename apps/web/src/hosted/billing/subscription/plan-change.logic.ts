@@ -1,5 +1,4 @@
 import type {
-	ComputePlanChangeKind,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
 	ComputePlanSlug,
@@ -252,14 +251,10 @@ export function shouldRecoverWalletToCardSwitch(
 	);
 }
 
-export function isFundingSourceSwitchChangeKind(changeKind: ComputePlanChangeKind): boolean {
-	return changeKind === "funding_source_switch";
-}
-
 export function isFundingSourceSwitchQuote(
 	quote: Pick<ComputePlanChangeQuoteResponse, "change_kind"> | null,
 ): boolean {
-	return quote !== null && isFundingSourceSwitchChangeKind(quote.change_kind);
+	return quote?.change_kind === "funding_source_switch";
 }
 
 export function isValidFundingSourceSwitchQuote(

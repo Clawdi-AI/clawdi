@@ -172,18 +172,21 @@ function SubscriptionActions({ subscription }: { subscription: ComputeSubscripti
 
 export function SubscriptionAgentLink({
 	deploymentId,
+	agentName,
 }: {
 	deploymentId: ComputeSubscriptionListItem["deployment_id"];
+	agentName: ComputeSubscriptionListItem["agent_name"];
 }) {
-	return deploymentId ? (
+	return deploymentId && agentName ? (
 		<Link
 			{...agentSectionLink(deploymentId, "settings", {
 				source: "on-clawdi",
 				settings: "billing-plan",
 			})}
-			className="font-medium text-primary underline-offset-4 hover:underline"
+			className="block min-w-0 truncate font-medium text-primary underline-offset-4 hover:underline"
+			title={agentName}
 		>
-			View agent
+			{agentName}
 		</Link>
 	) : (
 		<span className="font-medium text-muted-foreground">Deleted agent</span>
@@ -221,7 +224,10 @@ function SubscriptionRow({ subscription }: { subscription: ComputeSubscriptionLi
 			</div>
 			<div className="min-w-0">
 				<FieldLabel>Agent</FieldLabel>
-				<SubscriptionAgentLink deploymentId={subscription.deployment_id} />
+				<SubscriptionAgentLink
+					deploymentId={subscription.deployment_id}
+					agentName={subscription.agent_name}
+				/>
 			</div>
 			<div>
 				<FieldLabel>Payment source</FieldLabel>
