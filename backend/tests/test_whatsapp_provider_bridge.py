@@ -33,6 +33,7 @@ from app.models.channel import (
 )
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channels import (
+    _delivery_error_code,
     archive_bot_agent_link,
     build_channel_account,
     channel_control_help_reply,
@@ -248,18 +249,25 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         "connection_mode": "baileys_managed",
         "sidecar_config_revision": sidecar_config.binding_revision,
     }
+    lid_jid = "184207372460253@lid"
+    await remember_whatsapp_binding_aliases(
+        db_session,
+        binding=binding,
+        remote_jid=binding.external_chat_id,
+        alt_jid=lid_jid,
+    )
     await db_session.commit()
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     bridge = WhatsAppProviderBridge(sessionmaker, account_id=account.id)
     message_proto = b"\x32\x0c\x0a\x0aexact-edit"
     message = WhatsAppOutboundMessage(
-        to_jid=binding.external_chat_id,
+        to_jid=lid_jid,
         message_id="agent-exact-1",
         message_proto=message_proto,
         enc_type="msg",
         attrs={
             "id": "agent-exact-1",
-            "to": binding.external_chat_id,
+            "to": lid_jid,
             "edit": "8",
             "addressing_mode": "lid",
         },
@@ -342,16 +350,46 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
     assert stored is not None
     assert delivery is not None
     assert stored.direction == MESSAGE_DIRECTION_OUTBOUND
+    assert stored.external_chat_id == binding.external_chat_id
     assert stored.payload["providerPayload"] == {
         "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
         "messageId": "agent-exact-1",
         "messageProtoBase64": base64.b64encode(message_proto).decode("ascii"),
         "encType": "msg",
-        "attrs": message.attrs,
+        "attrs": {"edit": "8", "addressing_mode": "lid"},
         "additionalNodes": [{"tag": "meta", "attrs": {"polltype": "creation"}}],
     }
     assert stored.provider_message_id == "physical-agent-exact-1"
     assert delivery.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_provider_payload_foreign_target_fails_with_safe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account = ChannelAccount(id=uuid4())
+    external_chat_id = "15551114444@s.whatsapp.net"
+    provider_payload = {
+        "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
+        "messageId": "agent-foreign-target-1",
+        "messageProtoBase64": base64.b64encode(b"foreign target").decode("ascii"),
+        "encType": "msg",
+        "attrs": {"to": "15559999999@s.whatsapp.net"},
+    }
+    transport = _FakeProviderTransport()
+    _use_delivery_transport(monkeypatch, transport)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await relay_whatsapp_provider_payload(
+            account=account,
+            external_chat_id=external_chat_id,
+            text="must fail closed",
+            provider_payload=provider_payload,
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "whatsapp provider payload target mismatch"
+    assert _delivery_error_code(exc_info.value.detail) == "channel_provider_rejected"
+    assert transport.outbound_messages == []
 
 
 @pytest.mark.asyncio
