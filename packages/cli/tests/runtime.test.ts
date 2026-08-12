@@ -6896,44 +6896,33 @@ exit 64
 		]);
 	});
 
-	it("runtime watch restarts changed runtime and egress units without restarting itself", async () => {
+	it("runtime watch reconciles changed runtime and egress units without restarting itself", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
 		const systemctlLog = join(root, "systemctl-locale.log");
+		const systemctlStateRoot = join(root, "systemctl-locale-state");
 		const sidecarReadyPath = join(run, "egress", "systemd", "ca.pem");
 		const abort = new AbortController();
 		const previousLog = console.log;
 		const logs: string[] = [];
-		mkdirSync(bin, { recursive: true });
-		writeFileSync(
-			join(bin, "systemctl"),
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> '${systemctlLog}'
-if [ "\${1:-}" = "--user" ]; then shift; fi
-if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
-elif [ "\${1:-}" = "is-enabled" ]; then
-  printf 'enabled\\n'
-elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
-  shift
-  for unit in "$@"; do
-    if [ "$unit" = "clawdi-runtime-sidecar.service" ]; then
-      mkdir -p '${dirname(sidecarReadyPath)}'
-      touch '${sidecarReadyPath}'
-    fi
-  done
-fi
-exit 0
-`,
-		);
-		chmodSync(join(bin, "systemctl"), 0o700);
+		writeFakeSystemdManager({
+			path: join(bin, "systemctl"),
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+			environmentRoot: join(run, "systemd", "env"),
+			sidecarReadyPath,
+		});
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
-		seedRuntimeWatchLocaleBaseline(home, state, run);
+		const paths = seedRuntimeWatchLocaleBaseline(home, state, run);
+		const baselineUnits = readSystemdUnitSnapshot(paths);
+		seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, baselineUnits);
+		for (const unit of baselineUnits.user.keys()) {
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
+		}
 		let resolveInitialWatchEvent: (() => void) | null = null;
 		const initialWatchEvent = new Promise<void>((resolveEvent) => {
 			resolveInitialWatchEvent = resolveEvent;
@@ -7014,7 +7003,7 @@ exit 0
 			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
 			expect(systemctlCalls).toContain("--user reset-failed openclaw-gateway.service");
 			expect(systemctlCalls.some((call) => call.includes("enable --now"))).toBe(false);
-			expect(systemctlCalls).toContain("restart clawdi-runtime-sidecar.service");
+			expect(systemctlCalls).toContain("start clawdi-runtime-sidecar.service");
 			expect(systemctlCalls).toContain("restart clawdi-daemon.service");
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
@@ -7183,7 +7172,6 @@ exit 0
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(bin, { recursive: true });
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -7213,27 +7201,13 @@ exit 64
 `,
 		);
 		chmodSync(openclawBin, 0o700);
-		writeFileSync(
-			join(bin, "systemctl"),
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "--user" ]; then shift; fi
-if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
-elif [ "\${1:-}" = "is-enabled" ]; then
-  printf 'enabled\\n'
-elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
-  shift
-  for unit in "$@"; do
-    if [ "$unit" = "clawdi-runtime-sidecar.service" ]; then
-      mkdir -p '${dirname(sidecarReadyPath)}'
-      touch '${sidecarReadyPath}'
-    fi
-  done
-fi
-`,
-		);
-		chmodSync(join(bin, "systemctl"), 0o700);
+		writeFakeSystemdManager({
+			path: join(bin, "systemctl"),
+			logPath: join(root, "systemctl-watch-channel.log"),
+			stateRoot: join(root, "systemctl-watch-channel-state"),
+			environmentRoot: join(run, "systemd", "env"),
+			sidecarReadyPath,
+		});
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -7437,29 +7411,13 @@ fi
 		let daemonToken = "file-runtime-token";
 		let gatewayToken: string | undefined = "test-openclaw-gateway-token";
 		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(dirname(systemctlPath), { recursive: true });
-		writeFileSync(
-			systemctlPath,
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> '${systemctlLog}'
-if [ "\${1:-}" = "--user" ]; then shift; fi
-if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
-elif [ "\${1:-}" = "is-enabled" ]; then
-  printf 'enabled\\n'
-elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
-  shift
-  for unit in "$@"; do
-    if [ "$unit" = "clawdi-runtime-sidecar.service" ]; then
-      mkdir -p '${dirname(sidecarReadyPath)}'
-      touch '${sidecarReadyPath}'
-    fi
-  done
-fi
-`,
-		);
-		chmodSync(systemctlPath, 0o700);
+		writeFakeSystemdManager({
+			path: systemctlPath,
+			logPath: systemctlLog,
+			stateRoot: join(root, "systemctl-generation-state"),
+			environmentRoot: join(run, "systemd", "env"),
+			sidecarReadyPath,
+		});
 		seedOfficialOpenClawServiceInstaller(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -9050,7 +9008,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 set -euo pipefail
 printf '%s\\n' "$*" >> '${systemctlLog}'
 if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nNeedDaemonReload=no\\n'
+	  printf 'LoadState=loaded\\nMainPID=0\\nNeedDaemonReload=no\\n'
   if [ "\${2:-}" = "clawdi-runtime-sidecar.service" ]; then
     printf 'ActiveState=%s\\n' "$(tr -d '\\n' < '${sidecarState}')"
   else
@@ -9440,8 +9398,7 @@ elif [ "$*" = "${installArgs}" ]; then
   test -s '${join(paths.systemdUserRoot, `${serviceName}.service.d`, "10-clawdi-hosted.conf")}'
   mkdir -p '${dirname(runtimeUnit)}' '${systemctlStateRoot}'
   printf '[Service]\\nExecStart=${runtime} gateway run\\n' > '${runtimeUnit}'
-  touch '${fakeSystemdStatePath(systemctlStateRoot, "user", `${serviceName}.service`, "active")}'
-  touch '${fakeSystemdStatePath(systemctlStateRoot, "user", `${serviceName}.service`, "enabled")}'
+	  systemctl --user enable --now '${serviceName}.service'
 fi
 exit 0
 `,
@@ -9919,12 +9876,12 @@ fi
 	});
 
 	it("runtime watch reapplies transparent egress across CLI self-upgrade", async () => {
-		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
 		const systemctlLog = join(root, "systemctl.log");
+		const systemctlStateRoot = join(root, "systemctl-self-upgrade-state");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
@@ -9971,29 +9928,14 @@ SH
 chmod +x "$prefix/bin/clawdi"
 `,
 		);
-		writeFileSync(
-			join(bin, "systemctl"),
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> '${systemctlLog}'
-if [ "\${1:-}" = "--user" ]; then shift; fi
-if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
-elif [ "\${1:-}" = "is-enabled" ]; then
-  printf 'enabled\\n'
-elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
-  shift
-  for unit in "$@"; do
-    if [ "$unit" = "clawdi-runtime-sidecar.service" ]; then
-      mkdir -p '${join(run, "egress", "systemd")}'
-      touch '${join(run, "egress", "systemd", "ca.pem")}'
-    fi
-  done
-fi
-`,
-		);
+		writeFakeSystemdManager({
+			path: join(bin, "systemctl"),
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+			environmentRoot: join(run, "systemd", "env"),
+			sidecarReadyPath: join(run, "egress", "systemd", "ca.pem"),
+		});
 		chmodSync(join(bin, "npm"), 0o700);
-		chmodSync(join(bin, "systemctl"), 0o700);
 		process.env.PATH = `${bin}:${previousPath ?? ""}`;
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -10076,6 +10018,11 @@ fi
 			},
 			paths,
 		);
+		const activeUnits = readSystemdUnitSnapshot(paths);
+		seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, activeUnits);
+		for (const unit of activeUnits.user.keys()) {
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
+		}
 		writeFileSync(systemctlLog, "");
 		const { restore } = mockFetch([
 			{
