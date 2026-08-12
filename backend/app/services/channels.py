@@ -7152,10 +7152,13 @@ def _delivery_error_code(error: str) -> str:
         "channel account has no provider token configured": DELIVERY_ERROR_PROVIDER_CREDENTIAL,
         "telegram api unreachable": DELIVERY_ERROR_PROVIDER_UNREACHABLE,
         "discord api unreachable": DELIVERY_ERROR_PROVIDER_UNREACHABLE,
+        "whatsapp provider transport unavailable": DELIVERY_ERROR_PROVIDER_UNREACHABLE,
         "telegram api rate limited": DELIVERY_ERROR_PROVIDER_RATE_LIMITED,
         "discord api rate limited": DELIVERY_ERROR_PROVIDER_RATE_LIMITED,
         "telegram api rejected message": DELIVERY_ERROR_PROVIDER_REJECTED,
         "discord api rejected message": DELIVERY_ERROR_PROVIDER_REJECTED,
+        "whatsapp provider transport rejected message": DELIVERY_ERROR_PROVIDER_REJECTED,
+        "whatsapp provider payload target mismatch": DELIVERY_ERROR_PROVIDER_REJECTED,
         "channel delivery failed": DELIVERY_ERROR_FAILED,
         hosted_agent_provider_link_limit_detail(
             CHANNEL_PROVIDER_TELEGRAM,

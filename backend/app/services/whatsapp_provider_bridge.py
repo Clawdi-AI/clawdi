@@ -43,6 +43,7 @@ from app.services.whatsapp_baileys import (
     forward_iq_over,
     parse_whatsapp_jid,
     parse_whatsapp_usync_device_targets,
+    relay_outbound_extra_attrs,
     remember_whatsapp_binding_aliases,
     resolve_whatsapp_binding_by_jids,
     strip_whatsapp_device,
@@ -416,8 +417,10 @@ async def relay_whatsapp_provider_payload(
     text: str,
     provider_payload: object | None,
 ) -> tuple[str | None, dict[str, JsonValue]]:
-    transport = get_whatsapp_provider_transport(account.id)
-    if transport is None or not _transport_connected(transport):
+    from app.services.whatsapp_sidecar_registry import resolve_whatsapp_delivery_transport
+
+    transport = resolve_whatsapp_delivery_transport(account)
+    if transport is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="whatsapp provider transport unavailable",
@@ -583,12 +586,15 @@ async def _active_link_owns_account(
 def _provider_payload_from_outbound(
     message: WhatsAppOutboundMessage,
 ) -> dict[str, JsonValue]:
+    attrs: dict[str, JsonValue] = {
+        key: value for key, value in relay_outbound_extra_attrs(message.attrs).items()
+    }
     payload: dict[str, JsonValue] = {
         "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
         "messageId": message.message_id,
         "messageProtoBase64": base64.b64encode(message.message_proto).decode("ascii"),
         "encType": message.enc_type,
-        "attrs": dict(message.attrs),
+        "attrs": attrs,
     }
     additional_nodes = validate_relay_outbound_additional_nodes(message.additional_nodes)
     if additional_nodes:
