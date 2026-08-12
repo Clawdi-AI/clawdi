@@ -657,10 +657,12 @@ This change is Phase A: publish `clawdi@0.13.69`, which reads both legacy and
 canonical terminal-Codex env names while writing only the canonical local env.
 Phase B keeps backend emission deployment-scoped: terminal Codex receives
 `CLAWDI_AI_API_KEY` only when the desired CLI is `clawdi@0.13.69` or later and
-strict v2 diagnostics prove the exact desired version, current apply generation,
-and current instance. Observation generation, ETag, and source revision must
-agree with that applied record. Every missing, invalid, stale, or mismatched
-state retains `OPENAI_API_KEY`, including upgrades and rollbacks.
+strict v2 `diagnostics.cli` proves the exact desired package is installed and
+active, along with the current apply generation and instance. An in-place update
+preserves the daemon process, so its `activeCliVersion` may remain the older
+running version. Observation generation, ETag, and source revision must agree
+with that applied record. Every missing, invalid, stale, or mismatched state
+retains `OPENAI_API_KEY`, including upgrades and rollbacks.
 Phase B may therefore deploy before the fleet upgrades: each deployment remains
 on the legacy env name until its own CLI and observation have converged.
 The gate does not compare that last applied revision with the revision currently
