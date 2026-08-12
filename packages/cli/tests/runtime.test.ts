@@ -311,7 +311,7 @@ function fakeSystemdStatePath(
 	stateRoot: string,
 	scope: "system" | "user",
 	unit: string,
-	state: "active" | "enabled" | "failed" | "not-found",
+	state: "active" | "enabled" | "failed" | "not-found" | "reload",
 ): string {
 	return join(stateRoot, `${scope}-${unit}.${state}`);
 }
@@ -349,7 +349,9 @@ case "$command" in
     [ ! -f "$(state_path "$unit" active)" ] || active_state=active
     [ ! -f "$(state_path "$unit" failed)" ] || active_state=failed
     if [ -f "$(state_path "$unit" not-found)" ]; then load_state=not-found; active_state=inactive; fi
-    printf 'LoadState=%s\\nActiveState=%s\\n' "$load_state" "$active_state"
+    need_daemon_reload=no
+    [ ! -f "$(state_path "$unit" reload)" ] || need_daemon_reload=yes
+    printf 'LoadState=%s\\nActiveState=%s\\nNeedDaemonReload=%s\\n' "$load_state" "$active_state" "$need_daemon_reload"
     ;;
   is-enabled)
     unit="\${1:-}"
@@ -392,7 +394,7 @@ case "$command" in
     ;;
   disable) for unit in "$@"; do rm -f "$(state_path "$unit" enabled)"; done ;;
   reset-failed) for unit in "$@"; do rm -f "$(state_path "$unit" failed)"; done ;;
-  daemon-reload) ;;
+  daemon-reload) rm -f '${input.stateRoot}'/"$scope"-*.reload ;;
   *)
     printf 'unexpected systemctl command: %s\\n' "$raw" >&2
     exit 64
@@ -1295,7 +1297,7 @@ set -euo pipefail
 ${systemctlLog ? `printf '%s\\n' "$*" >> '${systemctlLog}'` : ""}
 if [ "\${1:-}" = "--user" ]; then shift; fi
 if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\n'
+  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
 elif [ "\${1:-}" = "is-enabled" ]; then
   printf 'enabled\\n'
 elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
@@ -6825,7 +6827,7 @@ set -euo pipefail
 printf '%s\\n' "$*" >> '${systemctlLog}'
 if [ "\${1:-}" = "--user" ]; then shift; fi
 if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\n'
+  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
 elif [ "\${1:-}" = "is-enabled" ]; then
   printf 'enabled\\n'
 elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
@@ -7130,7 +7132,7 @@ exit 64
 set -euo pipefail
 if [ "\${1:-}" = "--user" ]; then shift; fi
 if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\n'
+  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
 elif [ "\${1:-}" = "is-enabled" ]; then
   printf 'enabled\\n'
 elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
@@ -7356,7 +7358,7 @@ set -euo pipefail
 printf '%s\\n' "$*" >> '${systemctlLog}'
 if [ "\${1:-}" = "--user" ]; then shift; fi
 if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\n'
+  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
 elif [ "\${1:-}" = "is-enabled" ]; then
   printf 'enabled\\n'
 elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
@@ -7726,7 +7728,7 @@ fi
 set -euo pipefail
 if [ "\${1:-}" = "--user" ]; then shift; fi
 if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\n'
+  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
 elif [ "\${1:-}" = "is-enabled" ]; then
   printf 'enabled\\n'
 elif { [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; } && [[ " $* " = *" clawdi-runtime-sidecar.service "* ]] && [ -f '${failNextSidecarActivation}' ]; then
@@ -8797,20 +8799,12 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const run = join(root, "run", "clawdi");
 		const systemctlPath = join(root, "bin", "systemctl");
 		const systemctlLog = join(root, "systemctl.log");
-		mkdirSync(dirname(systemctlPath), { recursive: true });
-		writeFileSync(
-			systemctlPath,
-			`#!/usr/bin/env bash
-printf '%s\\n' "$*" >> '${systemctlLog}'
-if [ "\${1:-}" = "--user" ]; then shift; fi
-if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\n'
-elif [ "\${1:-}" = "is-enabled" ]; then
-  printf 'enabled\\n'
-fi
-`,
-		);
-		chmodSync(systemctlPath, 0o700);
+		const systemctlStateRoot = join(root, "systemctl-cli-only-state");
+		writeFakeSystemdManager({
+			path: systemctlPath,
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+		});
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
@@ -8822,6 +8816,10 @@ fi
 		seedOpenClawBinary(home);
 		const paths = getRuntimePaths();
 		const current = runtimeWatchLocaleManifest(home, 10);
+		const runtimeAuthSecret = {
+			"secret://clawdi/auth-token":
+				TEST_RUNTIME_SERVICE_SECRET_VALUES["secret://clawdi/auth-token"],
+		};
 		expect(
 			convergeRuntimeManifest(
 				{
@@ -8829,11 +8827,16 @@ fi
 					source: "remote-datasource",
 					sourcePath: "test://cli-current",
 					offline: false,
+					secretValues: runtimeAuthSecret,
 				},
 				paths,
 			).installErrors,
 		).toEqual([]);
 		const before = readSystemdUnitSnapshot(paths);
+		const unchangedUnitInodes = [
+			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
+		].map((path) => statSync(path).ino);
 		const next: RuntimeManifest = {
 			...current,
 			generation: 11,
@@ -8850,10 +8853,25 @@ fi
 					source: "remote-datasource",
 					sourcePath: "test://cli-next",
 					offline: false,
+					secretValues: runtimeAuthSecret,
 				},
 				paths,
 			).installErrors,
 		).toEqual([]);
+		expect(
+			[
+				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+				join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
+			].map((path) => statSync(path).ino),
+		).toEqual(unchangedUnitInodes);
+		for (const unit of before.system.keys()) {
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "system", unit, "active"), "\n");
+		}
+		for (const unit of before.user.keys()) {
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "active"), "\n");
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
+		}
+		writeFileSync(systemctlLog, "");
 
 		const applied = applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths));
 
@@ -8863,9 +8881,74 @@ fi
 			userUnitsChanged: [],
 		});
 		const calls = readFileSync(systemctlLog, "utf-8");
+		expect(calls).not.toContain("daemon-reload");
 		expect(calls).not.toContain("restart clawdi-daemon.service");
 		expect(calls).not.toContain("restart openclaw-gateway.service");
 		expect(calls).not.toContain("restart clawdi-runtime-sidecar.service");
+
+		const currentCheckpointUnits = {
+			system: new Map<string, string>(),
+			user: new Map([["hermes-gateway.service", "current"]]),
+		};
+		writeFileSync(
+			fakeSystemdStatePath(systemctlStateRoot, "user", "hermes-gateway.service", "active"),
+			"\n",
+		);
+		writeFileSync(
+			fakeSystemdStatePath(systemctlStateRoot, "user", "hermes-gateway.service", "enabled"),
+			"\n",
+		);
+		writeFileSync(
+			fakeSystemdStatePath(systemctlStateRoot, "user", "hermes-gateway.service", "reload"),
+			"\n",
+		);
+		writeFileSync(systemctlLog, "");
+		expect(
+			applySystemdRuntimeUpdate(
+				paths,
+				{
+					system: new Map<string, string>(),
+					user: new Map([["hermes-gateway.service", "legacy"]]),
+				},
+				currentCheckpointUnits,
+				{ preserveActiveUnits: true },
+			),
+		).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
+		const currentCheckpointCalls = readFileSync(systemctlLog, "utf-8");
+		expect(currentCheckpointCalls).toContain("--user daemon-reload");
+		expect(currentCheckpointCalls).not.toContain("restart hermes-gateway.service");
+
+		const driftedUnits = {
+			system: new Map([["clawdi-runtime-watch.service", "watch"]]),
+			user: new Map([["hermes-gateway.service", "hermes"]]),
+		};
+		for (const [scope, unit] of [
+			["system", "clawdi-runtime-watch.service"],
+			["user", "hermes-gateway.service"],
+		] as const) {
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, scope, unit, "active"), "\n");
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, scope, unit, "reload"), "\n");
+		}
+		writeFileSync(
+			fakeSystemdStatePath(systemctlStateRoot, "user", "hermes-gateway.service", "enabled"),
+			"\n",
+		);
+		writeFileSync(systemctlLog, "");
+
+		expect(
+			applySystemdRuntimeUpdate(paths, driftedUnits, driftedUnits, {
+				preserveActiveUnits: true,
+			}),
+		).toEqual({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: ["hermes-gateway.service"],
+		});
+		const driftRepairCalls = readFileSync(systemctlLog, "utf-8");
+		expect(driftRepairCalls).toContain("daemon-reload");
+		expect(driftRepairCalls).toContain("--user daemon-reload");
+		expect(driftRepairCalls).toContain("--user restart hermes-gateway.service");
+		expect(driftRepairCalls).not.toContain("restart clawdi-runtime-watch.service");
 	});
 
 	it("stops the egress sidecar while proving independent system units ready", () => {
@@ -8883,7 +8966,7 @@ fi
 set -euo pipefail
 printf '%s\\n' "$*" >> '${systemctlLog}'
 if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\n'
+  printf 'LoadState=loaded\\nNeedDaemonReload=no\\n'
   if [ "\${2:-}" = "clawdi-runtime-sidecar.service" ]; then
     printf 'ActiveState=%s\\n' "$(tr -d '\\n' < '${sidecarState}')"
   else
@@ -9809,7 +9892,7 @@ set -euo pipefail
 printf '%s\\n' "$*" >> '${systemctlLog}'
 if [ "\${1:-}" = "--user" ]; then shift; fi
 if [ "\${1:-}" = "show" ]; then
-  printf 'LoadState=loaded\\nActiveState=active\\n'
+  printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\n'
 elif [ "\${1:-}" = "is-enabled" ]; then
   printf 'enabled\\n'
 elif [ "\${1:-}" = "start" ] || [ "\${1:-}" = "restart" ]; then
@@ -12829,6 +12912,11 @@ exit 64
 				generation: 14,
 				issuedAt: "2026-07-07T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test/" },
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@0.13.66",
+					registry: "https://registry.npmjs.org",
+				},
 				egressEngine: seedMitmproxyCache(paths),
 				runtimes: {
 					hermes: {
@@ -12939,6 +13027,12 @@ exit 64
 		const initialOpenClawRevision = systemdEnvRevision(
 			readSystemdEnvFile(paths, "openclaw-gateway"),
 		);
+		const hermesDropIn = join(
+			paths.systemdUserRoot,
+			"hermes-gateway.service.d",
+			"10-clawdi-hosted.conf",
+		);
+		const initialHermesDropInInode = statSync(hermesDropIn).ino;
 		const initialUnits = readSystemdUnitSnapshot(paths);
 		for (const unit of initialUnits.system.keys()) {
 			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "system", unit, "active"), "\n");
@@ -12956,6 +13050,7 @@ exit 64
 			paths,
 		);
 		expect(unrelatedSecret.installErrors).toEqual([]);
+		expect(statSync(hermesDropIn).ino).toBe(initialHermesDropInInode);
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		expect(applySystemdRuntimeUpdate(paths, initialUnits, readSystemdUnitSnapshot(paths))).toEqual({
 			applied: true,
@@ -12974,19 +13069,26 @@ exit 64
 		) as Record<string, unknown>;
 		const beforeCredentialChange = readSystemdUnitSnapshot(paths);
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-		const changedCredential = convergeRuntimeManifest(
-			{
-				...projected,
-				secretValues: {
-					...projected.secretValues,
-					[credentialSecretRef]: JSON.stringify({
-						...projectedCreds,
-						advSecretKey: "wa-hermes-secret-rotated",
-					}),
+		const changedCheckpoint: RuntimeManifestLoad = {
+			...projected,
+			manifest: {
+				...projected.manifest,
+				clawdiCli: {
+					...projected.manifest.clawdiCli,
+					packageSpec: "clawdi@0.13.67",
 				},
 			},
-			paths,
-		);
+			secretValues: {
+				...projected.secretValues,
+				[credentialSecretRef]: JSON.stringify({
+					...projectedCreds,
+					advSecretKey: "wa-hermes-secret-rotated",
+				}),
+			},
+		};
+		const preserveActiveUnits = runtimeOnlyChangesCliPackage(projected, changedCheckpoint);
+		expect(preserveActiveUnits).toBe(false);
+		const changedCredential = convergeRuntimeManifest(changedCheckpoint, paths);
 		expect(changedCredential.installErrors).toEqual([]);
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(
 			initialHermesRevision,
@@ -12997,7 +13099,9 @@ exit 64
 		writeFileSync(systemctlLog, "");
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		expect(
-			applySystemdRuntimeUpdate(paths, beforeCredentialChange, readSystemdUnitSnapshot(paths)),
+			applySystemdRuntimeUpdate(paths, beforeCredentialChange, readSystemdUnitSnapshot(paths), {
+				preserveActiveUnits,
+			}),
 		).toEqual({
 			applied: true,
 			systemUnitsChanged: [],

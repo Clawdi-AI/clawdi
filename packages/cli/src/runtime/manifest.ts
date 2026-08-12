@@ -230,6 +230,10 @@ import {
 	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
 } from "./transparent-egress";
 import {
+	type ManagedWhatsAppAuthCredential,
+	managedWhatsAppAuthCredentials,
+} from "./whatsapp-credential-projection";
+import {
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 	parseManagedWhatsAppSocketMetadataJson,
 } from "./whatsapp-upstream-contract";
@@ -475,14 +479,6 @@ function omitSecretRefs(
 	return normalized;
 }
 
-interface ManagedWhatsAppAuthCredential {
-	accountKey: string;
-	credentialId: string;
-	authDir: string;
-	credsJsonSecretRef: string;
-	target: "openclaw" | "hermes" | "legacy";
-}
-
 const MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
 
 export function materializeHostedChannelCredentials(
@@ -581,62 +577,7 @@ function hostedChannelCredentialsDeclared(manifest: RuntimeManifest): boolean {
 }
 
 function hostedWhatsAppAuthCredentials(manifest: RuntimeManifest): ManagedWhatsAppAuthCredential[] {
-	const raw = manifest.projection?.channelCredentials;
-	if (!Array.isArray(raw)) return [];
-	return raw
-		.flatMap(parseManagedWhatsAppAuthCredentials)
-		.filter((entry): entry is ManagedWhatsAppAuthCredential => entry !== null)
-		.sort((left, right) =>
-			`${left.target}:${left.accountKey}:${left.credentialId}`.localeCompare(
-				`${right.target}:${right.accountKey}:${right.credentialId}`,
-			),
-		);
-}
-
-function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAuthCredential[] {
-	const record = recordValue(value);
-	if (!record) return [];
-	if (record.provider !== "whatsapp" || record.kind !== "whatsapp_baileys_auth_state") return [];
-	const accountKey = stringValue(record.accountKey);
-	const credentialId = stringValue(record.credentialId);
-	const files = Array.isArray(record.files) ? record.files : [];
-	const credsFile = files
-		.map(recordValue)
-		.find((file) => file?.path === "creds.json" && typeof file.secretRef === "string");
-	const credsJsonSecretRef = credsFile ? stringValue(credsFile.secretRef) : null;
-	if (!accountKey || !credentialId || !credsJsonSecretRef) {
-		throw new Error("WhatsApp auth credential projection is incomplete");
-	}
-	const targets = recordValue(record.targets);
-	const parsedTargets: ManagedWhatsAppAuthCredential[] = [];
-	const openclawTarget = targets ? recordValue(targets.openclaw) : null;
-	const openclawAuthDir = targets
-		? stringValue(openclawTarget?.authDir)
-		: stringValue(record.authDir);
-	if (openclawAuthDir) {
-		parsedTargets.push({
-			accountKey,
-			credentialId,
-			authDir: openclawAuthDir,
-			credsJsonSecretRef,
-			target: targets ? "openclaw" : "legacy",
-		});
-	}
-	const hermesTarget = targets ? recordValue(targets.hermes) : null;
-	const hermesAuthDir = hermesTarget ? stringValue(hermesTarget.authDir) : null;
-	if (hermesAuthDir) {
-		parsedTargets.push({
-			accountKey,
-			credentialId,
-			authDir: hermesAuthDir,
-			credsJsonSecretRef,
-			target: "hermes",
-		});
-	}
-	if (parsedTargets.length === 0) {
-		throw new Error("WhatsApp auth credential projection is incomplete");
-	}
-	return parsedTargets;
+	return managedWhatsAppAuthCredentials(manifest.projection?.channelCredentials);
 }
 
 function materializeManagedWhatsAppAuthDir(

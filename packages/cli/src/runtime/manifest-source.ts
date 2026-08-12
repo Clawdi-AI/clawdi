@@ -35,6 +35,7 @@ import {
 	normalizeSecretValues,
 	runtimeSecretValue,
 } from "./secret-values";
+import { managedWhatsAppAuthCredentials } from "./whatsapp-credential-projection";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -934,6 +935,11 @@ export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 	}
 	if (hasEnabledRuntime) {
 		for (const ref of egressProfileSecretRefs(manifest.egressProfiles)) refs.add(ref);
+		for (const credential of managedWhatsAppAuthCredentials(
+			manifest.projection?.channelCredentials,
+		)) {
+			refs.add(credential.credsJsonSecretRef);
+		}
 	}
 	return [...refs].sort();
 }

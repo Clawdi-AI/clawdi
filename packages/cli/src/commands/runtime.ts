@@ -485,6 +485,7 @@ export interface SystemdUnitSnapshot {
 interface SystemdUnitManagerState {
 	loadState: string;
 	activeState: string;
+	needDaemonReload: boolean;
 	enabledState?: string;
 }
 
@@ -633,6 +634,26 @@ export function applySystemdRuntimeUpdate(
 			userUnitsChanged: [...userUnitsChanged].sort(),
 		};
 	}
+	const systemManagerNeedsReload = new Set(
+		system.present.filter(
+			(unit) => systemdUnitManagerState(paths, "system", unit).needDaemonReload,
+		),
+	);
+	const userManagerNeedsReload = new Set(
+		user.present.filter((unit) => systemdUnitManagerState(paths, "user", unit).needDaemonReload),
+	);
+	const changedSystemUnits = new Set(system.changed);
+	const changedUserUnits = new Set(user.changed);
+	const preExistingStaleSystemUnits = new Set(
+		[...systemManagerNeedsReload].filter(
+			(unit) => !changedSystemUnits.has(unit) && !system.added.includes(unit),
+		),
+	);
+	const preExistingStaleUserUnits = new Set(
+		[...userManagerNeedsReload].filter(
+			(unit) => !changedUserUnits.has(unit) && !user.added.includes(unit),
+		),
+	);
 
 	for (const unit of system.removed) {
 		const state = systemdUnitManagerState(paths, "system", unit);
@@ -652,15 +673,24 @@ export function applySystemdRuntimeUpdate(
 		}
 	}
 
-	if (system.added.length > 0 || system.changed.length > 0 || system.removed.length > 0) {
+	if (
+		system.added.length > 0 ||
+		system.changed.length > 0 ||
+		system.removed.length > 0 ||
+		systemManagerNeedsReload.size > 0
+	) {
 		systemctl(["daemon-reload"]);
 	}
-	if (user.added.length > 0 || user.changed.length > 0 || user.removed.length > 0) {
+	if (
+		user.added.length > 0 ||
+		user.changed.length > 0 ||
+		user.removed.length > 0 ||
+		userManagerNeedsReload.size > 0
+	) {
 		runtimeUserSystemctl(paths, ["daemon-reload"]);
 	}
 
 	const addedSystemUnits = new Set(system.added);
-	const changedSystemUnits = new Set(system.changed);
 	const forcedRestartUnits = new Set(forcedSystemRestarts);
 	const forcedStopUnits = new Set(forcedSystemStops);
 	const skipActivatedSystemUnits = new Set(opts.skipActivatedSystemUnits ?? []);
@@ -685,7 +715,8 @@ export function applySystemdRuntimeUpdate(
 		if (
 			state.activeState === "active" &&
 			unit !== RUNTIME_WATCH_SYSTEM_UNIT &&
-			((changedSystemUnits.has(unit) && !opts.preserveActiveUnits) ||
+			(preExistingStaleSystemUnits.has(unit) ||
+				(changedSystemUnits.has(unit) && !opts.preserveActiveUnits) ||
 				(forcedRestartUnits.has(unit) &&
 					(!addedSystemUnits.has(unit) || unit === RUNTIME_SIDECAR_SYSTEM_UNIT)))
 		) {
@@ -699,7 +730,6 @@ export function applySystemdRuntimeUpdate(
 	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
 	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 
-	const changedUserUnits = new Set(user.changed);
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
 	const enableUserUnits: string[] = [];
@@ -726,7 +756,10 @@ export function applySystemdRuntimeUpdate(
 			enableUserUnits.push(unit);
 			userUnitsChanged.add(unit);
 		}
-		if (changedUserUnits.has(unit) && !opts.preserveActiveUnits) {
+		if (
+			preExistingStaleUserUnits.has(unit) ||
+			(changedUserUnits.has(unit) && !opts.preserveActiveUnits)
+		) {
 			restartUserUnits.push(unit);
 			userUnitsChanged.add(unit);
 		}
@@ -744,12 +777,17 @@ export function applySystemdRuntimeUpdate(
 	const systemConverged = system.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "system", unit);
 		if (forcedStopUnits.has(unit)) return systemdUnitAbsentOrInactive(state);
-		return state.loadState !== "not-found" && state.activeState === "active";
+		return (
+			state.loadState !== "not-found" && state.activeState === "active" && !state.needDaemonReload
+		);
 	});
 	const userConverged = user.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "user", unit);
 		return (
-			state.loadState !== "not-found" && state.activeState === "active" && systemdUnitEnabled(state)
+			state.loadState !== "not-found" &&
+			state.activeState === "active" &&
+			!state.needDaemonReload &&
+			systemdUnitEnabled(state)
 		);
 	});
 	const removedSystemConverged = system.removed.every(
@@ -788,7 +826,13 @@ function systemdUnitManagerState(
 	scope: "system" | "user",
 	unit: string,
 ): SystemdUnitManagerState {
-	const showArgs = ["show", unit, "--property=LoadState", "--property=ActiveState"];
+	const showArgs = [
+		"show",
+		unit,
+		"--property=LoadState",
+		"--property=ActiveState",
+		"--property=NeedDaemonReload",
+	];
 	const show =
 		scope === "system" ? systemctlResult(showArgs) : runtimeUserSystemctlResult(paths, showArgs);
 	assertCommandSucceeded(scope === "system" ? systemctlPath() : "systemctl --user", showArgs, show);
@@ -804,10 +848,17 @@ function systemdUnitManagerState(
 	);
 	const loadState = properties.LoadState;
 	const activeState = properties.ActiveState;
-	if (!loadState || !activeState) {
+	const needDaemonReload = properties.NeedDaemonReload;
+	if (!loadState || !activeState || !needDaemonReload) {
 		throw new Error(`systemd ${scope} unit ${unit} returned incomplete manager state`);
 	}
-	if (scope === "system") return { loadState, activeState };
+	if (needDaemonReload !== "yes" && needDaemonReload !== "no") {
+		throw new Error(
+			`systemd ${scope} unit ${unit} returned invalid NeedDaemonReload: ${needDaemonReload}`,
+		);
+	}
+	const managerState = { loadState, activeState, needDaemonReload: needDaemonReload === "yes" };
+	if (scope === "system") return managerState;
 
 	const enabledArgs = ["is-enabled", unit];
 	const enabled = runtimeUserSystemctlResult(paths, enabledArgs);
@@ -816,7 +867,7 @@ function systemdUnitManagerState(
 		assertCommandSucceeded("systemctl --user", enabledArgs, enabled);
 		throw new Error(`systemd user unit ${unit} returned unknown enabled state: ${enabledState}`);
 	}
-	return { loadState, activeState, enabledState };
+	return { ...managerState, enabledState };
 }
 
 const SYSTEMD_ENABLED_STATES = new Set([

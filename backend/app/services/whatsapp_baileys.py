@@ -176,14 +176,6 @@ class ResolvedWhatsAppCredential:
 
 
 @dataclass(frozen=True)
-class _WhatsAppCredentialSelfIdentityState:
-    creds: dict[str, object]
-    me: dict[str, object]
-    self_identity: dict[str, str]
-    needs_repair: bool
-
-
-@dataclass(frozen=True)
 class RelayDecision:
     action: Literal["relay", "drop"]
     node: BinaryNode | None = None
@@ -1846,11 +1838,11 @@ def whatsapp_credential_needs_self_identity_repair(
 ) -> bool:
     if self_identity is None or credential.revoked_at is not None:
         return False
-    state = _whatsapp_credential_self_identity_state(
+    *_, needs_repair = _load_whatsapp_credential_self_identity_state(
         credential,
         self_identity=self_identity,
     )
-    return state.needs_repair
+    return needs_repair
 
 
 async def save_whatsapp_credential_self_identity(
@@ -1861,28 +1853,28 @@ async def save_whatsapp_credential_self_identity(
 ) -> bool:
     if self_identity is None or credential.revoked_at is not None:
         return False
-    state = _whatsapp_credential_self_identity_state(
+    creds, me, validated, needs_repair = _load_whatsapp_credential_self_identity_state(
         credential,
         self_identity=self_identity,
     )
     stored_identity: dict[str, JsonValue] = {
         "id": credential.synthetic_jid,
-        "lid": state.self_identity["lid"],
+        "lid": validated["lid"],
     }
-    if name := state.self_identity.get("name"):
+    if name := validated.get("name"):
         stored_identity["name"] = name
 
     config = dict(credential.config or {})
     config_changed = config.get("self_identity") != stored_identity
-    if not state.needs_repair and not config_changed:
+    if not needs_repair and not config_changed:
         return False
-    if state.needs_repair:
-        state.creds["me"] = {
-            **state.me,
+    if needs_repair:
+        creds["me"] = {
+            **me,
             "id": credential.synthetic_jid,
-            "lid": state.self_identity["lid"],
+            "lid": validated["lid"],
         }
-        ciphertext, nonce = encrypt(serialize_creds(state.creds))
+        ciphertext, nonce = encrypt(serialize_creds(creds))
         credential.encrypted_credentials = ciphertext
         credential.credential_nonce = nonce
     if config_changed:
@@ -1892,11 +1884,11 @@ async def save_whatsapp_credential_self_identity(
     return True
 
 
-def _whatsapp_credential_self_identity_state(
+def _load_whatsapp_credential_self_identity_state(
     credential: ChannelAgentCredential,
     *,
     self_identity: Mapping[str, str],
-) -> _WhatsAppCredentialSelfIdentityState:
+) -> tuple[dict[str, object], dict[str, object], dict[str, str], bool]:
     validated = whatsapp_self_identity_from_config({"self_identity": dict(self_identity)})
     if validated is None:
         raise ValueError("WhatsApp self identity requires a valid PN and LID pair")
@@ -1908,13 +1900,11 @@ def _whatsapp_credential_self_identity_state(
     me = creds.get("me")
     if not _is_object_dict(me):
         raise ValueError("WhatsApp credential creds.me must be an object")
-    return _WhatsAppCredentialSelfIdentityState(
-        creds=creds,
-        me=me,
-        self_identity=validated,
-        needs_repair=(
-            me.get("id") != credential.synthetic_jid or me.get("lid") != validated["lid"]
-        ),
+    return (
+        creds,
+        me,
+        validated,
+        me.get("id") != credential.synthetic_jid or me.get("lid") != validated["lid"],
     )
 
 
