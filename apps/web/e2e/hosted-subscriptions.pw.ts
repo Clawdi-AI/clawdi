@@ -136,10 +136,12 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Show history (2)" })).toBeVisible();
+	await expect(dialog.locator('[data-slot="compute-subscription-card"] h3')).toHaveCount(2);
 	await expectCardsFit(dialog);
 
 	await dialog.getByRole("button", { name: "Show history (2)" }).click();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(4);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"] h3')).toHaveCount(4);
 	await expect(dialog.getByText("Canceled", { exact: true })).toHaveCount(2);
 	await expect(dialog.getByText("ended_first", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("ended_second", { exact: true })).toBeVisible();
@@ -182,7 +184,24 @@ test("agent settings uses the subscription card without changing plan actions", 
 		deployments: [
 			paidBasicDeployment,
 			cancelPendingBasicDeployment,
-			cardPastDueDeployment,
+			{
+				...paidBasicDeployment,
+				id: "hdep_card_action_required",
+				name: "Card authentication required",
+				compute_subscription: {
+					...paidBasicDeployment.compute_subscription,
+					payment_state: "requires_action",
+					latest_failed_invoice_id: "in_card_action_required",
+					latest_failed_invoice_hosted_url: "https://billing.example/invoice/action-required",
+				},
+			},
+			{
+				...cardPastDueDeployment,
+				compute_subscription: {
+					...cardPastDueDeployment.compute_subscription,
+					status: "active",
+				},
+			},
 			terminalFallbackDeployment,
 		],
 		plans: [basicPlan, performancePlan],
@@ -228,7 +247,21 @@ test("agent settings uses the subscription card without changing plan actions", 
 		"data-status",
 		"destructive",
 	);
-	await expect(pastDueCard.getByRole("button", { name: "Change payment source" })).toBeVisible();
+	await expect(
+		pastDueCard.getByRole("button", { name: "Change plan, term, or payment source" }),
+	).toBeVisible();
+	await expectCardsFit(page.locator("body"));
+
+	await gotoHostedAgentSettings(page, "hdep_card_action_required", "Basic");
+	const actionRequiredCard = page
+		.locator('[data-slot="compute-subscription-card"]')
+		.filter({ hasText: "Basic compute" });
+	await expect(
+		actionRequiredCard.getByText("Payment action required", { exact: true }),
+	).toHaveAttribute("data-status", "warning");
+	await expect(
+		actionRequiredCard.getByRole("button", { name: "Change plan, term, or payment source" }),
+	).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");

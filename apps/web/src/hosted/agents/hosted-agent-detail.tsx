@@ -3701,8 +3701,21 @@ function ComputeSettingsSections({
 						currentSubscriptionStatus === "trialing"
 					? "success"
 					: "neutral";
+	const computePlanStatusLabel =
+		!isPaidCompute || !subscriptionLifecycle
+			? "Current"
+			: currentSubscriptionStatus === "past_due" ||
+					currentSubscription?.payment_state === "past_due"
+				? "Past due"
+				: currentSubscriptionStatus === "unpaid" || currentSubscription?.payment_state === "unpaid"
+					? "Unpaid"
+					: currentSubscription?.payment_state === "requires_action"
+						? "Payment action required"
+						: currentSubscriptionStatus === "canceling" || subscriptionCancelPending
+							? "Canceling"
+							: subscriptionLifecycle.badgeLabel;
 	const computePlanStatus = {
-		label: isPaidCompute && subscriptionLifecycle ? subscriptionLifecycle.badgeLabel : "Current",
+		label: computePlanStatusLabel,
 		tone: computePlanStatusTone,
 	};
 	const pendingPlanCopy = pendingPlanSlug

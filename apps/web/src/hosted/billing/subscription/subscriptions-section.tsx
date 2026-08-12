@@ -212,7 +212,6 @@ function SubscriptionRow({ subscription }: { subscription: ComputeSubscriptionLi
 	return (
 		<li className="min-w-0">
 			<ComputeSubscriptionCard
-				headingLevel={4}
 				title={planLabel(subscription.plan_slug)}
 				status={status}
 				badges={subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
