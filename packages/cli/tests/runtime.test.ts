@@ -8580,7 +8580,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		});
 	});
 
-	it("classifies only a package-spec-only runtime checkpoint as CLI-only", () => {
+	it("classifies a fresh CLI package checkpoint as CLI-only", () => {
 		const home = join(root, "home", "clawdi");
 		const previousManifest = {
 			...runtimeWatchLocaleManifest(home, 13),
@@ -8589,6 +8589,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const nextManifest: RuntimeManifest = {
 			...previousManifest,
 			generation: 14,
+			issuedAt: "2026-06-06T00:00:14Z",
 			clawdiCli: {
 				...previousManifest.clawdiCli,
 				packageSpec: "clawdi@1.2.4-test",
@@ -8896,7 +8897,7 @@ chmod +x "$prefix/bin/clawdi"
 								...hostedRequiredState(),
 								instanceId: "iid_cli_update",
 								generation: runtimeGeneration,
-								issuedAt: "2026-06-06T00:00:00Z",
+								issuedAt: `2026-06-06T00:00:${runtimeGeneration}Z`,
 								locale: TEST_HOSTED_LOCALE,
 								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
