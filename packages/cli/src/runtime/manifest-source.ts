@@ -164,6 +164,7 @@ export interface RuntimeManifestFailure {
 	mode: "repair" | "manifest-rejected";
 	stage: "detect" | "local" | "network" | "auth";
 	errors: string[];
+	etag?: string;
 	rejectedGeneration?: number | null;
 	activeGeneration?: number | null;
 }
@@ -183,6 +184,15 @@ class RuntimeAuthError extends Error {
 				detail ? ` ${detail.slice(0, 200)}` : ""
 			}`,
 		);
+	}
+}
+
+class RuntimeManifestResponseError extends Error {
+	constructor(
+		message: string,
+		readonly etag: string | undefined,
+	) {
+		super(message);
 	}
 }
 
@@ -276,12 +286,20 @@ async function fetchRuntimeManifestPayload(
 		}
 		const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
 		if (contentType !== HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE) {
-			throw new Error(
+			throw new RuntimeManifestResponseError(
 				`runtime manifest response content-type must be ${HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE}, received ${contentType ?? "missing"}`,
+				etag,
 			);
 		}
 		if (!etag) throw new Error("runtime bundle response is missing its strong ETag");
-		return { url, raw: await response.json(), etag };
+		try {
+			return { url, raw: await response.json(), etag };
+		} catch (error) {
+			throw new RuntimeManifestResponseError(
+				`runtime manifest response is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+				etag,
+			);
+		}
 	} finally {
 		clearTimeout(timer);
 	}
@@ -314,6 +332,7 @@ async function loadRemoteRuntimeManifestPipeline(
 					error instanceof Error ? error.message : String(error)
 				}`,
 			],
+			...(error instanceof RuntimeManifestResponseError && error.etag ? { etag: error.etag } : {}),
 		};
 	}
 	if ("notModified" in fetched) {
@@ -341,12 +360,18 @@ async function loadRemoteRuntimeManifestPipeline(
 			mode: "manifest-rejected",
 			stage: "network",
 			errors: error instanceof z.ZodError ? zodErrors(error) : [String(error)],
+			etag: fetched.etag,
 			rejectedGeneration: rawGeneration(fetched.raw),
 			activeGeneration: loadExistingState(paths).generation ?? null,
 		};
 	}
 	const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
-	if (!("manifest" in loaded)) return loaded;
+	if (!("manifest" in loaded)) {
+		return {
+			...loaded,
+			etag: fetched.etag,
+		};
+	}
 	return {
 		...loaded,
 		etag: fetched.etag,

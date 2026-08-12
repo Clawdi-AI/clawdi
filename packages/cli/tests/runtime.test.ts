@@ -7159,6 +7159,161 @@ exit 64
 		}
 	});
 
+	it("runtime watch probes a failed ETag without reconverging and applies a new ETag", async () => {
+		installSuccessfulSystemctlFixture();
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const abort = new AbortController();
+		const previousLog = console.log;
+		const logs: string[] = [];
+		const paths = seedRuntimeWatchLocaleBaseline(home, state, run);
+		setRuntimeApplyGeneration(2, CANONICAL_TEST_CONTEXT);
+		const badEtag = testBundleEtag("manifest-locale-bad-2");
+		const goodEtag = testBundleEtag("manifest-locale-good-2");
+		const badPayload = hostedRuntimeWatchLocalePayload(home, 2);
+		let manifestCalls = 0;
+		let deferredEvent: unknown = null;
+		const sameEtagProbeStarted = Promise.withResolvers<void>();
+		const releaseSameEtagProbe = Promise.withResolvers<void>();
+		const recoveryProbeStarted = Promise.withResolvers<void>();
+		const releaseRecoveryProbe = Promise.withResolvers<void>();
+		console.log = (value?: unknown) => {
+			const line = String(value);
+			logs.push(line);
+			const event = JSON.parse(line);
+			if (event.status === "applied") abort.abort();
+		};
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: async () => {
+					manifestCalls += 1;
+					if (manifestCalls === 1) {
+						return hostedRuntimeBundleResponse(badPayload, {
+							etag: badEtag,
+							includeRuntimeServiceSecrets: false,
+						});
+					}
+					if (manifestCalls === 2) {
+						sameEtagProbeStarted.resolve();
+						await releaseSameEtagProbe.promise;
+						return hostedRuntimeBundleResponse(badPayload, {
+							etag: badEtag,
+							includeRuntimeServiceSecrets: false,
+						});
+					}
+					recoveryProbeStarted.resolve();
+					await releaseRecoveryProbe.promise;
+					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
+						etag: goodEtag,
+					});
+				},
+			},
+		]);
+
+		try {
+			await runtimeWatch({
+				intervalMs: 20,
+				selfHealMs: 300_000,
+				json: true,
+				abort: abort.signal,
+				notificationConsumer: async (options) => {
+					await sameEtagProbeStarted.promise;
+					await options.onEvent({
+						type: "runtime_manifest_changed",
+						environment_id: "env_watch_locale",
+					});
+					releaseSameEtagProbe.resolve();
+					await recoveryProbeStarted.promise;
+					deferredEvent = JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf-8")).event;
+					releaseRecoveryProbe.resolve();
+					await new Promise<void>((resolveDone) => {
+						if (options.abort.aborted) return resolveDone();
+						options.abort.addEventListener("abort", () => resolveDone(), { once: true });
+					});
+				},
+			});
+
+			expect(captured.map((request) => request.headers["if-none-match"] ?? null)).toEqual([
+				testBundleEtag("manifest-locale-1"),
+				badEtag,
+				badEtag,
+			]);
+			const events = logs.map((line) => JSON.parse(line));
+			expect(events).toHaveLength(2);
+			expect(events[0].error).toContain(
+				"Runtime secret secret://runtime/openclaw/gateway-token is unavailable.",
+			);
+			expect(events[1]).toMatchObject({ status: "applied", etag: goodEtag });
+			expect(deferredEvent).toEqual(events[0]);
+			expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 2, etag: goodEtag });
+		} finally {
+			restore();
+			console.log = previousLog;
+		}
+	});
+
+	it("runtime watch keeps no-ETag failures deferred across SSE notifications", async () => {
+		installSuccessfulSystemctlFixture();
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const abort = new AbortController();
+		const previousLog = console.log;
+		const logs: string[] = [];
+		const paths = seedRuntimeWatchLocaleBaseline(home, state, run);
+		setRuntimeApplyGeneration(2, CANONICAL_TEST_CONTEXT);
+		const failure = Promise.withResolvers<void>();
+		let subscriptionCalls = 0;
+		console.log = (value?: unknown) => {
+			const line = String(value);
+			logs.push(line);
+			failure.resolve();
+		};
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => new Response("temporary failure", { status: 503 }),
+			},
+		]);
+
+		try {
+			await runtimeWatch({
+				intervalMs: 20,
+				selfHealMs: 300_000,
+				json: true,
+				abort: abort.signal,
+				notificationConsumer: async (options) => {
+					subscriptionCalls += 1;
+					if (subscriptionCalls === 2) {
+						abort.abort();
+						return;
+					}
+					await failure.promise;
+					await options.onEvent({
+						type: "runtime_manifest_changed",
+						environment_id: "env_watch_locale",
+					});
+				},
+			});
+
+			expect(subscriptionCalls).toBe(2);
+			expect(captured).toHaveLength(1);
+			expect(logs).toHaveLength(1);
+			const originalError = JSON.parse(logs[0]);
+			expect(originalError).toMatchObject({ status: "error", stage: "network" });
+			expect(JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf-8")).event).toEqual(
+				originalError,
+			);
+		} finally {
+			restore();
+			console.log = previousLog;
+		}
+	});
+
 	it("runtime watch receives the gateway token and applies a live channel binding", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");

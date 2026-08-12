@@ -1311,7 +1311,11 @@ describe("hosted runtime bundle v2", () => {
 		const loaded = await loadRemoteRuntimeManifest(getRuntimePaths({ mode: "hosted" }), {
 			applyContext,
 		});
-		expect(loaded).toMatchObject({ mode: "manifest-rejected", stage: "network" });
+		expect(loaded).toMatchObject({
+			mode: "manifest-rejected",
+			stage: "network",
+			etag: '"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"',
+		});
 		expect("errors" in loaded ? loaded.errors.join("\n") : "").toContain(
 			"does not match its sourceRevision validator",
 		);
