@@ -242,14 +242,14 @@ discoverable from account state and should be reconciled separately with
    release and the same registry/pairing smoke gate; it is not an image,
    manifest, environment override, or npm dist-tag setting.
 
-   Do not merge or deploy the backend terminal Codex environment-name cutover
-   until `clawdi@0.13.69` is published and existing deployments' desired
-   package specs and active CLI observations have converged. The backend then
-   switches each deployment to `CLAWDI_AI_API_KEY` only when its desired
+   The backend terminal Codex environment-name cutover may deploy after
+   `clawdi@0.13.69` is published. Existing deployments do not need to converge
+   first: each deployment switches to `CLAWDI_AI_API_KEY` only when its desired
    version is at least `0.13.69` and strict v2 diagnostics report that exact
    desired version plus the current apply generation and instance. Observation
    generation, ETag, and source revision must agree with that applied record;
-   every other state continues to receive `OPENAI_API_KEY`.
+   every older, upgrading, stale, or unhealthy deployment continues to receive
+   `OPENAI_API_KEY`.
 
    Managed provider egress rewrites require the public
    `Bearer clawdi-egress-placeholder` authorization value as an explicit intent
