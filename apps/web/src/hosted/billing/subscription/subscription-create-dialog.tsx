@@ -268,7 +268,9 @@ export function SubscriptionCreateDialog({
 						description:
 							source.mode === "existing"
 								? "Compute updates after the existing subscription is assigned."
-								: `${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(selectedOffer?.price_cents ?? 0)} was paid from Wallet. Compute updates after payment is projected.`,
+								: fundingSource === "wallet"
+									? `${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(selectedOffer?.price_cents ?? 0)} was paid from Wallet. Compute updates after payment is projected.`
+									: "Card payment was confirmed. Compute updates after payment is projected.",
 					},
 				);
 				onOpenChange(false);
