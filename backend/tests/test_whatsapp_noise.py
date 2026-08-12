@@ -78,6 +78,10 @@ from app.services.whatsapp_noise import (
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
 
+def _pad_message(message_proto: bytes, pad_length: int) -> bytes:
+    return message_proto + bytes([pad_length]) * pad_length
+
+
 async def _create_whatsapp_channel_with_existing_link(
     client,
     db_session,
@@ -232,7 +236,7 @@ def test_whatsapp_noise_message_padding_matches_baileys_shape():
     assert 1 <= pad_length <= 16
     assert padded.endswith(bytes([pad_length]) * pad_length)
     assert _unpad_random_max16(padded) == raw
-    assert _proto_conversation_text(padded) == "hello"
+    assert _proto_conversation_text(raw) == "hello"
 
 
 def test_whatsapp_wabinary_decodes_baileys_dictionary_tokens():
@@ -749,68 +753,105 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
 
     sender = session._signal_senders["184207372460253:0@lid"]
     reply_proto = _bytes_field(1, b"agent reply")
-    reply = sender.encrypt_from_established_session("184207372460253", 0, reply_proto)
-    message = encode_binary_node_minimal(
-        {
-            "tag": "message",
-            "attrs": {"id": "m-1", "to": "15551112222@s.whatsapp.net"},
-            "content": [
-                {
-                    "tag": "participants",
-                    "attrs": {},
-                    "content": [
-                        {
-                            "tag": "to",
-                            "attrs": {"jid": "15551112222@s.whatsapp.net"},
-                            "content": [
-                                {
-                                    "tag": "enc",
-                                    "attrs": {"type": reply.type},
-                                    "content": reply.ciphertext,
-                                }
-                            ],
-                        }
-                    ],
-                },
-                {"tag": "meta", "attrs": {"polltype": "creation"}},
-                {"tag": "device-identity", "attrs": {}, "content": b"not-forwarded"},
-            ],
-        }
-    )
-    ack_frames = _run(session.handle_inbound(pack_frame(client.transport.encrypt(message))))
+    for pad_length in (1, 4, 5, 8, 16):
+        message_id = f"m-{pad_length}"
+        reply = sender.encrypt_from_established_session(
+            "184207372460253",
+            0,
+            _pad_message(reply_proto, pad_length),
+        )
+        message = encode_binary_node_minimal(
+            {
+                "tag": "message",
+                "attrs": {"id": message_id, "to": "15551112222@s.whatsapp.net"},
+                "content": [
+                    {
+                        "tag": "participants",
+                        "attrs": {},
+                        "content": [
+                            {
+                                "tag": "to",
+                                "attrs": {"jid": "15551112222@s.whatsapp.net"},
+                                "content": [
+                                    {
+                                        "tag": "enc",
+                                        "attrs": {"type": reply.type},
+                                        "content": reply.ciphertext,
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {"tag": "meta", "attrs": {"polltype": "creation"}},
+                    {"tag": "device-identity", "attrs": {}, "content": b"not-forwarded"},
+                ],
+            }
+        )
+        ack_frames = _run(session.handle_inbound(pack_frame(client.transport.encrypt(message))))
 
-    assert len(ack_frames) == 1
-    ack_ciphertext, _rest = unpack_frame(ack_frames[0]) or (b"", b"")
-    ack = decode_binary_node_minimal(client.transport.decrypt(ack_ciphertext))
-    assert ack == {
-        "tag": "ack",
-        "attrs": {
-            "id": "m-1",
-            "to": "15551112222@s.whatsapp.net",
-            "class": "message",
-        },
-    }
-    assert events[-1].stage == "outbound_message"
-    assert events[-1].outcome == "decoded"
-    assert events[-1].details == {
-        "id": "m-1",
-        "encType": "msg",
-        "protoBytes": len(reply_proto),
-        "protoSha256": hashlib.sha256(reply_proto).hexdigest(),
-        "conversationPresent": True,
-        "children": ["participants", "meta", "device-identity"],
-    }
-    assert outbound_messages == [
-        WhatsAppOutboundMessage(
+        assert len(ack_frames) == 1
+        ack_ciphertext, _rest = unpack_frame(ack_frames[0]) or (b"", b"")
+        ack = decode_binary_node_minimal(client.transport.decrypt(ack_ciphertext))
+        assert ack == {
+            "tag": "ack",
+            "attrs": {
+                "id": message_id,
+                "to": "15551112222@s.whatsapp.net",
+                "class": "message",
+            },
+        }
+        assert events[-1].stage == "outbound_message"
+        assert events[-1].outcome == "decoded"
+        assert events[-1].details == {
+            "id": message_id,
+            "encType": "msg",
+            "protoBytes": len(reply_proto),
+            "protoSha256": hashlib.sha256(reply_proto).hexdigest(),
+            "conversationPresent": True,
+            "children": ["participants", "meta", "device-identity"],
+        }
+        assert outbound_messages[-1] == WhatsAppOutboundMessage(
             to_jid="15551112222@s.whatsapp.net",
-            message_id="m-1",
+            message_id=message_id,
             message_proto=reply_proto,
             enc_type="msg",
-            attrs={"id": "m-1", "to": "15551112222@s.whatsapp.net"},
+            attrs={"id": message_id, "to": "15551112222@s.whatsapp.net"},
             conversation="agent reply",
             additional_nodes=({"tag": "meta", "attrs": {"polltype": "creation"}},),
         )
-    ]
+        assert _read_fields(outbound_messages[-1].message_proto) == [(1, 2, b"agent reply")]
+
+    malformed = sender.encrypt_from_established_session(
+        "184207372460253",
+        0,
+        reply_proto + b"\x00",
+    )
+    malformed_message = encode_binary_node_minimal(
+        {
+            "tag": "message",
+            "attrs": {"id": "m-malformed", "to": "15551112222@s.whatsapp.net"},
+            "content": [
+                {
+                    "tag": "enc",
+                    "attrs": {"type": malformed.type},
+                    "content": malformed.ciphertext,
+                }
+            ],
+        }
+    )
+
+    assert (
+        _run(session.handle_inbound(pack_frame(client.transport.encrypt(malformed_message)))) == []
+    )
+    assert len(outbound_messages) == 5
+    assert events[-1].stage == "outbound_message"
+    assert events[-1].outcome == "dropped"
+    assert events[-1].details == {
+        "reason": "decrypt-failed",
+        "id": "m-malformed",
+        "children": ["enc"],
+        "errorType": "ValueError",
+    }
 
 
 def test_whatsapp_noise_emulator_session_decodes_agent_group_message_stanzas():
@@ -867,11 +908,15 @@ def test_whatsapp_noise_emulator_session_decodes_agent_group_message_stanzas():
         2,
         _bytes_field(1, group_jid.encode("utf-8")) + _bytes_field(2, axolotl),
     )
-    skdm = sender.encrypt_from_established_session("15551112222", 0, skdm_proto)
+    skdm = sender.encrypt_from_established_session(
+        "15551112222",
+        0,
+        _pad_message(skdm_proto, 8),
+    )
     group_proto = _bytes_field(1, b"group reply")
     skmsg = encrypt_whatsapp_group_message_for_sender_key(
         axolotl_bytes=axolotl,
-        plaintext=group_proto,
+        plaintext=_pad_message(group_proto, 5),
     )
     message = encode_binary_node_minimal(
         {
@@ -964,7 +1009,7 @@ def test_whatsapp_noise_emulator_session_decodes_agent_group_message_stanzas():
     restored_group_proto = _bytes_field(1, b"restored group reply")
     restored_skmsg = encrypt_whatsapp_group_message_for_sender_key(
         axolotl_bytes=axolotl,
-        plaintext=restored_group_proto,
+        plaintext=_pad_message(restored_group_proto, 16),
     )
     restored_message = encode_binary_node_minimal(
         {
@@ -1075,7 +1120,11 @@ def test_whatsapp_noise_emulator_session_restores_signal_sender_snapshots():
 
     restored_sender = SignalSender(snapshots["15551112222:0@s.whatsapp.net"])
     reply_proto = _bytes_field(1, b"restored reply")
-    reply = restored_sender.encrypt_from_established_session("15551112222", 0, reply_proto)
+    reply = restored_sender.encrypt_from_established_session(
+        "15551112222",
+        0,
+        _pad_message(reply_proto, 4),
+    )
     message = encode_binary_node_minimal(
         {
             "tag": "message",
@@ -1616,7 +1665,11 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     snapshots = whatsapp_signal_senders_from_config(active_credential.config)
     reply_sender = SignalSender(snapshots["15551112222:0@s.whatsapp.net"])
     reply_proto = _bytes_field(1, b"agent websocket reply")
-    reply = reply_sender.encrypt_from_established_session("15551112222", 0, reply_proto)
+    reply = reply_sender.encrypt_from_established_session(
+        "15551112222",
+        0,
+        _pad_message(reply_proto, 4),
+    )
     reply_node = encode_binary_node_minimal(
         {
             "tag": "message",

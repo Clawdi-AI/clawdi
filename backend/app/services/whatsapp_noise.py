@@ -816,13 +816,15 @@ class WhatsAppNoiseEmulatorSession:
             )
             return None
         try:
-            message_proto = sender.decrypt_from(
-                signal_recipient.user,
-                signal_recipient.device or 0,
-                EncryptedSignalEnvelope(
-                    type=envelope_type,
-                    ciphertext=ciphertext,
-                ),
+            message_proto = _unpad_random_max16(
+                sender.decrypt_from(
+                    signal_recipient.user,
+                    signal_recipient.device or 0,
+                    EncryptedSignalEnvelope(
+                        type=envelope_type,
+                        ciphertext=ciphertext,
+                    ),
+                )
             )
         except Exception as exc:
             await self._emit_outbound_drop(
@@ -881,11 +883,13 @@ class WhatsAppNoiseEmulatorSession:
             if not processed:
                 return None
         try:
-            message_proto = self._group_cipher.decrypt_skmsg(
-                group_jid=group_jid,
-                author_user=self._agent_user,
-                author_device=self._agent_device,
-                ciphertext=ciphertext,
+            message_proto = _unpad_random_max16(
+                self._group_cipher.decrypt_skmsg(
+                    group_jid=group_jid,
+                    author_user=self._agent_user,
+                    author_device=self._agent_device,
+                    ciphertext=ciphertext,
+                )
             )
         except Exception:
             await self._emit_outbound_drop(
@@ -935,10 +939,12 @@ class WhatsAppNoiseEmulatorSession:
                 continue
             envelope_type: Literal["pkmsg", "msg"] = "pkmsg" if enc_type == "pkmsg" else "msg"
             try:
-                skdm_proto = sender.decrypt_from(
-                    participant.user,
-                    participant.device or 0,
-                    EncryptedSignalEnvelope(type=envelope_type, ciphertext=ciphertext),
+                skdm_proto = _unpad_random_max16(
+                    sender.decrypt_from(
+                        participant.user,
+                        participant.device or 0,
+                        EncryptedSignalEnvelope(type=envelope_type, ciphertext=ciphertext),
+                    )
                 )
                 parsed = _parse_sender_key_distribution_message(skdm_proto)
             except Exception:
@@ -1297,11 +1303,6 @@ def _unpad_random_max16(message_proto: bytes) -> bytes:
 
 
 def _proto_conversation_text(message_proto: bytes) -> str | None:
-    with_padding_fallback = message_proto
-    try:
-        message_proto = _unpad_random_max16(message_proto)
-    except ValueError:
-        message_proto = with_padding_fallback
     try:
         fields = _read_fields(message_proto)
     except ValueError:
