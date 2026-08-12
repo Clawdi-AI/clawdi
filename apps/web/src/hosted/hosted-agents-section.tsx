@@ -20,7 +20,7 @@ function HostedEmptyAccountHero({ canDeployOnClawdi }: { canDeployOnClawdi: bool
 	return (
 		<div className="space-y-4">
 			<OnboardingCard variant="first-agent" canDeployOnClawdi={canDeployOnClawdi} />
-			<WelcomeWalletCard showDeployAction={false} />
+			<WelcomeWalletCard />
 		</div>
 	);
 }
@@ -101,6 +101,8 @@ export function HostedAgentsSection({
 		connectedTiles.length === 0 &&
 		!unified.isLoading &&
 		!unified.error;
+	// WelcomeWalletCard relies on this authoritative unified empty state; it
+	// does not issue a second deployments query of its own.
 	return (
 		<div data-hosted="true" className="space-y-4">
 			{isEmptyState ? (
