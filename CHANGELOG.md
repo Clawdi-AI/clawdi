@@ -10,6 +10,29 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.65
+
+Package: `clawdi@0.13.65`
+
+This entry summarizes notable upgrade behavior from v0.13.44 through v0.13.65.
+
+### Added
+
+- Hosted Hermes and OpenClaw runtimes can receive managed WhatsApp channel
+  bindings through the runtime bundle, with Link-scoped credentials and
+  fail-closed validation.
+
+### Fixed
+
+- Exact Hosted CLI-only updates hand off to the new CLI without restarting
+  healthy daemon, egress sidecar, or runtime services. Failed or inactive units
+  still follow the normal recovery path.
+- Hermes WhatsApp restores recipient encryption state and restarts only the
+  affected Hermes gateway when its managed credentials rotate.
+- Hosted upgrades and restarts preserve active service state and OpenClaw
+  configuration while repairing Clawdi-owned Skill, MCP, provider, and gateway
+  state when its durable ownership or generated files need reconstruction.
+
 ## Clawdi CLI v0.13.43
 
 Package: `clawdi@0.13.43`

@@ -336,12 +336,13 @@ Cloud-owned Hosted manifests select `clawdi@<exact-semver>` only. The runtime
 installs that exact public version directly and never calls `npm view` for
 Hosted desired state.
 
-Agent deployment v2 is not live, so there is no rolling compatibility window.
-Keep v2 creation and runtime-state reconciliation disabled until the final
-Hosted capability envelope, exact CLI release, and Cloud manifest contract are
-all deployed. Then verify a fresh deployment's runtime-state write, canonical
-`/v1/runtime/manifest` fetch, SSE invalidation, and runtime services before
-enabling v2. Do not add legacy fields or aliases.
+Agent deployment v2 became publicly enabled on 2026-08-12 while v1 remained
+enabled. Treat its runtime contract as a released surface: roll out additive
+manifest capabilities consumer first, preserve compatibility with deployed
+exact CLI versions, and verify runtime-state writes, canonical
+`/v1/runtime/manifest` fetches, SSE invalidation, and runtime services during
+each controlled rollout. Do not repurpose or remove released fields without an
+explicit compatibility path.
 
 The monorepo has two GitHub Release lines:
 
