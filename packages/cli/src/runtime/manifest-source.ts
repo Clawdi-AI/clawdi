@@ -164,7 +164,6 @@ export interface RuntimeManifestFailure {
 	stage: "detect" | "local" | "network" | "auth";
 	errors: string[];
 	etag?: string;
-	sourceRevision?: string;
 	rejectedGeneration?: number | null;
 	activeGeneration?: number | null;
 }
@@ -239,9 +238,8 @@ function rawGeneration(value: unknown): number | null {
 	return typeof generation === "number" && Number.isInteger(generation) ? generation : null;
 }
 
-function rawSourceRevision(value: unknown): string | undefined {
-	const revision = plainRecord(value)?.sourceRevision;
-	return typeof revision === "string" && /^[a-f0-9]{64}$/.test(revision) ? revision : undefined;
+function strongEtag(value: string | null): string | undefined {
+	return value && /^"[^"\r\n]*"$/.test(value) ? value : undefined;
 }
 
 async function fetchRuntimeManifestPayload(
@@ -274,7 +272,7 @@ async function fetchRuntimeManifestPayload(
 			},
 			signal: controller.signal,
 		});
-		const etag = response.headers.get("etag") ?? undefined;
+		const etag = strongEtag(response.headers.get("etag"));
 		if (response.status === 304) {
 			return { url, notModified: true, etag };
 		}
@@ -366,7 +364,6 @@ async function loadRemoteRuntimeManifestPipeline(
 			stage: "network",
 			errors: error instanceof z.ZodError ? zodErrors(error) : [String(error)],
 			etag: fetched.etag,
-			sourceRevision: rawSourceRevision(fetched.raw),
 			rejectedGeneration: rawGeneration(fetched.raw),
 			activeGeneration: loadExistingState(paths).generation ?? null,
 		};
@@ -376,7 +373,6 @@ async function loadRemoteRuntimeManifestPipeline(
 		return {
 			...loaded,
 			etag: fetched.etag,
-			...(normalized.sourceRevision ? { sourceRevision: normalized.sourceRevision } : {}),
 		};
 	}
 	return {

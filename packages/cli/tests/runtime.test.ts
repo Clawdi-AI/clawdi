@@ -13,6 +13,7 @@ import {
 	statSync,
 	symlinkSync,
 	utimesSync,
+	watch,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7081,7 +7082,7 @@ exit 0
 		}
 	});
 
-	it("runtime watch defers a rejected ETag while probing and applies a new ETag promptly", async () => {
+	it("runtime watch probes a failed ETag without reconverging and applies a new ETag", async () => {
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -7096,61 +7097,45 @@ exit 0
 		const badEtag = testBundleEtag("manifest-locale-bad-2");
 		const goodEtag = testBundleEtag("manifest-locale-good-2");
 		const badPayload = hostedRuntimeWatchLocalePayload(home, 2);
-		let corrected = false;
 		let manifestCalls = 0;
-		let fullResponses = 0;
-		let resolveFirstEvent: (() => void) | null = null;
-		let resolveThirdProbeStarted: (() => void) | null = null;
-		let releaseThirdProbe: (() => void) | null = null;
 		let deferredStatus: unknown = null;
-		const firstEvent = new Promise<void>((resolveEvent) => {
-			resolveFirstEvent = resolveEvent;
-		});
-		const thirdProbeStarted = new Promise<void>((resolveProbe) => {
-			resolveThirdProbeStarted = resolveProbe;
-		});
-		const thirdProbeReleased = new Promise<void>((resolveProbe) => {
-			releaseThirdProbe = resolveProbe;
-		});
+		const firstEvent = Promise.withResolvers<void>();
+		const sameEtagProbeStarted = Promise.withResolvers<void>();
+		const releaseSameEtagProbe = Promise.withResolvers<void>();
+		const recoveryProbeStarted = Promise.withResolvers<void>();
+		const releaseRecoveryProbe = Promise.withResolvers<void>();
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 			abort.abort();
 		};
 		console.error = (value?: unknown) => {
 			errors.push(String(value));
-			resolveFirstEvent?.();
+			firstEvent.resolve();
 		};
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
 				path: "/v1/runtime/manifest",
-				response: async (request) => {
+				response: async () => {
 					manifestCalls += 1;
 					if (manifestCalls === 1) {
-						fullResponses += 1;
 						return hostedRuntimeBundleResponse(badPayload, {
 							etag: badEtag,
 							includeRuntimeServiceSecrets: false,
 						});
 					}
-					if (manifestCalls === 2) return new Response("temporary failure", { status: 503 });
-					if (manifestCalls === 3) {
-						resolveThirdProbeStarted?.();
-						await thirdProbeReleased;
-						return new Response(null, {
-							status: 304,
-							headers: { etag: request.headers["if-none-match"] ?? badEtag },
+					if (manifestCalls === 2) {
+						sameEtagProbeStarted.resolve();
+						await releaseSameEtagProbe.promise;
+						return hostedRuntimeBundleResponse(badPayload, {
+							etag: badEtag,
+							includeRuntimeServiceSecrets: false,
 						});
 					}
-					if (corrected) {
-						fullResponses += 1;
-						return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
-							etag: goodEtag,
-						});
-					}
-					return new Response(null, {
-						status: 304,
-						headers: { etag: request.headers["if-none-match"] ?? badEtag },
+					recoveryProbeStarted.resolve();
+					await releaseRecoveryProbe.promise;
+					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
+						etag: goodEtag,
 					});
 				},
 			},
@@ -7162,22 +7147,16 @@ exit 0
 				selfHealMs: 300_000,
 				abort: abort.signal,
 				notificationConsumer: async (options) => {
-					await firstEvent;
+					await firstEvent.promise;
+					await sameEtagProbeStarted.promise;
 					await options.onEvent({
 						type: "runtime_manifest_changed",
 						environment_id: "env_watch_locale",
 					});
-					await thirdProbeStarted;
-					try {
-						deferredStatus = JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf-8"));
-						corrected = true;
-						await options.onEvent({
-							type: "runtime_manifest_changed",
-							environment_id: "env_watch_locale",
-						});
-					} finally {
-						releaseThirdProbe?.();
-					}
+					releaseSameEtagProbe.resolve();
+					await recoveryProbeStarted.promise;
+					deferredStatus = JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf-8"));
+					releaseRecoveryProbe.resolve();
 					await new Promise<void>((resolveDone) => {
 						if (options.abort.aborted) return resolveDone();
 						options.abort.addEventListener("abort", () => resolveDone(), { once: true });
@@ -7185,10 +7164,8 @@ exit 0
 				},
 			});
 
-			expect(fullResponses).toBe(2);
 			expect(captured.map((request) => request.headers["if-none-match"] ?? null)).toEqual([
 				testBundleEtag("manifest-locale-1"),
-				badEtag,
 				badEtag,
 				badEtag,
 			]);
@@ -7201,9 +7178,9 @@ exit 0
 				event: {
 					status: "error",
 					etag: badEtag,
-					retry: { deferred: true, attempt: 1 },
 				},
 			});
+			expect(JSON.stringify(deferredStatus)).not.toContain('"retry"');
 			expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 2, etag: goodEtag });
 		} finally {
 			restore();
@@ -7212,7 +7189,7 @@ exit 0
 		}
 	});
 
-	it("runtime watch lets one coalesced notification probe an unknown failure immediately", async () => {
+	it("runtime watch keeps no-ETag failures deferred across SSE notifications", async () => {
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -7220,30 +7197,20 @@ exit 0
 		const abort = new AbortController();
 		const previousLog = console.log;
 		const logs: string[] = [];
-		seedRuntimeWatchLocaleBaseline(home, state, run);
+		const paths = seedRuntimeWatchLocaleBaseline(home, state, run);
 		setRuntimeApplyGeneration(2, CANONICAL_TEST_CONTEXT);
-		let manifestCalls = 0;
-		let resolveFailure: (() => void) | null = null;
-		const failure = new Promise<void>((resolveEvent) => {
-			resolveFailure = resolveEvent;
-		});
+		const failure = Promise.withResolvers<void>();
+		let statusWatcher: ReturnType<typeof watch> | null = null;
 		console.log = (value?: unknown) => {
 			const line = String(value);
 			logs.push(line);
-			if (logs.length === 1) resolveFailure?.();
-			if (JSON.parse(line).status === "applied") abort.abort();
+			failure.resolve();
 		};
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
 				path: "/v1/runtime/manifest",
-				response: () => {
-					manifestCalls += 1;
-					if (manifestCalls === 1) return new Response("temporary failure", { status: 503 });
-					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
-						etag: testBundleEtag("manifest-locale-recovered-2"),
-					});
-				},
+				response: () => new Response("temporary failure", { status: 503 }),
 			},
 		]);
 
@@ -7254,24 +7221,32 @@ exit 0
 				json: true,
 				abort: abort.signal,
 				notificationConsumer: async (options) => {
-					await failure;
-					for (let index = 0; index < 2; index += 1) {
-						await options.onEvent({
-							type: "runtime_manifest_changed",
-							environment_id: "env_watch_locale",
+					await failure.promise;
+					const initialStatusInode = statSync(paths.runtimeWatchStatus).ino;
+					const deferredTick = new Promise<void>((resolveEvent) => {
+						statusWatcher = watch(paths.statusRoot, (_eventType, filename) => {
+							if (filename !== "runtime-watch.json") return;
+							if (statSync(paths.runtimeWatchStatus).ino !== initialStatusInode) resolveEvent();
 						});
-					}
-					await new Promise<void>((resolveDone) => {
-						if (options.abort.aborted) return resolveDone();
-						options.abort.addEventListener("abort", () => resolveDone(), { once: true });
 					});
+					await options.onEvent({
+						type: "runtime_manifest_changed",
+						environment_id: "env_watch_locale",
+					});
+					await deferredTick;
+					abort.abort();
 				},
 			});
 
-			expect(captured).toHaveLength(2);
-			expect(logs.map((line) => JSON.parse(line).status)).toEqual(["error", "applied"]);
-			expect(readRuntimeAppliedState(getRuntimePaths())?.generation).toBe(2);
+			expect(captured).toHaveLength(1);
+			expect(logs).toHaveLength(1);
+			const originalError = JSON.parse(logs[0]);
+			expect(originalError).toMatchObject({ status: "error", stage: "network" });
+			expect(JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf-8")).event).toEqual(
+				originalError,
+			);
 		} finally {
+			statusWatcher?.close();
 			restore();
 			console.log = previousLog;
 		}
@@ -7878,16 +7853,13 @@ fi
 			const tokenBeforeRejection = readFileSync(tokenPath, "utf-8");
 			const tokenMtimeBeforeRejection = statSync(tokenPath).mtimeMs;
 			const appliedStateBeforeRejection = readFileSync(paths.appliedState, "utf-8");
-			const eventsBeforeRejection = logs.length;
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode).toBe(1);
-			expect(logs).toHaveLength(eventsBeforeRejection + 1);
 			expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
 				status: "error",
 				stage: "final",
-				retry: { attempt: 1, deferred: false },
 			});
 			expect(JSON.parse(logs.at(-1) ?? "{}").error).toContain(
 				"Runtime secret secret://runtime/openclaw/gateway-token is unavailable.",
@@ -11662,7 +11634,6 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.status).toBe("error");
 			expect(event.stage).toBe("cli-update");
 			expect(event.cliUpdate.status).toBe("error");
-			expect(event.retry).toBeUndefined();
 			expect(event.error).toContain("ETARGET");
 			expect(event.activeGeneration).toBeNull();
 			expect(event.rejectedGeneration).toBe(17);
