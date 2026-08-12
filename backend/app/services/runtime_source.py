@@ -62,14 +62,12 @@ from app.services.channels import (
 )
 from app.services.hosted_runtime_secrets import validate_hosted_runtime_secret_key_version
 from app.services.managed_ai_provider import (
-    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
-    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
-    V2_MANAGED_AI_PROVIDER_ID,
+    V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_MANAGED_AI_PROVIDER_IDS,
     is_managed_provider_id,
+    is_v2_deployment_managed_provider_id,
     managed_provider_api_mode,
     runtime_managed_provider_id,
-    v2_deployment_managed_provider_id,
 )
 from app.services.project_runtime_skills import (
     RUNTIME_PROJECT_SKILL_KEY_PATTERN,
@@ -617,14 +615,13 @@ def render_runtime_source(
             )
         )
     codex_tool = tools.codex
+    if not is_v2_deployment_managed_provider_id(codex_tool.provider_id):
+        raise RuntimeSourceError("Hosted Codex tool provider must use its exact deployment source")
     codex_agent_provider_id = runtime_managed_provider_id(codex_tool.provider_id)
     provider_sources: dict[str, str] = {}
     for bound_provider_id in [*bound_runtime_provider_ids, codex_tool.provider_id]:
         agent_provider_id = runtime_managed_provider_id(bound_provider_id)
-        source_provider_id = _provider_source_id(
-            batch,
-            user_id=user_id,
-            deployment_id=state.deployment_id,
+        source_provider_id = _exact_provider_source_id(
             bound_provider_id=bound_provider_id,
         )
         existing_source = provider_sources.get(agent_provider_id)
@@ -1011,27 +1008,21 @@ def _agent_codex_tool(codex_tool: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _provider_source_id(
-    batch: RuntimeSourceBatch,
+def _exact_provider_source_id(
     *,
-    user_id: UUID,
-    deployment_id: str,
     bound_provider_id: str,
 ) -> str:
-    """Resolve an agent alias to the deployment-scoped credential/catalog row."""
+    """Validate and return the exact provider credential/catalog identity."""
 
-    if bound_provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
-        return bound_provider_id
-    deployment_provider_id = v2_deployment_managed_provider_id(deployment_id)
-    if deployment_provider_id is not None and (user_id, deployment_provider_id) in batch.providers:
-        return deployment_provider_id
-    if (user_id, V2_MANAGED_AI_PROVIDER_ID) in batch.providers:
-        return V2_MANAGED_AI_PROVIDER_ID
-    if (user_id, V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID) in batch.providers:
-        return V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID
-    if (user_id, V2_LEGACY_MANAGED_AI_PROVIDER_ID) in batch.providers:
-        return V2_LEGACY_MANAGED_AI_PROVIDER_ID
-    return V2_MANAGED_AI_PROVIDER_ID
+    if bound_provider_id in V2_MANAGED_AI_PROVIDER_IDS:
+        raise RuntimeSourceError(
+            "Hosted v2 managed provider binding must use its exact deployment source"
+        )
+    if bound_provider_id.startswith(V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX) and not (
+        is_v2_deployment_managed_provider_id(bound_provider_id)
+    ):
+        raise RuntimeSourceError("Hosted v2 managed provider source is invalid")
+    return bound_provider_id
 
 
 def _selected_auth_payload(
