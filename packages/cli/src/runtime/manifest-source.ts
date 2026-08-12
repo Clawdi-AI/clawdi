@@ -238,10 +238,6 @@ function rawGeneration(value: unknown): number | null {
 	return typeof generation === "number" && Number.isInteger(generation) ? generation : null;
 }
 
-function strongEtag(value: string | null): string | undefined {
-	return value && /^"[^"\r\n]*"$/.test(value) ? value : undefined;
-}
-
 async function fetchRuntimeManifestPayload(
 	applyContext: RuntimeApplyContext,
 	opts: { ifNoneMatch?: string } = {},
@@ -272,7 +268,7 @@ async function fetchRuntimeManifestPayload(
 			},
 			signal: controller.signal,
 		});
-		const etag = strongEtag(response.headers.get("etag"));
+		const etag = response.headers.get("etag") ?? undefined;
 		if (response.status === 304) {
 			return { url, notModified: true, etag };
 		}

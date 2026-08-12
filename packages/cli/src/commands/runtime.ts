@@ -176,7 +176,6 @@ interface RuntimeWatchFailureBackoff {
 	backoffMs: number;
 	etag: string | null;
 	nextRetryAt: number;
-	event: Record<string, unknown>;
 }
 
 interface RuntimeWatchTickOptions {
@@ -189,10 +188,6 @@ interface RuntimeWatchTickOptions {
 	applyContext?: RuntimeApplyContext;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
-
-type RuntimeWatchTickResult =
-	| { kind: "event"; event: Record<string, unknown> }
-	| { kind: "deferred"; event: Record<string, unknown> };
 
 function writable(path: string): boolean {
 	try {
@@ -1451,64 +1446,53 @@ async function runtimeInitLocked(
 async function runtimeWatchTick(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: RuntimeWatchTickOptions,
-): Promise<RuntimeWatchTickResult> {
+): Promise<Record<string, unknown> | null> {
 	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
-}
-
-function runtimeWatchEvent(event: Record<string, unknown>): RuntimeWatchTickResult {
-	return { kind: "event", event };
-}
-
-function runtimeWatchDeferred(backoff: RuntimeWatchFailureBackoff): RuntimeWatchTickResult {
-	return { kind: "deferred", event: backoff.event };
 }
 
 async function runtimeWatchTickLocked(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: RuntimeWatchTickOptions,
-): Promise<RuntimeWatchTickResult> {
+): Promise<Record<string, unknown> | null> {
 	let reconciliation: RuntimeCliReconciliationResult;
 	try {
 		reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return runtimeWatchEvent({
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "error",
-				stage: "cli-update",
-				errors: [message],
-				error: message,
-				selfReexec: false,
-		});
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			stage: "cli-update",
+			errors: [message],
+			error: message,
+			selfReexec: false,
+		};
 	}
 	if (reconciliation.selfReexec) {
-		return runtimeWatchEvent({
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "cli_handoff",
-				stage: "cli-update",
-				handoff: "cli_reexec",
-				reconciliation,
-				selfReexec: true,
-		});
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "cli_handoff",
+			stage: "cli-update",
+			handoff: "cli_reexec",
+			reconciliation,
+			selfReexec: true,
+		};
 	}
-	if (
-		opts.failureBackoff?.etag === null &&
-		opts.now < opts.failureBackoff.nextRetryAt
-	) {
-		return runtimeWatchDeferred(opts.failureBackoff);
+	if (opts.failureBackoff?.etag === null && opts.now < opts.failureBackoff.nextRetryAt) {
+		return null;
 	}
-	const result = await runtimeWatchTickAfterCliReconciliation(paths, opts);
-	if (result.kind === "deferred") return result;
-	return runtimeWatchEvent({
-			...result.event,
-			selfReexec: reconciliation.selfReexec || result.event.selfReexec === true,
-	});
+	const event = await runtimeWatchTickAfterCliReconciliation(paths, opts);
+	if (event === null) return null;
+	return {
+		...event,
+		selfReexec: reconciliation.selfReexec || event.selfReexec === true,
+	};
 }
 
 async function runtimeWatchTickAfterCliReconciliation(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: RuntimeWatchTickOptions,
-): Promise<RuntimeWatchTickResult> {
+): Promise<Record<string, unknown> | null> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
 	let failureEtag: string | null = null;
 	const retryDeferred =
@@ -1529,14 +1513,14 @@ async function runtimeWatchTickAfterCliReconciliation(
 			opts.failureBackoff &&
 			(!manifestLoad.etag || manifestLoad.etag === opts.failureBackoff.etag)
 		) {
-			return runtimeWatchDeferred(opts.failureBackoff);
+			return null;
 		}
-		return runtimeWatchEvent(runtimeManifestFailureWatchEvent(manifestLoad));
+		return runtimeManifestFailureWatchEvent(manifestLoad);
 	}
 	const responseManifestEtag = manifestLoad.etag ?? manifestEtag ?? null;
 	failureEtag = responseManifestEtag;
 	if (retryDeferred && opts.failureBackoff?.etag === responseManifestEtag) {
-		return runtimeWatchDeferred(opts.failureBackoff);
+		return null;
 	}
 	if (
 		"notModified" in manifestLoad &&
@@ -1548,7 +1532,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 		)
 	) {
 		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
-		return runtimeWatchEvent({
+		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "not_modified",
 			sourcePath: manifestLoad.sourcePath,
@@ -1557,7 +1541,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			generation: activeAppliedState.generation,
 			instanceId: activeAppliedState.instanceId,
 			selfReexec: completion.selfReexec,
-		});
+		};
 	}
 
 	try {
@@ -1566,11 +1550,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 				? await loadFullRuntimeManifestForWatch(paths, opts.applyContext)
 				: manifestLoad;
 		if ("errors" in fresh) {
-			return runtimeWatchEvent(runtimeManifestFailureWatchEvent(fresh));
+			return runtimeManifestFailureWatchEvent(fresh);
 		}
 		failureEtag = fresh.etag ?? failureEtag;
 		if (retryDeferred && opts.failureBackoff && opts.failureBackoff.etag === fresh.etag) {
-			return runtimeWatchDeferred(opts.failureBackoff);
+			return null;
 		}
 		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh, paths);
 		const bundleEtag = loaded.etag;
@@ -1607,7 +1591,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 		});
 		if (applyResult.kind === "cli_handoff") {
 			const activeAppliedState = readRuntimeAppliedState(paths);
-			return runtimeWatchEvent({
+			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
 				status: "cli_handoff",
 				stage: "cli-update",
@@ -1623,12 +1607,12 @@ async function runtimeWatchTickAfterCliReconciliation(
 					systemUnitsChanged: [],
 					userUnitsChanged: [],
 				},
-			});
+			};
 		}
 		if (applyResult.kind === "cli_update_failed") {
 			const error = applyResult.cliUpdate.error ?? "CLI update failed";
 			const activeAppliedState = readRuntimeAppliedState(paths);
-			return runtimeWatchEvent({
+			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
 				status: "error",
 				stage: "cli-update",
@@ -1646,7 +1630,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 					systemUnitsChanged: [],
 					userUnitsChanged: [],
 				},
-			});
+			};
 		}
 		const { convergence, cliUpdate, systemdApply: systemdApplyResult } = applyResult;
 		const cliUpdateError =
@@ -1660,7 +1644,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors);
 			if (cliRollback.status === "rolled_back") selfReexec = true;
 			const activeAppliedState = readRuntimeAppliedState(paths);
-			return runtimeWatchEvent({
+			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
 				status: "error",
 				stage: cliUpdateError ? "cli-update" : "final",
@@ -1676,11 +1660,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 				systemdUnitsChanged,
 				systemdApply: systemdApplyResult,
 				convergence: convergence.outputs,
-			});
+			};
 		}
 		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
 		selfReexec = selfReexec || completion.selfReexec;
-		return runtimeWatchEvent({
+		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "applied",
 			sourcePath: loaded.sourcePath,
@@ -1694,17 +1678,17 @@ async function runtimeWatchTickAfterCliReconciliation(
 			systemdUnitsChanged,
 			systemdApply: systemdApplyResult,
 			convergence: convergence.outputs,
-		});
+		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return runtimeWatchEvent({
+		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "error",
 			stage: "final",
 			errors: [message],
 			error: message,
 			...(failureEtag ? { etag: failureEtag } : {}),
-		});
+		};
 	}
 }
 
@@ -1735,7 +1719,6 @@ function runtimeWatchFailureBackoff(
 		backoffMs,
 		etag,
 		nextRetryAt: now + backoffMs,
-		event,
 	};
 }
 
@@ -2049,9 +2032,9 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 				tickNow - lastFullFetchAt >= selfHealMs || cliInstallRetryDue || failureRetryDue;
 			const fullFetchAttempted =
 				forceRefresh && (!failureBackoff || tickNow >= failureBackoff.nextRetryAt);
-			let result: RuntimeWatchTickResult;
+			let event: Record<string, unknown> | null;
 			try {
-				result = await runtimeWatchTick(paths, {
+				event = await runtimeWatchTick(paths, {
 					forceRefresh,
 					applyContext,
 					hostedRuntimeContract: opts.hostedRuntimeContract,
@@ -2067,52 +2050,50 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				result = {
-					kind: "event",
-					event: {
-						schemaVersion: "clawdi.runtimeWatchEvent.v1",
-						status: "error",
-						stage: "watch",
-						errors: [message],
-						error: message,
-					},
+				event = {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "error",
+					stage: "watch",
+					errors: [message],
+					error: message,
 				};
 			}
-			const { event } = result;
-			const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
-			if (cliUpdateStatus === "error") {
-				cliInstallRetryPending = true;
-				cliInstallBackoffMs = nextBoundedBackoffMs(cliInstallBackoffMs);
-				nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
-			} else if (
-				cliUpdateStatus === "installed" ||
-				cliUpdateStatus === "current" ||
-				cliUpdateStatus === "not_requested"
-			) {
-				cliInstallRetryPending = false;
-				cliInstallBackoffMs = 0;
-				nextCliInstallRetryAt = 0;
+			if (event !== null) {
+				const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
+				if (cliUpdateStatus === "error") {
+					cliInstallRetryPending = true;
+					cliInstallBackoffMs = nextBoundedBackoffMs(cliInstallBackoffMs);
+					nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
+				} else if (
+					cliUpdateStatus === "installed" ||
+					cliUpdateStatus === "current" ||
+					cliUpdateStatus === "not_requested"
+				) {
+					cliInstallRetryPending = false;
+					cliInstallBackoffMs = 0;
+					nextCliInstallRetryAt = 0;
+				}
+				if (event.status === "error" && event.stage !== "cli-update") {
+					failureBackoff = runtimeWatchFailureBackoff(failureBackoff, event, Date.now());
+				} else if (event.status !== "error" || event.stage === "cli-update") {
+					failureBackoff = null;
+				}
+				if (event.status === "applied" || fullFetchAttempted) lastFullFetchAt = Date.now();
+				writeRuntimeWatchStatus(event, paths);
+				emitRuntimeWatchEvent(event, opts.json);
 			}
-			if (event.status === "error" && event.stage !== "cli-update" && result.kind === "event") {
-				failureBackoff = runtimeWatchFailureBackoff(failureBackoff, event, Date.now());
-			} else if (event.status !== "error" || event.stage === "cli-update") {
-				failureBackoff = null;
-			}
-			if (event.status === "applied" || fullFetchAttempted) lastFullFetchAt = Date.now();
-			writeRuntimeWatchStatus(event, paths);
-			if (result.kind === "event") emitRuntimeWatchEvent(event, opts.json);
 			notificationSubscription = ensureRuntimeWatchNotificationSubscription(
 				notificationSubscription,
 				paths,
 				wakeSignal,
 				opts,
 			);
-			if (opts.once) {
+			if (event !== null && opts.once) {
 				if (event.status === "error") process.exitCode = 1;
 				else process.exitCode = 0;
 				return;
 			}
-			if (event.selfReexec === true || opts.abort?.aborted) {
+			if (event?.selfReexec === true || opts.abort?.aborted) {
 				return;
 			}
 			if ((await wakeSignal.wait(intervalMs, opts.abort)) === "aborted") return;
