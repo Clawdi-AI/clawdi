@@ -46,7 +46,7 @@ describe("idempotent billing transport", () => {
 	});
 
 	it("does not retry responses, aborts, or a second network failure", async () => {
-		for (const scenario of ["response", "abort", "second-failure"] as const) {
+		for (const scenario of ["response", "abort", "other-endpoint", "second-failure"] as const) {
 			let calls = 0;
 			const controller = new AbortController();
 			const transport = retryIdempotentBillingTransport(async () => {
@@ -55,7 +55,8 @@ describe("idempotent billing transport", () => {
 				if (scenario === "abort") controller.abort();
 				throw new BillingNetworkError("offline");
 			});
-			const request = new Request("https://api.clawdi.ai/v2/wallet/topup", {
+			const path = scenario === "other-endpoint" ? "/v2/subscription/checkout" : "/v2/wallet/topup";
+			const request = new Request(`https://api.clawdi.ai${path}`, {
 				method: "POST",
 				headers: { "Idempotency-Key": "topup-1" },
 				signal: controller.signal,

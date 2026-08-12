@@ -77,9 +77,6 @@ export function WalletPage() {
 			try {
 				const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
 				if (!key) {
-					toast.error("Couldn't refresh top-up", {
-						description: "Stripe isn't configured in this environment.",
-					});
 					return {
 						status: null,
 						paymentIntentId: null,
@@ -88,9 +85,6 @@ export function WalletPage() {
 				}
 				const stripe = await getStripe(key);
 				if (!stripe) {
-					toast.error("Couldn't refresh top-up", {
-						description: "Reload the page and try again.",
-					});
 					return {
 						status: null,
 						paymentIntentId: null,

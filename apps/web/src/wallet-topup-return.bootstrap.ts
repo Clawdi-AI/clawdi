@@ -1,4 +1,4 @@
-import { bootstrapWalletTopupReturn } from "@/hosted/billing/wallet/top-up-return.logic";
+import { bootstrapWalletTopupReturn } from "@/lib/wallet-topup-return";
 
 if (typeof window !== "undefined") {
 	bootstrapWalletTopupReturn(

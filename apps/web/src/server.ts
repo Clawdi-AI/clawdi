@@ -1,6 +1,6 @@
 import { wrapFetchWithSentry } from "@sentry/tanstackstart-react";
 import handler, { createServerEntry } from "@tanstack/react-start/server-entry";
-import { cleanMarkedWalletTopupReturnRequest } from "@/hosted/billing/wallet/top-up-return.logic";
+import { cleanMarkedWalletTopupReturnRequest } from "@/lib/wallet-topup-return";
 
 await import("../instrument.server.mjs");
 

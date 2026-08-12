@@ -111,8 +111,11 @@ export function retryIdempotentBillingTransport(fetcher: BillingFetch): BillingF
 			return await fetcher(request);
 		} catch (error) {
 			const idempotencyKey = request.headers.get("Idempotency-Key");
+			const url = new URL(request.url);
 			if (
 				!(error instanceof BillingNetworkError) ||
+				request.method !== "POST" ||
+				url.pathname !== "/v2/wallet/topup" ||
 				!idempotencyKey?.trim() ||
 				request.signal.aborted
 			) {
