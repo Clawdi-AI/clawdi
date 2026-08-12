@@ -36,7 +36,7 @@ export function OnboardingCard({
 			: "Connect another agent on your machine and manage it from this dashboard."
 		: canDeployOnClawdi
 			? "Deploy on Clawdi in minutes, or connect an agent on your machine."
-			: "Connect an agent first. Then create a Project to organize reusable skills and credentials you can share with teammates.";
+			: "Connect an agent on your machine and manage it from this dashboard.";
 
 	return (
 		<>
@@ -49,9 +49,18 @@ export function OnboardingCard({
 					<CardDescription>{description}</CardDescription>
 				</CardHeader>
 				<CardContent>
-					<div className="flex flex-col gap-2">
+					<div
+						className={
+							canDeployOnClawdi && !isAdditionalAgent ? "grid gap-2 xl:grid-cols-2" : "grid gap-2"
+						}
+					>
 						{canDeployOnClawdi ? (
-							<Button render={<Link to="/deploy" />} nativeButton={false} size="lg">
+							<Button
+								render={<Link to="/deploy" />}
+								nativeButton={false}
+								size="lg"
+								className="w-full"
+							>
 								<Rocket data-icon="inline-start" /> Deploy on Clawdi
 							</Button>
 						) : null}
@@ -59,6 +68,7 @@ export function OnboardingCard({
 							type="button"
 							variant={canDeployOnClawdi ? "outline" : "default"}
 							size="lg"
+							className="w-full"
 							onClick={() => setConnectOpen(true)}
 						>
 							<TerminalSquare data-icon="inline-start" /> Connect an agent on your machine
