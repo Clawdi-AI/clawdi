@@ -20,7 +20,7 @@ beforeEach(() => {
 	origConfigDir = process.env.CLAUDE_CONFIG_DIR;
 	origPath = process.env.PATH;
 	delete process.env.CLAUDE_CONFIG_DIR;
-	tmpHome = copyFixtureToTmp("claude-code");
+	tmpHome = copyFixtureToTmp("claude_code");
 	process.env.HOME = tmpHome;
 });
 

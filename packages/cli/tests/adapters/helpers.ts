@@ -2,6 +2,7 @@ import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AgentType } from "../../src/adapters/agent-types";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturesRoot = join(here, "..", "fixtures");
@@ -12,11 +13,12 @@ const fixturesRoot = join(here, "..", "fixtures");
  * Tests should set `process.env.HOME = tmpHome` immediately after calling
  * this — lib/config.ts and adapters/paths.ts read $HOME lazily on every call.
  */
-export function copyFixtureToTmp(agent: "claude-code" | "codex" | "hermes" | "openclaw"): string {
-	const src = join(fixturesRoot, agent);
+export function copyFixtureToTmp(agent: AgentType): string {
+	const fixtureName = agent === "claude_code" ? "claude-code" : agent;
+	const src = join(fixturesRoot, fixtureName);
 	const dst = join(
 		tmpdir(),
-		`clawdi-fixture-${agent}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		`clawdi-fixture-${fixtureName}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
 	);
 	mkdirSync(dst, { recursive: true });
 	cpSync(src, dst, { recursive: true });

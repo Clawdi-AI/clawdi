@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AgentType } from "../../src/adapters/agent-types";
 import { push } from "../../src/commands/push";
 import { recordProjectSkillMaterialization } from "../../src/lib/skills-lock";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
@@ -28,20 +29,11 @@ function batchSessions(c: CapturedRequest | undefined): BatchSession[] {
 	return body?.sessions ?? [];
 }
 
-type AgentKey = "claude-code" | "codex" | "hermes" | "openclaw";
-
-const AGENT_TYPE: Record<AgentKey, string> = {
-	"claude-code": "claude_code",
-	codex: "codex",
-	hermes: "hermes",
-	openclaw: "openclaw",
-};
-
 let tmpHome: string;
 let origHome: string | undefined;
 let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 
-function setup(agent: AgentKey): {
+function setup(agent: AgentType): {
 	sent: ReturnType<typeof mockFetch>["captured"];
 	restore: () => void;
 } {
@@ -49,7 +41,7 @@ function setup(agent: AgentKey): {
 	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
-	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
+	seedAuthAndEnv(tmpHome, agent);
 	return { sent: [], restore: () => {} };
 }
 
@@ -257,7 +249,7 @@ describe("push — Hermes fixture", () => {
 
 describe("push — Claude Code fixture", () => {
 	it("uploads the single fixture session", async () => {
-		setup("claude-code");
+		setup("claude_code");
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
@@ -424,7 +416,7 @@ describe("push — preflight checks", () => {
 
 describe("push — --all flag fan-out", () => {
 	it("--all + explicit --agent narrows to that agent (explicit wins)", async () => {
-		setup("claude-code");
+		setup("claude_code");
 		// Seed a second env so the only way "claude_code" gets selected
 		// is if the explicit --agent flag overrides --all's broadening.
 		writeFileSync(
@@ -454,7 +446,7 @@ describe("push — --all flag fan-out", () => {
 	});
 
 	it("--all + --project narrows project (silent-precedence bug fix)", async () => {
-		setup("claude-code");
+		setup("claude_code");
 		const { captured, restore } = mockFetch([okEnvironmentProbe()]);
 		try {
 			// Project that no fixture session lives in. Old behavior:
@@ -475,7 +467,7 @@ describe("push — --all flag fan-out", () => {
 	});
 
 	it("--all alone reaches all axes for a single registered agent", async () => {
-		setup("claude-code");
+		setup("claude_code");
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
@@ -509,7 +501,7 @@ describe("push — --all flag fan-out", () => {
 	});
 
 	it("multi-agent push scans every agent then uploads (scan/upload split)", async () => {
-		setup("claude-code");
+		setup("claude_code");
 		// Two registered agents. The claude-code fixture only has
 		// claude_code session data; codex has an env file but no
 		// session dir — it scans empty. The push must still iterate
