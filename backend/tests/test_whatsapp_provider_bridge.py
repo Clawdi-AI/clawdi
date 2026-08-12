@@ -561,12 +561,7 @@ async def test_whatsapp_provider_usync_requires_link_binding_and_uses_durable_li
     db_session.add(other_binding)
     await db_session.commit()
 
-    class UnavailableUsyncTransport(_FakeProviderTransport):
-        async def query_iq(self, node, timeout_ms):
-            self.iq_queries.append((node, timeout_ms))
-            return None
-
-    transport = UnavailableUsyncTransport()
+    transport = _FakeProviderTransport()
     bridge = WhatsAppProviderBridge(
         async_sessionmaker(db_session.bind, expire_on_commit=False),
         account_id=account.id,
@@ -597,12 +592,7 @@ async def test_whatsapp_provider_usync_requires_link_binding_and_uses_durable_li
 
     assert unbound is None
     assert cross_link is None
-    assert len(transport.iq_queries) == 2
-    assert transport.iq_queries[0][0]["attrs"] == {
-        "to": "s.whatsapp.net",
-        "type": "get",
-        "xmlns": "usync",
-    }
+    assert transport.iq_queries == []
     assert resolved is not None
     assert resolved["attrs"]["id"] == "stock-usync-devices"
     resolved_user = resolved["content"][0]["content"][0]["content"][0]
