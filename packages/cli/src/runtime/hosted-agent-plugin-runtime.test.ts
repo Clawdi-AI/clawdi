@@ -302,6 +302,7 @@ function plugin(
 	version: string,
 	ownershipIdentity: string,
 	mcpServerNames: readonly string[] = [],
+	remote = false,
 ): PreparedHostedAgentPlugin {
 	const manifest = Buffer.from(
 		JSON.stringify({ $schema: AGENT_PLUGINS_SCHEMA_1_0_0, name, version }),
@@ -313,7 +314,12 @@ function plugin(
 					JSON.stringify({
 						$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
 						mcpServers: Object.fromEntries(
-							mcpServerNames.map((serverName) => [serverName, { type: "stdio", command: "node" }]),
+							mcpServerNames.map((serverName) => [
+								serverName,
+								remote
+									? { type: "streamable-http", url: "https://desired.example.test/mcp" }
+									: { type: "stdio", command: "node" },
+							]),
 						),
 					}),
 				);
@@ -345,6 +351,7 @@ function plugin(
 		},
 		receiptNativeId: null,
 		mcpServerNames: [...mcpServerNames].sort(),
+		hasStreamableHttpMcp: remote,
 		tree,
 	};
 }
@@ -531,6 +538,42 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			),
 		).toBe(true);
 		expect(runner.get("hermes", desired.name)?.enabled).toBe(true);
+	});
+
+	test("requires the Hermes one-shot remote behavior proof before live mutation", () => {
+		const desired = plugin("acme.tools", "1.2.3", "c".repeat(64), ["remote"], true);
+		const prepared = desiredState("hermes", desired);
+		const oldRunner = new FakeNativeRunner();
+		let oldProbeCalls = 0;
+		expect(() =>
+			proveHostedAgentPluginCapabilities({
+				prepared,
+				commands,
+				runner: oldRunner,
+				hermesRemoteCapabilityProbe: () => {
+					oldProbeCalls += 1;
+					throw new Error("portable remote skipped");
+				},
+			}),
+		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+		expect(oldProbeCalls).toBe(1);
+		expect(oldRunner.liveMutations()).toEqual([]);
+
+		const currentRunner = new FakeNativeRunner();
+		let currentProbeCalls = 0;
+		expect(() =>
+			proveHostedAgentPluginCapabilities({
+				prepared,
+				commands,
+				runner: currentRunner,
+				hermesRemoteCapabilityProbe: ({ home }) => {
+					currentProbeCalls += 1;
+					expect(home).not.toBe(currentRunner.liveHome);
+				},
+			}),
+		).not.toThrow();
+		expect(currentProbeCalls).toBe(1);
+		expect(currentRunner.liveMutations()).toEqual([]);
 	});
 
 	test("fails the capability gate before any command when the runtime is unsupported", () => {

@@ -38,7 +38,7 @@ import { writeRuntimePlatformFileAtomic } from "./state";
 export const AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR =
 	"Agent Plugin secret bindings are not supported by native runtimes";
 export const HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR =
-	"Hermes remote Agent Plugin components cannot be proven through the native CLI";
+	"Hermes Agent Plugins only support the portable streamable-http remote transport";
 export const HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR =
 	"Hermes Agent Plugin package cannot preserve its verified bytes through local Git transport";
 
@@ -97,6 +97,7 @@ export interface PreparedHostedAgentPlugin {
 	installation: PreparedHostedAgentPluginInstallation;
 	receiptNativeId: string | null;
 	mcpServerNames: readonly string[];
+	hasStreamableHttpMcp?: boolean;
 	tree: readonly PreparedAgentPluginTreeFile[];
 }
 
@@ -782,15 +783,19 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 function assertMcpComponents(
 	tree: readonly PreparedAgentPluginTreeFile[],
 	runtime: HostedAgentPluginRuntime,
-): string[] {
+): { serverNames: string[]; hasStreamableHttp: boolean } {
 	const file = tree.find((entry) => entry.path === "mcp.json");
-	if (!file) return [];
+	if (!file) return { serverNames: [], hasStreamableHttp: false };
 	const parsed = mcpManifestSchema.safeParse(parseJsonObject(file, "Agent Plugin mcp.json"));
 	if (!parsed.success) throw new Error("Agent Plugin mcp.json does not match the 1.0.0 schema");
+	let hasStreamableHttp = false;
 	for (const server of Object.values(parsed.data.mcpServers)) {
 		if (server.type !== "stdio") {
 			assertRemoteServer(server);
-			if (runtime === "hermes") throw new Error(HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR);
+			if (server.type === "sse" && runtime === "hermes") {
+				throw new Error(HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR);
+			}
+			hasStreamableHttp ||= server.type === "streamable-http";
 			continue;
 		}
 		if (
@@ -816,7 +821,10 @@ function assertMcpComponents(
 		}
 		if (server.cwd !== undefined) assertScopedPortablePath(server.cwd);
 	}
-	return Object.keys(parsed.data.mcpServers).sort();
+	return {
+		serverNames: Object.keys(parsed.data.mcpServers).sort(),
+		hasStreamableHttp,
+	};
 }
 
 function assertPackageIdentity(
@@ -867,13 +875,14 @@ async function validateArchive(
 		}
 		assertPackageIdentity(descriptor, collected.tree);
 		assertSkillComponents(collected.tree);
-		const mcpServerNames = assertMcpComponents(collected.tree, descriptor.runtime);
+		const mcp = assertMcpComponents(collected.tree, descriptor.runtime);
 		if (descriptor.runtime === "hermes") assertHermesSupportedPackage(collected.tree);
 		return {
 			name: descriptor.name,
 			installation: descriptor.installation,
 			receiptNativeId: null,
-			mcpServerNames,
+			mcpServerNames: mcp.serverNames,
+			hasStreamableHttpMcp: mcp.hasStreamableHttp,
 			tree: collected.tree,
 		};
 	} finally {

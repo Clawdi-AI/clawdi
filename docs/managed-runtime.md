@@ -772,13 +772,13 @@ runner identity, package ownership identity, and observed native id; one failed
 package prevents every live package mutation. Missing, old, or incompatible
 runtimes fail with the stable unsupported-capability error.
 
-Upstream capability evidence was refreshed on 2026-08-10. OpenClaw main was
-[`cef6e690d5573d06f3feef5fdf103906e842c618`](https://github.com/openclaw/openclaw/commit/cef6e690d5573d06f3feef5fdf103906e842c618).
+Upstream capability evidence was refreshed on 2026-08-12. OpenClaw main was
+[`f9316c4697242ba63aaadaca8d02fc976a2aa766`](https://github.com/openclaw/openclaw/commit/f9316c4697242ba63aaadaca8d02fc976a2aa766).
 Agent Plugins support landed in
 [`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
 that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
 `PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
-[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/plugins/status.ts#L350-L502)
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/f9316c4697242ba63aaadaca8d02fc976a2aa766/src/plugins/status.ts)
 exposes every MCP server name, unsupported state, and plugin diagnostics.
 Clawdi requires the reported names to equal the already-validated `mcp.json`
 names and requires no unsupported entry or diagnostic during every isolated and
@@ -792,10 +792,14 @@ which predates Agent Plugins support. Clawdi passes no `--version` to the
 official installer; the reviewed installer defaults to npm `latest`. A runtime
 at the current release therefore fails the native package probe instead of
 silently accepting components it cannot load. A future compatible release can
-pass without a Clawdi version-table change.
+pass without a Clawdi version-table change. npm beta is
+`2026.8.1-beta.1`, but inspection of that published package still finds the old
+Codex, Claude, and Cursor bundle implementation rather than Agent Plugins.
+Neither the stable nor beta package should therefore be inferred to have the
+source capability currently present on main.
 
 Hermes main was
-[`ee4bb75b532e932a1055d9a710802a7435163b6a`](https://github.com/NousResearch/hermes-agent/commit/ee4bb75b532e932a1055d9a710802a7435163b6a).
+[`66a41616208135198dfe96d0e3b8e5510b20d035`](https://github.com/NousResearch/hermes-agent/commit/66a41616208135198dfe96d0e3b8e5510b20d035).
 Portable Skills, stdio MCP, and component diagnostics landed by
 [`8cb066404e3edc3501a07a408c59834dc745cc74`](https://github.com/NousResearch/hermes-agent/commit/8cb066404e3edc3501a07a408c59834dc745cc74).
 Main added streamable-http execution and cross-origin header stripping in
@@ -804,21 +808,28 @@ while still reporting and skipping SSE. The latest release,
 [`v2026.8.3`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.3)
 at
 [`3c27eb6234bf91b8ceee9e9071591b31e9b148cb`](https://github.com/NousResearch/hermes-agent/commit/3c27eb6234bf91b8ceee9e9071591b31e9b148cb),
-predates both portable commits. Clawdi passes neither `--branch` nor `--commit`;
-the reviewed official Hermes installer defaults to `main`, so the installed
-checkout may be ahead of the latest release.
+is package version `0.20.0` and predates both portable commits. Clawdi passes
+neither `--branch` nor `--commit`; the reviewed official Hermes installer
+defaults to `main`, so installer behavior and the latest tagged release have
+different capability surfaces.
 
-Hermes nevertheless remains limited in Hosted to Agent Plugins Skills and
-stdio MCP servers. Current
-[`plugins list --json`](https://github.com/NousResearch/hermes-agent/blob/ee4bb75b532e932a1055d9a710802a7435163b6a/hermes_cli/plugins_cmd.py#L1221-L1249)
-reports only plugin identity, state, version, description, and source. It has no
-portable component or diagnostic inventory, and `hermes mcp list` is native MCP
-configuration inventory rather than proof that a portable component survived
-plugin translation. No stable binary gate can distinguish streamable-http
-support from an older binary that installs the plugin while skipping the
-component. Hosted therefore continues to reject streamable-http and SSE before
-the isolated probe. Package validation also checks Skill frontmatter and the
-complete supported stdio command, args, env, and cwd shapes.
+Hermes `plugins list --json` reports package identity and lifecycle state but
+does not inventory portable components. `hermes mcp test` and `hermes tools
+list` read explicit top-level `mcp_servers`, so neither proves Agent Plugin
+translation. Before live mutation of any remote package, Clawdi instead runs
+the public `hermes -z` consumer in an isolated HOME against task-local
+OpenAI-compatible inference and Streamable HTTP MCP fixtures. Hermes startup
+must discover the enabled portable canary, advertise its exact MCP tool to the
+stub model, execute the model's tool call through its own MCP runtime, return a
+nonce-bearing result, and finish with the unique expected token. This detects
+older binaries that install the package while silently skipping remote entries;
+it does not import Hermes Python modules or rewrite Hermes configuration
+formats. The canary package points only to loopback and never connects to a
+desired package URL. Desired streamable-http URLs and literal headers are
+validated against the Agent Plugins schema without contacting the endpoint
+during reconciliation. Package validation also checks Skill frontmatter and
+the complete supported stdio command, args, env, and cwd shapes. Portable SSE
+continues to fail closed because Hermes main explicitly diagnoses and skips it.
 
 Neither runtime exposes a native Agent Plugins `secretRefs` binding contract.
 Agent Plugins URL and header strings remain literal package data, and non-empty

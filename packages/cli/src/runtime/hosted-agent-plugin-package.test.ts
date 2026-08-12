@@ -18,7 +18,6 @@ import {
 	cleanupHostedAgentPluginTransientArchives,
 	gcHostedAgentPluginArchives,
 	HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR,
-	HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR,
 	type PreparedHostedAgentPluginInstallation,
 	type PreparedHostedAgentPlugins,
 	prepareHostedAgentPluginPackages,
@@ -224,7 +223,7 @@ describe("Hosted Agent Plugin package preparation", () => {
 		expect(prepared.desired.get("acme.tools")?.mcpServerNames).toEqual(["review"]);
 	});
 
-	test("rejects Hermes remote MCP before an isolated native probe", async () => {
+	test("accepts Hermes streamable-http and still rejects portable SSE", async () => {
 		const runtimePaths = paths();
 		const files = pluginFiles({
 			$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
@@ -237,25 +236,25 @@ describe("Hosted Agent Plugin package preparation", () => {
 			},
 		});
 		const bytes = await archive(files);
-		let nativeCommands = 0;
+		const prepared = await prepareHostedAgentPluginPackages(
+			manifest("hermes", treeDigest(files)),
+			runtimePaths,
+			{ fetcher: async () => archiveResponse(bytes) },
+		);
+		expect(prepared?.desired.get("acme.tools")).toMatchObject({
+			mcpServerNames: ["remote"],
+			hasStreamableHttpMcp: true,
+		});
+
+		const sseFiles = pluginFiles({
+			$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+			mcpServers: { remote: { type: "sse", url: "https://mcp.example.test/sse" } },
+		});
 		await expect(
-			(async () => {
-				const prepared = await prepareHostedAgentPluginPackages(
-					manifest("hermes", treeDigest(files)),
-					runtimePaths,
-					{ fetcher: async () => archiveResponse(bytes) },
-				);
-				if (!prepared) throw new Error("missing prepared Agent Plugin fixture");
-				proveHostedAgentPluginCapabilities({
-					prepared,
-					commands: hostedAgentPluginCommands(runtimePaths.userHome),
-					runner: permissiveNativeRunner(() => {
-						nativeCommands += 1;
-					}),
-				});
-			})(),
-		).rejects.toThrow(HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR);
-		expect(nativeCommands).toBe(0);
+			prepareHostedAgentPluginPackages(manifest("hermes", treeDigest(sseFiles)), runtimePaths, {
+				fetcher: async () => archiveResponse(await archive(sseFiles)),
+			}),
+		).rejects.toThrow("only support the portable streamable-http");
 	});
 
 	test("allows explicit loopback HTTP MCP URLs but rejects 127-prefixed DNS names", async () => {

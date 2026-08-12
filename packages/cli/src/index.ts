@@ -743,6 +743,27 @@ runtimeCmd
 	});
 
 runtimeCmd
+	.command("agent-plugin-canary", { hidden: true })
+	.description("Run the isolated Hermes Agent Plugin capability fixture")
+	.requiredOption("--ready-file <path>")
+	.requiredOption("--result-file <path>")
+	.requiredOption("--nonce <nonce>")
+	.requiredOption("--success-token <token>")
+	.action(
+		async (opts: {
+			readyFile: string;
+			resultFile: string;
+			nonce: string;
+			successToken: string;
+		}) => {
+			const { runHermesAgentPluginCanaryController } = await import(
+				"./runtime/hermes-agent-plugin-canary-controller.js"
+			);
+			await runHermesAgentPluginCanaryController(opts);
+		},
+	);
+
+runtimeCmd
 	.command("status", { hidden: true })
 	.description("Show managed Hosted runtime boot status")
 	.option("--json", "Emit machine-readable JSON")
