@@ -7,6 +7,7 @@ import {
 	HERMES_CODEX_AUTH_HELPER,
 	hermesCodexAuthInvocation,
 	oauthCredentialFingerprint,
+	resolveOpenClawConfigMutationSdkExport,
 	resolveOpenClawProviderAuthSdkExport,
 } from "./codex-oauth-native-store";
 
@@ -46,23 +47,29 @@ describe("native OAuth store contracts", () => {
 		);
 	}
 
-	test("resolves OpenClaw provider auth through the public package export", () => {
+	test("resolves OpenClaw public SDK exports from the installed package", () => {
 		const packageRoot = tempRoot();
-		const sdkPath = join(packageRoot, "provider-auth.mjs");
+		const providerAuthPath = join(packageRoot, "provider-auth.mjs");
+		const configMutationPath = join(packageRoot, "config-mutation.mjs");
 		const commandPath = join(packageRoot, "bin", "openclaw");
 		mkdirSync(join(packageRoot, "bin"), { recursive: true });
 		writeFileSync(commandPath, "#!/bin/sh\n");
-		writeFileSync(sdkPath, "export const publicProviderAuth = true;\n");
+		writeFileSync(providerAuthPath, "export const publicProviderAuth = true;\n");
+		writeFileSync(configMutationPath, "export const publicConfigMutation = true;\n");
 		writeFileSync(
 			join(packageRoot, "package.json"),
 			JSON.stringify({
 				name: "openclaw",
 				type: "module",
-				exports: { "./plugin-sdk/provider-auth": "./provider-auth.mjs" },
+				exports: {
+					"./plugin-sdk/provider-auth": "./provider-auth.mjs",
+					"./plugin-sdk/config-mutation": "./config-mutation.mjs",
+				},
 			}),
 		);
 
-		expect(resolveOpenClawProviderAuthSdkExport([commandPath])).toBe(sdkPath);
+		expect(resolveOpenClawProviderAuthSdkExport([commandPath])).toBe(providerAuthPath);
+		expect(resolveOpenClawConfigMutationSdkExport([commandPath])).toBe(configMutationPath);
 	});
 
 	test("preserves a future Hermes store version and unrelated pool entries", () => {

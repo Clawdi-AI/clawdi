@@ -3495,41 +3495,90 @@ chmod +x "$HOME/.local/bin/hermes"
 		const state = join(root, "model-switch", "var", "lib", "clawdi");
 		const run = join(root, "model-switch", "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
+		const openclawPackage = join(home, ".local", "lib", "node_modules", "openclaw");
 		const openclawConfig = join(home, ".openclaw", "openclaw.json");
-		const providerPatch = join(root, "openclaw-model-switch-patch.json");
 		const commandLog = join(root, "openclaw-model-switch-command.txt");
+		const mutationLog = join(root, "openclaw-model-switch-mutation.json");
+		const configMutationSdk = join(openclawPackage, "config-mutation.mjs");
+		const legacyModels = Array.from({ length: 24 }, (_, index) => ({
+			id: `legacy-${index}`,
+			name: `Legacy managed model ${index}`,
+			api: "openai-responses",
+			input: ["text", "image"],
+			reasoning: true,
+			contextWindow: 200_000,
+			maxTokens: 64_000,
+		}));
 		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(openclawPackage, { recursive: true });
 		mkdirSync(dirname(openclawConfig), { recursive: true });
 		writeFileSync(
 			openclawConfig,
 			`${JSON.stringify({
+				gateway: { mode: "local", port: 19_001 },
+				logging: { level: "debug" },
 				models: {
 					providers: {
-						"clawdi-managed": { models: [{ id: "luna" }] },
+						"user-owned": {
+							baseUrl: "https://user.provider.example.test/v1",
+							api: "openai-completions",
+							models: [{ id: "user-model", name: "User model" }],
+						},
+						"clawdi-managed": {
+							baseUrl: "https://managed.provider.example.test/v1",
+							api: "openai-responses",
+							models: legacyModels,
+						},
 					},
 				},
 			})}\n`,
 		);
+		writeFileSync(commandLog, "");
 		writeFileSync(
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> '${commandLog}'
-if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
-  cat > '${providerPatch}'
-  if grep -q '"models"' '${providerPatch}'; then
-    if [ "\${4:-}" != "--replace-path" ] || [ "\${5:-}" != 'models.providers["clawdi-managed"].models' ] || [ -n "\${6:-}" ]; then
-      echo 'Refusing to replace models.providers.clawdi-managed.models; use --merge or --replace intentionally.' >&2
-      exit 42
-    fi
-    cp '${providerPatch}' '${openclawConfig}'
-  fi
-  exit 0
-fi
 exit 0
 `,
 		);
 		chmodSync(openclawBin, 0o700);
+		writeFileSync(
+			join(openclawPackage, "package.json"),
+			JSON.stringify({
+				name: "openclaw",
+				type: "module",
+				exports: { "./plugin-sdk/config-mutation": "./config-mutation.mjs" },
+			}),
+		);
+		writeFileSync(
+			configMutationSdk,
+			`import { readFileSync, writeFileSync } from "node:fs";
+export async function mutateConfigFile(options) {
+  if (options.base !== "source") throw new Error("expected source config mutation");
+  if (options.afterWrite?.mode !== "none") throw new Error("expected no SDK-owned restart");
+  const before = JSON.parse(readFileSync(${JSON.stringify(openclawConfig)}, "utf8"));
+  const draft = structuredClone(before);
+  await options.mutate(draft, { snapshot: {}, previousHash: null, attempt: 1 });
+  const next = JSON.stringify(draft, null, 2) + "\\n";
+  const beforeBytes = Buffer.byteLength(JSON.stringify(before, null, 2) + "\\n");
+  const nextBytes = Buffer.byteLength(next);
+  if (nextBytes < Math.floor(beforeBytes * 0.5) && options.writeOptions?.allowConfigSizeDrop !== true) {
+    throw new Error(\`size-drop:\${beforeBytes}->\${nextBytes}\`);
+  }
+  writeFileSync(${JSON.stringify(openclawConfig)}, next);
+  writeFileSync(${JSON.stringify(mutationLog)}, JSON.stringify({
+    base: options.base,
+    afterWrite: options.afterWrite,
+    allowConfigSizeDrop: options.writeOptions?.allowConfigSizeDrop,
+    explicitSetPaths: options.writeOptions?.explicitSetPaths,
+    unsetPaths: options.writeOptions?.unsetPaths,
+    beforeBytes,
+    nextBytes,
+  }));
+}
+`,
+		);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3561,18 +3610,49 @@ exit 0
 			}),
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+		const paths = getRuntimePaths();
+		const convergence = convergeRuntimeManifest(loaded, paths);
 
 		expect(convergence.installErrors).toEqual([]);
-		expect(readFileSync(commandLog, "utf-8")).toContain(
-			'config patch --stdin --replace-path models.providers["clawdi-managed"].models',
-		);
+		expect(readFileSync(commandLog, "utf-8")).not.toContain("config patch --stdin");
+		const mutation = JSON.parse(readFileSync(mutationLog, "utf8"));
+		expect(mutation).toMatchObject({
+			base: "source",
+			afterWrite: { mode: "none" },
+			allowConfigSizeDrop: true,
+		});
+		expect(mutation.nextBytes).toBeLessThan(Math.floor(mutation.beforeBytes * 0.5));
+		expect(mutation.explicitSetPaths).toContainEqual([
+			"models",
+			"providers",
+			"clawdi-managed",
+			"models",
+		]);
 		const appliedConfig = JSON.parse(readFileSync(openclawConfig, "utf-8"));
 		expect(appliedConfig.agents.defaults.model.primary).toBe("clawdi-managed/sol");
 		expect(appliedConfig.models.providers["clawdi-managed"].models).toEqual([
 			expect.objectContaining({ id: "sol" }),
 		]);
-		expect(JSON.stringify(appliedConfig)).not.toContain("luna");
+		expect(appliedConfig.models.providers["user-owned"].models).toEqual([
+			{ id: "user-model", name: "User model" },
+		]);
+		expect(appliedConfig.gateway).toEqual({ mode: "local", port: 19_001 });
+		expect(appliedConfig.logging).toEqual({ level: "debug" });
+		expect(JSON.stringify(appliedConfig)).not.toContain("legacy-");
+
+		writeTestRuntimeAppliedState(paths, loaded, convergence);
+		const unmanaged = convergeRuntimeManifest(
+			hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 3),
+			paths,
+		);
+		expect(unmanaged.installErrors).toEqual([]);
+		const deletionMutation = JSON.parse(readFileSync(mutationLog, "utf8"));
+		expect(deletionMutation.unsetPaths).toContainEqual(["models", "providers", "clawdi-managed"]);
+		const unmanagedConfig = JSON.parse(readFileSync(openclawConfig, "utf8"));
+		expect(unmanagedConfig.models.providers["clawdi-managed"]).toBeUndefined();
+		expect(unmanagedConfig.models.providers["user-owned"]).toEqual(
+			appliedConfig.models.providers["user-owned"],
+		);
 	});
 
 	it("writes Codex managed provider config from hosted runtime converge", () => {

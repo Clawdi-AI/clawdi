@@ -45,6 +45,7 @@ import {
 	OPENCLAW_PROVIDER_AUTH_HELPER,
 	type OpenClawProviderAuthAction,
 	oauthCredentialFingerprint,
+	resolveOpenClawConfigMutationSdkExport,
 	resolveOpenClawProviderAuthSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
@@ -2480,13 +2481,7 @@ function applyHostedAiProviderProjection(
 		);
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (providerPatch.apply) {
-			runRuntimeUserCommand(
-				observation.commandPath,
-				["config", "patch", "--stdin", ...providerPatch.args],
-				providerPatch.content,
-				home,
-				workspaceRoot,
-			);
+			applyOpenClawHostedProviderPatch(observation, providerPatch, home, workspaceRoot);
 		}
 		return {
 			path: observation.commandPath,
@@ -2809,6 +2804,86 @@ export interface OpenClawHostedProviderPatch {
 	args: string[];
 	content: string;
 	providerIds: string[];
+}
+
+const OPENCLAW_CONFIG_MUTATION_HELPER = `
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const sdk = await import(pathToFileURL(process.argv[1]).href);
+if (typeof sdk.mutateConfigFile !== "function") {
+  throw new Error("required public config-mutation export is missing");
+}
+const patch = JSON.parse(readFileSync(0, "utf8"));
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+if (!isRecord(patch)) throw new Error("OpenClaw provider patch must be an object");
+const blockedKeys = new Set(["__proto__", "constructor", "prototype"]);
+const explicitSetPaths = [];
+const unsetPaths = [];
+const applyMergePatch = (target, source, path = []) => {
+  for (const [key, value] of Object.entries(source)) {
+    if (blockedKeys.has(key)) throw new Error("OpenClaw provider patch contains a blocked key");
+    const nextPath = [...path, key];
+    if (value === null) {
+      delete target[key];
+      unsetPaths.push(nextPath);
+    } else if (isRecord(value)) {
+      if (!isRecord(target[key])) target[key] = {};
+      if (Object.keys(value).length === 0) explicitSetPaths.push(nextPath);
+      applyMergePatch(target[key], value, nextPath);
+    } else {
+      target[key] = structuredClone(value);
+      explicitSetPaths.push(nextPath);
+    }
+  }
+};
+await sdk.mutateConfigFile({
+  base: "source",
+  afterWrite: { mode: "none", reason: "Clawdi runtime convergence owns service reconciliation" },
+  writeOptions: { allowConfigSizeDrop: true, explicitSetPaths, unsetPaths },
+  mutate: (draft) => applyMergePatch(draft, patch),
+});
+`;
+
+function openClawConfigMutationSdkPath(
+	observation: RuntimeInstallObservation,
+	home: string,
+): string | null {
+	const commandPath = observation.commandPath;
+	return resolveOpenClawConfigMutationSdkExport([
+		commandPath,
+		observation.appRoot,
+		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
+		join(home, ".openclaw", "node_modules", "openclaw"),
+		join(home, ".local", "lib", "node_modules", "openclaw"),
+	]);
+}
+
+function applyOpenClawHostedProviderPatch(
+	observation: RuntimeInstallObservation,
+	patch: OpenClawHostedProviderPatch,
+	home: string,
+	workspaceRoot: string,
+): void {
+	const sdkPath = openClawConfigMutationSdkPath(observation, home);
+	if (!sdkPath) {
+		runRuntimeUserCommand(
+			observation.commandPath ?? "openclaw",
+			["config", "patch", "--stdin", ...patch.args],
+			patch.content,
+			home,
+			workspaceRoot,
+		);
+		return;
+	}
+	ensureRuntimeUserHome(home);
+	runRuntimeUserCommand(
+		"node",
+		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
+		patch.content,
+		home,
+		workspaceRoot,
+	);
 }
 
 export function buildOpenClawHostedProviderPatch(

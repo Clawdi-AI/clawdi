@@ -77,8 +77,9 @@ export function nativeOAuthCredentialEvidenceFingerprint(value: unknown): string
 		.digest("hex")}`;
 }
 
-export function resolveOpenClawProviderAuthSdkExport(
+function resolveOpenClawSdkExport(
 	startPaths: ReadonlyArray<string | null | undefined>,
+	exportPath: `openclaw/plugin-sdk/${string}`,
 ): string | null {
 	const packageRoots = new Set<string>();
 	for (const startPath of startPaths) {
@@ -109,15 +110,25 @@ export function resolveOpenClawProviderAuthSdkExport(
 	}
 	for (const packageRoot of packageRoots) {
 		try {
-			const resolved = createRequire(join(packageRoot, "package.json")).resolve(
-				"openclaw/plugin-sdk/provider-auth",
-			);
+			const resolved = createRequire(join(packageRoot, "package.json")).resolve(exportPath);
 			if (existsSync(resolved)) return resolved;
 		} catch {
-			// The installed package does not expose the public provider-auth SDK.
+			// The installed package does not expose this public SDK subpath.
 		}
 	}
 	return null;
+}
+
+export function resolveOpenClawProviderAuthSdkExport(
+	startPaths: ReadonlyArray<string | null | undefined>,
+): string | null {
+	return resolveOpenClawSdkExport(startPaths, "openclaw/plugin-sdk/provider-auth");
+}
+
+export function resolveOpenClawConfigMutationSdkExport(
+	startPaths: ReadonlyArray<string | null | undefined>,
+): string | null {
+	return resolveOpenClawSdkExport(startPaths, "openclaw/plugin-sdk/config-mutation");
 }
 
 export function nativeOAuthObservation(value: unknown): NativeOAuthCredentialObservation {

@@ -40,9 +40,10 @@ export const AGENT_TARGET_CONTRACTS: Record<
 		status: "enabled",
 	},
 	openclaw: {
-		settingMethod: "openclaw config patch --stdin",
+		settingMethod:
+			"public openclaw/plugin-sdk/config-mutation for provider projection; openclaw config patch --stdin for other native patches",
 		verifiedContractBaseline:
-			"OpenClaw config patch and public provider-auth SDK contracts with namespaced SQLite profiles",
+			"OpenClaw 2026.7.1-2 public config-mutation/provider-auth SDK contracts and namespaced SQLite profiles",
 		status: "enabled",
 	},
 };
