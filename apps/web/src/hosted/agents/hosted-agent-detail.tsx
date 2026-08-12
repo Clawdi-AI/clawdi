@@ -235,6 +235,7 @@ import {
 	runtimeConsoleUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
+import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
 	aiBindingBuildErrorCopy,
 	buildAiBindingFields,
@@ -2230,6 +2231,7 @@ function AiProviderTab({
 	const providers = useUserAiProviders();
 	const managedModelCatalog = useManagedModelCatalog();
 	const updateDeployment = useUpdateDeployment();
+	const [addProviderOpen, setAddProviderOpen] = useState(false);
 	const updateInProgress =
 		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
@@ -2288,6 +2290,7 @@ function AiProviderTab({
 	const {
 		draft: aiBindingDraft,
 		managedPrimaryModelReady,
+		selectCreatedProvider,
 		selectProvider,
 		setBindingMode,
 		setPrimaryModel,
@@ -2400,7 +2403,7 @@ function AiProviderTab({
 				<EntityAddCard
 					title="Add a provider"
 					description="Connect OpenAI, Anthropic, or another endpoint."
-					href="/ai-providers"
+					onClick={() => setAddProviderOpen(true)}
 				/>
 			</div>
 
@@ -2443,6 +2446,12 @@ function AiProviderTab({
 				</Link>
 				.
 			</p>
+
+			<AddProviderDialog
+				open={addProviderOpen}
+				onOpenChange={setAddProviderOpen}
+				onCreated={selectCreatedProvider}
+			/>
 		</div>
 	);
 }
