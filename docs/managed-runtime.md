@@ -630,6 +630,13 @@ BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the same
 terminal Codex default. Unmanaged OpenClaw or Hermes units receive no provider
 environment.
 
+For a Clawdi-managed runtime provider, the CLI gives each native runtime a
+reserved local placeholder name: `CLAWDI_OPENCLAW_API_KEY` for OpenClaw and
+`CLAWDI_MANAGED_OPENAI_API_KEY` for Hermes. The endpoint-scoped egress profile
+still matches that placeholder and rewrites Authorization from the provider
+secret reference. Terminal Codex continues to use `OPENAI_API_KEY`, and
+user-managed provider environment names are not remapped.
+
 Only the selected model and managed endpoint vary for the terminal consumer;
 the provider model catalog remains on runtime provider projections where
 OpenClaw and Hermes consume its capability and compatibility facts. Fixed v1
