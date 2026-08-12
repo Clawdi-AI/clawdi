@@ -96,7 +96,7 @@ function observedStatus(
 		return "error";
 	}
 	if (!hasAppliedAuthority) return "unknown";
-	if (systemd?.status === "unknown") return "unknown";
+	if (systemd && systemdReadinessStatus(systemd.units) === "unknown") return "unknown";
 	if (watchEvent?.status === "applied" || watchEvent?.status === "not_modified") return "ok";
 	if (bootStatus?.status === "ok") return "ok";
 	return "unknown";
@@ -357,6 +357,21 @@ function systemdUnitsStatus(units: HostedRuntimeObservedSystemdUnit[]): Observed
 	if (units.some((unit) => unit.status === "error")) return "error";
 	if (units.some((unit) => unit.status === "unknown")) return "unknown";
 	return "ok";
+}
+
+function systemdReadinessStatus(units: HostedRuntimeObservedSystemdUnit[]): ObservedStatus {
+	return systemdUnitsStatus(units.filter((unit) => !isRuntimeWatchRestartTransition(unit)));
+}
+
+function isRuntimeWatchRestartTransition(unit: HostedRuntimeObservedSystemdUnit): boolean {
+	return (
+		unit.scope === "system" &&
+		unit.name === "clawdi-runtime-watch.service" &&
+		unit.activeState === "activating" &&
+		unit.subState === "auto-restart" &&
+		unit.status === "unknown" &&
+		unit.error === null
+	);
 }
 
 function systemdUnitObservedStatus(

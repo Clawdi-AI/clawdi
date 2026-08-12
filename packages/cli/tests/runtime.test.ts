@@ -8328,6 +8328,81 @@ esac
 		}
 	});
 
+	it("runtime observed keeps runtime-watch auto-restart outside data-plane readiness", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const watchFailed = join(root, "watch-failed");
+		mkdirSync(run, { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		const systemctl = join(bin, "systemctl");
+		writeFileSync(
+			systemctl,
+			`#!/usr/bin/env bash
+if [ -f '${watchFailed}' ]; then
+  printf 'ActiveState=failed\\nSubState=failed\\n'
+else
+  printf 'ActiveState=activating\\nSubState=auto-restart\\n'
+fi
+`,
+		);
+		chmodSync(systemctl, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+		const paths = getRuntimePaths();
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
+		mkdirSync(paths.systemdSystemRoot, { recursive: true });
+		writeFileSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"), "[Service]\n");
+		writeRuntimeWatchStatus(
+			{ status: "applied", generation: 5, instanceId: "iid-watch-restart" },
+			paths,
+		);
+		const appliedState = {
+			schemaVersion: "clawdi.runtimeAppliedState.v2" as const,
+			appliedAt: "2026-08-12T04:21:24.000Z",
+			instanceId: "iid-watch-restart",
+			etag: '"watch-restart"',
+			sourceRevision: "a".repeat(64),
+			generation: 5,
+			contentIdentity: {
+				sourcePath: "https://runtime.test/v1/runtime/manifest",
+				sha256: "b".repeat(64),
+			},
+			providerIds: [],
+			projectedProviderIds: {},
+		};
+
+		const restarting = readHostedRuntimeObserved(paths, { appliedState });
+
+		expect(restarting?.status).toBe("ok");
+		expect(restarting?.systemd).toEqual({
+			status: "unknown",
+			unitCount: 1,
+			units: [
+				{
+					scope: "system",
+					name: "clawdi-runtime-watch.service",
+					activeState: "activating",
+					subState: "auto-restart",
+					status: "unknown",
+					error: null,
+				},
+			],
+		});
+
+		writeFileSync(watchFailed, "");
+		const failed = readHostedRuntimeObserved(paths, { appliedState });
+		expect(failed?.status).toBe("error");
+		expect(failed?.systemd).toMatchObject({
+			status: "error",
+			units: [{ name: "clawdi-runtime-watch.service", status: "error" }],
+		});
+	});
+
 	it("runtime observed does not report ok when managed systemd units are inactive", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
