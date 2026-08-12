@@ -308,9 +308,9 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	chownSync(configPath, runtimeUid, runtimeGid);
 
 	const previousConfigPath = process.env.OPENCLAW_CONFIG_PATH;
-	const previousProviderKey = process.env.CLAWDI_OPENCLAW_API_KEY;
+	const previousProviderKey = process.env.CLAWDI_AI_API_KEY;
 	process.env.OPENCLAW_CONFIG_PATH = configPath;
-	process.env.CLAWDI_OPENCLAW_API_KEY = "clawdi-egress-placeholder";
+	process.env.CLAWDI_AI_API_KEY = "clawdi-egress-placeholder";
 	process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	process.env.CLAWDI_RUNTIME_USER = "clawdi";
 	process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
@@ -354,7 +354,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 						},
 					],
 					apiMode: "openai_chat",
-					runtimeEnvName: "OPENAI_API_KEY",
+					runtimeEnvName: "CLAWDI_AI_API_KEY",
 					apiKeySecretRef: "secret://providers/clawdi/api-key",
 				},
 			},
@@ -409,7 +409,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 				"env",
 				`HOME=${runtimeHome}`,
 				`OPENCLAW_CONFIG_PATH=${configPath}`,
-				"CLAWDI_OPENCLAW_API_KEY=clawdi-egress-placeholder",
+				"CLAWDI_AI_API_KEY=clawdi-egress-placeholder",
 				commandPath,
 				"config",
 				"patch",
@@ -453,8 +453,8 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	} finally {
 		if (previousConfigPath === undefined) delete process.env.OPENCLAW_CONFIG_PATH;
 		else process.env.OPENCLAW_CONFIG_PATH = previousConfigPath;
-		if (previousProviderKey === undefined) delete process.env.CLAWDI_OPENCLAW_API_KEY;
-		else process.env.CLAWDI_OPENCLAW_API_KEY = previousProviderKey;
+		if (previousProviderKey === undefined) delete process.env.CLAWDI_AI_API_KEY;
+		else process.env.CLAWDI_AI_API_KEY = previousProviderKey;
 	}
 }, 60_000);
 
@@ -810,7 +810,7 @@ http.createServer((request, response) => {
 					baseUrl: "https://ai-gateway.example.test/v1",
 					model: "gpt-test",
 					apiMode: "openai_chat",
-					runtimeEnvName: "OPENAI_API_KEY",
+					runtimeEnvName: "CLAWDI_AI_API_KEY",
 					apiKeySecretRef: "secret://providers/clawdi/api-key",
 				},
 			},
@@ -948,7 +948,7 @@ http.createServer((request, response) => {
 		join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 		"utf8",
 	);
-	expect(gatewayEnv).toContain('CLAWDI_OPENCLAW_API_KEY="clawdi-egress-placeholder"');
+	expect(gatewayEnv).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 	expect(gatewayEnv).not.toMatch(/^OPENAI_API_KEY=/m);
 	expect(gatewayEnv).not.toContain("sk-clawdi-provider");
 	const projectedOpenClawConfig = JSON.parse(readFileSync(openClawConfig, "utf8")) as {
@@ -956,7 +956,7 @@ http.createServer((request, response) => {
 	};
 	expect(projectedOpenClawConfig.models?.providers?.clawdi).toMatchObject({
 		baseUrl: "https://ai-gateway.example.test/v1",
-		apiKey: { id: "CLAWDI_OPENCLAW_API_KEY" },
+		apiKey: { id: "CLAWDI_AI_API_KEY" },
 	});
 	expect(existsSync(join(runtimeHome, ".clawdi"))).toBe(false);
 	expect(statSync(paths.clawdiHome).uid).toBe(runtimeUid);

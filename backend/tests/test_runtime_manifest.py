@@ -3593,7 +3593,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
                 managed_by="clawdi",
-                runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+                runtime_env_name="CLAWDI_AI_API_KEY",
             ),
             AiProviderAuthPayload(
                 owner_user_id=seed_user.id,
@@ -4776,7 +4776,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         auth_type="api_key",
         auth_metadata={"source": "managed"},
         managed_by="clawdi",
-        runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+        runtime_env_name="CLAWDI_AI_API_KEY",
     )
     db_session.add(provider)
     db_session.add(
@@ -4811,7 +4811,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         "apiMode": "openai_chat",
         "managed_by": "clawdi",
         "models": managed_models,
-        "runtimeEnvName": "OPENAI_API_KEY",
+        "runtimeEnvName": "CLAWDI_AI_API_KEY",
         "apiKeySecretRef": "secret://tool.codex.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
@@ -4903,7 +4903,7 @@ async def test_runtime_state_normalizes_deployment_provider_and_resolves_its_cat
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
                 managed_by="clawdi",
-                runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+                runtime_env_name="CLAWDI_AI_API_KEY",
             ),
             AiProviderAuthPayload(
                 owner_user_id=seed_user.id,
@@ -5195,7 +5195,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
             auth_type="api_key",
             auth_metadata={"source": "managed"},
             managed_by="clawdi",
-            runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+            runtime_env_name="CLAWDI_AI_API_KEY",
         )
     )
     db_session.add(
@@ -5236,7 +5236,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
         "apiMode": "openai_responses",
         "managed_by": "clawdi",
         "models": [{"id": "openai-codex/gpt-5.5"}],
-        "runtimeEnvName": "OPENAI_API_KEY",
+        "runtimeEnvName": "CLAWDI_AI_API_KEY",
         "apiKeySecretRef": "secret://provider.clawdi-managed.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {

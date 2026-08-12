@@ -824,7 +824,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						baseUrl: "https://provider.example.test/v1",
 						apiMode: "openai_chat",
 						managed_by: "clawdi",
-						runtimeEnvName: "OPENAI_API_KEY",
+						runtimeEnvName: "CLAWDI_AI_API_KEY",
 						models: [
 							{
 								id: "k3",
@@ -1043,15 +1043,15 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("rejects terminal Codex without its fixed process env contract", () => {
 		const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
-		terminalTooling.codex.provider.runtimeEnvName = "CLAWDI_MANAGED_OPENAI_API_KEY";
+		terminalTooling.codex.provider.runtimeEnvName = "CLAWDI_AI_API_KEY";
 		const manifest = hostedManifestFixture({ terminalTooling });
 		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
-	test("rejects the legacy managed runtime env-name rewrite contract", () => {
+	test("rejects the terminal Codex env name for managed runtime providers", () => {
 		const provider = {
 			...TEST_HOSTED_CODEX_TOOLING.codex.provider,
-			runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+			runtimeEnvName: "OPENAI_API_KEY",
 			apiKeySecretRef: "secret://provider.default.apiKey",
 		};
 		const manifest = hostedManifestFixture({ providers: { default: provider } });
@@ -2182,7 +2182,7 @@ describe("runtime manifest reconciliation invariants", () => {
 							baseUrl: "https://api.example.test/v1",
 							model: "gpt-test",
 							apiMode: "openai_chat",
-							runtimeEnvName: "OPENAI_API_KEY",
+							runtimeEnvName: "CLAWDI_AI_API_KEY",
 							apiKeySecretRef: "secret://providers/default/api-key",
 						},
 					},
@@ -2190,7 +2190,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 		);
 		const provider = hostedAiProviderCatalog(manifest, "openclaw")?.catalog.providers[0];
-		expect(provider?.runtime_env_name).toBe("CLAWDI_OPENCLAW_API_KEY");
+		expect(provider?.runtime_env_name).toBe("CLAWDI_AI_API_KEY");
 
 		const result = convergeRuntimeManifest(
 			manifestLoad(manifest, "inline-managed-provider", {
@@ -2208,7 +2208,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						apiKey: {
 							source: "env",
 							provider: "default",
-							id: "CLAWDI_OPENCLAW_API_KEY",
+							id: "CLAWDI_AI_API_KEY",
 						},
 					},
 				},
@@ -2217,13 +2217,13 @@ describe("runtime manifest reconciliation invariants", () => {
 		const runConfig = JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", paths), "utf8")) as {
 			env?: Record<string, string>;
 		};
-		expect(runConfig.env?.CLAWDI_OPENCLAW_API_KEY).toBe("clawdi-egress-placeholder");
+		expect(runConfig.env?.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
 		expect(runConfig.env?.OPENAI_API_KEY).toBeUndefined();
 		const envFile = readFileSync(
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf8",
 		);
-		expect(envFile).toContain('CLAWDI_OPENCLAW_API_KEY="clawdi-egress-placeholder"');
+		expect(envFile).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 		expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
 		expect(envFile).not.toContain("sk-managed");
 	});
@@ -2441,7 +2441,7 @@ describe("runtime manifest reconciliation invariants", () => {
 								{ id: "kimi-for-coding-highspeed", context_window: 262_144 },
 							],
 							apiMode: "openai_chat",
-							runtimeEnvName: "OPENAI_API_KEY",
+							runtimeEnvName: "CLAWDI_AI_API_KEY",
 							apiKeySecretRef: "secret://providers/default/api-key",
 						},
 					},
