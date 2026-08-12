@@ -650,13 +650,6 @@ export function applySystemdRuntimeUpdate(
 	);
 	const changedSystemUnits = new Set(system.changed);
 	const changedUserUnits = new Set(user.changed);
-	const systemProcessRevisionDrift = new Set(
-		system.present.filter((unit) => {
-			if (unit === RUNTIME_WATCH_SYSTEM_UNIT) return false;
-			const state = systemdUnitManagerState(paths, "system", unit);
-			return state.activeState === "active" && !systemdProcessRevisionMatches(paths, unit, state);
-		}),
-	);
 	const userProcessRevisionDrift = new Set(
 		user.present.filter((unit) => {
 			const state = systemdUnitManagerState(paths, "user", unit);
@@ -724,8 +717,7 @@ export function applySystemdRuntimeUpdate(
 		if (
 			state.activeState === "active" &&
 			unit !== RUNTIME_WATCH_SYSTEM_UNIT &&
-			(systemProcessRevisionDrift.has(unit) ||
-				(changedSystemUnits.has(unit) && !opts.preserveActiveUnits) ||
+			((changedSystemUnits.has(unit) && !opts.preserveActiveUnits) ||
 				(forcedRestartUnits.has(unit) &&
 					(!addedSystemUnits.has(unit) || unit === RUNTIME_SIDECAR_SYSTEM_UNIT)))
 		) {
@@ -789,8 +781,7 @@ export function applySystemdRuntimeUpdate(
 		return (
 			state.loadState !== "not-found" &&
 			state.activeState === "active" &&
-			!state.needDaemonReload &&
-			(unit === RUNTIME_WATCH_SYSTEM_UNIT || systemdProcessRevisionMatches(paths, unit, state))
+			!state.needDaemonReload
 		);
 	});
 	const userConverged = user.present.every((unit) => {
