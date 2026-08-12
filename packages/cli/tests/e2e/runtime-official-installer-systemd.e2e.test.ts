@@ -1058,6 +1058,35 @@ http.createServer((request, response) => {
 	const mainPid = Number.parseInt(mainPidResult.stdout.trim(), 10);
 	expect(mainPid).toBeGreaterThan(1);
 	expect(statSync(`/proc/${mainPid}`).uid).toBe(runtimeUid);
+	const gatewayMainPidResult = spawnSync(
+		"runuser",
+		[
+			"-u",
+			"clawdi",
+			"--",
+			"env",
+			`HOME=${runtimeHome}`,
+			`XDG_RUNTIME_DIR=/run/user/${runtimeUid}`,
+			`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${runtimeUid}/bus`,
+			"systemctl",
+			"--user",
+			"show",
+			"openclaw-gateway.service",
+			"--property=MainPID",
+			"--value",
+		],
+		{ encoding: "utf8" },
+	);
+	expect(gatewayMainPidResult.status).toBe(0);
+	const gatewayMainPid = Number.parseInt(gatewayMainPidResult.stdout.trim(), 10);
+	expect(gatewayMainPid).toBeGreaterThan(1);
+	expect(statSync(`/proc/${gatewayMainPid}`).uid).toBe(runtimeUid);
+	const activeUnits = readSystemdUnitSnapshot(paths);
+	expect(
+		applySystemdRuntimeUpdate(paths, activeUnits, activeUnits, {
+			activationScope: { systemUnits: [], userUnits: ["openclaw-gateway.service"] },
+		}),
+	).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
 	const unitControl = spawnSync(
 		"runuser",
 		["-u", "clawdi", "--", "systemctl", "stop", "clawdi-files.service"],

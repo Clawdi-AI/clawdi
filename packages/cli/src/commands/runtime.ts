@@ -8,10 +8,12 @@ import {
 	existsSync,
 	readdirSync,
 	readFileSync,
+	statSync,
 } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { z } from "zod";
+import { parseDotenv } from "../lib/dotenv";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
 import {
@@ -40,6 +42,7 @@ import {
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
 import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
+import { withEffectiveFilesystemIdentity } from "../runtime/effective-identity";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
@@ -66,6 +69,7 @@ import {
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
+import { systemdEnvironmentFilePath } from "../runtime/runtime-systemd-reconciliation";
 import {
 	buildNumericUserCommand,
 	buildRuntimeUserCommand,
@@ -485,6 +489,8 @@ export interface SystemdUnitSnapshot {
 interface SystemdUnitManagerState {
 	loadState: string;
 	activeState: string;
+	mainPid: number;
+	needDaemonReload: boolean;
 	enabledState?: string;
 }
 
@@ -498,6 +504,7 @@ interface CommandResult {
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 const RUNTIME_DAEMON_SYSTEM_UNIT = "clawdi-daemon.service";
 const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
+const RUNTIME_REVISION_RE = /^[a-f0-9]{32}$/;
 
 export function readSystemdUnitSnapshot(
 	paths: ReturnType<typeof getRuntimePaths>,
@@ -633,6 +640,22 @@ export function applySystemdRuntimeUpdate(
 			userUnitsChanged: [...userUnitsChanged].sort(),
 		};
 	}
+	const systemManagerNeedsReload = new Set(
+		system.present.filter(
+			(unit) => systemdUnitManagerState(paths, "system", unit).needDaemonReload,
+		),
+	);
+	const userManagerNeedsReload = new Set(
+		user.present.filter((unit) => systemdUnitManagerState(paths, "user", unit).needDaemonReload),
+	);
+	const changedSystemUnits = new Set(system.changed);
+	const changedUserUnits = new Set(user.changed);
+	const userProcessRevisionDrift = new Set(
+		user.present.filter((unit) => {
+			const state = systemdUnitManagerState(paths, "user", unit);
+			return state.activeState === "active" && !systemdProcessRevisionMatches(paths, unit, state);
+		}),
+	);
 
 	for (const unit of system.removed) {
 		const state = systemdUnitManagerState(paths, "system", unit);
@@ -652,15 +675,24 @@ export function applySystemdRuntimeUpdate(
 		}
 	}
 
-	if (system.added.length > 0 || system.changed.length > 0 || system.removed.length > 0) {
+	if (
+		system.added.length > 0 ||
+		system.changed.length > 0 ||
+		system.removed.length > 0 ||
+		systemManagerNeedsReload.size > 0
+	) {
 		systemctl(["daemon-reload"]);
 	}
-	if (user.added.length > 0 || user.changed.length > 0 || user.removed.length > 0) {
+	if (
+		user.added.length > 0 ||
+		user.changed.length > 0 ||
+		user.removed.length > 0 ||
+		userManagerNeedsReload.size > 0
+	) {
 		runtimeUserSystemctl(paths, ["daemon-reload"]);
 	}
 
 	const addedSystemUnits = new Set(system.added);
-	const changedSystemUnits = new Set(system.changed);
 	const forcedRestartUnits = new Set(forcedSystemRestarts);
 	const forcedStopUnits = new Set(forcedSystemStops);
 	const skipActivatedSystemUnits = new Set(opts.skipActivatedSystemUnits ?? []);
@@ -699,7 +731,6 @@ export function applySystemdRuntimeUpdate(
 	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
 	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 
-	const changedUserUnits = new Set(user.changed);
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
 	const enableUserUnits: string[] = [];
@@ -726,7 +757,10 @@ export function applySystemdRuntimeUpdate(
 			enableUserUnits.push(unit);
 			userUnitsChanged.add(unit);
 		}
-		if (changedUserUnits.has(unit) && !opts.preserveActiveUnits) {
+		if (
+			userProcessRevisionDrift.has(unit) ||
+			(changedUserUnits.has(unit) && !opts.preserveActiveUnits)
+		) {
 			restartUserUnits.push(unit);
 			userUnitsChanged.add(unit);
 		}
@@ -744,12 +778,18 @@ export function applySystemdRuntimeUpdate(
 	const systemConverged = system.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "system", unit);
 		if (forcedStopUnits.has(unit)) return systemdUnitAbsentOrInactive(state);
-		return state.loadState !== "not-found" && state.activeState === "active";
+		return (
+			state.loadState !== "not-found" && state.activeState === "active" && !state.needDaemonReload
+		);
 	});
 	const userConverged = user.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "user", unit);
 		return (
-			state.loadState !== "not-found" && state.activeState === "active" && systemdUnitEnabled(state)
+			state.loadState !== "not-found" &&
+			state.activeState === "active" &&
+			!state.needDaemonReload &&
+			systemdUnitEnabled(state) &&
+			systemdProcessRevisionMatches(paths, unit, state)
 		);
 	});
 	const removedSystemConverged = system.removed.every(
@@ -788,7 +828,14 @@ function systemdUnitManagerState(
 	scope: "system" | "user",
 	unit: string,
 ): SystemdUnitManagerState {
-	const showArgs = ["show", unit, "--property=LoadState", "--property=ActiveState"];
+	const showArgs = [
+		"show",
+		unit,
+		"--property=LoadState",
+		"--property=ActiveState",
+		"--property=MainPID",
+		"--property=NeedDaemonReload",
+	];
 	const show =
 		scope === "system" ? systemctlResult(showArgs) : runtimeUserSystemctlResult(paths, showArgs);
 	assertCommandSucceeded(scope === "system" ? systemctlPath() : "systemctl --user", showArgs, show);
@@ -804,10 +851,30 @@ function systemdUnitManagerState(
 	);
 	const loadState = properties.LoadState;
 	const activeState = properties.ActiveState;
-	if (!loadState || !activeState) {
+	const mainPidValue = properties.MainPID;
+	const needDaemonReload = properties.NeedDaemonReload;
+	if (!loadState || !activeState || mainPidValue === undefined || !needDaemonReload) {
 		throw new Error(`systemd ${scope} unit ${unit} returned incomplete manager state`);
 	}
-	if (scope === "system") return { loadState, activeState };
+	if (!/^(0|[1-9]\d*)$/.test(mainPidValue)) {
+		throw new Error(`systemd ${scope} unit ${unit} returned invalid MainPID`);
+	}
+	const mainPid = Number(mainPidValue);
+	if (!Number.isSafeInteger(mainPid)) {
+		throw new Error(`systemd ${scope} unit ${unit} returned invalid MainPID`);
+	}
+	if (needDaemonReload !== "yes" && needDaemonReload !== "no") {
+		throw new Error(
+			`systemd ${scope} unit ${unit} returned invalid NeedDaemonReload: ${needDaemonReload}`,
+		);
+	}
+	const managerState = {
+		loadState,
+		activeState,
+		mainPid,
+		needDaemonReload: needDaemonReload === "yes",
+	};
+	if (scope === "system") return managerState;
 
 	const enabledArgs = ["is-enabled", unit];
 	const enabled = runtimeUserSystemctlResult(paths, enabledArgs);
@@ -816,7 +883,81 @@ function systemdUnitManagerState(
 		assertCommandSucceeded("systemctl --user", enabledArgs, enabled);
 		throw new Error(`systemd user unit ${unit} returned unknown enabled state: ${enabledState}`);
 	}
-	return { loadState, activeState, enabledState };
+	return { ...managerState, enabledState };
+}
+
+function systemdProcessRevisionMatches(
+	paths: ReturnType<typeof getRuntimePaths>,
+	unit: string,
+	state: SystemdUnitManagerState,
+): boolean {
+	if (state.mainPid === 0) {
+		throw new Error(`active managed systemd unit ${unit} has no MainPID`);
+	}
+	if (!unit.endsWith(".service")) {
+		throw new Error(`managed systemd unit has invalid name: ${unit}`);
+	}
+	const programName = unit.slice(0, -".service".length);
+	const envPath = systemdEnvironmentFilePath(paths, programName);
+	let desiredRevision: string;
+	try {
+		const content = readFileSync(envPath, "utf8");
+		const parsed = parseDotenv(content).filter(([key]) => key === "CLAWDI_RUNTIME_REV");
+		const declarations = content
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith("CLAWDI_RUNTIME_REV="));
+		const match = /^CLAWDI_RUNTIME_REV="([a-f0-9]{32})"$/.exec(declarations[0] ?? "");
+		if (parsed.length !== 1 || declarations.length !== 1 || !match) {
+			throw new Error("invalid revision declaration");
+		}
+		desiredRevision = match[1];
+	} catch (error) {
+		throw new Error(`could not prove desired runtime revision for managed systemd unit ${unit}`, {
+			cause: error,
+		});
+	}
+
+	let processRevision: string;
+	try {
+		const procDir = `/proc/${state.mainPid}`;
+		const owner = statSync(procDir);
+		const readEnvironment = () => readFileSync(join(procDir, "environ"));
+		let environment: Buffer;
+		try {
+			environment = readEnvironment();
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (owner.uid === 0 || (code !== "EACCES" && code !== "EPERM")) throw error;
+			environment = withEffectiveFilesystemIdentity(
+				{ uid: owner.uid, gid: owner.gid },
+				readEnvironment,
+			);
+		}
+		processRevision = runtimeRevisionFromProcessEnvironment(environment);
+	} catch (error) {
+		throw new Error(`could not prove active runtime revision for managed systemd unit ${unit}`, {
+			cause: error,
+		});
+	}
+	return processRevision === desiredRevision;
+}
+
+function runtimeRevisionFromProcessEnvironment(environment: Buffer): string {
+	const prefix = Buffer.from("CLAWDI_RUNTIME_REV=");
+	const revisions: string[] = [];
+	for (let start = 0; start < environment.length; ) {
+		const separator = environment.indexOf(0, start);
+		const end = separator < 0 ? environment.length : separator;
+		const entry = environment.subarray(start, end);
+		if (entry.subarray(0, prefix.length).equals(prefix)) {
+			revisions.push(entry.subarray(prefix.length).toString("ascii"));
+		}
+		start = end + 1;
+	}
+	if (revisions.length !== 1 || !RUNTIME_REVISION_RE.test(revisions[0])) {
+		throw new Error("invalid revision entry");
+	}
+	return revisions[0];
 }
 
 const SYSTEMD_ENABLED_STATES = new Set([

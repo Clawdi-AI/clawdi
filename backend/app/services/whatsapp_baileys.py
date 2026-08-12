@@ -1831,6 +1831,20 @@ def whatsapp_self_identity_from_config(
     return identity
 
 
+def whatsapp_credential_needs_self_identity_repair(
+    credential: ChannelAgentCredential,
+    *,
+    self_identity: Mapping[str, str] | None,
+) -> bool:
+    if self_identity is None or credential.revoked_at is not None:
+        return False
+    *_, needs_repair = _load_whatsapp_credential_self_identity_state(
+        credential,
+        self_identity=self_identity,
+    )
+    return needs_repair
+
+
 async def save_whatsapp_credential_self_identity(
     db: AsyncSession,
     *,
@@ -1839,9 +1853,10 @@ async def save_whatsapp_credential_self_identity(
 ) -> bool:
     if self_identity is None or credential.revoked_at is not None:
         return False
-    validated = whatsapp_self_identity_from_config({"self_identity": dict(self_identity)})
-    if validated is None:
-        raise ValueError("WhatsApp self identity requires a valid PN and LID pair")
+    creds, me, validated, needs_repair = _load_whatsapp_credential_self_identity_state(
+        credential,
+        self_identity=self_identity,
+    )
     stored_identity: dict[str, JsonValue] = {
         "id": credential.synthetic_jid,
         "lid": validated["lid"],
@@ -1849,21 +1864,11 @@ async def save_whatsapp_credential_self_identity(
     if name := validated.get("name"):
         stored_identity["name"] = name
 
-    creds = decode_buffer_json(
-        json.loads(decrypt(credential.encrypted_credentials, credential.credential_nonce))
-    )
-    if not _is_object_dict(creds):
-        raise ValueError("WhatsApp credential creds must be an object")
-    me = creds.get("me")
-    if not _is_object_dict(me):
-        raise ValueError("WhatsApp credential creds.me must be an object")
-
     config = dict(credential.config or {})
-    creds_changed = me.get("id") != credential.synthetic_jid or me.get("lid") != validated["lid"]
     config_changed = config.get("self_identity") != stored_identity
-    if not creds_changed and not config_changed:
+    if not needs_repair and not config_changed:
         return False
-    if creds_changed:
+    if needs_repair:
         creds["me"] = {
             **me,
             "id": credential.synthetic_jid,
@@ -1877,6 +1882,30 @@ async def save_whatsapp_credential_self_identity(
         credential.config = config
     await db.flush()
     return True
+
+
+def _load_whatsapp_credential_self_identity_state(
+    credential: ChannelAgentCredential,
+    *,
+    self_identity: Mapping[str, str],
+) -> tuple[dict[str, object], dict[str, object], dict[str, str], bool]:
+    validated = whatsapp_self_identity_from_config({"self_identity": dict(self_identity)})
+    if validated is None:
+        raise ValueError("WhatsApp self identity requires a valid PN and LID pair")
+    creds = decode_buffer_json(
+        json.loads(decrypt(credential.encrypted_credentials, credential.credential_nonce))
+    )
+    if not _is_object_dict(creds):
+        raise ValueError("WhatsApp credential creds must be an object")
+    me = creds.get("me")
+    if not _is_object_dict(me):
+        raise ValueError("WhatsApp credential creds.me must be an object")
+    return (
+        creds,
+        me,
+        validated,
+        me.get("id") != credential.synthetic_jid or me.get("lid") != validated["lid"],
+    )
 
 
 def _clean_optional_whatsapp_text(value: object) -> str | None:

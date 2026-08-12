@@ -45,9 +45,9 @@ from app.services.runtime_source import (
     ensure_runtime_whatsapp_credentials,
     expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
-    missing_runtime_whatsapp_credential_link_ids,
     render_runtime_bundle,
     render_runtime_source,
+    runtime_whatsapp_credential_repair_link_ids,
     vault_key_identity,
 )
 from app.services.tar_utils import tar_from_content
@@ -76,19 +76,19 @@ async def get_runtime_manifest(
         )
 
     try:
-        source, missing_link_ids = await _render_runtime_source_snapshot(
+        source, repair_link_ids = await _render_runtime_source_snapshot(
             environment_id=environment_id,
             owner_user_id=auth.user_id,
         )
-        if missing_link_ids:
+        if repair_link_ids:
             await ensure_runtime_whatsapp_credentials(
                 db,
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
-                link_ids=missing_link_ids,
+                link_ids=repair_link_ids,
             )
             await db.commit()
-            source, missing_link_ids = await _render_runtime_source_snapshot(
+            source, repair_link_ids = await _render_runtime_source_snapshot(
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
             )
@@ -125,12 +125,12 @@ async def _render_runtime_source_snapshot(
             environment_ids=[environment_id],
             owner_user_id=owner_user_id,
         )
-        missing_link_ids = missing_runtime_whatsapp_credential_link_ids(
+        repair_link_ids = runtime_whatsapp_credential_repair_link_ids(
             batch,
             environment_id=environment_id,
         )
-        if missing_link_ids:
-            return None, missing_link_ids
+        if repair_link_ids:
+            return None, repair_link_ids
         return (
             render_runtime_source(
                 batch,

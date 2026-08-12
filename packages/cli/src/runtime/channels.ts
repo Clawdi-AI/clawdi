@@ -6,6 +6,7 @@ import type { RuntimeBundleChannelBinding, RuntimeManifestLoad } from "./manifes
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeSecretValue } from "./secret-values";
+import { managedWhatsAppAuthCredentials } from "./whatsapp-credential-projection";
 import { buildManagedWhatsAppEgressProfiles } from "./whatsapp-egress";
 import {
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
@@ -629,7 +630,11 @@ function managedWhatsAppSecretValues(
 	channelCredentials: unknown,
 ): Record<string, string> {
 	const values: Record<string, string> = {};
-	const projectedCredentialSecrets = projectedWhatsAppCredentialSecretRefs(channelCredentials);
+	const projectedCredentialSecrets = new Set(
+		managedWhatsAppAuthCredentials(channelCredentials).map(
+			(credential) => credential.credsJsonSecretRef,
+		),
+	);
 	for (const link of links) {
 		const material = whatsappBaileysCredentialMaterial(link);
 		if (material) {
@@ -640,26 +645,6 @@ function managedWhatsAppSecretValues(
 		}
 	}
 	return values;
-}
-
-function projectedWhatsAppCredentialSecretRefs(channelCredentials: unknown): Set<string> {
-	const refs = new Set<string>();
-	if (!Array.isArray(channelCredentials)) return refs;
-	for (const credential of channelCredentials) {
-		const record = recordValue(credential);
-		if (record?.provider !== "whatsapp" || record.kind !== "whatsapp_baileys_auth_state") {
-			continue;
-		}
-		const files = Array.isArray(record.files) ? record.files : [];
-		for (const file of files) {
-			const fileRecord = recordValue(file);
-			const secretRef = stringValue(fileRecord?.secretRef);
-			if (fileRecord?.path === "creds.json" && secretRef) {
-				refs.add(secretRef);
-			}
-		}
-	}
-	return refs;
 }
 
 function whatsappAgentTokenSecretRef(accountKey: string, linkId: string): string {
@@ -789,10 +774,6 @@ function runtimeCredentialTargets(manifest: RuntimeManifest): RuntimeCredentialT
 function recordValue(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	return value as Record<string, unknown>;
-}
-
-function stringValue(value: unknown): string | null {
-	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function stripTrailingSlash(value: string): string {

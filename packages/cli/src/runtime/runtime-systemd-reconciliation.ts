@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
+	chownSync,
 	existsSync,
 	lstatSync,
 	readdirSync,
@@ -44,6 +45,7 @@ import {
 	executableExists,
 	makeRuntimeUserOwned,
 	RuntimeUserCommandTimeoutError,
+	runningAsRoot,
 	runRuntimeUserCommand,
 	runtimeEgressGid,
 	runtimeEgressUid,
@@ -344,7 +346,7 @@ function systemdUnitEnvironmentLines(values: Record<string, string>): string[] {
 	);
 }
 
-function systemdEnvironmentFilePath(paths: RuntimePaths, unitName: string): string {
+export function systemdEnvironmentFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(paths.systemdEnvRoot, `${systemdUnitFileName(unitName)}.env`);
 }
 
@@ -746,24 +748,43 @@ function writeSystemdEnvironmentFile(input: {
 			return `${key}=${systemdEnvironmentFileQuote(value)}`;
 		});
 	const content = `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n${lines.join("\n")}\n`;
+	writeSystemdManagedFile({
+		path,
+		content,
+		mode: 0o600,
+		dirMode: 0o711,
+		trustedRoot: input.paths.runRoot,
+		owner: input.owner,
+	});
+	return path;
+}
+
+function writeSystemdManagedFile(input: {
+	path: string;
+	content: string;
+	mode: number;
+	dirMode: number;
+	trustedRoot: string;
+	owner: "root" | "runtime-user";
+}): void {
 	let unchanged = false;
 	try {
-		const current = lstatSync(path);
-		unchanged = current.isFile() && current.nlink === 1 && readFileSync(path, "utf8") === content;
+		const current = lstatSync(input.path);
+		unchanged =
+			current.isFile() && current.nlink === 1 && readFileSync(input.path, "utf8") === input.content;
 	} catch {
 		// A missing or unreadable target is replaced by the trusted atomic writer below.
 	}
-	if (!unchanged) {
-		writePrivateFileAtomic(path, content, {
-			mode: 0o600,
-			dirMode: 0o711,
-			trustedRoot: input.paths.runRoot,
+	if (unchanged) chmodSync(input.path, input.mode);
+	else {
+		writePrivateFileAtomic(input.path, input.content, {
+			mode: input.mode,
+			dirMode: input.dirMode,
+			trustedRoot: input.trustedRoot,
 		});
-	} else {
-		chmodSync(path, 0o600);
 	}
-	if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
-	return path;
+	if (input.owner === "runtime-user") makeRuntimeUserOwned(input.path);
+	else if (runningAsRoot()) chownSync(input.path, 0, 0);
 }
 
 function writeSystemdProgramEnvironment(input: {
@@ -861,12 +882,14 @@ function writeSystemdUnit(input: {
 	const writeUnitFile = (): string => {
 		ensureDirectoryWithinTrustedRoot(input.root, input.root);
 		if (input.owner === "runtime-user") makeRuntimeUserOwned(input.root);
-		writePrivateFileAtomic(path, `${lines.join("\n")}`, {
+		writeSystemdManagedFile({
+			path,
+			content: lines.join("\n"),
 			mode: 0o644,
 			dirMode: 0o755,
 			trustedRoot: input.root,
+			owner: input.owner,
 		});
-		if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
 		return path;
 	};
 	return input.owner === "runtime-user"
@@ -939,12 +962,14 @@ function writeSystemdUserDropIn(input: {
 		removeGeneratedRuntimeBaseUnit(input.paths, unitName);
 		ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
 		makeRuntimeUserOwned(dirname(path));
-		writePrivateFileAtomic(path, `${lines.join("\n")}`, {
+		writeSystemdManagedFile({
+			path,
+			content: lines.join("\n"),
 			mode: 0o644,
 			dirMode: 0o755,
 			trustedRoot: input.paths.systemdUserRoot,
+			owner: "runtime-user",
 		});
-		makeRuntimeUserOwned(path);
 		return join(input.paths.systemdUserRoot, unitName);
 	});
 }
