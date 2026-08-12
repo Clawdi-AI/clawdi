@@ -398,7 +398,7 @@ describe("run command project folder selection", () => {
 				command: "openclaw",
 				defaultArgs: ["gateway", "run"],
 				env: {
-					CLAWDI_MANAGED_OPENAI_API_KEY: "clawdi-egress-placeholder",
+					CLAWDI_AI_API_KEY: "clawdi-egress-placeholder",
 				},
 				secretEnv: {},
 				secretFilePath: null,
@@ -420,7 +420,7 @@ describe("run command project folder selection", () => {
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0].args).toEqual(["gateway", "run"]);
-		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
+		expect(calls[0].env.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 		expect(calls[0].env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
 	});

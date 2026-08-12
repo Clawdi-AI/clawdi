@@ -462,7 +462,7 @@ def _seed_codex_provider_graph(
         auth_type="api_key",
         auth_metadata={"source": "managed"},
         managed_by="clawdi",
-        runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+        runtime_env_name="CLAWDI_AI_API_KEY",
     )
     payload = AiProviderAuthPayload(
         owner_user_id=user.id,

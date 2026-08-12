@@ -716,13 +716,13 @@ describe("ai-provider commands", () => {
 							source: "managed",
 						},
 						managed_by: "clawdi",
-						runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+						runtime_env_name: "CLAWDI_AI_API_KEY",
 					},
 				],
 			}),
 		);
-		const oldRuntimeKey = process.env.CLAWDI_MANAGED_OPENAI_API_KEY;
-		process.env.CLAWDI_MANAGED_OPENAI_API_KEY = "sk-runtime-managed";
+		const oldRuntimeKey = process.env.CLAWDI_AI_API_KEY;
+		process.env.CLAWDI_AI_API_KEY = "sk-runtime-managed";
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "GET",
@@ -737,8 +737,8 @@ describe("ai-provider commands", () => {
 		} finally {
 			restore();
 			restoreFetch();
-			if (oldRuntimeKey === undefined) delete process.env.CLAWDI_MANAGED_OPENAI_API_KEY;
-			else process.env.CLAWDI_MANAGED_OPENAI_API_KEY = oldRuntimeKey;
+			if (oldRuntimeKey === undefined) delete process.env.CLAWDI_AI_API_KEY;
+			else process.env.CLAWDI_AI_API_KEY = oldRuntimeKey;
 		}
 
 		expect(
@@ -749,7 +749,7 @@ describe("ai-provider commands", () => {
 		const providerProbe = captured.find((request) => request.path === "/v1/models");
 		expect(providerProbe?.headers.authorization).toBe("Bearer sk-runtime-managed");
 		expect(output()).toContain('"status": "ok"');
-		expect(output()).toContain("managed api_key:env:CLAWDI_MANAGED_OPENAI_API_KEY");
+		expect(output()).toContain("managed api_key:env:CLAWDI_AI_API_KEY");
 		expect(output()).not.toContain("sk-runtime-managed");
 	});
 
@@ -806,7 +806,7 @@ describe("ai-provider commands", () => {
 					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_AI_API_KEY",
 				},
 			],
 			defaults: { chat_provider_id: "clawdi-managed-v2" },
@@ -827,7 +827,7 @@ describe("ai-provider commands", () => {
 		expect(patch.models.providers.clawdi.apiKey).toEqual({
 			source: "env",
 			provider: "default",
-			id: "CLAWDI_MANAGED_OPENAI_API_KEY",
+			id: "CLAWDI_AI_API_KEY",
 		});
 		expect(JSON.stringify(patch)).not.toContain("clawdi-managed-v2");
 	});
@@ -845,7 +845,7 @@ describe("ai-provider commands", () => {
 					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_AI_API_KEY",
 				},
 			],
 			defaults: { chat_provider_id: "clawdi-managed-v2" },
@@ -855,7 +855,7 @@ describe("ai-provider commands", () => {
 		expect(patch).toContain('provider: "custom:clawdi"');
 		expect(patch).toContain('api: "https://sub2api.example.test/v1"');
 		expect(patch).toContain('transport: "chat_completions"');
-		expect(patch).toContain('key_env: "CLAWDI_MANAGED_OPENAI_API_KEY"');
+		expect(patch).toContain('key_env: "CLAWDI_AI_API_KEY"');
 		expect(patch).not.toContain("chatgpt.com");
 		expect(patch).not.toContain("CLAWDI_PROVIDER_PLACEHOLDER_TOKEN");
 		expect(patch).not.toContain("clawdi-managed-v2");

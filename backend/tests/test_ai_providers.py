@@ -1364,7 +1364,7 @@ async def test_canonical_and_legacy_managed_ids_resolve_while_deployment_id_is_h
                 auth_type="api_key",
                 auth_metadata={"source": "managed", "profile": "default"},
                 managed_by="clawdi",
-                runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+                runtime_env_name="CLAWDI_AI_API_KEY",
                 models=[{"id": "gpt-5.5"}],
             )
         )
@@ -2161,7 +2161,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
                 "api_mode": "openai_chat",
                 "auth": {"type": "api_key", "source": "managed"},
                 "managed_by": "clawdi",
-                "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+                "runtime_env_name": "CLAWDI_AI_API_KEY",
             },
         )
         assert managed.status_code == 200, managed.text
@@ -2179,7 +2179,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "api_mode": "openai_responses",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",
-            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+            "runtime_env_name": "CLAWDI_AI_API_KEY",
         },
     )
     assert v1_managed.status_code == 200, v1_managed.text
@@ -2196,7 +2196,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "api_mode": "openai_chat",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",
-            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+            "runtime_env_name": "CLAWDI_AI_API_KEY",
         },
     )
     assert v1_managed_wrong_mode.status_code == 422, v1_managed_wrong_mode.text

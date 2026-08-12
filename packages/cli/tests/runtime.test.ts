@@ -1009,7 +1009,7 @@ function hostedEgressSecretRotationPayload(
 					models: [{ id: "gpt-test" }],
 					apiMode: "openai_responses",
 					managed_by: "clawdi",
-					runtimeEnvName: "OPENAI_API_KEY",
+					runtimeEnvName: "CLAWDI_AI_API_KEY",
 					apiKeySecretRef: "secret://provider.default.apiKey",
 				},
 			},
@@ -1031,7 +1031,7 @@ function hostedCliManifestResponse(
 				models: [{ id: "gpt-5" }],
 				apiMode: "openai_responses",
 				managed_by: "clawdi",
-				runtimeEnvName: "OPENAI_API_KEY",
+				runtimeEnvName: "CLAWDI_AI_API_KEY",
 				apiKeySecretRef: opts.providerSecretRef,
 			}
 		: hostedRequiredState().providers.default;
@@ -1876,7 +1876,7 @@ function hostedProviderSwitchProvider(
 		],
 		apiMode: providerId === "clawdi-managed" ? "openai_responses" : "openai_chat",
 		managed_by: managedBy,
-		runtimeEnvName: managedBy === "clawdi" ? "OPENAI_API_KEY" : `BYOK_${envPrefix}_API_KEY`,
+		runtimeEnvName: managedBy === "clawdi" ? "CLAWDI_AI_API_KEY" : `BYOK_${envPrefix}_API_KEY`,
 		apiKeySecretRef: `secret://provider.${providerId}.apiKey`,
 	};
 }
@@ -1893,6 +1893,7 @@ function hostedProviderSwitchLoad(
 	const codexProvider = {
 		...hostedProviderSwitchProvider("clawdi-managed", "clawdi"),
 		type: "openai",
+		runtimeEnvName: "OPENAI_API_KEY",
 		apiKeySecretRef: TEST_HOSTED_CODEX_SECRET_REF,
 	};
 	const terminalTooling = {
@@ -2023,7 +2024,7 @@ function hostedSingleProviderModeLoad(
 						models: [{ id: "gpt-5.5" }],
 						apiMode: "openai_responses",
 						managed_by: "clawdi",
-						runtimeEnvName: "OPENAI_API_KEY",
+						runtimeEnvName: "CLAWDI_AI_API_KEY",
 						apiKeySecretRef: "secret://provider.clawdi-managed.apiKey",
 					},
 				}
@@ -2031,6 +2032,7 @@ function hostedSingleProviderModeLoad(
 	const codexProvider = {
 		...hostedProviderSwitchProvider("clawdi-managed", "clawdi"),
 		type: "openai",
+		runtimeEnvName: "OPENAI_API_KEY",
 		apiKeySecretRef: TEST_HOSTED_CODEX_SECRET_REF,
 	};
 	const terminalTooling = {
@@ -2889,7 +2891,7 @@ describe("runtime manifest datasource", () => {
 									models: [{ id: "gpt-5.5" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
-									runtimeEnvName: "OPENAI_API_KEY",
+									runtimeEnvName: "CLAWDI_AI_API_KEY",
 									apiKeySecretRef: "secret://provider.default.apiKey",
 								},
 							},
@@ -3127,7 +3129,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									models: [{ id: "gpt-5.5" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
-									runtimeEnvName: "OPENAI_API_KEY",
+									runtimeEnvName: "CLAWDI_AI_API_KEY",
 									apiKeySecretRef: "secret://provider.default.apiKey",
 								},
 							},
@@ -3144,7 +3146,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			const loaded = await loadRuntimeManifest(paths);
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
 			const provider = hostedAiProviderCatalog(loaded.manifest, "hermes")?.catalog.providers[0];
-			expect(provider?.runtime_env_name).toBe("CLAWDI_MANAGED_OPENAI_API_KEY");
+			expect(provider?.runtime_env_name).toBe("CLAWDI_AI_API_KEY");
 			expectProviderEgressProfileUsesSecretRef(
 				loaded.manifest.egressProfiles?.profiles,
 				"secret://provider.default.apiKey",
@@ -3173,18 +3175,14 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(convergence.outputs.systemdSystemUnits).toContain(
 				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
 			);
-			expect(managedProvider.key_env).toBe("CLAWDI_MANAGED_OPENAI_API_KEY");
-			expect(hermesEnv).not.toContain("CLAWDI_OPENCLAW_API_KEY");
-			expect(hermesEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="clawdi-egress-placeholder"');
+			expect(managedProvider.key_env).toBe("CLAWDI_AI_API_KEY");
+			expect(hermesEnv).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 			expect(hermesEnv).not.toMatch(/^OPENAI_API_KEY=/m);
-			expect(hermesDashboardEnv).not.toContain("CLAWDI_OPENCLAW_API_KEY");
-			expect(hermesDashboardEnv).toContain(
-				'CLAWDI_MANAGED_OPENAI_API_KEY="clawdi-egress-placeholder"',
-			);
+			expect(hermesDashboardEnv).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 			expect(hermesDashboardEnv).not.toMatch(/^OPENAI_API_KEY=/m);
-			expect(hermesRunEnv.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
+			expect(hermesRunEnv.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
 			expect(hermesRunEnv.OPENAI_API_KEY).toBeUndefined();
-			expect(hermesDashboardRunEnv.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
+			expect(hermesDashboardRunEnv.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
 			expect(hermesDashboardRunEnv.OPENAI_API_KEY).toBeUndefined();
 			expectEgressProfileBundleUsesSecretRef(
 				convergence.outputs.egressProfileBundle,
@@ -3251,7 +3249,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									models: [{ id: "gpt-5.4-mini" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
-									runtimeEnvName: "OPENAI_API_KEY",
+									runtimeEnvName: "CLAWDI_AI_API_KEY",
 									apiKeySecretRef: "secret://provider.default.apiKey",
 								},
 							},
@@ -3271,7 +3269,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				baseUrl: "https://ai-gateway.example.test/v1",
 				models: [{ id: "gpt-5.4-mini" }],
 				apiMode: "openai_chat",
-				runtimeEnvName: "OPENAI_API_KEY",
+				runtimeEnvName: "CLAWDI_AI_API_KEY",
 			});
 			expect(
 				loaded.manifest.egressProfiles?.profiles.find(
@@ -3348,7 +3346,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									models: [{ id: "gpt-5.4-mini" }],
 									apiMode: "openai_responses",
 									managed_by: "clawdi",
-									runtimeEnvName: "OPENAI_API_KEY",
+									runtimeEnvName: "CLAWDI_AI_API_KEY",
 									apiKeySecretRef: "secret://provider.default.apiKey",
 								},
 							},
@@ -3531,7 +3529,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				id: "OPENAI_API_KEY",
 			},
 		});
-		expect(patch.models.providers.default.apiKey.id).not.toBe("CLAWDI_OPENCLAW_API_KEY");
+		expect(patch.models.providers.default.apiKey.id).not.toBe("CLAWDI_AI_API_KEY");
 		expect(patch.models.providers.default.api).toBeUndefined();
 		expect(JSON.stringify(patch)).not.toContain("agentRuntime");
 		expect(JSON.stringify(patch)).not.toContain("chatgpt.com");
@@ -3547,7 +3545,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			"--force",
 		]);
 		expect(runConfig.defaultArgs).not.toContain("--auth");
-		expect(runConfig.env.CLAWDI_OPENCLAW_API_KEY).toBeUndefined();
+		expect(runConfig.env.CLAWDI_AI_API_KEY).toBeUndefined();
 		expect(runConfig.env.OPENAI_API_KEY).toBeUndefined();
 		expect(runConfig.secretEnv).toEqual({ OPENAI_API_KEY: "secret://provider.default.apiKey" });
 		expect(runConfig.secretFilePath).toBeNull();
@@ -3701,7 +3699,7 @@ export async function mutateConfigFile(options) {
 		expect(appliedConfig.models.providers.clawdi.apiKey).toEqual({
 			source: "env",
 			provider: "default",
-			id: "CLAWDI_OPENCLAW_API_KEY",
+			id: "CLAWDI_AI_API_KEY",
 		});
 		expect(appliedConfig.models.providers["user-owned"].models).toEqual([
 			{ id: "user-model", name: "User model" },
@@ -4354,7 +4352,7 @@ exit 0
 		const runtimeUnitEnv = readSystemdEnvFile(paths, runtimeUnit);
 		for (const forbidden of [
 			"OPENAI_API_KEY",
-			"CLAWDI_OPENCLAW_API_KEY",
+			"CLAWDI_AI_API_KEY",
 			"clawdi-egress-placeholder",
 			"provider.clawdi-managed",
 			"egress-secrets.json",
@@ -6018,7 +6016,7 @@ cp '${sdkSource}' '${sdkTarget}'
 							models: [{ id: "gpt-5.5" }],
 							apiMode: "openai_chat",
 							managed_by: "clawdi",
-							runtimeEnvName: "OPENAI_API_KEY",
+							runtimeEnvName: "CLAWDI_AI_API_KEY",
 							apiKeySecretRef: "secret://tool.codex.apiKey",
 						},
 					},
@@ -6041,7 +6039,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		const runConfig = JSON.parse(
 			readFileSync(join(getRuntimePaths().runConfigRoot, "openclaw.json"), "utf-8"),
 		);
-		expect(runConfig.env.CLAWDI_OPENCLAW_API_KEY).toBe("clawdi-egress-placeholder");
+		expect(runConfig.env.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
 		expect(runConfig.env.OPENAI_API_KEY).toBeUndefined();
 		expect(runConfig.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -8103,7 +8101,7 @@ fi
 						models: [{ id: "gpt-5.5" }],
 						apiMode: "openai_chat",
 						managed_by: "clawdi",
-						runtimeEnvName: "OPENAI_API_KEY",
+						runtimeEnvName: "CLAWDI_AI_API_KEY",
 						apiKeySecretRef: providerSecretRef,
 					},
 				},
@@ -15205,7 +15203,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 								model: "gpt-5.5",
 								apiMode: "openai_responses",
 								managed_by: "clawdi",
-								runtimeEnvName: "OPENAI_API_KEY",
+								runtimeEnvName: "CLAWDI_AI_API_KEY",
 								apiKeySecretRef: "secret://provider.default.apiKey",
 							},
 						},
@@ -15290,7 +15288,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).not.toContain("sk-runtime");
-		expect(openclawEnv).toContain('CLAWDI_OPENCLAW_API_KEY="clawdi-egress-placeholder"');
+		expect(openclawEnv).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 		expect(openclawEnv).not.toMatch(/^OPENAI_API_KEY=/m);
 		expect(openclawEnv).not.toContain("sk-runtime");
 		expect(openclawEnv).not.toContain(dirname(paths.cliManagedBin));
@@ -15345,7 +15343,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 								model: "gpt-5.5",
 								apiMode: "openai_responses",
 								managed_by: "clawdi",
-								runtimeEnvName: "OPENAI_API_KEY",
+								runtimeEnvName: "CLAWDI_AI_API_KEY",
 								apiKeySecretRef: "secret://provider.default.apiKey",
 							},
 						},
@@ -15360,7 +15358,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			getRuntimePaths(),
 		);
 		const openclawEnv = readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway");
-		expect(openclawEnv).toContain('CLAWDI_OPENCLAW_API_KEY="clawdi-egress-placeholder"');
+		expect(openclawEnv).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 		expect(openclawEnv).not.toMatch(/^OPENAI_API_KEY=/m);
 		expect(openclawEnv).not.toContain("secret://provider.default.apiKey");
 	});
@@ -15954,7 +15952,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 									models: [{ id: "gpt-test" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
-									runtimeEnvName: "OPENAI_API_KEY",
+									runtimeEnvName: "CLAWDI_AI_API_KEY",
 									apiKeySecretRef: "secret://tool.codex.apiKey",
 								},
 							},

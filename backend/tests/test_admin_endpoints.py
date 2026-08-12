@@ -1220,7 +1220,7 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
         "api_mode": "openai_chat",
         "auth": {"type": "api_key", "source": "managed", "profile": "default"},
         "managed_by": "clawdi",
-        "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+        "runtime_env_name": "CLAWDI_AI_API_KEY",
         "base_url": "https://ai-gateway.clawdi.ai/v1",
         "capabilities": {
             "chat": True,
