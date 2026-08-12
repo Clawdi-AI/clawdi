@@ -639,11 +639,15 @@ not remapped.
 
 The new CLI writes no Codex `model` or `model_catalog_json`; it writes only the
 custom provider selection, endpoint, canonical env key, and Responses transport.
-This plain `env_key` provider does not enable Codex's remote model refresh, so
+On the normal Clawdi-provisioned path, the plain `env_key`, fresh managed home,
+and absence of command or Codex-backend auth leave remote refresh disabled, so
 Codex selects its own default from its bundled catalog (`gpt-5.6-sol` in the
-locked `0.146.0` catalog). Clawdi does not encode that model choice. Manifest
-v1 `primary_model` remains required only because strict parsing precedes a
-`clawdiCli.packageSpec` self-upgrade; the new CLI validates and ignores it.
+locked `0.146.0` catalog). A manually written or stale ChatGPT backend auth file
+can satisfy Codex's upstream refresh gate. Codex has no native discovery-off
+setting analogous to OpenClaw or Hermes, and Clawdi does not invent one or
+encode a model choice. Manifest v1 `primary_model` remains required only
+because strict parsing precedes a `clawdiCli.packageSpec` self-upgrade; the new
+CLI validates and ignores it.
 Legacy terminal-Codex `OPENAI_API_KEY` and provider `models` are also read-only
 v1 compatibility inputs; local output always uses `CLAWDI_AI_API_KEY` and
 remains catalog-free. Removing those wire fields needs a new schema after older

@@ -62,8 +62,18 @@ Without `model_catalog_json`, the configured provider constructs
 which initializes from bundled `models.json`. Its
 [`should_refresh_models`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/models-manager/src/manager.rs#L414-L416)
 gate requires Codex-backend auth or `auth.command`; a plain `env_key` does not
-qualify. Hosted managed Codex therefore does not request `/models`; it selects
-its default from the bundled catalog. In the locked catalog,
+qualify. On the normal Clawdi-provisioned path, a fresh managed home has neither
+command auth nor Codex-backend auth, so Codex does not remotely refresh and
+selects its default from the bundled catalog. However,
+[`ThreadManager`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/thread_manager.rs#L300-L308)
+passes its global `AuthManager` to the custom provider, and providers without
+command auth
+[`retain it`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/model-provider/src/auth.rs#L166-L176).
+A manually written or stale ChatGPT backend auth file can therefore satisfy the
+endpoint's
+[`uses_codex_backend`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/model-provider/src/models_endpoint.rs#L68-L72)
+gate. Codex exposes no OpenClaw/Hermes-style discovery-off setting, and Clawdi
+does not invent one. In the locked catalog,
 [`gpt-5.6-sol`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/models-manager/models.json#L3-L11)
 is the first picker-visible model after
 [`priority` sorting](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/models-manager/src/manager.rs#L122-L134),
