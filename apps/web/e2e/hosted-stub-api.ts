@@ -1,9 +1,26 @@
-import type { DeploymentRead } from "@clawdi/shared/api";
+import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route } from "@playwright/test";
 
 export type DeploymentComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
 >;
+
+type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress"];
+type PlanChangeKind = PlanChangeProgress["changeKind"];
+type PlanChangeBillingEffect = PlanChangeProgress["billingEffect"];
+type PlanChangeQuote = DeployComponents["schemas"]["V2ComputePlanChangeQuoteResponse"];
+type PlanChangeOperation = DeployComponents["schemas"]["LongRunningOperation"];
+
+function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingEffect {
+	switch (changeKind) {
+		case "immediate_upgrade":
+			return "immediate_proration";
+		case "scheduled_downgrade":
+			return "period_end";
+		case "funding_source_switch":
+			return "future_renewals";
+	}
+}
 
 export type DeploymentMutationFixture = {
 	id: string;
@@ -347,7 +364,7 @@ export const includedBasicDeployment = {
 		ai_provider_bindings: {},
 		public_ports: [],
 	},
-};
+} satisfies DeploymentMutationFixture;
 
 export const paidBasicDeployment = {
 	...includedBasicDeployment,
@@ -364,7 +381,7 @@ export const paidBasicDeployment = {
 		cancel_at_period_end: false,
 		current_period_end: "2027-07-15T00:00:00Z",
 	},
-};
+} satisfies DeploymentMutationFixture;
 
 export const performanceDeployment = {
 	...paidBasicDeployment,
@@ -611,7 +628,7 @@ export function planChangeQuoteResponse({
 	changeKind,
 	effectiveAt,
 	amountCents,
-	amountCredits,
+	amountUsd,
 }: {
 	operationId: string;
 	subscriptionId: number;
@@ -620,11 +637,11 @@ export function planChangeQuoteResponse({
 	targetPlanSlug: "compute_basic" | "compute_performance";
 	currentBillingTermMonths: 1 | 12;
 	targetBillingTermMonths: 1 | 12;
-	changeKind: "immediate_upgrade" | "scheduled_downgrade";
+	changeKind: PlanChangeKind;
 	effectiveAt: string;
 	amountCents: number;
-	amountCredits: string | null;
-}) {
+	amountUsd: string | null;
+}): PlanChangeQuote {
 	return {
 		operation_id: operationId,
 		subscription_id: subscriptionId,
@@ -634,13 +651,13 @@ export function planChangeQuoteResponse({
 		current_billing_term_months: currentBillingTermMonths,
 		target_billing_term_months: targetBillingTermMonths,
 		change_kind: changeKind,
+		billing_effect: planChangeBillingEffect(changeKind),
 		status: "quoted",
 		effective_at: effectiveAt,
 		proration_date: "2026-07-16T00:00:00Z",
 		expires_at: "2026-07-16T00:15:00Z",
 		amount_cents: amountCents,
-		amount_credits: amountCredits,
-		points_per_usd: fundingSource === "wallet" ? 1_000 : null,
+		amount_usd: amountUsd,
 		currency: "usd",
 		stripe_invoice_preview_id: "in_preview_browser",
 	};
@@ -653,6 +670,7 @@ export function planChangeResponse({
 	currentPlanSlug,
 	targetPlanSlug,
 	targetBillingTermMonths,
+	changeKind,
 	status,
 	effectiveAt,
 }: {
@@ -662,19 +680,55 @@ export function planChangeResponse({
 	currentPlanSlug: "compute_basic" | "compute_performance";
 	targetPlanSlug: "compute_basic" | "compute_performance";
 	targetBillingTermMonths: 1 | 12;
+	changeKind?: PlanChangeKind;
 	status: "awaiting_payment" | "awaiting_projection" | "scheduled" | "complete";
 	effectiveAt: string;
-}) {
+}): PlanChangeOperation {
+	const resolvedChangeKind =
+		changeKind ?? (status === "scheduled" ? "scheduled_downgrade" : "immediate_upgrade");
+	const deploymentId = `hdep_plan_${subscriptionId}`;
 	return {
-		operation_id: operationId,
-		subscription_id: subscriptionId,
-		funding_source: fundingSource,
-		current_plan_slug: currentPlanSlug,
-		target_plan_slug: targetPlanSlug,
-		target_billing_term_months: targetBillingTermMonths,
-		status,
-		effective_at: effectiveAt,
-		funding_invoice_id: status === "scheduled" ? null : "in_plan_browser",
+		name: `operations/${operationId}`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId,
+			verb: "plan_change",
+			targetGeneration: 1,
+			manifestETag: `plan-change-${operationId}`,
+			createTime: effectiveAt,
+			updateTime: effectiveAt,
+			planChange: {
+				"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
+				operationId,
+				subscriptionId,
+				fundingSource,
+				changeKind: resolvedChangeKind,
+				billingEffect: planChangeBillingEffect(resolvedChangeKind),
+				sourcePlanSlug: currentPlanSlug,
+				targetPlanSlug,
+				targetBillingTermMonths,
+				state: status,
+				effectiveAt,
+				fundingInvoiceId: status === "scheduled" ? null : "in_plan_browser",
+			},
+		},
+		done: status === "complete" || status === "scheduled",
+		error: null,
+		response:
+			status === "complete" || status === "scheduled"
+				? {
+						"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+						deployment: mutationDeploymentReadFixture({
+							...paidBasicDeployment,
+							id: deploymentId,
+							config_info: {
+								...paidBasicDeployment.config_info,
+								compute_plan_slug: targetPlanSlug,
+								runtime: "hermes",
+							},
+						}).resource,
+					}
+				: null,
 	};
 }
 
@@ -861,13 +915,13 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 				current_billing_term_months: 1,
 				target_billing_term_months: 1,
 				change_kind: "immediate_upgrade",
+				billing_effect: "immediate_proration",
 				status: "quoted",
 				effective_at: "2026-07-16T00:00:00Z",
 				proration_date: "2026-07-16T00:00:00Z",
 				expires_at: "2026-07-16T00:15:00Z",
 				amount_cents: 1_000,
-				amount_credits: null,
-				points_per_usd: null,
+				amount_usd: null,
 				currency: "usd",
 				stripe_invoice_preview_id: "in_preview_browser",
 			};
@@ -877,17 +931,18 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		}
 		if (p === "/v2/subscription/plan/change" && r.request().method() === "POST") {
 			options.planChangeRequests?.push(r.request().postData() ?? "");
-			const response = options.planChangeResponses?.shift() ?? {
-				operation_id: "op_plan_browser",
-				subscription_id: 42,
-				funding_source: "stripe",
-				current_plan_slug: "compute_basic",
-				target_plan_slug: "compute_performance",
-				target_billing_term_months: 1,
-				status: "complete",
-				effective_at: "2026-07-16T00:00:00Z",
-				funding_invoice_id: "in_plan_browser",
-			};
+			const response =
+				options.planChangeResponses?.shift() ??
+				planChangeResponse({
+					operationId: "op_plan_browser",
+					subscriptionId: 42,
+					fundingSource: "stripe",
+					currentPlanSlug: "compute_basic",
+					targetPlanSlug: "compute_performance",
+					targetBillingTermMonths: 1,
+					status: "complete",
+					effectiveAt: "2026-07-16T00:00:00Z",
+				});
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
 				: fulfillJson(r, response);

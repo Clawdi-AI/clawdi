@@ -32,7 +32,7 @@ import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const SUBSCRIPTION_GRID_CLASS =
-	"grid gap-4 lg:grid-cols-[minmax(10rem,1.35fr)_minmax(9rem,1fr)_minmax(7rem,.65fr)_minmax(8rem,.8fr)_minmax(9rem,auto)] lg:items-center";
+	"grid gap-4 lg:grid-cols-[minmax(10rem,1.35fr)_minmax(8rem,1fr)_minmax(7rem,.7fr)_minmax(7rem,.65fr)_minmax(8rem,.8fr)_minmax(9rem,auto)] lg:items-center";
 
 const STATUS_PRESENTATION: Record<
 	ComputeSubscriptionListItem["status"],
@@ -49,6 +49,15 @@ function planLabel(planSlug: string): string {
 		return `Compute ${computeTierLabel(planSlug)}`;
 	}
 	return planSlug.replace(/^compute_/, "").replaceAll("_", " ");
+}
+
+export function subscriptionPaymentSourceLabel(
+	fundingSource: ComputeSubscriptionListItem["funding_source"],
+): string {
+	if (fundingSource === null) return "Included";
+	if (fundingSource === "stripe") return "Card";
+	if (fundingSource === "wallet") return "Wallet";
+	return "Unavailable";
 }
 
 function priceLabel(subscription: ComputeSubscriptionListItem): string {
@@ -163,18 +172,21 @@ function SubscriptionActions({ subscription }: { subscription: ComputeSubscripti
 
 export function SubscriptionAgentLink({
 	deploymentId,
+	agentName,
 }: {
 	deploymentId: ComputeSubscriptionListItem["deployment_id"];
+	agentName: ComputeSubscriptionListItem["agent_name"];
 }) {
-	return deploymentId ? (
+	return deploymentId && agentName ? (
 		<Link
 			{...agentSectionLink(deploymentId, "settings", {
 				source: "on-clawdi",
 				settings: "billing-plan",
 			})}
-			className="font-medium text-primary underline-offset-4 hover:underline"
+			className="block min-w-0 truncate font-medium text-primary underline-offset-4 hover:underline"
+			title={agentName}
 		>
-			View agent
+			{agentName}
 		</Link>
 	) : (
 		<span className="font-medium text-muted-foreground">Deleted agent</span>
@@ -212,7 +224,16 @@ function SubscriptionRow({ subscription }: { subscription: ComputeSubscriptionLi
 			</div>
 			<div className="min-w-0">
 				<FieldLabel>Agent</FieldLabel>
-				<SubscriptionAgentLink deploymentId={subscription.deployment_id} />
+				<SubscriptionAgentLink
+					deploymentId={subscription.deployment_id}
+					agentName={subscription.agent_name}
+				/>
+			</div>
+			<div>
+				<FieldLabel>Payment source</FieldLabel>
+				<span className="text-sm font-medium">
+					{subscriptionPaymentSourceLabel(subscription.funding_source)}
+				</span>
 			</div>
 			<div>
 				<FieldLabel>Price</FieldLabel>
@@ -240,6 +261,7 @@ function SubscriptionListSkeleton() {
 				<div key={key} className={`${SUBSCRIPTION_GRID_CLASS} px-3 py-4`}>
 					<Skeleton className="h-9 w-36" />
 					<Skeleton className="h-4 w-24" />
+					<Skeleton className="h-4 w-16" />
 					<Skeleton className="h-9 w-20" />
 					<Skeleton className="h-4 w-28" />
 					<Skeleton className="h-8 w-20 lg:justify-self-end" />
@@ -258,7 +280,7 @@ export function SubscriptionsSection() {
 			data-hosted="true"
 			headingLevel={3}
 			title="Your subscriptions"
-			description="Manage every paid compute subscription in one place."
+			description="Manage every compute subscription in one place."
 		>
 			{subscriptions.isLoading ? (
 				<SubscriptionListSkeleton />
@@ -278,6 +300,7 @@ export function SubscriptionsSection() {
 						>
 							<span>Subscription</span>
 							<span>Agent</span>
+							<span>Payment source</span>
 							<span>Price</span>
 							<span>Renewal / end</span>
 							<span className="text-right">Actions</span>
@@ -308,7 +331,7 @@ export function SubscriptionsSection() {
 					variant="inset"
 					icon={CreditCard}
 					title="No compute subscriptions"
-					description="Paid subscriptions will appear here when you start a hosted agent."
+					description="Compute subscriptions will appear here when you start a hosted agent."
 					className="py-8 md:p-8"
 				/>
 			)}

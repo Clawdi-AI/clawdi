@@ -16,10 +16,18 @@ export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCan
 export type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
 export type ComputePlanChangeRequest = Schemas["V2ComputePlanChangeRequest"];
-export type ComputePlanChangeResult =
-	| { kind: "complete"; effectiveAt: string }
-	| { kind: "scheduled"; effectiveAt: string }
-	| { kind: "pending"; waitingFor: "payment" | "update" };
+export type ComputePlanChangeProgress = Schemas["ComputePlanChangeProgress"];
+export type ComputePlanChangeKind = ComputePlanChangeProgress["changeKind"];
+export type ComputePlanChangeBillingEffect = ComputePlanChangeProgress["billingEffect"];
+export type ComputePlanChangeFundingSource = ComputePlanChangeProgress["fundingSource"];
+export type ComputePlanChangeResult = {
+	kind: Extract<ComputePlanChangeProgress["state"], "complete" | "scheduled">;
+	operationName: string;
+	effectiveAt: string;
+	changeKind: ComputePlanChangeKind;
+	billingEffect: ComputePlanChangeBillingEffect;
+	fundingSource: ComputePlanChangeFundingSource;
+};
 export type ComputePlanChangeQuoteRequest = Schemas["V2ComputePlanChangeQuoteRequest"];
 export type ComputePlanChangeQuoteResponse = Schemas["V2ComputePlanChangeQuoteResponse"];
 export type ComputeSubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];

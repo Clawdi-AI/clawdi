@@ -103,6 +103,19 @@ export function applyDeploymentSubscriptionResult(
 	);
 }
 
+export function applySubscriptionActionSuccess(
+	qc: QueryClient,
+	body: ComputeSubscriptionCancelRequest | ComputeSubscriptionResumeRequest,
+	next: ComputeSubscriptionActionResult,
+): void {
+	if (body.deployment_id) {
+		applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
+	} else if (body.subscription_id) {
+		qc.invalidateQueries({ queryKey: billingKeys.deployments });
+	}
+	qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
+}
+
 /**
  * Shared billing read: gates fetches on `isDeployApiConfigured()` and applies
  * the transient-only `billingQueryRetry` so deterministic 4xx (auth,
@@ -210,16 +223,24 @@ export function useQuotePlanChange() {
 	});
 }
 
+export function invalidatePlanChangeQueries(qc: QueryClient): void {
+	qc.invalidateQueries({ queryKey: billingKeys.deployments });
+	qc.invalidateQueries({ queryKey: billingKeys.wallet });
+	qc.invalidateQueries({ queryKey: billingKeys.transactions });
+	qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
+}
+
+export function invalidateSettledPlanChangeQueries(qc: QueryClient, error: Error | null): void {
+	if (error && !(error instanceof PlanChangeTerminalError)) return;
+	invalidatePlanChangeQueries(qc);
+}
+
 export function useChangePlan(onAccepted?: (operationName: string) => void) {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation<ComputePlanChangeResult, Error, ComputePlanChangeRequest>({
 		mutationFn: (body) => client.changePlan(body, onAccepted),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: billingKeys.transactions });
-		},
+		onSettled: (_result, error) => invalidateSettledPlanChangeQueries(qc, error),
 	});
 }
 
@@ -228,12 +249,7 @@ export function useCheckPlanChange() {
 	const qc = useQueryClient();
 	return useMutation<ComputePlanChangeResult, Error, string>({
 		mutationFn: (operationName) => client.checkPlanChange(operationName),
-		onSettled: (_result, error) => {
-			if (error && !(error instanceof PlanChangeTerminalError)) return;
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: billingKeys.transactions });
-		},
+		onSettled: (_result, error) => invalidateSettledPlanChangeQueries(qc, error),
 	});
 }
 
@@ -242,12 +258,7 @@ export function useCancelSubscription() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionCancelRequest) => client.cancelSubscription(body),
-		onSuccess: (next, body) => {
-			if (body.deployment_id) {
-				applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
-			}
-			qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
-		},
+		onSuccess: (next, body) => applySubscriptionActionSuccess(qc, body, next),
 	});
 }
 
@@ -256,12 +267,7 @@ export function useResumeSubscription() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionResumeRequest) => client.resumeSubscription(body),
-		onSuccess: (next, body) => {
-			if (body.deployment_id) {
-				applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
-			}
-			qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
-		},
+		onSuccess: (next, body) => applySubscriptionActionSuccess(qc, body, next),
 	});
 }
 
