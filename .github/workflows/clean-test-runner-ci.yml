@@ -88,6 +88,9 @@ concurrency:
   group: clean-test-runner-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
 jobs:
   docker-runner:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}

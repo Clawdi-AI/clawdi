@@ -122,7 +122,7 @@ jobs:
           name: ${{ env.CLI_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/clawdi-cli-release/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   publish-immutable-artifact-with-oidc:
     needs: build-immutable-artifact
