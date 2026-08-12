@@ -17,7 +17,10 @@ from app.services.whatsapp_baileys import (
     WhatsAppAuthCert,
     encode_buffer_json,
     mint_whatsapp_synthetic_creds,
+    parse_whatsapp_usync_device_targets,
+    strip_whatsapp_device,
     whatsapp_text_message_proto,
+    whatsapp_usync_device_result,
 )
 from app.services.whatsapp_noise import (
     WhatsAppNoiseEmulatorSession,
@@ -137,6 +140,32 @@ def create_app(state: HarnessState) -> FastAPI:
         await websocket.accept()
         state.connections += 1
         state.authorized_connections += 1
+
+        def resolve_recipient_lid(jid: str) -> str | None:
+            normalized = strip_whatsapp_device(jid)
+            return INBOUND_LID if normalized in {INBOUND_JID, INBOUND_LID} else None
+
+        async def forward_iq(
+            node: dict[str, Any], _tenant_id: str | None
+        ) -> dict[str, Any] | None:
+            targets = parse_whatsapp_usync_device_targets(node)
+            if targets is None:
+                return None
+            target_lids: dict[str, str] = {}
+            for target in targets:
+                normalized = strip_whatsapp_device(target)
+                if normalized == strip_whatsapp_device(SYNTHETIC_LID):
+                    continue
+                lid = resolve_recipient_lid(normalized)
+                if lid is None:
+                    return None
+                target_lids[target] = lid
+            return whatsapp_usync_device_result(
+                node,
+                target_lids=target_lids,
+                self_lid=SYNTHETIC_LID,
+            )
+
         session = WhatsAppNoiseEmulatorSession(
             auth_cert=state.cert,
             lid=SYNTHETIC_LID,
@@ -144,15 +173,7 @@ def create_app(state: HarnessState) -> FastAPI:
             on_event=state.record_event,
             on_outbound_message=state.record_outbound_message,
             on_outbound_relay=state.record_outbound_node,
-            resolve_recipient_lid=lambda jid: (
-                INBOUND_LID
-                if jid.split("@", 1)[0].split(":", 1)[0]
-                in {
-                    INBOUND_JID.split("@", 1)[0],
-                    INBOUND_LID.split("@", 1)[0],
-                }
-                else None
-            ),
+            forward_iq=forward_iq,
         )
         state.websocket = websocket
         state.session = session
@@ -226,7 +247,7 @@ def create_app(state: HarnessState) -> FastAPI:
         proto = whatsapp_text_message_proto(request.text)
         try:
             frame, result = await state.session.push_inbound_message(
-                from_jid=INBOUND_JID,
+                from_jid=INBOUND_LID,
                 message_id=request.message_id,
                 message_proto=proto,
                 push_name="Native E2E",

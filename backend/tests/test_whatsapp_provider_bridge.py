@@ -127,7 +127,7 @@ def _stock_usync_device_iq(*jids: str) -> dict[str, Any]:
         "tag": "iq",
         "attrs": {
             "id": "stock-usync-devices",
-            "to": "s.whatsapp.net",
+            "to": "@s.whatsapp.net",
             "type": "get",
             "xmlns": "usync",
         },
