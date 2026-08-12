@@ -49,11 +49,13 @@ from app.schemas.runtime import (
     HostedRuntimeSystem,
     HostedRuntimeTools,
     PersistedHostedRuntimeSkills,
+    exact_semver_is_at_least,
     is_canonical_secret_ref,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
     validate_hosted_runtime_mcp_desired_state,
 )
+from app.schemas.runtime_observed import HostedRuntimeObservedV2
 from app.services.channels import (
     HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS,
     channel_runtime_account_key,
@@ -87,7 +89,8 @@ RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
-_CODEX_TOOL_RUNTIME_ENV = "OPENAI_API_KEY"
+_CODEX_TOOL_LEGACY_RUNTIME_ENV = "OPENAI_API_KEY"
+_CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION = "0.13.69"
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
@@ -107,6 +110,27 @@ def expected_runtime_bundle_v2_etag(source_revision: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", source_revision):
         raise ValueError("runtime bundle source revision must be a SHA-256 digest")
     return f'"sha256:{source_revision}"'
+
+
+def _codex_tool_runtime_env(
+    cli_package_spec: str,
+    observation: HostedRuntimeConfigObservation | None,
+) -> str:
+    desired_version = cli_package_spec.removeprefix("clawdi@")
+    if not exact_semver_is_at_least(
+        desired_version,
+        _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION,
+    ):
+        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
+    if observation is None:
+        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
+    try:
+        observed = HostedRuntimeObservedV2.model_validate(observation.diagnostics)
+    except ValidationError:
+        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
+    if observed.active_cli_version != desired_version:
+        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
+    return _MANAGED_PROVIDER_RUNTIME_ENV
 
 
 @dataclass(frozen=True)
@@ -735,7 +759,7 @@ def render_runtime_source(
         "baseUrl": codex_provider_material.get("baseUrl"),
         "apiMode": _CODEX_TOOL_API_MODE,
         "managed_by": codex_provider_material.get("managed_by"),
-        "runtimeEnvName": _CODEX_TOOL_RUNTIME_ENV,
+        "runtimeEnvName": _codex_tool_runtime_env(cli_package_spec, row.observation),
         "apiKeySecretRef": codex_provider_material.get("apiKeySecretRef"),
     }
     try:

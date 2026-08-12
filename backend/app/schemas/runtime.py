@@ -223,6 +223,32 @@ def _parse_exact_semver(value: str) -> tuple[int, int, int, tuple[str, ...]] | N
     )
 
 
+def exact_semver_is_at_least(value: str, minimum: str) -> bool:
+    parsed = _parse_exact_semver(value)
+    parsed_minimum = _parse_exact_semver(minimum)
+    if parsed is None or parsed_minimum is None:
+        raise ValueError("versions must be exact semver without build metadata")
+
+    core, prerelease = parsed[:3], parsed[3]
+    minimum_core, minimum_prerelease = parsed_minimum[:3], parsed_minimum[3]
+    if core != minimum_core:
+        return core > minimum_core
+    if not prerelease or not minimum_prerelease:
+        return not prerelease
+
+    for identifier, minimum_identifier in zip(prerelease, minimum_prerelease, strict=False):
+        if identifier == minimum_identifier:
+            continue
+        identifier_is_numeric = identifier.isdigit()
+        minimum_is_numeric = minimum_identifier.isdigit()
+        if identifier_is_numeric and minimum_is_numeric:
+            return int(identifier) > int(minimum_identifier)
+        if identifier_is_numeric != minimum_is_numeric:
+            return not identifier_is_numeric
+        return identifier > minimum_identifier
+    return len(prerelease) >= len(minimum_prerelease)
+
+
 def validate_clawdi_cli_package_spec(value: object) -> str:
     if not isinstance(value, str) or not value.startswith("clawdi@"):
         raise ValueError("cli_package_spec must be clawdi@<exact-semver> without build metadata")
@@ -667,7 +693,7 @@ class HostedCodexProviderProjection(BaseModel):
     baseUrl: str = Field(min_length=1, max_length=1000)
     apiMode: Literal["openai_responses"]
     managed_by: Literal["clawdi"]
-    runtimeEnvName: Literal["OPENAI_API_KEY"]
+    runtimeEnvName: Literal["OPENAI_API_KEY", "CLAWDI_AI_API_KEY"]
     apiKeySecretRef: Literal["secret://tool.codex.apiKey"]
 
 

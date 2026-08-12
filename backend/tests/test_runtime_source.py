@@ -15,6 +15,7 @@ from app.models.channel import (
     ChannelWhatsAppAuthCert,
 )
 from app.models.hosted_runtime import (
+    HostedRuntimeConfigObservation,
     HostedRuntimeSecret,
     HostedRuntimeState,
 )
@@ -308,6 +309,42 @@ def _render(batch: RuntimeSourceBatch):
         vault_key_identity="vault-key-generation-1",
         decrypt_secrets=False,
     )
+
+
+def _set_cli_versions(
+    batch: RuntimeSourceBatch,
+    *,
+    desired: str,
+    active: str | None = None,
+    diagnostics: object | None = None,
+) -> None:
+    row = batch.rows[ENV_ID]
+    assert row.state is not None
+    row.state.cli_package_spec = desired
+    observation = None
+    if active is not None or diagnostics is not None:
+        observation = HostedRuntimeConfigObservation(
+            environment_id=ENV_ID,
+            diagnostics=(
+                diagnostics
+                if diagnostics is not None
+                else {
+                    "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+                    "reportedAt": "2026-07-13T00:00:00Z",
+                    "runtimeMode": "hosted",
+                    "status": "ok",
+                    "activeCliVersion": active,
+                    "applied": None,
+                    "boot": None,
+                    "cli": None,
+                }
+            ),
+        )
+    batch.rows[ENV_ID] = RuntimeSourceRow(row.environment, row.state, observation)
+
+
+def _codex_runtime_env(batch: RuntimeSourceBatch) -> str:
+    return _render(batch).manifest["terminalTooling"]["codex"]["provider"]["runtimeEnvName"]
 
 
 def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sources() -> None:
@@ -698,6 +735,75 @@ def test_codex_tool_projection_pydantic_contract_rejects_openai_chat() -> None:
                 "apiKeySecretRef": "secret://tool.codex.apiKey",
             }
         )
+
+
+def test_codex_tool_projection_rejects_arbitrary_runtime_env_name() -> None:
+    projection = {
+        "kind": "openai-compatible",
+        "type": "custom_openai_compatible",
+        "baseUrl": "https://provider.test/v1",
+        "apiMode": "openai_responses",
+        "managed_by": "clawdi",
+        "runtimeEnvName": "CUSTOM_OPENAI_API_KEY",
+        "apiKeySecretRef": "secret://tool.codex.apiKey",
+    }
+
+    with pytest.raises(ValueError):
+        HostedCodexProviderProjection.model_validate(projection)
+
+
+def test_codex_tool_env_stays_legacy_for_old_cli_observations() -> None:
+    old = _batch()
+    _set_cli_versions(old, desired="clawdi@0.13.68", active="0.13.68")
+    prerelease = _batch()
+    _set_cli_versions(
+        prerelease,
+        desired="clawdi@0.13.69-rc.1",
+        active="0.13.69-rc.1",
+    )
+
+    assert _codex_runtime_env(old) == "OPENAI_API_KEY"
+    assert _codex_runtime_env(prerelease) == "OPENAI_API_KEY"
+
+
+def test_codex_tool_env_stays_legacy_until_new_cli_is_observed() -> None:
+    old_active = _batch()
+    _set_cli_versions(old_active, desired="clawdi@0.13.69", active="0.13.68")
+    missing = _batch()
+    _set_cli_versions(missing, desired="clawdi@0.13.69")
+    invalid = _batch()
+    _set_cli_versions(
+        invalid,
+        desired="clawdi@0.13.69",
+        diagnostics={"schemaVersion": "clawdi.hostedRuntimeObserved.v2"},
+    )
+
+    assert [_codex_runtime_env(batch) for batch in (old_active, missing, invalid)] == [
+        "OPENAI_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_API_KEY",
+    ]
+
+
+def test_codex_tool_env_is_canonical_for_exact_new_cli_observation() -> None:
+    batch = _batch()
+    _set_cli_versions(batch, desired="clawdi@0.13.69", active="0.13.69")
+
+    assert _codex_runtime_env(batch) == "CLAWDI_AI_API_KEY"
+
+
+def test_codex_tool_env_is_canonical_for_matching_newer_prerelease() -> None:
+    batch = _batch()
+    _set_cli_versions(batch, desired="clawdi@0.14.0-rc.1", active="0.14.0-rc.1")
+
+    assert _codex_runtime_env(batch) == "CLAWDI_AI_API_KEY"
+
+
+def test_codex_tool_env_returns_to_legacy_during_rollback() -> None:
+    batch = _batch()
+    _set_cli_versions(batch, desired="clawdi@0.13.68", active="0.14.0")
+
+    assert _codex_runtime_env(batch) == "OPENAI_API_KEY"
 
 
 def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None:
