@@ -10,7 +10,7 @@ import { isLowBalance } from "@/hosted/billing/wallet/wallet-constants";
 
 /**
  * Balance hero. When the balance trips the low threshold the figure goes
- * warning-toned and an inline chip explains the consequence for Clawdi AI
+ * warning-toned and an inline chip explains the consequence for AI usage
  * and wallet-funded compute.
  */
 export function BalanceCard({
@@ -47,7 +47,10 @@ export function BalanceCard({
 						</span>
 					</div>
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-						<span>Pays for Clawdi AI and wallet-funded compute.</span>
+						<span>
+							Pays for AI usage and wallet-funded compute subscriptions. Card-paid subscriptions do
+							not use this balance.
+						</span>
 						{low ? (
 							<span className="inline-flex items-center gap-1 font-medium text-warning-muted-foreground">
 								<TriangleAlert className="size-3.5" aria-hidden /> Low — top up before

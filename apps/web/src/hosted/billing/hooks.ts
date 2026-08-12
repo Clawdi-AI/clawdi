@@ -343,6 +343,7 @@ export function useUsage(
 		queryKey: billingKeys.usage(days, agentId),
 		queryFn: () => client.getUsage(days, agentId),
 		enabled,
+		placeholderData: keepPreviousData,
 	});
 }
 

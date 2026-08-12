@@ -249,7 +249,7 @@ function SubscriptionListSkeleton() {
 	);
 }
 
-export function SubscriptionsSection({ actions }: { actions?: ReactNode }) {
+export function SubscriptionsSection() {
 	const subscriptions = useSubscriptions();
 	const rows = subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [];
 
@@ -259,7 +259,6 @@ export function SubscriptionsSection({ actions }: { actions?: ReactNode }) {
 			headingLevel={3}
 			title="Your subscriptions"
 			description="Manage every paid compute subscription in one place."
-			actions={actions}
 		>
 			{subscriptions.isLoading ? (
 				<SubscriptionListSkeleton />
