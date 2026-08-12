@@ -23,8 +23,12 @@ import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture
 
 type InvalidateDeploymentSnapshots =
 	typeof import("@/hosted/agents/deployment-hooks").invalidateDeploymentSnapshots;
+type InvalidateDeploymentDeleteSnapshots =
+	typeof import("@/hosted/agents/deployment-hooks").invalidateDeploymentDeleteSnapshots;
 type ProjectAcceptedDeploymentTransition =
 	typeof import("@/hosted/agents/deployment-hooks").projectAcceptedDeploymentTransition;
+type SettleAcceptedDeploymentDelete =
+	typeof import("@/hosted/agents/deployment-hooks").settleAcceptedDeploymentDelete;
 type ShouldShowHostedProjectionNotice =
 	typeof import("@/hosted/agents/hosted-agent-detail").shouldShowHostedProjectionNotice;
 type RunManualDeploymentRefetch =
@@ -41,7 +45,9 @@ type CanRetryInitialDeployment =
 	typeof import("@/hosted/agents/hosted-agent-detail").canRetryInitialDeployment;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
+let invalidateDeleteSnapshots: InvalidateDeploymentDeleteSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
+let settleAcceptedDelete: SettleAcceptedDeploymentDelete | null = null;
 let shouldShowProjectionNotice: ShouldShowHostedProjectionNotice | null = null;
 let runManualDeploymentRefetch: RunManualDeploymentRefetch | null = null;
 let overviewComputeStatus: OverviewComputeStatus | null = null;
@@ -65,7 +71,9 @@ beforeAll(async () => {
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/agents/deployment-hooks");
 	invalidateSnapshots = module.invalidateDeploymentSnapshots;
+	invalidateDeleteSnapshots = module.invalidateDeploymentDeleteSnapshots;
 	projectAcceptedTransition = module.projectAcceptedDeploymentTransition;
+	settleAcceptedDelete = module.settleAcceptedDeploymentDelete;
 	const agentHomeModule = await import("@/hosted/agents/agent-home");
 	runManualDeploymentRefetch = agentHomeModule.runManualDeploymentRefetch;
 	const detailModule = await import("@/hosted/agents/hosted-agent-detail");
@@ -738,16 +746,23 @@ function successfulOperation(
 }
 
 describe("deployment mutation settlement", () => {
-	test("invalidates deployment membership and its additive agent projection together", () => {
+	test("keeps reusable subscriptions scoped to delete snapshot invalidation", () => {
 		const queryClient = new QueryClient();
 		queryClient.setQueryData(billingKeys.deployments, []);
 		queryClient.setQueryData(["get", "/v1/agents"], []);
+		queryClient.setQueryData(billingKeys.reusableSubscriptions, []);
 
-		if (!invalidateSnapshots) throw new Error("deployment hooks were not loaded");
+		if (!invalidateSnapshots || !invalidateDeleteSnapshots) {
+			throw new Error("deployment hooks were not loaded");
+		}
 		invalidateSnapshots(queryClient);
 
 		expect(queryClient.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(queryClient.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
+		expect(queryClient.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(false);
+
+		invalidateDeleteSnapshots(queryClient);
+		expect(queryClient.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(true);
 	});
 
 	test("uses the shared invalidation on every inventory-changing mutation settlement", () => {
@@ -762,20 +777,65 @@ describe("deployment mutation settlement", () => {
 		expect(settlementInvalidations).toHaveLength(5);
 	});
 
-	test("describes accepted deletion as background cleanup and replace-navigates detail", () => {
-		const hooksSource = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
-		const homeSource = readFileSync(new URL("./agent-home.tsx", import.meta.url), "utf8");
-		const actionSource = readFileSync(
-			new URL("./deployment-delete-action.tsx", import.meta.url),
-			"utf8",
+	test("waits for accepted navigation before projecting the delete transition", async () => {
+		if (!settleAcceptedDelete) throw new Error("deployment hooks were not loaded");
+		const queryClient = new QueryClient();
+		queryClient.setQueryData<HostedDeployment[]>(billingKeys.deployments, [
+			hostedDeploymentFixture({ id: "hdep_delete" }),
+		]);
+		const navigation = Promise.withResolvers<void>();
+		let navigationStarts = 0;
+
+		const settlement = settleAcceptedDelete(
+			queryClient,
+			{ deploymentId: "hdep_delete", operation: acceptedOperation("delete") },
+			() => {
+				navigationStarts += 1;
+				return navigation.promise;
+			},
+			() => undefined,
 		);
 
-		expect(hooksSource).toContain('toast.message("Agent removed", {');
-		expect(hooksSource).toContain('description: "Cleanup continues in the background."');
-		expect(homeSource).toContain(
-			'onDeleteAccepted={() => router.navigate({ href: "/agents", replace: true })}',
+		expect(navigationStarts).toBe(1);
+		const beforeNavigation = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
+		expect(requiredDeploymentStatus(beforeNavigation?.[0]).summary_state).not.toBe("deleting");
+
+		navigation.resolve();
+		expect(await settlement).toBe(true);
+
+		const projected = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
+		expect(requiredDeploymentStatus(projected?.[0]).summary_state).toBe("deleting");
+		expect(navigationStarts).toBe(1);
+	});
+
+	test("settles an accepted delete when navigation fails", async () => {
+		if (!settleAcceptedDelete) throw new Error("deployment hooks were not loaded");
+		const queryClient = new QueryClient();
+		queryClient.setQueryData<HostedDeployment[]>(billingKeys.deployments, [
+			hostedDeploymentFixture({ id: "hdep_delete" }),
+		]);
+		const navigation = Promise.withResolvers<void>();
+		let navigationStarts = 0;
+
+		const settlement = settleAcceptedDelete(
+			queryClient,
+			{ deploymentId: "hdep_delete", operation: acceptedOperation("delete") },
+			() => {
+				navigationStarts += 1;
+				return navigation.promise;
+			},
+			() => undefined,
 		);
-		expect(actionSource).toContain('await router.navigate({ href: "/agents", replace: true });');
+
+		expect(navigationStarts).toBe(1);
+		const beforeFailure = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
+		expect(requiredDeploymentStatus(beforeFailure?.[0]).summary_state).not.toBe("deleting");
+
+		navigation.reject(new Error("navigation failed"));
+		expect(await settlement).toBe(false);
+
+		const projected = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
+		expect(requiredDeploymentStatus(projected?.[0]).summary_state).toBe("deleting");
 	});
 
 	test("retires old runtime windows only after restart, access reset, or delete is accepted", () => {

@@ -11,8 +11,10 @@ export const DEFAULT_CONFIGURATION_ROOT = "/etc/clawdi";
 export const DEFAULT_SERVICE_STATE_ROOT = "/var/lib/clawdi";
 export const DEFAULT_CACHE_ROOT = "/var/cache/clawdi";
 export const DEFAULT_RUN_ROOT = "/run/clawdi";
+export const DEFAULT_RUNTIME_USER_CLI_STATE_ROOT = "/var/lib/clawdi-user";
 export const DEFAULT_FILE_BROWSER_STATE_ROOT = "/var/lib/clawdi-files";
 export const DEFAULT_FILE_BROWSER_RUNTIME_ROOT = "/run/clawdi-files";
+export const RUNTIME_USER_CLI_STATE_ROOT_MODE = 0o750;
 
 export interface RuntimePaths {
 	mode: RuntimeMode;
@@ -45,6 +47,7 @@ export interface RuntimePaths {
 	egressEngineStatus: string;
 	egressEngineMaintainedRoot: string;
 	fileBrowserInstallRoot: string;
+	fileBrowserConfigRoot: string;
 	fileBrowserStateRoot: string;
 	fileBrowserServiceBinary: string;
 	fileBrowserConfig: string;
@@ -70,10 +73,10 @@ export interface RuntimePaths {
 	instanceRoot: string;
 	installInventory: string;
 	installReceipts: string;
+	managedResourceRoot: string;
 	projectionRoot: string;
 	runRoot: string;
 	convergeLock: string;
-	fileBrowserAclTempPrefix: string;
 	managedSecretRoot: string;
 	daemonStateRoot: string;
 	egressRoot: string;
@@ -102,10 +105,14 @@ function defaultHome(mode: RuntimeMode): string {
 	return process.env.HOME || homedir();
 }
 
-function defaultClawdiHome(mode: RuntimeMode, userHome: string): string {
+function defaultClawdiHome(mode: RuntimeMode, serviceStateRoot: string): string {
 	if (mode === "hosted") {
-		// Keep the hosted user-state tree anchored to the resolved runtime home.
-		return process.env.CLAWDI_HOME || join(userHome, ".clawdi");
+		const override = envPath("CLAWDI_HOME");
+		if (override) return override;
+		if (serviceStateRoot === DEFAULT_SERVICE_STATE_ROOT) {
+			return DEFAULT_RUNTIME_USER_CLI_STATE_ROOT;
+		}
+		return join(dirname(serviceStateRoot), `${basename(serviceStateRoot)}-user`);
 	}
 	return getClawdiDir();
 }
@@ -150,11 +157,11 @@ export function detectRuntimeMode(): RuntimeMode {
 export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths {
 	const mode = opts.mode ?? detectRuntimeMode();
 	const userHome = defaultHome(mode);
-	const clawdiHome = defaultClawdiHome(mode, userHome);
+	const serviceStateRoot = envPath("CLAWDI_SERVICE_STATE_DIR") ?? DEFAULT_SERVICE_STATE_ROOT;
+	const clawdiHome = defaultClawdiHome(mode, serviceStateRoot);
 	const userLocalRoot = join(userHome, ".local");
 	const userLocalBin = join(userLocalRoot, "bin");
 	const userDataRoot = join(userLocalRoot, "share");
-	const serviceStateRoot = envPath("CLAWDI_SERVICE_STATE_DIR") ?? DEFAULT_SERVICE_STATE_ROOT;
 	const configurationRoot = derivedPlatformRoot(
 		serviceStateRoot,
 		DEFAULT_CONFIGURATION_ROOT,
@@ -162,6 +169,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	);
 	const cacheRoot = derivedPlatformRoot(serviceStateRoot, DEFAULT_CACHE_ROOT, "cache");
 	const runRoot = envPath("CLAWDI_RUN_DIR") ?? DEFAULT_RUN_ROOT;
+	const fileBrowserConfigRoot = join(runRoot, "files");
 	const statusRoot = join(serviceStateRoot, "status");
 	const maintainedRoot = join(serviceStateRoot, "maintained");
 	const managedCliRoot = join(maintainedRoot, "clawdi");
@@ -200,9 +208,10 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		egressEngineStatus: join(statusRoot, "egress-engine.json"),
 		egressEngineMaintainedRoot: join(maintainedRoot, "egress-engine", "mitmproxy"),
 		fileBrowserInstallRoot: join(maintainedRoot, "filebrowser"),
+		fileBrowserConfigRoot,
 		fileBrowserStateRoot: DEFAULT_FILE_BROWSER_STATE_ROOT,
 		fileBrowserServiceBinary: join(DEFAULT_FILE_BROWSER_RUNTIME_ROOT, "filebrowser"),
-		fileBrowserConfig: join(configurationRoot, "filebrowser.yaml"),
+		fileBrowserConfig: join(fileBrowserConfigRoot, "filebrowser.yaml"),
 		cacheRoot,
 		hostedSkillArchiveRoot: join(cacheRoot, "workspace-skills"),
 		channelsEtag: join(cacheRoot, "channels.etag"),
@@ -226,10 +235,10 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		instanceRoot,
 		installInventory: join(serviceStateRoot, "install-inventory"),
 		installReceipts: join(statusRoot, "runtime-install-receipts.json"),
+		managedResourceRoot: join(serviceStateRoot, "managed-resources"),
 		projectionRoot: join(configurationRoot, "projections"),
 		runRoot,
 		convergeLock: join(runRoot, "locks", "converge.lock"),
-		fileBrowserAclTempPrefix: join(runRoot, ".filebrowser-acl-"),
 		managedSecretRoot: join(runRoot, "secrets"),
 		daemonStateRoot: join(serviceStateRoot, "daemon"),
 		egressRoot: join(runRoot, "egress"),

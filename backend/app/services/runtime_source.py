@@ -20,9 +20,12 @@ from app.models.channel import (
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelAgentCredential,
     ChannelBotAgentLink,
+    ChannelWhatsAppAuthCert,
 )
 from app.models.hosted_runtime import (
     HostedRuntimeConfigObservation,
@@ -48,10 +51,12 @@ from app.schemas.runtime import (
     HostedRuntimeTools,
     PersistedHostedRuntimeSkills,
     is_canonical_secret_ref,
+    parse_exact_semver,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
     validate_hosted_runtime_mcp_desired_state,
 )
+from app.schemas.runtime_observed import HostedRuntimeObservedV2
 from app.services.channels import (
     HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS,
     channel_runtime_account_key,
@@ -60,29 +65,36 @@ from app.services.channels import (
 )
 from app.services.hosted_runtime_secrets import validate_hosted_runtime_secret_key_version
 from app.services.managed_ai_provider import (
-    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
-    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
-    V2_MANAGED_AI_PROVIDER_ID,
+    V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_MANAGED_AI_PROVIDER_IDS,
     is_managed_provider_id,
+    is_v2_deployment_managed_provider_id,
     managed_provider_api_mode,
     runtime_managed_provider_id,
-    v2_deployment_managed_provider_id,
 )
 from app.services.project_runtime_skills import (
     RUNTIME_PROJECT_SKILL_KEY_PATTERN,
     agent_supports_project_skills,
     project_skill_file_signature,
 )
+from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 from app.services.vault_crypto import decrypt
+from app.services.whatsapp_baileys import (
+    buffer_json,
+    ensure_whatsapp_agent_credential,
+    whatsapp_credential_needs_self_identity_repair,
+    whatsapp_self_identity_from_config,
+)
 
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
-_MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
+_MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
+_CODEX_TOOL_LEGACY_RUNTIME_ENV = "OPENAI_API_KEY"
+_CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION = (0, 13, 69)
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
@@ -102,6 +114,47 @@ def expected_runtime_bundle_v2_etag(source_revision: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", source_revision):
         raise ValueError("runtime bundle source revision must be a SHA-256 digest")
     return f'"sha256:{source_revision}"'
+
+
+def _codex_tool_runtime_env(
+    state: HostedRuntimeState,
+    observation: HostedRuntimeConfigObservation | None,
+) -> str:
+    desired_version = state.cli_package_spec.removeprefix("clawdi@")
+    parsed_version = parse_exact_semver(desired_version)
+    if parsed_version is None or (
+        parsed_version[:3] < _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION
+        or (
+            parsed_version[:3] == _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION
+            and parsed_version[3]
+        )
+    ):
+        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
+    if observation is None:
+        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
+    try:
+        observed = HostedRuntimeObservedV2.model_validate(observation.diagnostics)
+    except ValidationError:
+        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
+    expected_generation = resolve_runtime_apply_generation(
+        generation=state.generation,
+        apply_generation=state.apply_generation,
+    )
+    # The env-name change creates the next source revision, so gate only on the
+    # last applied record's internal identity instead of this render's revision.
+    if not (
+        observed.status == "ok"
+        and observed.converge_error is None
+        and observed.active_cli_version == desired_version
+        and observed.applied is not None
+        and observed.applied.instance_id == state.instance_id
+        and observed.applied.generation == expected_generation
+        and observation.observed_config_generation == expected_generation
+        and observation.observed_manifest_etag == observed.applied.etag
+        and observation.observed_source_revision == observed.applied.source_revision
+    ):
+        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
+    return _MANAGED_PROVIDER_RUNTIME_ENV
 
 
 @dataclass(frozen=True)
@@ -125,6 +178,8 @@ class RuntimeSourceBatch:
     providers: dict[tuple[UUID, str], AiProvider]
     auth_payloads: dict[tuple[UUID, str, str], AiProviderAuthPayload]
     channels: dict[UUID, tuple[tuple[ChannelAccount, ChannelBotAgentLink], ...]]
+    channel_credentials: dict[UUID, ChannelAgentCredential] = field(default_factory=dict)
+    whatsapp_auth_certs: dict[UUID, ChannelWhatsAppAuthCert] = field(default_factory=dict)
     runtime_secrets: dict[UUID, tuple[HostedRuntimeSecret, ...]] = field(default_factory=dict)
     project_skills: dict[UUID, tuple[RuntimeProjectSkill, ...]] = field(default_factory=dict)
 
@@ -132,7 +187,7 @@ class RuntimeSourceBatch:
 @dataclass(frozen=True)
 class RenderedRuntimeSource:
     manifest: dict[str, Any]
-    channel_bindings: list[dict[str, str]]
+    channel_bindings: list[dict[str, Any]]
     secret_values: dict[str, str]
     source_revision: str
     apply_generation: int | None
@@ -153,7 +208,7 @@ async def load_runtime_source_batch(
     owner_user_id: UUID | None = None,
 ) -> RuntimeSourceBatch:
     if not environment_ids:
-        return RuntimeSourceBatch({}, {}, {}, {}, {}, {})
+        return RuntimeSourceBatch(rows={}, providers={}, auth_payloads={}, channels={})
     env_filters: list[ColumnElement[bool]] = [
         AgentEnvironment.id.in_(environment_ids),
         AgentEnvironment.archived_at.is_(None),
@@ -181,7 +236,7 @@ async def load_runtime_source_batch(
     }
     user_ids = sorted({row.environment.user_id for row in rows.values()}, key=str)
     if not user_ids:
-        return RuntimeSourceBatch(rows, {}, {}, {}, {}, {})
+        return RuntimeSourceBatch(rows=rows, providers={}, auth_payloads={}, channels={})
     providers = list(
         (
             await db.execute(
@@ -213,7 +268,13 @@ async def load_runtime_source_batch(
                 ChannelBotAgentLink.archived_at.is_(None),
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
-                ChannelAccount.provider.in_((CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD)),
+                ChannelAccount.provider.in_(
+                    (
+                        CHANNEL_PROVIDER_TELEGRAM,
+                        CHANNEL_PROVIDER_DISCORD,
+                        CHANNEL_PROVIDER_WHATSAPP,
+                    )
+                ),
             )
             .order_by(
                 ChannelBotAgentLink.agent_id,
@@ -226,6 +287,52 @@ async def load_runtime_source_batch(
     channels: dict[UUID, list[tuple[ChannelAccount, ChannelBotAgentLink]]] = {}
     for environment_id, account, link in channel_rows:
         channels.setdefault(environment_id, []).append((account, link))
+    whatsapp_links = [
+        (account, link)
+        for _environment_id, account, link in channel_rows
+        if account.provider == CHANNEL_PROVIDER_WHATSAPP
+    ]
+    credential_rows = (
+        list(
+            (
+                await db.execute(
+                    select(ChannelAgentCredential)
+                    .where(
+                        ChannelAgentCredential.bot_agent_link_id.in_(
+                            [link.id for _account, link in whatsapp_links]
+                        ),
+                        ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
+                        ChannelAgentCredential.revoked_at.is_(None),
+                    )
+                    .order_by(
+                        ChannelAgentCredential.bot_agent_link_id,
+                        ChannelAgentCredential.created_at.desc(),
+                        ChannelAgentCredential.id.desc(),
+                    )
+                )
+            ).scalars()
+        )
+        if whatsapp_links
+        else []
+    )
+    channel_credentials: dict[UUID, ChannelAgentCredential] = {}
+    for credential in credential_rows:
+        channel_credentials.setdefault(credential.bot_agent_link_id, credential)
+    auth_cert_rows = (
+        list(
+            (
+                await db.execute(
+                    select(ChannelWhatsAppAuthCert).where(
+                        ChannelWhatsAppAuthCert.account_id.in_(
+                            [account.id for account, _link in whatsapp_links]
+                        )
+                    )
+                )
+            ).scalars()
+        )
+        if whatsapp_links
+        else []
+    )
     runtime_secret_rows = list(
         (
             await db.execute(
@@ -296,13 +403,75 @@ async def load_runtime_source_batch(
             )
         )
     return RuntimeSourceBatch(
-        rows,
-        {(item.owner_user_id, item.provider_id): item for item in providers},
-        {(item.owner_user_id, item.provider_id, item.auth_profile): item for item in auth_payloads},
-        {key: tuple(value) for key, value in channels.items()},
-        {key: tuple(value) for key, value in runtime_secrets.items()},
-        {key: tuple(value) for key, value in project_skills.items()},
+        rows=rows,
+        providers={(item.owner_user_id, item.provider_id): item for item in providers},
+        auth_payloads={
+            (item.owner_user_id, item.provider_id, item.auth_profile): item
+            for item in auth_payloads
+        },
+        channels={key: tuple(value) for key, value in channels.items()},
+        channel_credentials=channel_credentials,
+        whatsapp_auth_certs={item.account_id: item for item in auth_cert_rows},
+        runtime_secrets={key: tuple(value) for key, value in runtime_secrets.items()},
+        project_skills={key: tuple(value) for key, value in project_skills.items()},
     )
+
+
+async def ensure_runtime_whatsapp_credentials(
+    db: AsyncSession,
+    *,
+    environment_id: UUID,
+    owner_user_id: UUID,
+    link_ids: tuple[UUID, ...],
+) -> None:
+    if not link_ids:
+        return
+    rows = (
+        await db.execute(
+            select(ChannelAccount, ChannelBotAgentLink)
+            .join(ChannelBotAgentLink, ChannelBotAgentLink.account_id == ChannelAccount.id)
+            .where(
+                ChannelBotAgentLink.id.in_(link_ids),
+                ChannelBotAgentLink.agent_id == environment_id,
+                ChannelBotAgentLink.user_id == owner_user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+                ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+            )
+            .order_by(ChannelAccount.id, ChannelBotAgentLink.id)
+        )
+    ).all()
+    try:
+        for account, link in rows:
+            await ensure_whatsapp_agent_credential(db, account=account, link=link)
+    except Exception as exc:
+        raise RuntimeSourceError("Hosted runtime WhatsApp credential source is invalid") from exc
+
+
+def runtime_whatsapp_credential_repair_link_ids(
+    batch: RuntimeSourceBatch,
+    *,
+    environment_id: UUID,
+) -> tuple[UUID, ...]:
+    repair_link_ids: list[UUID] = []
+    try:
+        for account, link in batch.channels.get(environment_id, ()):
+            if account.provider != CHANNEL_PROVIDER_WHATSAPP:
+                continue
+            credential = batch.channel_credentials.get(link.id)
+            if credential is None or account.id not in batch.whatsapp_auth_certs:
+                repair_link_ids.append(link.id)
+                continue
+            if whatsapp_credential_needs_self_identity_repair(
+                credential,
+                self_identity=whatsapp_self_identity_from_config(account.config),
+            ):
+                repair_link_ids.append(link.id)
+    except Exception as exc:
+        raise RuntimeSourceError("Hosted runtime WhatsApp credential source is invalid") from exc
+    return tuple(repair_link_ids)
 
 
 def _project_runtime_skills(
@@ -503,14 +672,13 @@ def render_runtime_source(
             )
         )
     codex_tool = tools.codex
+    if not is_v2_deployment_managed_provider_id(codex_tool.provider_id):
+        raise RuntimeSourceError("Hosted Codex tool provider must use its exact deployment source")
     codex_agent_provider_id = runtime_managed_provider_id(codex_tool.provider_id)
     provider_sources: dict[str, str] = {}
     for bound_provider_id in [*bound_runtime_provider_ids, codex_tool.provider_id]:
         agent_provider_id = runtime_managed_provider_id(bound_provider_id)
-        source_provider_id = _provider_source_id(
-            batch,
-            user_id=user_id,
-            deployment_id=state.deployment_id,
+        source_provider_id = _exact_provider_source_id(
             bound_provider_id=bound_provider_id,
         )
         existing_source = provider_sources.get(agent_provider_id)
@@ -521,6 +689,10 @@ def render_runtime_source(
         provider_sources[agent_provider_id] = source_provider_id
     provider_material: dict[str, dict[str, Any]] = {}
     runtime_provider_ids = set(runtime["provider_ids"])
+    primary_model = runtime.get("primary_model")
+    selected_models = (
+        {primary_model["provider_id"]: primary_model["model"]} if primary_model else {}
+    )
     for agent_provider_id, source_provider_id in sorted(provider_sources.items()):
         provider = batch.providers.get((user_id, source_provider_id))
         is_codex_provider = agent_provider_id == codex_agent_provider_id
@@ -567,6 +739,7 @@ def render_runtime_source(
                 if payload is not None and payload.kind in {"agent_profile", "oauth_profile"}
                 else None
             ),
+            selected_model=selected_models.get(agent_provider_id),
         )
         if is_codex_provider and (
             provider_entry.get("apiMode") not in _CODEX_PROVIDER_SOURCE_API_MODES
@@ -619,7 +792,7 @@ def render_runtime_source(
         "baseUrl": codex_provider_material.get("baseUrl"),
         "apiMode": _CODEX_TOOL_API_MODE,
         "managed_by": codex_provider_material.get("managed_by"),
-        "runtimeEnvName": codex_provider_material.get("runtimeEnvName"),
+        "runtimeEnvName": _codex_tool_runtime_env(state, row.observation),
         "apiKeySecretRef": codex_provider_material.get("apiKeySecretRef"),
     }
     try:
@@ -684,7 +857,7 @@ def render_runtime_source(
         manifest["tools"] = tool_projection
     manifest["terminalTooling"] = terminal_tooling
 
-    bindings: list[dict[str, str]] = []
+    bindings: list[dict[str, Any]] = []
     channel_rows = batch.channels.get(environment_id, ())
     projected_providers: set[str] = set()
     for account, link in channel_rows:
@@ -699,16 +872,71 @@ def render_runtime_source(
         if not link.encrypted_agent_token or not link.agent_token_nonce:
             raise RuntimeSourceError("Active runtime channel link has no token material")
         account_key = channel_runtime_account_key(account.id)
-        agent_ref = f"secret://channels/{account.provider}/{account_key}/agent-token"
-        placeholder_ref = f"secret://channels/{account.provider}/{account_key}/placeholder-token"
-        bindings.append(
-            {
-                "provider": account.provider,
-                "accountKey": account_key,
-                "agentTokenSecretRef": agent_ref,
-                "placeholderTokenSecretRef": placeholder_ref,
-            }
-        )
+        if account.provider == CHANNEL_PROVIDER_WHATSAPP:
+            agent_ref = f"secret://channels/whatsapp/{account_key}/links/{link.id}/agent-token"
+            placeholder_ref = (
+                f"secret://channels/whatsapp/{account_key}/links/{link.id}/egress-capability"
+            )
+            credential = batch.channel_credentials.get(link.id)
+            auth_cert = batch.whatsapp_auth_certs.get(account.id)
+            if credential is None or auth_cert is None:
+                raise RuntimeSourceError(
+                    "Active runtime WhatsApp Link has no synthetic credential material"
+                )
+            credential_ref = (
+                f"secret://channels/whatsapp/{account_key}/credentials/{credential.id}/creds-json"
+            )
+            bindings.append(
+                {
+                    "provider": CHANNEL_PROVIDER_WHATSAPP,
+                    "accountId": str(account.id),
+                    "accountKey": account_key,
+                    "linkId": str(link.id),
+                    "agentTokenSecretRef": agent_ref,
+                    "placeholderTokenSecretRef": placeholder_ref,
+                    "credential": {
+                        "id": str(credential.id),
+                        "credsSecretRef": credential_ref,
+                        "authCert": {
+                            "SERIAL": auth_cert.serial,
+                            "ISSUER": "clawdi",
+                            "PUBLIC_KEY": buffer_json(auth_cert.root_public_key),
+                        },
+                    },
+                }
+            )
+            _add_secret_source(
+                secret_sources,
+                credential_ref,
+                _secret_identity(
+                    credential.id,
+                    credential.encrypted_credentials,
+                    credential.credential_nonce,
+                    vault_key_identity,
+                    "channel-whatsapp-synthetic-credential",
+                ),
+            )
+            secret_materials.append(
+                RuntimeSecretMaterial(
+                    secret_ref=credential_ref,
+                    ciphertext=credential.encrypted_credentials,
+                    nonce=credential.credential_nonce,
+                    error_message="Hosted runtime WhatsApp credential source is invalid",
+                )
+            )
+        else:
+            agent_ref = f"secret://channels/{account.provider}/{account_key}/agent-token"
+            placeholder_ref = (
+                f"secret://channels/{account.provider}/{account_key}/placeholder-token"
+            )
+            bindings.append(
+                {
+                    "provider": account.provider,
+                    "accountKey": account_key,
+                    "agentTokenSecretRef": agent_ref,
+                    "placeholderTokenSecretRef": placeholder_ref,
+                }
+            )
         _add_secret_source(
             secret_sources,
             agent_ref,
@@ -738,7 +966,13 @@ def render_runtime_source(
         for binding in bindings:
             placeholder_ref = binding["placeholderTokenSecretRef"]
             secrets[placeholder_ref] = channel_runtime_placeholder_token(
-                binding["provider"], binding["accountKey"]
+                binding["provider"],
+                binding["accountKey"],
+                link_id=(
+                    UUID(binding["linkId"])
+                    if binding["provider"] == CHANNEL_PROVIDER_WHATSAPP
+                    else None
+                ),
             )
 
     descriptor: dict[str, object] = {
@@ -838,27 +1072,21 @@ def _agent_codex_tool(codex_tool: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _provider_source_id(
-    batch: RuntimeSourceBatch,
+def _exact_provider_source_id(
     *,
-    user_id: UUID,
-    deployment_id: str,
     bound_provider_id: str,
 ) -> str:
-    """Resolve an agent alias to the deployment-scoped credential/catalog row."""
+    """Validate and return the exact provider credential/catalog identity."""
 
-    if bound_provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
-        return bound_provider_id
-    deployment_provider_id = v2_deployment_managed_provider_id(deployment_id)
-    if deployment_provider_id is not None and (user_id, deployment_provider_id) in batch.providers:
-        return deployment_provider_id
-    if (user_id, V2_MANAGED_AI_PROVIDER_ID) in batch.providers:
-        return V2_MANAGED_AI_PROVIDER_ID
-    if (user_id, V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID) in batch.providers:
-        return V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID
-    if (user_id, V2_LEGACY_MANAGED_AI_PROVIDER_ID) in batch.providers:
-        return V2_LEGACY_MANAGED_AI_PROVIDER_ID
-    return V2_MANAGED_AI_PROVIDER_ID
+    if bound_provider_id in V2_MANAGED_AI_PROVIDER_IDS:
+        raise RuntimeSourceError(
+            "Hosted v2 managed provider binding must use its exact deployment source"
+        )
+    if bound_provider_id.startswith(V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX) and not (
+        is_v2_deployment_managed_provider_id(bound_provider_id)
+    ):
+        raise RuntimeSourceError("Hosted v2 managed provider source is invalid")
+    return bound_provider_id
 
 
 def _selected_auth_payload(
@@ -894,6 +1122,7 @@ def _provider_entry(
     *,
     secret_ref: str | None,
     credential_revision: str | None,
+    selected_model: str | None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "kind": "openai-compatible",
@@ -915,6 +1144,7 @@ def _provider_entry(
         result["apiMode"] = api_mode
     if provider.managed_by == "clawdi":
         result["managed_by"] = provider.managed_by
+    models: list[dict[str, Any]] = []
     if provider.models is not None:
         try:
             models = [
@@ -923,8 +1153,10 @@ def _provider_entry(
             ]
         except ValidationError as exc:
             raise RuntimeSourceError("Stored AI provider model metadata is invalid") from exc
-        if models:
-            result["models"] = models
+    if selected_model and not any(model["id"] == selected_model for model in models):
+        models.insert(0, {"id": selected_model})
+    if models:
+        result["models"] = models
     if runtime_env:
         result["runtimeEnvName"] = runtime_env
     if provider.auth_type in {"api_key", "secret_ref"} and not secret_ref:

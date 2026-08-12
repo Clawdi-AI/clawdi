@@ -82,6 +82,7 @@ class _ManagedOnboardingSidecar:
             connected=self.connected,
             registered=self.registered,
             account_jid="15551234567:1@s.whatsapp.net" if self.registered else None,
+            account_lid="900000000000001:1@lid" if self.registered else None,
         )
 
     async def pairing_qr(self):
@@ -1067,6 +1068,115 @@ async def test_admin_fixed_managed_ai_provider_preserves_null_models_wire_respon
 
 
 @pytest.mark.asyncio
+async def test_admin_fixed_managed_provider_invalidates_bound_runtime_on_manifest_changes(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from app.models.hosted_runtime import HostedRuntimeState
+    from app.services import sync_events
+    from tests.conftest import create_env_with_project
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"fixed-managed-provider-event-{uuid.uuid4().hex[:8]}",
+        machine_name="Fixed managed provider event",
+        agent_type="openclaw",
+    )
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=env.id,
+            deployment_id="fixed-managed-provider-event",
+            instance_id=f"instance-{uuid.uuid4().hex}",
+            generation=1,
+            cli_package_spec="clawdi@1.2.3-test",
+            locale={"language": "en", "timezone": "UTC"},
+            system={},
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            tools={
+                "codex": {
+                    "enabled": True,
+                    "provider_id": V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+                    "primary_model": {
+                        "provider_id": V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+                        "model": "gpt-5.5",
+                    },
+                }
+            },
+            runtimes={
+                "openclaw": {
+                    "enabled": True,
+                    "providerMode": "configured",
+                    "provider_ids": [V2_LEGACY_MANAGED_AI_PROVIDER_ID],
+                    "primary_model": {
+                        "provider_id": V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+                        "model": "gpt-5.5",
+                    },
+                    "install": {"source": "official"},
+                }
+            },
+        )
+    )
+    await db_session.commit()
+
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    body = {
+        "target_clerk_id": seed_user.clerk_id,
+        "base_url": "https://ai-gateway.clawdi.ai/v1",
+        "api_key": "sk-fixed-initial",
+        "models": [{"id": "gpt-5.5"}],
+    }
+    expected_event = {
+        "type": "runtime_manifest_changed",
+        "environment_id": str(env.id),
+    }
+    try:
+        created = await admin_client.put(
+            f"/v1/admin/ai-providers/{V2_LEGACY_MANAGED_AI_PROVIDER_ID}",
+            headers=_AUTH,
+            json=body,
+        )
+        assert created.status_code == 200, created.text
+        assert queue.get_nowait() == expected_event
+        assert queue.empty()
+
+        credential_only = await admin_client.put(
+            f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
+            headers=_AUTH,
+            json={**body, "api_key": "sk-fixed-rotated"},
+        )
+        assert credential_only.status_code == 200, credential_only.text
+        assert queue.get_nowait() == expected_event
+        assert queue.empty()
+
+        replayed_write = await admin_client.put(
+            f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
+            headers=_AUTH,
+            json={**body, "api_key": "sk-fixed-rotated"},
+        )
+        assert replayed_write.status_code == 200, replayed_write.text
+        assert queue.get_nowait() == expected_event
+        assert queue.empty()
+
+        catalog_changed = await admin_client.put(
+            f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
+            headers=_AUTH,
+            json={
+                **body,
+                "api_key": "sk-fixed-rotated",
+                "models": [{"id": "gpt-5.6"}],
+            },
+        )
+        assert catalog_changed.status_code == 200, catalog_changed.text
+        assert queue.get_nowait() == expected_event
+        assert queue.empty()
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
 async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_and_audited(
     admin_client,
     db_session,
@@ -1110,7 +1220,7 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
         "api_mode": "openai_chat",
         "auth": {"type": "api_key", "source": "managed", "profile": "default"},
         "managed_by": "clawdi",
-        "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+        "runtime_env_name": "CLAWDI_AI_API_KEY",
         "base_url": "https://ai-gateway.clawdi.ai/v1",
         "capabilities": {
             "chat": True,
@@ -1224,6 +1334,145 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
         assert event.details["owner"] == expected_owners[event.target_user_id]
         assert event.details["owner_user_id"] == str(event.target_user_id)
         assert event.details["provider_id"] == provider_id
+
+
+@pytest.mark.asyncio
+async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manifest_changes(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from app.models.hosted_runtime import HostedRuntimeState
+    from app.models.user import User
+    from app.services import sync_events
+    from tests.conftest import create_env_with_project
+
+    deployment_id = "8403"
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}{deployment_id}"
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    other = User(clerk_id="managed_provider_manifest_event_other_owner")
+    db_session.add(other)
+    await db_session.flush()
+
+    environments = []
+    for user, state_deployment_id in (
+        (seed_user, deployment_id),
+        (seed_user, "unbound-deployment"),
+        (other, deployment_id),
+    ):
+        env = await create_env_with_project(
+            db_session,
+            user_id=user.id,
+            machine_id=f"managed-provider-event-{uuid.uuid4().hex[:8]}",
+            machine_name="Managed provider event",
+            agent_type="openclaw",
+        )
+        db_session.add(
+            HostedRuntimeState(
+                environment_id=env.id,
+                deployment_id=state_deployment_id,
+                instance_id=f"instance-{uuid.uuid4().hex}",
+                generation=1,
+                cli_package_spec="clawdi@1.2.3-test",
+                locale={"language": "en", "timezone": "UTC"},
+                system={},
+                live_sync={"enabled": False, "agents": []},
+                recovery={"cacheManifest": True, "allowOfflineBoot": True},
+                tools={
+                    "codex": {
+                        "enabled": True,
+                        "provider_id": V2_MANAGED_AI_PROVIDER_ID,
+                        "primary_model": {
+                            "provider_id": V2_MANAGED_AI_PROVIDER_ID,
+                            "model": "gpt-5.5",
+                        },
+                    }
+                },
+                runtimes={
+                    "openclaw": {
+                        "enabled": True,
+                        "providerMode": "configured",
+                        "provider_ids": [V2_MANAGED_AI_PROVIDER_ID],
+                        "primary_model": {
+                            "provider_id": V2_MANAGED_AI_PROVIDER_ID,
+                            "model": "gpt-5.5",
+                        },
+                        "install": {"source": "official"},
+                    }
+                },
+            )
+        )
+        environments.append((user, env))
+    await db_session.commit()
+
+    queues = [
+        sync_events.subscribe(user.id, frozenset(), environment_id=env.id)
+        for user, env in environments
+    ]
+    request_body = {
+        "owner": owner,
+        "base_url": "https://ai-gateway.clawdi.ai/v1",
+        "api_key": "sk-initial",
+        "models": [{"id": "gpt-5.5"}],
+    }
+    expected_event = {
+        "type": "runtime_manifest_changed",
+        "environment_id": str(environments[0][1].id),
+    }
+    try:
+        created = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}", headers=_AUTH, json=request_body
+        )
+        assert created.status_code == 200, created.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
+
+        credential_only = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}",
+            headers=_AUTH,
+            json={**request_body, "api_key": "sk-rotated"},
+        )
+        assert credential_only.status_code == 200, credential_only.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
+
+        replayed_write = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}",
+            headers=_AUTH,
+            json={**request_body, "api_key": "sk-rotated"},
+        )
+        assert replayed_write.status_code == 200, replayed_write.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
+
+        catalog_changed = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}",
+            headers=_AUTH,
+            json={**request_body, "api_key": "sk-rotated", "models": [{"id": "gpt-5.6"}]},
+        )
+        assert catalog_changed.status_code == 200, catalog_changed.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
+
+        deleted = await admin_client.delete(
+            f"/v1/admin/ai-providers/{provider_id}", headers=_AUTH, params=owner
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert queues[0].get_nowait() == expected_event
+        assert queues[0].empty()
+        assert queues[1].empty()
+        assert queues[2].empty()
+    finally:
+        for (user, _), queue in zip(environments, queues, strict=True):
+            sync_events.unsubscribe(user.id, queue)
 
 
 @pytest.mark.asyncio
@@ -2202,9 +2451,13 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     from app.models.session import AgentEnvironment
     from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
     from app.services.vault_crypto import decrypt
-    from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
+    from tests.hosted_runtime_fixtures import (
+        CANONICAL_CODEX_TOOL_PROVIDER_ID,
+        ensure_canonical_codex_tool_provider,
+    )
 
     agent_id = uuid.uuid4()
+    provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
     created = await admin_client.post(
         "/v1/admin/agents",
         headers=_AUTH,
@@ -2243,9 +2496,9 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
         "tools": {
             "codex": {
                 "enabled": True,
-                "provider_id": "clawdi-managed-v2",
+                "provider_id": provider_id,
                 "primary_model": {
-                    "provider_id": "clawdi-managed-v2",
+                    "provider_id": provider_id,
                     "model": "gpt-5.5",
                 },
             }
@@ -2258,9 +2511,9 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
             "openclaw": {
                 "enabled": True,
                 "providerMode": "configured",
-                "provider_ids": ["clawdi-managed-v2"],
+                "provider_ids": [provider_id],
                 "primary_model": {
-                    "provider_id": "clawdi-managed-v2",
+                    "provider_id": provider_id,
                     "model": "gpt-5.5",
                 },
                 "install": {"source": "official"},
@@ -2282,6 +2535,8 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     ).scalar_one_or_none()
     assert state is not None
     assert state.deployment_id == "dep-admin-agent-alias"
+    assert state.runtimes["openclaw"]["provider_ids"] == [provider_id]
+    assert state.tools["codex"]["provider_id"] == provider_id
     secret_rows = list(
         (
             await db_session.execute(
@@ -2313,6 +2568,8 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
         vault_key_identity="test-key-version",
         decrypt_secrets=False,
     )
+    assert first_source.manifest["runtimes"]["openclaw"]["provider_ids"] == ["clawdi"]
+    assert first_source.manifest["terminalTooling"]["codex"]["provider_id"] == "clawdi"
 
     repeated = await admin_client.put(
         f"/v1/admin/agents/{agent_id}/runtime-state",
@@ -2942,10 +3199,15 @@ async def test_admin_endpoints_excluded_from_openapi_schema(admin_client, seed_u
 
 @pytest.mark.asyncio
 async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logout_is_fail_closed(
-    admin_client, db_session, monkeypatch
+    admin_client, db_session, seed_user, channel_agent, monkeypatch
 ):
     import app.routes.admin as admin_routes
-    from app.models.channel import ChannelAccount, ChannelWhatsAppOnboardingSession
+    from app.models.channel import (
+        ChannelAccount,
+        ChannelBotAgentLink,
+        ChannelWhatsAppOnboardingSession,
+    )
+    from app.services import sync_events
 
     account_id = uuid.uuid4()
     fake = _ManagedOnboardingSidecar()
@@ -2962,6 +3224,7 @@ async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logo
         "name": "Shared WhatsApp",
     }
     pairing_url = "/v1/admin/channels/whatsapp/pairing-sessions"
+    queue = None
     try:
         assert (await admin_client.post(pairing_url, json=payload)).status_code == 401
         started = await admin_client.post(pairing_url, json=payload, headers=_AUTH)
@@ -2997,17 +3260,39 @@ async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logo
         await registry.reconcile_managed_ownership(db_session)
         assert registry.managed_is_bound(account_id)
         monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_registry", lambda: registry)
+        db_session.add(
+            ChannelBotAgentLink(
+                account_id=account.id,
+                user_id=seed_user.id,
+                agent_id=channel_agent.id,
+                status="active",
+            )
+        )
+        await db_session.commit()
+        queue = sync_events.subscribe(
+            seed_user.id,
+            frozenset(),
+            environment_id=channel_agent.id,
+        )
         fake.logout_fails = True
         assert (
             await admin_client.delete(f"/v1/admin/channels/{account_id}", headers=_AUTH)
         ).status_code == 503
         await db_session.refresh(account)
         assert account.archived_at is None
+        assert queue.empty()
         fake.logout_fails = False
         assert (
             await admin_client.delete(f"/v1/admin/channels/{account_id}", headers=_AUTH)
         ).status_code == 204
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(channel_agent.id),
+        }
+        assert queue.empty()
     finally:
+        if queue is not None:
+            sync_events.unsubscribe(seed_user.id, queue)
         await registry.stop()
 
 

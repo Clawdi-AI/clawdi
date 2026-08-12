@@ -68,9 +68,16 @@ function ledgerPath(): string {
 	const root = process.env.CLAWDI_SERVICE_STATE_DIR?.trim();
 	const mode = process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase();
 	if (mode === "hosted" || root) {
-		return join(getRuntimePaths({ mode: "hosted" }).projectionRoot, LEDGER_FILE);
+		return join(getRuntimePaths({ mode: "hosted" }).managedResourceRoot, LEDGER_FILE);
 	}
 	return join(getClawdiDir(), "managed-resources", LEDGER_FILE);
+}
+
+function legacyHostedLedgerPath(path: string): string | null {
+	const runtimePaths = getRuntimePaths({ mode: "hosted" });
+	return path === join(runtimePaths.managedResourceRoot, LEDGER_FILE)
+		? join(runtimePaths.projectionRoot, LEDGER_FILE)
+		: null;
 }
 
 function emptyLedger(): ManagedSkillReservationLedger {
@@ -78,12 +85,18 @@ function emptyLedger(): ManagedSkillReservationLedger {
 }
 
 function readLedger(path: string): ManagedSkillReservationLedger {
-	if (!existsSync(path)) return emptyLedger();
+	const legacyPath = legacyHostedLedgerPath(path);
+	const sourcePath = existsSync(path)
+		? path
+		: legacyPath && existsSync(legacyPath)
+			? legacyPath
+			: null;
+	if (!sourcePath) return emptyLedger();
 	let value: unknown;
 	try {
-		const stat = lstatSync(path);
+		const stat = lstatSync(sourcePath);
 		if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("not a regular file");
-		value = JSON.parse(readFileSync(path, "utf8"));
+		value = JSON.parse(readFileSync(sourcePath, "utf8"));
 	} catch {
 		throw new Error("managed Skill ownership state is invalid");
 	}

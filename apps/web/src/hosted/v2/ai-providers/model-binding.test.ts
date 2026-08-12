@@ -123,18 +123,19 @@ describe("model binding", () => {
 			{
 				...managedMetadata,
 				description: "Variable cost for long, detailed work.",
-				id: "k3",
-				display_name: "Kimi K3",
-				provider_id: "kimi-coding",
+				id: "glm-5.2",
+				display_name: "GLM-5.2",
+				provider_id: "redpill",
 				is_default: false,
 				is_featured: true,
 			},
 			{
 				...managedMetadata,
-				id: "future-model",
-				display_name: "Future model",
+				id: "deepseek-v4-flash-0731",
+				display_name: "DeepSeek V4 Flash 0731",
+				provider_id: "redpill",
 				is_default: false,
-				is_featured: false,
+				is_featured: true,
 			},
 			{
 				...managedMetadata,
@@ -159,28 +160,32 @@ describe("model binding", () => {
 				{
 					value: "gpt-5.6-sol",
 					label: "GPT-5.6 Sol",
-					providerId: "openai-codex",
+					iconId: "openai-codex",
 					description: "Higher cost for complex work.",
 				},
 				{
-					value: "k3",
-					label: "Kimi K3",
-					providerId: "kimi-coding",
+					value: "glm-5.2",
+					label: "GLM-5.2",
+					iconId: "zai",
 					description: "Variable cost for long, detailed work.",
+				},
+				{
+					value: "deepseek-v4-flash-0731",
+					label: "DeepSeek V4 Flash 0731",
+					iconId: "deepseek",
 				},
 			],
 			overflow: [
-				{ value: "future-model", label: "Future model", providerId: "openai-codex" },
 				{
 					value: "gpt-5.6-luna",
 					label: "GPT-5.6 Luna",
-					providerId: "openai-codex",
+					iconId: "openai-codex",
 					description: "Low cost for routine work.",
 				},
 				{
 					value: "gpt-5.6-terra",
 					label: "GPT-5.6 Terra",
-					providerId: "openai-codex",
+					iconId: "openai-codex",
 					description: "Balanced cost for everyday work.",
 				},
 			],
@@ -209,14 +214,14 @@ describe("model binding", () => {
 			{
 				value: "provider-model-a",
 				label: "Provider Model A (Canonical)",
-				providerId: "openai-codex",
+				iconId: "openai-codex",
 			},
 		]);
 		expect(items.overflow).toEqual([
 			{
 				value: "provider-model-b",
 				label: "Provider Model B — Full Name",
-				providerId: "openai-codex",
+				iconId: "openai-codex",
 			},
 		]);
 	});

@@ -21,7 +21,7 @@ export type IdempotencyAttempt = {
 
 type MintIdempotencyKey = (prefix: string) => string;
 
-export const IDEMPOTENCY_ATTEMPT_TTL_MS = 30 * 60_000;
+export const IDEMPOTENCY_ATTEMPT_TTL_MS = 24 * 60 * 60_000;
 
 const IDEMPOTENCY_STORAGE_KEY = "clawdi:idempotency-attempts";
 
@@ -186,5 +186,26 @@ export function forgetIdempotencyAttempt(
 	const entryKey = storageEntryKey(prefix, fingerprint);
 	if (!(entryKey in attempts)) return;
 	delete attempts[entryKey];
+	writeStoredAttempts(storage, attempts);
+}
+
+/** Remove a finished attempt when only its durable request key is available. */
+export function forgetIdempotencyAttemptByKey(
+	prefix: string,
+	key: string,
+	options: IdempotencyPersistenceOptions = {},
+): void {
+	const storage = options.storage === undefined ? browserSessionStorage() : options.storage;
+	if (!storage) return;
+	const now = options.now?.() ?? Date.now();
+	const ttlMs = options.ttlMs ?? IDEMPOTENCY_ATTEMPT_TTL_MS;
+	const attempts = readStoredAttempts(storage, now, ttlMs);
+	if (!attempts) return;
+	const entryPrefix = `${prefix}:`;
+	const entry = Object.entries(attempts).find(
+		([entryKey, attempt]) => entryKey.startsWith(entryPrefix) && attempt.key === key,
+	);
+	if (!entry) return;
+	delete attempts[entry[0]];
 	writeStoredAttempts(storage, attempts);
 }

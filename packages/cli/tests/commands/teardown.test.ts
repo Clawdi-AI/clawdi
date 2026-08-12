@@ -9,6 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import type { AgentType } from "../../src/adapters/agent-types";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { teardown } from "../../src/commands/teardown";
 import { managedSkillDirectoryDigest } from "../../src/runtime/hosted-bundled-skill";
@@ -25,14 +26,6 @@ import {
 	snapshotAndClearAgentHomeOverrides,
 } from "./helpers";
 
-type AgentKey = "claude-code" | "codex" | "hermes" | "openclaw";
-const AGENT_TYPE: Record<AgentKey, string> = {
-	"claude-code": "claude_code",
-	codex: "codex",
-	hermes: "hermes",
-	openclaw: "openclaw",
-};
-
 let tmpHome: string;
 let origHome: string | undefined;
 let origPath: string | undefined;
@@ -41,7 +34,7 @@ let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 let origIsTTY: boolean | undefined;
 
 function setup(
-	agent: AgentKey,
+	agent: AgentType,
 	options: { managed?: boolean } = {},
 ): {
 	envPath: string;
@@ -52,9 +45,9 @@ function setup(
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	process.env.HERMES_HOME = join(tmpHome, ".hermes");
-	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
+	seedAuthAndEnv(tmpHome, agent);
 
-	const envPath = join(tmpHome, ".clawdi", "environments", `${AGENT_TYPE[agent]}.json`);
+	const envPath = join(tmpHome, ".clawdi", "environments", `${agent}.json`);
 
 	// Plant a clawdi skill where the registry expects to find it.
 	let skillPath: string;
@@ -62,7 +55,7 @@ function setup(
 		const oid = process.env.OPENCLAW_AGENT_ID || "main";
 		skillPath = join(tmpHome, ".openclaw", "agents", oid, "skills", "clawdi", "SKILL.md");
 	} else {
-		const home = `.${agent === "claude-code" ? "claude" : agent}`;
+		const home = `.${agent === "claude_code" ? "claude" : agent}`;
 		skillPath = join(tmpHome, home, "skills", "clawdi", "SKILL.md");
 	}
 	mkdirSync(join(skillPath, ".."), { recursive: true });
@@ -138,7 +131,7 @@ function installOpenClawStub(): string {
 
 describe("teardown — basic round-trip per agent", () => {
 	it("Claude Code: removes env file + bundled skill (--keep-mcp to skip claude exec)", async () => {
-		const { envPath, skillPath } = setup("claude-code");
+		const { envPath, skillPath } = setup("claude_code");
 		expect(existsSync(envPath)).toBe(true);
 		expect(existsSync(skillPath)).toBe(true);
 
@@ -174,7 +167,7 @@ describe("teardown — basic round-trip per agent", () => {
 
 describe("teardown — flag behavior", () => {
 	it("--keep-skill leaves the bundled skill in place", async () => {
-		const { envPath, skillPath } = setup("claude-code");
+		const { envPath, skillPath } = setup("claude_code");
 		const target = dirname(skillPath);
 		await teardown({ agent: "claude_code", yes: true, keepMcp: true, keepSkill: true });
 		expect(existsSync(envPath)).toBe(false);
@@ -189,7 +182,7 @@ describe("teardown — flag behavior", () => {
 	});
 
 	it("adopts and removes a genuine pre-ledger bundle on direct teardown only once", async () => {
-		const { skillPath } = setup("claude-code", { managed: false });
+		const { skillPath } = setup("claude_code", { managed: false });
 		const target = dirname(skillPath);
 		rmSync(target, { recursive: true, force: true });
 		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), target, { recursive: true });
@@ -217,7 +210,7 @@ describe("teardown — flag behavior", () => {
 	});
 
 	it("preserves an unproven custom same-name Skill on direct teardown", async () => {
-		const { skillPath } = setup("claude-code", { managed: false });
+		const { skillPath } = setup("claude_code", { managed: false });
 		const target = dirname(skillPath);
 		writeFileSync(skillPath, "---\nname: clawdi\ndescription: Custom Skill\n---\n");
 

@@ -103,7 +103,7 @@ export function writeManagedSkillReceipt(input: {
 	});
 }
 
-function readManagedSkillReceipt(input: {
+function readManagedSkillMarker(input: {
 	path: string;
 	schemaVersion: string;
 	skillId: string;
@@ -111,6 +111,17 @@ function readManagedSkillReceipt(input: {
 	exclude?: ReadonlySet<string>;
 }): ManagedSkillReceipt | null {
 	try {
+		const target = lstatSync(input.target);
+		if (target.isSymbolicLink() || !target.isDirectory()) return null;
+		const receiptStat = lstatSync(input.path);
+		const effectiveUid = process.geteuid?.();
+		if (
+			receiptStat.isSymbolicLink() ||
+			!receiptStat.isFile() ||
+			(receiptStat.mode & 0o022) !== 0 ||
+			(effectiveUid !== undefined && receiptStat.uid !== effectiveUid)
+		)
+			return null;
 		const receipt = JSON.parse(readFileSync(input.path, "utf8")) as Record<string, unknown>;
 		if (
 			receipt.schemaVersion === input.schemaVersion &&
@@ -119,17 +130,48 @@ function readManagedSkillReceipt(input: {
 			receipt.ownershipIdentity.length > 0 &&
 			receipt.ownershipIdentity.length <= 2048 &&
 			typeof receipt.treeFingerprint === "string" &&
-			/^[a-f0-9]{64}$/.test(receipt.treeFingerprint) &&
-			receipt.treeFingerprint ===
-				managedSkillTreeFingerprint(
-					collectManagedSkillTree(input.target, { exclude: input.exclude }),
-				)
+			/^[a-f0-9]{64}$/.test(receipt.treeFingerprint)
 		)
 			return receipt as ManagedSkillReceipt;
 		return null;
 	} catch {
 		return null;
 	}
+}
+
+function readManagedSkillReceipt(input: {
+	path: string;
+	schemaVersion: string;
+	skillId: string;
+	target: string;
+	exclude?: ReadonlySet<string>;
+}): ManagedSkillReceipt | null {
+	const marker = readManagedSkillMarker(input);
+	return marker?.treeFingerprint ===
+		managedSkillTreeFingerprint(collectManagedSkillTree(input.target, { exclude: input.exclude }))
+		? marker
+		: null;
+}
+
+export function managedSkillMarkerOwnsTarget(input: {
+	path: string;
+	schemaVersion: string;
+	skillId: string;
+	target: string;
+	exclude?: ReadonlySet<string>;
+}): boolean {
+	return readManagedSkillMarker(input) !== null;
+}
+
+export function managedSkillMarkerMatchesIdentity(input: {
+	path: string;
+	schemaVersion: string;
+	skillId: string;
+	ownershipIdentity: string;
+	target: string;
+	exclude?: ReadonlySet<string>;
+}): boolean {
+	return readManagedSkillMarker(input)?.ownershipIdentity === input.ownershipIdentity;
 }
 
 export function managedSkillReceiptOwnsTarget(input: {

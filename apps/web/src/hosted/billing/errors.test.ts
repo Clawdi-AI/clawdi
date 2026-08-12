@@ -3,11 +3,14 @@ import {
 	BillingApiError,
 	BillingNetworkError,
 	billingQueryRetry,
+	DeploymentRequestTerminalError,
+	deploymentRequestTerminalOutcome,
 	deploySubmissionErrorPresentation,
 	isAuthError,
 	isForbiddenError,
 	isInsufficientBalanceError,
 	isNetworkError,
+	isPaymentMethodRequiredError,
 	isRetryableError,
 	isServerError,
 	normalizeBillingError,
@@ -132,9 +135,16 @@ describe("normalizeBillingError", () => {
 	});
 
 	test("snake_case codes stay internal while real sentences pass through", () => {
-		expect(normalizeBillingError(new BillingApiError(400, "payment_method_required"))).toBe(
+		const paymentMethodRequired = new BillingApiError(400, "payment_method_required");
+		expect(normalizeBillingError(paymentMethodRequired)).toBe(
 			"Add a payment method and try again.",
 		);
+		expect(isPaymentMethodRequiredError(paymentMethodRequired)).toBe(true);
+		expect(
+			isPaymentMethodRequiredError(
+				new BillingApiError(409, "Request failed", { detail: { code: "payment_method_required" } }),
+			),
+		).toBe(true);
 		expect(normalizeBillingError(new BillingApiError(400, "bridge_internal_17"))).not.toContain(
 			"bridge_internal_17",
 		);
@@ -187,7 +197,11 @@ describe("deploySubmissionErrorPresentation", () => {
 		expect(presentation.description).toContain("No payment was submitted");
 	});
 
-	test("keeps ambiguous wallet and create failures on the idempotent retry path", () => {
+	test("keeps ambiguous assignment, wallet, and create failures on the idempotent retry path", () => {
+		const assignment = deploySubmissionErrorPresentation(
+			new BillingNetworkError("offline"),
+			"subscription_assignment",
+		);
 		const wallet = deploySubmissionErrorPresentation(
 			new BillingNetworkError("timeout"),
 			"wallet_creation",
@@ -197,6 +211,9 @@ describe("deploySubmissionErrorPresentation", () => {
 			"included_creation",
 		);
 
+		expect(assignment.title).toBe("We couldn’t confirm this attempt");
+		expect(assignment.description).toContain("safely resume the same attempt");
+		expect(assignment.description).not.toMatch(/payment|wallet/i);
 		expect(wallet.title).toBe("We couldn’t confirm this attempt");
 		expect(wallet.description).toContain("safely resume the same attempt");
 		expect(wallet.description).not.toContain("No Wallet payment was made");
@@ -214,5 +231,48 @@ describe("deploySubmissionErrorPresentation", () => {
 		expect(presentation.title).toBe("Payment and creation didn’t start");
 		expect(presentation.description).toContain("No Wallet payment was made");
 		expect(presentation.description).not.toContain("internal validation trace");
+	});
+});
+
+describe("deployment request terminal outcome", () => {
+	test("distinguishes a new attempt, superseded review, and existing deployment", () => {
+		const withoutLineage = deploymentRequestTerminalOutcome(
+			new DeploymentRequestTerminalError(
+				{
+					deploy_request_id: "checkout-expired",
+					request_status: "expired",
+					lineage_tail: null,
+				},
+				"expired",
+			),
+		);
+		const superseded = deploymentRequestTerminalOutcome(
+			new DeploymentRequestTerminalError(
+				{
+					deploy_request_id: "checkout-superseded",
+					request_status: "superseded",
+					lineage_tail: null,
+				},
+				"superseded",
+			),
+		);
+		const withLineage = deploymentRequestTerminalOutcome(
+			new DeploymentRequestTerminalError(
+				{
+					deploy_request_id: "checkout-failed",
+					request_status: "failed",
+					lineage_tail: {
+						deployment_id: "hdep_failed",
+						lineage_version: 1,
+						lineage_state: "failed",
+					},
+				},
+				"failed",
+			),
+		);
+
+		expect(withoutLineage?.kind).toBe("new_attempt");
+		expect(superseded?.kind).toBe("review_agents");
+		expect(withLineage).toEqual({ kind: "open_deployment", deploymentId: "hdep_failed" });
 	});
 });

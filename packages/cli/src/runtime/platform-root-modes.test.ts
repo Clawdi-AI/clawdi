@@ -40,8 +40,9 @@ test("never chmods the four platform roots that child writes touch", async () =>
 	const state = join(root, "state");
 	const run = join(root, "run");
 	const systemdSystemRoot = join(run, "systemd", "system");
-	const openclaw = join(home, ".openclaw", "bin", "openclaw");
+	const openclaw = join(home, ".local", "bin", "openclaw");
 	mkdirSync(dirname(openclaw), { recursive: true });
+	mkdirSync(join(home, ".openclaw"), { recursive: true });
 	writeFileSync(
 		openclaw,
 		`#!/bin/sh

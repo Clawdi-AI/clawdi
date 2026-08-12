@@ -50,6 +50,7 @@ from app.services.whatsapp_baileys import (
     strip_whatsapp_device,
     whatsapp_jid_candidates,
     whatsapp_message_proto_bytes,
+    whatsapp_self_identity_from_config,
     whatsapp_text_from_message_proto,
     whatsapp_text_message_proto,
 )
@@ -132,6 +133,37 @@ def test_whatsapp_synthetic_creds_are_baileys_json_compatible_and_provider_secre
     assert '"type":"Buffer"' in serialized
     assert "providerToken" not in serialized
     assert "physicalAuthState" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        (
+            {
+                "self_identity": {
+                    "id": "15551234567:1@s.whatsapp.net",
+                    "lid": "900000000000001:1@lid",
+                }
+            },
+            {
+                "id": "15551234567:1@s.whatsapp.net",
+                "lid": "900000000000001:1@lid",
+            },
+        ),
+        ({"self_identity": {"lid": "900000000000001:1@lid"}}, None),
+        (
+            {
+                "self_identity": {
+                    "id": "15551234567:1@s.whatsapp.net",
+                    "lid": "15551234567:1@s.whatsapp.net",
+                }
+            },
+            None,
+        ),
+    ],
+)
+def test_whatsapp_self_identity_requires_pn_and_lid_pair(config, expected):
+    assert whatsapp_self_identity_from_config(config) == expected
 
 
 def test_whatsapp_jid_helpers_resolve_lid_and_device_aliases():
@@ -633,7 +665,25 @@ async def test_respond_to_iq_handles_key_usync_and_group_shapes():
         resolve_recipient_bundle=lambda _jid: bundle,
     )
     assert key_response["attrs"]["id"] == "keys"
-    assert key_response["content"][0]["content"][0]["tag"] == "registration"
+    key_list = key_response["content"][0]
+    assert key_list["tag"] == "list"
+    key_user = key_list["content"][0]
+    assert key_user["attrs"]["jid"] == "15551112222@s.whatsapp.net"
+    assert [child["tag"] for child in key_user["content"]] == [
+        "registration",
+        "type",
+        "identity",
+        "skey",
+        "key",
+    ]
+    assert key_user["content"][-1] == {
+        "tag": "key",
+        "attrs": {},
+        "content": [
+            {"tag": "id", "attrs": {}, "content": b"\x00\x00\x03"},
+            {"tag": "value", "attrs": {}, "content": b"\x05" + bytes(range(64, 96))},
+        ],
+    }
 
     usync_response = await respond_to_iq(
         {

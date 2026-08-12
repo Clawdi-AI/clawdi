@@ -3,6 +3,7 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	type ComputePlanSlug,
+	type ComputeSubscriptionListItem,
 	type HostedComputeSubscription,
 	type Plan,
 } from "@/hosted/billing/contracts";
@@ -35,20 +36,46 @@ export function isComputeSubscriptionTermChangeable(
 	return COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES.has(subscription?.status ?? "");
 }
 
+type AccountSubscriptionActionState = Pick<
+	ComputeSubscriptionListItem,
+	"cancel_at_period_end" | "deployment_id" | "is_orphan" | "status"
+>;
+
+export function canCancelAccountSubscription(
+	subscription: AccountSubscriptionActionState,
+): boolean {
+	return !subscription.cancel_at_period_end && isComputeSubscriptionCancelable(subscription);
+}
+
+export function canResumeAccountSubscription(
+	subscription: AccountSubscriptionActionState,
+): boolean {
+	return (
+		!subscription.is_orphan &&
+		Boolean(subscription.deployment_id) &&
+		(subscription.cancel_at_period_end || subscription.status === "canceling")
+	);
+}
+
+export function isEndedAccountSubscription(
+	subscription: Pick<
+		ComputeSubscriptionListItem,
+		"cancel_at_period_end" | "current_period_end" | "status"
+	>,
+	nowMs: number,
+): boolean {
+	if (subscription.status !== "canceled") return false;
+	if (!subscription.current_period_end) return false;
+	const periodEndMs = Date.parse(subscription.current_period_end);
+	return Number.isFinite(periodEndMs) && periodEndMs <= nowMs;
+}
+
 export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {
 	return plans?.find((plan) => plan.slug === COMPUTE_BASIC_SLUG);
 }
 
 export function resolvePerformancePlan(plans: Plan[] | undefined): Plan | undefined {
 	return plans?.find((plan) => plan.slug === COMPUTE_PERFORMANCE_SLUG);
-}
-
-export function largestSignupGrantUsd(plans: readonly Plan[] | undefined): string | null {
-	return (plans ?? []).reduce<string | null>((largest, plan) => {
-		const grant = Number(plan.signup_grant_usd);
-		if (!Number.isFinite(grant) || grant <= 0) return largest;
-		return largest === null || grant > Number(largest) ? plan.signup_grant_usd : largest;
-	}, null);
 }
 
 export function isBasicCompute(planSlug: string | null | undefined): boolean {
@@ -167,7 +194,7 @@ export function computeSubscriptionLifecycle(
 	}
 	if (status === "active") {
 		return {
-			badgeLabel: "Current",
+			badgeLabel: "Active",
 			dateAt: subscription.current_period_end ?? null,
 			dateVerb: "Renews",
 			renews: true,
@@ -183,7 +210,7 @@ export function computeSubscriptionLifecycle(
 	}
 	if (status === "past_due") {
 		return {
-			badgeLabel: "Payment past due",
+			badgeLabel: "Past due",
 			dateAt: null,
 			dateVerb: null,
 			renews: true,

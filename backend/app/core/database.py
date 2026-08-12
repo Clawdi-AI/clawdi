@@ -29,11 +29,6 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def get_runtime_snapshot_session() -> AsyncGenerator[AsyncSession, None]:
-    async with runtime_snapshot_session() as session:
-        yield session
-
-
 async def get_runtime_observation_session() -> AsyncGenerator[AsyncSession, None]:
     """Open one repeatable-read observation snapshot that may persist expiry.
 

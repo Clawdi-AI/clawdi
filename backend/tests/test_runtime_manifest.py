@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
-from app.core.database import get_runtime_snapshot_session, get_session
+from app.core.database import engine as runtime_engine
+from app.core.database import get_session
 from app.main import app
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
@@ -28,8 +29,10 @@ from app.models.audit import ControlPlaneAuditEvent
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelAgentCredential,
     ChannelBinding,
     ChannelBotAgentLink,
+    ChannelWhatsAppAuthCert,
 )
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
@@ -38,7 +41,11 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
-from app.routes.sessions import _runtime_observed_health
+from app.routes.sessions import (
+    _runtime_observed_desired,
+    _runtime_observed_health,
+    _runtime_observed_provider_health,
+)
 from app.schemas.admin import AdminRuntimeStateUpsert
 from app.schemas.runtime import (
     HostedEgressEngine,
@@ -49,6 +56,7 @@ from app.schemas.runtime import (
 )
 from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
+from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
 from app.services.runtime_source import (
     RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
@@ -57,7 +65,7 @@ from app.services.runtime_source import (
     expected_runtime_bundle_v2_etag,
     runtime_manifest_issued_at,
 )
-from app.services.vault_crypto import encrypt
+from app.services.vault_crypto import decrypt, encrypt
 from scripts.seed_dashboard_dev import (
     _create_hosted_runtime_graph,
     _seed_ai_provider,
@@ -65,13 +73,14 @@ from scripts.seed_dashboard_dev import (
 )
 from tests.conftest import create_env_with_project
 from tests.hosted_runtime_fixtures import (
+    CANONICAL_CODEX_TOOL_PROVIDER_ID,
+    canonical_hosted_runtime_state,
+)
+from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS as TEST_CODEX_TOOLS,
 )
 from tests.hosted_runtime_fixtures import (
     canonical_codex_tool_provider_graph as _managed_codex_provider_graph,
-)
-from tests.hosted_runtime_fixtures import (
-    canonical_hosted_runtime_state,
 )
 from tests.hosted_runtime_fixtures import (
     filebrowser_companion as _filebrowser_companion,
@@ -414,7 +423,7 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     provider = await db_session.scalar(
         select(AiProvider).where(
             AiProvider.owner_user_id == seed_user.id,
-            AiProvider.provider_id == "clawdi-managed-v2",
+            AiProvider.provider_id == CANONICAL_CODEX_TOOL_PROVIDER_ID,
         )
     )
     if provider is None:
@@ -432,7 +441,6 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
         return AuthContext(user=seed_user, api_key=api_key)
 
     app.dependency_overrides[get_session] = _override_get_session
-    app.dependency_overrides[get_runtime_snapshot_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
     transport = ASGITransport(app=app)
     return httpx.AsyncClient(
@@ -503,7 +511,7 @@ def _runtime_state(
     **overrides,
 ) -> dict:
     selected_provider_ids = (
-        ([] if provider_mode == "unmanaged" else ["clawdi-managed-v2"])
+        ([] if provider_mode == "unmanaged" else [CANONICAL_CODEX_TOOL_PROVIDER_ID])
         if provider_ids is None
         else provider_ids
     )
@@ -796,6 +804,68 @@ def test_unmanaged_health_requires_exact_empty_applied_provider_set():
     assert "applied_provider_ids_extra" in stale.reasons
     assert malformed.status == "unknown"
     assert "desired_provider_contract_invalid" in malformed.reasons
+
+
+def test_managed_health_compares_agent_facing_provider_ids():
+    now = datetime.now(UTC)
+    source_revision = "e" * 64
+    etag = expected_runtime_bundle_v2_etag(source_revision)
+    state = SimpleNamespace(
+        deployment_id="42",
+        instance_id="hri-managed-health",
+        generation=3,
+        cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+        updated_at=now,
+        runtimes=_runtime_state(provider_ids=[CLAWDI_MANAGED_PROVIDER_ID]),
+        mcp=None,
+        tools=None,
+    )
+    env = SimpleNamespace(last_sync_error=None, last_sync_at=now)
+    observation = SimpleNamespace(
+        observed_at=now,
+        observed_config_generation=3,
+        observed_manifest_etag=etag,
+        observed_source_revision=source_revision,
+        diagnostics={
+            "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+            "reportedAt": now.isoformat(),
+            "runtimeMode": "hosted",
+            "status": "ok",
+            "activeCliVersion": TEST_CLI_PACKAGE_SPEC.split("@", 1)[1],
+            "applied": {
+                "etag": etag,
+                "sourceRevision": source_revision,
+                "generation": 3,
+                "instanceId": "hri-managed-health",
+                "appliedProviderIds": [CLAWDI_MANAGED_PROVIDER_ID],
+            },
+            "boot": None,
+            "cli": None,
+            "providers": {
+                CLAWDI_MANAGED_PROVIDER_ID: {
+                    "status": "ok",
+                    "configured": True,
+                    "secretAvailable": True,
+                }
+            },
+        },
+    )
+
+    health = _runtime_observed_health(
+        env,
+        state,
+        observation,
+        desired_source_revision=source_revision,
+        desired_cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+    )
+    provider_health = _runtime_observed_provider_health(state, observation)
+
+    assert _runtime_observed_desired(state).provider_id == CLAWDI_MANAGED_PROVIDER_ID
+    assert health.status == "ok"
+    assert health.reasons == []
+    assert [provider.provider_id for provider in provider_health] == [CLAWDI_MANAGED_PROVIDER_ID]
+    assert provider_health[0].status == "ok"
+    assert provider_health[0].desired == {"selected": True, "primary": True}
 
 
 async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: str, **overrides):
@@ -1134,7 +1204,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert set(manifest["locale"]) == {"language", "timezone"}
     assert manifest["system"] == TEST_SYSTEM
     expected_runtime = expected["runtimes"]["openclaw"]
-    assert expected_runtime["provider_ids"] == ["clawdi-managed-v2"]
+    assert expected_runtime["provider_ids"] == [CANONICAL_CODEX_TOOL_PROVIDER_ID]
     assert manifest["runtimes"]["openclaw"] == {
         **expected_runtime,
         "provider_ids": [CLAWDI_MANAGED_PROVIDER_ID],
@@ -2429,7 +2499,7 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
                     "reportedAt": "2026-06-11T00:00:00+00:00",
                     "runtimeMode": "hosted",
                     "status": "ok",
-                    "activeCliVersion": TEST_CLI_PACKAGE_SPEC.split("@", 1)[1],
+                    "activeCliVersion": "0.13.68",
                     "applied": {
                         "etag": etag,
                         "sourceRevision": bundle["sourceRevision"],
@@ -3508,7 +3578,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
             ),
             AiProvider(
                 owner_user_id=seed_user.id,
-                provider_id="clawdi-managed-v2",
+                provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
                 type="custom_openai_compatible",
                 base_url="https://managed-provider.test/v1",
                 models=[{"id": "gpt-5.5"}],
@@ -3516,11 +3586,11 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
                 managed_by="clawdi",
-                runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+                runtime_env_name="CLAWDI_AI_API_KEY",
             ),
             AiProviderAuthPayload(
                 owner_user_id=seed_user.id,
-                provider_id="clawdi-managed-v2",
+                provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
                 auth_profile="default",
                 kind="api_key",
                 source="managed",
@@ -4294,12 +4364,183 @@ async def test_agent_link_lifecycle_advances_polled_source_but_chat_binding_does
 
 
 @pytest.mark.asyncio
+async def test_runtime_manifest_repairs_and_invalidates_an_existing_whatsapp_link(
+    admin_client,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env, _, _, account, link = await _create_bundle_runtime(
+        admin_client,
+        db_session,
+        seed_user,
+    )
+    account.provider = "whatsapp"
+    account_lid = "900000000000001:1@lid"
+    account.config = {
+        "self_identity": {
+            "id": "15551234567:1@s.whatsapp.net",
+            "lid": account_lid,
+        }
+    }
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="whatsapp-repair")
+    target_queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=env.id,
+    )
+    try:
+        async with await _runtime_client(db_session, seed_user, api_key) as client:
+            repaired = await client.get("/v1/runtime/manifest")
+            assert repaired.status_code == 200, repaired.text
+            binding = repaired.json()["channelBindings"][0]
+            credential = await db_session.scalar(
+                select(ChannelAgentCredential).where(
+                    ChannelAgentCredential.bot_agent_link_id == link.id,
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+            )
+            assert credential is not None
+            auth_cert = await db_session.scalar(
+                select(ChannelWhatsAppAuthCert).where(
+                    ChannelWhatsAppAuthCert.account_id == account.id
+                )
+            )
+            assert auth_cert is not None
+
+            def decrypt_credential_only(ciphertext: bytes, nonce: bytes) -> str:
+                if ciphertext in {
+                    auth_cert.encrypted_root_private_key,
+                    auth_cert.encrypted_intermediate_private_key,
+                }:
+                    raise AssertionError(
+                        "runtime manifest must not decrypt WhatsApp auth-cert private keys"
+                    )
+                return decrypt(ciphertext, nonce)
+
+            monkeypatch.setattr(
+                "app.services.whatsapp_baileys.decrypt",
+                decrypt_credential_only,
+            )
+
+            def load_credential_creds() -> dict:
+                value = json.loads(
+                    decrypt(credential.encrypted_credentials, credential.credential_nonce)
+                )
+                assert isinstance(value, dict)
+                return value
+
+            account_key = channel_runtime_account_key(account.id)
+            capability_ref = (
+                f"secret://channels/whatsapp/{account_key}/links/{link.id}/egress-capability"
+            )
+            assert binding == {
+                "provider": "whatsapp",
+                "accountId": str(account.id),
+                "accountKey": account_key,
+                "linkId": str(link.id),
+                "agentTokenSecretRef": (
+                    f"secret://channels/whatsapp/{account_key}/links/{link.id}/agent-token"
+                ),
+                "placeholderTokenSecretRef": capability_ref,
+                "credential": {
+                    "id": str(credential.id),
+                    "credsSecretRef": (
+                        f"secret://channels/whatsapp/{account_key}/credentials/"
+                        f"{credential.id}/creds-json"
+                    ),
+                    "authCert": binding["credential"]["authCert"],
+                },
+            }
+            assert repaired.json()["secretValues"][capability_ref] == (
+                channel_runtime_placeholder_token("whatsapp", account_key, link_id=link.id)
+            )
+
+            legacy_creds = load_credential_creds()
+            legacy_me = legacy_creds.get("me")
+            assert isinstance(legacy_me, dict)
+            legacy_me.pop("lid")
+            credential.encrypted_credentials, credential.credential_nonce = encrypt(
+                json.dumps(legacy_creds)
+            )
+            await db_session.commit()
+
+            identity_repaired = await client.get("/v1/runtime/manifest")
+            assert identity_repaired.status_code == 200, identity_repaired.text
+            assert identity_repaired.json()["sourceRevision"] != repaired.json()["sourceRevision"]
+            await db_session.refresh(credential)
+            repaired_creds = load_credential_creds()
+            repaired_me = repaired_creds.get("me")
+            assert isinstance(repaired_me, dict)
+            assert repaired_me["id"] == credential.synthetic_jid
+            assert repaired_me["lid"] == account_lid
+            healthy_material = (
+                credential.encrypted_credentials,
+                credential.credential_nonce,
+                credential.updated_at,
+            )
+
+            async def reject_healthy_credential_ensure(*_args, **_kwargs):
+                raise AssertionError("healthy WhatsApp credential must not enter repair")
+
+            monkeypatch.setattr(
+                "app.routes.runtime.ensure_runtime_whatsapp_credentials",
+                reject_healthy_credential_ensure,
+            )
+            repeated = await client.get("/v1/runtime/manifest")
+            assert repeated.status_code == 200, repeated.text
+            assert repeated.json()["sourceRevision"] == identity_repaired.json()["sourceRevision"]
+            await db_session.refresh(credential)
+            assert (
+                credential.encrypted_credentials,
+                credential.credential_nonce,
+                credential.updated_at,
+            ) == healthy_material
+            credential_count = await db_session.scalar(
+                select(func.count())
+                .select_from(ChannelAgentCredential)
+                .where(
+                    ChannelAgentCredential.bot_agent_link_id == link.id,
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+            )
+            assert credential_count == 1
+
+            rotated = await client.post(f"/v1/channels/{account.id}/agent-links/{link.id}/token")
+            assert rotated.status_code == 200, rotated.text
+            assert target_queue.get_nowait() == {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(env.id),
+            }
+            token_rotated = await client.get("/v1/runtime/manifest")
+            assert token_rotated.status_code == 200, token_rotated.text
+            assert (
+                token_rotated.json()["sourceRevision"] != identity_repaired.json()["sourceRevision"]
+            )
+
+            deleted = await client.delete(f"/v1/channels/{account.id}/agent-links/{link.id}")
+            assert deleted.status_code == 204, deleted.text
+            assert target_queue.get_nowait() == {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(env.id),
+            }
+            removed = await client.get("/v1/runtime/manifest")
+            assert removed.status_code == 200, removed.text
+            assert removed.json()["channelBindings"] == []
+    finally:
+        app.dependency_overrides.clear()
+        sync_events.unsubscribe(seed_user.id, target_queue)
+
+
+@pytest.mark.asyncio
 async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_constant(
     admin_client, db_session, seed_user
 ):
     env, _, _, _, link = await _create_bundle_runtime(admin_client, db_session, seed_user)
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle")
-    engine = db_session.bind.sync_engine
+    observed_engines = {db_session.bind.sync_engine, runtime_engine.sync_engine}
     select_count = 0
 
     def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
@@ -4307,7 +4548,8 @@ async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_cons
         if statement.lstrip().upper().startswith("SELECT"):
             select_count += 1
 
-    event.listen(engine, "before_cursor_execute", count_selects)
+    for observed_engine in observed_engines:
+        event.listen(observed_engine, "before_cursor_execute", count_selects)
     try:
         async with await _runtime_client(db_session, seed_user, api_key) as client:
             select_count = 0
@@ -4325,7 +4567,8 @@ async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_cons
                 "/v1/runtime/manifest", headers={"Accept": "application/json"}
             )
     finally:
-        event.remove(engine, "before_cursor_execute", count_selects)
+        for observed_engine in observed_engines:
+            event.remove(observed_engine, "before_cursor_execute", count_selects)
         app.dependency_overrides.clear()
     assert healthy.status_code == 200
     # One bounded Project Skill graph query joins all requested Agents; the
@@ -4644,22 +4887,21 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
     ]
     provider = AiProvider(
         owner_user_id=seed_user.id,
-        provider_id="clawdi-managed-v2",
+        provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
         type="custom_openai_compatible",
         base_url="https://sub2api.test/v1",
         models=managed_models,
-        # Simulate a stale v2 managed provider row from before the chat-completions contract.
-        api_mode="openai_responses",
+        api_mode="openai_chat",
         auth_type="api_key",
         auth_metadata={"source": "managed"},
         managed_by="clawdi",
-        runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+        runtime_env_name="CLAWDI_AI_API_KEY",
     )
     db_session.add(provider)
     db_session.add(
         AiProviderAuthPayload(
             owner_user_id=seed_user.id,
-            provider_id="clawdi-managed-v2",
+            provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
             auth_profile="default",
             kind="api_key",
             source="managed",
@@ -4688,7 +4930,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         "apiMode": "openai_chat",
         "managed_by": "clawdi",
         "models": managed_models,
-        "runtimeEnvName": "OPENAI_API_KEY",
+        "runtimeEnvName": "CLAWDI_AI_API_KEY",
         "apiKeySecretRef": "secret://tool.codex.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
@@ -4720,7 +4962,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         await db_session.execute(
             AiProviderAuthPayload.__table__.select().where(
                 AiProviderAuthPayload.owner_user_id == seed_user.id,
-                AiProviderAuthPayload.provider_id == "clawdi-managed-v2",
+                AiProviderAuthPayload.provider_id == CANONICAL_CODEX_TOOL_PROVIDER_ID,
             )
         )
     ).first()
@@ -4729,7 +4971,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         AiProviderAuthPayload.__table__.update()
         .where(
             AiProviderAuthPayload.owner_user_id == seed_user.id,
-            AiProviderAuthPayload.provider_id == "clawdi-managed-v2",
+            AiProviderAuthPayload.provider_id == CANONICAL_CODEX_TOOL_PROVIDER_ID,
         )
         .values(encrypted_payload=ciphertext, nonce=nonce)
     )
@@ -4753,7 +4995,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalog(
+async def test_runtime_state_preserves_deployment_provider_and_resolves_its_catalog(
     admin_client,
     db_session,
     seed_user,
@@ -4780,7 +5022,7 @@ async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalo
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
                 managed_by="clawdi",
-                runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+                runtime_env_name="CLAWDI_AI_API_KEY",
             ),
             AiProviderAuthPayload(
                 owner_user_id=seed_user.id,
@@ -4794,26 +5036,36 @@ async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalo
         ]
     )
     await db_session.commit()
-    primary_model = {
-        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+    internal_primary_model = {
+        "provider_id": internal_provider_id,
         "model": "gpt-5.5",
     }
     await _write_runtime_state(
         admin_client,
         str(env.id),
-        deployment_id="42",
         runtimes=_runtime_state(
-            provider_ids=[CLAWDI_MANAGED_PROVIDER_ID],
-            primary_model=primary_model,
+            provider_ids=[internal_provider_id],
+            primary_model=internal_primary_model,
         ),
         tools={
             "codex": {
                 "enabled": True,
-                "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
-                "primary_model": primary_model,
+                "provider_id": internal_provider_id,
+                "primary_model": internal_primary_model,
             }
         },
     )
+
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    agent_primary_model = {
+        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+        "model": "gpt-5.5",
+    }
+    assert state.runtimes["openclaw"]["provider_ids"] == [internal_provider_id]
+    assert state.runtimes["openclaw"]["primary_model"] == internal_primary_model
+    assert state.tools["codex"]["provider_id"] == internal_provider_id
+    assert state.tools["codex"]["primary_model"] == internal_primary_model
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -4824,7 +5076,7 @@ async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalo
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["runtimes"]["openclaw"]["provider_ids"] == [CLAWDI_MANAGED_PROVIDER_ID]
-    assert manifest["runtimes"]["openclaw"]["primary_model"] == primary_model
+    assert manifest["runtimes"]["openclaw"]["primary_model"] == agent_primary_model
     assert set(manifest["providers"]) == {CLAWDI_MANAGED_PROVIDER_ID}
     assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == models
     assert manifest["terminalTooling"]["codex"]["provider_id"] == (CLAWDI_MANAGED_PROVIDER_ID)
@@ -4939,10 +5191,10 @@ async def test_admin_managed_provider_models_project_exact_hosted_wire_contract(
         },
     }
     upsert = await admin_client.put(
-        "/v1/admin/ai-providers/clawdi-managed-v2",
+        f"/v1/admin/ai-providers/{CANONICAL_CODEX_TOOL_PROVIDER_ID}",
         headers=_AUTH,
         json={
-            "target_clerk_id": seed_user.clerk_id,
+            "owner": {"kind": "clerk", "ref": seed_user.clerk_id},
             "base_url": "https://sub2api.test/v1",
             "api_key": "sk-complete-provider",
             "models": [model],
@@ -5061,7 +5313,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
             auth_type="api_key",
             auth_metadata={"source": "managed"},
             managed_by="clawdi",
-            runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+            runtime_env_name="CLAWDI_AI_API_KEY",
         )
     )
     db_session.add(
@@ -5102,7 +5354,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
         "apiMode": "openai_responses",
         "managed_by": "clawdi",
         "models": [{"id": "openai-codex/gpt-5.5"}],
-        "runtimeEnvName": "OPENAI_API_KEY",
+        "runtimeEnvName": "CLAWDI_AI_API_KEY",
         "apiKeySecretRef": "secret://provider.clawdi-managed.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
@@ -5116,7 +5368,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_uses_structured_primary_model_without_catalog_model(
+async def test_runtime_manifest_projects_primary_model_when_provider_models_is_null(
     admin_client,
     db_session,
     seed_user,
@@ -5139,6 +5391,7 @@ async def test_runtime_manifest_uses_structured_primary_model_without_catalog_mo
             auth_type="api_key",
             auth_metadata={"source": "managed"},
             managed_by="user",
+            models=None,
             runtime_env_name="CUSTOM_OPENAI_API_KEY",
         )
     )
@@ -5178,10 +5431,10 @@ async def test_runtime_manifest_uses_structured_primary_model_without_catalog_mo
         "type": "custom_openai_compatible",
         "baseUrl": "https://provider.test/v1",
         "apiMode": "openai_responses",
+        "models": [{"id": "gpt-5.5"}],
         "runtimeEnvName": "CUSTOM_OPENAI_API_KEY",
         "apiKeySecretRef": "secret://provider.custom-openai.apiKey",
     }
-    assert "models" not in payload["manifest"]["providers"]["custom-openai"]
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "custom-openai",
         "model": "gpt-5.5",

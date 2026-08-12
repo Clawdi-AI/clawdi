@@ -40,9 +40,10 @@ export const AGENT_TARGET_CONTRACTS: Record<
 		status: "enabled",
 	},
 	openclaw: {
-		settingMethod: "openclaw config patch --stdin",
+		settingMethod:
+			"public openclaw/plugin-sdk/config-mutation for provider projection; openclaw config patch --stdin for other native patches",
 		verifiedContractBaseline:
-			"OpenClaw config patch and public provider-auth SDK contracts with namespaced SQLite profiles",
+			"OpenClaw 2026.7.1-2 public config-mutation/provider-auth SDK contracts and namespaced SQLite profiles",
 		status: "enabled",
 	},
 };
@@ -98,6 +99,7 @@ export function buildAgentTargetProjection(
 	target: AgentTarget,
 	catalog: AiProviderCatalog,
 	primaryModel?: AgentPrimaryModel,
+	options: { freezeManagedModelCatalog?: boolean } = {},
 ): AgentTargetProjection {
 	const validation = validateAiProviderCatalog(catalog);
 	if (!validation.valid) {
@@ -112,7 +114,12 @@ export function buildAgentTargetProjection(
 		target === "openclaw"
 			? buildOpenClawProjection(providers, primaryProvider, selectedPrimaryModel)
 			: target === "hermes"
-				? buildHermesProjection(providers, primaryProvider, selectedPrimaryModel)
+				? buildHermesProjection(
+						providers,
+						primaryProvider,
+						selectedPrimaryModel,
+						options.freezeManagedModelCatalog === true,
+					)
 				: buildCodexProjection(providers, primaryProvider, selectedPrimaryModel);
 	const extension = target === "openclaw" ? "json" : target === "hermes" ? "yaml" : "toml";
 	return {
@@ -442,6 +449,7 @@ function buildHermesProjection(
 	providers: ProjectionProvider[],
 	primaryProvider: ProjectionProvider,
 	primaryModel: AgentPrimaryModel,
+	freezeManagedModelCatalog: boolean,
 ): string {
 	const nativeCodexDefault = usesNativeCodexOpenAiProvider(primaryProvider);
 	const customProviders = providers.filter((provider) => !usesNativeCodexOpenAiProvider(provider));
@@ -471,6 +479,9 @@ function buildHermesProjection(
 		lines.push(`    transport: ${quoteYaml(transport)}`);
 		const envName = hermesKeyEnvForProvider(provider);
 		if (envName) lines.push(`    key_env: ${quoteYaml(envName)}`);
+		if (freezeManagedModelCatalog && provider.managed_by === "clawdi") {
+			lines.push("    discover_models: false");
+		}
 		lines.push(...hermesModelLines(provider));
 	}
 	return `${lines.join("\n")}\n`;

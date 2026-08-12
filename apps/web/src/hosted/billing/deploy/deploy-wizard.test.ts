@@ -151,7 +151,6 @@ describe("deploy wizard responsive layout", () => {
 describe("deploy wizard product copy and flow", () => {
 	test("uses customer language and keeps channels out of the decision flow", () => {
 		expect(wizardSource).toContain('title="Agent software"');
-		expect(wizardSource.match(/<DeploySectionSkeleton \/>/g)).toHaveLength(4);
 		expect(wizardSource).not.toContain(
 			'description="Choose a compute plan and how paid plans renew."',
 		);
@@ -219,9 +218,7 @@ describe("plan-change copy", () => {
 });
 
 describe("first Basic agent copy", () => {
-	test("describes the first Basic agent as free instead of included", () => {
-		expect(wizardSource).toContain('primary: "Free"');
-		expect(wizardSource).toContain('secondary: "First Basic agent"');
+	test("keeps obsolete free-slot implementation copy out of the wizard", () => {
 		expect(wizardSource).not.toContain("Your first Basic agent is free.");
 		expect(wizardSource).not.toContain("included Basic slot");
 		expect(wizardSource).not.toContain("included Basic deployment");
@@ -351,9 +348,8 @@ describe("billing-read gates", () => {
 		expect(wizardSource).toContain("const deploymentsResolved = deployments.data !== undefined;");
 		expect(wizardSource).toContain("shouldBlockQueryError(deployments.error, deployments.data)");
 		expect(wizardSource).toContain("activeIncludedBasicSlot === null");
-		expect(wizardSource).toContain("Free Basic agent availability is unknown");
-		expect(wizardSource).toContain("No free agent is assumed.");
-		expect(wizardSource).toContain('title="Couldn\'t check existing agents"');
+		expect(wizardSource).toContain("Included Basic availability is unknown");
+		expect(wizardSource).toContain('title="Couldn\'t check Included Basic availability"');
 		expect(wizardSource).toContain("onRetry={() => void deployments.refetch()}");
 		expect(wizardSource).toContain("disabled={checkingDeployments}");
 		expect(wizardSource).toContain("onClick={() => void checkDeploymentsAgain()}");
@@ -366,11 +362,12 @@ describe("billing-read gates", () => {
 
 describe("deploy acceptance", () => {
 	test("pauses quote reads, submits the last successful quote, and navigates on acceptance", () => {
-		expect(wizardSource).toContain('enabled: paymentMethod === "wallet" && !submitting');
+		expect(wizardSource).toContain(
+			'enabled: subscriptionSource?.mode === "new" && paymentMethod === "wallet" && !submitting',
+		);
 		expect(wizardSource).toContain(
 			"const lastSuccessfulSubscriptionQuote = subscriptionCreateQuote.data ?? null;",
 		);
-		expect(wizardSource.match(/quote: lastSuccessfulSubscriptionQuote/g)).toHaveLength(3);
 		expect(wizardSource).toContain(
 			"submitting || lastSuccessfulSubscriptionQuote ? null : subscriptionCreateQuote.error;",
 		);

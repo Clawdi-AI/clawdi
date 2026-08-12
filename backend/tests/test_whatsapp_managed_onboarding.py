@@ -70,6 +70,7 @@ class FakeManagedSidecar:
             connected=self.connected,
             registered=self.registered,
             account_jid="15551234567:1@s.whatsapp.net" if self.registered else None,
+            account_lid="900000000000001:1@lid" if self.registered else None,
             last_disconnect_reason=self.last_disconnect_reason,
         )
 
@@ -228,6 +229,10 @@ async def test_multiple_shared_accounts_use_distinct_sessions_on_one_service(
         assert first_account is not None and first_account.user_id is None
         assert second_account is not None and second_account.user_id is None
         assert first_account.config["phone_number"] == "15551234567"
+        assert first_account.config["self_identity"] == {
+            "id": "15551234567:1@s.whatsapp.net",
+            "lid": "900000000000001:1@lid",
+        }
         assert second_account.config["phone_number"] == "15551234567"
     finally:
         await registry.stop()
@@ -293,6 +298,10 @@ async def test_existing_shared_account_reauth_preserves_inventory_and_history(
         assert registry.managed_is_bound(account_id)
         await db_session.refresh(account)
         assert account.config["phone_number"] == "15551234567"
+        assert account.config["self_identity"] == {
+            "id": "15551234567:1@s.whatsapp.net",
+            "lid": "900000000000001:1@lid",
+        }
 
         await db_session.refresh(previous)
         assert previous.state == "connected"

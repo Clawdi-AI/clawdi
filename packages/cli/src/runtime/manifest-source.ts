@@ -19,15 +19,14 @@ import {
 } from "./hosted-egress-profiles";
 import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
-	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	type HostedRuntimeBundleV2Manifest,
 	type HostedRuntimeManifest,
 	hasUnsupportedAgentPluginInstallations,
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	manifestSchema,
-	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
+	officialInstallArgs,
 	RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 	type RuntimeManifest,
 } from "./manifest-contract";
@@ -39,6 +38,7 @@ import {
 	normalizeSecretValues,
 	runtimeSecretValue,
 } from "./secret-values";
+import { managedWhatsAppAuthCredentials } from "./whatsapp-credential-projection";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -60,14 +60,7 @@ export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runti
 export const HOSTED_RUNTIME_CAPABILITIES_HEADER = "x-clawdi-runtime-capabilities";
 export const HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1";
 
-export interface RuntimeBundleChannelBinding {
-	provider: "telegram" | "discord";
-	accountKey: string;
-	agentTokenSecretRef: string;
-	placeholderTokenSecretRef: string;
-}
-
-const runtimeBundleChannelBindingSchema = z
+const runtimeBundleTokenChannelBindingSchema = z
 	.object({
 		provider: z.enum(["telegram", "discord"]),
 		accountKey: z.string().min(1),
@@ -75,6 +68,42 @@ const runtimeBundleChannelBindingSchema = z
 		placeholderTokenSecretRef: canonicalSecretRefSchema,
 	})
 	.strict();
+
+const runtimeBundleWhatsAppBindingSchema = z
+	.object({
+		provider: z.literal("whatsapp"),
+		accountId: z.string().uuid(),
+		accountKey: z.string().min(1),
+		linkId: z.string().uuid(),
+		agentTokenSecretRef: canonicalSecretRefSchema,
+		placeholderTokenSecretRef: canonicalSecretRefSchema,
+		credential: z
+			.object({
+				id: z.string().uuid(),
+				credsSecretRef: canonicalSecretRefSchema,
+				authCert: z
+					.object({
+						SERIAL: z.number().int().nonnegative().safe(),
+						ISSUER: z.string().trim().min(1).max(256),
+						PUBLIC_KEY: z
+							.object({
+								type: z.literal("Buffer"),
+								data: z.string().min(1),
+							})
+							.strict(),
+					})
+					.strict(),
+			})
+			.strict(),
+	})
+	.strict();
+
+const runtimeBundleChannelBindingSchema = z.discriminatedUnion("provider", [
+	runtimeBundleTokenChannelBindingSchema,
+	runtimeBundleWhatsAppBindingSchema,
+]);
+
+export type RuntimeBundleChannelBinding = z.infer<typeof runtimeBundleChannelBindingSchema>;
 
 const hostedRuntimeBundleV2Schema = z
 	.object({
@@ -140,46 +169,9 @@ export interface RuntimeManifestFailure {
 	mode: "repair" | "manifest-rejected";
 	stage: "detect" | "local" | "network" | "auth";
 	errors: string[];
+	etag?: string;
 	rejectedGeneration?: number | null;
 	activeGeneration?: number | null;
-}
-
-export interface RuntimeChannelAgentLink {
-	id: string;
-	account_id: string;
-	agent_id: string;
-	status: string;
-	agent_token: string | null;
-}
-
-export interface RuntimeChannelCredential {
-	id: string;
-	account_id: string;
-	agent_link_id: string;
-	agent_id: string;
-	provider: string;
-	kind: string;
-	created_at?: string;
-	jid?: string | null;
-	identity_pub_key_hex?: string | null;
-	material?: unknown;
-}
-
-export interface RuntimeChannelAccount {
-	id: string;
-	provider: "telegram" | "discord" | "whatsapp";
-	name: string;
-	status: string;
-	visibility: "private" | "public";
-	runtime_links: RuntimeChannelAgentLink[];
-	runtime_credentials: RuntimeChannelCredential[];
-}
-
-export interface RuntimeChannelsLoad {
-	channels: RuntimeChannelAccount[];
-	source: "remote-datasource";
-	sourcePath: string;
-	etag?: string;
 }
 
 interface ExistingManifestState {
@@ -197,6 +189,15 @@ class RuntimeAuthError extends Error {
 				detail ? ` ${detail.slice(0, 200)}` : ""
 			}`,
 		);
+	}
+}
+
+class RuntimeManifestResponseError extends Error {
+	constructor(
+		message: string,
+		readonly etag: string | undefined,
+	) {
+		super(message);
 	}
 }
 
@@ -291,12 +292,20 @@ async function fetchRuntimeManifestPayload(
 		}
 		const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
 		if (contentType !== HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE) {
-			throw new Error(
+			throw new RuntimeManifestResponseError(
 				`runtime manifest response content-type must be ${HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE}, received ${contentType ?? "missing"}`,
+				etag,
 			);
 		}
 		if (!etag) throw new Error("runtime bundle response is missing its strong ETag");
-		return { url, raw: await response.json(), etag };
+		try {
+			return { url, raw: await response.json(), etag };
+		} catch (error) {
+			throw new RuntimeManifestResponseError(
+				`runtime manifest response is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+				etag,
+			);
+		}
 	} finally {
 		clearTimeout(timer);
 	}
@@ -329,6 +338,7 @@ async function loadRemoteRuntimeManifestPipeline(
 					error instanceof Error ? error.message : String(error)
 				}`,
 			],
+			...(error instanceof RuntimeManifestResponseError && error.etag ? { etag: error.etag } : {}),
 		};
 	}
 	if ("notModified" in fetched) {
@@ -350,18 +360,24 @@ async function loadRemoteRuntimeManifestPipeline(
 	try {
 		normalized = normalizeRemoteManifestPayload(fetched.raw);
 		assertRemoteBundleAuthority(normalized.sourceRevision, fetched.etag);
-		assertRuntimeApplyContextMatchesManifest(normalized.manifest, applyContext);
+		assertRuntimeApplyIdentityMatchesManifest(normalized.manifest, applyContext);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
 			stage: "network",
 			errors: error instanceof z.ZodError ? zodErrors(error) : [String(error)],
+			etag: fetched.etag,
 			rejectedGeneration: rawGeneration(fetched.raw),
 			activeGeneration: loadExistingState(paths).generation ?? null,
 		};
 	}
 	const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
-	if (!("manifest" in loaded)) return loaded;
+	if (!("manifest" in loaded)) {
+		return {
+			...loaded,
+			etag: fetched.etag,
+		};
+	}
 	return {
 		...loaded,
 		etag: fetched.etag,
@@ -390,7 +406,7 @@ function runtimeApplyContextLoadFields(applyContext: RuntimeApplyContext): {
 	return { applyContext };
 }
 
-function assertRuntimeApplyContextMatchesManifest(
+function assertRuntimeApplyIdentityMatchesManifest(
 	manifest: RuntimeManifest,
 	applyContext: RuntimeApplyContext,
 ): void {
@@ -400,15 +416,6 @@ function assertRuntimeApplyContextMatchesManifest(
 	) {
 		throw new Error(
 			`runtime apply identity generation ${applyContext.identity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(manifest)}`,
-		);
-	}
-	const manifestCliPackageSpec = manifest.clawdiCli?.packageSpec;
-	const pairedFixtureMatch =
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS === "1" &&
-		applyContext.cliPackageSpec === HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE;
-	if (applyContext.cliPackageSpec !== manifestCliPackageSpec && !pairedFixtureMatch) {
-		throw new Error(
-			`runtime context CLI package ${applyContext.cliPackageSpec} does not match manifest CLI package ${manifestCliPackageSpec ?? "missing"}`,
 		);
 	}
 }
@@ -466,7 +473,7 @@ export function hostedManifestToRuntimeManifest(
 					method: "official-installer" as const,
 					url: OFFICIAL_INSTALL_URLS[selectedRuntime],
 					home: paths.userHome,
-					args: OFFICIAL_INSTALL_ARGS[selectedRuntime],
+					args: officialInstallArgs(selectedRuntime, paths.userHome),
 				},
 				run: hostedRuntimeRunSettings(runtime.run),
 				services: Object.fromEntries(
@@ -691,8 +698,24 @@ function validateManifestSemantics(
 		if (runtime.install.args.includes("--dir")) {
 			errors.push(`runtime ${name} install args must not include --dir`);
 		}
-		if (runtime.install.args.includes("--prefix")) {
-			errors.push(`runtime ${name} install args must not include --prefix`);
+		const prefixIndexes = runtime.install.args.flatMap((arg, index) =>
+			arg === "--prefix" ? [index] : [],
+		);
+		if (prefixIndexes.length > 0) {
+			const expectedArgs = officialInstallArgs(name, runtime.install.home);
+			const expectedPrefixIndex = expectedArgs.indexOf("--prefix");
+			const expectedPrefix =
+				expectedPrefixIndex >= 0 ? expectedArgs[expectedPrefixIndex + 1] : undefined;
+			const prefixIndex = prefixIndexes[0];
+			if (
+				prefixIndexes.length !== 1 ||
+				expectedPrefix === undefined ||
+				runtime.install.args[prefixIndex + 1] !== expectedPrefix
+			) {
+				errors.push(
+					`runtime ${name} install prefix must match the official launcher prefix ${expectedPrefix ?? "none"}`,
+				);
+			}
 		}
 	}
 	return errors;
@@ -950,6 +973,11 @@ export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 	}
 	if (hasEnabledRuntime) {
 		for (const ref of egressProfileSecretRefs(manifest.egressProfiles)) refs.add(ref);
+		for (const credential of managedWhatsAppAuthCredentials(
+			manifest.projection?.channelCredentials,
+		)) {
+			refs.add(credential.credsJsonSecretRef);
+		}
 	}
 	return [...refs].sort();
 }

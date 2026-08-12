@@ -173,9 +173,11 @@ function convergeHostedEgressFixture(): { paths: RuntimePaths; root: string } {
 	// systemd-prescribed 0755 directory modes. Mirror that topology so the
 	// platform-root walk sees the same boundaries production has.
 	const systemdSystemRoot = join(root, "systemd-run", "system");
-	mkdirSync(join(home, ".openclaw", "bin"), { recursive: true });
+	const openclaw = join(home, ".local", "bin", "openclaw");
+	mkdirSync(dirname(openclaw), { recursive: true });
+	mkdirSync(join(home, ".openclaw"), { recursive: true });
 	writeFileSync(
-		join(home, ".openclaw", "bin", "openclaw"),
+		openclaw,
 		`#!/bin/sh
 case "$*" in
   "--version") printf '%s\\n' '2026.7.1' ;;
@@ -183,7 +185,7 @@ case "$*" in
 esac
 `,
 	);
-	chmodSync(join(home, ".openclaw", "bin", "openclaw"), 0o755);
+	chmodSync(openclaw, 0o755);
 
 	const originalEnv = { ...process.env };
 	process.env.HOME = home;

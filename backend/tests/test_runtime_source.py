@@ -8,10 +8,20 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
-from app.models.channel import ChannelAccount, ChannelBotAgentLink
-from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
+from app.models.channel import (
+    ChannelAccount,
+    ChannelAgentCredential,
+    ChannelBotAgentLink,
+    ChannelWhatsAppAuthCert,
+)
+from app.models.hosted_runtime import (
+    HostedRuntimeConfigObservation,
+    HostedRuntimeSecret,
+    HostedRuntimeState,
+)
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import HostedCodexProviderProjection
+from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
@@ -26,6 +36,7 @@ from app.services.runtime_source import (
     render_runtime_bundle,
     render_runtime_source,
 )
+from tests.hosted_runtime_fixtures import CANONICAL_CODEX_TOOL_PROVIDER_ID
 
 USER_ID = UUID("10000000-0000-0000-0000-000000000001")
 ENV_ID = UUID("20000000-0000-0000-0000-000000000002")
@@ -87,8 +98,11 @@ def _batch(
             "openclaw": {
                 "enabled": True,
                 "providerMode": "configured",
-                "provider_ids": ["managed"],
-                "primary_model": {"provider_id": "managed", "model": "gpt-test"},
+                "provider_ids": [CANONICAL_CODEX_TOOL_PROVIDER_ID],
+                "primary_model": {
+                    "provider_id": CANONICAL_CODEX_TOOL_PROVIDER_ID,
+                    "model": "gpt-test",
+                },
                 "install": {"source": "official"},
                 "run": {
                     "args": [
@@ -117,8 +131,11 @@ def _batch(
         tools={
             "codex": {
                 "enabled": True,
-                "provider_id": "managed",
-                "primary_model": {"provider_id": "managed", "model": "gpt-test"},
+                "provider_id": CANONICAL_CODEX_TOOL_PROVIDER_ID,
+                "primary_model": {
+                    "provider_id": CANONICAL_CODEX_TOOL_PROVIDER_ID,
+                    "model": "gpt-test",
+                },
             }
         },
     )
@@ -126,7 +143,7 @@ def _batch(
     provider = AiProvider(
         id=PROVIDER_ROW_ID,
         owner_user_id=USER_ID,
-        provider_id="managed",
+        provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
         type="custom_openai_compatible",
         label=provider_label,
         base_url="https://provider.test/v1",
@@ -138,7 +155,7 @@ def _batch(
     auth = AiProviderAuthPayload(
         id=AUTH_ROW_ID,
         owner_user_id=USER_ID,
-        provider_id="managed",
+        provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID,
         auth_profile="default",
         kind="api_key",
         source="managed",
@@ -165,8 +182,8 @@ def _batch(
     )
     return RuntimeSourceBatch(
         rows={ENV_ID: RuntimeSourceRow(environment, state)},
-        providers={(USER_ID, "managed"): provider},
-        auth_payloads={(USER_ID, "managed", "default"): auth},
+        providers={(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID): provider},
+        auth_payloads={(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID, "default"): auth},
         channels={ENV_ID: ((account, link),)},
         runtime_secrets={
             ENV_ID: (
@@ -250,40 +267,38 @@ def _add_prefix_colliding_channel(batch: RuntimeSourceBatch) -> None:
     batch.channels[ENV_ID] = (*batch.channels[ENV_ID], (account, link))
 
 
-def _use_managed_provider(
+def _use_whatsapp_channel(
     batch: RuntimeSourceBatch,
-    *,
-    bound_provider_id: str,
-    source_provider_id: str,
-) -> str:
-    state = batch.rows[ENV_ID].state
-    assert state is not None
-    state.deployment_id = "42"
-    runtime = dict(state.runtimes["openclaw"])
-    runtime["provider_ids"] = [bound_provider_id]
-    runtime["primary_model"] = {
-        "provider_id": bound_provider_id,
-        "model": "gpt-test",
-    }
-    state.runtimes = {"openclaw": runtime}
-    state.tools = {
-        "codex": {
-            "enabled": True,
-            "provider_id": bound_provider_id,
-            "primary_model": {
-                "provider_id": bound_provider_id,
-                "model": "gpt-test",
-            },
-        }
-    }
-
-    provider = batch.providers.pop((USER_ID, "managed"))
-    provider.provider_id = source_provider_id
-    batch.providers[(USER_ID, source_provider_id)] = provider
-    auth = batch.auth_payloads.pop((USER_ID, "managed", "default"))
-    auth.provider_id = source_provider_id
-    batch.auth_payloads[(USER_ID, source_provider_id, "default")] = auth
-    return source_provider_id
+) -> tuple[ChannelAgentCredential, ChannelWhatsAppAuthCert]:
+    account, link = batch.channels[ENV_ID][0]
+    account.provider = "whatsapp"
+    credential = ChannelAgentCredential(
+        id=UUID("80000000-0000-0000-0000-000000000011"),
+        account_id=account.id,
+        bot_agent_link_id=link.id,
+        user_id=USER_ID,
+        provider="whatsapp",
+        identity_pub_key_hash="1" * 64,
+        identity_public_key=b"identity-public-key",
+        synthetic_jid="15551234567:1@s.whatsapp.net",
+        encrypted_credentials=b'{"advSecretKey":"managed-whatsapp"}',
+        credential_nonce=b"credential-nonce",
+    )
+    auth_cert = ChannelWhatsAppAuthCert(
+        id=UUID("90000000-0000-0000-0000-000000000012"),
+        account_id=account.id,
+        user_id=USER_ID,
+        root_public_key=b"r" * 32,
+        encrypted_root_private_key=b"root-private",
+        root_private_key_nonce=b"root-nonce",
+        intermediate_public_key=b"i" * 32,
+        encrypted_intermediate_private_key=b"intermediate-private",
+        intermediate_private_key_nonce=b"intermediate-nonce",
+        serial=7,
+    )
+    batch.channel_credentials[link.id] = credential
+    batch.whatsapp_auth_certs[account.id] = auth_cert
+    return credential, auth_cert
 
 
 def _render(batch: RuntimeSourceBatch):
@@ -294,6 +309,53 @@ def _render(batch: RuntimeSourceBatch):
         vault_key_identity="vault-key-generation-1",
         decrypt_secrets=False,
     )
+
+
+def _set_healthy_cli_observation(
+    batch: RuntimeSourceBatch,
+    *,
+    desired: str,
+    active: str | None = None,
+    source_revision: str = "a" * 64,
+) -> HostedRuntimeConfigObservation:
+    row = batch.rows[ENV_ID]
+    assert row.state is not None
+    row.state.cli_package_spec = desired
+    expected_generation = (
+        row.state.apply_generation
+        if row.state.apply_generation is not None
+        else row.state.generation
+    )
+    etag = expected_runtime_bundle_v2_etag(source_revision)
+    observation = HostedRuntimeConfigObservation(
+        environment_id=ENV_ID,
+        observed_config_generation=expected_generation,
+        observed_manifest_etag=etag,
+        observed_source_revision=source_revision,
+        diagnostics={
+            "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+            "reportedAt": "2026-07-13T00:00:00Z",
+            "runtimeMode": "hosted",
+            "status": "ok",
+            "activeCliVersion": active or desired.removeprefix("clawdi@"),
+            "applied": {
+                "etag": etag,
+                "sourceRevision": source_revision,
+                "generation": expected_generation,
+                "instanceId": row.state.instance_id,
+                "appliedProviderIds": ["managed"],
+            },
+            "boot": None,
+            "cli": None,
+            "convergeError": None,
+        },
+    )
+    batch.rows[ENV_ID] = RuntimeSourceRow(row.environment, row.state, observation)
+    return observation
+
+
+def _codex_runtime_env(batch: RuntimeSourceBatch) -> str:
+    return _render(batch).manifest["terminalTooling"]["codex"]["provider"]["runtimeEnvName"]
 
 
 def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sources() -> None:
@@ -347,6 +409,67 @@ def test_runtime_source_revalidates_persisted_agent_plugins_before_rendering() -
 
     with pytest.raises(RuntimeSourceError, match="Agent Plugins state is invalid"):
         _render(batch)
+
+
+def test_runtime_source_binds_whatsapp_capability_and_revision_to_link_credential_and_cert(
+    monkeypatch,
+) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    credential, auth_cert = _use_whatsapp_channel(batch)
+    account, link = batch.channels[ENV_ID][0]
+    monkeypatch.setattr(runtime_source, "decrypt", lambda ciphertext, _nonce: ciphertext.decode())
+
+    source = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=True,
+    )
+    account_key = channel_runtime_account_key(account.id)
+    agent_ref = f"secret://channels/whatsapp/{account_key}/links/{link.id}/agent-token"
+    capability_ref = f"secret://channels/whatsapp/{account_key}/links/{link.id}/egress-capability"
+    credential_ref = (
+        f"secret://channels/whatsapp/{account_key}/credentials/{credential.id}/creds-json"
+    )
+    assert source.channel_bindings == [
+        {
+            "provider": "whatsapp",
+            "accountId": str(account.id),
+            "accountKey": account_key,
+            "linkId": str(link.id),
+            "agentTokenSecretRef": agent_ref,
+            "placeholderTokenSecretRef": capability_ref,
+            "credential": {
+                "id": str(credential.id),
+                "credsSecretRef": credential_ref,
+                "authCert": {
+                    "SERIAL": 7,
+                    "ISSUER": "clawdi",
+                    "PUBLIC_KEY": {
+                        "type": "Buffer",
+                        "data": "cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI=",
+                    },
+                },
+            },
+        }
+    ]
+    assert source.secret_values[capability_ref] == channel_runtime_placeholder_token(
+        "whatsapp", account_key, link_id=link.id
+    )
+    assert source.secret_values[credential_ref] == credential.encrypted_credentials.decode()
+
+    initial_revision = source.source_revision
+    credential.encrypted_credentials = b'{"advSecretKey":"rotated"}'
+    credential_rotated = _render(batch)
+    credential.encrypted_credentials = b'{"advSecretKey":"managed-whatsapp"}'
+    auth_cert.root_public_key = b"s" * 32
+    cert_rotated = _render(batch)
+
+    assert credential_rotated.source_revision != initial_revision
+    assert cert_rotated.source_revision != initial_revision
 
 
 def test_runtime_source_delivers_owned_oauth_only_to_selected_runtime(monkeypatch) -> None:
@@ -512,7 +635,7 @@ def test_runtime_source_rejects_non_public_provider_without_decrypting_secret(mo
     from app.services import runtime_source
 
     batch = _batch()
-    provider = batch.providers[(USER_ID, "managed")]
+    provider = batch.providers[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID)]
     provider.base_url = "https://provider.home.arpa/v1"
 
     decrypt_calls: list[tuple[bytes, bytes]] = []
@@ -629,7 +752,9 @@ def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs
 
     assert source.manifest["providers"] == {}
     assert source.manifest["runtimes"]["openclaw"]["providerMode"] == "unmanaged"
-    assert source.manifest["terminalTooling"]["codex"]["provider_id"] == "managed"
+    assert source.manifest["terminalTooling"]["codex"]["provider_id"] == (
+        CLAWDI_MANAGED_PROVIDER_ID
+    )
     assert source.manifest["terminalTooling"]["codex"]["provider"]["apiMode"] == (
         "openai_responses"
     )
@@ -638,25 +763,136 @@ def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs
     assert "clawdi://" not in json.dumps(bundle)
 
 
-def test_codex_tool_projection_pydantic_contract_rejects_openai_chat() -> None:
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("apiMode", "openai_chat"),
+        ("runtimeEnvName", "CUSTOM_OPENAI_API_KEY"),
+    ],
+)
+def test_codex_tool_projection_rejects_invalid_fixed_fields(field: str, value: str) -> None:
+    projection = {
+        "kind": "openai-compatible",
+        "type": "custom_openai_compatible",
+        "baseUrl": "https://provider.test/v1",
+        "apiMode": "openai_responses",
+        "managed_by": "clawdi",
+        "runtimeEnvName": "OPENAI_API_KEY",
+        "apiKeySecretRef": "secret://tool.codex.apiKey",
+    }
+    projection[field] = value
+
     with pytest.raises(ValueError):
-        HostedCodexProviderProjection.model_validate(
-            {
-                "kind": "openai-compatible",
-                "type": "custom_openai_compatible",
-                "baseUrl": "https://provider.test/v1",
-                "apiMode": "openai_chat",
-                "managed_by": "clawdi",
-                "runtimeEnvName": "OPENAI_API_KEY",
-                "apiKeySecretRef": "secret://tool.codex.apiKey",
-            }
-        )
+        HostedCodexProviderProjection.model_validate(projection)
+
+
+@pytest.mark.parametrize(
+    ("desired", "active", "expected"),
+    [
+        ("0.13.68", "0.13.68", "OPENAI_API_KEY"),
+        ("0.13.69-rc.1", "0.13.69-rc.1", "OPENAI_API_KEY"),
+        ("0.13.69", "0.13.68", "OPENAI_API_KEY"),
+        ("0.13.69", "0.13.69", "CLAWDI_AI_API_KEY"),
+        ("0.14.0-rc.1", "0.14.0-rc.1", "CLAWDI_AI_API_KEY"),
+        ("0.13.68", "0.14.0", "OPENAI_API_KEY"),
+    ],
+)
+def test_codex_tool_env_respects_cli_version_boundary(
+    desired: str,
+    active: str,
+    expected: str,
+) -> None:
+    batch = _batch()
+    _set_healthy_cli_observation(
+        batch,
+        desired=f"clawdi@{desired}",
+        active=active,
+    )
+
+    assert _codex_runtime_env(batch) == expected
+
+
+def test_codex_tool_env_stays_legacy_until_new_cli_is_observed() -> None:
+    missing = _batch()
+    assert missing.rows[ENV_ID].state is not None
+    missing.rows[ENV_ID].state.cli_package_spec = "clawdi@0.13.69"
+    invalid = _batch()
+    invalid_observation = _set_healthy_cli_observation(invalid, desired="clawdi@0.13.69")
+    invalid_observation.diagnostics = {"schemaVersion": "clawdi.hostedRuntimeObserved.v2"}
+
+    assert [_codex_runtime_env(batch) for batch in (missing, invalid)] == [
+        "OPENAI_API_KEY",
+        "OPENAI_API_KEY",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("diagnostics_update", "applied_update", "observation_update"),
+    [
+        ({"status": "error"}, {}, {}),
+        ({"convergeError": "apply failed"}, {}, {}),
+        ({"applied": None}, {}, {}),
+        ({}, {"instanceId": "hri_previous"}, {}),
+        ({}, {"generation": 0}, {}),
+        ({}, {}, {"observed_config_generation": 0}),
+        ({}, {}, {"observed_manifest_etag": expected_runtime_bundle_v2_etag("b" * 64)}),
+        ({}, {}, {"observed_source_revision": "b" * 64}),
+    ],
+)
+def test_codex_tool_env_rejects_unhealthy_or_inconsistent_observations(
+    diagnostics_update: dict[str, object],
+    applied_update: dict[str, object],
+    observation_update: dict[str, object],
+) -> None:
+    batch = _batch()
+    observation = _set_healthy_cli_observation(batch, desired="clawdi@0.13.69")
+    assert isinstance(observation.diagnostics, dict)
+    applied = observation.diagnostics["applied"]
+    observation.diagnostics.update(diagnostics_update)
+    if applied_update:
+        assert isinstance(applied, dict)
+        applied.update(applied_update)
+    for field, value in observation_update.items():
+        setattr(observation, field, value)
+
+    assert _codex_runtime_env(batch) == "OPENAI_API_KEY"
+
+
+def test_codex_tool_env_cutover_reaches_a_stable_source_revision() -> None:
+    batch = _batch()
+    assert batch.rows[ENV_ID].state is not None
+    batch.rows[ENV_ID].state.cli_package_spec = "clawdi@0.13.69"
+    legacy = _render(batch)
+    assert _codex_runtime_env(batch) == "OPENAI_API_KEY"
+
+    observation = _set_healthy_cli_observation(
+        batch,
+        desired="clawdi@0.13.69",
+        source_revision=legacy.source_revision,
+    )
+    canonical = _render(batch)
+    assert canonical.source_revision != legacy.source_revision
+    assert observation.observed_source_revision == legacy.source_revision
+    assert observation.observed_source_revision != canonical.source_revision
+    assert _codex_runtime_env(batch) == "CLAWDI_AI_API_KEY"
+    assert _render(batch).source_revision == canonical.source_revision
+
+    assert isinstance(observation.diagnostics, dict)
+    applied = observation.diagnostics["applied"]
+    assert isinstance(applied, dict)
+    canonical_etag = expected_runtime_bundle_v2_etag(canonical.source_revision)
+    applied.update({"etag": canonical_etag, "sourceRevision": canonical.source_revision})
+    observation.observed_manifest_etag = canonical_etag
+    observation.observed_source_revision = canonical.source_revision
+    assert _render(batch).source_revision == canonical.source_revision
 
 
 def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None:
     source = _render(_batch())
 
-    assert source.manifest["providers"]["managed"]["apiMode"] == "openai_chat"
+    runtime_provider = source.manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]
+    assert runtime_provider["apiMode"] == "openai_chat"
+    assert runtime_provider["models"] == [{"id": "gpt-test"}]
     codex_provider = source.manifest["terminalTooling"]["codex"]["provider"]
     assert codex_provider == {
         "kind": "openai-compatible",
@@ -669,41 +905,23 @@ def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None
     }
 
 
-@pytest.mark.parametrize(
-    ("bound_provider_id", "source_provider_id"),
-    [
-        (CLAWDI_MANAGED_PROVIDER_ID, "clawdi-v2-deployment-42"),
-        (CLAWDI_MANAGED_PROVIDER_ID, V2_MANAGED_AI_PROVIDER_ID),
-        (CLAWDI_MANAGED_PROVIDER_ID, V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID),
-        (CLAWDI_MANAGED_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID),
-        (V2_MANAGED_AI_PROVIDER_ID, "clawdi-v2-deployment-42"),
-        ("clawdi-v2-deployment-42", "clawdi-v2-deployment-42"),
-        (
-            V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
-            V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
-        ),
-        (V2_LEGACY_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID),
-    ],
-    ids=[
-        "agent-alias-scoped-source",
-        "agent-alias-base-source",
-        "agent-alias-legacy-public-source",
-        "agent-alias-legacy-source",
-        "stable-internal",
-        "deployment-scoped",
-        "legacy-public",
-        "legacy-internal",
-    ],
-)
-def test_managed_v2_provider_projects_bare_agent_identity(
-    bound_provider_id: str,
-    source_provider_id: str,
-) -> None:
+def test_managed_v2_exact_provider_source_projects_bare_agent_identity() -> None:
     batch = _batch()
-    persisted_provider_id = _use_managed_provider(
-        batch,
-        bound_provider_id=bound_provider_id,
-        source_provider_id=source_provider_id,
+    source_provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
+    scoped_provider = batch.providers[(USER_ID, source_provider_id)]
+    scoped_provider.models = [{"id": "scoped-model", "label": "Scoped model"}]
+    batch.providers[(USER_ID, V2_MANAGED_AI_PROVIDER_ID)] = AiProvider(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id=V2_MANAGED_AI_PROVIDER_ID,
+        type=scoped_provider.type,
+        label=scoped_provider.label,
+        base_url=scoped_provider.base_url,
+        api_mode=scoped_provider.api_mode,
+        auth_type=scoped_provider.auth_type,
+        auth_metadata=scoped_provider.auth_metadata,
+        managed_by=scoped_provider.managed_by,
+        models=[{"id": "wrong-user-level-model"}],
     )
 
     source = _render(batch)
@@ -715,6 +933,11 @@ def test_managed_v2_provider_projects_bare_agent_identity(
         "model": "gpt-test",
     }
     assert set(manifest["providers"]) == {CLAWDI_MANAGED_PROVIDER_ID}
+    assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == [
+        {"id": "gpt-test"},
+        {"id": "scoped-model", "label": "Scoped model"},
+    ]
+    assert scoped_provider.models == [{"id": "scoped-model", "label": "Scoped model"}]
     assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["apiKeySecretRef"] == (
         "secret://tool.codex.apiKey"
     )
@@ -722,40 +945,76 @@ def test_managed_v2_provider_projects_bare_agent_identity(
     assert manifest["terminalTooling"]["codex"]["primary_model"]["provider_id"] == (
         CLAWDI_MANAGED_PROVIDER_ID
     )
-    if persisted_provider_id != CLAWDI_MANAGED_PROVIDER_ID:
-        assert persisted_provider_id not in json.dumps(manifest)
+    assert source_provider_id not in json.dumps(manifest)
 
 
-def test_bare_managed_alias_prefers_deployment_source_over_fallback_rows() -> None:
+@pytest.mark.parametrize(
+    ("runtime_provider_id", "codex_provider_id", "error"),
+    [
+        (
+            CLAWDI_MANAGED_PROVIDER_ID,
+            CANONICAL_CODEX_TOOL_PROVIDER_ID,
+            "exact deployment source",
+        ),
+        (
+            V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+            CANONICAL_CODEX_TOOL_PROVIDER_ID,
+            "exact deployment source",
+        ),
+        (
+            V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+            CANONICAL_CODEX_TOOL_PROVIDER_ID,
+            "exact deployment source",
+        ),
+        (
+            "clawdi-v2-deployment-0",
+            CANONICAL_CODEX_TOOL_PROVIDER_ID,
+            "source is invalid",
+        ),
+        (
+            "clawdi-v2-deployment-43",
+            "clawdi-v2-deployment-43",
+            "missing or archived",
+        ),
+        (
+            CANONICAL_CODEX_TOOL_PROVIDER_ID,
+            "custom-managed-provider",
+            "Codex tool provider must use its exact deployment source",
+        ),
+        (
+            CANONICAL_CODEX_TOOL_PROVIDER_ID,
+            "clawdi-v2-deployment-43",
+            "multiple provider bindings",
+        ),
+    ],
+    ids=[
+        "bare",
+        "legacy-public",
+        "legacy-internal",
+        "malformed",
+        "missing",
+        "custom-codex-source",
+        "mismatch",
+    ],
+)
+def test_managed_v2_provider_source_fails_closed(
+    runtime_provider_id: str,
+    codex_provider_id: str,
+    error: str,
+) -> None:
     batch = _batch()
-    _use_managed_provider(
-        batch,
-        bound_provider_id=CLAWDI_MANAGED_PROVIDER_ID,
-        source_provider_id="clawdi-v2-deployment-42",
-    )
-    scoped_provider = batch.providers[(USER_ID, "clawdi-v2-deployment-42")]
-    scoped_provider.models = [{"id": "scoped-model"}]
-    for provider_id, model in [
-        (V2_MANAGED_AI_PROVIDER_ID, "base-model"),
-        (V2_LEGACY_MANAGED_AI_PROVIDER_ID, "legacy-model"),
-    ]:
-        batch.providers[(USER_ID, provider_id)] = AiProvider(
-            id=uuid4(),
-            owner_user_id=USER_ID,
-            provider_id=provider_id,
-            type=scoped_provider.type,
-            label=scoped_provider.label,
-            base_url=scoped_provider.base_url,
-            api_mode=scoped_provider.api_mode,
-            auth_type=scoped_provider.auth_type,
-            auth_metadata=scoped_provider.auth_metadata,
-            managed_by=scoped_provider.managed_by,
-            models=[{"id": model}],
-        )
+    state = batch.rows[ENV_ID].state
+    assert state is not None and state.tools is not None
+    runtime = state.runtimes["openclaw"]
+    runtime["provider_ids"] = [runtime_provider_id]
+    runtime["primary_model"]["provider_id"] = runtime_provider_id
+    state.tools["codex"]["provider_id"] = codex_provider_id
+    state.tools["codex"]["primary_model"]["provider_id"] = codex_provider_id
+    batch.providers.clear()
+    batch.auth_payloads.clear()
 
-    manifest = _render(batch).manifest
-
-    assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == [{"id": "scoped-model"}]
+    with pytest.raises(RuntimeSourceError, match=error):
+        _render(batch)
 
 
 @pytest.mark.parametrize(
@@ -775,17 +1034,19 @@ def test_codex_tool_provider_fails_closed_without_platform_credential(failure: s
     if failure == "missing_provider":
         batch.providers.clear()
     elif failure == "user_owned":
-        batch.providers[(USER_ID, "managed")].managed_by = "user"
+        batch.providers[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID)].managed_by = "user"
     elif failure == "missing_payload":
         batch.auth_payloads.clear()
     elif failure == "payload_kind":
-        batch.auth_payloads[(USER_ID, "managed", "default")].kind = "oauth_profile"
+        batch.auth_payloads[
+            (USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID, "default")
+        ].kind = "oauth_profile"
     elif failure == "payload_source":
-        batch.auth_payloads[(USER_ID, "managed", "default")].source = "vault"
+        batch.auth_payloads[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID, "default")].source = "vault"
     elif failure == "provider_auth_type":
-        batch.providers[(USER_ID, "managed")].auth_type = "agent_profile"
+        batch.providers[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID)].auth_type = "agent_profile"
     else:
-        batch.providers[(USER_ID, "managed")].api_mode = "anthropic_messages"
+        batch.providers[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID)].api_mode = "anthropic_messages"
 
     with pytest.raises(RuntimeSourceError, match="Hosted Codex tool provider"):
         _render(batch)

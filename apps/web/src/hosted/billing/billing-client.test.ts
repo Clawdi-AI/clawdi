@@ -2,22 +2,76 @@ import { describe, expect, it } from "bun:test";
 import {
 	acceptDeclarativeOperation,
 	createBillingClient,
+	retryIdempotentBillingTransport,
 	unwrapDeploy,
 } from "@/hosted/billing/billing-client";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
-import type { DeploymentOperation } from "@/hosted/billing/contracts";
+import type {
+	ComputePlanChangeBillingEffect,
+	ComputePlanChangeKind,
+	ComputePlanChangeProgress,
+	DeploymentOperation,
+} from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
 	BillingNetworkError,
 	DEPLOYMENT_CONFLICT_MESSAGE,
 	DeploymentConflictError,
-	DeploymentRequestTerminalError,
 	PlanChangePendingError,
 	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 const NOW = "2026-07-22T00:00:00Z";
+
+describe("idempotent billing transport", () => {
+	it("retries one network failure with the exact request", async () => {
+		const seen: Array<{ body: string; key: string | null; auth: string | null }> = [];
+		const transport = retryIdempotentBillingTransport(async (request) => {
+			seen.push({
+				body: await request.text(),
+				key: request.headers.get("Idempotency-Key"),
+				auth: request.headers.get("Authorization"),
+			});
+			if (seen.length === 1) throw new BillingNetworkError("offline");
+			return new Response(null, { status: 204 });
+		});
+		const response = await transport(
+			new Request("https://api.clawdi.ai/v2/wallet/topup", {
+				method: "POST",
+				headers: { "Idempotency-Key": "topup-1", Authorization: "Bearer token" },
+				body: '{"amount_usd":12}',
+			}),
+		);
+		expect(response.status).toBe(204);
+		expect(seen).toEqual([
+			{ body: '{"amount_usd":12}', key: "topup-1", auth: "Bearer token" },
+			{ body: '{"amount_usd":12}', key: "topup-1", auth: "Bearer token" },
+		]);
+	});
+
+	it("does not retry responses, aborts, or a second network failure", async () => {
+		for (const scenario of ["response", "abort", "other-endpoint", "second-failure"] as const) {
+			let calls = 0;
+			const controller = new AbortController();
+			const transport = retryIdempotentBillingTransport(async () => {
+				calls += 1;
+				if (scenario === "response") return new Response(null, { status: 502 });
+				if (scenario === "abort") controller.abort();
+				throw new BillingNetworkError("offline");
+			});
+			const path = scenario === "other-endpoint" ? "/v2/subscription/checkout" : "/v2/wallet/topup";
+			const request = new Request(`https://api.clawdi.ai${path}`, {
+				method: "POST",
+				headers: { "Idempotency-Key": "topup-1" },
+				signal: controller.signal,
+			});
+			if (scenario === "response") expect((await transport(request)).status).toBe(502);
+			else await expect(transport(request)).rejects.toBeInstanceOf(BillingNetworkError);
+			expect(calls).toBe(scenario === "second-failure" ? 2 : 1);
+		}
+	});
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -60,9 +114,29 @@ function operation({
 }
 
 function planChangeOperation(
-	state: string,
-	{ done = false, error = null }: { done?: boolean; error?: unknown } = {},
-) {
+	state: ComputePlanChangeProgress["state"],
+	{
+		done = false,
+		error = null,
+		changeKind = "immediate_upgrade",
+		billingEffect = changeKind === "funding_source_switch"
+			? "future_renewals"
+			: "immediate_proration",
+		fundingSource = "wallet",
+		sourcePlanSlug = "compute_basic",
+		targetPlanSlug = changeKind === "funding_source_switch"
+			? sourcePlanSlug
+			: "compute_performance",
+	}: {
+		done?: boolean;
+		error?: DeploymentOperation["error"];
+		changeKind?: ComputePlanChangeKind;
+		billingEffect?: ComputePlanChangeBillingEffect;
+		fundingSource?: "stripe" | "wallet";
+		sourcePlanSlug?: string;
+		targetPlanSlug?: string;
+	} = {},
+): DeploymentOperation {
 	return {
 		name: "operations/plan-change-1",
 		metadata: {
@@ -77,9 +151,11 @@ function planChangeOperation(
 				"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
 				operationId: "plan-change-1",
 				subscriptionId: 42,
-				fundingSource: "wallet",
-				sourcePlanSlug: "compute_basic",
-				targetPlanSlug: "compute_performance",
+				fundingSource,
+				changeKind,
+				billingEffect,
+				sourcePlanSlug,
+				targetPlanSlug,
 				targetBillingTermMonths: 1,
 				state,
 				effectiveAt: NOW,
@@ -87,7 +163,13 @@ function planChangeOperation(
 		},
 		done,
 		error,
-		response: null,
+		response:
+			done && error === null
+				? {
+						"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+						deployment: hostedDeploymentFixture({ id: "hdep_test" }).resource,
+					}
+				: null,
 	};
 }
 
@@ -474,31 +556,51 @@ describe("declarative deployment mutations", () => {
 		]);
 	});
 
-	it("bounds an initial by-request not-found race", async () => {
+	it("stops an in-flight deployment request read at its wall-clock deadline", async () => {
 		const requests: Request[] = [];
 		const deployRequestId = "checkout/race:stable";
-		let sleeps = 0;
+		let requestWasAborted = false;
 		const client = createBillingClient(async () => "test-token", {
 			fetch: async (request) => {
 				requests.push(request.clone());
-				return jsonResponse({ detail: "Deploy request not visible yet" }, 404);
+				return await new Promise<Response>((_resolve, reject) => {
+					const rejectAbort = () => {
+						requestWasAborted = true;
+						reject(request.signal.reason ?? new DOMException("Aborted", "AbortError"));
+					};
+					if (request.signal.aborted) rejectAbort();
+					else request.signal.addEventListener("abort", rejectAbort, { once: true });
+				});
 			},
-			operationPollLimit: 2,
-			sleep: async () => {
-				sleeps += 1;
-			},
+			deploymentRequestTimeoutMs: 25,
 		});
 
+		const startedAt = Date.now();
 		await expect(client.waitForDeploymentRequest(deployRequestId)).rejects.toBeInstanceOf(
 			BillingNetworkError,
 		);
-		expect(requests.map((request) => new URL(request.url).pathname)).toEqual(
-			Array.from(
-				{ length: 3 },
-				() => `/v2/deployments/by-request/${encodeURIComponent(deployRequestId)}`,
-			),
+		expect(Date.now() - startedAt).toBeLessThan(1_000);
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+			`/v2/deployments/by-request/${encodeURIComponent(deployRequestId)}`,
+		]);
+		expect(requestWasAborted).toBe(true);
+	});
+
+	it("caps zero-delay transient reads independently of the deadline", async () => {
+		let requestCount = 0;
+		const client = createBillingClient(async () => "test-token", {
+			fetch: async () => {
+				requestCount += 1;
+				return jsonResponse({ detail: "Deploy request not visible yet" }, 404);
+			},
+			operationPollLimit: 2,
+			sleep: async () => undefined,
+		});
+
+		await expect(client.waitForDeploymentRequest("checkout-not-visible")).rejects.toBeInstanceOf(
+			BillingNetworkError,
 		);
-		expect(sleeps).toBe(2);
+		expect(requestCount).toBe(3);
 	});
 
 	it("surfaces a checkout deployment request that fails before acceptance", async () => {
@@ -522,9 +624,10 @@ describe("declarative deployment mutations", () => {
 			throw new Error(`Unexpected request: ${request.method} ${path}`);
 		});
 
-		await expect(client.waitForDeploymentRequest(intentKey)).rejects.toBeInstanceOf(
-			DeploymentRequestTerminalError,
-		);
+		await expect(client.waitForDeploymentRequest(intentKey)).rejects.toMatchObject({
+			name: "DeploymentRequestTerminalError",
+			request: { deploy_request_id: intentKey, request_status: "failed" },
+		});
 		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
 			`/v2/deployments/by-request/${intentKey}`,
 		]);
@@ -864,6 +967,73 @@ describe("declarative deployment mutations", () => {
 	});
 });
 
+describe("account compute subscriptions", () => {
+	it("lists subscriptions and targets cancel or resume by subscription id", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			const path = new URL(request.url).pathname;
+			if (path === "/v2/subscriptions") {
+				return jsonResponse({
+					items: [
+						{
+							subscription_id: "csub_test",
+							plan_slug: "compute_performance",
+							funding_source: "stripe",
+							status: "active",
+							price_cents: 2_000,
+							currency: "usd",
+							billing_term_months: 1,
+							current_period_end: "2026-08-22T00:00:00Z",
+							cancel_at_period_end: false,
+							deployment_id: "hdep_test",
+							agent_name: "Performance agent",
+							is_orphan: false,
+						},
+					],
+					has_more: true,
+					next_cursor: "cursor-next",
+				});
+			}
+			return jsonResponse({
+				status: "active",
+				funding_source: "stripe",
+				billing_term_months: 1,
+				cancel_at_period_end: path.endsWith("/cancel"),
+				current_period_end: "2026-08-22T00:00:00Z",
+			});
+		});
+
+		await expect(client.getSubscriptions(3, "cursor-current")).resolves.toEqual({
+			items: [
+				expect.objectContaining({
+					subscription_id: "csub_test",
+					agent_name: "Performance agent",
+					is_orphan: false,
+				}),
+			],
+			has_more: true,
+			next_cursor: "cursor-next",
+		});
+		await client.cancelSubscription({ subscription_id: "csub_test" });
+		await client.resumeSubscription({ subscription_id: "csub_test" });
+
+		expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+			["GET", "/v2/subscriptions"],
+			["POST", "/v2/subscription/cancel"],
+			["POST", "/v2/subscription/resume"],
+		]);
+		expect(await requests[1]?.json()).toEqual({ subscription_id: "csub_test" });
+		expect(await requests[2]?.json()).toEqual({ subscription_id: "csub_test" });
+		expect(new URL(requests[0]?.url ?? "").searchParams).toEqual(
+			new URLSearchParams({ limit: "3", cursor: "cursor-current" }),
+		);
+		expect(
+			requests.every((request) => request.headers.get("Authorization") === "Bearer test-token"),
+		).toBe(true);
+	});
+});
+
 describe("compute plan changes", () => {
 	it("accepts once and waits through awaiting_payment for terminal success", async () => {
 		const requests: Request[] = [];
@@ -889,7 +1059,11 @@ describe("compute plan changes", () => {
 			}),
 		).resolves.toEqual({
 			kind: "complete",
+			operationName: "operations/plan-change-1",
 			effectiveAt: NOW,
+			changeKind: "immediate_upgrade",
+			billingEffect: "immediate_proration",
+			fundingSource: "wallet",
 		});
 		expect(acceptedOperations).toEqual(["operations/plan-change-1"]);
 		expect(requests.map((request) => request.method)).toEqual(["POST", "GET", "GET"]);
@@ -934,7 +1108,11 @@ describe("compute plan changes", () => {
 		complete = true;
 		await expect(client.checkPlanChange(pending.operationName)).resolves.toEqual({
 			kind: "complete",
+			operationName: "operations/plan-change-1",
 			effectiveAt: NOW,
+			changeKind: "immediate_upgrade",
+			billingEffect: "immediate_proration",
+			fundingSource: "wallet",
 		});
 		expect(requests.map((request) => request.method)).toEqual(["GET"]);
 	});
@@ -974,5 +1152,86 @@ describe("compute plan changes", () => {
 		const result = client.changePlan({ operation_id: "plan-change-1" });
 		await expect(result).rejects.toBeInstanceOf(PlanChangeTerminalError);
 		await expect(result).rejects.toThrow("The payment method was rejected");
+	});
+
+	it("keeps funding-source switch context on terminal outcomes", async () => {
+		const completed = planChangeOperation("complete", {
+			done: true,
+			changeKind: "funding_source_switch",
+			fundingSource: "stripe",
+		});
+		const completeClient = testClient(async () => jsonResponse(completed));
+
+		await expect(completeClient.checkPlanChange(completed.name)).resolves.toEqual({
+			kind: "complete",
+			operationName: "operations/plan-change-1",
+			effectiveAt: NOW,
+			changeKind: "funding_source_switch",
+			billingEffect: "future_renewals",
+			fundingSource: "stripe",
+		});
+
+		const failed = planChangeOperation("failed", {
+			done: true,
+			changeKind: "funding_source_switch",
+			fundingSource: "stripe",
+			error: {
+				code: 9,
+				message: "A card is required.",
+				details: [
+					{
+						"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+						type: "https://api.clawdi.ai/problems/payment-method-required",
+						title: "A card is required",
+						status: 409,
+						detail: "payment_method_required",
+						code: "payment_method_required",
+						phase: "plan_change",
+						retryable: false,
+						conditionReason: "PaymentMethodRequired",
+						conditionMessage: "Add a card and try again.",
+						observedGeneration: 2,
+					},
+				],
+			},
+		});
+		const failedClient = testClient(async () => jsonResponse(failed));
+
+		try {
+			await failedClient.checkPlanChange(failed.name);
+			throw new Error("Expected the plan change to fail");
+		} catch (error) {
+			expect(error).toBeInstanceOf(PlanChangeTerminalError);
+			if (!(error instanceof PlanChangeTerminalError)) throw error;
+			expect(error.changeKind).toBe("funding_source_switch");
+			expect(error.fundingSource).toBe("stripe");
+			expect(error.operationName).toBe("operations/plan-change-1");
+		}
+	});
+
+	it("rejects incomplete or mismatched plan-change metadata instead of reporting success", async () => {
+		const mismatched = planChangeOperation("complete", {
+			done: true,
+			changeKind: "funding_source_switch",
+			billingEffect: "immediate_proration",
+			fundingSource: "stripe",
+		});
+		const missingFundingSource = planChangeOperation("complete", { done: true });
+		if (missingFundingSource.metadata.planChange) {
+			Reflect.deleteProperty(missingFundingSource.metadata.planChange, "fundingSource");
+		}
+		const missingMetadata = {
+			...planChangeOperation("complete", { done: true }),
+			metadata: undefined,
+		};
+		const invalidResponse = {
+			...planChangeOperation("complete", { done: true }),
+			response: { "@type": "type.googleapis.com/google.protobuf.Empty" },
+		};
+
+		for (const operation of [mismatched, missingFundingSource, missingMetadata, invalidResponse]) {
+			const client = testClient(async () => jsonResponse(operation));
+			await expect(client.checkPlanChange(operation.name)).rejects.toMatchObject({ status: 502 });
+		}
 	});
 });

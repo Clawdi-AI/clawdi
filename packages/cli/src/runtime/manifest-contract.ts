@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { z } from "zod";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
 import {
@@ -14,15 +16,29 @@ import { canonicalSecretRefName, canonicalSecretRefSchema } from "./secret-value
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 
+// Temporary v1 read compatibility. Runtime providers and generated config stay canonical-only.
+export const LEGACY_HOSTED_CODEX_MANAGED_RUNTIME_ENV = "OPENAI_API_KEY";
+
+export function isHostedCodexManagedRuntimeEnv(value: string | null | undefined): boolean {
+	return (
+		value === MANAGED_AI_PROVIDER_RUNTIME_ENV || value === LEGACY_HOSTED_CODEX_MANAGED_RUNTIME_ENV
+	);
+}
+
 export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 	openclaw: "https://openclaw.ai/install-cli.sh",
 	hermes: "https://hermes-agent.nousresearch.com/install.sh",
 };
 
-export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
+const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 	openclaw: ["--json", "--no-onboard"],
 	hermes: ["--skip-setup", "--skip-browser", "--non-interactive"],
 };
+
+export function officialInstallArgs(runtime: string, home: string): string[] {
+	const args = [...(OFFICIAL_INSTALL_ARGS[runtime] ?? [])];
+	return runtime === "openclaw" ? [...args, "--prefix", join(home, ".local")] : args;
+}
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
 
@@ -394,7 +410,7 @@ function validateUnmanagedRunSettings(
 	if (!settings) return;
 	const env = settings.env ?? {};
 	const secretEnv = settings.secretEnv ?? {};
-	for (const envName of ["CLAWDI_MANAGED_OPENAI_API_KEY", "OPENAI_API_KEY"]) {
+	for (const envName of ["CLAWDI_AI_API_KEY", "OPENAI_API_KEY"]) {
 		if (envName in env || envName in secretEnv) {
 			ctx.addIssue({
 				code: "custom",
@@ -604,21 +620,32 @@ const hostedProviderSchema = z
 				path: [],
 			});
 		}
-		if (provider.managed_by === "clawdi" && provider.runtimeEnvName !== "OPENAI_API_KEY") {
-			ctx.addIssue({
-				code: "custom",
-				message: "Clawdi-managed runtime providers require OPENAI_API_KEY",
-				path: ["runtimeEnvName"],
-			});
-		}
 	});
+
+const hostedRuntimeProviderSchema = hostedProviderSchema.superRefine((provider, ctx) => {
+	if (
+		provider.managed_by === "clawdi" &&
+		provider.runtimeEnvName !== MANAGED_AI_PROVIDER_RUNTIME_ENV
+	) {
+		ctx.addIssue({
+			code: "custom",
+			message: `Clawdi-managed runtime providers require ${MANAGED_AI_PROVIDER_RUNTIME_ENV}`,
+			path: ["runtimeEnvName"],
+		});
+	}
+});
+
+const hostedCodexProviderV1ReadSchema = hostedProviderSchema.transform(
+	({ models: _legacyModels, ...provider }) => provider,
+);
 
 const hostedCodexToolSchema = z
 	.object({
 		enabled: z.literal(true),
 		provider_id: z.string().min(1),
 		primary_model: hostedPrimaryModelSchema,
-		provider: hostedProviderSchema,
+		// Older v1 manifests carried a Codex catalog. Accept it only long enough to self-upgrade.
+		provider: hostedCodexProviderV1ReadSchema,
 	})
 	.strict()
 	.superRefine((tool, ctx) => {
@@ -633,7 +660,7 @@ const hostedCodexToolSchema = z
 			tool.provider.managed_by !== "clawdi" ||
 			tool.provider.apiMode !== "openai_responses" ||
 			canonicalSecretRefName(tool.provider.apiKeySecretRef) !== "tool.codex.apiKey" ||
-			tool.provider.runtimeEnvName !== "OPENAI_API_KEY" ||
+			!isHostedCodexManagedRuntimeEnv(tool.provider.runtimeEnvName) ||
 			tool.provider.status === "error"
 		) {
 			ctx.addIssue({
@@ -713,7 +740,7 @@ const hostedRuntimeManifestBaseSchema = z
 		egressEngine: egressEngineSchema.strict().optional(),
 		companions: runtimeCompanionsSchema.optional(),
 		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
-		providers: z.record(z.string().min(1), hostedProviderSchema),
+		providers: z.record(z.string().min(1), hostedRuntimeProviderSchema),
 		liveSync: hostedLiveSyncSchema,
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
 		mcp: hostedMcpDesiredStateSchema.optional(),

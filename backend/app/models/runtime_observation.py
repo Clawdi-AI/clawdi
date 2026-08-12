@@ -249,6 +249,7 @@ class V2RuntimeObservationHead(Base, TimestampMixin):
     manifest_etag: Mapped[str] = mapped_column(String(1024), nullable=False)
     apply_receipt_id: Mapped[str] = mapped_column(String(128), nullable=False)
     boot_nonce: Mapped[str] = mapped_column(String(128), nullable=False)
+    authorized_successor_boot_session_id: Mapped[str | None] = mapped_column(String(128))
     highest_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     latest_inbox_id: Mapped[int | None] = mapped_column(BigInteger)
     latest_stream_position: Mapped[int] = mapped_column(BigInteger, nullable=False)

@@ -72,6 +72,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.ai_provider import AiProvider
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
@@ -356,6 +357,23 @@ async def queue_provider_runtime_manifest_changed(
     return affected
 
 
+def runtime_manifest_provider_non_auth_signature(
+    provider: AiProvider | None,
+) -> dict[str, object] | None:
+    """Return the provider fields that contribute to a runtime manifest."""
+    if provider is None:
+        return None
+    return {
+        "type": provider.type,
+        "base_url": provider.base_url,
+        "api_mode": provider.api_mode,
+        "models": provider.models,
+        "managed_by": provider.managed_by,
+        "runtime_env_name": provider.runtime_env_name,
+        "archived_at": provider.archived_at,
+    }
+
+
 def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str) -> bool:
     runtimes = state.runtimes
     if len(runtimes) != 1:
@@ -376,7 +394,10 @@ def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str)
     if provider_id == tools.codex.provider_id:
         return True
     if not is_v2_deployment_managed_provider_id(provider_id):
-        return False
+        normalized_provider_id = runtime_managed_provider_id(provider_id)
+        return normalized_provider_id in {
+            runtime_managed_provider_id(value) for value in runtime.provider_ids
+        } or normalized_provider_id == runtime_managed_provider_id(tools.codex.provider_id)
     if v2_deployment_managed_provider_id(state.deployment_id) != provider_id:
         return False
     runtime_provider_ids = {runtime_managed_provider_id(value) for value in runtime.provider_ids}

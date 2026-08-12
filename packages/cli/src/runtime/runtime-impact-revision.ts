@@ -85,10 +85,9 @@ export function runtimeServiceProgramRevision(program: RuntimeServiceProgramImpa
 }
 
 export function daemonProgramRevision(
-	manifest: Pick<RuntimeManifest, "clawdiCli" | "controlPlane" | "liveSync">,
+	manifest: Pick<RuntimeManifest, "controlPlane" | "liveSync">,
 ): string {
 	return runtimeImpactRevision({
-		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
 		liveSync: manifest.liveSync ?? null,
 	});

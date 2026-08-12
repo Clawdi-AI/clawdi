@@ -10,6 +10,11 @@
  */
 
 import { toast } from "sonner";
+import type {
+	ComputePlanChangeFundingSource,
+	ComputePlanChangeKind,
+	HostedDeployRequestStatus,
+} from "@/hosted/billing/contracts";
 
 export class BillingApiError extends Error {
 	constructor(
@@ -53,15 +58,55 @@ export class DeploymentConflictError extends Error {
 	}
 }
 
-/** A checkout-funded deploy request reached a terminal state before acceptance. */
+/** A checkout-funded deploy request reached an explicit terminal state. */
 export class DeploymentRequestTerminalError extends BillingApiError {
 	override name = "DeploymentRequestTerminalError";
+
+	constructor(
+		public readonly request: HostedDeployRequestStatus,
+		detail: string,
+	) {
+		super(409, detail, request);
+	}
+}
+
+export type DeploymentRequestTerminalOutcome =
+	| { kind: "open_deployment"; deploymentId: string }
+	| {
+			kind: "new_attempt" | "review_agents";
+			title: string;
+			description: string;
+	  };
+
+export function deploymentRequestTerminalOutcome(
+	error: unknown,
+): DeploymentRequestTerminalOutcome | null {
+	if (!(error instanceof DeploymentRequestTerminalError)) return null;
+	const requestStatus = error.request.request_status;
+	const deploymentId = error.request.lineage_tail?.deployment_id?.trim();
+	if (deploymentId) {
+		return { kind: "open_deployment", deploymentId };
+	}
+	if (requestStatus === "superseded") {
+		return {
+			kind: "review_agents",
+			title: "Checkout was replaced",
+			description:
+				"A newer checkout attempt replaced this agent request. Review your agents before starting another checkout.",
+		};
+	}
+	return {
+		kind: "new_attempt",
+		title: requestStatus === "expired" ? "Agent request expired" : "Agent creation failed",
+		description:
+			"No agent was accepted from this checkout. Review your choices and start a new checkout when you’re ready.",
+	};
 }
 
 /** A plan change remains nonterminal after the bounded foreground poll. */
 export class PlanChangePendingError extends Error {
 	constructor(public readonly operationName: string) {
-		super("We're still waiting for the plan change to finish. Check the status again in a moment.");
+		super("We're still waiting for the subscription change to finish. Check again in a moment.");
 		this.name = "PlanChangePendingError";
 	}
 }
@@ -69,6 +114,17 @@ export class PlanChangePendingError extends Error {
 /** The accepted plan change reached an explicit failed terminal state. */
 export class PlanChangeTerminalError extends BillingApiError {
 	override name = "PlanChangeTerminalError";
+
+	constructor(
+		status: number,
+		detail: string,
+		payload?: unknown,
+		public readonly changeKind: ComputePlanChangeKind | null = null,
+		public readonly fundingSource: ComputePlanChangeFundingSource | null = null,
+		public readonly operationName: string | null = null,
+	) {
+		super(status, detail, payload);
+	}
 }
 
 function hasDetail(value: unknown): value is { detail: unknown } {
@@ -95,6 +151,14 @@ export function billingErrorDetail(error: unknown): Record<string, unknown> | nu
 
 export function isIdempotencyKeyReusedError(error: unknown): boolean {
 	return billingErrorDetail(error)?.code === "idempotency_key_reused";
+}
+
+export function isReusableSubscriptionUnavailableError(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		error.status === 409 &&
+		billingErrorDetail(error)?.code === "reusable_subscription_unavailable"
+	);
 }
 
 /**
@@ -144,7 +208,11 @@ export function isRetryableError(error: unknown): boolean {
 	return isNetworkError(error) || isServerError(error);
 }
 
-export type DeploySubmissionContext = "card_checkout" | "included_creation" | "wallet_creation";
+export type DeploySubmissionContext =
+	| "card_checkout"
+	| "included_creation"
+	| "subscription_assignment"
+	| "wallet_creation";
 
 export type DeploySubmissionErrorPresentation = {
 	description: string;
@@ -205,6 +273,23 @@ export function deploySubmissionErrorPresentation(
 		return {
 			title: "Checkout didn’t open",
 			description: `${reason} No payment was submitted. Retry when you’re ready.`,
+		};
+	}
+	if (context === "subscription_assignment") {
+		if (isDefinitiveBillingRejection(error)) {
+			return {
+				title: "Subscription assignment didn’t start",
+				description: `${knownRecovery ?? "The request was rejected before it was accepted."} Review your choices and retry.`,
+			};
+		}
+		const reason = isNetworkError(error)
+			? error.kind === "timeout"
+				? "The request timed out before subscription assignment and agent creation were confirmed."
+				: "The connection dropped before subscription assignment and agent creation were confirmed."
+			: "The service didn’t confirm subscription assignment and agent creation.";
+		return {
+			title: "We couldn’t confirm this attempt",
+			description: `${reason} Retry to safely resume the same attempt.`,
 		};
 	}
 
@@ -273,6 +358,14 @@ export function isInsufficientBalanceError(error: unknown): boolean {
 	if (!(error instanceof BillingApiError)) return false;
 	if (error.status !== 403 && error.status !== 402) return false;
 	return billingErrorDetail(error)?.code === INSUFFICIENT_WALLET_BALANCE_CODE;
+}
+
+export function isPaymentMethodRequiredError(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		(error.detail === "payment_method_required" ||
+			billingErrorDetail(error)?.code === "payment_method_required")
+	);
 }
 
 /**

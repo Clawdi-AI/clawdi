@@ -181,7 +181,7 @@ resource rows. Agent Workspaces and hidden compatibility containers are
 protected from these lifecycle mutations.
 
 Local folder links are CLI selection hints for `clawdi run`. They do not grant
-membership, attach Projects, or mutate cloud Project relationships.
+membership, link Projects to Agents, or mutate cloud Project relationships.
 
 ## Skills
 
@@ -330,8 +330,10 @@ Current behavior and the Hosted manifest/controller boundary are documented in
 Managed runtime mode is a public CLI/dashboard contract for controlled runtime
 environments. The CLI validates desired state, writes non-secret local
 projections, creates short-lived secret files under the runtime run directory,
-renders support/runtime service plans, and exposes `runtime init`, `watch`,
-`sidecar`, `status`, `doctor`, and explicit `clawdi run -- <command>`.
+renders support/runtime service plans, and exposes the managed operator ABI:
+`runtime init`, `watch`, `verify`, `sidecar`, `status`, `doctor`, and hidden
+`clawdi run --runtime-service ...` dispatch alongside explicit
+`clawdi run -- <command>`.
 
 Cloud API is the single desired-state composer for Skills. It merges Hosted V2
 Agent Workspace Skill intent with Cloud-owned Skills from linked Projects. The
@@ -395,7 +397,7 @@ Core tables verified under `backend/app/models/`:
 | `hosted_runtime_config_observations` | Daemon-reported CONFIG convergence with `observed_at`, observed config generation, observed manifest ETag, and validated diagnostics JSONB; distinct from hosted provider COMPUTE observations. |
 | `v2_runtime_environment_fences`, `v2_runtime_observation_inbox`, `v2_runtime_observation_heads`, `v2_runtime_observation_consumer_cursors` | Additive declarative-v2 runtime evidence under direct `/v2/runtime/*` routes, permanent retirement fencing, boot-session high-waters/tombstones, and Hosted workload-bound replay cursors. Retention compacts private inbox payloads in place while permanent identity rows preserve event/session uniqueness. The existing v1 heartbeat and observation table remain unchanged. |
 | `projects`, `project_memberships`, `project_share_links`, `project_invitations`, `share_redeem_attempts` | Project ownership, viewer access, share links, directed invites, and redeem throttling/idempotency. |
-| `agent_project_bindings` | One fixed `primary` Agent Project plus ordered `context` attached Projects. |
+| `agent_project_bindings` | One fixed `primary` Agent Project plus ordered `context` linked Projects. |
 | `sessions`, `session_permissions` | Conversation metadata, object-store body pointer, public/user/email sharing permissions. |
 | `skills` | Project-scoped skill metadata and object-store tarball pointer. |
 | `vaults`, `vault_project_attachments`, `vault_project_slug_aliases`, `vault_items`, `vault_credential_profiles` | Account-owned vaults, Project access attachments, compatibility slug aliases, encrypted secret fields, encrypted local auth profiles. |

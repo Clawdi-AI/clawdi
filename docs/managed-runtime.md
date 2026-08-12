@@ -33,15 +33,17 @@ The public contract covers:
 - installing or verifying supported agent runtimes through their normal
   installers;
 - writing non-secret local run configuration;
-- projecting short-lived secrets only for the current runtime session;
+- projecting runtime secrets only onto their declared runtime surfaces,
+  including the OpenClaw gateway's official config and transient installer
+  environment;
 - running final hosted runtimes from direct process-manager entries that name
   official Hermes/OpenClaw binaries;
 - running Clawdi-owned support programs under the runtime process manager;
 - supporting explicit `clawdi run -- <command>` when a caller opts into Clawdi
   runtime env injection;
 - exposing strict-v2 OpenClaw directly on its native `18789` gateway with
-  official token and device authentication when the typed authorization
-  capability is active;
+  official shared-token authentication and no device-pairing step when the
+  typed authorization capability is active;
 - exposing a dashboard Terminal contract for one deployment shell;
 - reporting status and diagnostics through runtime commands.
 
@@ -156,8 +158,14 @@ flowchart TB
     subgraph Durable["Durable non-secret state: /var/lib/clawdi"]
         Inventory[install-inventory/<runtime>.json]
         CliBin[root-only maintained/clawdi/bin/clawdi]
-        UserUnits[$HOME/.config/systemd/user/*.service]
     end
+
+    subgraph TenantState["Tenant-UID CLI state: /var/lib/clawdi-user"]
+        LiveSync[environments/<agent>.json]
+    end
+
+    Init --> TenantState
+    Init --> UserUnits[$HOME/.config/systemd/user/*.service]
 
     subgraph Cache["Disposable cache: /var/cache/clawdi"]
         LastGood[manifest and secret last-good fallbacks]
@@ -225,6 +233,10 @@ systemd-owned roots instead of recursively hardening their ownership. The run
 root is searchable only for the two explicit platform-to-tenant handoff
 classes: the egress CA and per-unit tenant environment files. All other
 platform files remain private or are exposed only to dedicated system services.
+Tenant-context CLI state has a separate durable root,
+`/var/lib/clawdi-user`, owned by `10001:10001` with mode `0750`. Hosted
+convergence sets `CLAWDI_HOME` to that path for every generated tenant user
+unit; `/var/lib/clawdi` remains the root-owned platform state root.
 Before directory preparation, lock acquisition, or any external runtime command,
 Hosted convergence requires the explicit process contract
 `CLAWDI_RUNTIME_MODE=hosted`, a resolved HOME of exactly `/home/clawdi`, and
@@ -329,61 +341,69 @@ private `.staging-*` directory, verifies the exact SHA256, then atomically renam
 or non-directories. The service's unit-private bind mount runs the pinned
 version/commit probe in `ExecStartPre=` before executing the content-addressed candidate, and
 garbage-collects older candidates only after applied authority commits. The
-existing manifest snapshot covers the desired candidate, root-only `0600`
-configuration, install receipt, systemd unit/environment file, and applied
+existing manifest snapshot covers the desired candidate, root-authored
+configuration handoff, install receipt, systemd unit/environment file, and applied
 state, so a download, verification, systemd, or readiness failure restores the
 previous exact pre-image. There is no separate active/previous link state or
 hand-built chroot.
 
-`clawdi-files.service` runs as the dedicated non-login `clawdi-files` system
-UID/GID, never as the tenant runtime user. CLI/root reconciliation is the only
-identity, installer, updater, ACL, and unit controller. Candidate
-directories and binaries are root-owned; systemd copies the root-only config
-into the unit through `LoadCredential=` and publishes only the verified binary
-through a unit-private `BindReadOnlyPaths=` mount. DB/cache state lives in the
-service-owned `0700` `StateDirectory=clawdi-files`; install
-receipts remain root-only `0600`. The tenant cannot replace those assets, read
-the derived JWT secret or state, signal the distinct-UID process, or control
-the system unit.
+`clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
+native read/write access to the complete tenant home, including `0600` files,
+`0700` directories, and dotfiles. Reconciliation does not rewrite ownership,
+modes, or ACLs across the home. Candidate directories and binaries remain
+root-owned. The root-authored JWT configuration is a `root:<runtime group>`
+`0440` file below a root-only `0700` directory, so other tenant processes
+cannot traverse to it; systemd publishes that file and the verified binary only
+inside the Files mount namespace through `BindReadOnlyPaths=`. Install receipts
+remain root-only `0600`.
 
-The CLI grants the service only named-group `rwX` access to `/home/clawdi`
-using recursive access and default POSIX ACLs through the image's existing
-`systemd-tmpfiles` `+ACL` support. Symlinks are not followed, existing content
-is reconciled, and new content inherits reciprocal tenant/service access. The
-base runtime image remains unchanged and contains no File Browser binary,
-configuration, state, service identity, installer, or File Browser-specific
+DB/cache state lives in the tenant-owned `0700`
+`StateDirectory=clawdi-files`. The tenant can therefore inspect or alter its
+own Files state and can signal the same-UID Files process, but cannot replace
+the root-owned binary or configuration source, write receipts, or control the
+system unit. Systemd restarts a terminated Files process and readiness gates
+activation. The base runtime image remains unchanged and contains no File
+Browser binary, configuration, state, installer, or File Browser-specific
 package. The service reuses the generated system-unit and environment-file
 writer and applies systemd's native
 `ProtectSystem=strict`, `ProtectHome=tmpfs`, `BindPaths`, `ReadWritePaths`,
-`ReadOnlyPaths`, `NoExecPaths`, private device/tmp, capability, namespace, and task-limit
-controls. File Browser receives its official JWT header configuration with
-password, signup, passkey, sharing, admin, API-token management, realtime, and
-WebDAV disabled. It accepts only the manifest-bound external JWT assertion; no
-password, pairing code, access code, or URL token is part of this runtime
-contract. When a later manifest omits the companion, normal stale-unit
+`ReadOnlyPaths`, `NoExecPaths`, `PrivatePIDs`, private device/tmp, capability,
+namespace, and task-limit controls. `PrivatePIDs` prevents Files from observing
+or signaling the tenant's other runtime processes. File Browser receives its
+official JWT header configuration with password, signup, passkey, sharing,
+admin, API-token management, realtime, and WebDAV disabled. It accepts only the
+manifest-bound external JWT assertion; no password, pairing code, access code,
+or URL token is part of this runtime
+contract. The non-admin profile settings remain available for safe display and
+file-viewing preferences, with dotfiles visible and the sidebar unpinned by
+default; those settings cannot elevate the separately disabled permissions or
+unlock password auth. Quantum applies those defaults when it first creates the
+external-JWT user and preserves that user's later preferences across config
+changes; reconciliation never rewrites or deletes the service database to force
+new defaults onto an existing account. Files still refuses symlinks rather than
+traversing them.
+
+When a later manifest omits the companion, normal stale-unit
 reconciliation stops and withdraws only `clawdi-files.service` while preserving
 the selected Hermes or OpenClaw unit.
 
-The unavoidable workspace boundary is content-level: the tenant owns its
-workspace and can edit or delete its contents. It can also make an individual
-file or directory temporarily inaccessible to File Browser by changing its own
-permissions or ACL mask; the next CLI reconciliation repairs the managed ACL
-baseline. This does not grant the tenant control over the managed service,
-binary, configuration, secret, DB/cache state, receipts, unit, or active
-listener. Port 9120 has normal socket exclusivity rather than a separate
-tenant-slice reservation: the tenant cannot displace the running service, but
-can bind 9120 while it is not listening and thereby cause later service
-activation/systemd readiness proof to fail. That remaining availability/DoS
-boundary does not let reconciliation adopt the tenant process as the managed
-unit.
+The unavoidable workspace boundary is content-level: the tenant owns its home
+and can edit or delete its contents and Files state. This does not grant the
+tenant control over the root-owned binary, configuration secret source,
+receipts, unit, or listener authority. Port 9120 has normal socket exclusivity
+rather than a separate tenant-slice reservation: the tenant cannot displace the
+running service, but can bind 9120 while it is not listening and thereby cause
+later activation/readiness proof to fail. That remaining availability boundary
+does not let reconciliation adopt the tenant process as the managed unit.
 
 The pinned upstream contracts are File Browser's
 [JWT verifier](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/auth/jwt.go),
 [JWT middleware](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/middleware.go),
 and [authentication settings](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/auth.go),
+the [user-default and permission fields](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/structs.go),
+and the [non-admin profile update boundary](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/users.go),
 plus the documented
-[systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)
-and [`systemd-tmpfiles` POSIX ACL types](https://www.freedesktop.org/software/systemd/man/latest/tmpfiles.d.html).
+[systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
 Repository tests verify the manifest, rollback, and systemd sandbox contracts.
 
 Done: `bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts`
@@ -465,10 +485,10 @@ auth when exposing the official OpenClaw port directly.
 The control plane accepts only exact
 `Accept: application/vnd.clawdi.runtime-bundle.v2+json` and returns strict
 `clawdi.hosted-runtime.bundle.v2`. The response contains the hosted manifest,
-sanitized Telegram and Discord `channelBindings`, one merged `secretValues`
-map, and deterministic `sourceRevision`. Missing or unsupported media types
-return `406`; the CLI does not fall back to another representation or a second
-`/v1/channels` request.
+sanitized Telegram, Discord, and WhatsApp `channelBindings`, one merged
+`secretValues` map, and deterministic `sourceRevision`. Missing or unsupported
+media types return `406`; the CLI does not fall back to another representation
+or a second `/v1/channels` request.
 
 Bundle responses identify the vendor media type and return `Vary: Accept`.
 Negotiation `406` responses also return `Vary: Accept` and
@@ -479,16 +499,24 @@ validator without decrypting secrets in the health summary.
 
 ### Channel reconcile boundary
 
-Telegram and Discord `ChannelBotAgentLink` rows are runtime desired state. A
-link create or re-link, link delete, account archive, or link credential
-rotation changes the rendered channel projection and therefore
+Telegram, Discord, and WhatsApp `ChannelBotAgentLink` rows are runtime desired
+state. A link create or re-link, link delete, account archive, or link
+credential rotation changes the rendered channel projection and therefore
 `sourceRevision`. Those mutation transactions also enqueue the existing
 signal-only `runtime_manifest_changed` event for the linked Agent. The event is
 delivered only after commit; the runtime refetches the manifest and converges at
 the normal ETag/sourceRevision boundary. ETag polling remains the missed-event
 fallback, so no separate restart or channel-specific reconcile state machine is
 required. Creating a pair code emits this signal only when that request also
-creates an AgentLink.
+creates an AgentLink or repairs missing WhatsApp credential material.
+
+Each WhatsApp binding carries Link-scoped agent-token and egress-capability
+secret references plus a credential descriptor containing its id, explicit
+`credsSecretRef`, and public auth-certificate material. The matching serialized
+Baileys credentials are present in `secretValues` only under that declared
+reference. Healthy manifest reads use the repeatable-read snapshot directly;
+missing credential or auth-certificate rows enter a locked, idempotent repair
+path and then render from a fresh snapshot.
 
 `ChannelBinding` rows are provider routing state, not runtime identity. Pairing
 or unpairing a chat updates only the binding and provider-owned per-chat
@@ -531,7 +559,7 @@ Normalization maps hosted fields into the internal shape:
 | `runtime` | Required selected compute runtime; exactly one enabled `openclaw` or `hermes` entry must match it |
 | `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone |
 | `system.openclawControlUiAllowedOrigins` | Strict-v2 OpenClaw public origin allowlist |
-| `system.openclawGatewayAuth` | Strict-v2 OpenClaw token and required device-auth capability; the token itself is an environment secret reference |
+| `system.openclawGatewayAuth` | Strict-v2 OpenClaw token and required native shared-token capability; the token itself is an environment secret reference |
 | `system.hermesDashboardAuth` | Strict-v2 Hermes Basic provider settings, public URL, session TTL, and environment secret references; plaintext credentials are never part of the manifest |
 | `controlPlane.cloudApiUrl` | Required and only control-plane field; `appId`, `apiUrl`, and `manifestUrl` are not public manifest fields |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
@@ -604,14 +632,42 @@ BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the same
 terminal Codex default. Unmanaged OpenClaw or Hermes units receive no provider
 environment.
 
-Only the selected model and managed endpoint vary for the terminal consumer;
-the provider model catalog remains on runtime provider projections where
-OpenClaw and Hermes consume its capability and compatibility facts. Fixed v1
-terminal fields remain on the wire because strict manifest parsing precedes a
-`clawdiCli.packageSpec` self-upgrade. The versioned CLI validates those fields
-and derives the local Codex provider id, Responses transport, environment name,
-and secret wiring. This compatibility ordering rules out removing the fixed
-fields in place even though they are consumer invariants.
+For a Clawdi-managed provider, the CLI gives OpenClaw, Hermes, and terminal
+Codex the same reserved local placeholder name: `CLAWDI_AI_API_KEY`. Each
+consumer sends the fixed placeholder value through that env key; the
+endpoint-scoped egress profile matches the Authorization value and rewrites it
+from the provider secret reference. User-managed provider environment names are
+not remapped.
+
+The new CLI writes no Codex `model` or `model_catalog_json`; it writes only the
+custom provider selection, endpoint, canonical env key, and Responses transport.
+On the normal Clawdi-provisioned path, the plain `env_key`, fresh managed home,
+and absence of command or Codex-backend auth leave remote refresh disabled, so
+Codex selects its own default from its bundled catalog (`gpt-5.6-sol` in the
+locked `0.146.0` catalog). A manually written or stale ChatGPT backend auth file
+can satisfy Codex's upstream refresh gate. Codex has no native discovery-off
+setting analogous to OpenClaw or Hermes, and Clawdi does not invent one or
+encode a model choice. Manifest v1 `primary_model` remains required only
+because strict parsing precedes a `clawdiCli.packageSpec` self-upgrade; the new
+CLI validates and ignores it.
+Legacy terminal-Codex `OPENAI_API_KEY` and provider `models` are also read-only
+v1 compatibility inputs; local output always uses `CLAWDI_AI_API_KEY` and
+remains catalog-free. Removing those wire fields needs a new schema after older
+CLIs can reach this compatibility release.
+
+This change is Phase A: publish `clawdi@0.13.69`, which reads both legacy and
+canonical terminal-Codex env names while writing only the canonical local env.
+Phase B keeps backend emission deployment-scoped: terminal Codex receives
+`CLAWDI_AI_API_KEY` only when the desired CLI is `clawdi@0.13.69` or later and
+strict v2 diagnostics prove the exact desired version, current apply generation,
+and current instance. Observation generation, ETag, and source revision must
+agree with that applied record. Every missing, invalid, stale, or mismatched
+state retains `OPENAI_API_KEY`, including upgrades and rollbacks.
+Phase B may therefore deploy before the fleet upgrades: each deployment remains
+on the legacy env name until its own CLI and observation have converged.
+The gate does not compare that last applied revision with the revision currently
+being rendered: changing the env name creates a new revision, and the internally
+consistent applied record keeps the canonical projection stable while it catches up.
 
 This mode controls default configuration ownership, not pod-wide network
 isolation. Egress matching is domain based, so another pod process could call a
@@ -910,6 +966,13 @@ its exact managed package is isolated under
 egress wrapper can delegate to it without replacing the tenant's general npm
 global tree.
 
+The hosted image's bootstrap package may expose
+`/usr/local/bin/clawdi -> ../lib/node_modules/clawdi/bin/clawdi.mjs` while root
+convergence starts. Reconciliation removes only that exact system-npm symlink
+and rejects any unexpected entry or target at the same path. All continuing
+platform invocations use `/var/lib/clawdi/maintained/clawdi/bin/clawdi`
+directly, so a tenant shell cannot discover `clawdi` through `PATH`.
+
 CLI self-upgrade verifies a new exact package before atomically switching the
 active link inside the root-only managed directory. There is no shared
 `/var/lib/clawdi/bin` compatibility path and no migration or dual-path read.
@@ -931,24 +994,27 @@ installs and hands off to the selected package or fails before applying the new
 desired state.
 
 When only the exact CLI package changes and the capability image remains
-compatible, the substrate may atomically replace the single fixed runtime-context
-file without replacing the workload. The running watcher first requires the
-context `cliPackageSpec` to match the fetched manifest package, installs and
-verifies that exact package, atomically activates it, and exits cleanly. The
-`Restart=always` systemd unit then starts the watcher from the absolute managed
-CLI path. The new CLI performs the complete manifest and systemd convergence;
-the old applied authority remains current until that convergence commits the
-new Apply identity. A failed first convergence rolls back to the previously
-verified CLI. This is a process handoff inside the existing workload, not a
-workload restart or replacement.
+compatible, the runtime context and workload stay unchanged. The fetched
+manifest is the desired CLI authority. The running watcher installs and verifies
+that exact package, atomically activates it, and exits before manifest or systemd
+convergence. The `Restart=always` systemd unit then starts the watcher from the
+absolute managed CLI path. The new CLI completes convergence without restarting
+the daemon, sidecar, or runtime gateway; their independent program and secret
+revisions remain unchanged. The old applied authority remains current until the
+new watcher commits the manifest. A failed first convergence rolls back to the
+previously verified CLI. This is a watcher process handoff inside the existing
+workload: systemd launches the watcher's new `ExecStart` after its clean exit,
+without an explicit `systemctl restart`, an unrelated service restart, or a
+workload replacement.
 
 ## Commands
 
 Root runtime operators can use these commands in controlled environments:
 
 ```bash
-clawdi runtime init --non-interactive
-clawdi runtime watch
+clawdi runtime init --non-interactive --json
+clawdi runtime watch --once --json
+clawdi runtime verify --json
 clawdi runtime sidecar
 clawdi runtime status --json
 clawdi runtime doctor --json
@@ -956,8 +1022,8 @@ clawdi run -- <command>
 ```
 
 Normal local onboarding still uses `clawdi setup`. Runtime commands are for
-managed environments where configuration is supplied by policy or a manifest,
-not by an interactive user setup flow.
+managed Hosted environments where configuration is supplied by policy and
+controller desired state, not by an interactive user setup flow or user file.
 
 `runtime watch` is the long-running reconciliation loop. It refreshes remote
 manifest state using ETags, applies changes, records status, and falls back to
@@ -968,23 +1034,38 @@ enabled.
 ## Runtime UI Authentication
 
 Strict-v2 OpenClaw binds the official gateway directly to the pod network with
-`gateway run --allow-unconfigured --port 18789 --bind lan --force`, and provide
-`OPENCLAW_GATEWAY_TOKEN` only through `run.secretEnv`. The local config patch
-sets official shared-token auth, intentionally sets
+`gateway run --allow-unconfigured --port 18789 --bind lan --force`. Before the
+official service installer runs, Clawdi uses the official `openclaw config patch
+--stdin` flow to persist the managed token at `gateway.auth.token`, and passes
+that same value to the installer through its `OPENCLAW_GATEWAY_TOKEN`
+environment. The token never appears in installer argv. OpenClaw's installer
+resolves configured tokens before its environment fallback and only persists a
+token itself when it generated the token, so the preceding official config
+patch is required for caller-selected tokens:
+[`gateway-install-token.ts` lines 169-205](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/commands/gateway-install-token.ts#L169-L205),
+[`auth-token-resolution.ts` lines 38-60](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/gateway/auth-token-resolution.ts#L38-L60),
+and the official [`config patch --stdin` contract](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/docs/cli/config.md#L249-L263).
+
+The local config patch also sets official shared-token auth, intentionally sets
 `dangerouslyDisableDeviceAuth: true` for the managed v2 product, disables
 insecure and Host-header fallback modes, derives `gateway.controlUi.basePath`
 from the clean public URL, and includes that URL's origin in `allowedOrigins`.
-The patch writes `gateway.auth.token: null` to delete any stale durable token;
-OpenClaw documents this RFC 7396 behavior in
-[`merge-patch.ts` lines 88-113](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/config/merge-patch.ts#L88-L113),
-while the active token comes from the ephemeral service environment.
+The managed backend value, transient installer environment, and
+`openclaw.json` token must remain identical. The gateway unit does not receive
+an `OPENCLAW_GATEWAY_TOKEN` environment entry because runtime auth resolves the
+persisted config first, making `openclaw.json` the gateway's only at-rest token
+store. A config-patch failure aborts convergence before service installation or
+systemd activation. A changed token updates the official config and restarts the
+gateway; an unchanged token does not rewrite the config or restart the gateway.
 
 Direct OpenClaw exposure remains fail closed behind the typed
 `openclaw-native-auth-v1` capability and an available
-`OPENCLAW_GATEWAY_TOKEN`. Hosted returns a clean endpoint plus an explicit token
+managed gateway token. Hosted returns a clean endpoint plus an explicit token
 and `handoff_url` through an owner-checked, no-store credential endpoint. The
-handoff carries exactly one official `#token=` fragment. Device pairing and
-device-auth behavior are deliberately outside this managed token-only contract.
+handoff carries exactly one official `#token=` fragment. In hosted mode that
+managed token is the authentication, so device pairing is intentionally
+disabled to avoid an additional approval step in the iframe or new-window
+handoff. OpenClaw retains its normal device-auth behavior outside hosted mode.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
@@ -1127,7 +1208,7 @@ Strict-v2 workloads provide their bootstrap and apply authority through the
 single fixed file `/etc/clawdi/runtime-context.json`. The file
 is a strict `clawdi.runtimeContext.v2` object containing an `apply` tuple
 (`generation`, `manifestETag`, `applyReceiptId`, and `bootNonce`), an exact
-`backend: "incus"` attestation, an exact `cliPackageSpec`, and a typed HTTP
+`backend: "incus"` attestation, the exact bootstrap `cliPackageSpec`, and a typed HTTP
 `manifestSource` with bearer auth. `backend` is required for every Hosted v2
 context and is validated by the common precondition gate before convergence.
 Business secrets are not bootstrap context: the fetched bundle's `secretValues`
@@ -1136,10 +1217,12 @@ that are already in the manifest, auth selectors, paths, mode, runtime user, and
 process environment are not duplicated in the context. A missing or malformed
 context
 fails closed, and no field falls back to ambient process environment. The
-applied generation and exact CLI package must match the fetched manifest and
-are validated before CLI installation, systemd mutation, or applied-authority
-commit can occur. The paired-image local tarball exception exists only when the
-explicit test-installer gate is enabled. `manifestETag` names the
+applied generation must match the fetched manifest before CLI installation,
+systemd mutation, or applied-authority commit can occur. The context package is
+validated as bootstrap identity but is not desired-state authority and need not
+match a later exact package selected by the manifest. The paired-image local
+tarball exception exists only when the explicit test-installer gate is enabled.
+`manifestETag` names the
 Hosted control-plane snapshot and is persisted separately from the fetched
 bundle's HTTP ETag, which remains the strong validator derived from
 `sourceRevision`; the two values are intentionally independent. This lets one
@@ -1172,14 +1255,17 @@ and ephemeral runtime handoffs. Important outputs include:
 | Output | Purpose |
 | --- | --- |
 | `/etc/clawdi/clawdi.json` | Redacted managed runtime config |
-| `/etc/clawdi/filebrowser.yaml` | Root-only `0600` File Browser configuration loaded through systemd credentials |
+| `/run/clawdi/files/` | Root-only `0700` per-boot Files config source directory |
+| `/run/clawdi/files/filebrowser.yaml` | `root:<runtime group>` `0440` Files config published only through the unit-private bind mount |
 | `/etc/clawdi/projections/*` and `/etc/clawdi/run/*` | Managed projections and `clawdi run` launch config |
 | `/var/lib/clawdi/sync/runtimes.json` | Runtime sync state |
 | `/var/lib/clawdi/status/*` | Boot, apply, upgrade, provider, egress, watch, and receipt status/result files |
 | `/var/lib/clawdi/install-inventory/<runtime>.json` | Install/verify observation |
+| `/var/lib/clawdi/managed-resources/*.json` | Durable managed Skill and MCP ownership ledgers |
 | `/var/lib/clawdi/maintained/filebrowser/candidates/<sha256>/filebrowser` | Root-owned, verified Files executable |
 | `/var/lib/clawdi/maintained/clawdi/` | Root-only managed CLI activation and versioned package prefixes |
-| `/var/lib/clawdi-files/` | `clawdi-files`-owned `0700` DB and component cache state |
+| `/var/lib/clawdi-user/` | Tenant-owned `0750` hosted CLI state selected by `CLAWDI_HOME` |
+| `/var/lib/clawdi-files/` | Tenant-owned `0700` Files DB and component cache state |
 | `/var/cache/clawdi/manifest.last-good.json` | Refetchable last-good manifest fallback |
 | `/var/cache/clawdi/runtime-secrets.last-good.json` | Root-only refetchable secret fallback for offline recovery |
 | `/var/cache/clawdi/npm/` | Managed CLI npm download cache |
@@ -1189,6 +1275,11 @@ and ephemeral runtime handoffs. Important outputs include:
 | `$CLAWDI_RUN_DIR/systemd/system/*.service` or `/run/systemd/system/*.service` | Generated system units for root-owned Clawdi support programs |
 | `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units and direct runtime-user programs |
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
+
+Hosted convergence never writes `~/.clawdi`. Before launch it removes legacy
+`~/.clawdi/environments/*.json` files only when their `managedBy` value is
+exactly `clawdi runtime init`, then removes the directories only if empty.
+Unmarked files, non-regular files, and symlinks are never adopted or removed.
 
 Each reconciliation plan declares the exact managed root and runtime-user file
 targets it may mutate. Before any command that can change live state, Apply
@@ -1213,9 +1304,9 @@ derived from the current manifest. OpenClaw current state is the
 canonical `mcp.servers` object in `~/.openclaw/openclaw.json`; Hermes uses
 `mcp_servers` in `~/.hermes/config.yaml`. A desired name that already exists
 without ledger ownership fails closed. Native absence already satisfies a
-managed deletion. The runtime apply snapshots both complete native configs and
-the ledger, preserves unrelated entries, writes the ledger last, and restores
-the exact previous files and metadata if any later mutation fails.
+managed deletion. The convergence transaction snapshots both complete native
+configs and the ledger, preserves unrelated entries, writes the ledger last,
+and restores the exact previous files and metadata if any later mutation fails.
 These paths and transports are pinned to official fixed-commit sources:
 OpenClaw's
 [`mcp-config.ts` read path](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/mcp-config.ts#L51-L65),
@@ -1249,23 +1340,28 @@ manifest.
 
 ## Command And Launch Model
 
-`clawdi run -- <command>` is a local vault-injection command and an interactive
-hosted shell boundary. In hosted mode, it first tries to resolve the command
-against a generated runtime run config. If a matching enabled config exists, it
-launches that runtime with the configured command, args, cwd, env, PATH, secret
-refs, and optional sidecar profile. If the config exists but is disabled,
-`clawdi run` exits with a disabled-runtime error.
+The tenant terminal runs official runtime commands directly. For OpenClaw, the
+product path is `openclaw agent`; OpenClaw resolves managed runtime credentials
+through its official config-first behavior and native config/credential stores.
+There is no Clawdi wrapper in that credential path.
 
-Interactive shell commands are not intercepted. `openclaw`, `hermes`, and
-future runtime names resolve to official binaries on PATH. Clawdi only
-participates when the caller explicitly invokes `clawdi run` or when
-`runtime init` projects manifest-selected config.
+`clawdi run -- <command>` remains an explicit local vault-injection command. It
+is not the hosted tenant terminal boundary and does not mediate hosted managed
+credentials. When a caller opts into it, an enabled generated runtime run config
+can supply that command's configured args, cwd, env, PATH, secret refs, and
+optional sidecar profile. A disabled matching config is rejected.
+
+Interactive tenant shell commands are not intercepted. `openclaw`, `hermes`,
+and future runtime names resolve to official binaries on PATH; `clawdi` does
+not. The platform invokes its root-only CLI by absolute path when it projects
+manifest-selected config.
 
 Hosted daemon startup avoids `clawdi run`. For OpenClaw/Hermes gateways,
 `runtime init` invokes the official service installer to create the base user
 unit, then writes a hosted drop-in with the minimum local environment needed by
-the Linux-like container. Sensitive env lives under `$CLAWDI_RUN_DIR/systemd/env`
-instead of durable unit files:
+the Linux-like container. Service environment that is still required at runtime
+lives under `$CLAWDI_RUN_DIR/systemd/env` instead of durable unit files; the
+OpenClaw gateway token is not part of that environment:
 
 ```ini
 # $HOME/.config/systemd/user/openclaw-gateway.service.d/10-clawdi-hosted.conf
@@ -1276,6 +1372,9 @@ Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"
 EnvironmentFile="/run/clawdi/systemd/env/openclaw-gateway.service.env"
 ExecStart="/home/clawdi/.openclaw/bin/openclaw" "gateway" "run" "--allow-unconfigured" "--port" "18789" "--bind" "lan" "--force"
 ```
+
+The generated environment file includes
+`CLAWDI_HOME=/var/lib/clawdi-user`; it never points into the tenant home.
 
 When egress profiles are enabled, systemd runs the Clawdi sidecar. Egress
 interception uses a runtime-fetched `mitmdump` (mitmproxy) transparent gateway
@@ -1308,8 +1407,9 @@ official dashboard installer or claim the compatibility unit is upstream-owned.
 
 Strict-v2 OpenClaw uses the official gateway directly on native port `18789`.
 Clawdi patches `gateway.port=18789`, `gateway.bind=lan`, and
-`gateway.auth.mode=token` from `OPENCLAW_GATEWAY_TOKEN`; the launch command does
-not pass a conflicting `--auth` override:
+`gateway.auth.mode=token` with the managed token. The service receives no token
+environment entry, and the launch command does not pass a conflicting `--auth`
+override:
 
 ```bash
 openclaw gateway run --allow-unconfigured --port 18789 --bind lan --force
@@ -1317,9 +1417,11 @@ openclaw gateway run --allow-unconfigured --port 18789 --bind lan --force
 
 The strict manifest references the token only as
 `secret://runtime/openclaw/gateway-token`; its value comes only from the fetched
-bundle's `secretValues` map and is absent from manifest config and durable
-general config. Missing token, native-auth capability, deployment policy,
-public origin or exact command rejects the
+bundle's `secretValues` map. It is absent from manifest config and Clawdi's
+general managed config, but is deliberately persisted by the official config
+writer to the owner-only OpenClaw config. The installer receives the same value
+only through its transient subprocess environment. Missing token, native-auth
+capability, deployment policy, public origin or exact command rejects the
 strict-v2 configuration before exposure.
 
 ## Official Update Compatibility
@@ -1424,7 +1526,9 @@ fallback for environments that reject custom WebSocket subprotocols.
 ## Security Rules
 
 - Do not persist auth tokens, private keys, provider secrets, or resolved vault
-  values in durable runtime config.
+  values in Clawdi-owned durable runtime config. The managed OpenClaw gateway
+  token is deliberately persisted only through OpenClaw's official owner-only
+  config writer.
 - Keep non-secret desired state separate from secret values.
 - Treat runtime policy as an input to the CLI, not as hardcoded private logic.
 - Prefer official runtime configuration and installers before proxying or
@@ -1435,8 +1539,10 @@ fallback for environments that reject custom WebSocket subprotocols.
   channel descriptors, filesystem paths, and process launch arguments.
 - Remove `CLAWDI_AUTH_TOKEN` from agent child process environments unless that
   process is explicitly the Clawdi daemon or runtime reconciler.
-- Never disable OpenClaw device auth or enable its insecure/Host-header fallback
-  modes for strict v2.
+- Disable OpenClaw device auth only for hosted strict v2, where the managed
+  shared token authenticates the dashboard handoff without an additional
+  pairing approval. Keep device auth enabled outside hosted mode, and never
+  enable insecure or Host-header fallback modes.
 - Prefer WebSocket subprotocol auth for Terminal sessions so bearer tokens do
   not normally appear in URLs or proxy access logs.
 
@@ -1501,28 +1607,11 @@ through ordinary higher-generation runtime-state reconciliation. Database
 migrations backfill stored authority where required; operators do not patch
 individual production rows to advance deployments.
 
-For the optional v2 `applyGeneration` amendment, strict older consumers reject
-the new root field. This OSS consumer release must deploy before Hosted producer
-activation. The nullable database field is the default-closed receiving edge;
-Hosted must not write it until compatible CLI deployment is confirmed.
-
-The pre-activation sequence uses existing Hosted desired-state behavior. If a
-deployment is at metadata/apply `1` and checkpoint `2`, first leave the CLI pin
-unchanged and accept the existing
-`POST /v2/deployments/{deployment_id}/restart` mutation, whose desired-state
-change increments only `rollout_nonce`; while the producer gate is off, the
-legacy checkpoint floor aligns the deployment to `2/2` without a runtime-state
-content change. Next, select the exact compatible CLI and use its ordinary
-controlled rollout to advance metadata and the CLI-pin checkpoint together to
-`3/3`. A direct CLI pin from `1/2` would produce `2/3`, so it is not an
-alignment mechanism. Verify the online bundle, `runtime-applied.json`,
-last-good cache, offline boot, observation tuple, and canonical Agent health
-before enabling the Hosted producer gate. No direct database, Cloud state, Pod
-cache, or tenant filesystem mutation is part of this protocol.
-
-After every active CLI and stored applied state has explicit Apply identity, a
-narrow follow-up contract release removes the optionality, legacy fallback,
-null omission gate, temporary rollout text, and legacy compatibility tests.
+WhatsApp bindings and `applyGeneration` followed this consumer-first rollout
+order before their producers were enabled. They are now part of the released
+manifest contract; later changes must use the same additive sequencing and
+must not depend on producer-version detection, a fallback datasource, or
+direct mutation of Cloud state or tenant filesystems.
 
 Bundled-Skill versioning follows expand, migrate, contract ordering. During
 expand, the CLI accepts the prior enabled-only Skill entry and canonicalizes

@@ -19,6 +19,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.services.whatsapp_baileys import (
     BinaryNode,
+    parse_whatsapp_jid,
     relay_outbound_extra_attrs,
     validate_relay_outbound_additional_nodes,
 )
@@ -95,6 +96,7 @@ class WhatsAppSidecarHealth:
     connected: bool
     registered: bool
     account_jid: str | None = field(default=None, repr=False)
+    account_lid: str | None = field(default=None, repr=False)
     last_disconnect_reason: str | None = None
 
 
@@ -296,6 +298,7 @@ class WhatsAppBaileysSidecarClient:
             connected=connected,
             registered=_required_bool(payload, "registered"),
             account_jid=_sidecar_account_jid(payload.get("user")),
+            account_lid=_sidecar_account_lid(payload.get("user")),
             last_disconnect_reason=_sidecar_disconnect_reason(payload.get("lastDisconnectReason")),
         )
 
@@ -699,6 +702,18 @@ def _sidecar_account_jid(value: JsonValue | None) -> str | None:
     if not isinstance(account_jid, str) or not account_jid or len(account_jid) > 128:
         return None
     return account_jid
+
+
+def _sidecar_account_lid(value: JsonValue | None) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    account_lid = value.get("lid")
+    if not isinstance(account_lid, str) or len(account_lid) > 128:
+        return None
+    parsed = parse_whatsapp_jid(account_lid)
+    if parsed is None or parsed.server != "lid":
+        return None
+    return account_lid
 
 
 def _sidecar_disconnect_reason(value: JsonValue | None) -> str | None:

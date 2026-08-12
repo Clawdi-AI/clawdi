@@ -5,7 +5,11 @@ import {
 	PaymentElement,
 	useCheckoutElements,
 } from "@stripe/react-stripe-js/checkout";
-import type { Stripe, StripeCheckoutElementsSdkOptions } from "@stripe/stripe-js";
+import type {
+	Stripe,
+	StripeCheckoutElementsSdkOptions,
+	StripeCheckoutStatus,
+} from "@stripe/stripe-js";
 import { AlertCircle, CreditCard, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -21,8 +25,13 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
+import { useStripeAppearance } from "@/hosted/billing/stripe-appearance";
 import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 import { env } from "@/lib/env";
+import {
+	completedCheckoutPaymentStatus,
+	type StripeCheckoutPaymentStatus,
+} from "./stripe-checkout.logic";
 
 export type StripeCheckoutSummary = {
 	detail: string;
@@ -34,7 +43,8 @@ export type StripeCheckoutSummary = {
 type StripeCheckoutDialogProps = {
 	clientSecret: CheckoutSessionClientSecret | null;
 	description: string;
-	onComplete: () => void;
+	onComplete: (paymentStatus: StripeCheckoutPaymentStatus) => void;
+	onExpired: () => void;
 	onOpenChange: (open: boolean) => void;
 	open: boolean;
 	summary: StripeCheckoutSummary | null;
@@ -46,91 +56,6 @@ type RetainedCheckout = Pick<
 	StripeCheckoutDialogProps,
 	"clientSecret" | "description" | "summary" | "title"
 >;
-type CheckoutAppearance = NonNullable<
-	NonNullable<StripeCheckoutElementsSdkOptions["elementsOptions"]>["appearance"]
->;
-
-const FALLBACK_THEME = {
-	background: "oklch(0.175 0.004 95)",
-	border: "oklch(0.275 0.005 95)",
-	destructive: "oklch(0.62 0.19 27)",
-	foreground: "oklch(0.92 0.004 95)",
-	input: "oklch(0.33 0.006 95)",
-	muted: "oklch(0.245 0.005 95)",
-	mutedForeground: "oklch(0.63 0.006 95)",
-	primary: "oklch(0.6724 0.1308 38.7559)",
-	radius: "0.625rem",
-};
-
-function checkoutAppearanceFromTheme(): CheckoutAppearance {
-	const style =
-		typeof window === "undefined" ? null : window.getComputedStyle(document.documentElement);
-	const token = (name: string, fallback: string) =>
-		style?.getPropertyValue(name).trim() || fallback;
-	const isDark =
-		typeof document !== "undefined" && document.documentElement.classList.contains("dark");
-
-	return {
-		theme: isDark ? "night" : "stripe",
-		variables: {
-			borderRadius: token("--radius", FALLBACK_THEME.radius),
-			colorBackground: token("--background", FALLBACK_THEME.background),
-			colorDanger: token("--destructive", FALLBACK_THEME.destructive),
-			colorIconTab: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
-			colorIconTabSelected: token("--primary", FALLBACK_THEME.primary),
-			colorPrimary: token("--primary", FALLBACK_THEME.primary),
-			colorText: token("--foreground", FALLBACK_THEME.foreground),
-			colorTextPlaceholder: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
-			colorTextSecondary: token("--muted-foreground", FALLBACK_THEME.mutedForeground),
-			fontFamily: token("--font-sans", '"Geist Sans", sans-serif'),
-			spacingUnit: "4px",
-		},
-		rules: {
-			".Block": {
-				backgroundColor: token("--muted", FALLBACK_THEME.muted),
-				borderColor: token("--border", FALLBACK_THEME.border),
-			},
-			".Input": {
-				backgroundColor: token("--background", FALLBACK_THEME.background),
-				borderColor: token("--input", FALLBACK_THEME.input),
-				boxShadow: "none",
-			},
-			".Input:focus": {
-				borderColor: token("--primary", FALLBACK_THEME.primary),
-				boxShadow: "none",
-			},
-			".Tab": {
-				backgroundColor: token("--muted", FALLBACK_THEME.muted),
-				borderColor: token("--border", FALLBACK_THEME.border),
-				boxShadow: "none",
-			},
-			".Tab--selected": {
-				borderColor: token("--primary", FALLBACK_THEME.primary),
-				boxShadow: "none",
-			},
-		},
-	};
-}
-
-function useCheckoutAppearance(open: boolean): CheckoutAppearance {
-	const [appearance, setAppearance] = useState<CheckoutAppearance>(() =>
-		checkoutAppearanceFromTheme(),
-	);
-
-	useEffect(() => {
-		if (!open || typeof MutationObserver === "undefined") return;
-		const update = () => setAppearance(checkoutAppearanceFromTheme());
-		update();
-		const observer = new MutationObserver(update);
-		observer.observe(document.documentElement, {
-			attributeFilter: ["class", "style"],
-			attributes: true,
-		});
-		return () => observer.disconnect();
-	}, [open]);
-
-	return appearance;
-}
 
 function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | null }) {
 	if (!summary) return null;
@@ -161,10 +86,12 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 
 function CheckoutElementForm({
 	onComplete,
+	onExpired,
 	onLoadError,
 	onSubmittingChange,
 }: {
-	onComplete: () => void;
+	onComplete: (paymentStatus: StripeCheckoutPaymentStatus) => void;
+	onExpired: () => void;
 	onLoadError: (message: string) => void;
 	onSubmittingChange: (submitting: boolean) => void;
 }) {
@@ -173,7 +100,21 @@ function CheckoutElementForm({
 	const [takingLong, setTakingLong] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const submittingRef = useRef(false);
+	const settledRef = useRef(false);
 	const loadErrorMessage = checkoutState.type === "error" ? checkoutState.error.message : null;
+	const checkout = checkoutState.type === "success" ? checkoutState.checkout : null;
+	const settleOnce = useCallback(
+		(status: StripeCheckoutStatus): boolean => {
+			if (settledRef.current) return true;
+			const paymentStatus = completedCheckoutPaymentStatus(status);
+			if (!paymentStatus && status.type !== "expired") return false;
+			settledRef.current = true;
+			if (paymentStatus) onComplete(paymentStatus);
+			else onExpired();
+			return true;
+		},
+		[onComplete, onExpired],
+	);
 
 	function finishSubmitting() {
 		submittingRef.current = false;
@@ -191,6 +132,10 @@ function CheckoutElementForm({
 	useEffect(() => {
 		if (loadErrorMessage) onLoadError(loadErrorMessage);
 	}, [loadErrorMessage, onLoadError]);
+
+	useEffect(() => {
+		if (checkout) settleOnce(checkout.status);
+	}, [checkout, settleOnce]);
 
 	if (checkoutState.type === "loading") {
 		return (
@@ -215,25 +160,22 @@ function CheckoutElementForm({
 		);
 	}
 
-	const { checkout } = checkoutState;
+	const { checkout: readyCheckout } = checkoutState;
 
 	async function confirmCheckout() {
-		if (submittingRef.current || !checkout.canConfirm) return;
+		if (submittingRef.current || !readyCheckout.canConfirm) return;
 		submittingRef.current = true;
 		setSubmitting(true);
 		onSubmittingChange(true);
 		setError(null);
 		try {
-			const result = await checkout.confirm({ redirect: "if_required" });
+			const result = await readyCheckout.confirm({ redirect: "if_required" });
 			if (result.type === "error") {
 				setError(result.error.message || "We could not confirm this payment. Please try again.");
 				finishSubmitting();
 				return;
 			}
-			if (result.session.status.type === "complete") {
-				onComplete();
-				return;
-			}
+			if (settleOnce(result.session.status)) return;
 			setError("Stripe needs another step before this checkout can finish.");
 			finishSubmitting();
 		} catch {
@@ -266,7 +208,7 @@ function CheckoutElementForm({
 				<Button
 					type="button"
 					onClick={confirmCheckout}
-					disabled={submitting || !checkout.canConfirm}
+					disabled={submitting || !readyCheckout.canConfirm}
 				>
 					{submitting ? (
 						<>
@@ -285,6 +227,7 @@ export function StripeCheckoutDialog({
 	clientSecret,
 	description,
 	onComplete,
+	onExpired,
 	onOpenChange,
 	open,
 	summary,
@@ -302,20 +245,22 @@ export function StripeCheckoutDialog({
 		value: checkout,
 		emptyValue: { clientSecret: null, description: "", summary: null, title: "" },
 	});
-	const appearance = useCheckoutAppearance(open);
-	const onCompleteRef = useRef(onComplete);
-
-	useEffect(() => {
-		onCompleteRef.current = onComplete;
-	}, [onComplete]);
+	const appearance = useStripeAppearance(open);
 
 	const renderedCheckout = exit.renderedValue;
 	const renderedClientSecret = renderedCheckout.clientSecret;
 
-	const completeCheckout = useCallback(() => {
+	const completeCheckout = useCallback(
+		(paymentStatus: StripeCheckoutPaymentStatus) => {
+			exit.beginClose();
+			onComplete(paymentStatus);
+		},
+		[exit.beginClose, onComplete],
+	);
+	const expireCheckout = useCallback(() => {
 		exit.beginClose();
-		onCompleteRef.current();
-	}, [exit.beginClose]);
+		onExpired();
+	}, [exit.beginClose, onExpired]);
 
 	const handleProviderLoadError = useCallback(() => {
 		setState("error");
@@ -413,6 +358,7 @@ export function StripeCheckoutDialog({
 					>
 						<CheckoutElementForm
 							onComplete={completeCheckout}
+							onExpired={expireCheckout}
 							onLoadError={handleProviderLoadError}
 							onSubmittingChange={setCheckoutSubmitting}
 						/>

@@ -30,6 +30,7 @@ from app.services.user_provisioning import lazy_create_partner_user_with_persona
 from app.services.vault_crypto import decrypt
 from tests.conftest import create_env_with_project
 from tests.hosted_runtime_fixtures import (
+    CANONICAL_CODEX_TOOL_PROVIDER_ID,
     ensure_canonical_codex_tool_provider,
     filebrowser_companion,
 )
@@ -174,8 +175,28 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
     }
 
 
-def _runtime_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, object]:
-    return {"owner": owner, **_runtime_payload(agent_id)}
+def _runtime_body(
+    owner: dict[str, str],
+    agent_id: uuid.UUID,
+    *,
+    provider_id: str | None = None,
+) -> dict[str, object]:
+    payload = _runtime_payload(agent_id)
+    if provider_id is not None:
+        runtime = payload["runtimes"]["openclaw"]
+        runtime["provider_ids"] = [provider_id]
+        runtime["primary_model"]["provider_id"] = provider_id
+        payload["tools"] = {
+            "codex": {
+                "enabled": True,
+                "provider_id": provider_id,
+                "primary_model": {
+                    "provider_id": provider_id,
+                    "model": "gpt-5.5",
+                },
+            }
+        }
+    return {"owner": owner, **payload}
 
 
 async def _create_platform_agent(
@@ -493,6 +514,7 @@ async def test_platform_runtime_state_accepts_and_projects_filebrowser_companion
 ):
     owner = _clerk_owner(seed_user)
     agent_id = uuid.uuid4()
+    provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
     await ensure_canonical_codex_tool_provider(db_session, seed_user)
     created = await _create_platform_agent(
         platform_client,
@@ -505,13 +527,18 @@ async def test_platform_runtime_state_accepts_and_projects_filebrowser_companion
     response = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
         headers=_headers("runtime-companion-upsert"),
-        json={**_runtime_body(owner, agent_id), "companions": _TEST_COMPANIONS},
+        json={
+            **_runtime_body(owner, agent_id, provider_id=provider_id),
+            "companions": _TEST_COMPANIONS,
+        },
     )
 
     assert response.status_code == 200, response.text
     state = await db_session.get(HostedRuntimeState, agent_id)
     assert state is not None
     assert state.companions == _TEST_COMPANIONS
+    assert state.runtimes["openclaw"]["provider_ids"] == [provider_id]
+    assert state.tools["codex"]["provider_id"] == provider_id
 
     batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
     source = render_runtime_source(
@@ -521,12 +548,17 @@ async def test_platform_runtime_state_accepts_and_projects_filebrowser_companion
         vault_key_identity="test-key-version",
         decrypt_secrets=False,
     )
+    assert source.manifest["runtimes"]["openclaw"]["provider_ids"] == ["clawdi"]
+    assert source.manifest["terminalTooling"]["codex"]["provider_id"] == "clawdi"
     assert source.manifest["companions"]["filebrowser"] == _TEST_COMPANIONS["filebrowser"]
 
     cleared = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
         headers=_headers("runtime-companion-clear"),
-        json={**_runtime_body(owner, agent_id), "generation": 2},
+        json={
+            **_runtime_body(owner, agent_id, provider_id=provider_id),
+            "generation": 2,
+        },
     )
     assert cleared.status_code == 200, cleared.text
     await db_session.refresh(state)
@@ -650,6 +682,7 @@ async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_re
 ):
     owner = _clerk_owner(seed_user)
     agent_id = uuid.uuid4()
+    provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
     await ensure_canonical_codex_tool_provider(db_session, seed_user)
     created = await _create_platform_agent(
         platform_client,
@@ -658,7 +691,7 @@ async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_re
         key="stable-runtime-secret-agent",
     )
     assert created.status_code == 200, created.text
-    body = _runtime_body(owner, agent_id)
+    body = _runtime_body(owner, agent_id, provider_id=provider_id)
     first = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
         headers=_headers("stable-runtime-secret-first"),

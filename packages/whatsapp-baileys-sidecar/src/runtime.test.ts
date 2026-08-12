@@ -19,6 +19,37 @@ import type { ProviderMessageEventInput } from "./sqlite-state.js";
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("physical Baileys runtime", () => {
+	it("exposes only the authenticated durable user LID in health", async () => {
+		const validHarness = createHarness({
+			user: {
+				id: "15550001111:1@s.whatsapp.net",
+				name: "Test account",
+				lid: "900000000000001:7@lid",
+			},
+		});
+		const valid = new BaileysSocketRuntime(sidecarConfig(), validHarness.dependencies);
+		expect(valid.health().user).toEqual({
+			id: "15550001111:1@s.whatsapp.net",
+			name: "Test account",
+			lid: "900000000000001:7@lid",
+		});
+
+		const invalidHarness = createHarness({
+			user: {
+				id: "15550001111:1@s.whatsapp.net",
+				name: "Test account",
+				lid: "15550001111@s.whatsapp.net",
+			},
+		});
+		const invalid = new BaileysSocketRuntime(sidecarConfig(), invalidHarness.dependencies);
+		expect(invalid.health().user).toEqual({
+			id: "15550001111:1@s.whatsapp.net",
+			name: "Test account",
+		});
+		await valid.stop();
+		await invalid.stop();
+	});
+
 	it("retains verified rc14 QR identity through restart and SQLite reopen", async () => {
 		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-runtime-qr-"));
 		const config = { ...sidecarConfig(), sessionDir };
@@ -525,6 +556,7 @@ describe("physical Baileys runtime", () => {
 
 type HarnessOptions = {
 	registered?: boolean;
+	user?: AuthenticationCreds["me"];
 	failCredsWrite?: boolean;
 	failInboxWrite?: boolean;
 	failRetryWrite?: boolean;
@@ -557,7 +589,7 @@ function createHarness(options: HarnessOptions = {}) {
 	const creds = initAuthCreds();
 	creds.registered = options.registered ?? true;
 	if (creds.registered) {
-		creds.me = { id: "15550001111:1@s.whatsapp.net", name: "Test account" };
+		creds.me = options.user ?? { id: "15550001111:1@s.whatsapp.net", name: "Test account" };
 	}
 	const providerState = {
 		state: {

@@ -1,4 +1,4 @@
-import type { DeploymentRead } from "@clawdi/shared/api";
+import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
 import type { ManagedModelCatalogItem } from "../src/hosted/billing/contracts";
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
@@ -9,6 +9,22 @@ import {
 	mutationDeploymentReadFixture,
 	readDeploymentFixture,
 } from "./hosted-stub-api";
+
+type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress"];
+type PlanChangeKind = PlanChangeProgress["changeKind"];
+type PlanChangeBillingEffect = PlanChangeProgress["billingEffect"];
+type PlanChangeQuote = DeployComponents["schemas"]["V2ComputePlanChangeQuoteResponse"];
+
+function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingEffect {
+	switch (changeKind) {
+		case "immediate_upgrade":
+			return "immediate_proration";
+		case "scheduled_downgrade":
+			return "period_end";
+		case "funding_source_switch":
+			return "future_renewals";
+	}
+}
 
 declare global {
 	interface Window {
@@ -556,11 +572,7 @@ const _deepSeekProxyProvider = {
 	base_url: "https://proxy.example.com/v1",
 };
 
-function _userProvider(
-	providerId: string,
-	label: string,
-	models: AiProvider["models"],
-): AiProvider {
+function userProvider(providerId: string, label: string, models: AiProvider["models"]): AiProvider {
 	return {
 		id: `row-${providerId}`,
 		provider_id: providerId,
@@ -909,14 +921,12 @@ const _cardPastDueDeployment = {
 	},
 };
 
-const _terminalFallbackDeployment = {
+const terminalFallbackDeployment: DeploymentMutationFixture = {
 	...includedBasicDeployment,
 	id: "hdep_terminal_fallback",
 	name: "Fallback Basic",
 	upgrade_available: false,
-	compute_subscription: { ...includedBasicDeployment.compute_subscription },
 	last_funding_event: {
-		type: "compute_subscription_fallback",
 		funding_source: "stripe",
 		reason: "payment_failure",
 		prior_plan_slug: "compute_performance",
@@ -998,11 +1008,11 @@ function planChangeQuoteResponse({
 	targetPlanSlug: "compute_basic" | "compute_performance";
 	currentBillingTermMonths: 1 | 12;
 	targetBillingTermMonths: 1 | 12;
-	changeKind: "immediate_upgrade" | "scheduled_downgrade";
+	changeKind: PlanChangeKind;
 	effectiveAt: string;
 	amountCents: number;
 	amountUsd: string | null;
-}) {
+}): PlanChangeQuote {
 	return {
 		operation_id: operationId,
 		subscription_id: subscriptionId,
@@ -1012,6 +1022,7 @@ function planChangeQuoteResponse({
 		current_billing_term_months: currentBillingTermMonths,
 		target_billing_term_months: targetBillingTermMonths,
 		change_kind: changeKind,
+		billing_effect: planChangeBillingEffect(changeKind),
 		status: "quoted",
 		effective_at: effectiveAt,
 		proration_date: "2026-07-16T00:00:00Z",
@@ -1030,6 +1041,7 @@ function planChangeResponse({
 	currentPlanSlug,
 	targetPlanSlug,
 	targetBillingTermMonths,
+	changeKind,
 	status,
 	effectiveAt,
 }: {
@@ -1039,16 +1051,20 @@ function planChangeResponse({
 	currentPlanSlug: "compute_basic" | "compute_performance";
 	targetPlanSlug: "compute_basic" | "compute_performance";
 	targetBillingTermMonths: 1 | 12;
+	changeKind?: PlanChangeKind;
 	status: "awaiting_payment" | "awaiting_projection" | "scheduled" | "complete";
 	effectiveAt: string;
-}) {
+}): { body: NonNullable<DeploymentRead["accepted_operation"]>; status: number } {
+	const resolvedChangeKind =
+		changeKind ?? (status === "scheduled" ? "scheduled_downgrade" : "immediate_upgrade");
+	const deploymentId = `hdep_plan_${subscriptionId}`;
 	return {
 		status: 202,
 		body: {
 			name: `operations/${operationId}`,
 			metadata: {
 				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
-				deploymentId: `hdep_plan_${subscriptionId}`,
+				deploymentId,
 				verb: "plan_change",
 				targetGeneration: 1,
 				manifestETag: `plan-change-${operationId}`,
@@ -1059,6 +1075,8 @@ function planChangeResponse({
 					operationId,
 					subscriptionId,
 					fundingSource,
+					changeKind: resolvedChangeKind,
+					billingEffect: planChangeBillingEffect(resolvedChangeKind),
 					sourcePlanSlug: currentPlanSlug,
 					targetPlanSlug,
 					targetBillingTermMonths,
@@ -1069,7 +1087,20 @@ function planChangeResponse({
 			},
 			done: status === "complete" || status === "scheduled",
 			error: null,
-			response: null,
+			response:
+				status === "complete" || status === "scheduled"
+					? {
+							"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+							deployment: mutationDeploymentReadFixture({
+								...paidBasicDeployment,
+								id: deploymentId,
+								config_info: {
+									...paidBasicDeployment.config_info,
+									compute_plan_slug: targetPlanSlug,
+								},
+							}).resource,
+						}
+					: null,
 		},
 	};
 }
@@ -1226,11 +1257,10 @@ type HostedApiStubOptions = {
 	agentOrderRequests?: string[];
 	autoReloadRequests?: string[];
 	autoReloadResponses?: StubResponse[];
-	billingHistoryRequests?: string[];
-	billingHistoryResponses?: unknown[];
 	canCreateCloudAgents?: boolean;
 	canUseLegacyHostedDashboard?: boolean;
 	productAccessRequests?: string[];
+	productAccessResponseGate?: Promise<void>;
 	cancelRequests?: string[];
 	cancelResponses?: StubResponse[];
 	checkoutRequests?: string[];
@@ -1280,15 +1310,12 @@ type HostedApiStubOptions = {
 	deploymentDetailResponses?: StubResponse[];
 	deploymentDetailResponseGates?: Array<Promise<void> | undefined>;
 	deploymentListRequests?: string[];
-	deploymentListResponses?: unknown[][];
+	deploymentListResponses?: Array<unknown[] | StubResponse>;
 	deploymentListResponseGates?: Array<Promise<void> | undefined>;
 	deploymentRequestReads?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
-	ledgerResponseForRequest?: (limit: number, cursor: string | null) => unknown;
-	ledgerRequests?: string[];
-	ledgerResponses?: unknown[];
 	legacyAgentEnvironmentIds?: readonly string[];
 	managedModels?: typeof managedModelCatalog;
 	managedModelRequests?: string[];
@@ -1338,6 +1365,7 @@ type HostedApiStubOptions = {
 	walletState?: typeof walletState;
 	walletRequests?: string[];
 	walletResponses?: StubResponse[];
+	walletResponseGates?: Array<Promise<void> | undefined>;
 	onTopUpSuccess?: () => void;
 	onWalletCheckoutSuccess?: () => void;
 };
@@ -1450,6 +1478,7 @@ async function _stubRetriedStripeCheckoutLoad(page: Page) {
 
 async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const deployments = options.deployments ?? [];
+	const aiProviders = [...(options.aiProviders ?? [])];
 	const acceptedDeleteIds = new Set<string>();
 	const completedDeleteIds = options.completedDeleteIds ?? new Set<string>();
 	const plans = options.plans ?? [];
@@ -1461,6 +1490,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
+			await options.productAccessResponseGate;
 			return fulfillJson(
 				r,
 				hostedUser(
@@ -1488,6 +1518,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
 			options.walletRequests?.push(r.request().url());
 			const response = options.walletResponses?.shift();
+			await options.walletResponseGates?.shift();
 			if (response) {
 				if (response.status < 400) currentWallet = response.body as typeof walletState;
 				return fulfillJson(r, response.body, response.status);
@@ -1509,15 +1540,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			currentWallet = { ...currentWallet, ...request };
 			return fulfillJson(r, currentWallet);
 		}
-		if (p === "/v2/wallet/ledger" && r.request().method() === "GET") {
-			options.ledgerRequests?.push(r.request().url());
-			const url = new URL(r.request().url());
-			const limit = Number(url.searchParams.get("limit"));
-			const response = options.ledgerResponseForRequest?.(limit, url.searchParams.get("cursor")) ??
-				options.ledgerResponses?.shift() ?? { items: [], has_more: false };
-			return isStubResponse(response)
-				? fulfillJson(r, response.body, response.status)
-				: fulfillJson(r, response);
+		if (p === "/v2/wallet/transactions" && r.request().method() === "GET") {
+			return fulfillJson(r, { items: [], has_more: false, next_cursor: null });
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			options.deploymentListRequests?.push(p);
@@ -1525,6 +1549,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			const deploymentListResponseGate = options.deploymentListResponseGates?.shift();
 			if (deploymentListResponse) {
 				await deploymentListResponseGate;
+				if (isStubResponse(deploymentListResponse)) {
+					return fulfillJson(r, deploymentListResponse.body, deploymentListResponse.status);
+				}
 				return fulfillJson(
 					r,
 					deploymentListResponse.map((deployment) =>
@@ -1795,17 +1822,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			options.fixPaymentRequests?.push(r.request().postData() ?? "");
 			return fulfillJson(r, { message: "Payment recovery started." });
 		}
-		if (p === "/v2/subscription/billing-history" && r.request().method() === "GET") {
-			options.billingHistoryRequests?.push(r.request().url());
-			const response = options.billingHistoryResponses?.shift() ?? {
-				data: [],
-				has_more: false,
-				next_cursor: null,
-			};
-			return isStubResponse(response)
-				? fulfillJson(r, response.body, response.status)
-				: fulfillJson(r, response);
-		}
 		if (p === "/v2/subscription/portal" && r.request().method() === "POST") {
 			options.portalRequests?.push(r.request().postData() ?? "");
 			return fulfillJson(r, { portal_url: "/channels?portal=opened" });
@@ -1941,6 +1957,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = url.pathname;
 		if (p === "/v1/me") {
 			options.productAccessRequests?.push(`CLOUD ${p}`);
+			await options.productAccessResponseGate;
 			return fulfillJson(
 				r,
 				hostedUser(
@@ -2029,7 +2046,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v1/ai-providers") {
 			options.aiProviderRequests?.push(r.request().url());
-			return fulfillJson(r, { providers: options.aiProviders ?? [] });
+			return fulfillJson(r, { providers: aiProviders });
 		}
 		if (p === "/v1/ai-providers/accept" && r.request().method() === "POST") {
 			options.providerAcceptRequests?.push(r.request().postData() ?? "");
@@ -2037,6 +2054,14 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				status: 500,
 				body: { detail: "No provider accept response configured" },
 			};
+			if (
+				response.status < 400 &&
+				isRecord(response.body) &&
+				response.body.status === "ready" &&
+				isRecord(response.body.provider)
+			) {
+				aiProviders.push(response.body.provider);
+			}
 			return fulfillJson(r, response.body, response.status);
 		}
 		if (p.match(/^\/v1\/ai-providers\/[^/]+$/) && r.request().method() === "PATCH") {
@@ -3206,6 +3231,344 @@ for (const projectionFailure of [
 	});
 }
 
+test("agent provider creation stays in context and updates only after Save changes", async ({
+	page,
+}) => {
+	const providerAcceptRequests: string[] = [];
+	const updateDeploymentRequests: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
+	const createdProvider: AiProvider = {
+		...userProvider("openai", "OpenAI", [{ id: "gpt-5", label: "GPT-5" }]),
+		type: "openai",
+		base_url: "https://api.openai.com/v1",
+		runtime_env_name: "OPENAI_API_KEY",
+	};
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		providerAcceptRequests,
+		providerAcceptResponses: [
+			{ status: 200, body: { status: "ready", provider: createdProvider } },
+		],
+		updateDeploymentRequests,
+	});
+	const agentPath = `/agents/${railHostedEnvironmentId}/model-provider?source=on-clawdi&d=${railHostedDeployment.id}`;
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		await page.goto(agentPath);
+		try {
+			await expect(page.getByRole("heading", { name: "AI Providers" })).toBeVisible();
+			break;
+		} catch (error) {
+			if (attempt === 1) throw error;
+		}
+	}
+	const agentPageUrl = page.url();
+
+	await page.getByRole("button", { name: /Add a provider/ }).click();
+	expect(page.url()).toBe(agentPageUrl);
+	const dialog = page.getByRole("dialog");
+	await expect(dialog).toBeVisible();
+	await expect(dialog).toHaveAccessibleName("Add a provider");
+	await dialog.getByRole("button", { name: /^OpenAI/ }).click();
+	await expect(dialog).toHaveAccessibleName("Set up OpenAI");
+	await dialog.getByRole("textbox", { name: "API key" }).fill("sk-e2e-agent-provider");
+	await dialog.getByRole("button", { name: "Add provider", exact: true }).click();
+
+	await expect(dialog).toBeHidden();
+	await expect.poll(() => providerAcceptRequests.length).toBe(1);
+	expect(page.url()).toBe(agentPageUrl);
+	const providerCard = page
+		.getByTestId("provider-choice-grid")
+		.getByRole("button", { pressed: true })
+		.filter({ hasText: "OpenAI" });
+	await expect(providerCard).toContainText("Selected");
+	const mainModel = page.getByRole("combobox", { name: "Main model" });
+	await expect(mainModel).toBeVisible();
+	const accountProviderLink = page
+		.locator("main p")
+		.filter({ hasText: "Add, validate, or remove providers" })
+		.getByRole("link", { name: "AI Providers" });
+	await expect(accountProviderLink).toHaveAttribute("href", "/ai-providers");
+	expect(updateDeploymentRequests).toEqual([]);
+
+	await mainModel.fill("gpt-5-confirmed");
+	expect(updateDeploymentRequests).toEqual([]);
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
+	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
+	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		ai_provider_auth_kind: "api_key",
+		ai_provider_id: "openai",
+		provider_ids: ["openai"],
+		primary_model: { provider_id: "openai", model: "gpt-5-confirmed" },
+	});
+});
+
+test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ page }) => {
+	let releaseDeploymentList: (() => void) | undefined;
+	const deploymentListGate = new Promise<void>((resolve) => {
+		releaseDeploymentList = resolve;
+	});
+	await stubHostedApi(page, {
+		cloudAgents: [railHostedCloudAgent],
+		deploymentListResponses: [[railHostedDeployment]],
+		deploymentListResponseGates: [deploymentListGate],
+	});
+
+	try {
+		await page.goto(
+			`/agents/${railHostedEnvironmentId}/console?source=on-clawdi&d=${railHostedDeployment.id}`,
+		);
+		const loadingShell = page.getByTestId("agent-live-tool-loading-shell");
+		await expect(loadingShell).toBeVisible();
+		await expect(page.getByTestId("overview-status-card-skeleton")).toHaveCount(0);
+		const loadingBox = await loadingShell.boundingBox();
+		if (!loadingBox) throw new Error("Live-tool loading shell should have stable geometry.");
+
+		releaseDeploymentList?.();
+		const liveSurface = page.getByTestId("hosted-agent-live-surface");
+		await expect(liveSurface).toBeVisible();
+		const liveBox = await liveSurface.boundingBox();
+		if (!liveBox) throw new Error("Hosted live-tool surface should have stable geometry.");
+		expect(Math.abs(liveBox.x - loadingBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(liveBox.width - loadingBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(liveBox.height - loadingBox.height)).toBeLessThanOrEqual(1);
+	} finally {
+		releaseDeploymentList?.();
+	}
+});
+
+test("agent rail keeps New agent after agents and retains cache after list failure", async ({
+	page,
+}) => {
+	let releaseColdList: (() => void) | undefined;
+	let releaseFailedRefetch: (() => void) | undefined;
+	const coldListGate = new Promise<void>((resolve) => {
+		releaseColdList = resolve;
+	});
+	const failedRefetchGate = new Promise<void>((resolve) => {
+		releaseFailedRefetch = resolve;
+	});
+	const deploymentListRequests: string[] = [];
+	const failedList = { body: { detail: "projection failed" }, status: 500 };
+	await stubHostedApi(page, {
+		cloudAgents: [railHostedCloudAgent],
+		deploymentListRequests,
+		deploymentListResponses: [[railHostedDeployment], failedList, failedList, failedList],
+		deploymentListResponseGates: [coldListGate, failedRefetchGate],
+	});
+
+	try {
+		await page.goto("/agents");
+		const rail = page.getByTestId("app-sidebar-agent-rail");
+		const newAgent = rail.getByRole("button", { name: "New agent" });
+		await expect(rail.getByTestId("app-sidebar-agent-loading-slot")).toHaveCount(2);
+		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(0);
+		await expect(rail.getByRole("button", { name: "e2e-2", exact: true })).toHaveCount(0);
+
+		releaseColdList?.();
+		const agentTile = rail.getByTestId("app-sidebar-agent-tile");
+		await expect(agentTile).toHaveCount(1);
+		await expect(rail.getByTestId("app-sidebar-agent-loading-slot")).toHaveCount(0);
+		const agentTileBox = await agentTile.boundingBox();
+		const loadedNewAgentBox = await newAgent.boundingBox();
+		if (!agentTileBox || !loadedNewAgentBox) {
+			throw new Error("Loaded agent rail controls should be visible.");
+		}
+		expect(loadedNewAgentBox.y).toBeGreaterThan(agentTileBox.y);
+
+		await rail.getByRole("button", { name: "e2e-2", exact: true }).click();
+		await expect(page.locator('[data-agent-overview="hosted"]')).toBeVisible();
+		const currentTime = await page.evaluate(() => Date.now());
+		await page.clock.setFixedTime(currentTime + 31_000);
+		await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+		await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
+		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(1);
+		await expect(page.locator('[data-agent-overview="hosted"]')).toBeVisible();
+
+		releaseFailedRefetch?.();
+		await expect.poll(() => deploymentListRequests.length).toBe(4);
+		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(1);
+		await expect(page.locator('[data-agent-overview="hosted"]')).toBeVisible();
+	} finally {
+		releaseColdList?.();
+		releaseFailedRefetch?.();
+	}
+});
+
+test("header Wallet slot stays stable from unresolved access through a long balance", async ({
+	page,
+	browser,
+	baseURL,
+}) => {
+	if (!baseURL) throw new Error("Playwright baseURL is required for the Wallet header test.");
+	let releaseProductAccess: (() => void) | undefined;
+	let releaseDeploymentList: (() => void) | undefined;
+	let releaseWalletChunk: (() => void) | undefined;
+	let releaseWalletResponse: (() => void) | undefined;
+	const productAccessGate = new Promise<void>((resolve) => {
+		releaseProductAccess = resolve;
+	});
+	const deploymentListGate = new Promise<void>((resolve) => {
+		releaseDeploymentList = resolve;
+	});
+	const walletChunkGate = new Promise<void>((resolve) => {
+		releaseWalletChunk = resolve;
+	});
+	const walletResponseGate = new Promise<void>((resolve) => {
+		releaseWalletResponse = resolve;
+	});
+	const productAccessRequests: string[] = [];
+	const deploymentListRequests: string[] = [];
+	const walletRequests: string[] = [];
+	const longBalance = "$12,345,678,901,234,567,890.12";
+	let walletChunkRequests = 0;
+	await page.route("**/src/hosted/global-wallet-balance.tsx*", async (route) => {
+		walletChunkRequests += 1;
+		await walletChunkGate;
+		await route.continue();
+	});
+	await stubHostedApi(page, {
+		productAccessRequests,
+		productAccessResponseGate: productAccessGate,
+		deploymentListRequests,
+		deploymentListResponses: [[railHostedDeployment]],
+		deploymentListResponseGates: [deploymentListGate],
+		walletRequests,
+		walletResponses: [
+			{
+				body: { ...walletState, balance_usd: "12345678901234567890.12" },
+				status: 200,
+			},
+		],
+		walletResponseGates: [walletResponseGate],
+	});
+
+	try {
+		await page.goto("/agents");
+		const walletSlot = page.getByTestId("global-wallet-balance-slot");
+		const walletControl = page.getByTestId("global-wallet-balance");
+		await expect(walletSlot).toBeVisible();
+		await expect.poll(() => productAccessRequests.length).toBeGreaterThan(0);
+		await expect.poll(() => deploymentListRequests.length).toBeGreaterThan(0);
+		await expect(walletSlot).toBeEmpty();
+		await expect(walletControl).toHaveCount(0);
+		expect(walletChunkRequests).toBe(0);
+		const unresolvedSlotBox = await walletSlot.boundingBox();
+		if (!unresolvedSlotBox) throw new Error("Unresolved Wallet slot should reserve geometry.");
+
+		releaseProductAccess?.();
+		releaseDeploymentList?.();
+		await expect(walletControl).toBeVisible();
+		await expect(walletControl).toBeDisabled();
+		await expect(walletControl.locator('[data-slot="skeleton"]')).toBeVisible();
+		const fallbackSlotBox = await walletSlot.boundingBox();
+		if (!fallbackSlotBox) throw new Error("Wallet chunk fallback should preserve slot geometry.");
+		expect(Math.abs(fallbackSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(fallbackSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
+		expect(Math.abs(fallbackSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(fallbackSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
+
+		releaseWalletChunk?.();
+		await expect.poll(() => walletRequests.length).toBe(1);
+		await expect(walletControl).toBeEnabled();
+
+		releaseWalletResponse?.();
+		await expect(walletControl).toContainText(longBalance);
+		await expect(walletControl).toHaveAttribute(
+			"aria-label",
+			`Wallet balance ${longBalance}. Open Wallet settings`,
+		);
+		await expect(walletControl).toHaveAttribute(
+			"title",
+			`Wallet balance ${longBalance}. Open Wallet settings`,
+		);
+		const finalSlotBox = await walletSlot.boundingBox();
+		if (!finalSlotBox) throw new Error("Loaded Wallet slot should preserve header geometry.");
+		expect(Math.abs(finalSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(finalSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
+		expect(Math.abs(finalSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(finalSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
+		const balanceText = walletControl.locator("span").filter({ hasText: longBalance });
+		await expect(balanceText).toBeVisible();
+		expect(
+			await balanceText.evaluate(
+				(element) => element.clientWidth > 0 && element.scrollWidth > element.clientWidth,
+			),
+		).toBe(true);
+		expect(walletChunkRequests).toBe(1);
+	} finally {
+		releaseProductAccess?.();
+		releaseDeploymentList?.();
+		releaseWalletChunk?.();
+		releaseWalletResponse?.();
+	}
+
+	const inapplicableContext = await browser.newContext({ baseURL });
+	const inapplicablePage = await inapplicableContext.newPage();
+	const inapplicableProductAccessRequests: string[] = [];
+	const inapplicableDeploymentListRequests: string[] = [];
+	let releaseInapplicableProductAccess: (() => void) | undefined;
+	let releaseInapplicableDeploymentList: (() => void) | undefined;
+	const inapplicableProductAccessGate = new Promise<void>((resolve) => {
+		releaseInapplicableProductAccess = resolve;
+	});
+	const inapplicableDeploymentListGate = new Promise<void>((resolve) => {
+		releaseInapplicableDeploymentList = resolve;
+	});
+	let inapplicableChunkRequests = 0;
+	try {
+		await inapplicablePage.route("**/src/hosted/global-wallet-balance.tsx*", async (route) => {
+			inapplicableChunkRequests += 1;
+			await route.continue();
+		});
+		await stubHostedApi(inapplicablePage, {
+			canCreateCloudAgents: false,
+			productAccessResponseGate: inapplicableProductAccessGate,
+			productAccessRequests: inapplicableProductAccessRequests,
+			deploymentListRequests: inapplicableDeploymentListRequests,
+			deploymentListResponses: [[]],
+			deploymentListResponseGates: [inapplicableDeploymentListGate],
+		});
+		await inapplicablePage.goto("/agents");
+		const walletSlot = inapplicablePage.getByTestId("global-wallet-balance-slot");
+		await expect(walletSlot).toBeVisible();
+		await expect.poll(() => inapplicableProductAccessRequests.length).toBeGreaterThan(0);
+		await expect.poll(() => inapplicableDeploymentListRequests.length).toBeGreaterThan(0);
+		await expect(walletSlot).toBeEmpty();
+		const unresolvedSlotBox = await walletSlot.boundingBox();
+		if (!unresolvedSlotBox) throw new Error("Inapplicable Wallet slot should reserve geometry.");
+
+		releaseInapplicableProductAccess?.();
+		releaseInapplicableDeploymentList?.();
+		await expect(
+			inapplicablePage
+				.getByTestId("app-sidebar-agent-rail")
+				.getByTestId("app-sidebar-agent-loading-slot"),
+		).toHaveCount(0);
+		await expect(
+			inapplicablePage
+				.getByTestId("app-sidebar-agent-rail")
+				.getByRole("button", { name: "New agent" }),
+		).toBeEnabled();
+		await expect(inapplicablePage.getByTestId("global-wallet-balance")).toHaveCount(0);
+		await expect(walletSlot).toBeEmpty();
+		const resolvedSlotBox = await walletSlot.boundingBox();
+		if (!resolvedSlotBox) throw new Error("Resolved Wallet slot should preserve geometry.");
+		expect(Math.abs(resolvedSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(resolvedSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
+		expect(Math.abs(resolvedSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(resolvedSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
+		expect(inapplicableChunkRequests).toBe(0);
+	} finally {
+		releaseInapplicableProductAccess?.();
+		releaseInapplicableDeploymentList?.();
+		await inapplicableContext.close();
+	}
+});
+
 test("hosted mixed agent rail uses whole semantic buttons for context switching", async ({
 	page,
 	browser,
@@ -3421,6 +3784,16 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 	});
 	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
 	const historyLengthBeforeDelete = await page.evaluate(() => window.history.length);
+	await page.evaluate(() => {
+		document.documentElement.dataset.deleteNotFoundFlash = "false";
+		const observer = new MutationObserver(() => {
+			if (document.body.textContent?.includes("Clawdi Cloud agent not found")) {
+				document.documentElement.dataset.deleteNotFoundFlash = "true";
+			}
+			if (window.location.pathname === "/") observer.disconnect();
+		});
+		observer.observe(document.body, { childList: true, subtree: true });
+	});
 
 	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
 	await page
@@ -3429,10 +3802,11 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		.click();
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
-	await expect.poll(() => new URL(page.url()).pathname).toBe("/agents");
+	await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 	await expect
 		.poll(() => page.evaluate(() => window.history.length))
 		.toBe(historyLengthBeforeDelete);
+	await expect(page.locator("html")).toHaveAttribute("data-delete-not-found-flash", "false");
 	await expect(page.getByText("Agent removed", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("Cleanup continues in the background.", { exact: true }),
@@ -3622,9 +3996,14 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	});
 	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
 
-	await page.getByRole("button", { name: "Change plan or billing term" }).click();
+	await page.getByRole("button", { name: "Change plan, term, or payment source" }).click();
 	const changeDialog = page.getByRole("dialog");
-	await expect(changeDialog.getByText("Funding source: Card", { exact: true })).toBeVisible();
+	await expect(changeDialog.getByRole("button", { name: "Card", exact: true })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+	await changeDialog.getByRole("combobox", { name: "Compute plan" }).click();
+	await page.getByRole("option", { name: "Performance", exact: true }).click();
 	await changeDialog.getByRole("button", { name: "Review change" }).click();
 	await expect.poll(() => planQuoteRequests.length).toBe(1);
 	await expect(changeDialog.getByText("$93.60", { exact: true })).toBeVisible();
@@ -3645,9 +4024,141 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	).toBeVisible();
 	await changeDialog.getByRole("button", { name: "Close", exact: true }).last().click();
 	await expect(changeDialog).not.toBeVisible();
-	await expect(page.getByRole("button", { name: "Check plan change status" })).toBeVisible();
+	await expect(
+		page.getByRole("button", { name: "Check subscription change status" }),
+	).toBeVisible();
 	await expect(page.getByText("Plan changed", { exact: true })).toBeVisible();
 	expect(errors, `paid card upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("paid card subscription switches future renewals to Wallet", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const planChangeRequests: string[] = [];
+	const planQuoteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [paidBasicDeployment],
+		planChangeRequests,
+		planChangeResponses: [
+			planChangeResponse({
+				operationId: "op_card_to_wallet",
+				subscriptionId: 42,
+				fundingSource: "wallet",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_basic",
+				targetBillingTermMonths: 12,
+				changeKind: "funding_source_switch",
+				status: "complete",
+				effectiveAt: "2026-07-16T00:00:00Z",
+			}),
+		],
+		planQuoteRequests,
+		planQuoteResponses: [
+			planChangeQuoteResponse({
+				operationId: "op_card_to_wallet",
+				subscriptionId: 42,
+				fundingSource: "wallet",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_basic",
+				currentBillingTermMonths: 12,
+				targetBillingTermMonths: 12,
+				changeKind: "funding_source_switch",
+				effectiveAt: "2026-07-16T00:00:00Z",
+				amountCents: 0,
+				amountUsd: "0.00",
+			}),
+		],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+
+	await page.getByRole("button", { name: "Change plan, term, or payment source" }).click();
+	const changeDialog = page.getByRole("dialog");
+	await changeDialog.getByRole("button", { name: "Wallet", exact: true }).click();
+	await changeDialog.getByRole("button", { name: "Review change" }).click();
+
+	await expect.poll(() => planQuoteRequests.length).toBe(1);
+	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
+		subscription_id: 42,
+		target_plan_slug: "compute_basic",
+		target_billing_term_months: 12,
+		funding_source: "wallet",
+	});
+	await expect(changeDialog.getByText("$0.00", { exact: true })).toBeVisible();
+	await expect(changeDialog.getByText("Future renewals use Wallet", { exact: true })).toBeVisible();
+	await changeDialog.getByRole("button", { name: "Update payment source" }).click();
+
+	await expect.poll(() => planChangeRequests.length).toBe(1);
+	expect(JSON.parse(planChangeRequests[0] ?? "{}")).toEqual({
+		operation_id: "op_card_to_wallet",
+	});
+	await expect(page.getByText("Payment method updated", { exact: true })).toBeVisible();
+	await expect(page.getByText("Future renewals will use Wallet.", { exact: true })).toBeVisible();
+	expect(errors, `card to Wallet switch: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("accepted plan change recovers from the deployment projection after refresh", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const planChangeRequests: string[] = [];
+	const operation = (status: "awaiting_projection" | "complete") =>
+		planChangeResponse({
+			operationId: "op_recovered_card",
+			subscriptionId: 42,
+			fundingSource: "stripe",
+			currentPlanSlug: "compute_basic",
+			targetPlanSlug: "compute_performance",
+			targetBillingTermMonths: 12,
+			status,
+			effectiveAt: "2026-07-16T00:00:00Z",
+		});
+	const pendingOperation = operation("awaiting_projection").body;
+	const failedOperation = {
+		...pendingOperation,
+		done: true,
+		error: { code: 9, message: "Plan change failed", details: [] },
+	};
+	const projectedDeployment = mutationDeploymentReadFixture(terminalFallbackDeployment);
+	projectedDeployment.accepted_operation = {
+		...pendingOperation,
+		metadata: { ...pendingOperation.metadata, deploymentId: projectedDeployment.resource.id },
+	};
+	const terminalDeployment = {
+		...projectedDeployment,
+		accepted_operation: {
+			...failedOperation,
+			metadata: { ...failedOperation.metadata, deploymentId: projectedDeployment.resource.id },
+		},
+	};
+
+	await stubHostedApi(page, {
+		deployments: [terminalDeployment],
+		deploymentListResponses: [[projectedDeployment], [projectedDeployment]],
+		planChangeRequests,
+		planChangeOperationResponses: [{ body: terminalDeployment.accepted_operation, status: 200 }],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	await page.reload();
+
+	await page.getByRole("button", { name: "Check subscription change status" }).click();
+	const recoveryDialog = page.getByRole("dialog", { name: "Check subscription change status" });
+	await expect(
+		recoveryDialog.getByText(
+			"This subscription change was already accepted. Checking its status will not submit another request or charge.",
+			{ exact: true },
+		),
+	).toBeVisible();
+	await recoveryDialog.getByRole("button", { name: "Check status", exact: true }).click();
+	await expect(page.getByText("Couldn’t update subscription", { exact: true })).toBeVisible();
+	const retryDialog = page.getByRole("dialog", { name: "Change compute subscription" });
+	await expect(retryDialog).toBeVisible();
+	await retryDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(
+		page.locator("#compute-plan-controls").getByRole("button", { name: "Choose a subscription" }),
+	).toBeVisible();
+	expect(planChangeRequests).toEqual([]);
+	expect(errors, `recovered plan change: ${errors.join(" | ")}`).toEqual([]);
 });
 
 for (const firstTimeViewport of [

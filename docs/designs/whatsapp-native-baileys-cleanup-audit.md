@@ -226,13 +226,16 @@ packages/whatsapp-baileys-sidecar/src/types.ts
 
 ```text
 docs/architecture.md
-docs/designs/channel-runtime-manifest.md
 docs/designs/native-channels-product-model.md
 docs/designs/whatsapp-native-baileys-cleanup-audit.md
 docs/designs/whatsapp-baileys-sidecar-runtime.md
 docs/egress-channel-transport-architecture.md
 docs/plans/channels-native-backend.md
 ```
+
+The retired user-file proposal remains at
+`docs/designs/channel-runtime-manifest.md` as historical context; it is not a
+current owner document.
 
 ## Residual Boundaries
 

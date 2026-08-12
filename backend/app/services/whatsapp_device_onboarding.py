@@ -45,6 +45,7 @@ from app.services.whatsapp_native_transport import (
     WhatsAppSidecarPairingStatus,
     WhatsAppSidecarProtocolError,
     WhatsAppSidecarUnavailableError,
+    whatsapp_phone_number_from_pn_jid,
 )
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
@@ -55,7 +56,7 @@ WHATSAPP_ONBOARDING_TTL = timedelta(minutes=5)
 _E164_DIGITS = re.compile(r"^[1-9][0-9]{6,14}$")
 _ALLOCATION_LOCK_ID = 8_071_323_912
 _LOGOUT_RECOVERY_TTL_SECONDS = 10.0
-_WhatsAppRepairReason = Literal["remote_logged_out", "unregistered"]
+_WhatsAppRepairReason = Literal["missing_lid", "remote_logged_out", "unregistered"]
 _UNRELEASED_SESSION_STATES = (*WHATSAPP_ONBOARDING_ACTIVE_STATES, WHATSAPP_ONBOARDING_STATE_ERROR)
 _REPAIR_IN_PROGRESS_STATES = (
     WHATSAPP_ONBOARDING_STATE_GENERATING,
@@ -202,12 +203,13 @@ async def start_whatsapp_onboarding(
         return await _mark_session_error(db, onboarding)
     try:
         capabilities = await client.capabilities()
-        await client.health()
         pairing = await client.pairing_qr()
+        health = await client.health()
         response = await _apply_pairing_status(
             db,
             onboarding=onboarding,
             pairing=pairing,
+            health=health,
             capabilities=capabilities,
             registry=registry,
         )
@@ -249,12 +251,13 @@ async def refresh_whatsapp_onboarding(
         return await _mark_session_error(db, onboarding)
     try:
         capabilities = await client.capabilities()
-        await client.health()
+        health = await client.health()
         pairing = await client.pairing_status()
         response = await _apply_pairing_status(
             db,
             onboarding=onboarding,
             pairing=pairing,
+            health=health,
             capabilities=capabilities,
             registry=registry,
         )
@@ -301,18 +304,19 @@ async def request_whatsapp_pairing_code(
         )
     try:
         capabilities = await client.capabilities()
-        await client.health()
         if "code" not in capabilities.pairing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Manual WhatsApp pairing is not supported",
             )
         pairing = await client.pairing_code(phone_number)
+        health = await client.health()
         onboarding.method = "code"
         response = await _apply_pairing_status(
             db,
             onboarding=onboarding,
             pairing=pairing,
+            health=health,
             capabilities=capabilities,
             registry=registry,
         )
@@ -456,12 +460,13 @@ async def retry_whatsapp_onboarding(
         return await _mark_session_error(db, onboarding)
     try:
         capabilities = await client.capabilities()
-        await client.health()
         pairing = await client.pairing_qr()
+        health = await client.health()
         response = await _apply_pairing_status(
             db,
             onboarding=onboarding,
             pairing=pairing,
+            health=health,
             capabilities=capabilities,
             registry=registry,
         )
@@ -573,11 +578,17 @@ async def repair_whatsapp_account(
             recovered = await client.pairing_recover()
             if recovered.status != "stopped" or recovered.registered:
                 raise WhatsAppSidecarProtocolError("custom Baileys recovery was not confirmed")
+        elif repair_reason == "missing_lid":
+            logged_out = await client.pairing_logout()
+            if logged_out.status != "stopped" or logged_out.registered:
+                raise WhatsAppSidecarProtocolError("custom Baileys logout was not confirmed")
         pairing = await client.pairing_qr()
+        health = await client.health()
         response = await _apply_pairing_status(
             db,
             onboarding=onboarding,
             pairing=pairing,
+            health=health,
             capabilities=capabilities,
             registry=registry,
         )
@@ -645,6 +656,8 @@ def _repair_reason(health: WhatsAppSidecarHealth) -> _WhatsAppRepairReason | Non
         return "remote_logged_out"
     if not health.registered:
         return "unregistered"
+    if health.account_lid is None:
+        return "missing_lid"
     return None
 
 
@@ -871,12 +884,25 @@ async def _apply_pairing_status(
     *,
     onboarding: ChannelWhatsAppOnboardingSession,
     pairing: WhatsAppSidecarPairingStatus,
+    health: WhatsAppSidecarHealth,
     capabilities: WhatsAppSidecarCapabilities,
     registry: ConfiguredWhatsAppSidecarRegistry,
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     manual_supported = "code" in capabilities.pairing
     if pairing.status == "connected" and pairing.registered:
-        await _finalize_connected_account(db, onboarding=onboarding, registry=registry)
+        if (
+            not health.connected
+            or not health.registered
+            or whatsapp_phone_number_from_pn_jid(health.account_jid) is None
+            or health.account_lid is None
+        ):
+            return await _mark_session_error(db, onboarding)
+        await _finalize_connected_account(
+            db,
+            onboarding=onboarding,
+            registry=registry,
+            health=health,
+        )
         return _session_response(
             onboarding,
             manual_pairing_code_supported=manual_supported,
@@ -930,7 +956,10 @@ async def _finalize_connected_account(
     *,
     onboarding: ChannelWhatsAppOnboardingSession,
     registry: ConfiguredWhatsAppSidecarRegistry,
+    health: WhatsAppSidecarHealth,
 ) -> None:
+    if health.account_jid is None or health.account_lid is None:
+        raise WhatsAppSidecarProtocolError("custom sidecar PN/LID identity is unavailable")
     session_id = onboarding.sidecar_account_id
     session_revision = onboarding.sidecar_config_revision
     account_id: UUID | None = None
@@ -960,6 +989,10 @@ async def _finalize_connected_account(
                     "connection_mode": "baileys_custom",
                     "sidecar_account_id": str(session_id),
                     "sidecar_config_revision": session_revision,
+                    "self_identity": {
+                        "id": health.account_jid,
+                        "lid": health.account_lid,
+                    },
                 },
             )
             db.add(existing)
@@ -977,6 +1010,13 @@ async def _finalize_connected_account(
             or existing.config.get("sidecar_config_revision") != session_revision
         ):
             raise WhatsAppSidecarProtocolError("custom sidecar ownership conflict")
+        else:
+            config = dict(existing.config)
+            config["self_identity"] = {
+                "id": health.account_jid,
+                "lid": health.account_lid,
+            }
+            existing.config = config
         account_id = existing.id
         newly_bound = await registry.bind_custom_account(
             session_id=session_id,
@@ -1056,14 +1096,25 @@ async def _expire_session(
     if client is None:
         return await _mark_session_error(db, onboarding)
     try:
-        await client.health()
+        health = await client.health()
         current = await client.pairing_status()
         if (
             onboarding.state != WHATSAPP_ONBOARDING_STATE_ERROR
             and current.status == "connected"
             and current.registered
         ):
-            await _finalize_connected_account(db, onboarding=onboarding, registry=registry)
+            if (
+                not health.connected
+                or whatsapp_phone_number_from_pn_jid(health.account_jid) is None
+                or health.account_lid is None
+            ):
+                return await _mark_session_error(db, onboarding)
+            await _finalize_connected_account(
+                db,
+                onboarding=onboarding,
+                registry=registry,
+                health=health,
+            )
             await db.commit()
             return _session_response(
                 onboarding,

@@ -120,6 +120,17 @@ describe("agentDisconnectUnavailable", () => {
 				envId: "aaaa",
 				explicitIdentity: false,
 				ownership: {
+					cloudEnvIds: new Set(),
+					legacyEnvIds: new Set(),
+					isResolved: false,
+				},
+			}),
+		).toBe(true);
+		expect(
+			agentDisconnectUnavailable({
+				envId: "aaaa",
+				explicitIdentity: false,
+				ownership: {
 					cloudEnvIds: new Set(["aaaa"]),
 					legacyEnvIds: new Set(),
 					isResolved: true,

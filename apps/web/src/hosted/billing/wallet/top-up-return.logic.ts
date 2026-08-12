@@ -1,19 +1,16 @@
-import {
-	type PaymentIntentClientSecret,
-	stripeReturnPaymentIntentClientSecret,
-} from "@/hosted/billing/stripe-client-secret";
 import { SETTINGS_QUERY_KEY } from "@/lib/settings-routes";
+import { cleanWalletTopupReturnUrl, WALLET_TOPUP_RETURN_PARAM } from "@/lib/wallet-topup-return";
 
-export const WALLET_TOPUP_RETURN_PARAM = "topup_return";
-export const STRIPE_PAYMENT_INTENT_PARAM = "payment_intent";
-export const STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM = "payment_intent_client_secret";
-export const STRIPE_REDIRECT_STATUS_PARAM = "redirect_status";
+export {
+	bootstrapWalletTopupReturn,
+	cleanMarkedWalletTopupReturnRequest,
+	cleanWalletTopupReturnUrl,
+	consumeWalletTopupReturn,
+	coordinateWalletTopupReturn,
+	readWalletTopupReturn,
+} from "@/lib/wallet-topup-return";
 
 export type WalletTopupReturnToastKind = "info" | "error";
-
-export interface WalletTopupReturnState {
-	clientSecret: PaymentIntentClientSecret;
-}
 
 export interface WalletTopupReturnToast {
 	kind: WalletTopupReturnToastKind;
@@ -27,28 +24,9 @@ export const WALLET_TOPUP_ACCEPTED_TOAST = {
 } as const;
 
 export function buildWalletTopupReturnUrl(currentHref: string): string {
-	const url = new URL(currentHref);
+	const url = new URL(cleanWalletTopupReturnUrl(currentHref));
 	url.searchParams.set(SETTINGS_QUERY_KEY, "billing-wallet");
 	url.searchParams.set(WALLET_TOPUP_RETURN_PARAM, "1");
-	return url.toString();
-}
-
-export function readWalletTopupReturn(search: string): WalletTopupReturnState | null {
-	const params = new URLSearchParams(search);
-	if (params.get(WALLET_TOPUP_RETURN_PARAM) !== "1") return null;
-	const clientSecret = stripeReturnPaymentIntentClientSecret(
-		params.get(STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM),
-	);
-	if (!clientSecret) return null;
-	return { clientSecret };
-}
-
-export function cleanWalletTopupReturnUrl(currentHref: string): string {
-	const url = new URL(currentHref);
-	url.searchParams.delete(WALLET_TOPUP_RETURN_PARAM);
-	url.searchParams.delete(STRIPE_PAYMENT_INTENT_PARAM);
-	url.searchParams.delete(STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM);
-	url.searchParams.delete(STRIPE_REDIRECT_STATUS_PARAM);
 	return url.toString();
 }
 

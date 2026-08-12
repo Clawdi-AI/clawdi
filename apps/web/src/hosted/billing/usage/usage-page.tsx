@@ -405,6 +405,7 @@ export function UsageSummaryView({
 			: null;
 	const sortedDays = completeDailyBreakdown(usage.by_day, usage.period_start, usage.period_end);
 	const sortedModels = [...usage.by_model].sort(sortModelBreakdown);
+	const modelsTruncated = (usage.truncated_sections ?? []).includes("by_model");
 	const windowLabel = `${formatUsageDate(usage.period_start)} – ${formatUsageDate(usage.period_end)} · UTC`;
 	const filters = rangeSelection ? (
 		<UsageFilters
@@ -493,7 +494,13 @@ export function UsageSummaryView({
 				)}
 			</SettingsSection>
 
-			<SettingsSection headingLevel={3} title="Models">
+			<SettingsSection
+				headingLevel={3}
+				title="Models"
+				description={
+					modelsTruncated ? `Showing the ${usage.breakdown_limit} highest-spend models.` : undefined
+				}
+			>
 				{missingSections.has("by_model") ? (
 					<EmptyState
 						variant="inset"

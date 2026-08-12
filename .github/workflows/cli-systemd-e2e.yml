@@ -1,0 +1,26 @@
+name: CLI Privileged systemd E2E
+
+on:
+  pull_request:
+    paths:
+      - "packages/cli/package.json"
+      - "packages/cli/tests/e2e/runtime-official-installer-systemd.e2e.test.ts"
+      - "packages/cli/tests/fixtures/runtime-official-installer-systemd/**"
+      - "scripts/test-runtime-official-installer-systemd.sh"
+      - ".github/workflows/cli-systemd-e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-systemd-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  privileged-systemd-e2e:
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test CLI against systemd as PID 1
+        run: scripts/test-runtime-official-installer-systemd.sh

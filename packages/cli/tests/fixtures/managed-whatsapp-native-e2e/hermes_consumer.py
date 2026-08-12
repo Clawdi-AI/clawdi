@@ -12,7 +12,7 @@ from gateway.platform_registry import platform_registry
 from hermes_cli.plugins import discover_plugins
 
 CONTROL_BASE = "http://127.0.0.1:9000"
-CHAT_JID = "15551112222@s.whatsapp.net"
+CHAT_JID = "184207372460253@lid"
 
 
 async def main() -> None:
@@ -27,6 +27,8 @@ async def main() -> None:
         os.environ[key] = value
     if os.environ.get("WHATSAPP_ALLOWED_USERS") != "*":
         raise RuntimeError("managed Hermes projection must use the stock wildcard allowlist")
+    if os.environ.get("WHATSAPP_ALLOW_ALL_USERS") != "true":
+        raise RuntimeError("managed Hermes projection must explicitly opt in to allow all users")
     discover_plugins()
 
     received: list[dict[str, Any]] = []

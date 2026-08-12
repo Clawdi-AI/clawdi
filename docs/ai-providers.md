@@ -197,12 +197,42 @@ For Hermes, Hosted convergence performs a structured merge into
 `$HERMES_HOME/config.yaml`. It preserves unrelated config, maps portable API
 modes to Hermes transport names, and writes only environment-variable names
 for API-key providers. Codex OAuth uses Hermes' native `openai-codex` selector
-and a reserved Clawdi-owned credential-pool entry.
+and a reserved Clawdi-owned credential-pool entry. Managed API-key provider
+objects set the upstream-supported `discover_models: false` and explicitly map
+the accepted-generation manifest's frozen `models`; each generation replaces
+all generated provider fields, so removed models do not survive. Generic and
+BYOK projection leaves Hermes' discovery default unchanged. Hermes has no
+OpenClaw-style global `models.mode` switch.
 
-For OpenClaw, Hosted convergence sends a native config patch through
-`openclaw config patch --stdin`. API-key providers use env-backed `apiKey`
-references. Codex OAuth uses the native subscription route and the public
-provider-auth SDK with a namespaced Clawdi-owned profile.
+This behavior is verified against Hermes `0.19.1`, source commit
+[`cc4cab2f`](https://github.com/NousResearch/hermes-agent/tree/cc4cab2f592e60a197e796506de9168f74baf3ea):
+[`model_switch.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/model_switch.py#L2613-L2658)
+and its custom-provider path
+[`model_switch.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/model_switch.py#L2791-L2942)
+probe `/models` by default but honor `discover_models: false`;
+[`config.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/config.py#L1310-L1321)
+accepts that provider field.
+
+For OpenClaw, Hosted provider convergence uses the public
+`openclaw/plugin-sdk/config-mutation` export. The mutation starts from authored
+source config, sets `models.mode` to `replace`, exactly replaces each selected
+provider object, and leaves unrelated provider and user settings intact. In the
+verified OpenClaw target, replace mode skips implicit provider discovery, so
+the active managed catalog comes only from the manifest projection; replacing
+the provider object also removes stale API modes and key references. The
+mutation enables OpenClaw's targeted `allowConfigSizeDrop` write option because
+removing stale managed models is an intentional size reduction; schema,
+SecretRef preflight, config-path ownership, locking, and compare-and-swap guards
+remain active. Gateway and channel patches continue to use `openclaw config
+patch --stdin`.
+
+This contract is verified against `openclaw@2026.7.1-2`, official source commit
+[`0790d9f`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c).
+The discovery skip is implemented in
+[`models-config.plan.ts`](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/agents/models-config.plan.ts#L115-L120).
+API-key providers use env-backed `apiKey` references. Codex OAuth uses the
+native subscription route and the public provider-auth SDK with a namespaced
+Clawdi-owned profile.
 
 OAuth reconcile is durable and target-native:
 

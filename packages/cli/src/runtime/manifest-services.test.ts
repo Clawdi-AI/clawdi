@@ -288,7 +288,7 @@ function officialServiceHarness(
 	const logPath = join(paths.runRoot, "official-service-receipt.log");
 	const command =
 		runtime === "openclaw"
-			? join(paths.userHome, ".openclaw", "bin", "openclaw")
+			? join(paths.userHome, ".local", "bin", "openclaw")
 			: join(paths.userHome, ".local", "bin", "hermes");
 	const unitPath = join(paths.systemdUserRoot, `${runtime}-gateway.service`);
 	const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
@@ -345,7 +345,7 @@ function officialServiceHarness(
 
 function channelPluginHarness(): InstallGateHarness {
 	const paths = tempRuntimePaths();
-	const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
+	const command = join(paths.userHome, ".local", "bin", "openclaw");
 	const installLogPath = join(paths.runRoot, "plugin-installs.log");
 	const inspectStatePath = join(paths.runRoot, "plugin-inspect.json");
 	const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
@@ -609,8 +609,10 @@ describe("runtime manifest services", () => {
 		expect(openclawEnv).toContain('CLAWDI_AUTH_TOKEN=""');
 		for (const name of ["openclaw-gateway", "hermes-gateway", "clawdi-hermes-dashboard"]) {
 			const env = readFileSync(join(paths.systemdEnvRoot, `${name}.service.env`), "utf8");
+			expect(env).toContain(`CLAWDI_HOME="${paths.clawdiHome}"`);
 			expect(env).not.toContain(dirname(paths.cliManagedBin));
 		}
+		expect(runtimeWatchEnv).toContain(`CLAWDI_HOME="${paths.clawdiHome}"`);
 
 		const serviceConfig = JSON.parse(
 			readFileSync(join(paths.runConfigRoot, "hermes+dashboard.json"), "utf8"),
@@ -1142,7 +1144,7 @@ describe("runtime manifest services", () => {
 	test("converges official service state before installers restart units", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
-		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
@@ -1974,7 +1976,7 @@ describe("runtime manifest services", () => {
 	test("uninstalls stale official gateway services when manifest disables them", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
-		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
@@ -2075,7 +2077,7 @@ describe("runtime manifest services", () => {
 		// under real systemd retries the official install.
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
-		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		writeFakeGatewayCli({
@@ -2142,7 +2144,7 @@ describe("runtime manifest services", () => {
 	test("applies locale config without a systemd user manager when systemd apply is disabled", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "openclaw-config.log");
-		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		mkdirSync(dirname(openclawCommand), { recursive: true });
 		writeFileSync(
@@ -2201,7 +2203,7 @@ cat > '${logPath}'
 	test("leaves hosted drop-ins for forward convergence when official install fails", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
-		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		const dropInPath = join(
@@ -2339,7 +2341,7 @@ esac
 	test("commits disabled authority before deferring a failed official uninstall", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
-		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 		writeFakeSystemctl({ path: systemctlCommand, logPath });

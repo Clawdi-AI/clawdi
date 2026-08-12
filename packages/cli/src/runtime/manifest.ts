@@ -11,6 +11,7 @@ import {
 	readdirSync,
 	readFileSync,
 	readlinkSync,
+	rmdirSync,
 	rmSync,
 	statSync,
 } from "node:fs";
@@ -22,6 +23,7 @@ import {
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	isClawdiManagedV2ProviderId,
+	MANAGED_AI_PROVIDER_RUNTIME_ENV,
 } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
@@ -44,6 +46,7 @@ import {
 	OPENCLAW_PROVIDER_AUTH_HELPER,
 	type OpenClawProviderAuthAction,
 	oauthCredentialFingerprint,
+	resolveOpenClawConfigMutationSdkExport,
 	resolveOpenClawProviderAuthSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
@@ -73,6 +76,7 @@ import {
 	RUNTIME_AUTH_TOKEN_SECRET_REF,
 	readRuntimeAuthToken,
 } from "./auth-token";
+import { removeHostedCliPathExposure } from "./cli-update";
 import {
 	ensureFileBrowserCompanion,
 	type FileBrowserCompanionInstallOptions,
@@ -152,6 +156,7 @@ import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	hasUnsupportedAgentPluginInstallations,
+	isHostedCodexManagedRuntimeEnv,
 	type LiveSyncAgent,
 	type RuntimeInstall,
 	type RuntimeManifest,
@@ -188,8 +193,7 @@ import {
 	ensureRuntimeMitmproxy,
 	type RuntimeMitmproxyEnsureResult,
 } from "./mitmproxy-fetch";
-import type { RuntimePaths } from "./paths";
-import { detectRuntimeMode } from "./paths";
+import { detectRuntimeMode, RUNTIME_USER_CLI_STATE_ROOT_MODE, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
 	buildRuntimeRunConfig,
@@ -248,6 +252,10 @@ import {
 	TRANSPARENT_EGRESS_TABLE,
 	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
 } from "./transparent-egress";
+import {
+	type ManagedWhatsAppAuthCredential,
+	managedWhatsAppAuthCredentials,
+} from "./whatsapp-credential-projection";
 import {
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 	parseManagedWhatsAppSocketMetadataJson,
@@ -455,14 +463,6 @@ function omitSecretRefs(
 	return normalized;
 }
 
-interface ManagedWhatsAppAuthCredential {
-	accountKey: string;
-	credentialId: string;
-	authDir: string;
-	credsJsonSecretRef: string;
-	target: "openclaw" | "hermes" | "legacy";
-}
-
 const MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
 
 export function materializeHostedChannelCredentials(
@@ -561,62 +561,7 @@ function hostedChannelCredentialsDeclared(manifest: RuntimeManifest): boolean {
 }
 
 function hostedWhatsAppAuthCredentials(manifest: RuntimeManifest): ManagedWhatsAppAuthCredential[] {
-	const raw = manifest.projection?.channelCredentials;
-	if (!Array.isArray(raw)) return [];
-	return raw
-		.flatMap(parseManagedWhatsAppAuthCredentials)
-		.filter((entry): entry is ManagedWhatsAppAuthCredential => entry !== null)
-		.sort((left, right) =>
-			`${left.target}:${left.accountKey}:${left.credentialId}`.localeCompare(
-				`${right.target}:${right.accountKey}:${right.credentialId}`,
-			),
-		);
-}
-
-function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAuthCredential[] {
-	const record = recordValue(value);
-	if (!record) return [];
-	if (record.provider !== "whatsapp" || record.kind !== "whatsapp_baileys_auth_state") return [];
-	const accountKey = stringValue(record.accountKey);
-	const credentialId = stringValue(record.credentialId);
-	const files = Array.isArray(record.files) ? record.files : [];
-	const credsFile = files
-		.map(recordValue)
-		.find((file) => file?.path === "creds.json" && typeof file.secretRef === "string");
-	const credsJsonSecretRef = credsFile ? stringValue(credsFile.secretRef) : null;
-	if (!accountKey || !credentialId || !credsJsonSecretRef) {
-		throw new Error("WhatsApp auth credential projection is incomplete");
-	}
-	const targets = recordValue(record.targets);
-	const parsedTargets: ManagedWhatsAppAuthCredential[] = [];
-	const openclawTarget = targets ? recordValue(targets.openclaw) : null;
-	const openclawAuthDir = targets
-		? stringValue(openclawTarget?.authDir)
-		: stringValue(record.authDir);
-	if (openclawAuthDir) {
-		parsedTargets.push({
-			accountKey,
-			credentialId,
-			authDir: openclawAuthDir,
-			credsJsonSecretRef,
-			target: targets ? "openclaw" : "legacy",
-		});
-	}
-	const hermesTarget = targets ? recordValue(targets.hermes) : null;
-	const hermesAuthDir = hermesTarget ? stringValue(hermesTarget.authDir) : null;
-	if (hermesAuthDir) {
-		parsedTargets.push({
-			accountKey,
-			credentialId,
-			authDir: hermesAuthDir,
-			credsJsonSecretRef,
-			target: "hermes",
-		});
-	}
-	if (parsedTargets.length === 0) {
-		throw new Error("WhatsApp auth credential projection is incomplete");
-	}
-	return parsedTargets;
+	return managedWhatsAppAuthCredentials(manifest.projection?.channelCredentials);
 }
 
 function materializeManagedWhatsAppAuthDir(
@@ -940,6 +885,24 @@ function makeRuntimeUserPrivateDir(path: string, home: string): void {
 	}
 }
 
+function ensureRuntimeUserCliStateRoot(path: string, identity: { uid: number; gid: number }): void {
+	mkdirSync(path, { recursive: true });
+	let node = lstatSync(path);
+	if (!node.isDirectory() || node.isSymbolicLink()) {
+		throw new Error(`hosted CLAWDI_HOME must be a real directory: ${path}`);
+	}
+	if (runningAsRoot()) chownSync(path, identity.uid, identity.gid);
+	chmodSync(path, RUNTIME_USER_CLI_STATE_ROOT_MODE);
+	node = lstatSync(path);
+	if (
+		(node.mode & 0o777) !== RUNTIME_USER_CLI_STATE_ROOT_MODE ||
+		node.uid !== identity.uid ||
+		node.gid !== identity.gid
+	) {
+		throw new Error(`hosted CLAWDI_HOME ownership or mode is invalid: ${path}`);
+	}
+}
+
 function ensureRuntimeUserHome(path: string): void {
 	mkdirSync(path, { recursive: true });
 	const node = lstatSync(path);
@@ -981,7 +944,7 @@ function runtimeInstallerCommand(name: string, install: RuntimeInstall | undefin
 }
 
 function runtimeCommandPath(name: string, home: string): string | null {
-	if (name === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
+	if (name === "openclaw") return join(home, ".local", "bin", "openclaw");
 	if (name === "hermes") return join(home, ".local", "bin", "hermes");
 	return null;
 }
@@ -1640,15 +1603,13 @@ interface HostedAiProviderProjectionResult {
 	providerIds: string[];
 }
 
-const CODEX_MANAGED_PROVIDER_ID = "clawdi-managed";
+const CODEX_MANAGED_PROVIDER_ID = "clawdi";
 const CODEX_MANAGED_PROVIDER_CONFIG_FILE = "config.toml";
-const CODEX_MANAGED_ENV_KEY = "OPENAI_API_KEY";
 const CODEX_NPM_PACKAGE_VERSION = "0.146.0";
 const CODEX_NPM_PACKAGE_SPEC = `@openai/codex@${CODEX_NPM_PACKAGE_VERSION}`;
 
 interface HostedCodexManagedProvider {
 	baseUrl: string;
-	model: string;
 }
 
 export type HostedAiProviderProjectionInput = {
@@ -1912,7 +1873,7 @@ function openClawProviderAuthSdkPath(
 		return testOverride;
 	}
 	const commandPath = observation?.commandPath;
-	const resolved = resolveOpenClawProviderAuthSdkExport([
+	const resolved = resolveOpenClawProviderAuthSdkExport(home, [
 		commandPath,
 		observation?.appRoot,
 		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
@@ -2443,13 +2404,7 @@ function applyHostedAiProviderProjection(
 		);
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (providerPatch.apply) {
-			runRuntimeUserCommand(
-				observation.commandPath,
-				["config", "patch", "--stdin", ...providerPatch.args],
-				providerPatch.content,
-				home,
-				workspaceRoot,
-			);
+			applyOpenClawHostedProviderPatch(observation, providerPatch, home, workspaceRoot);
 		}
 		return {
 			path: observation.commandPath,
@@ -2548,25 +2503,23 @@ function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManag
 	const providerId = stringValue(codex?.provider_id);
 	const baseUrl = stringValue(provider?.baseUrl);
 	const apiMode = stringValue(provider?.apiMode);
-	const model = stringValue(primaryModel?.model);
+	// Manifest v1 keeps this field so older CLIs can parse and self-upgrade; Codex chooses its model.
+	const compatibilityModel = stringValue(primaryModel?.model);
 	if (
 		codex?.enabled !== true ||
 		!provider ||
 		provider.managed_by !== "clawdi" ||
 		apiMode !== "openai_responses" ||
-		stringValue(provider.runtimeEnvName) !== CODEX_MANAGED_ENV_KEY ||
+		!isHostedCodexManagedRuntimeEnv(stringValue(provider.runtimeEnvName)) ||
 		normalizeSecretRef(stringValue(provider.apiKeySecretRef)) !== "secret://tool.codex.apiKey" ||
 		!providerId ||
 		stringValue(primaryModel?.provider_id) !== providerId ||
 		!baseUrl ||
-		!model
+		!compatibilityModel
 	) {
 		return null;
 	}
-	return {
-		baseUrl,
-		model,
-	};
+	return { baseUrl };
 }
 
 function hostedCodexHome(home: string): string {
@@ -2574,14 +2527,15 @@ function hostedCodexHome(home: string): string {
 }
 
 function hostedCodexManagedConfigToml(provider: HostedCodexManagedProvider): string {
-	const lines = ["# Managed by Clawdi hosted runtime. Do not put API keys in this file."];
+	const lines = ["# Generated by Clawdi hosted runtime. Do not put API keys in this file."];
 	lines.push(
-		`model = ${quoteTomlString(provider.model)}`,
 		`model_provider = ${quoteTomlString(CODEX_MANAGED_PROVIDER_ID)}`,
 		"",
 		`[model_providers.${CODEX_MANAGED_PROVIDER_ID}]`,
+		`name = ${quoteTomlString("clawdi")}`,
 		`base_url = ${quoteTomlString(provider.baseUrl)}`,
-		`env_key = ${quoteTomlString(CODEX_MANAGED_ENV_KEY)}`,
+		`env_key = ${quoteTomlString(MANAGED_AI_PROVIDER_RUNTIME_ENV)}`,
+		'wire_api = "responses"',
 		"",
 	);
 	return lines.join("\n");
@@ -2681,7 +2635,7 @@ function writeHostedCodexCommandShim(commandPath: string, realBin: string): void
 		commandPath,
 		[
 			"#!/usr/bin/env sh",
-			`export ${CODEX_MANAGED_ENV_KEY}=${shellQuote(MANAGED_EGRESS_PLACEHOLDER_VALUE)}`,
+			`export ${MANAGED_AI_PROVIDER_RUNTIME_ENV}=${shellQuote(MANAGED_EGRESS_PLACEHOLDER_VALUE)}`,
 			`exec ${shellQuote(realBin)} "$@"`,
 			"",
 		].join("\n"),
@@ -2730,6 +2684,7 @@ function applyHostedHermesAiProviderProjection(
 		"hermes",
 		projectionInput.catalog,
 		projectionInput.primaryModel,
+		{ freezeManagedModelCatalog: true },
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 	if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
@@ -2772,6 +2727,89 @@ export interface OpenClawHostedProviderPatch {
 	providerIds: string[];
 }
 
+const OPENCLAW_CONFIG_MUTATION_HELPER = `
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const sdk = await import(pathToFileURL(process.argv[1]).href);
+if (typeof sdk.mutateConfigFile !== "function") {
+  throw new Error("required public config-mutation export is missing");
+}
+const patch = JSON.parse(readFileSync(0, "utf8"));
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+if (!isRecord(patch)) throw new Error("OpenClaw provider patch must be an object");
+const blockedKeys = new Set(["__proto__", "constructor", "prototype"]);
+const explicitSetPaths = [];
+const unsetPaths = [];
+const applyMergePatch = (target, source, path = []) => {
+  for (const [key, value] of Object.entries(source)) {
+    if (blockedKeys.has(key)) throw new Error("OpenClaw provider patch contains a blocked key");
+    const nextPath = [...path, key];
+    if (value === null) {
+      delete target[key];
+      unsetPaths.push(nextPath);
+    } else if (path.length === 2 && path[0] === "models" && path[1] === "providers") {
+      target[key] = structuredClone(value);
+      explicitSetPaths.push(nextPath);
+    } else if (isRecord(value)) {
+      if (!isRecord(target[key])) target[key] = {};
+      if (Object.keys(value).length === 0) explicitSetPaths.push(nextPath);
+      applyMergePatch(target[key], value, nextPath);
+    } else {
+      target[key] = structuredClone(value);
+      explicitSetPaths.push(nextPath);
+    }
+  }
+};
+await sdk.mutateConfigFile({
+  base: "source",
+  afterWrite: { mode: "none", reason: "Clawdi runtime convergence owns service reconciliation" },
+  writeOptions: { allowConfigSizeDrop: true, explicitSetPaths, unsetPaths },
+  mutate: (draft) => applyMergePatch(draft, patch),
+});
+`;
+
+function openClawConfigMutationSdkPath(
+	observation: RuntimeInstallObservation,
+	home: string,
+): string | null {
+	const commandPath = observation.commandPath;
+	return resolveOpenClawConfigMutationSdkExport(home, [
+		commandPath,
+		observation.appRoot,
+		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
+		join(home, ".openclaw", "node_modules", "openclaw"),
+		join(home, ".local", "lib", "node_modules", "openclaw"),
+	]);
+}
+
+function applyOpenClawHostedProviderPatch(
+	observation: RuntimeInstallObservation,
+	patch: OpenClawHostedProviderPatch,
+	home: string,
+	workspaceRoot: string,
+): void {
+	const sdkPath = openClawConfigMutationSdkPath(observation, home);
+	if (!sdkPath) {
+		runRuntimeUserCommand(
+			observation.commandPath ?? "openclaw",
+			["config", "patch", "--stdin", ...patch.args],
+			patch.content,
+			home,
+			workspaceRoot,
+		);
+		return;
+	}
+	ensureRuntimeUserHome(home);
+	runRuntimeUserCommand(
+		"node",
+		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
+		patch.content,
+		home,
+		workspaceRoot,
+	);
+}
+
 export function buildOpenClawHostedProviderPatch(
 	projectionInput: HostedAiProviderProjectionInput | null,
 	previousProviderIds: readonly string[],
@@ -2794,10 +2832,12 @@ export function buildOpenClawHostedProviderPatch(
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
 	const providerIds = [...openClawProviderIdsFromPatch(file.content)].sort();
 	const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set(providerIds));
+	const providerPatchContent =
+		providerIds.length > 0 ? withOpenClawProviderMode(file.content, "replace") : file.content;
 	return {
 		apply: true,
-		args: openClawProviderModelReplacementArgs(file.content),
-		content: mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
+		args: openClawProviderReplacementArgs(file.content),
+		content: mergeOpenClawProviderDeletes(providerPatchContent, deletedProviderIds),
 		providerIds,
 	};
 }
@@ -2815,7 +2855,7 @@ function openClawProviderIdsFromPatch(content: string): Set<string> {
 	);
 }
 
-function openClawProviderModelReplacementArgs(content: string): string[] {
+function openClawProviderReplacementArgs(content: string): string[] {
 	const parsed = JSON.parse(content) as unknown;
 	const root = recordValue(parsed);
 	const models = root ? recordValue(root.models) : null;
@@ -2823,9 +2863,19 @@ function openClawProviderModelReplacementArgs(content: string): string[] {
 	if (!providers) return [];
 	return Object.entries(providers).flatMap(([providerId, provider]) => {
 		const providerConfig = recordValue(provider);
-		if (!providerConfig || !Array.isArray(providerConfig.models)) return [];
-		return ["--replace-path", `models.providers[${JSON.stringify(providerId)}].models`];
+		if (!providerConfig) return [];
+		return ["--replace-path", `models.providers[${JSON.stringify(providerId)}]`];
 	});
+}
+
+function withOpenClawProviderMode(patchContent: string, mode: "merge" | "replace"): string {
+	const parsed = JSON.parse(patchContent) as unknown;
+	const root = recordValue(parsed);
+	if (!root) return patchContent;
+	const patch = { ...root };
+	const models = { ...(recordValue(patch.models) ?? {}), mode };
+	patch.models = models;
+	return `${JSON.stringify(patch, null, 2)}\n`;
 }
 
 function mergeOpenClawProviderDeletes(
@@ -2846,7 +2896,6 @@ function mergeOpenClawProviderDeletes(
 	for (const providerId of deletedProviderIds) {
 		providers[providerId] = null;
 	}
-	models.mode = "merge";
 	models.providers = providers;
 	patch.models = models;
 	return `${JSON.stringify(patch, null, 2)}\n`;
@@ -2958,7 +3007,7 @@ function openClawGatewayHostedPatch(
 							? {
 									auth: {
 										mode: "token",
-										...(nativeAuth ? { token: null } : { token: gatewayToken }),
+										token: gatewayToken,
 									},
 								}
 							: {}),
@@ -2983,6 +3032,28 @@ function openClawGatewayHostedPatch(
 	};
 }
 
+function jsonMergePatchIsApplied(current: unknown, patch: unknown): boolean {
+	if (!isPlainRecord(patch)) return canonicalJsonEqual(current, patch);
+	if (!isPlainRecord(current)) return false;
+	return Object.entries(patch).every(([key, value]) =>
+		value === null ? !Object.hasOwn(current, key) : jsonMergePatchIsApplied(current[key], value),
+	);
+}
+
+function openClawGatewayHostedPatchIsApplied(
+	home: string,
+	patch: Record<string, unknown>,
+): boolean {
+	try {
+		const current = JSON.parse(
+			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf-8"),
+		) as unknown;
+		return jsonMergePatchIsApplied(current, patch);
+	} catch {
+		return false;
+	}
+}
+
 function openClawControlUiBasePath(manifest: RuntimeManifest): string {
 	const system = manifest.projection?.system;
 	if (!isPlainRecord(system)) return "/";
@@ -2999,7 +3070,7 @@ function applyOpenClawGatewayHostedProjection(
 	workspaceRoot: string,
 ): void {
 	const patch = openClawGatewayHostedPatch(manifest, secretValues);
-	if (!patch) return;
+	if (!patch || openClawGatewayHostedPatchIsApplied(home, patch)) return;
 	runRuntimeUserCommand(
 		command,
 		["config", "patch", "--stdin"],
@@ -3052,7 +3123,10 @@ function applyHostedChannelProjection(
 	if (name === "hermes") {
 		const configPath = join(home, ".hermes", "config.yaml");
 		withRuntimeUserFileAccess(() => {
-			mergeHermesChannelConfig(configPath, hermesManagedChannelsPatch(channels));
+			mergeHermesChannelConfig(
+				configPath,
+				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials),
+			);
 			makeRuntimeUserOwned(configPath);
 		});
 		return configPath;
@@ -3092,10 +3166,19 @@ function installHostedChannelProjectionDependencies(
 	});
 }
 
-function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
+function hermesManagedChannelsPatch(
+	channels: Record<string, unknown>,
+	channelCredentials: unknown,
+): Record<string, unknown> {
 	const telegramEnabled = channelHasAccounts(channels.telegram);
 	const discordEnabled = channelHasAccounts(channels.discord);
 	const whatsappEnabled = channelHasAccounts(channels.whatsapp);
+	const whatsappSessionPath = whatsappEnabled
+		? hermesManagedWhatsAppSessionPath(channelCredentials)
+		: null;
+	if (whatsappEnabled && !whatsappSessionPath) {
+		throw new Error("managed Hermes WhatsApp projection is missing its auth directory");
+	}
 	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled || whatsappEnabled;
 	return {
 		telegram: telegramEnabled
@@ -3148,6 +3231,7 @@ function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<s
 						whatsapp: {
 							enabled: true,
 							extra: {
+								session_path: whatsappSessionPath,
 								dm_policy: "allowlist",
 								group_policy: "open",
 								allow_from: ["*"],
@@ -3167,6 +3251,21 @@ function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<s
 			},
 		},
 	};
+}
+
+function hermesManagedWhatsAppSessionPath(channelCredentials: unknown): string | null {
+	if (!Array.isArray(channelCredentials)) return null;
+	for (const value of channelCredentials) {
+		const credential = recordValue(value);
+		if (credential?.provider !== "whatsapp" || credential.kind !== "whatsapp_baileys_auth_state") {
+			continue;
+		}
+		const targets = recordValue(credential.targets);
+		const hermes = recordValue(targets?.hermes);
+		const authDir = stringValue(hermes?.authDir);
+		if (authDir) return authDir;
+	}
+	return null;
 }
 
 function channelHasAccounts(channel: unknown): boolean {
@@ -3348,17 +3447,23 @@ function hostedMcpIntent(manifest: RuntimeManifest): HostedMcpIntent {
 }
 
 function hostedMcpLedgerPath(paths: RuntimePaths): string {
+	return join(paths.managedResourceRoot, HOSTED_MCP_LEDGER_FILE);
+}
+
+function legacyHostedMcpLedgerPath(paths: RuntimePaths): string {
 	return join(paths.projectionRoot, HOSTED_MCP_LEDGER_FILE);
 }
 
 function readHostedMcpManagedLedger(paths: RuntimePaths): HostedMcpManagedLedger {
 	const path = hostedMcpLedgerPath(paths);
-	if (!existsSync(path)) {
+	const legacyPath = legacyHostedMcpLedgerPath(paths);
+	const sourcePath = existsSync(path) ? path : existsSync(legacyPath) ? legacyPath : null;
+	if (!sourcePath) {
 		return { schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION, runtimes: {} };
 	}
 	let payload: unknown;
 	try {
-		payload = JSON.parse(readFileSync(path, "utf-8"));
+		payload = JSON.parse(readFileSync(sourcePath, "utf-8"));
 	} catch (error) {
 		throw new Error(
 			`hosted MCP last-applied ledger is invalid: ${
@@ -3604,6 +3709,36 @@ function recoverHostedOpenClawSourcedSkillReservations(
 			id: skillId,
 			manager: "hosted-manifest",
 			sourceIdentity: skill.sourceIdentity,
+		});
+	}
+}
+
+function recoverHostedOpenClawBundledSkillReservations(
+	manifest: RuntimeManifest,
+	openClawWorkspaceRoot: string,
+	driver: HostedOpenClawSkillDriver,
+): void {
+	if (!hostedBundledSkillsEnabled() || manifest.runtimes.openclaw?.enabled !== true) return;
+	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
+		if (desired.enabled !== true || "source" in desired) continue;
+		const targetDir = join(openClawWorkspaceRoot, "skills", skillId);
+		if (!existsSync(targetDir) || managedSkillReservationOwner(targetDir, skillId) !== "unreserved")
+			continue;
+		const bundled = resolveHostedBundledSkill(skillId, desired.version);
+		if (
+			!driver.hasOwnershipReceipt({
+				workspaceRoot: openClawWorkspaceRoot,
+				skillId,
+				ownershipIdentity: `content-sha256\0${bundled.digest}`,
+			})
+		)
+			continue;
+		reserveManagedSkill({
+			targetDir,
+			id: skillId,
+			manager: "hosted-manifest",
+			version: bundled.version,
+			digest: bundled.digest,
 		});
 	}
 }
@@ -3918,7 +4053,11 @@ function applyHostedMcpProjections(
 		outputs.add(runtime.commandPath);
 	}
 	// The last-applied ownership map advances only after every native target.
-	if (Object.keys(plan.nextLedger.runtimes).length > 0 || existsSync(ledgerPath)) {
+	if (
+		Object.keys(plan.nextLedger.runtimes).length > 0 ||
+		existsSync(ledgerPath) ||
+		existsSync(legacyHostedMcpLedgerPath(paths))
+	) {
 		writeHostedMcpManagedLedger(paths, plan.nextLedger);
 	}
 	return [...outputs];
@@ -4494,6 +4633,67 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 	return written;
 }
 
+function removeLegacyTenantClawdiState(paths: RuntimePaths): void {
+	const legacyRoot = join(paths.userHome, ".clawdi");
+	if (resolve(legacyRoot) === resolve(paths.clawdiHome)) return;
+	let root: ReturnType<typeof lstatSync>;
+	try {
+		root = lstatSync(legacyRoot);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!root.isDirectory() || root.isSymbolicLink()) return;
+	const environments = join(legacyRoot, "environments");
+	let directory: ReturnType<typeof lstatSync>;
+	try {
+		directory = lstatSync(environments);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!directory.isDirectory() || directory.isSymbolicLink()) return;
+	let removedManagedFile = false;
+	for (const entry of readdirSync(environments)) {
+		if (!entry.endsWith(".json")) continue;
+		const path = join(environments, entry);
+		try {
+			const node = lstatSync(path);
+			if (!node.isFile() || node.isSymbolicLink()) continue;
+			let value: unknown;
+			try {
+				value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+			} catch {
+				continue;
+			}
+			if (
+				typeof value !== "object" ||
+				value === null ||
+				Array.isArray(value) ||
+				(value as Record<string, unknown>).managedBy !== "clawdi runtime init"
+			) {
+				continue;
+			}
+			rmSync(path);
+			removedManagedFile = true;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+	}
+	if (!removedManagedFile) return;
+	removeEmptyLegacyDirectory(environments);
+	removeEmptyLegacyDirectory(legacyRoot);
+}
+
+function removeEmptyLegacyDirectory(path: string): void {
+	try {
+		rmdirSync(path);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "ENOENT" && code !== "ENOTEMPTY") throw error;
+	}
+}
+
 function liveSyncEnvironmentIndexPath(paths: RuntimePaths): string {
 	return paths.liveSyncEnvironmentIndex;
 }
@@ -4555,23 +4755,34 @@ function runtimeProgramRevisionForManifest(
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
 	const runtimeSecretRefs = desiredRuntime
-		? Object.values(
-				mergeRuntimeSecretEnv(
-					runtime,
-					desiredRuntime,
-					hostedProviderEnvironment(manifest, runtime).secretEnv,
+		? [
+				...Object.values(
+					mergeRuntimeSecretEnv(
+						runtime,
+						desiredRuntime,
+						hostedProviderEnvironment(manifest, runtime).secretEnv,
+					),
 				),
-			)
+				...hostedWhatsAppAuthCredentials(manifest)
+					.filter(
+						(credential) =>
+							credential.target === runtime ||
+							(runtime === "openclaw" && credential.target === "legacy"),
+					)
+					.map((credential) => credential.credsJsonSecretRef),
+			]
 		: [];
 	const channels = hostedChannelProjection(manifest);
 	const hostedTarget = runtime === "openclaw" || runtime === "hermes";
-	const channelProjection = channels
-		? runtime === "openclaw"
-			? openClawManagedChannelsPatch(channels)
-			: runtime === "hermes"
-				? hermesManagedChannelsPatch(channels)
-				: null
-		: null;
+	let channelProjection: Record<string, unknown> | null = null;
+	if (channels && runtime === "openclaw") {
+		channelProjection = openClawManagedChannelsPatch(channels);
+	} else if (channels && runtime === "hermes" && desiredRuntime?.enabled) {
+		channelProjection = hermesManagedChannelsPatch(
+			channels,
+			manifest.projection?.channelCredentials,
+		);
+	}
 	return runtimeProgramRevision({
 		renderedProjection: {
 			channels: channelProjection,
@@ -4944,6 +5155,7 @@ function validateRuntimeProjectionPlan(input: {
 					"hermes",
 					projectionInput.catalog,
 					projectionInput.primaryModel,
+					{ freezeManagedModelCatalog: true },
 				);
 				const yamlFile = yamlProjection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 				if (!yamlFile)
@@ -4962,8 +5174,11 @@ function validateRuntimeProjectionPlan(input: {
 
 		const channels = hostedChannelProjection(manifest);
 		if (channels && name === "openclaw") JSON.stringify(openClawManagedChannelsPatch(channels));
-		if (channels && name === "hermes") {
-			hermesConfig = renderHermesChannelConfig(hermesConfig, hermesManagedChannelsPatch(channels));
+		if (channels && name === "hermes" && runtime.enabled) {
+			hermesConfig = renderHermesChannelConfig(
+				hermesConfig,
+				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials),
+			);
 		}
 	}
 	validateHostedMcpProjectionPlan(manifest, paths, observations);
@@ -4984,8 +5199,8 @@ export function runtimeInstallerMutationTargets(
 		(openclawObservation?.status !== "present" ||
 			(options.includeOAuthRefresh !== false && hostedRuntimeOAuthDeclared(manifest, "openclaw")))
 	) {
-		targets.add(join(home, ".openclaw", "bin"));
-		targets.add(join(home, ".openclaw", "tools"));
+		targets.add(join(home, ".local", "bin", "openclaw"));
+		targets.add(join(home, ".local", "tools"));
 	}
 	const hermesObservation = observations.get("hermes");
 	if (
@@ -5139,9 +5354,8 @@ export function runtimeUserMutationTargets(
 			// install is pending. Root bootstrap images can otherwise leave a
 			// private root-owned executable that root observes as present but the
 			// official runtime user cannot execute. OpenClaw's official installer
-			// defaults to ~/.openclaw and writes the CLI under its bin directory:
-			// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/scripts/install-cli.sh#L64-L66
-			// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/scripts/install-cli.sh#L1122-L1129
+			// writes the CLI under the selected prefix's bin directory:
+			// https://github.com/openclaw/openclaw/blob/v2026.7.1/scripts/install-cli.sh#L1113-L1120
 			targets.add(commandPath);
 		}
 	}
@@ -5415,6 +5629,8 @@ export function convergeRuntimeManifest(
 		applyContext,
 		opts.hostedRuntimeContract,
 	);
+	removeHostedCliPathExposure(paths);
+	removeLegacyTenantClawdiState(paths);
 	if (manifest.companions?.filebrowser) {
 		if (manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2") {
 			throw new Error("Files companion requires a hosted v2 bundle");
@@ -5570,6 +5786,11 @@ export function convergeRuntimeManifest(
 			hermesSkillNativeReconciler,
 		);
 		if (openClawWorkspaceRoot) {
+			recoverHostedOpenClawBundledSkillReservations(
+				manifest,
+				openClawWorkspaceRoot,
+				openClawSkillDriver,
+			);
 			recoverHostedOpenClawSourcedSkillReservations(
 				manifest,
 				openClawWorkspaceRoot,
@@ -5806,9 +6027,9 @@ export function convergeRuntimeManifest(
 
 		hostedRuntimeContract.assertPlatformRoots();
 		ensureRuntimeUserHome(paths.userHome);
+		ensureRuntimeUserCliStateRoot(paths.clawdiHome, hostedRuntimeContract.identity);
 		withRuntimeUserFileAccess(() => {
 			mkdirSync(workspaceRoot, { recursive: true });
-			makeRuntimeUserPrivateDir(paths.clawdiHome, paths.userHome);
 			makeRuntimeUserOwned(workspaceRoot);
 		});
 		for (const directory of [paths.installInventory, paths.projectionRoot, instanceRoot, semRoot]) {

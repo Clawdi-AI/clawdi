@@ -28,7 +28,7 @@ export type ModelBindingPickerItem = {
 };
 
 export type ManagedModelBindingPickerItem = ModelBindingPickerItem & {
-	providerId: string;
+	iconId: string;
 };
 
 export type ManagedModelPickerItems = {
@@ -308,7 +308,7 @@ export function managedModelPickerItems(
 		seen.add(modelId);
 		const item = {
 			value: modelId,
-			providerId: model.provider_id,
+			iconId: managedModelBrandIconId(modelId, model.provider_id),
 			// Managed display names are authoritative catalog data. Keep them
 			// verbatim instead of deriving a friendlier label from the model id.
 			label: model.display_name,
@@ -317,6 +317,13 @@ export function managedModelPickerItems(
 		sections[model.is_featured ? "featured" : "overflow"].push(item);
 	}
 	return sections;
+}
+
+function managedModelBrandIconId(modelId: string, providerId: string): string {
+	const normalizedModelId = modelId.toLowerCase();
+	if (normalizedModelId.startsWith("deepseek-")) return "deepseek";
+	if (normalizedModelId.startsWith("glm-")) return "zai";
+	return providerId;
 }
 
 export function firstModelForProvider(

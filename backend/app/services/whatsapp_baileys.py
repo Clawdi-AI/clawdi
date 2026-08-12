@@ -21,7 +21,6 @@ from pydantic import JsonValue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
@@ -167,6 +166,13 @@ class WhatsAppAuthCert:
 class StoredWhatsAppCredential:
     credential: ChannelAgentCredential
     minted: MintedWhatsAppCreds
+
+
+@dataclass(frozen=True)
+class ResolvedWhatsAppCredential:
+    credential: ChannelAgentCredential
+    auth_cert: ChannelWhatsAppAuthCert
+    material_changed: bool
 
 
 @dataclass(frozen=True)
@@ -687,13 +693,6 @@ def serialize_creds(creds: Mapping[str, object]) -> str:
     return json.dumps(encode_buffer_json(creds), separators=(",", ":"), sort_keys=True)
 
 
-def deserialize_creds(serialized: str) -> dict[str, object]:
-    decoded = decode_buffer_json(json.loads(serialized))
-    if not _is_object_dict(decoded):
-        raise ValueError("stored WhatsApp credentials must be an object")
-    return decoded
-
-
 def serialize_agent_bundle(bundle: AgentBundle) -> dict[str, JsonValue]:
     return _encoded_json_object(
         {
@@ -989,7 +988,7 @@ def mint_whatsapp_synthetic_creds(
     phone_user: str | None = None,
     device: int = 1,
     name: str | None = None,
-    self_identity: dict[str, str | None] | None = None,
+    self_identity: Mapping[str, str | None] | None = None,
 ) -> MintedWhatsAppCreds:
     noise_key = _x25519_key_pair()
     signed_identity_key = _x25519_key_pair()
@@ -1388,8 +1387,14 @@ async def respond_to_iq(
         return _iq_result(
             req,
             [
-                _recipient_bundle_node(jid, resolve_recipient_bundle(jid))
-                for jid in _extract_user_jids_from_key_request(req)
+                {
+                    "tag": "list",
+                    "attrs": {},
+                    "content": [
+                        _recipient_bundle_node(jid, resolve_recipient_bundle(jid))
+                        for jid in _extract_user_jids_from_key_request(req)
+                    ],
+                }
             ],
         )
 
@@ -1570,54 +1575,75 @@ async def load_or_create_whatsapp_auth_cert(
     await db.execute(
         select(ChannelAccount.id).where(ChannelAccount.id == account.id).with_for_update()
     )
-    result = await db.execute(
-        select(ChannelWhatsAppAuthCert).where(ChannelWhatsAppAuthCert.account_id == account.id)
-    )
-    row = result.scalar_one_or_none()
+    row = await _load_whatsapp_auth_cert_row(db, account_id=account.id)
     if row is not None:
-        return WhatsAppAuthCert(
-            serial=row.serial,
-            issuer="clawdi",
-            root_public_key=row.root_public_key,
-            root_private_key=base64.b64decode(
-                decrypt(row.encrypted_root_private_key, row.root_private_key_nonce)
-            ),
-            intermediate_public_key=row.intermediate_public_key,
-            intermediate_private_key=base64.b64decode(
-                decrypt(
-                    row.encrypted_intermediate_private_key,
-                    row.intermediate_private_key_nonce,
-                )
-            ),
-        )
+        return _decrypt_whatsapp_auth_cert(row)
 
+    _, auth_cert = await _create_whatsapp_auth_cert(db, account=account)
+    return auth_cert
+
+
+async def _load_whatsapp_auth_cert_row(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+) -> ChannelWhatsAppAuthCert | None:
+    return (
+        await db.execute(
+            select(ChannelWhatsAppAuthCert).where(ChannelWhatsAppAuthCert.account_id == account_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def _create_whatsapp_auth_cert(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+) -> tuple[ChannelWhatsAppAuthCert, WhatsAppAuthCert]:
     root = _x25519_key_pair()
     intermediate = _x25519_key_pair()
     root_ciphertext, root_nonce = encrypt(base64.b64encode(root["private"]).decode("ascii"))
     intermediate_ciphertext, intermediate_nonce = encrypt(
         base64.b64encode(intermediate["private"]).decode("ascii")
     )
-    db.add(
-        ChannelWhatsAppAuthCert(
-            account_id=account.id,
-            user_id=account.user_id,
-            root_public_key=root["public"],
-            encrypted_root_private_key=root_ciphertext,
-            root_private_key_nonce=root_nonce,
-            intermediate_public_key=intermediate["public"],
-            encrypted_intermediate_private_key=intermediate_ciphertext,
-            intermediate_private_key_nonce=intermediate_nonce,
-            serial=0,
-        )
+    row = ChannelWhatsAppAuthCert(
+        account_id=account.id,
+        user_id=account.user_id,
+        root_public_key=root["public"],
+        encrypted_root_private_key=root_ciphertext,
+        root_private_key_nonce=root_nonce,
+        intermediate_public_key=intermediate["public"],
+        encrypted_intermediate_private_key=intermediate_ciphertext,
+        intermediate_private_key_nonce=intermediate_nonce,
+        serial=0,
     )
+    db.add(row)
     await db.flush()
-    return WhatsAppAuthCert(
+    return row, WhatsAppAuthCert(
         serial=0,
         issuer="clawdi",
         root_public_key=root["public"],
         root_private_key=root["private"],
         intermediate_public_key=intermediate["public"],
         intermediate_private_key=intermediate["private"],
+    )
+
+
+def _decrypt_whatsapp_auth_cert(row: ChannelWhatsAppAuthCert) -> WhatsAppAuthCert:
+    return WhatsAppAuthCert(
+        serial=row.serial,
+        issuer="clawdi",
+        root_public_key=row.root_public_key,
+        root_private_key=base64.b64decode(
+            decrypt(row.encrypted_root_private_key, row.root_private_key_nonce)
+        ),
+        intermediate_public_key=row.intermediate_public_key,
+        intermediate_private_key=base64.b64decode(
+            decrypt(
+                row.encrypted_intermediate_private_key,
+                row.intermediate_private_key_nonce,
+            )
+        ),
     )
 
 
@@ -1640,7 +1666,7 @@ async def mint_whatsapp_agent_credential(
     phone_user: str | None = None,
     device: int = 1,
     name: str | None = None,
-    self_identity: dict[str, str | None] | None = None,
+    self_identity: Mapping[str, str | None] | None = None,
 ) -> StoredWhatsAppCredential:
     minted = mint_whatsapp_synthetic_creds(
         tenant_id=str(bot_agent_link_id),
@@ -1673,12 +1699,91 @@ async def mint_whatsapp_agent_credential(
     return StoredWhatsAppCredential(credential=credential, minted=minted)
 
 
+async def ensure_whatsapp_agent_credential(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> ResolvedWhatsAppCredential:
+    if account.provider != CHANNEL_PROVIDER_WHATSAPP or link.account_id != account.id:
+        raise ValueError("WhatsApp runtime credential requires a matching WhatsApp Link")
+
+    async def load_credential() -> ChannelAgentCredential | None:
+        return (
+            await db.execute(
+                select(ChannelAgentCredential)
+                .where(
+                    ChannelAgentCredential.account_id == account.id,
+                    ChannelAgentCredential.bot_agent_link_id == link.id,
+                    ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+                .order_by(
+                    ChannelAgentCredential.created_at.desc(),
+                    ChannelAgentCredential.id.desc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    credential = await load_credential()
+    auth_cert = await _load_whatsapp_auth_cert_row(db, account_id=account.id)
+    if credential is not None and auth_cert is not None:
+        material_changed = await save_whatsapp_credential_self_identity(
+            db,
+            credential=credential,
+            self_identity=whatsapp_self_identity_from_config(account.config),
+        )
+        return ResolvedWhatsAppCredential(
+            credential=credential,
+            auth_cert=auth_cert,
+            material_changed=material_changed,
+        )
+
+    await db.execute(
+        select(ChannelAccount.id).where(ChannelAccount.id == account.id).with_for_update()
+    )
+    credential = await load_credential()
+    auth_cert = await _load_whatsapp_auth_cert_row(db, account_id=account.id)
+    material_changed = False
+    if auth_cert is None:
+        auth_cert, _ = await _create_whatsapp_auth_cert(db, account=account)
+        material_changed = True
+
+    if credential is None:
+        credential = (
+            await mint_whatsapp_agent_credential(
+                db,
+                account=account,
+                bot_agent_link_id=link.id,
+                user_id=link.user_id,
+                self_identity=whatsapp_self_identity_from_config(account.config),
+            )
+        ).credential
+        material_changed = True
+    else:
+        material_changed = (
+            await save_whatsapp_credential_self_identity(
+                db,
+                credential=credential,
+                self_identity=whatsapp_self_identity_from_config(account.config),
+            )
+            or material_changed
+        )
+
+    return ResolvedWhatsAppCredential(
+        credential=credential,
+        auth_cert=auth_cert,
+        material_changed=material_changed,
+    )
+
+
 def whatsapp_agent_credential_config(
     *,
     device: int,
     name: str | None,
     phone_user: str | None,
-    self_identity: dict[str, str | None] | None,
+    self_identity: Mapping[str, str | None] | None,
 ) -> dict[str, JsonValue]:
     config: dict[str, JsonValue] = {
         "device": device,
@@ -1699,6 +1804,108 @@ def whatsapp_agent_credential_config(
     if clean_self_identity:
         config["self_identity"] = clean_self_identity
     return config
+
+
+def whatsapp_self_identity_from_config(
+    config: Mapping[str, JsonValue] | None,
+) -> dict[str, str] | None:
+    if config is None:
+        return None
+    value = config.get("self_identity")
+    if not isinstance(value, dict):
+        return None
+    identity_id = _clean_optional_whatsapp_text(value.get("id"))
+    lid = _clean_optional_whatsapp_text(value.get("lid"))
+    if identity_id is None or lid is None:
+        return None
+    parsed_lid = parse_whatsapp_jid(lid)
+    if parsed_lid is None or parsed_lid.server != "lid":
+        return None
+    parsed_id = parse_whatsapp_jid(identity_id)
+    if parsed_id is None or parsed_id.server != "s.whatsapp.net":
+        return None
+    identity = {"id": identity_id, "lid": lid}
+    name = _clean_optional_whatsapp_text(value.get("name"))
+    if name is not None:
+        identity["name"] = name
+    return identity
+
+
+def whatsapp_credential_needs_self_identity_repair(
+    credential: ChannelAgentCredential,
+    *,
+    self_identity: Mapping[str, str] | None,
+) -> bool:
+    if self_identity is None or credential.revoked_at is not None:
+        return False
+    *_, needs_repair = _load_whatsapp_credential_self_identity_state(
+        credential,
+        self_identity=self_identity,
+    )
+    return needs_repair
+
+
+async def save_whatsapp_credential_self_identity(
+    db: AsyncSession,
+    *,
+    credential: ChannelAgentCredential,
+    self_identity: Mapping[str, str] | None,
+) -> bool:
+    if self_identity is None or credential.revoked_at is not None:
+        return False
+    creds, me, validated, needs_repair = _load_whatsapp_credential_self_identity_state(
+        credential,
+        self_identity=self_identity,
+    )
+    stored_identity: dict[str, JsonValue] = {
+        "id": credential.synthetic_jid,
+        "lid": validated["lid"],
+    }
+    if name := validated.get("name"):
+        stored_identity["name"] = name
+
+    config = dict(credential.config or {})
+    config_changed = config.get("self_identity") != stored_identity
+    if not needs_repair and not config_changed:
+        return False
+    if needs_repair:
+        creds["me"] = {
+            **me,
+            "id": credential.synthetic_jid,
+            "lid": validated["lid"],
+        }
+        ciphertext, nonce = encrypt(serialize_creds(creds))
+        credential.encrypted_credentials = ciphertext
+        credential.credential_nonce = nonce
+    if config_changed:
+        config["self_identity"] = stored_identity
+        credential.config = config
+    await db.flush()
+    return True
+
+
+def _load_whatsapp_credential_self_identity_state(
+    credential: ChannelAgentCredential,
+    *,
+    self_identity: Mapping[str, str],
+) -> tuple[dict[str, object], dict[str, object], dict[str, str], bool]:
+    validated = whatsapp_self_identity_from_config({"self_identity": dict(self_identity)})
+    if validated is None:
+        raise ValueError("WhatsApp self identity requires a valid PN and LID pair")
+    creds = decode_buffer_json(
+        json.loads(decrypt(credential.encrypted_credentials, credential.credential_nonce))
+    )
+    if not _is_object_dict(creds):
+        raise ValueError("WhatsApp credential creds must be an object")
+    me = creds.get("me")
+    if not _is_object_dict(me):
+        raise ValueError("WhatsApp credential creds.me must be an object")
+    return (
+        creds,
+        me,
+        validated,
+        me.get("id") != credential.synthetic_jid or me.get("lid") != validated["lid"],
+    )
 
 
 def _clean_optional_whatsapp_text(value: object) -> str | None:
@@ -1734,10 +1941,6 @@ async def resolve_whatsapp_credential_by_identity(
         )
     )
     return result.scalar_one_or_none()
-
-
-def whatsapp_agent_websocket_url() -> str:
-    return _public_ws_url("/v1/channels/whatsapp/baileys")
 
 
 def _x25519_key_pair() -> dict[str, bytes]:
@@ -2462,7 +2665,7 @@ def _stamp_whatsapp_self_identity(
     phone_user: str | None,
     device: int,
     name: str | None,
-    self_identity: dict[str, str | None] | None,
+    self_identity: Mapping[str, str | None] | None,
 ) -> str:
     del name
     if self_identity and self_identity.get("id"):
@@ -2602,66 +2805,64 @@ def _recipient_bundle_node(jid: str, bundle: AgentBundle | None) -> BinaryNode:
             "attrs": {"jid": jid},
             "content": [{"tag": "error", "attrs": {"code": "404"}}],
         }
-    return {
-        "tag": "user",
-        "attrs": {"jid": jid},
-        "content": [
+    content: list[BinaryNode] = [
+        {
+            "tag": "registration",
+            "attrs": {},
+            "content": _encode_big_endian(bundle.registration_id, 4),
+        },
+        {"tag": "type", "attrs": {}, "content": b"\x05"},
+        {
+            "tag": "identity",
+            "attrs": {},
+            "content": _maybe_prefixed_key(bundle.identity_key),
+        },
+        {
+            "tag": "skey",
+            "attrs": {},
+            "content": [
+                {
+                    "tag": "id",
+                    "attrs": {},
+                    "content": _encode_big_endian(bundle.signed_pre_key.id, 3),
+                },
+                {
+                    "tag": "value",
+                    "attrs": {},
+                    "content": _maybe_prefixed_key(bundle.signed_pre_key.public_key),
+                },
+                {
+                    "tag": "signature",
+                    "attrs": {},
+                    "content": bundle.signed_pre_key.signature,
+                },
+            ],
+        },
+    ]
+    if bundle.pre_keys:
+        pre_key = bundle.pre_keys[0]
+        content.append(
             {
-                "tag": "registration",
-                "attrs": {},
-                "content": _encode_big_endian(bundle.registration_id, 4),
-            },
-            {"tag": "type", "attrs": {}, "content": b"\x05"},
-            {
-                "tag": "identity",
-                "attrs": {},
-                "content": _maybe_prefixed_key(bundle.identity_key),
-            },
-            {
-                "tag": "skey",
+                "tag": "key",
                 "attrs": {},
                 "content": [
                     {
                         "tag": "id",
                         "attrs": {},
-                        "content": _encode_big_endian(bundle.signed_pre_key.id, 3),
+                        "content": _encode_big_endian(pre_key.id, 3),
                     },
                     {
                         "tag": "value",
                         "attrs": {},
-                        "content": _maybe_prefixed_key(bundle.signed_pre_key.public_key),
-                    },
-                    {
-                        "tag": "signature",
-                        "attrs": {},
-                        "content": bundle.signed_pre_key.signature,
+                        "content": _maybe_prefixed_key(pre_key.public_key),
                     },
                 ],
-            },
-            {
-                "tag": "list",
-                "attrs": {},
-                "content": [
-                    {
-                        "tag": "key",
-                        "attrs": {},
-                        "content": [
-                            {
-                                "tag": "id",
-                                "attrs": {},
-                                "content": _encode_big_endian(pre_key.id, 3),
-                            },
-                            {
-                                "tag": "value",
-                                "attrs": {},
-                                "content": _maybe_prefixed_key(pre_key.public_key),
-                            },
-                        ],
-                    }
-                    for pre_key in bundle.pre_keys
-                ],
-            },
-        ],
+            }
+        )
+    return {
+        "tag": "user",
+        "attrs": {"jid": jid},
+        "content": content,
     }
 
 
@@ -2745,14 +2946,15 @@ def _usync_devices_result(
 def whatsapp_usync_device_result(
     req: BinaryNode,
     *,
-    recipient_lids: Mapping[str, str],
+    target_lids: Mapping[str, str],
+    self_lid: str | None = None,
 ) -> BinaryNode:
-    """Build the stock Baileys device/LID result from authorized durable mappings."""
+    """Build the stock Baileys device/LID result from authorized target mappings."""
     return _usync_devices_result(
         req,
         agent_user=None,
-        agent_lid=None,
-        resolve_recipient_lid=recipient_lids.get,
+        agent_lid=self_lid,
+        resolve_recipient_lid=target_lids.get,
     )
 
 
@@ -2767,7 +2969,7 @@ def parse_whatsapp_usync_device_targets(req: BinaryNode) -> tuple[str, ...] | No
         not attrs["id"]
         or attrs["type"] != "get"
         or attrs["xmlns"] != "usync"
-        or attrs["to"] != "s.whatsapp.net"
+        or attrs["to"] != "@s.whatsapp.net"
     ):
         return None
     content = req.get("content")
@@ -3079,12 +3281,3 @@ async def _find_binding_alias(
         )
     )
     return result.scalar_one_or_none()
-
-
-def _public_ws_url(path: str) -> str:
-    base = settings.public_api_url.rstrip("/")
-    if base.startswith("https://"):
-        return "wss://" + base.removeprefix("https://") + path
-    if base.startswith("http://"):
-        return "ws://" + base.removeprefix("http://") + path
-    return base + path

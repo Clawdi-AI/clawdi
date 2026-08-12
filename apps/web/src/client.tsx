@@ -1,4 +1,6 @@
-// Sentry initialization must be the first import so pre-hydration errors are captured.
+// Remove Stripe return secrets before telemetry modules evaluate.
+import "./wallet-topup-return.bootstrap";
+
 import "./instrument.client";
 
 import { StartClient } from "@tanstack/react-start/client";

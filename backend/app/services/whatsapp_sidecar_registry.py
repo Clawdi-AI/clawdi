@@ -271,6 +271,7 @@ class ConfiguredWhatsAppSidecarRegistry:
                 if (
                     not health.connected
                     or not health.registered
+                    or health.account_lid is None
                     or pairing.status != "connected"
                     or not pairing.registered
                 ):
@@ -486,6 +487,7 @@ class ConfiguredWhatsAppSidecarRegistry:
                 if (
                     expected_revision is None
                     or health.registered != pairing.registered
+                    or (health.registered and health.account_lid is None)
                     or (owner is not None and owner[1] != expected_revision)
                     or (
                         reservation_revision is not None

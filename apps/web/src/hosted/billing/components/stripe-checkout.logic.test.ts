@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import type { StripeCheckoutStatus } from "@stripe/stripe-js";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
 	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
+	completedCheckoutPaymentStatus,
 } from "@/hosted/billing/components/stripe-checkout.logic";
 
 describe("stripe checkout logic", () => {
@@ -40,6 +42,22 @@ describe("stripe checkout logic", () => {
 
 	test("documents the checkout elements ui mode for the installed Stripe SDK", () => {
 		expect(CHECKOUT_ELEMENTS_UI_MODE).toBe("custom");
+	});
+
+	test("reads payment settlement only from a completed Checkout Session", () => {
+		const cases: ReadonlyArray<
+			[StripeCheckoutStatus, ReturnType<typeof completedCheckoutPaymentStatus>]
+		> = [
+			[{ type: "open" }, null],
+			[{ type: "expired" }, null],
+			[{ type: "complete", paymentStatus: "paid" }, "paid"],
+			[{ type: "complete", paymentStatus: "unpaid" }, "unpaid"],
+			[{ type: "complete", paymentStatus: "no_payment_required" }, "no_payment_required"],
+		];
+
+		for (const [status, expected] of cases) {
+			expect(completedCheckoutPaymentStatus(status)).toBe(expected);
+		}
 	});
 
 	test("starts with hosted Checkout when Stripe.js cannot be configured", () => {

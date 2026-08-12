@@ -51,7 +51,6 @@ Examples:
   $ clawdi vault set OPENAI_API_KEY Store a secret
   $ clawdi project folder link --project engineering  Use this folder with a Project
   $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime
-  $ clawdi runtime status --json    Inspect hosted runtime boot state
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
@@ -60,7 +59,6 @@ Environment:
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
-  CLAWDI_RUNTIME_MODE      Explicit runtime mode override for hosted tests/operators
   CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
@@ -198,7 +196,7 @@ configCmd
 	});
 
 configCmd
-	.command("paths")
+	.command("paths", { hidden: true })
 	.description("Show local and hosted runtime paths used by the CLI")
 	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
@@ -697,14 +695,14 @@ channelCmd
 	});
 
 // ─────────────────────────────────────────────────────────────
-// runtime manifest
+// managed runtime
 // ─────────────────────────────────────────────────────────────
 const runtimeCmd = program
-	.command("runtime")
-	.description("Hosted runtime boot and channel runtime projections");
+	.command("runtime", { hidden: true })
+	.description("Managed Hosted runtime control plane");
 
 runtimeCmd
-	.command("init")
+	.command("init", { hidden: true })
 	.description("Converge a hosted runtime from controller desired state")
 	.option("--non-interactive", "Required for hosted boot; never prompt")
 	.option("--json", "Output as JSON")
@@ -714,7 +712,7 @@ runtimeCmd
 	});
 
 runtimeCmd
-	.command("watch")
+	.command("watch", { hidden: true })
 	.description("Watch hosted runtime desired state and apply live changes")
 	.option("--interval-ms <ms>", "Polling interval in milliseconds")
 	.option("--self-heal-ms <ms>", "Maximum interval before forcing a full manifest fetch")
@@ -728,7 +726,7 @@ runtimeCmd
 	);
 
 runtimeCmd
-	.command("verify")
+	.command("verify", { hidden: true })
 	.description("Validate hosted runtime CLI modules and cached manifest")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts: { json?: boolean }) => {
@@ -737,7 +735,7 @@ runtimeCmd
 	});
 
 runtimeCmd
-	.command("sidecar")
+	.command("sidecar", { hidden: true })
 	.description("Run the hosted runtime egress sidecar")
 	.action(async () => {
 		const { runtimeSidecar } = await import("./commands/runtime.js");
@@ -745,57 +743,16 @@ runtimeCmd
 	});
 
 runtimeCmd
-	.command("plan")
-	.description("Preview channel account, link, and runtime projection changes")
-	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")
+	.command("status", { hidden: true })
+	.description("Show managed Hosted runtime boot status")
 	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts: { file?: string; json?: boolean }) => {
-		const { runtimePlanCommand } = await import("./commands/runtime.js");
-		await runtimePlanCommand(opts);
-	});
-
-runtimeCmd
-	.command("apply")
-	.description("Create or reuse channel runtime resources from a manifest")
-	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")
-	.option("--dry-run", "Preview changes without mutating backend or local files")
-	.option(
-		"--rotate-missing-tokens",
-		"Rotate existing link tokens only when local output lacks them",
-	)
-	.option("--rotate-all-tokens", "Rotate every declared link token")
-	.option("--yes", "Reserved for future destructive confirmations")
-	.option("--json", "Emit machine-readable JSON")
-	.action(
-		async (opts: {
-			file?: string;
-			dryRun?: boolean;
-			rotateMissingTokens?: boolean;
-			rotateAllTokens?: boolean;
-			yes?: boolean;
-			json?: boolean;
-		}) => {
-			const { runtimeApplyCommand } = await import("./commands/runtime.js");
-			await runtimeApplyCommand(opts);
-		},
-	);
-
-runtimeCmd
-	.command("status")
-	.description("Show hosted runtime boot status, or channel manifest status with --file")
-	.option("-f, --file <path>", "Channel runtime manifest path")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts: { file?: string; json?: boolean }) => {
-		const { runtimeStatus, runtimeStatusCommand } = await import("./commands/runtime.js");
-		if (opts.file) {
-			await runtimeStatusCommand(opts);
-			return;
-		}
+	.action(async (opts: { json?: boolean }) => {
+		const { runtimeStatus } = await import("./commands/runtime.js");
 		await runtimeStatus(opts);
 	});
 
 runtimeCmd
-	.command("doctor")
+	.command("doctor", { hidden: true })
 	.description("Diagnose hosted runtime policy, paths, and last boot state")
 	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
@@ -1209,7 +1166,7 @@ program
 	});
 
 program
-	.command("capabilities")
+	.command("capabilities", { hidden: true })
 	.description("Show CLI feature surface and hosted policy restrictions")
 	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {

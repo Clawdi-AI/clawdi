@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-	RuntimeChannelsLoad,
-	RuntimeManifestLoad,
-} from "../../../src/runtime/manifest-source";
+import { z } from "zod";
+import type { RuntimeManifestLoad } from "../../../src/runtime/manifest-source";
 
-const { applyRuntimeChannelsToManifestLoad } = await import("../../../src/runtime/channels");
+const { applyRuntimeBundleChannelsToManifestLoad } = await import("../../../src/runtime/channels");
 const { buildEgressProfileBundle, egressProfileSecretRefs } = await import(
 	"../../../src/runtime/egress-profiles"
 );
@@ -21,44 +20,56 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 	const scenarioPath = requiredEnvironment("E2E_SCENARIO");
 	const outputRoot = requiredEnvironment("E2E_OUTPUT");
 	const scenario = recordValue(JSON.parse(readFileSync(scenarioPath, "utf8")));
-	const channelMaterial = recordValue(scenario.channelMaterial);
+	const channelMaterial = z
+		.object({
+			creds: z.record(z.string(), z.unknown()),
+			authCert: z
+				.object({
+					SERIAL: z.number().int().nonnegative(),
+					ISSUER: z.string().min(1),
+					PUBLIC_KEY: z.object({ type: z.literal("Buffer"), data: z.string().min(1) }).strict(),
+				})
+				.strict(),
+		})
+		.passthrough()
+		.parse(scenario.channelMaterial);
 
-	const manifest = runtimeManifest(runtime, home);
-	const channels: RuntimeChannelsLoad = {
-		channels: [
+	const accountId = "50000000-0000-4000-8000-000000000005";
+	const accountKey = "clawdi_50000000000040008000000000000005";
+	const linkId = "60000000-0000-4000-8000-000000000006";
+	const credentialId = "80000000-0000-4000-8000-000000000011";
+	const agentTokenSecretRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/agent-token`;
+	const capabilitySecretRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/egress-capability`;
+	const credentialSecretRef = `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
+	const capability = `clawdi_${createHash("sha256")
+		.update(`whatsapp:${accountKey}:${linkId}`)
+		.digest("hex")
+		.slice(0, 32)}`;
+	const manifest: RuntimeManifestLoad = {
+		...runtimeManifest(runtime, home),
+		channelBindings: [
 			{
-				id: "acct-native-e2e",
 				provider: "whatsapp",
-				name: "Managed WhatsApp native E2E",
-				status: "active",
-				visibility: "public",
-				runtime_links: [
-					{
-						id: "link-native-e2e",
-						account_id: "acct-native-e2e",
-						agent_id: "agent-native-e2e",
-						status: "active",
-						agent_token: "wa-native-e2e-link-bearer",
-					},
-				],
-				runtime_credentials: [
-					{
-						id: "credential-native-e2e",
-						account_id: "acct-native-e2e",
-						agent_link_id: "link-native-e2e",
-						agent_id: "agent-native-e2e",
-						provider: "whatsapp",
-						kind: "whatsapp_baileys_auth_state",
-						material: channelMaterial,
-					},
-				],
+				accountId,
+				accountKey,
+				linkId,
+				agentTokenSecretRef,
+				placeholderTokenSecretRef: capabilitySecretRef,
+				credential: {
+					id: credentialId,
+					credsSecretRef: credentialSecretRef,
+					authCert: channelMaterial.authCert,
+				},
 			},
 		],
-		source: "native-e2e",
-		sourcePath: "test://native-e2e/channels",
+		secretValues: {
+			[agentTokenSecretRef]: "wa-native-e2e-link-bearer",
+			[capabilitySecretRef]: capability,
+			[credentialSecretRef]: JSON.stringify(channelMaterial.creds),
+		},
 	};
 
-	const projected = applyRuntimeChannelsToManifestLoad(manifest, channels);
+	const projected = applyRuntimeBundleChannelsToManifestLoad(manifest);
 	materializeHostedChannelCredentials(projected.manifest, projected.secretValues, home);
 	const credential = projected.manifest.projection?.channelCredentials?.[0];
 	if (!credential) throw new Error("managed WhatsApp credential was not projected");

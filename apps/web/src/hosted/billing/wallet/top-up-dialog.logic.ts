@@ -1,5 +1,5 @@
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
-import type { WalletLedgerEntry, WalletTopupResult } from "@/hosted/billing/contracts";
+import type { WalletTopupResult, WalletTransaction } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	type PaymentIntentClientSecret,
@@ -50,12 +50,11 @@ export function topUpAmountCentsForUsdShortfall(shortfallUsd: number | null): nu
 	return Math.min(TOPUP_MAX_CENTS, Math.max(TOPUP_MIN_CENTS, roundedCents));
 }
 
-export function invalidateWalletActivity(queryClient: QueryClient): void {
+export function invalidateWalletData(queryClient: QueryClient): void {
 	queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
-	queryClient.invalidateQueries({ queryKey: billingKeys.ledgerRoot });
+	queryClient.invalidateQueries({ queryKey: billingKeys.transactions });
 	queryClient.invalidateQueries({ queryKey: billingKeys.subscriptionCreateQuotes });
 	queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
-	queryClient.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
 	queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 }
 
@@ -63,7 +62,7 @@ export function completeTopup(
 	status: TopupCompletionStatus,
 	controls: TopupCompletionControls,
 ): void {
-	invalidateWalletActivity(controls.queryClient);
+	invalidateWalletData(controls.queryClient);
 	controls.resetAttempt();
 	controls.onComplete?.(status);
 	if (status === "succeeded") {
@@ -80,26 +79,26 @@ export function completeTopup(
 
 export function walletTopupCreditIsApplied(
 	paymentReference: string | null,
-	entries: readonly WalletLedgerEntry[],
+	transactions: readonly WalletTransaction[],
 ): boolean {
 	if (!paymentReference) return false;
-	return entries.some(
-		(entry) =>
-			entry.operation === "topup" &&
-			entry.status === "applied" &&
-			entry.payment_reference === paymentReference,
+	return transactions.some(
+		(transaction) =>
+			transaction.kind === "topup" &&
+			transaction.direction === "credit" &&
+			transaction.status === "applied" &&
+			transaction.payment_reference === paymentReference,
 	);
 }
 
-type WalletLedgerPage = { items: WalletLedgerEntry[] };
+type WalletTransactionsPage = { items: WalletTransaction[] };
 
 function walletTopupCreditIsCached(
 	paymentReference: string,
-	data: WalletLedgerPage | InfiniteData<WalletLedgerPage> | undefined,
+	data: InfiniteData<WalletTransactionsPage> | undefined,
 ): boolean {
 	if (!data) return false;
-	const pages = "pages" in data ? data.pages : [data];
-	return pages.some((page) => walletTopupCreditIsApplied(paymentReference, page.items));
+	return data.pages.some((page) => walletTopupCreditIsApplied(paymentReference, page.items));
 }
 
 export async function waitForWalletTopupCredit(
@@ -113,18 +112,16 @@ export async function waitForWalletTopupCredit(
 				{ throwOnError: true },
 			),
 			queryClient.refetchQueries(
-				{ queryKey: billingKeys.ledgerRoot, type: "active" },
+				{ queryKey: billingKeys.transactions, type: "active" },
 				{ throwOnError: true },
 			),
 		]);
-		const ledgerPages = queryClient.getQueriesData<
-			WalletLedgerPage | InfiniteData<WalletLedgerPage>
-		>({
-			queryKey: billingKeys.ledgerRoot,
+		const transactionPages = queryClient.getQueriesData<InfiniteData<WalletTransactionsPage>>({
+			queryKey: billingKeys.transactions,
 		});
 		if (
 			refreshes.every((refresh) => refresh.status === "fulfilled") &&
-			ledgerPages.some(([, data]) => walletTopupCreditIsCached(paymentReference, data))
+			transactionPages.some(([, data]) => walletTopupCreditIsCached(paymentReference, data))
 		) {
 			return true;
 		}
@@ -149,10 +146,10 @@ export function handleTopupStartResult(
 	}
 	const clientSecret = walletTopupPaymentIntentClientSecret(result);
 	if (clientSecret) {
-		// A pending ledger row matters only on a mounted activity surface. Keep
-		// balance and the rest of wallet activity untouched until payment settles.
+		// A pending transaction matters only on a mounted Wallet surface. Keep
+		// balance and the rest of Wallet data untouched until payment settles.
 		void controls.queryClient.refetchQueries({
-			queryKey: billingKeys.ledgerRoot,
+			queryKey: billingKeys.transactions,
 			type: "active",
 		});
 		controls.startPayment(clientSecret);

@@ -49,7 +49,9 @@ describe("dashboard data contracts", () => {
 
 	test("does not show first-agent empty copy while membership is unresolved", () => {
 		expect(agentGreetingSummary(0, "loading")).toBe("Loading agent status…");
-		expect(agentGreetingSummary(0, "resolved")).toBe("Connect your first agent to start syncing.");
+		expect(agentGreetingSummary(0, "resolved")).toBe(
+			"Get your first agent running to start syncing.",
+		);
 		expect(agentGreetingSummary(0, "error")).toBe("Agent status is unavailable right now.");
 	});
 });

@@ -25,7 +25,7 @@ function SectionSkeleton({
 	);
 }
 
-/** Compute: actions, billing history, and the two comparable plan cards. */
+/** Compute: subscription controls and the two comparable plan cards. */
 export function SubscriptionSkeleton() {
 	return (
 		<div data-hosted="true" className="space-y-8">
@@ -34,9 +34,6 @@ export function SubscriptionSkeleton() {
 					<Skeleton className="h-9 w-36" />
 					<Skeleton className="h-9 w-36" />
 				</div>
-			</SectionSkeleton>
-			<SectionSkeleton>
-				<Skeleton className="h-28 w-full rounded-lg" />
 			</SectionSkeleton>
 			<SectionSkeleton
 				description={false}

@@ -13,22 +13,33 @@ export type CheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
 export type ComputePlanSlug = Schemas["V2HostedDeployRequest"]["compute_plan_slug"];
 export type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActionResponse"];
 export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCancelRequest"];
+export type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
-export type ComputeBillingHistoryItem = Schemas["V2ComputeBillingHistoryItem"];
 export type ComputePlanChangeRequest = Schemas["V2ComputePlanChangeRequest"];
-export type ComputePlanChangeResult =
-	| { kind: "complete"; effectiveAt: string }
-	| { kind: "scheduled"; effectiveAt: string }
-	| { kind: "pending"; waitingFor: "payment" | "update" };
+export type ComputePlanChangeProgress = Schemas["ComputePlanChangeProgress"];
+export type ComputePlanChangeKind = ComputePlanChangeProgress["changeKind"];
+export type ComputePlanChangeBillingEffect = ComputePlanChangeProgress["billingEffect"];
+export type ComputePlanChangeFundingSource = ComputePlanChangeProgress["fundingSource"];
+export type ComputePlanChangeResult = {
+	kind: Extract<ComputePlanChangeProgress["state"], "complete" | "scheduled">;
+	operationName: string;
+	effectiveAt: string;
+	changeKind: ComputePlanChangeKind;
+	billingEffect: ComputePlanChangeBillingEffect;
+	fundingSource: ComputePlanChangeFundingSource;
+};
 export type ComputePlanChangeQuoteRequest = Schemas["V2ComputePlanChangeQuoteRequest"];
 export type ComputePlanChangeQuoteResponse = Schemas["V2ComputePlanChangeQuoteResponse"];
 export type ComputeSubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];
 export type ComputeSubscriptionQuoteResponse = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
+export type ReusableSubscription = Schemas["V2ComputeReusableSubscriptionItem"];
+export type ReusableSubscriptionsResponse = Schemas["V2ComputeReusableSubscriptionsResponse"];
 export type ComputeSubscriptionResumeRequest = Schemas["V2ComputeSubscriptionResumeRequest"];
 export type DeploymentCreateRequest = Schemas["V2HostedDeployRequest"];
 export type DeploymentDeleteConvergedResponse = Schemas["V2DeleteDeploymentConvergedResponse"];
 export type DeploymentDeleteRequest = Schemas["V2DeleteDeploymentRequest"];
 export type DeploymentUpdateRequest = Schemas["V2UpdateDeploymentRequest"];
+export type SubscriptionSelection = NonNullable<CheckoutRequest["subscription_selection"]>;
 export type DeploymentDesiredLifecycle = "running" | "stopped";
 export type DeployRequest = Schemas["V2HostedDeployRequest"];
 export type HostedDeploymentSpec = Schemas["HostedDeploymentSpec"];
@@ -54,8 +65,7 @@ export type Plan = Schemas["V2PlanResponse"];
 export type PortalRequest = Schemas["V2ComputePortalRequest"];
 export type WalletAutoReloadAction = Schemas["V2WalletAutoReloadActionResponse"];
 export type WalletAutoReloadRequest = Schemas["V2WalletAutoReloadRequest"];
-export type WalletLedgerEntry = Schemas["V2WalletLedgerItemResponse"];
-export type WalletLedgerStatus = WalletLedgerEntry["status"];
 export type WalletState = Schemas["V2WalletResponse"];
 export type WalletTopupRequest = Schemas["V2WalletTopupRequest"];
 export type WalletTopupResult = Schemas["V2WalletTopupResponse"];
+export type WalletTransaction = Schemas["V2WalletTransactionItemResponse"];

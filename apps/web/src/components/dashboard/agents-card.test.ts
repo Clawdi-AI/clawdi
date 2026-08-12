@@ -85,7 +85,7 @@ describe("selfManagedAgentTiles", () => {
 });
 
 describe("agentTileCardProjection", () => {
-	it("shows real v2 hosted live sync and retains useful card metadata", () => {
+	it("prioritizes hosted card status over activity and runtime identity", () => {
 		const projected = env({
 			last_seen_at: new Date(Date.now() - 30_000).toISOString(),
 			last_sync_at: new Date().toISOString(),
@@ -98,17 +98,19 @@ describe("agentTileCardProjection", () => {
 			agentType: "openclaw",
 			href: `/agents/${projected.id}`,
 			env: projected,
+			cardStatus: {
+				visual: { label: "Running", tooltip: "Compute status: Running.", dotClass: "dot" },
+				labels: ["Running", "Restart required"],
+			},
 		};
 
 		const projection = agentTileCardProjection(tile);
 
 		expect(projection.statusVisual).toMatchObject({
-			kind: "live",
-			label: "Live",
-			tooltip: "Sync is live.",
+			label: "Running",
+			tooltip: "Compute status: Running.",
 		});
-		expect(projection.meta[0]).toBe("OpenClaw");
-		expect(projection.meta[1]).toStartWith("Synced ");
+		expect(projection.meta).toEqual(["Running"]);
 	});
 
 	it("does not manufacture hosted sync status without an environment projection", () => {
@@ -147,12 +149,23 @@ describe("agentTileCardProjection", () => {
 		expect(agentTileCardProjection(legacy).statusVisual?.label).toBe("Live");
 	});
 
-	it("labels last-seen fallback explicitly when no sync timestamp exists", () => {
-		const [tile] = selfManagedAgentTiles([
-			env({ last_seen_at: new Date().toISOString(), last_sync_at: null }),
+	it("falls back to activity ahead of runtime identity", () => {
+		const [syncedTile, seenTile] = selfManagedAgentTiles([
+			env({ last_sync_at: new Date().toISOString() }),
+			env({
+				id: "33333333-3333-4333-8333-333333333333",
+				last_seen_at: new Date().toISOString(),
+				last_sync_at: null,
+			}),
 		]);
 
-		expect(agentTileCardProjection(tile).meta[1]).toStartWith("Seen ");
+		const syncedMeta = agentTileCardProjection(syncedTile).meta;
+		const seenMeta = agentTileCardProjection(seenTile).meta;
+
+		expect(syncedMeta).toHaveLength(1);
+		expect(syncedMeta[0]).toStartWith("Synced ");
+		expect(seenMeta).toHaveLength(1);
+		expect(seenMeta[0]).toStartWith("Seen ");
 	});
 });
 

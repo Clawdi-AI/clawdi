@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
+	chownSync,
 	existsSync,
 	lstatSync,
 	readdirSync,
@@ -17,7 +18,6 @@ import { stripTerminalEscapes } from "../lib/sanitize";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { runtimeContentSha256 } from "./applied-state";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
-import { FILE_BROWSER_SERVICE_GROUP, FILE_BROWSER_SERVICE_USER } from "./file-browser-isolation";
 import type { RuntimeInstallReceiptEntry, RuntimeInstallReceipts } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
@@ -45,6 +45,7 @@ import {
 	executableExists,
 	makeRuntimeUserOwned,
 	RuntimeUserCommandTimeoutError,
+	runningAsRoot,
 	runRuntimeUserCommand,
 	runtimeEgressGid,
 	runtimeEgressUid,
@@ -61,7 +62,7 @@ import {
 import { TRANSPARENT_EGRESS_PORT } from "./transparent-egress";
 
 function runtimeCommandPath(name: string, home: string): string | null {
-	if (name === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
+	if (name === "openclaw") return join(home, ".local", "bin", "openclaw");
 	if (name === "hermes") return join(home, ".local", "bin", "hermes");
 	return null;
 }
@@ -296,8 +297,6 @@ export function runtimeSystemdUserUnitName(program: RuntimeSystemdUserProgram): 
 }
 
 const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
-const FILE_BROWSER_SYSTEMD_CREDENTIAL = "/run/credentials/clawdi-files.service/filebrowser.yaml";
-
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
 		paths.systemdUserRoot,
@@ -321,8 +320,8 @@ function systemdExec(command: string, args: string[]): string {
 	return [command, ...args].map(systemdQuote).join(" ");
 }
 
-function fileBrowserSystemdExec(command: string): string {
-	return systemdExec(command, ["-c", FILE_BROWSER_SYSTEMD_CREDENTIAL]);
+function fileBrowserSystemdExec(command: string, config: string): string {
+	return systemdExec(command, ["-c", config]);
 }
 
 function fileBrowserVersionProbeExec(command: string, version: string, commit: string): string {
@@ -351,7 +350,7 @@ function systemdUnitEnvironmentLines(values: Record<string, string>): string[] {
 	);
 }
 
-function systemdEnvironmentFilePath(paths: RuntimePaths, unitName: string): string {
+export function systemdEnvironmentFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(paths.systemdEnvRoot, `${systemdUnitFileName(unitName)}.env`);
 }
 
@@ -368,6 +367,8 @@ type OfficialRuntimeServiceDescriptor = {
 	command: string;
 	installArgs: string[];
 	uninstallArgs: string[];
+	// Resolved in memory for the installer subprocess; strict native auth may omit it from the unit.
+	installSecretEnv?: readonly string[];
 	// Manifest `services` key the official unit corresponds to; used for
 	// program naming even when such an entry is not official for the runtime.
 	service: string;
@@ -387,6 +388,7 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		command: "openclaw",
 		installArgs: ["gateway", "install", "--force", "--json"],
 		uninstallArgs: ["gateway", "uninstall"],
+		installSecretEnv: ["OPENCLAW_GATEWAY_TOKEN"],
 		service: "gateway",
 		unitEnv: (unitName) => ({ OPENCLAW_SYSTEMD_UNIT: unitName }),
 		matchesProgram: (program) => !program.service,
@@ -749,13 +751,44 @@ function writeSystemdEnvironmentFile(input: {
 			}
 			return `${key}=${systemdEnvironmentFileQuote(value)}`;
 		});
-	writePrivateFileAtomic(path, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n${lines.join("\n")}\n`, {
+	const content = `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n${lines.join("\n")}\n`;
+	writeSystemdManagedFile({
+		path,
+		content,
 		mode: 0o600,
 		dirMode: 0o711,
 		trustedRoot: input.paths.runRoot,
+		owner: input.owner,
 	});
-	if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
 	return path;
+}
+
+function writeSystemdManagedFile(input: {
+	path: string;
+	content: string;
+	mode: number;
+	dirMode: number;
+	trustedRoot: string;
+	owner: "root" | "runtime-user";
+}): void {
+	let unchanged = false;
+	try {
+		const current = lstatSync(input.path);
+		unchanged =
+			current.isFile() && current.nlink === 1 && readFileSync(input.path, "utf8") === input.content;
+	} catch {
+		// A missing or unreadable target is replaced by the trusted atomic writer below.
+	}
+	if (unchanged) chmodSync(input.path, input.mode);
+	else {
+		writePrivateFileAtomic(input.path, input.content, {
+			mode: input.mode,
+			dirMode: input.dirMode,
+			trustedRoot: input.trustedRoot,
+		});
+	}
+	if (input.owner === "runtime-user") makeRuntimeUserOwned(input.path);
+	else if (runningAsRoot()) chownSync(input.path, 0, 0);
 }
 
 function writeSystemdProgramEnvironment(input: {
@@ -853,12 +886,14 @@ function writeSystemdUnit(input: {
 	const writeUnitFile = (): string => {
 		ensureDirectoryWithinTrustedRoot(input.root, input.root);
 		if (input.owner === "runtime-user") makeRuntimeUserOwned(input.root);
-		writePrivateFileAtomic(path, `${lines.join("\n")}`, {
+		writeSystemdManagedFile({
+			path,
+			content: lines.join("\n"),
 			mode: 0o644,
 			dirMode: 0o755,
 			trustedRoot: input.root,
+			owner: input.owner,
 		});
-		if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
 		return path;
 	};
 	return input.owner === "runtime-user"
@@ -931,12 +966,14 @@ function writeSystemdUserDropIn(input: {
 		removeGeneratedRuntimeBaseUnit(input.paths, unitName);
 		ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
 		makeRuntimeUserOwned(dirname(path));
-		writePrivateFileAtomic(path, `${lines.join("\n")}`, {
+		writeSystemdManagedFile({
+			path,
+			content: lines.join("\n"),
 			mode: 0o644,
 			dirMode: 0o755,
 			trustedRoot: input.paths.systemdUserRoot,
+			owner: "runtime-user",
 		});
-		makeRuntimeUserOwned(path);
 		return join(input.paths.systemdUserRoot, unitName);
 	});
 }
@@ -1057,7 +1094,14 @@ function installOfficialRuntimeUserService(
 	}
 	try {
 		resetFailedRuntimeUserService(runtimeSystemdProgramName(program), paths, program.cwd);
+		const environment = Object.fromEntries(
+			(descriptor.installSecretEnv ?? []).flatMap((name) => {
+				const value = program.resolvedSecretEnv[name];
+				return value ? [[name, value]] : [];
+			}),
+		);
 		const result = spawnRuntimeUserCommand(program.command, args, paths.userHome, program.cwd, {
+			environment,
 			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
 			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
 		});
@@ -1437,6 +1481,7 @@ export function removeStaleRuntimeSystemdFiles(
 export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<string, string> {
 	const environment: Record<string, string> = {
 		HOME: paths.userHome,
+		CLAWDI_HOME: paths.clawdiHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_USER: "clawdi",
 		PATH: runtimeSystemdPath(paths),
@@ -1464,11 +1509,23 @@ function writeRuntimeSystemdUserProgram(input: {
 			: program.args;
 	const name = runtimeSystemdProgramName(program);
 	const unitName = systemdUnitFileName(name);
+	const runtimeEnv = { ...program.env };
+	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
+	const installerOnlySecretEnv =
+		descriptor?.runtime === "openclaw" &&
+		input.manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		input.manifest.openclawGatewayAuth?.activation.enabled === true
+			? (descriptor.installSecretEnv ?? [])
+			: [];
+	for (const envName of installerOnlySecretEnv) {
+		delete runtimeEnv[envName];
+	}
 	const env = {
 		...input.commonEnvironment,
-		...program.env,
+		...runtimeEnv,
 		...(input.manifest.locale ? { TZ: input.manifest.locale.timezone } : {}),
 		CLAWDI_AUTH_TOKEN: "",
+		CLAWDI_HOME: input.paths.clawdiHome,
 		CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
 			input.manifest,
 			program,
@@ -1476,7 +1533,7 @@ function writeRuntimeSystemdUserProgram(input: {
 			input.providerProjectionRevisions,
 			input.runtimeRevision,
 		),
-		...(officialRuntimeServiceDescriptorForProgram(program)?.unitEnv?.(unitName) ?? {}),
+		...(descriptor?.unitEnv?.(unitName) ?? {}),
 	};
 	if (officialRuntimeServiceInstallArgs(program)) {
 		return writeSystemdUserDropIn({
@@ -1506,13 +1563,18 @@ function writeFileBrowserSystemdUnit(input: {
 }): string {
 	const companion = input.manifest.companions?.filebrowser;
 	if (!companion) throw new Error("Files systemd unit requires a companion manifest");
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	if (runtimeUser === "root" || runtimeUser === "0") {
+		throw new Error("Files systemd unit requires a non-root tenant runtime user");
+	}
+	const serviceConfig = join(dirname(input.paths.fileBrowserServiceBinary), "filebrowser.yaml");
 	return writeSystemdSystemUnit({
 		paths: input.paths,
 		name: "clawdi-files",
 		description: "Clawdi hosted Files companion",
 		command: input.program.command,
 		args: input.program.args,
-		execStart: fileBrowserSystemdExec(input.paths.fileBrowserServiceBinary),
+		execStart: fileBrowserSystemdExec(input.paths.fileBrowserServiceBinary, serviceConfig),
 		cwd: input.program.cwd,
 		directoryKind: "file-browser",
 		env: {
@@ -1523,12 +1585,12 @@ function writeFileBrowserSystemdUnit(input: {
 		},
 		extraUnitLines: ["After=network-online.target", "Wants=network-online.target"],
 		extraServiceLines: [
-			`User=${FILE_BROWSER_SERVICE_USER}`,
-			`Group=${FILE_BROWSER_SERVICE_GROUP}`,
-			`LoadCredential=filebrowser.yaml:${systemdPath(input.paths.fileBrowserConfig)}`,
+			`User=${runtimeUser}`,
+			`Group=${runtimeUserGid(runtimeUser)}`,
 			// Publish only this verified executable into the component service's
 			// private runtime directory; the platform state root stays untraversable.
 			`BindReadOnlyPaths=${systemdPath(input.program.command)}:${systemdPath(input.paths.fileBrowserServiceBinary)}:norbind`,
+			`BindReadOnlyPaths=${systemdPath(input.paths.fileBrowserConfig)}:${systemdPath(serviceConfig)}:norbind`,
 			`ExecStartPre=${fileBrowserVersionProbeExec(
 				input.paths.fileBrowserServiceBinary,
 				companion.version,
@@ -1551,6 +1613,7 @@ function writeFileBrowserSystemdUnit(input: {
 			"ProtectHostname=true",
 			"ProtectProc=invisible",
 			"ProcSubset=pid",
+			"PrivatePIDs=true",
 			"LockPersonality=true",
 			"RestrictSUIDSGID=true",
 			"RestrictRealtime=true",

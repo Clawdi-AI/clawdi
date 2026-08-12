@@ -38,6 +38,7 @@ concurrency:
 
 env:
   BACKEND_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-backend
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
   SIDECAR_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar
   WEB_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-web
 

@@ -15,8 +15,6 @@ Severity legend for open gaps: 🔴 blocks · 🟡 friction · ⚪ nitpick.
   agent appears in the rail and on `/`.
 - **State**: `ossIsEmptyState` gates the card; the rail hydrates from
   `/v1/agents` (10s polling, `refetchIntervalInBackground: false`).
-- **Next-step hint**: with ≥1 agent and `projects_count === 0`, the
-  dashboard Library card shows a one-line "create your first Project" link.
 - **Guarded by**: e2e `query-refresh-no-flicker`, onboarding screenshots in
   the sidebar suite.
 

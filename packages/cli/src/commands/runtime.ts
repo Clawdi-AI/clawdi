@@ -8,14 +8,12 @@ import {
 	existsSync,
 	readdirSync,
 	readFileSync,
+	statSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { components } from "@clawdi/shared/api";
+import { join } from "node:path";
 import chalk from "chalk";
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { ApiClient, unwrap } from "../lib/api-client";
-import { getConfig } from "../lib/config";
+import { parseDotenv } from "../lib/dotenv";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
 import {
@@ -44,6 +42,7 @@ import {
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
 import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
+import { withEffectiveFilesystemIdentity } from "../runtime/effective-identity";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
@@ -72,11 +71,13 @@ import {
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
 import {
+	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest,
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
+import { systemdEnvironmentFilePath } from "../runtime/runtime-systemd-reconciliation";
 import {
 	buildNumericUserCommand,
 	buildRuntimeUserCommand,
@@ -104,936 +105,6 @@ import {
 	type TransparentEgressEnvConfig,
 } from "../runtime/transparent-egress";
 import { consumeSse } from "../serve/sse-client";
-
-type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
-type ChannelAccountCreate = components["schemas"]["ChannelAccountCreate"];
-type ChannelAccountCreated = components["schemas"]["ChannelAccountCreatedResponse"];
-type ChannelAgentLink = components["schemas"]["ChannelAgentLinkResponse"];
-type ChannelCommandSpec = components["schemas"]["ChannelCommandSpec"];
-type ChannelPairCode = components["schemas"]["ChannelPairCodeResponse"];
-type ChannelProvider = ChannelAccountCreate["provider"];
-
-const DOTENV_BLOCK_START = "# >>> clawdi channel runtime >>>";
-const DOTENV_BLOCK_END = "# <<< clawdi channel runtime <<<";
-
-const providerSchema = z.enum(["telegram", "discord", "whatsapp"]);
-const envNameSchema = z
-	.string()
-	.regex(/^[A-Z_][A-Z0-9_]*$/, "must be an environment variable name");
-const jsonObjectSchema = z.record(z.string(), z.unknown());
-const secretsEnvSchema = z.record(z.string(), envNameSchema);
-
-const accountSchema = z.union([
-	z
-		.object({
-			id: z.string().min(1),
-			visibility: z.enum(["private", "public"]).optional(),
-		})
-		.strict(),
-	z
-		.object({
-			private: z
-				.object({
-					name: z.string().min(1),
-					provider_token_env: envNameSchema.optional(),
-					config: jsonObjectSchema.optional(),
-					secrets_env: secretsEnvSchema.optional(),
-				})
-				.strict(),
-		})
-		.strict(),
-]);
-
-const runtimeProjectionSchema = z.enum(["dotenv"]);
-const runtimeEnvKeySchema = z.enum([
-	"api_base_url",
-	"gateway_url",
-	"websocket_url",
-	"media_proxy_base_url",
-	"auth_dir",
-	"password",
-]);
-
-const linkSchema = z
-	.object({
-		ref: z.string().min(1),
-		agent_id: z.string().min(1),
-		runtime: z
-			.object({
-				token_env: envNameSchema,
-				projection: runtimeProjectionSchema.default("dotenv"),
-				env: z.partialRecord(runtimeEnvKeySchema, envNameSchema).optional(),
-			})
-			.strict(),
-		pair_code: z
-			.object({
-				ttl_seconds: z.number().int().min(60).max(86_400).default(300),
-				command_env: envNameSchema.optional(),
-			})
-			.strict()
-			.optional(),
-	})
-	.strict();
-
-const channelSchema = z
-	.object({
-		ref: z.string().min(1),
-		provider: providerSchema,
-		account: accountSchema,
-		links: z.array(linkSchema).min(1),
-		commands: z
-			.object({
-				sync: z.boolean().default(false),
-				guild_id: z.string().min(1).optional(),
-				spec: z.array(jsonObjectSchema).optional(),
-			})
-			.strict()
-			.optional(),
-	})
-	.strict();
-
-const manifestSchema = z
-	.object({
-		version: z.literal(1),
-		channels: z.array(channelSchema).min(1),
-		outputs: z
-			.object({
-				dotenv: z.string().min(1),
-			})
-			.strict(),
-	})
-	.strict()
-	.superRefine((manifest, ctx) => {
-		const channelRefs = new Set<string>();
-		const linkRefs = new Set<string>();
-		const envNames = new Set<string>();
-		const claimEnv = (envName: string, path: (string | number)[]) => {
-			if (envNames.has(envName)) {
-				ctx.addIssue({
-					code: "custom",
-					path,
-					message: `duplicate env output: ${envName}`,
-				});
-			}
-			envNames.add(envName);
-		};
-		for (const [channelIndex, channel] of manifest.channels.entries()) {
-			if (channelRefs.has(channel.ref)) {
-				ctx.addIssue({
-					code: "custom",
-					path: ["channels", channelIndex, "ref"],
-					message: `duplicate channel ref: ${channel.ref}`,
-				});
-			}
-			channelRefs.add(channel.ref);
-			for (const [linkIndex, link] of channel.links.entries()) {
-				if (linkRefs.has(link.ref)) {
-					ctx.addIssue({
-						code: "custom",
-						path: ["channels", channelIndex, "links", linkIndex, "ref"],
-						message: `duplicate link ref: ${link.ref}`,
-					});
-				}
-				linkRefs.add(link.ref);
-				claimEnv(link.runtime.token_env, [
-					"channels",
-					channelIndex,
-					"links",
-					linkIndex,
-					"runtime",
-					"token_env",
-				]);
-				if (link.pair_code?.command_env) {
-					claimEnv(link.pair_code.command_env, [
-						"channels",
-						channelIndex,
-						"links",
-						linkIndex,
-						"pair_code",
-						"command_env",
-					]);
-				}
-			}
-		}
-	});
-
-type RuntimeManifest = z.infer<typeof manifestSchema>;
-type RuntimeChannel = RuntimeManifest["channels"][number];
-type RuntimeLink = RuntimeChannel["links"][number];
-
-interface RuntimeCommandOptions {
-	file?: string;
-	json?: boolean;
-}
-
-interface RuntimeApplyOptions extends RuntimeCommandOptions {
-	dryRun?: boolean;
-	rotateMissingTokens?: boolean;
-	rotateAllTokens?: boolean;
-	yes?: boolean;
-}
-
-interface ApplyContext {
-	api: ApiClient;
-	manifest: RuntimeManifest;
-	manifestDir: string;
-	rotateMissingTokens: boolean;
-	rotateAllTokens: boolean;
-	env: Map<string, string>;
-	actions: RuntimeAction[];
-	accounts: AppliedAccount[];
-	links: AppliedLink[];
-	pairCodes: AppliedPairCode[];
-	writes: string[];
-	warnings: string[];
-	channelsCache?: ChannelAccount[];
-	linksCache: Map<string, ChannelAgentLink[]>;
-}
-
-interface RuntimeAction {
-	action: string;
-	channel_ref?: string;
-	link_ref?: string;
-	account_id?: string;
-	link_id?: string;
-	detail?: string;
-}
-
-interface AppliedAccount {
-	ref: string;
-	account: ChannelAccount | ChannelAccountCreated;
-	created: boolean;
-}
-
-interface AppliedLink {
-	ref: string;
-	account_ref: string;
-	link: ChannelAgentLink;
-	created: boolean;
-	token_env: string;
-	token_written: boolean;
-}
-
-interface AppliedPairCode {
-	link_ref: string;
-	pair_code: ChannelPairCode;
-	command_env?: string;
-}
-
-export async function runtimePlanCommand(opts: RuntimeCommandOptions = {}): Promise<void> {
-	const { manifest, manifestDir } = readManifest(opts.file);
-	const api = new ApiClient();
-	const plan = await buildPlan(api, manifest, manifestDir);
-	printResult({ plan }, opts.json);
-}
-
-export async function runtimeStatusCommand(opts: RuntimeCommandOptions = {}): Promise<void> {
-	const { manifest, manifestDir } = readManifest(opts.file);
-	const api = new ApiClient();
-	const plan = await buildPlan(api, manifest, manifestDir);
-	const status = {
-		manifest: plan.manifest,
-		accounts: plan.accounts,
-		links: plan.links,
-		outputs: plan.outputs,
-		warnings: plan.warnings,
-	};
-	printResult({ status }, opts.json);
-}
-
-export async function runtimeApplyCommand(opts: RuntimeApplyOptions = {}): Promise<void> {
-	if (opts.rotateMissingTokens && opts.rotateAllTokens) {
-		throw new Error("Pass only one of --rotate-missing-tokens or --rotate-all-tokens.");
-	}
-	if (opts.rotateAllTokens && !opts.yes) {
-		throw new Error("Pass --yes with --rotate-all-tokens to confirm token rotation.");
-	}
-	if (opts.dryRun) {
-		await runtimePlanCommand({ file: opts.file, json: opts.json });
-		return;
-	}
-	const { manifest, manifestDir } = readManifest(opts.file);
-	preflightRuntimeOutputs(manifest);
-	const ctx: ApplyContext = {
-		api: new ApiClient(),
-		manifest,
-		manifestDir,
-		rotateMissingTokens: opts.rotateMissingTokens ?? false,
-		rotateAllTokens: opts.rotateAllTokens ?? false,
-		env: new Map(),
-		actions: [],
-		accounts: [],
-		links: [],
-		pairCodes: [],
-		writes: [],
-		warnings: [],
-		linksCache: new Map(),
-	};
-	for (const channel of manifest.channels) {
-		await applyChannel(ctx, channel);
-	}
-	writeDotenvOutput(ctx);
-	printResult(
-		{
-			applied: {
-				actions: ctx.actions,
-				accounts: ctx.accounts,
-				links: ctx.links,
-				pair_codes: ctx.pairCodes,
-				writes: ctx.writes,
-				warnings: ctx.warnings,
-			},
-		},
-		opts.json,
-	);
-}
-
-async function buildPlan(api: ApiClient, manifest: RuntimeManifest, manifestDir: string) {
-	let channels: ChannelAccount[] | null = null;
-	const accountPlans = [];
-	const linkPlans = [];
-	const warnings: string[] = [];
-	for (const channel of manifest.channels) {
-		const existingAccountId = isExistingAccountSpec(channel.account) ? channel.account.id : null;
-		let existingAccount: ChannelAccount | null;
-		if (existingAccountId !== null) {
-			existingAccount = unwrap(
-				await api.GET("/v1/channels/{account_id}", {
-					params: { path: { account_id: existingAccountId } },
-				}),
-			);
-		} else {
-			if (channels === null) {
-				channels = unwrap(await api.GET("/v1/channels"));
-			}
-			existingAccount = findManifestAccount(channels, channel) ?? null;
-		}
-		if (existingAccount) {
-			assertManifestAccountCompatible(channel, existingAccount);
-		}
-		accountPlans.push({
-			ref: channel.ref,
-			provider: channel.provider,
-			account_id: existingAccount?.id ?? null,
-			action: existingAccount ? "reuse_account" : "create_private_account",
-		});
-		if (!existingAccount) {
-			for (const link of channel.links) {
-				linkPlans.push({
-					ref: link.ref,
-					channel_ref: channel.ref,
-					agent_id: link.agent_id,
-					action: "create_after_account",
-				});
-			}
-			continue;
-		}
-		const links = unwrap(
-			await api.GET("/v1/channels/{account_id}/agent-links", {
-				params: { path: { account_id: existingAccount.id } },
-			}),
-		);
-		for (const link of channel.links) {
-			const existingLink = links.find((candidate) => candidate.agent_id === link.agent_id);
-			linkPlans.push({
-				ref: link.ref,
-				channel_ref: channel.ref,
-				account_id: existingAccount.id,
-				link_id: existingLink?.id ?? null,
-				agent_id: link.agent_id,
-				action: existingLink ? "reuse_link" : "create_link",
-			});
-			if (
-				existingLink &&
-				!hasDotenvValue(manifestDir, manifest.outputs.dotenv, link.runtime.token_env)
-			) {
-				warnings.push(
-					`${link.ref}: existing links do not reveal agent SDK tokens; run apply --rotate-missing-tokens to materialize ${link.runtime.token_env}.`,
-				);
-			}
-		}
-	}
-	return {
-		manifest: { version: manifest.version, channels: manifest.channels.length },
-		accounts: accountPlans,
-		links: linkPlans,
-		outputs: outputPaths(manifest, manifestDir),
-		warnings,
-	};
-}
-
-async function applyChannel(ctx: ApplyContext, channel: RuntimeChannel): Promise<void> {
-	const account = await ensureAccount(ctx, channel);
-	ctx.accounts.push({ ref: channel.ref, account, created: isCreatedAccount(account) });
-	for (const linkManifest of channel.links) {
-		await applyLink(ctx, channel, account, linkManifest);
-	}
-	if (channel.commands?.sync) {
-		const sync = unwrap(
-			await ctx.api.POST("/v1/channels/{account_id}/commands/sync", {
-				params: { path: { account_id: account.id } },
-				body: {
-					commands: channel.commands.spec ? (channel.commands.spec as ChannelCommandSpec[]) : null,
-					guild_id: channel.commands.guild_id ?? null,
-				},
-			}),
-		);
-		ctx.actions.push({
-			action: "sync_commands",
-			channel_ref: channel.ref,
-			account_id: account.id,
-			detail: `${sync.commands.length} command(s)`,
-		});
-	}
-}
-
-async function ensureAccount(
-	ctx: ApplyContext,
-	channel: RuntimeChannel,
-): Promise<ChannelAccount | ChannelAccountCreated> {
-	if (isExistingAccountSpec(channel.account)) {
-		const accountSpec = channel.account;
-		const account = unwrap(
-			await ctx.api.GET("/v1/channels/{account_id}", {
-				params: { path: { account_id: accountSpec.id } },
-			}),
-		);
-		assertManifestAccountCompatible(channel, account);
-		ctx.actions.push({ action: "reuse_account", channel_ref: channel.ref, account_id: account.id });
-		return account;
-	}
-	const createSpec = createPrivateAccountSpec(channel.account);
-	const channels = await listChannels(ctx);
-	const existing = channels.find(
-		(candidate) =>
-			candidate.provider === channel.provider &&
-			candidate.visibility === "private" &&
-			candidate.name === createSpec.name,
-	);
-	if (existing) {
-		ctx.actions.push({
-			action: "reuse_account",
-			channel_ref: channel.ref,
-			account_id: existing.id,
-		});
-		return existing;
-	}
-	const created = unwrap(
-		await ctx.api.POST("/v1/channels", {
-			body: {
-				provider: channel.provider,
-				name: createSpec.name,
-				agent_id: null,
-				provider_token: createSpec.provider_token_env
-					? readRequiredEnv(createSpec.provider_token_env, "provider_token_env")
-					: null,
-				config: createSpec.config ?? null,
-				secrets: resolveSecrets(createSpec.secrets_env),
-			},
-		}),
-	);
-	ctx.actions.push({
-		action: "create_private_account",
-		channel_ref: channel.ref,
-		account_id: created.id,
-	});
-	ctx.channelsCache = [...channels, created];
-	return created;
-}
-
-async function applyLink(
-	ctx: ApplyContext,
-	channel: RuntimeChannel,
-	account: ChannelAccount | ChannelAccountCreated,
-	linkManifest: RuntimeLink,
-): Promise<void> {
-	const links = await listLinks(ctx, account.id);
-	let link = links.find((candidate) => candidate.agent_id === linkManifest.agent_id);
-	let created = false;
-	if (!link) {
-		link = unwrap(
-			await ctx.api.POST("/v1/channels/{account_id}/agent-links", {
-				params: { path: { account_id: account.id } },
-				body: { agent_id: linkManifest.agent_id },
-			}),
-		);
-		created = true;
-		ctx.linksCache.set(account.id, [...links, link]);
-		ctx.actions.push({
-			action: "create_link",
-			channel_ref: channel.ref,
-			link_ref: linkManifest.ref,
-			account_id: account.id,
-			link_id: link.id,
-		});
-	} else {
-		ctx.actions.push({
-			action: "reuse_link",
-			channel_ref: channel.ref,
-			link_ref: linkManifest.ref,
-			account_id: account.id,
-			link_id: link.id,
-		});
-	}
-	link = requireLink(link, linkManifest.ref);
-
-	let token = link.agent_token ?? null;
-	let tokenWritten = false;
-	if (
-		ctx.rotateAllTokens ||
-		(ctx.rotateMissingTokens &&
-			!hasDotenvValue(ctx.manifestDir, ctx.manifest.outputs.dotenv, linkManifest.runtime.token_env))
-	) {
-		const rotatedLink = unwrap(
-			await ctx.api.POST("/v1/channels/{account_id}/agent-links/{link_id}/token", {
-				params: { path: { account_id: account.id, link_id: link.id } },
-			}),
-		);
-		link = rotatedLink;
-		token = link.agent_token ?? null;
-		ctx.linksCache.set(
-			account.id,
-			(ctx.linksCache.get(account.id) ?? []).map((candidate) =>
-				candidate.id === rotatedLink.id ? rotatedLink : candidate,
-			),
-		);
-		ctx.actions.push({
-			action: "rotate_link_token",
-			channel_ref: channel.ref,
-			link_ref: linkManifest.ref,
-			account_id: account.id,
-			link_id: link.id,
-		});
-	}
-
-	if (token) {
-		addRuntimeEnv(ctx, channel.provider, linkManifest, token);
-		tokenWritten = true;
-	} else {
-		const existingToken = readDotenvValue(
-			ctx.manifestDir,
-			ctx.manifest.outputs.dotenv,
-			linkManifest.runtime.token_env,
-		);
-		if (existingToken) {
-			addRuntimeEnv(ctx, channel.provider, linkManifest, existingToken);
-			tokenWritten = true;
-		} else {
-			ctx.warnings.push(
-				`${linkManifest.ref}: agent SDK token is not available from an existing link; use --rotate-missing-tokens if ${linkManifest.runtime.token_env} must be written.`,
-			);
-		}
-	}
-
-	if (linkManifest.pair_code) {
-		const pairCode = unwrap(
-			await ctx.api.POST("/v1/channels/{account_id}/pair-codes", {
-				params: { path: { account_id: account.id } },
-				body: {
-					agent_id: null,
-					agent_link_id: link.id,
-					ttl_seconds: linkManifest.pair_code.ttl_seconds,
-				},
-			}),
-		);
-		ctx.pairCodes.push({
-			link_ref: linkManifest.ref,
-			pair_code: pairCode,
-			command_env: linkManifest.pair_code.command_env,
-		});
-		if (linkManifest.pair_code.command_env) {
-			ctx.env.set(linkManifest.pair_code.command_env, pairCode.pairing_command);
-		}
-		ctx.actions.push({
-			action: "create_pair_code",
-			channel_ref: channel.ref,
-			link_ref: linkManifest.ref,
-			account_id: account.id,
-			link_id: link.id,
-		});
-	}
-
-	ctx.links.push({
-		ref: linkManifest.ref,
-		account_ref: channel.ref,
-		link,
-		created,
-		token_env: linkManifest.runtime.token_env,
-		token_written: tokenWritten,
-	});
-}
-
-function addRuntimeEnv(
-	ctx: ApplyContext,
-	provider: ChannelProvider,
-	link: RuntimeLink,
-	token: string,
-): void {
-	const baseUrl = stripTrailingSlash(getConfig().apiUrl);
-	setRuntimeEnv(ctx, link.runtime.token_env, token);
-	if (provider === "telegram") {
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "api_base_url", "TELEGRAM_BOT_API_BASE_URL"),
-			`${baseUrl}/v1/channels/telegram`,
-		);
-	}
-	if (provider === "discord") {
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "api_base_url", "DISCORD_BOT_API_BASE_URL"),
-			`${baseUrl}/v1/channels/discord`,
-		);
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
-			`${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
-		);
-	}
-}
-
-function runtimeEnvName(
-	link: RuntimeLink,
-	key: z.infer<typeof runtimeEnvKeySchema>,
-	fallback: string,
-): string {
-	return link.runtime.env?.[key] ?? fallback;
-}
-
-function setRuntimeEnv(ctx: ApplyContext, name: string, value: string): void {
-	const existing = ctx.env.get(name);
-	if (existing !== undefined && existing !== value) {
-		throw new Error(
-			`Runtime output ${name} has conflicting values. Use runtime.env to give each channel-specific value a distinct env name.`,
-		);
-	}
-	ctx.env.set(name, value);
-}
-
-function writeDotenvOutput(ctx: ApplyContext): void {
-	if (ctx.env.size === 0) return;
-	const path = resolvePath(ctx.manifestDir, ctx.manifest.outputs.dotenv);
-	const generatedLines = [...ctx.env.entries()]
-		.sort(([left], [right]) => left.localeCompare(right))
-		.map(([key, value]) => `${key}=${quoteDotenv(value)}`);
-	const block = [DOTENV_BLOCK_START, ...generatedLines, DOTENV_BLOCK_END].join("\n");
-	writePrivateFileAtomic(path, mergeDotenvManagedBlock(path, block));
-	ctx.writes.push(path);
-}
-
-function readManifest(file = "clawdi.runtime.yaml"): {
-	manifest: RuntimeManifest;
-	manifestDir: string;
-} {
-	const path = resolve(file);
-	const raw = readFileSync(path, "utf-8");
-	const parsed = parseYaml(raw);
-	const result = manifestSchema.safeParse(parsed);
-	if (!result.success) {
-		throw new Error(`Invalid runtime manifest ${path}: ${z.prettifyError(result.error)}`);
-	}
-	return { manifest: result.data, manifestDir: dirname(path) };
-}
-
-function preflightRuntimeOutputs(manifest: RuntimeManifest): void {
-	const baseUrl = stripTrailingSlash(getConfig().apiUrl);
-	const outputs = new Map<string, { value: string; ref: string }>();
-	const claim = (name: string, value: string, ref: string) => {
-		const existing = outputs.get(name);
-		if (existing && existing.value !== value) {
-			throw new Error(
-				`Runtime output ${name} has conflicting values before apply (${existing.ref}, ${ref}). Use runtime.env to give each channel-specific value a distinct env name.`,
-			);
-		}
-		outputs.set(name, { value, ref });
-	};
-
-	for (const channel of manifest.channels) {
-		for (const link of channel.links) {
-			claim(link.runtime.token_env, `token:${link.ref}`, link.ref);
-			if (link.pair_code?.command_env) {
-				claim(link.pair_code.command_env, `pair-code:${link.ref}`, link.ref);
-			}
-			if (channel.provider === "telegram") {
-				claim(
-					runtimeEnvName(link, "api_base_url", "TELEGRAM_BOT_API_BASE_URL"),
-					`${baseUrl}/v1/channels/telegram`,
-					link.ref,
-				);
-			}
-			if (channel.provider === "discord") {
-				claim(
-					runtimeEnvName(link, "api_base_url", "DISCORD_BOT_API_BASE_URL"),
-					`${baseUrl}/v1/channels/discord`,
-					link.ref,
-				);
-				claim(
-					runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
-					`${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
-					link.ref,
-				);
-			}
-		}
-	}
-}
-
-function assertManifestAccountCompatible(channel: RuntimeChannel, account: ChannelAccount): void {
-	if (account.provider !== channel.provider) {
-		throw new Error(
-			`${channel.ref}: account ${account.id} is provider ${account.provider}, expected ${channel.provider}.`,
-		);
-	}
-	if (
-		isExistingAccountSpec(channel.account) &&
-		channel.account.visibility &&
-		account.visibility !== channel.account.visibility
-	) {
-		throw new Error(
-			`${channel.ref}: account ${account.id} visibility is ${account.visibility}, expected ${channel.account.visibility}.`,
-		);
-	}
-}
-
-function findManifestAccount(
-	channels: ChannelAccount[],
-	channel: RuntimeChannel,
-): ChannelAccount | undefined {
-	if (isExistingAccountSpec(channel.account)) {
-		const accountSpec = channel.account;
-		return channels.find((candidate) => candidate.id === accountSpec.id);
-	}
-	const createSpec = createPrivateAccountSpec(channel.account);
-	return channels.find(
-		(candidate) =>
-			candidate.provider === channel.provider &&
-			candidate.visibility === "private" &&
-			candidate.name === createSpec.name,
-	);
-}
-
-function resolveSecrets(
-	secretsEnv: Record<string, string> | undefined,
-): Record<string, string> | null {
-	if (!secretsEnv || Object.keys(secretsEnv).length === 0) return null;
-	const secrets: Record<string, string> = {};
-	for (const [name, envName] of Object.entries(secretsEnv)) {
-		secrets[name] = readRequiredEnv(envName, `secrets_env.${name}`);
-	}
-	return secrets;
-}
-
-function readRequiredEnv(envName: string, label: string): string {
-	const value = process.env[envName];
-	if (value === undefined || value === "") {
-		throw new Error(`${label} requires ${envName} to be set.`);
-	}
-	return value;
-}
-
-function hasDotenvValue(manifestDir: string, output: string, envName: string): boolean {
-	return readDotenvValue(manifestDir, output, envName) !== null;
-}
-
-function readDotenvValue(manifestDir: string, output: string, envName: string): string | null {
-	const path = resolvePath(manifestDir, output);
-	if (!existsSync(path)) return null;
-	const pattern = new RegExp(`^${escapeRegExp(envName)}=(.*)$`, "m");
-	const match = pattern.exec(readFileSync(path, "utf-8"));
-	if (!match) return null;
-	return unquoteDotenv(match[1] ?? "");
-}
-
-function mergeDotenvManagedBlock(path: string, block: string): string {
-	const nextBlock = `${block}\n`;
-	if (!existsSync(path)) return nextBlock;
-	const current = readFileSync(path, "utf-8");
-	const start = current.indexOf(DOTENV_BLOCK_START);
-	const end = current.indexOf(DOTENV_BLOCK_END);
-	if (start >= 0 && end >= start) {
-		const afterEnd = end + DOTENV_BLOCK_END.length;
-		const prefix = current.slice(0, start).replace(/\n*$/, "");
-		const suffix = current.slice(afterEnd).replace(/^\n*/, "");
-		return `${[prefix, nextBlock.trimEnd(), suffix].filter(Boolean).join("\n\n")}\n`;
-	}
-	const prefix = current.replace(/\n*$/, "");
-	return prefix ? `${prefix}\n\n${nextBlock}` : nextBlock;
-}
-
-function outputPaths(manifest: RuntimeManifest, manifestDir: string): Record<string, string> {
-	return { dotenv: resolvePath(manifestDir, manifest.outputs.dotenv) };
-}
-
-function resolvePath(baseDir: string, path: string): string {
-	return isAbsolute(path) ? path : join(baseDir, path);
-}
-
-function quoteDotenv(value: string): string {
-	if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
-	return JSON.stringify(value);
-}
-
-function unquoteDotenv(raw: string): string {
-	const value = raw.trim();
-	if (!value.startsWith('"')) return value;
-	try {
-		const parsed = JSON.parse(value);
-		return typeof parsed === "string" ? parsed : value;
-	} catch {
-		return value;
-	}
-}
-
-function toWebSocketUrl(baseUrl: string): string {
-	if (baseUrl.startsWith("https://")) return `wss://${baseUrl.slice("https://".length)}`;
-	if (baseUrl.startsWith("http://")) return `ws://${baseUrl.slice("http://".length)}`;
-	return baseUrl;
-}
-
-function stripTrailingSlash(value: string): string {
-	return value.replace(/\/+$/, "");
-}
-
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function isCreatedAccount(
-	account: ChannelAccount | ChannelAccountCreated,
-): account is ChannelAccountCreated {
-	return "webhook_secret" in account;
-}
-
-function isExistingAccountSpec(
-	account: RuntimeChannel["account"],
-): account is Extract<RuntimeChannel["account"], { id: string }> {
-	return "id" in account;
-}
-
-function createPrivateAccountSpec(
-	account: RuntimeChannel["account"],
-): Extract<RuntimeChannel["account"], { private: { name: string } }>["private"] {
-	if ("private" in account) return account.private;
-	throw new Error("Expected private account manifest branch.");
-}
-
-function requireLink(link: ChannelAgentLink | undefined, ref: string): ChannelAgentLink {
-	if (link) return link;
-	throw new Error(`${ref}: expected backend to return a bot-agent link.`);
-}
-
-function printResult(value: unknown, json = false): void {
-	if (json) {
-		console.log(JSON.stringify(value, null, 2));
-		return;
-	}
-	printHumanResult(value);
-	const warnings = collectWarnings(value);
-	for (const warning of warnings) {
-		console.error(chalk.yellow(`warning: ${warning}`));
-	}
-}
-
-async function listChannels(ctx: ApplyContext): Promise<ChannelAccount[]> {
-	if (!ctx.channelsCache) {
-		ctx.channelsCache = unwrap(await ctx.api.GET("/v1/channels"));
-	}
-	return ctx.channelsCache;
-}
-
-async function listLinks(ctx: ApplyContext, accountId: string): Promise<ChannelAgentLink[]> {
-	const cached = ctx.linksCache.get(accountId);
-	if (cached) return cached;
-	const links = unwrap(
-		await ctx.api.GET("/v1/channels/{account_id}/agent-links", {
-			params: { path: { account_id: accountId } },
-		}),
-	);
-	ctx.linksCache.set(accountId, links);
-	return links;
-}
-
-function printHumanResult(value: unknown): void {
-	if (!value || typeof value !== "object") {
-		console.log(JSON.stringify(value, null, 2));
-		return;
-	}
-	const root = value as {
-		plan?: {
-			accounts?: RuntimeAction[];
-			links?: RuntimeAction[];
-			outputs?: Record<string, string>;
-		};
-		status?: {
-			accounts?: RuntimeAction[];
-			links?: RuntimeAction[];
-			outputs?: Record<string, string>;
-		};
-		applied?: {
-			actions?: RuntimeAction[];
-			pair_codes?: AppliedPairCode[];
-			writes?: string[];
-		};
-	};
-	if (root.plan) {
-		console.log(chalk.bold("Runtime plan"));
-		printActions([...(root.plan.accounts ?? []), ...(root.plan.links ?? [])]);
-		printOutputs(root.plan.outputs);
-		return;
-	}
-	if (root.status) {
-		console.log(chalk.bold("Runtime status"));
-		printActions([...(root.status.accounts ?? []), ...(root.status.links ?? [])]);
-		printOutputs(root.status.outputs);
-		return;
-	}
-	if (root.applied) {
-		console.log(`${chalk.green("✓")} Applied runtime manifest.`);
-		printActions(root.applied.actions ?? []);
-		if (root.applied.pair_codes?.length) {
-			console.log(chalk.bold("Pair codes"));
-			for (const item of root.applied.pair_codes) {
-				console.log(
-					`  ${item.link_ref}: ${item.pair_code.pairing_command} (expires ${item.pair_code.expires_at})`,
-				);
-			}
-		}
-		if (root.applied.writes?.length) {
-			console.log(chalk.bold("Writes"));
-			for (const path of root.applied.writes) console.log(`  ${path}`);
-		}
-		return;
-	}
-	console.log(JSON.stringify(value, null, 2));
-}
-
-function printActions(actions: RuntimeAction[]): void {
-	if (actions.length === 0) {
-		console.log("  No changes.");
-		return;
-	}
-	for (const action of actions) {
-		const subject = action.link_ref ?? action.channel_ref ?? action.account_id ?? "-";
-		const ids = [action.account_id, action.link_id].filter(Boolean).join(" ");
-		const suffix = ids ? ` ${chalk.gray(ids)}` : "";
-		console.log(`  ${action.action}: ${subject}${suffix}`);
-	}
-}
-
-function printOutputs(outputs: Record<string, string> | undefined): void {
-	if (!outputs || Object.keys(outputs).length === 0) return;
-	console.log(chalk.bold("Outputs"));
-	for (const [name, path] of Object.entries(outputs)) console.log(`  ${name}: ${path}`);
-}
-
-function collectWarnings(value: unknown): string[] {
-	if (!value || typeof value !== "object") return [];
-	const root = value as {
-		plan?: { warnings?: string[] };
-		status?: { warnings?: string[] };
-		applied?: { warnings?: string[] };
-	};
-	return root.plan?.warnings ?? root.status?.warnings ?? root.applied?.warnings ?? [];
-}
 
 interface RuntimeInitOptions {
 	nonInteractive?: boolean;
@@ -1115,6 +186,23 @@ interface RuntimeManifestIdentity {
 	previouslyApplied?: boolean;
 }
 
+interface RuntimeWatchFailureBackoff {
+	backoffMs: number;
+	etag: string | null;
+	nextRetryAt: number;
+}
+
+interface RuntimeWatchTickOptions {
+	forceRefresh: boolean;
+	deferCliInstall?: boolean;
+	deferCliInstallReason?: string;
+	recoverFailedSystemdUnits?: boolean;
+	failureBackoff?: RuntimeWatchFailureBackoff;
+	now: number;
+	applyContext?: RuntimeApplyContext;
+	hostedRuntimeContract?: HostedRuntimeContractOptions;
+}
+
 function writable(path: string): boolean {
 	try {
 		accessSync(path, constants.W_OK);
@@ -1153,6 +241,61 @@ export function runtimeAppliedContentIdentity(
 // Keep secret-dependent recoverability verification in the root-only applied state.
 export function runtimePublicContentRevision(load: RuntimeManifestLoad): string {
 	return runtimeContentSha256({ manifest: load.manifest });
+}
+
+function runtimeCheckpointContent(
+	load: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
+): unknown {
+	const {
+		generation: _generation,
+		applyGeneration: _applyGeneration,
+		issuedAt: _issuedAt,
+		clawdiCli,
+		...manifest
+	} = load.manifest;
+	const { packageSpec: _packageSpec, ...cliPolicy } = clawdiCli ?? {};
+	return {
+		manifest: {
+			...manifest,
+			...(clawdiCli === undefined ? {} : { clawdiCli: cliPolicy }),
+		},
+		secretValues: runtimeRecoverableSecretValues(load.manifest, load.secretValues),
+	};
+}
+
+export function runtimeOnlyChangesCliPackage(
+	previous: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
+	next: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
+): boolean {
+	const previousPackageSpec = previous.manifest.clawdiCli?.packageSpec?.trim();
+	const nextPackageSpec = next.manifest.clawdiCli?.packageSpec?.trim();
+	if (!previousPackageSpec || !nextPackageSpec || previousPackageSpec === nextPackageSpec) {
+		return false;
+	}
+	try {
+		return (
+			runtimeContentSha256(runtimeCheckpointContent(previous)) ===
+			runtimeContentSha256(runtimeCheckpointContent(next))
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isRuntimeCliOnlyCheckpoint(load: RuntimeManifestLoad, paths: RuntimePaths): boolean {
+	const activeAppliedState = readRuntimeAppliedState(paths);
+	const activeApplyIdentity = activeAppliedState
+		? runtimeAppliedApplyIdentity(activeAppliedState)
+		: null;
+	if (
+		!load.applyContext ||
+		!activeApplyIdentity ||
+		!runtimeApplyIdentitiesEqual(load.applyContext.identity, activeApplyIdentity)
+	) {
+		return false;
+	}
+	const committed = loadCommittedRuntimeManifest(paths, load.applyContext);
+	return "errors" in committed ? false : runtimeOnlyChangesCliPackage(committed, load);
 }
 
 export function commitRuntimeAppliedState(input: {
@@ -1373,6 +516,8 @@ export interface SystemdUnitSnapshot {
 interface SystemdUnitManagerState {
 	loadState: string;
 	activeState: string;
+	mainPid: number;
+	needDaemonReload: boolean;
 	enabledState?: string;
 }
 
@@ -1386,6 +531,7 @@ interface CommandResult {
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 const RUNTIME_DAEMON_SYSTEM_UNIT = "clawdi-daemon.service";
 const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
+const RUNTIME_REVISION_RE = /^[a-f0-9]{32}$/;
 
 export function readSystemdUnitSnapshot(
 	paths: ReturnType<typeof getRuntimePaths>,
@@ -1472,6 +618,7 @@ export function applySystemdRuntimeUpdate(
 			systemUnits: readonly string[];
 			userUnits: readonly string[];
 		};
+		preserveActiveUnits?: boolean;
 		skipActivatedSystemUnits?: readonly string[];
 	} = {},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
@@ -1495,8 +642,8 @@ export function applySystemdRuntimeUpdate(
 	const user = opts.activationScope
 		? filterChanges(allUser, opts.activationScope.userUnits)
 		: allUser;
-	const systemUnitsChanged = [...system.added, ...system.changed].sort();
-	const userUnitsChanged = [...user.added, ...user.changed].sort();
+	const systemUnitsChanged = new Set([...system.added, ...system.removed]);
+	const userUnitsChanged = new Set([...user.added, ...user.removed]);
 	const scopedSystemUnits = opts.activationScope ? new Set(opts.activationScope.systemUnits) : null;
 	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
 		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
@@ -1504,8 +651,9 @@ export function applySystemdRuntimeUpdate(
 	const forcedSystemStops = (opts.forceStopSystemUnits ?? []).filter(
 		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
 	);
-	const forcedUserRestarts = (opts.forceRestartUserUnits ?? []).filter((unit) =>
-		after.user.has(unit),
+	const scopedUserUnits = opts.activationScope ? new Set(opts.activationScope.userUnits) : null;
+	const forcedUserRestarts = (opts.forceRestartUserUnits ?? []).filter(
+		(unit) => after.user.has(unit) && (!scopedUserUnits || scopedUserUnits.has(unit)),
 	);
 	const recoverFailedUnits = opts.recoverFailedUnits !== false;
 	const activationChanged =
@@ -1519,8 +667,28 @@ export function applySystemdRuntimeUpdate(
 		forcedSystemStops.length > 0 ||
 		forcedUserRestarts.length > 0;
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
-		return { applied: !activationChanged, systemUnitsChanged, userUnitsChanged };
+		return {
+			applied: !activationChanged,
+			systemUnitsChanged: [...systemUnitsChanged].sort(),
+			userUnitsChanged: [...userUnitsChanged].sort(),
+		};
 	}
+	const systemManagerNeedsReload = new Set(
+		system.present.filter(
+			(unit) => systemdUnitManagerState(paths, "system", unit).needDaemonReload,
+		),
+	);
+	const userManagerNeedsReload = new Set(
+		user.present.filter((unit) => systemdUnitManagerState(paths, "user", unit).needDaemonReload),
+	);
+	const changedSystemUnits = new Set(system.changed);
+	const changedUserUnits = new Set(user.changed);
+	const userProcessRevisionDrift = new Set(
+		user.present.filter((unit) => {
+			const state = systemdUnitManagerState(paths, "user", unit);
+			return state.activeState === "active" && !systemdProcessRevisionMatches(paths, unit, state);
+		}),
+	);
 
 	for (const unit of system.removed) {
 		const state = systemdUnitManagerState(paths, "system", unit);
@@ -1534,18 +702,30 @@ export function applySystemdRuntimeUpdate(
 	}
 	for (const unit of forcedSystemStops) {
 		const state = systemdUnitManagerState(paths, "system", unit);
-		if (!systemdUnitAbsentOrInactive(state)) systemctl(["stop", unit]);
+		if (!systemdUnitAbsentOrInactive(state)) {
+			systemctl(["stop", unit]);
+			systemUnitsChanged.add(unit);
+		}
 	}
 
-	if (system.added.length > 0 || system.changed.length > 0 || system.removed.length > 0) {
+	if (
+		system.added.length > 0 ||
+		system.changed.length > 0 ||
+		system.removed.length > 0 ||
+		systemManagerNeedsReload.size > 0
+	) {
 		systemctl(["daemon-reload"]);
 	}
-	if (user.added.length > 0 || user.changed.length > 0 || user.removed.length > 0) {
+	if (
+		user.added.length > 0 ||
+		user.changed.length > 0 ||
+		user.removed.length > 0 ||
+		userManagerNeedsReload.size > 0
+	) {
 		runtimeUserSystemctl(paths, ["daemon-reload"]);
 	}
 
 	const addedSystemUnits = new Set(system.added);
-	const changedSystemUnits = new Set(system.changed);
 	const forcedRestartUnits = new Set(forcedSystemRestarts);
 	const forcedStopUnits = new Set(forcedSystemStops);
 	const skipActivatedSystemUnits = new Set(opts.skipActivatedSystemUnits ?? []);
@@ -1559,20 +739,23 @@ export function applySystemdRuntimeUpdate(
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedSystemUnits.push(unit);
 			startSystemUnits.push(unit);
+			systemUnitsChanged.add(unit);
 			continue;
 		}
 		if (state.activeState === "inactive") {
 			startSystemUnits.push(unit);
+			systemUnitsChanged.add(unit);
 			continue;
 		}
 		if (
 			state.activeState === "active" &&
 			unit !== RUNTIME_WATCH_SYSTEM_UNIT &&
-			(changedSystemUnits.has(unit) ||
+			((changedSystemUnits.has(unit) && !opts.preserveActiveUnits) ||
 				(forcedRestartUnits.has(unit) &&
 					(!addedSystemUnits.has(unit) || unit === RUNTIME_SIDECAR_SYSTEM_UNIT)))
 		) {
 			restartSystemUnits.push(unit);
+			systemUnitsChanged.add(unit);
 		}
 	}
 	// Each reconciliation makes at most one recovery attempt per failed unit.
@@ -1581,9 +764,8 @@ export function applySystemdRuntimeUpdate(
 	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
 	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 
-	const changedUserUnits = new Set(user.changed);
-	const forcedRestartUserUnits = new Set(forcedUserRestarts);
 	const resetFailedUserUnits: string[] = [];
+	const forcedRestartUserUnits = new Set(forcedUserRestarts);
 	const startUserUnits: string[] = [];
 	const enableUserUnits: string[] = [];
 	const enableAndStartUserUnits: string[] = [];
@@ -1593,6 +775,7 @@ export function applySystemdRuntimeUpdate(
 		const enabled = systemdUnitEnabled(state);
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedUserUnits.push(unit);
+			userUnitsChanged.add(unit);
 		}
 		if (
 			state.activeState === "inactive" ||
@@ -1600,12 +783,21 @@ export function applySystemdRuntimeUpdate(
 		) {
 			if (enabled) startUserUnits.push(unit);
 			else enableAndStartUserUnits.push(unit);
+			userUnitsChanged.add(unit);
 			continue;
 		}
 		if (state.activeState !== "active") continue;
-		if (!enabled) enableUserUnits.push(unit);
-		if (changedUserUnits.has(unit) || forcedRestartUserUnits.has(unit)) {
+		if (!enabled) {
+			enableUserUnits.push(unit);
+			userUnitsChanged.add(unit);
+		}
+		if (
+			userProcessRevisionDrift.has(unit) ||
+			(changedUserUnits.has(unit) && !opts.preserveActiveUnits) ||
+			forcedRestartUserUnits.has(unit)
+		) {
 			restartUserUnits.push(unit);
+			userUnitsChanged.add(unit);
 		}
 	}
 	if (resetFailedUserUnits.length > 0) {
@@ -1621,12 +813,18 @@ export function applySystemdRuntimeUpdate(
 	const systemConverged = system.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "system", unit);
 		if (forcedStopUnits.has(unit)) return systemdUnitAbsentOrInactive(state);
-		return state.loadState !== "not-found" && state.activeState === "active";
+		return (
+			state.loadState !== "not-found" && state.activeState === "active" && !state.needDaemonReload
+		);
 	});
 	const userConverged = user.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "user", unit);
 		return (
-			state.loadState !== "not-found" && state.activeState === "active" && systemdUnitEnabled(state)
+			state.loadState !== "not-found" &&
+			state.activeState === "active" &&
+			!state.needDaemonReload &&
+			systemdUnitEnabled(state) &&
+			systemdProcessRevisionMatches(paths, unit, state)
 		);
 	});
 	const removedSystemConverged = system.removed.every(
@@ -1640,8 +838,8 @@ export function applySystemdRuntimeUpdate(
 	});
 	return {
 		applied: systemConverged && userConverged && removedSystemConverged && removedUserConverged,
-		systemUnitsChanged,
-		userUnitsChanged,
+		systemUnitsChanged: [...systemUnitsChanged].sort(),
+		userUnitsChanged: [...userUnitsChanged].sort(),
 	};
 }
 
@@ -1665,7 +863,14 @@ function systemdUnitManagerState(
 	scope: "system" | "user",
 	unit: string,
 ): SystemdUnitManagerState {
-	const showArgs = ["show", unit, "--property=LoadState", "--property=ActiveState"];
+	const showArgs = [
+		"show",
+		unit,
+		"--property=LoadState",
+		"--property=ActiveState",
+		"--property=MainPID",
+		"--property=NeedDaemonReload",
+	];
 	const show =
 		scope === "system" ? systemctlResult(showArgs) : runtimeUserSystemctlResult(paths, showArgs);
 	assertCommandSucceeded(scope === "system" ? systemctlPath() : "systemctl --user", showArgs, show);
@@ -1681,10 +886,30 @@ function systemdUnitManagerState(
 	);
 	const loadState = properties.LoadState;
 	const activeState = properties.ActiveState;
-	if (!loadState || !activeState) {
+	const mainPidValue = properties.MainPID;
+	const needDaemonReload = properties.NeedDaemonReload;
+	if (!loadState || !activeState || mainPidValue === undefined || !needDaemonReload) {
 		throw new Error(`systemd ${scope} unit ${unit} returned incomplete manager state`);
 	}
-	if (scope === "system") return { loadState, activeState };
+	if (!/^(0|[1-9]\d*)$/.test(mainPidValue)) {
+		throw new Error(`systemd ${scope} unit ${unit} returned invalid MainPID`);
+	}
+	const mainPid = Number(mainPidValue);
+	if (!Number.isSafeInteger(mainPid)) {
+		throw new Error(`systemd ${scope} unit ${unit} returned invalid MainPID`);
+	}
+	if (needDaemonReload !== "yes" && needDaemonReload !== "no") {
+		throw new Error(
+			`systemd ${scope} unit ${unit} returned invalid NeedDaemonReload: ${needDaemonReload}`,
+		);
+	}
+	const managerState = {
+		loadState,
+		activeState,
+		mainPid,
+		needDaemonReload: needDaemonReload === "yes",
+	};
+	if (scope === "system") return managerState;
 
 	const enabledArgs = ["is-enabled", unit];
 	const enabled = runtimeUserSystemctlResult(paths, enabledArgs);
@@ -1693,7 +918,81 @@ function systemdUnitManagerState(
 		assertCommandSucceeded("systemctl --user", enabledArgs, enabled);
 		throw new Error(`systemd user unit ${unit} returned unknown enabled state: ${enabledState}`);
 	}
-	return { loadState, activeState, enabledState };
+	return { ...managerState, enabledState };
+}
+
+function systemdProcessRevisionMatches(
+	paths: ReturnType<typeof getRuntimePaths>,
+	unit: string,
+	state: SystemdUnitManagerState,
+): boolean {
+	if (state.mainPid === 0) {
+		throw new Error(`active managed systemd unit ${unit} has no MainPID`);
+	}
+	if (!unit.endsWith(".service")) {
+		throw new Error(`managed systemd unit has invalid name: ${unit}`);
+	}
+	const programName = unit.slice(0, -".service".length);
+	const envPath = systemdEnvironmentFilePath(paths, programName);
+	let desiredRevision: string;
+	try {
+		const content = readFileSync(envPath, "utf8");
+		const parsed = parseDotenv(content).filter(([key]) => key === "CLAWDI_RUNTIME_REV");
+		const declarations = content
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith("CLAWDI_RUNTIME_REV="));
+		const match = /^CLAWDI_RUNTIME_REV="([a-f0-9]{32})"$/.exec(declarations[0] ?? "");
+		if (parsed.length !== 1 || declarations.length !== 1 || !match) {
+			throw new Error("invalid revision declaration");
+		}
+		desiredRevision = match[1];
+	} catch (error) {
+		throw new Error(`could not prove desired runtime revision for managed systemd unit ${unit}`, {
+			cause: error,
+		});
+	}
+
+	let processRevision: string;
+	try {
+		const procDir = `/proc/${state.mainPid}`;
+		const owner = statSync(procDir);
+		const readEnvironment = () => readFileSync(join(procDir, "environ"));
+		let environment: Buffer;
+		try {
+			environment = readEnvironment();
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (owner.uid === 0 || (code !== "EACCES" && code !== "EPERM")) throw error;
+			environment = withEffectiveFilesystemIdentity(
+				{ uid: owner.uid, gid: owner.gid },
+				readEnvironment,
+			);
+		}
+		processRevision = runtimeRevisionFromProcessEnvironment(environment);
+	} catch (error) {
+		throw new Error(`could not prove active runtime revision for managed systemd unit ${unit}`, {
+			cause: error,
+		});
+	}
+	return processRevision === desiredRevision;
+}
+
+function runtimeRevisionFromProcessEnvironment(environment: Buffer): string {
+	const prefix = Buffer.from("CLAWDI_RUNTIME_REV=");
+	const revisions: string[] = [];
+	for (let start = 0; start < environment.length; ) {
+		const separator = environment.indexOf(0, start);
+		const end = separator < 0 ? environment.length : separator;
+		const entry = environment.subarray(start, end);
+		if (entry.subarray(0, prefix.length).equals(prefix)) {
+			revisions.push(entry.subarray(prefix.length).toString("ascii"));
+		}
+		start = end + 1;
+	}
+	if (revisions.length !== 1 || !RUNTIME_REVISION_RE.test(revisions[0])) {
+		throw new Error("invalid revision entry");
+	}
+	return revisions[0];
 }
 
 const SYSTEMD_ENABLED_STATES = new Set([
@@ -2305,29 +1604,15 @@ async function runtimeInitLocked(
 
 async function runtimeWatchTick(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: {
-		forceRefresh: boolean;
-		deferCliInstall?: boolean;
-		deferCliInstallReason?: string;
-		recoverFailedSystemdUnits?: boolean;
-		applyContext?: RuntimeApplyContext;
-		hostedRuntimeContract?: HostedRuntimeContractOptions;
-	},
-): Promise<Record<string, unknown>> {
+	opts: RuntimeWatchTickOptions,
+): Promise<Record<string, unknown> | null> {
 	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
 }
 
 async function runtimeWatchTickLocked(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: {
-		forceRefresh: boolean;
-		deferCliInstall?: boolean;
-		deferCliInstallReason?: string;
-		recoverFailedSystemdUnits?: boolean;
-		applyContext?: RuntimeApplyContext;
-		hostedRuntimeContract?: HostedRuntimeContractOptions;
-	},
-): Promise<Record<string, unknown>> {
+	opts: RuntimeWatchTickOptions,
+): Promise<Record<string, unknown> | null> {
 	let reconciliation: RuntimeCliReconciliationResult;
 	try {
 		reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
@@ -2352,7 +1637,11 @@ async function runtimeWatchTickLocked(
 			selfReexec: true,
 		};
 	}
+	if (opts.failureBackoff?.etag === null && opts.now < opts.failureBackoff.nextRetryAt) {
+		return null;
+	}
 	const event = await runtimeWatchTickAfterCliReconciliation(paths, opts);
+	if (event === null) return null;
 	return {
 		...event,
 		selfReexec: reconciliation.selfReexec || event.selfReexec === true,
@@ -2361,34 +1650,37 @@ async function runtimeWatchTickLocked(
 
 async function runtimeWatchTickAfterCliReconciliation(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: {
-		forceRefresh: boolean;
-		deferCliInstall?: boolean;
-		deferCliInstallReason?: string;
-		recoverFailedSystemdUnits?: boolean;
-		applyContext?: RuntimeApplyContext;
-		hostedRuntimeContract?: HostedRuntimeContractOptions;
-	},
-): Promise<Record<string, unknown>> {
+	opts: RuntimeWatchTickOptions,
+): Promise<Record<string, unknown> | null> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
-	const manifestEtag = opts.forceRefresh ? undefined : (activeAppliedState?.etag ?? undefined);
+	let failureEtag: string | null = null;
+	const retryDeferred =
+		opts.failureBackoff !== undefined && opts.now < opts.failureBackoff.nextRetryAt;
+	const manifestEtag =
+		retryDeferred && opts.failureBackoff?.etag
+			? opts.failureBackoff.etag
+			: opts.forceRefresh
+				? undefined
+				: (activeAppliedState?.etag ?? undefined);
 	const manifestLoad = await loadRemoteRuntimeManifest(paths, {
 		ifNoneMatch: manifestEtag,
 		applyContext: opts.applyContext,
 	});
 	if ("errors" in manifestLoad) {
-		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			mode: manifestLoad.mode,
-			stage: manifestLoad.stage,
-			errors: manifestLoad.errors,
-			error: manifestLoad.errors[0],
-			activeGeneration: manifestLoad.activeGeneration ?? null,
-			rejectedGeneration: manifestLoad.rejectedGeneration ?? null,
-		};
+		if (
+			retryDeferred &&
+			opts.failureBackoff &&
+			(!manifestLoad.etag || manifestLoad.etag === opts.failureBackoff.etag)
+		) {
+			return null;
+		}
+		return runtimeManifestFailureWatchEvent(manifestLoad);
 	}
 	const responseManifestEtag = manifestLoad.etag ?? manifestEtag ?? null;
+	failureEtag = responseManifestEtag;
+	if (retryDeferred && opts.failureBackoff?.etag === responseManifestEtag) {
+		return null;
+	}
 	if (
 		"notModified" in manifestLoad &&
 		activeAppliedState !== null &&
@@ -2417,16 +1709,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 				? await loadFullRuntimeManifestForWatch(paths, opts.applyContext)
 				: manifestLoad;
 		if ("errors" in fresh) {
-			return {
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "error",
-				mode: fresh.mode,
-				stage: fresh.stage,
-				errors: fresh.errors,
-				error: fresh.errors[0],
-				activeGeneration: fresh.activeGeneration ?? null,
-				rejectedGeneration: fresh.rejectedGeneration ?? null,
-			};
+			return runtimeManifestFailureWatchEvent(fresh);
+		}
+		failureEtag = fresh.etag ?? failureEtag;
+		if (retryDeferred && opts.failureBackoff && opts.failureBackoff.etag === fresh.etag) {
+			return null;
 		}
 		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh, paths);
 		const bundleEtag = loaded.etag;
@@ -2434,6 +1721,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 		if (!bundleEtag || !sourceRevision) {
 			throw new Error("runtime bundle is missing applied authority identity");
 		}
+		failureEtag = bundleEtag;
 		const manifestIdentity = runtimeManifestIdentityForWatch(
 			loaded.manifest.generation,
 			bundleEtag,
@@ -2492,6 +1780,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 				activeGeneration: activeAppliedState?.generation ?? null,
 				rejectedGeneration: loaded.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
+				etag: bundleEtag,
 				cliUpdate: applyResult.cliUpdate,
 				selfReexec: applyResult.cliUpdate.selfReexec,
 				systemdUnitsChanged: false,
@@ -2523,6 +1812,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 				activeGeneration: activeAppliedState?.generation ?? null,
 				rejectedGeneration: convergence.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
+				etag: bundleEtag,
 				cliUpdate,
 				cliRollback,
 				selfReexec,
@@ -2549,14 +1839,46 @@ async function runtimeWatchTickAfterCliReconciliation(
 			convergence: convergence.outputs,
 		};
 	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "error",
 			stage: "final",
-			errors: [error instanceof Error ? error.message : String(error)],
-			error: error instanceof Error ? error.message : String(error),
+			errors: [message],
+			error: message,
+			...(failureEtag ? { etag: failureEtag } : {}),
 		};
 	}
+}
+
+function runtimeManifestFailureWatchEvent(
+	failure: RuntimeManifestFailure,
+): Record<string, unknown> {
+	return {
+		schemaVersion: "clawdi.runtimeWatchEvent.v1",
+		status: "error",
+		mode: failure.mode,
+		stage: failure.stage,
+		errors: failure.errors,
+		error: failure.errors[0],
+		activeGeneration: failure.activeGeneration ?? null,
+		rejectedGeneration: failure.rejectedGeneration ?? null,
+		...(failure.etag ? { etag: failure.etag } : {}),
+	};
+}
+
+function runtimeWatchFailureBackoff(
+	previous: RuntimeWatchFailureBackoff | null,
+	event: Record<string, unknown>,
+	now: number,
+): RuntimeWatchFailureBackoff {
+	const etag = typeof event.etag === "string" ? event.etag : null;
+	const backoffMs = nextBoundedBackoffMs(previous?.etag === etag ? previous.backoffMs : 0);
+	return {
+		backoffMs,
+		etag,
+		nextRetryAt: now + backoffMs,
+	};
 }
 
 async function applyRuntimeDesiredState(
@@ -2585,6 +1907,7 @@ async function applyRuntimeDesiredState(
 		if (cliUpdate.selfReexec) {
 			return { kind: "cli_handoff", cliUpdate };
 		}
+		const preserveActiveUnits = isRuntimeCliOnlyCheckpoint(load, paths);
 		if (preparedHostedAgentPlugins === undefined) {
 			preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(load.manifest, paths, {
 				offline: load.offline,
@@ -2602,6 +1925,7 @@ async function applyRuntimeDesiredState(
 			systemUnitsChanged: [] as string[],
 			userUnitsChanged: [] as string[],
 		};
+		let egressPrerequisiteApply: typeof systemdApply | null = null;
 		let egressPrerequisiteActivated = false;
 		const convergence = convergeRuntimeManifest(load, paths, {
 			cacheLastGood: false,
@@ -2631,6 +1955,7 @@ async function applyRuntimeDesiredState(
 									userUnits: [],
 								},
 								forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+								preserveActiveUnits,
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
 							},
 						);
@@ -2638,6 +1963,7 @@ async function applyRuntimeDesiredState(
 							assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
 							egressPrerequisiteActivated = true;
 						}
+						egressPrerequisiteApply = prerequisite;
 						return prerequisite;
 					} catch (error) {
 						throw new Error(
@@ -2663,7 +1989,7 @@ async function applyRuntimeDesiredState(
 							staleSystemUnits,
 							staleUserUnits,
 						);
-						systemdApply = applySystemdRuntimeUpdate(
+						const activation = applySystemdRuntimeUpdate(
 							paths,
 							previousSystemdUnits,
 							activationTarget,
@@ -2673,12 +1999,28 @@ async function applyRuntimeDesiredState(
 									...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
 								],
 								forceRestartUserUnits: restartUserUnits,
+								preserveActiveUnits,
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
 								skipActivatedSystemUnits: egressPrerequisiteActivated
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],
 							},
 						);
+						systemdApply = {
+							applied: activation.applied && (egressPrerequisiteApply?.applied ?? true),
+							systemUnitsChanged: [
+								...new Set([
+									...(egressPrerequisiteApply?.systemUnitsChanged ?? []),
+									...activation.systemUnitsChanged,
+								]),
+							].sort(),
+							userUnitsChanged: [
+								...new Set([
+									...(egressPrerequisiteApply?.userUnitsChanged ?? []),
+									...activation.userUnitsChanged,
+								]),
+							].sort(),
+						};
 						return systemdApply;
 					} catch (error) {
 						throw new Error(
@@ -2809,6 +2151,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	let cliInstallRetryPending = false;
 	let cliInstallBackoffMs = 0;
 	let nextCliInstallRetryAt = 0;
+	let failureBackoff: RuntimeWatchFailureBackoff | null = null;
 	const wakeSignal = createRuntimeWatchWakeSignal();
 	let notificationSubscription: RuntimeWatchNotificationSubscription | null = null;
 
@@ -2876,56 +2219,80 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		let lastFullFetchAt = Date.now();
 		for (;;) {
 			if (opts.abort?.aborted) return;
-			const now = Date.now();
-			const cliInstallRetryDue = cliInstallRetryPending && now >= nextCliInstallRetryAt;
+			const tickNow = Date.now();
+			const cliInstallRetryDue = cliInstallRetryPending && tickNow >= nextCliInstallRetryAt;
 			const deferCliInstall = cliInstallRetryPending && !cliInstallRetryDue;
+			const failureRetryDue = failureBackoff !== null && tickNow >= failureBackoff.nextRetryAt;
 			// Full refreshes also re-resolve floating CLI channels when manifest ETags are unchanged.
-			const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
-			const event = await runtimeWatchTick(paths, {
-				forceRefresh,
-				applyContext,
-				hostedRuntimeContract: opts.hostedRuntimeContract,
-				deferCliInstall,
-				// Conditional retries run every 15 seconds. Recover failed units
-				// only on the five-minute full refresh, or once in one-shot mode.
-				recoverFailedSystemdUnits: forceRefresh || opts.once === true,
-				deferCliInstallReason: deferCliInstall
-					? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
-					: undefined,
-			});
-			const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
-			if (cliUpdateStatus === "error") {
-				cliInstallRetryPending = true;
-				cliInstallBackoffMs = nextCliInstallBackoffMs(cliInstallBackoffMs);
-				nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
-			} else if (
-				cliUpdateStatus === "installed" ||
-				cliUpdateStatus === "current" ||
-				cliUpdateStatus === "not_requested"
-			) {
-				cliInstallRetryPending = false;
-				cliInstallBackoffMs = 0;
-				nextCliInstallRetryAt = 0;
+			const forceRefresh =
+				tickNow - lastFullFetchAt >= selfHealMs || cliInstallRetryDue || failureRetryDue;
+			const fullFetchAttempted =
+				forceRefresh && (!failureBackoff || tickNow >= failureBackoff.nextRetryAt);
+			let event: Record<string, unknown> | null;
+			try {
+				event = await runtimeWatchTick(paths, {
+					forceRefresh,
+					applyContext,
+					hostedRuntimeContract: opts.hostedRuntimeContract,
+					deferCliInstall,
+					failureBackoff: failureBackoff ?? undefined,
+					now: tickNow,
+					// Conditional retries run every 15 seconds. Recover failed units
+					// only on the five-minute full refresh, or once in one-shot mode.
+					recoverFailedSystemdUnits: forceRefresh || opts.once === true,
+					deferCliInstallReason: deferCliInstall
+						? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
+						: undefined,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				event = {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "error",
+					stage: "watch",
+					errors: [message],
+					error: message,
+				};
 			}
-			if (event.status === "applied" || forceRefresh) lastFullFetchAt = Date.now();
-			writeRuntimeWatchStatus(event, paths);
-			emitRuntimeWatchEvent(event, opts.json);
+			if (event !== null) {
+				const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
+				if (cliUpdateStatus === "error") {
+					cliInstallRetryPending = true;
+					cliInstallBackoffMs = nextBoundedBackoffMs(cliInstallBackoffMs);
+					nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
+				} else if (
+					cliUpdateStatus === "installed" ||
+					cliUpdateStatus === "current" ||
+					cliUpdateStatus === "not_requested"
+				) {
+					cliInstallRetryPending = false;
+					cliInstallBackoffMs = 0;
+					nextCliInstallRetryAt = 0;
+				}
+				if (event.status === "error" && event.stage !== "cli-update") {
+					failureBackoff = runtimeWatchFailureBackoff(failureBackoff, event, Date.now());
+				} else if (event.status !== "error" || event.stage === "cli-update") {
+					failureBackoff = null;
+				}
+				if (event.status === "applied" || fullFetchAttempted) lastFullFetchAt = Date.now();
+				writeRuntimeWatchStatus(event, paths);
+				emitRuntimeWatchEvent(event, opts.json);
+			}
 			notificationSubscription = ensureRuntimeWatchNotificationSubscription(
 				notificationSubscription,
 				paths,
 				wakeSignal,
 				opts,
 			);
-			if (opts.once) {
+			if (event !== null && opts.once) {
 				if (event.status === "error") process.exitCode = 1;
 				else process.exitCode = 0;
 				return;
 			}
-			if (event.selfReexec === true || opts.abort?.aborted) {
+			if (event?.selfReexec === true || opts.abort?.aborted) {
 				return;
 			}
-			const wakeReason = await wakeSignal.wait(intervalMs, opts.abort);
-			if (wakeReason === "aborted") return;
+			if ((await wakeSignal.wait(intervalMs, opts.abort)) === "aborted") return;
 		}
 	} finally {
 		notificationSubscription?.abort.abort();
@@ -2951,7 +2318,7 @@ function runtimeWatchCliUpdateStatus(
 	return null;
 }
 
-function nextCliInstallBackoffMs(previousMs: number): number {
+function nextBoundedBackoffMs(previousMs: number): number {
 	if (previousMs <= 0) return 60_000;
 	return Math.min(previousMs * 2, 300_000);
 }

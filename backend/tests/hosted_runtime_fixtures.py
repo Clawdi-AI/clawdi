@@ -10,7 +10,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services.vault_crypto import encrypt
 
-CANONICAL_CODEX_TOOL_PROVIDER_ID = "clawdi-managed-v2"
+CANONICAL_CODEX_TOOL_PROVIDER_ID = "clawdi-v2-deployment-42"
 CANONICAL_CODEX_TOOL_SECRET = "sk-codex-tool"
 CANONICAL_CODEX_TOOLS = {
     "codex": {
@@ -79,7 +79,7 @@ def canonical_codex_tool_provider_graph(
         auth_type="api_key",
         auth_metadata={"source": "managed"},
         managed_by="clawdi",
-        runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+        runtime_env_name="CLAWDI_AI_API_KEY",
     )
     payload = AiProviderAuthPayload(
         owner_user_id=user.id,

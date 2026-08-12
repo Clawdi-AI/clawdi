@@ -108,6 +108,8 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 		applyReceiptId: z.string().min(16).max(128),
 		bootNonce: z.string().min(16).max(128),
 		bootSessionId: z.string().min(1).max(128),
+		successorBootSessionId: z.string().min(1).max(128).optional(),
+		predecessorBootSessionId: z.string().min(1).max(128).optional(),
 		sequence: positiveSafeIntegerSchema,
 		eventId: z.string().min(1).max(128),
 		capturedAt: isoTimestampSchema,
@@ -119,6 +121,20 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 				code: "custom",
 				message: "reportedAt must equal the original capturedAt for companion events",
 				path: ["reportedAt"],
+			});
+		}
+		if (event.predecessorBootSessionId === event.bootSessionId) {
+			ctx.addIssue({
+				code: "custom",
+				message: "predecessorBootSessionId must differ from bootSessionId",
+				path: ["predecessorBootSessionId"],
+			});
+		}
+		if (event.successorBootSessionId === event.bootSessionId) {
+			ctx.addIssue({
+				code: "custom",
+				message: "successorBootSessionId must differ from bootSessionId",
+				path: ["successorBootSessionId"],
 			});
 		}
 	});
@@ -136,7 +152,7 @@ const pendingEventSchema = z
 	})
 	.strict();
 
-const heartbeatStateSchema = z
+const legacyHeartbeatStateSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeHeartbeatObservation.v1"),
 		environmentId: z.string().min(1),
@@ -147,7 +163,38 @@ const heartbeatStateSchema = z
 	})
 	.strict();
 
+const heartbeatStateSchema = z
+	.object({
+		schemaVersion: z.literal("clawdi.runtimeHeartbeatObservation.v2"),
+		environmentId: z.string().min(1),
+		bootIdentity: persistedBootIdentitySchema,
+		successorBootSessionId: z.string().min(1).max(128),
+		predecessorBootSessionId: z.string().min(1).max(128).nullable(),
+		phase: z.enum(["preparing-successor", "unestablished", "active"]),
+		nextSequence: positiveSafeIntegerSchema,
+		lastCapturedAt: isoTimestampSchema.nullable().optional(),
+		pending: pendingEventSchema.nullable(),
+	})
+	.strict()
+	.superRefine((state, ctx) => {
+		if (state.successorBootSessionId === state.bootIdentity.bootSessionId) {
+			ctx.addIssue({
+				code: "custom",
+				message: "successor boot session must differ from the current boot session",
+				path: ["successorBootSessionId"],
+			});
+		}
+		if (state.predecessorBootSessionId === state.bootIdentity.bootSessionId) {
+			ctx.addIssue({
+				code: "custom",
+				message: "predecessor boot session must differ from the current boot session",
+				path: ["predecessorBootSessionId"],
+			});
+		}
+	});
+
 type PersistedHeartbeatState = z.infer<typeof heartbeatStateSchema>;
+type LegacyHeartbeatState = z.infer<typeof legacyHeartbeatStateSchema>;
 type PersistedBootIdentity = z.infer<typeof persistedBootIdentitySchema>;
 
 export interface BufferedRuntimeObservedEvent {
@@ -161,6 +208,7 @@ interface HostedRuntimeHeartbeatOptions {
 	paths?: RuntimePaths;
 	now?: () => Date;
 	createId?: () => string;
+	createSuccessorId?: () => string;
 }
 
 export class HostedRuntimeHeartbeatSession {
@@ -172,22 +220,24 @@ export class HostedRuntimeHeartbeatSession {
 	private currentBootIdentity: PersistedBootIdentity | null = null;
 	private readonly now: () => Date;
 	private readonly createId: () => string;
+	private readonly createSuccessorId: () => string;
 
 	constructor(options: HostedRuntimeHeartbeatOptions) {
 		this.paths = options.paths ?? getRuntimePaths();
 		this.environmentId = options.environmentId;
 		this.now = options.now ?? (() => new Date());
 		this.createId = options.createId ?? randomUUID;
+		this.createSuccessorId = options.createSuccessorId ?? randomUUID;
 		this.statePath = runtimeHeartbeatObservationStatePath(this.paths, options.environmentId);
-		this.state = this.paths.mode === "hosted" ? readState(this.statePath) : null;
-		if (this.state && this.state.environmentId !== options.environmentId) {
+		const persisted = this.paths.mode === "hosted" ? readState(this.statePath) : null;
+		if (persisted && persisted.environmentId !== options.environmentId) {
 			throw new Error("runtime heartbeat state environment binding does not match");
 		}
-
-		this.refreshAppliedState(true);
+		this.state = null;
+		this.initializeAppliedState(persisted);
 	}
 
-	refreshAppliedState(forceNewBoot = false): boolean {
+	refreshAppliedState(): boolean {
 		const appliedState = this.paths.mode === "hosted" ? readRuntimeAppliedState(this.paths) : null;
 		const applyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
 		if (!appliedState || !applyIdentity) {
@@ -195,36 +245,93 @@ export class HostedRuntimeHeartbeatSession {
 			this.currentBootIdentity = null;
 			return false;
 		}
-		if (
-			!forceNewBoot &&
-			this.currentBootIdentity &&
-			sameApplyIdentity(this.currentBootIdentity, applyIdentity)
-		) {
+		if (this.currentBootIdentity && sameApplyIdentity(this.currentBootIdentity, applyIdentity)) {
 			this.capturedAppliedState = appliedState;
 			return false;
 		}
 
-		const nextBootIdentity = {
-			...applyIdentity,
-			bootSessionId: nonEmptyId(this.createId(), "boot session ID"),
-		};
-		const pending = this.state?.pending ?? null;
-		const candidate: PersistedHeartbeatState = {
-			schemaVersion: "clawdi.runtimeHeartbeatObservation.v1",
-			environmentId: this.environmentId,
-			bootIdentity: nextBootIdentity,
-			nextSequence: 1,
-			lastCapturedAt: null,
-			pending:
-				pending && eventMatchesApplyIdentity(decodePendingEvent(pending).event, applyIdentity)
-					? pending
-					: null,
-		};
+		const candidate = this.freshState(applyIdentity);
 		writeState(this.paths, this.statePath, candidate);
 		this.state = candidate;
 		this.capturedAppliedState = appliedState;
-		this.currentBootIdentity = nextBootIdentity;
+		this.currentBootIdentity = candidate.bootIdentity;
 		return true;
+	}
+
+	private initializeAppliedState(
+		persisted: PersistedHeartbeatState | LegacyHeartbeatState | null,
+	): void {
+		const appliedState = this.paths.mode === "hosted" ? readRuntimeAppliedState(this.paths) : null;
+		const applyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
+		if (!appliedState || !applyIdentity) return;
+
+		let candidate: PersistedHeartbeatState;
+		if (persisted && sameApplyIdentity(persisted.bootIdentity, applyIdentity)) {
+			if (persisted.schemaVersion === "clawdi.runtimeHeartbeatObservation.v1") {
+				candidate = {
+					schemaVersion: "clawdi.runtimeHeartbeatObservation.v2",
+					environmentId: this.environmentId,
+					bootIdentity: persisted.bootIdentity,
+					successorBootSessionId: this.newSuccessorId(persisted.bootIdentity.bootSessionId),
+					predecessorBootSessionId: null,
+					phase: "preparing-successor",
+					nextSequence: persisted.nextSequence,
+					lastCapturedAt: persisted.lastCapturedAt ?? null,
+					pending: persisted.pending,
+				};
+			} else if (persisted.phase === "active") {
+				candidate = this.rotateState(persisted);
+			} else {
+				candidate = persisted;
+			}
+		} else {
+			candidate = this.freshState(applyIdentity);
+		}
+		writeState(this.paths, this.statePath, candidate);
+		this.state = candidate;
+		this.capturedAppliedState = appliedState;
+		this.currentBootIdentity = candidate.bootIdentity;
+	}
+
+	private freshState(applyIdentity: RuntimeApplyIdentity): PersistedHeartbeatState {
+		const bootSessionId = nonEmptyId(this.createId(), "boot session ID");
+		return {
+			schemaVersion: "clawdi.runtimeHeartbeatObservation.v2",
+			environmentId: this.environmentId,
+			bootIdentity: {
+				...applyIdentity,
+				bootSessionId,
+			},
+			successorBootSessionId: this.newSuccessorId(bootSessionId),
+			predecessorBootSessionId: null,
+			phase: "unestablished",
+			nextSequence: 1,
+			lastCapturedAt: null,
+			pending: null,
+		};
+	}
+
+	private rotateState(state: PersistedHeartbeatState): PersistedHeartbeatState {
+		return {
+			...state,
+			bootIdentity: {
+				...state.bootIdentity,
+				bootSessionId: state.successorBootSessionId,
+			},
+			successorBootSessionId: this.newSuccessorId(state.successorBootSessionId),
+			predecessorBootSessionId: state.bootIdentity.bootSessionId,
+			phase: "unestablished",
+			nextSequence: 1,
+			pending: state.pending,
+		};
+	}
+
+	private newSuccessorId(currentBootSessionId: string): string {
+		const successor = nonEmptyId(this.createSuccessorId(), "successor boot session ID");
+		if (successor === currentBootSessionId) {
+			throw new Error("successor boot session ID must differ from the current boot session ID");
+		}
+		return successor;
 	}
 
 	nextEvent(): BufferedRuntimeObservedEvent | null {
@@ -252,6 +359,10 @@ export class HostedRuntimeHeartbeatSession {
 			applyReceiptId: this.currentBootIdentity.applyReceiptId,
 			bootNonce: this.currentBootIdentity.bootNonce,
 			bootSessionId: this.currentBootIdentity.bootSessionId,
+			successorBootSessionId: this.state.successorBootSessionId,
+			...(this.state.predecessorBootSessionId
+				? { predecessorBootSessionId: this.state.predecessorBootSessionId }
+				: {}),
 			sequence: this.state.nextSequence,
 			eventId: nonEmptyId(this.createId(), "runtime heartbeat event ID"),
 			capturedAt,
@@ -273,7 +384,25 @@ export class HostedRuntimeHeartbeatSession {
 	}
 
 	acknowledge(eventId: string): boolean {
-		return this.clearPending(eventId);
+		if (!this.state?.pending) return false;
+		const pending = decodePendingEvent(this.state.pending);
+		if (pending.event.eventId !== eventId) return false;
+		let candidate: PersistedHeartbeatState = { ...this.state, pending: null };
+		if (
+			candidate.phase === "preparing-successor" &&
+			pending.event.successorBootSessionId === candidate.successorBootSessionId
+		) {
+			candidate = this.rotateState(candidate);
+		} else if (
+			candidate.phase === "unestablished" &&
+			pending.event.bootSessionId === candidate.bootIdentity.bootSessionId
+		) {
+			candidate = { ...candidate, predecessorBootSessionId: null, phase: "active" };
+		}
+		writeState(this.paths, this.statePath, candidate);
+		this.state = candidate;
+		this.currentBootIdentity = candidate.bootIdentity;
+		return true;
 	}
 
 	retireTerminallyStale(eventId: string): boolean {
@@ -303,11 +432,11 @@ export function runtimeHeartbeatObservationStatePath(
 	return join(paths.runtimeHeartbeatRoot, `${environmentKey}.json`);
 }
 
-function readState(path: string): PersistedHeartbeatState | null {
+function readState(path: string): PersistedHeartbeatState | LegacyHeartbeatState | null {
 	if (!existsSync(path)) return null;
 	try {
 		const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
-		return heartbeatStateSchema.parse(raw);
+		return z.union([heartbeatStateSchema, legacyHeartbeatStateSchema]).parse(raw);
 	} catch (error) {
 		throw new Error(
 			`invalid durable runtime heartbeat state at ${path}: ${
@@ -377,17 +506,5 @@ function sameApplyIdentity(
 		left.manifestETag === right.manifestETag &&
 		left.applyReceiptId === right.applyReceiptId &&
 		left.bootNonce === right.bootNonce
-	);
-}
-
-function eventMatchesApplyIdentity(
-	event: HostedRuntimeObservedEvent,
-	identity: RuntimeApplyIdentity,
-): boolean {
-	return (
-		event.applied.generation === identity.generation &&
-		event.applied.etag === identity.manifestETag &&
-		event.applyReceiptId === identity.applyReceiptId &&
-		event.bootNonce === identity.bootNonce
 	);
 }

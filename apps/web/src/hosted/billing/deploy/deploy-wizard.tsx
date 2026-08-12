@@ -39,7 +39,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
@@ -53,6 +52,7 @@ import {
 	checkoutRedirectUrl,
 	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
+	type StripeCheckoutPaymentStatus,
 } from "@/hosted/billing/components/stripe-checkout.logic";
 import {
 	StripeCheckoutDialog,
@@ -76,10 +76,7 @@ import {
 	DEFAULT_DEPLOY_RUNTIME,
 	deployAgentNameAfterRuntimeChange,
 } from "@/hosted/billing/deploy/deploy-defaults";
-import {
-	resolveBasicDeploySelection,
-	usesActiveIncludedBasicSlot,
-} from "@/hosted/billing/deploy/deploy-model";
+import { usesActiveIncludedBasicSlot } from "@/hosted/billing/deploy/deploy-model";
 import {
 	type ComputePricePresentation,
 	cardDeployAmountPresentation,
@@ -103,8 +100,10 @@ import {
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorNormalizer,
+	deploymentRequestTerminalOutcome,
 	deploySubmissionErrorPresentation,
 	isIdempotencyKeyReusedError,
+	isReusableSubscriptionUnavailableError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
@@ -117,18 +116,23 @@ import {
 } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
+	forgetIdempotencyAttemptByKey,
 	type IdempotencyAttempt,
 	idempotencyAttemptFor,
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
+import { billingKeys } from "@/hosted/billing/query-keys";
 import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actions";
 import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
+import { useReusableSubscriptions } from "@/hosted/billing/subscription/reusable-subscriptions-query";
 import {
-	type SubscriptionCreateRequestView,
+	existingSubscriptionCreateSelection,
 	type SubscriptionCreateSelection,
+	type SubscriptionSource,
 	supportedBillingTerm,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
+import { SubscriptionSourcePicker } from "@/hosted/billing/subscription/subscription-source-picker";
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
@@ -178,13 +182,17 @@ type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: CheckoutSessionClientSecret;
-	request: SubscriptionCreateRequestView;
+	requestKey: string;
 	summary: StripeCheckoutSummary;
 	tierLabel: "Basic" | "Performance";
 };
 type AcceptedDeploymentRecovery = {
 	replace: boolean;
 	target: CheckoutReturnNavigationTarget;
+};
+type DeploymentRequestProgress = {
+	busyLabel: string;
+	takingLongCopy: string;
 };
 type PaidDeploySelection = {
 	billingTermMonths: number;
@@ -196,6 +204,29 @@ type PaidDeploySelection = {
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
 const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
+const DEFAULT_DEPLOYMENT_REQUEST_PROGRESS: DeploymentRequestProgress = {
+	busyLabel: "Finishing checkout…",
+	takingLongCopy:
+		"Checkout is complete and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+};
+
+function checkoutDeploymentRequestProgress(
+	paymentStatus: StripeCheckoutPaymentStatus,
+): DeploymentRequestProgress {
+	if (paymentStatus === "unpaid") {
+		return {
+			busyLabel: "Waiting for payment…",
+			takingLongCopy:
+				"Stripe is still processing your payment. Agent creation will start after payment is confirmed.",
+		};
+	}
+	if (paymentStatus === "no_payment_required") return DEFAULT_DEPLOYMENT_REQUEST_PROGRESS;
+	return {
+		busyLabel: "Creating agent…",
+		takingLongCopy:
+			"Payment was confirmed and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+	};
+}
 
 function showWalletPaymentConfirmation(amount: string) {
 	toast.success("Wallet payment confirmed", {
@@ -292,53 +323,52 @@ function ComputeResources({
 	);
 }
 
-function DeploySectionSkeleton() {
-	return (
-		<section className="flex flex-col gap-4">
-			<Separator />
-			<div className="flex max-w-2xl flex-col gap-2">
-				<Skeleton className="h-4 w-24" />
-				<Skeleton className="h-3.5 w-80 max-w-full" />
-				<Skeleton className="h-3.5 w-56 max-w-full" />
-			</div>
-			<div className={ENTITY_CHOICE_GRID_CLASS}>
-				{Array.from({ length: 2 }).map((_, index) => (
-					<Skeleton key={index} className="h-[86px] w-full rounded-lg" />
-				))}
-			</div>
-		</section>
-	);
-}
-
 export function DeployWizard() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
 	const resolveDeploymentRequest = useResolveDeploymentRequest().mutateAsync;
+	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const clearCheckoutAttempt = useCallback((requestKey: string) => {
+		forgetIdempotencyAttemptByKey("subscription-checkout", requestKey);
+		if (checkoutAttemptRef.current?.key === requestKey) checkoutAttemptRef.current = null;
+	}, []);
 	const [acceptedDeploymentRecovery, setAcceptedDeploymentRecovery] =
 		useState<AcceptedDeploymentRecovery | null>(null);
 	const acceptanceNavigatingRef = useRef(false);
 	const acceptDeployment = useCallback(
-		async (target: CheckoutReturnNavigationTarget, replace = false): Promise<boolean> => {
+		async (
+			target: CheckoutReturnNavigationTarget,
+			replace = false,
+			requestProgress: DeploymentRequestProgress = DEFAULT_DEPLOYMENT_REQUEST_PROGRESS,
+		): Promise<boolean> => {
 			setAcceptedDeploymentRecovery(null);
-			setSubmitBusyLabel("Loading agent details…");
+			setSubmitBusyLabel(
+				target.kind === "deploy_request" ? requestProgress.busyLabel : "Loading agent details…",
+			);
 			setSubmitTakingLongCopy(
-				"Your deployment was accepted. Keep this page open while we load its committed details.",
+				target.kind === "deploy_request" ? requestProgress.takingLongCopy : null,
 			);
 			setSubmitTakingLong(false);
 			setSubmitting(true);
 			acceptanceNavigatingRef.current = true;
+			const navigation = {
+				getDeployment: billingClient.getDeployment,
+				navigate: (options: { href: string; replace: boolean }) => router.navigate(options),
+				queryClient,
+				replace,
+			};
 			try {
-				const navigation = {
-					getDeployment: billingClient.getDeployment,
-					navigate: (options: { href: string; replace: boolean }) => router.navigate(options),
-					queryClient,
-					replace,
-				};
 				if (target.kind === "deploy_request") {
 					await navigateToAcceptedDeploymentRequest({
 						...navigation,
 						deployRequestId: target.deployRequestId,
+						onAccepted: () => {
+							clearCheckoutAttempt(target.deployRequestId);
+							setSubmitBusyLabel("Loading agent details…");
+							setSubmitTakingLongCopy(null);
+							setSubmitTakingLong(false);
+						},
 						resolveDeploymentRequest,
 					});
 				} else {
@@ -348,15 +378,56 @@ export function DeployWizard() {
 					});
 				}
 				return true;
-			} catch {
+			} catch (error) {
 				acceptanceNavigatingRef.current = false;
-				setAcceptedDeploymentRecovery({ replace, target });
+				const terminalOutcome = deploymentRequestTerminalOutcome(error);
+				if (target.kind === "deploy_request" && terminalOutcome) {
+					clearCheckoutAttempt(target.deployRequestId);
+					if (terminalOutcome.kind === "open_deployment") {
+						const deploymentTarget = {
+							kind: "deployment",
+							deploymentId: terminalOutcome.deploymentId,
+						} as const;
+						acceptanceNavigatingRef.current = true;
+						try {
+							await navigateToAcceptedDeployment({
+								...navigation,
+								deploymentId: deploymentTarget.deploymentId,
+							});
+							return true;
+						} catch {
+							acceptanceNavigatingRef.current = false;
+							setAcceptedDeploymentRecovery({ replace, target: deploymentTarget });
+						}
+					} else {
+						toast.error(terminalOutcome.title, {
+							description: terminalOutcome.description,
+						});
+						if (terminalOutcome.kind === "review_agents") {
+							acceptanceNavigatingRef.current = true;
+							try {
+								await router.navigate({ href: "/agents", replace });
+								return true;
+							} catch {
+								acceptanceNavigatingRef.current = false;
+							}
+						}
+					}
+				} else {
+					setAcceptedDeploymentRecovery({ replace, target });
+				}
 				setSubmitting(false);
 				setSubmitTakingLong(false);
 				return false;
 			}
 		},
-		[billingClient.getDeployment, queryClient, resolveDeploymentRequest, router],
+		[
+			billingClient.getDeployment,
+			clearCheckoutAttempt,
+			queryClient,
+			resolveDeploymentRequest,
+			router,
+		],
 	);
 	const navigateCheckoutReturn = useCallback(
 		async (target: CheckoutReturnNavigationTarget) => {
@@ -371,11 +442,11 @@ export function DeployWizard() {
 	});
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
+	const reusableSubscriptions = useReusableSubscriptions(billingClient);
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
 	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
-	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const agentNameEditedRef = useRef(false);
@@ -391,10 +462,11 @@ export function DeployWizard() {
 	const [submitting, setSubmitting] = useState(false);
 	const [submitTakingLong, setSubmitTakingLong] = useState(false);
 	const [submitBusyLabel, setSubmitBusyLabel] = useState("Creating agent…");
-	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState(
+	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState<string | null>(
 		"Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
 	);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
+	const [subscriptionSource, setSubscriptionSource] = useState<SubscriptionSource | null>(null);
 	const [checkingDeployments, setCheckingDeployments] = useState(false);
 	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
 	const deploymentsResolved = deployments.data !== undefined;
@@ -438,15 +510,12 @@ export function DeployWizard() {
 		() => (deploymentsResolved ? usesActiveIncludedBasicSlot(deployments.data ?? []) : null),
 		[deployments.data, deploymentsResolved],
 	);
-	const basicSelection = useMemo(
-		() =>
-			resolveBasicDeploySelection({
-				basicPlan,
-				billingTermMonths: term,
-				includedSlotAvailable: activeIncludedBasicSlot === null ? null : !activeIncludedBasicSlot,
-			}),
-		[activeIncludedBasicSlot, basicPlan, term],
-	);
+	const includedBasicAvailability =
+		!deploymentsResolved || activeIncludedBasicSlot === null
+			? "unknown"
+			: activeIncludedBasicSlot
+				? "unavailable"
+				: "available";
 	const perfOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
 		[perfPlan, term],
@@ -461,9 +530,11 @@ export function DeployWizard() {
 		? computePricePresentation(basicOffer, basicOffers)
 		: null;
 	const perfPricePresentation = perfOffer ? computePricePresentation(perfOffer, perfOffers) : null;
-	const paidSelection: PaidDeploySelection | null = !deploymentsResolved
-		? null
-		: compute === "performance" && perfPlan && perfOfferSelection
+	const paidSelection: PaidDeploySelection | null =
+		subscriptionSource?.mode === "new" &&
+		compute === "performance" &&
+		perfPlan &&
+		perfOfferSelection
 			? {
 					billingTermMonths: perfOfferSelection.billingTermMonths,
 					computePlanSlug: COMPUTE_PERFORMANCE_SLUG,
@@ -471,12 +542,15 @@ export function DeployWizard() {
 					plan: perfPlan,
 					tierLabel: "Performance",
 				}
-			: compute === "basic" && basicSelection.mode === "checkout"
+			: subscriptionSource?.mode === "new" &&
+					compute === "basic" &&
+					basicPlan &&
+					basicOfferSelection
 				? {
-						billingTermMonths: basicSelection.billingTermMonths,
+						billingTermMonths: basicOfferSelection.billingTermMonths,
 						computePlanSlug: COMPUTE_BASIC_SLUG,
-						offer: basicSelection.offer,
-						plan: basicSelection.plan,
+						offer: basicOfferSelection.offer,
+						plan: basicPlan,
 						tierLabel: "Basic",
 					}
 				: null;
@@ -492,11 +566,17 @@ export function DeployWizard() {
 					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				}
 			: null;
+	const selectedReusableSubscription =
+		subscriptionSource?.mode === "existing"
+			? (reusableSubscriptions.data?.find(
+					(subscription) => subscription.subscription_id === subscriptionSource.subscriptionId,
+				) ?? null)
+			: null;
 	const wallet = useWalletSnapshot({
-		enabled: paymentMethod === "wallet",
+		enabled: subscriptionSource?.mode === "new" && paymentMethod === "wallet",
 	});
 	const subscriptionCreateQuote = useSubscriptionCreateQuote(subscriptionCreateSelection, {
-		enabled: paymentMethod === "wallet" && !submitting,
+		enabled: subscriptionSource?.mode === "new" && paymentMethod === "wallet" && !submitting,
 	});
 	const lastSuccessfulSubscriptionQuote = subscriptionCreateQuote.data ?? null;
 	const visibleSubscriptionQuoteError =
@@ -511,8 +591,6 @@ export function DeployWizard() {
 			: walletDebit
 				? "ready"
 				: "loading";
-	const basicUnavailable = basicSelection.mode === "unavailable";
-
 	const savedProviderList = usableProviders(aiProviders.data ?? []);
 	const availabilityContext = { runtime, environmentId: null };
 	const providerList = usableProviders(savedProviderList, availabilityContext);
@@ -547,7 +625,9 @@ export function DeployWizard() {
 	const managedModelsLoading =
 		managedProviderSelected && managedModels.length === 0 && !managedModelsNeedRetry;
 	const computePlanReady =
-		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
+		compute === "performance"
+			? !!perfPlan && !!perfOfferSelection
+			: !!basicPlan && !!basicOfferSelection;
 	const trimmedAgentName = agentName.trim();
 	const nameLimitReached = agentName.length >= DEPLOY_AGENT_NAME_MAX_LENGTH;
 	const showNameCount = agentName.length >= DEPLOY_AGENT_NAME_MAX_LENGTH - 10;
@@ -568,19 +648,33 @@ export function DeployWizard() {
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
 		if (personaError) return personaError;
-		if (!plansResolved) return "Waiting for compute plans.";
-		if (!deploymentsResolved) {
-			return blockingDeploymentsError
-				? "Retry the agent availability check above."
-				: "Checking your free Basic agent availability.";
+		if (!subscriptionSource) return "Choose a subscription source.";
+		if (subscriptionSource.mode === "included") {
+			if (!deploymentsResolved) {
+				return blockingDeploymentsError
+					? "Retry the Included Basic availability check above."
+					: "Checking your Included Basic availability.";
+			}
+			if (includedBasicAvailability !== "available") return "Included Basic is unavailable.";
+		} else {
+			if (reusableSubscriptions.isFetching) return "Checking reusable subscriptions.";
+			if (reusableSubscriptions.error != null || reusableSubscriptions.data === undefined) {
+				return "Retry loading reusable subscriptions above.";
+			}
+			if (subscriptionSource.mode === "existing" && !selectedReusableSubscription) {
+				return "Choose an available reusable subscription.";
+			}
+			if (subscriptionSource.mode === "new") {
+				if (!plansResolved) return "Waiting for compute plans.";
+				if (!computePlanReady) return "Choose an available compute plan.";
+			}
 		}
-		if (!computePlanReady) return "Choose an available compute plan.";
 		if (!managedPrimaryModelReady) {
 			if (managedModelsNeedRetry) return "Retry loading Clawdi AI models above.";
 			if (managedModelsLoading) return "Loading Clawdi AI models.";
 			return "Choose an available primary model.";
 		}
-		if (paidSelection && paymentMethod === "wallet") {
+		if (subscriptionSource.mode === "new" && paidSelection && paymentMethod === "wallet") {
 			if (!wallet.data) {
 				return wallet.error
 					? "Retry loading your Wallet balance above."
@@ -612,9 +706,16 @@ export function DeployWizard() {
 	}
 
 	useEffect(() => {
-		if (compute !== "performance" || !plansResolved || perfPlan) return;
+		if (
+			subscriptionSource?.mode !== "new" ||
+			compute !== "performance" ||
+			!plansResolved ||
+			perfPlan
+		) {
+			return;
+		}
 		setCompute("basic");
-	}, [compute, perfPlan, plansResolved]);
+	}, [compute, perfPlan, plansResolved, subscriptionSource?.mode]);
 
 	useEffect(() => {
 		const selectedOffer = compute === "performance" ? perfOfferSelection : basicOfferSelection;
@@ -625,8 +726,10 @@ export function DeployWizard() {
 	}, [basicOfferSelection, compute, perfOfferSelection, term]);
 
 	useEffect(() => {
-		if (paymentMethod === "wallet" && walletDisabledReason) setPaymentMethod("card");
-	}, [paymentMethod, walletDisabledReason]);
+		if (subscriptionSource?.mode === "new" && paymentMethod === "wallet" && walletDisabledReason) {
+			setPaymentMethod("card");
+		}
+	}, [paymentMethod, subscriptionSource?.mode, walletDisabledReason]);
 
 	function setComputeTier(next: Compute) {
 		setCompute(next);
@@ -664,11 +767,13 @@ export function DeployWizard() {
 	function showDeploySubmissionError(error: unknown) {
 		const presentation = deploySubmissionErrorPresentation(
 			error,
-			paidSelection
-				? paymentMethod === "wallet"
-					? "wallet_creation"
-					: "card_checkout"
-				: "included_creation",
+			subscriptionSource?.mode === "existing"
+				? "subscription_assignment"
+				: paidSelection
+					? paymentMethod === "wallet"
+						? "wallet_creation"
+						: "card_checkout"
+					: "included_creation",
 		);
 		toast.error(presentation.title, {
 			id: "deploy-submit-error",
@@ -706,59 +811,112 @@ export function DeployWizard() {
 		return false;
 	}
 
-	async function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
+	async function handleCheckoutComplete(
+		requestKey: string,
+		paymentStatus: StripeCheckoutPaymentStatus,
+	) {
 		setCheckoutSession(null);
-		await acceptDeployment({ kind: "deployment", deploymentId });
-	}
-	async function handleCheckoutComplete(request: SubscriptionCreateRequestView) {
-		setCheckoutSession(null);
-		setSubmitTakingLong(false);
-		setSubmitBusyLabel("Creating agent…");
-		setSubmitTakingLongCopy(
-			"Payment was confirmed and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+		await acceptDeployment(
+			{ kind: "deploy_request", deployRequestId: requestKey },
+			true,
+			checkoutDeploymentRequestProgress(paymentStatus),
 		);
-		setSubmitting(true);
-		try {
-			const requestFingerprint = idempotencyFingerprint({
-				selection: request.selection,
-				target: request.target,
-			});
-			const accepted = await acceptDeployment(
-				{ kind: "deploy_request", deployRequestId: request.idempotencyKey },
-				true,
-			);
-			if (accepted) {
-				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
-				checkoutAttemptRef.current = null;
-			}
-		} finally {
-			setSubmitting(false);
-			setSubmitTakingLong(false);
+	}
+
+	function handleCheckoutExpired(requestKey: string) {
+		setCheckoutSession(null);
+		clearCheckoutAttempt(requestKey);
+		toast.error("Checkout expired", {
+			description: "This secure checkout can no longer be used. Start a new checkout to try again.",
+		});
+	}
+
+	async function handleReusableSubscriptionUnavailable(error: unknown): Promise<boolean> {
+		if (!isReusableSubscriptionUnavailableError(error)) return false;
+		for (const [prefix, attempt] of [
+			["subscription-checkout", checkoutAttemptRef.current],
+			["subscription-wallet-deploy", walletCreateAttemptRef.current],
+		] as const) {
+			if (attempt) forgetIdempotencyAttempt(prefix, attempt.fingerprint);
 		}
+		checkoutAttemptRef.current = null;
+		walletCreateAttemptRef.current = null;
+		setSubscriptionSource(null);
+		await queryClient.invalidateQueries({
+			queryKey: billingKeys.reusableSubscriptions,
+			refetchType: "none",
+		});
+		await reusableSubscriptions.refetch();
+		toast.error("Subscription no longer available", {
+			description: "Choose a current reusable subscription or start a new one.",
+		});
+		return true;
 	}
 
 	async function onDeploy() {
-		if (!canSubmit) return;
+		if (!canSubmit || !subscriptionSource) return;
 		setSubmitTakingLong(false);
 		setSubmitBusyLabel(
-			paidSelection
-				? paymentMethod === "wallet"
-					? "Confirming payment & creating agent…"
-					: "Opening secure checkout…"
-				: "Creating agent…",
+			subscriptionSource.mode === "existing"
+				? "Assigning subscription & creating agent…"
+				: paidSelection
+					? paymentMethod === "wallet"
+						? "Confirming payment & creating agent…"
+						: "Opening secure checkout…"
+					: "Creating agent…",
 		);
 		setSubmitTakingLongCopy(
-			paidSelection
-				? paymentMethod === "wallet"
-					? "Payment and agent creation are still being confirmed. Keep this page open; we’ll take you to your agent as soon as both are confirmed."
-					: "Secure checkout is still opening. No payment has been submitted yet; keep this page open to continue."
-				: "Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+			subscriptionSource.mode === "existing"
+				? "The existing subscription is being assigned and agent creation is starting. Keep this page open."
+				: paidSelection
+					? paymentMethod === "wallet"
+						? "Payment and agent creation are still being confirmed. Keep this page open; we’ll take you to your agent as soon as both are confirmed."
+						: "Secure checkout is still opening. No payment has been submitted yet; keep this page open to continue."
+					: "Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
 		);
 		setSubmitting(true);
 		try {
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
-			if (paidSelection) {
+			if (subscriptionSource.mode === "existing") {
+				if (!selectedReusableSubscription) return;
+				const selection = existingSubscriptionCreateSelection(selectedReusableSubscription);
+				const subscriptionSelection = {
+					mode: "existing",
+					subscription_id: selectedReusableSubscription.subscription_id,
+				} as const;
+				const target = {
+					kind: "new_deployment",
+					deployConfig: buildDeployRequest(aiFields, selection.planSlug),
+				} as const;
+				const fingerprint = idempotencyFingerprint({
+					selection,
+					subscriptionSelection,
+					target,
+				});
+				checkoutAttemptRef.current = idempotencyAttemptFor(
+					checkoutAttemptRef.current,
+					"subscription-checkout",
+					fingerprint,
+					newIdempotencyKey,
+				);
+				const outcome = await createSubscription.execute({
+					selection,
+					subscriptionSelection,
+					target,
+					uiMode: CHECKOUT_ELEMENTS_UI_MODE,
+					idempotencyKey: checkoutAttemptRef.current.key,
+					quote: null,
+				});
+				if (outcome.flowType !== "subscription_activation") {
+					throw new Error("Existing subscription assignment unexpectedly returned checkout.");
+				}
+				forgetIdempotencyAttempt("subscription-checkout", fingerprint);
+				checkoutAttemptRef.current = null;
+				await acceptDeployment({ kind: "deployment", deploymentId: outcome.deploymentId });
+				return;
+			}
+			if (subscriptionSource.mode === "new" && paidSelection) {
 				const deployConfig = buildDeployRequest(aiFields, paidSelection.computePlanSlug);
 				const billingTermMonths = supportedBillingTerm(paidSelection.billingTermMonths);
 				if (!billingTermMonths) {
@@ -772,10 +930,15 @@ export function DeployWizard() {
 					billingTermMonths,
 					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				};
+				const subscriptionSelection = { mode: "new" } as const;
 				const cardCheckoutUiMode = checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
 				const target = { kind: "new_deployment", deployConfig } as const;
 				if (paymentMethod === "wallet") {
-					const fingerprint = idempotencyFingerprint({ selection, target });
+					const fingerprint = idempotencyFingerprint({
+						selection,
+						subscriptionSelection,
+						target,
+					});
 					const attempt = idempotencyAttemptFor(
 						walletCreateAttemptRef.current,
 						"subscription-wallet-deploy",
@@ -786,6 +949,7 @@ export function DeployWizard() {
 					const outcome = await createSubscription
 						.execute({
 							selection,
+							subscriptionSelection,
 							target,
 							uiMode: CHECKOUT_ELEMENTS_UI_MODE,
 							idempotencyKey: attempt.key,
@@ -816,7 +980,11 @@ export function DeployWizard() {
 					});
 					return;
 				}
-				const checkoutFingerprint = idempotencyFingerprint({ selection, target });
+				const checkoutFingerprint = idempotencyFingerprint({
+					selection,
+					subscriptionSelection,
+					target,
+				});
 				checkoutAttemptRef.current = idempotencyAttemptFor(
 					checkoutAttemptRef.current,
 					"subscription-checkout",
@@ -826,6 +994,7 @@ export function DeployWizard() {
 				const outcome = await createSubscription
 					.execute({
 						selection,
+						subscriptionSelection,
 						target,
 						uiMode: cardCheckoutUiMode,
 						idempotencyKey: checkoutAttemptRef.current.key,
@@ -841,7 +1010,7 @@ export function DeployWizard() {
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
-					await navigateToReusedSubscription(outcome);
+					await acceptDeployment({ kind: "deployment", deploymentId: outcome.deploymentId });
 					return;
 				}
 				const result = outcome.checkout;
@@ -849,13 +1018,7 @@ export function DeployWizard() {
 				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && clientSecret) {
 					setCheckoutSession({
 						clientSecret,
-						request: {
-							selection,
-							target,
-							uiMode: cardCheckoutUiMode,
-							idempotencyKey: checkoutAttemptRef.current.key,
-							quote: lastSuccessfulSubscriptionQuote,
-						},
+						requestKey: checkoutAttemptRef.current.key,
 						summary: computeCheckoutSummary({
 							offer: paidSelection.offer,
 							plan: paidSelection.plan,
@@ -871,6 +1034,7 @@ export function DeployWizard() {
 					"Secure checkout could not be opened. Review the payment method and try again.",
 				);
 			}
+			if (subscriptionSource.mode !== "included") return;
 			const deployConfig = buildDeployRequest(aiFields, COMPUTE_BASIC_SLUG);
 			const fingerprint = idempotencyFingerprint(deployConfig);
 			const attempt = idempotencyAttemptFor(
@@ -893,7 +1057,8 @@ export function DeployWizard() {
 			includedCreateAttemptRef.current = null;
 			await acceptDeployment({ kind: "deployment", deploymentId: created.deploymentId });
 		} catch (e) {
-			if (paymentMethod === "wallet") {
+			if (await handleReusableSubscriptionUnavailable(e)) return;
+			if (subscriptionSource.mode === "new" && paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
 				if (walletTopUp.handleFundingError(e)) return;
 			}
@@ -904,13 +1069,16 @@ export function DeployWizard() {
 		}
 	}
 
-	const deployLabel = paidSelection
-		? paymentMethod === "wallet"
-			? walletInsufficient
-				? "Top up Wallet"
-				: "Pay & deploy"
-			: "Continue to checkout"
-		: "Deploy";
+	const deployLabel =
+		subscriptionSource?.mode === "existing"
+			? "Use subscription & deploy"
+			: paidSelection
+				? paymentMethod === "wallet"
+					? walletInsufficient
+						? "Top up Wallet"
+						: "Pay & deploy"
+					: "Continue to checkout"
+				: "Deploy";
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
 	);
@@ -934,17 +1102,19 @@ export function DeployWizard() {
 					.join(" · ");
 	const runtimeSummary = runtimeDisplayName(runtime);
 	const deployAmount =
-		compute === "basic" && basicSelection.mode === "included"
+		subscriptionSource?.mode === "included"
 			? { amount: "Free", caption: null, detail: null }
-			: paidSelection
-				? paymentMethod === "wallet"
-					? walletDeployAmountPresentation({
-							billingTermMonths: paidSelection.billingTermMonths,
-							state: walletQuoteState,
-							walletDebit,
-						})
-					: cardDeployAmountPresentation(paidSelection.offer)
-				: null;
+			: selectedReusableSubscription
+				? { amount: "$0 due now", caption: null, detail: null }
+				: paidSelection
+					? paymentMethod === "wallet"
+						? walletDeployAmountPresentation({
+								billingTermMonths: paidSelection.billingTermMonths,
+								state: walletQuoteState,
+								walletDebit,
+							})
+						: cardDeployAmountPresentation(paidSelection.offer)
+					: null;
 	const walletTopUpAction =
 		paidSelection !== null && paymentMethod === "wallet" && walletInsufficient;
 	const acceptedDeploymentHydrationFailed = acceptedDeploymentRecovery !== null;
@@ -958,8 +1128,17 @@ export function DeployWizard() {
 		paymentMethod === "wallet" &&
 		(walletQuoteState !== "ready" || walletInsufficient);
 	const visibleSubmitBlockingReason = amountExplainsBlocking ? null : submitBlockingReason;
+	const selectedComputeLabel = selectedReusableSubscription
+		? selectedReusableSubscription.plan_slug === COMPUTE_PERFORMANCE_SLUG
+			? "Performance"
+			: "Basic"
+		: subscriptionSource?.mode === "included"
+			? "Basic"
+			: compute === "performance"
+				? "Performance"
+				: "Basic";
 	const summaryLine = [
-		`${compute === "performance" ? "Performance" : "Basic"} compute`,
+		`${selectedComputeLabel} compute`,
 		aiSummary,
 		runtimeSummary,
 		LANGUAGE_OPTIONS.find((l) => l.code === language)?.label ?? null,
@@ -974,32 +1153,6 @@ export function DeployWizard() {
 			? new Error("The billing service returned no compute plans. Try loading plans again.")
 			: null);
 
-	if (plansLoadError) {
-		return (
-			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
-				<PageHeader title="Deploy an Agent" />
-				<ApiErrorPanel
-					normalizer={billingErrorNormalizer}
-					error={plansLoadError}
-					onRetry={() => void plans.refetch()}
-					title="Couldn't load compute plans"
-				/>
-			</div>
-		);
-	}
-
-	if (plans.isLoading) {
-		return (
-			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
-				<PageHeader title="Deploy an Agent" description="Preparing your compute options…" />
-				<DeploySectionSkeleton />
-				<DeploySectionSkeleton />
-				<DeploySectionSkeleton />
-				<DeploySectionSkeleton />
-			</div>
-		);
-	}
-
 	const deployDirty =
 		runtime !== DEFAULT_DEPLOY_RUNTIME ||
 		agentName !== runtimeDisplayName(runtime) ||
@@ -1007,6 +1160,7 @@ export function DeployWizard() {
 		language !== "" ||
 		timezone !== "" ||
 		term !== 1 ||
+		subscriptionSource !== null ||
 		checkoutSession !== null;
 
 	return (
@@ -1138,29 +1292,36 @@ export function DeployWizard() {
 				</SettingsSection>
 
 				<SettingsSection title="Compute">
-					<div className="flex flex-col gap-3">
-						{!deploymentsResolved ? (
-							blockingDeploymentsError ? (
-								<ApiErrorPanel
-									normalizer={billingErrorNormalizer}
-									error={blockingDeploymentsError}
-									onRetry={() => void deployments.refetch()}
-									title="Couldn't check existing agents"
-								/>
-							) : (
-								<p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-									<Spinner className="size-3.5" /> Checking your free Basic slot…
-								</p>
-							)
+					<div className="flex min-w-0 flex-col gap-4">
+						<SubscriptionSourcePicker
+							value={subscriptionSource}
+							onChange={setSubscriptionSource}
+							showIncluded
+							includedAvailability={includedBasicAvailability}
+							reusableSubscriptions={reusableSubscriptions.data ?? []}
+							isLoading={reusableSubscriptions.isFetching}
+							error={reusableSubscriptions.error}
+							onRetry={() => void reusableSubscriptions.refetch()}
+							disabled={submitting}
+						/>
+						{subscriptionSource?.mode === "included" && blockingDeploymentsError ? (
+							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								error={blockingDeploymentsError}
+								onRetry={() => void deployments.refetch()}
+								title="Couldn't check Included Basic availability"
+							/>
 						) : null}
-						{deploymentsResolved && activeIncludedBasicSlot === null ? (
+						{subscriptionSource?.mode === "included" &&
+						deploymentsResolved &&
+						activeIncludedBasicSlot === null ? (
 							<Alert data-hosted="true">
 								<TriangleAlert />
-								<AlertTitle>Free Basic agent availability is unknown</AlertTitle>
+								<AlertTitle>Included Basic availability is unknown</AlertTitle>
 								<AlertDescription className="flex flex-col gap-3 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-between">
 									<span>
-										We can’t determine whether an existing agent is already using your free Basic
-										allowance. No free agent is assumed.
+										We can’t determine whether an existing agent is already using your included
+										Basic entitlement.
 									</span>
 									<Button
 										type="button"
@@ -1179,7 +1340,21 @@ export function DeployWizard() {
 								</AlertDescription>
 							</Alert>
 						) : null}
-						{paidSelection && (compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
+						{subscriptionSource?.mode === "new" && plansLoadError ? (
+							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								error={plansLoadError}
+								onRetry={() => void plans.refetch()}
+								title="Couldn't load compute plans"
+							/>
+						) : subscriptionSource?.mode === "new" && plans.isLoading ? (
+							<p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+								<Spinner className="size-3.5" /> Loading compute plans…
+							</p>
+						) : null}
+						{subscriptionSource?.mode === "new" &&
+						paidSelection &&
+						(compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
 							<div className="flex max-w-xs flex-col gap-1.5">
 								<span className="text-xs text-muted-foreground">Billing term</span>
 								<TermSwitcher
@@ -1189,150 +1364,130 @@ export function DeployWizard() {
 								/>
 							</div>
 						) : null}
-						<div className={ENTITY_CHOICE_GRID_CLASS}>
-							<EntityChoiceCard
-								selected={compute === "basic"}
-								onClick={
-									deploymentsResolved && !basicUnavailable
-										? () => setComputeTier("basic")
-										: undefined
-								}
-								icon={
-									<IconChip size="sm" tint="bg-identity-3-bg text-identity-3-fg">
-										<Cpu />
-									</IconChip>
-								}
-								title="Basic"
-								description={
-									!deploymentsResolved ? (
-										<span className="text-xs">
-											{blockingDeploymentsError
-												? "Basic availability couldn't be checked"
-												: "Checking free Basic slot availability"}
-										</span>
-									) : basicPlan ? (
-										<ComputeResources
-											testId="basic-ram-resource"
-											vcpu={basicPlan.vcpu}
-											ramGb={basicPlan.ram_gb}
-											diskGb={basicPlan.disk_size}
-										/>
-									) : (
-										<span className="text-xs">Basic plan unavailable</span>
-									)
-								}
-								detailsPlacement="trailing"
-								details={
-									deploymentsResolved && basicSelection.mode === "included" ? (
-										<ComputePriceBlock
-											testId="basic-compute-price"
-											presentation={{
-												primary: "Free",
-												secondary: "First Basic agent",
-												savings: null,
-											}}
-										/>
-									) : deploymentsResolved && basicPricePresentation ? (
-										<ComputePriceBlock
-											testId="basic-compute-price"
-											presentation={basicPricePresentation}
-										/>
-									) : null
-								}
-								badge={
-									!deploymentsResolved ? (
-										<Badge variant="secondary">
-											{blockingDeploymentsError ? "Unavailable" : "Checking…"}
-										</Badge>
-									) : basicSelection.mode === "unavailable" ? (
-										<Badge variant="secondary">Unavailable</Badge>
-									) : null
-								}
-								disabled={!deploymentsResolved || basicUnavailable}
-								className="items-center p-3"
-							/>
-							<EntityChoiceCard
-								selected={compute === "performance"}
-								onClick={
-									deploymentsResolved && perfPlan && perfOfferSelection
-										? () => setComputeTier("performance")
-										: undefined
-								}
-								icon={
-									<IconChip size="sm" tint="bg-identity-8-bg text-identity-8-fg">
-										<Zap />
-									</IconChip>
-								}
-								title="Performance"
-								description={
-									perfPlan ? (
-										<ComputeResources
-											testId="performance-ram-resource"
-											vcpu={perfPlan.vcpu}
-											ramGb={perfPlan.ram_gb}
-											diskGb={perfPlan.disk_size}
-										/>
-									) : (
-										<span className="text-xs">Performance plan unavailable</span>
-									)
-								}
-								detailsPlacement="trailing"
-								details={
-									perfPricePresentation ? (
-										<ComputePriceBlock
-											testId="performance-compute-price"
-											presentation={perfPricePresentation}
-										/>
-									) : null
-								}
-								badge={perfPricePresentation ? null : <Badge>Unavailable</Badge>}
-								disabled={!deploymentsResolved || !perfPlan || !perfOfferSelection}
-								className="items-center p-3"
-							/>
-						</div>
-						{paidSelection ? (
-							<div className="flex flex-col gap-3">
-								<div className="text-sm font-medium">Payment method</div>
+						{subscriptionSource?.mode === "new" && !plansLoadError && !plans.isLoading ? (
+							<>
 								<div className={ENTITY_CHOICE_GRID_CLASS}>
 									<EntityChoiceCard
-										selected={paymentMethod === "card"}
-										onClick={() => setPaymentMethod("card")}
+										selected={compute === "basic"}
+										onClick={
+											basicPlan && basicOfferSelection ? () => setComputeTier("basic") : undefined
+										}
 										icon={
-											<IconChip tint="bg-muted text-muted-foreground">
-												<CreditCard />
+											<IconChip size="sm" tint="bg-identity-3-bg text-identity-3-fg">
+												<Cpu />
 											</IconChip>
 										}
-										title="Card subscription"
-										description="Recurring subscription via Stripe. Manage or cancel anytime."
+										title="Basic"
+										description={
+											basicPlan ? (
+												<ComputeResources
+													testId="basic-ram-resource"
+													vcpu={basicPlan.vcpu}
+													ramGb={basicPlan.ram_gb}
+													diskGb={basicPlan.disk_size}
+												/>
+											) : (
+												<span className="text-xs">Basic plan unavailable</span>
+											)
+										}
+										detailsPlacement="trailing"
+										details={
+											basicPricePresentation ? (
+												<ComputePriceBlock
+													testId="basic-compute-price"
+													presentation={basicPricePresentation}
+												/>
+											) : null
+										}
+										badge={basicPricePresentation ? null : <Badge>Unavailable</Badge>}
+										disabled={!basicPlan || !basicOfferSelection}
+										className="items-center p-3"
 									/>
 									<EntityChoiceCard
-										selected={paymentMethod === "wallet"}
-										onClick={walletDisabledReason ? undefined : () => setPaymentMethod("wallet")}
+										selected={compute === "performance"}
+										onClick={
+											perfPlan && perfOfferSelection
+												? () => setComputeTier("performance")
+												: undefined
+										}
 										icon={
-											<IconChip tint="bg-identity-6-bg text-identity-6-fg">
-												<WalletCards />
+											<IconChip size="sm" tint="bg-identity-8-bg text-identity-8-fg">
+												<Zap />
 											</IconChip>
 										}
-										title="Wallet balance"
+										title="Performance"
 										description={
-											walletDisabledReason ??
-											"Paid upfront from your Wallet balance. Renews from Wallet."
+											perfPlan ? (
+												<ComputeResources
+													testId="performance-ram-resource"
+													vcpu={perfPlan.vcpu}
+													ramGb={perfPlan.ram_gb}
+													diskGb={perfPlan.disk_size}
+												/>
+											) : (
+												<span className="text-xs">Performance plan unavailable</span>
+											)
 										}
-										disabled={walletDisabledReason !== null}
+										detailsPlacement="trailing"
+										details={
+											perfPricePresentation ? (
+												<ComputePriceBlock
+													testId="performance-compute-price"
+													presentation={perfPricePresentation}
+												/>
+											) : null
+										}
+										badge={perfPricePresentation ? null : <Badge>Unavailable</Badge>}
+										disabled={!perfPlan || !perfOfferSelection}
+										className="items-center p-3"
 									/>
 								</div>
-							</div>
+								{paidSelection ? (
+									<div className="flex flex-col gap-3">
+										<div className="text-sm font-medium">Payment method</div>
+										<div className={ENTITY_CHOICE_GRID_CLASS}>
+											<EntityChoiceCard
+												selected={paymentMethod === "card"}
+												onClick={() => setPaymentMethod("card")}
+												icon={
+													<IconChip tint="bg-muted text-muted-foreground">
+														<CreditCard />
+													</IconChip>
+												}
+												title="Card subscription"
+												description="Recurring subscription via Stripe. Manage or cancel anytime."
+											/>
+											<EntityChoiceCard
+												selected={paymentMethod === "wallet"}
+												onClick={
+													walletDisabledReason ? undefined : () => setPaymentMethod("wallet")
+												}
+												icon={
+													<IconChip tint="bg-identity-6-bg text-identity-6-fg">
+														<WalletCards />
+													</IconChip>
+												}
+												title="Wallet balance"
+												description={
+													walletDisabledReason ??
+													"Paid upfront from your Wallet balance. Renews from Wallet."
+												}
+												disabled={walletDisabledReason !== null}
+											/>
+										</div>
+									</div>
+								) : null}
+								{compute === "basic" && basicPlan && !basicOfferSelection ? (
+									<p className="text-xs text-destructive" role="alert">
+										Paid Basic checkout isn’t available. Retry plans or choose Performance.
+									</p>
+								) : null}
+							</>
 						) : null}
-						{compute === "basic" &&
-						basicSelection.mode === "unavailable" &&
-						basicSelection.reason !== "inventory_unavailable" ? (
-							<p className="text-xs text-destructive" role="alert">
-								{basicSelection.reason === "offers_missing"
-									? "Paid Basic checkout isn’t available. Retry plans or choose Performance."
-									: "The Basic plan isn’t available. Retry plans before deploying."}
-							</p>
-						) : null}
-						{compute === "performance" && perfPlan && !perfOfferSelection ? (
+						{subscriptionSource?.mode === "new" &&
+						compute === "performance" &&
+						perfPlan &&
+						!perfOfferSelection ? (
 							<p className="text-xs text-destructive" role="alert">
 								Performance pricing isn’t available. Retry plans before deploying.
 							</p>
@@ -1526,7 +1681,7 @@ export function DeployWizard() {
 											? "Retry opening agent"
 											: deployLabel}
 								</Button>
-								{submitTakingLong ? (
+								{submitTakingLong && submitTakingLongCopy ? (
 									<p
 										className="max-w-sm text-xs text-muted-foreground @2xl/main:text-right"
 										role="status"
@@ -1574,8 +1729,13 @@ export function DeployWizard() {
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
 				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
 				summary={checkoutSession?.summary ?? null}
-				onComplete={() => {
-					if (checkoutSession) void handleCheckoutComplete(checkoutSession.request);
+				onComplete={(paymentStatus) => {
+					if (checkoutSession) {
+						void handleCheckoutComplete(checkoutSession.requestKey, paymentStatus);
+					}
+				}}
+				onExpired={() => {
+					if (checkoutSession) handleCheckoutExpired(checkoutSession.requestKey);
 				}}
 			/>
 		</div>

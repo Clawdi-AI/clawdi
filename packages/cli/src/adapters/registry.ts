@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { AGENT_TYPES, type AgentType } from "./agent-types";
 import type { AgentAdapter } from "./base";
 import { ClaudeCodeAdapter } from "./claude-code";
 import { CodexAdapter } from "./codex";
@@ -7,12 +8,7 @@ import { OpenClawAdapter } from "./openclaw";
 import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
 import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome } from "./paths";
 
-// Agent identity is declared as a literal tuple so `AgentType` doesn't depend
-// on the registry object — avoids a type-level cycle when `AdapterRegistryEntry`
-// references `AgentAdapter` (which references `AgentType`).
-// Adding an agent: append here AND add the matching entry to `adapterRegistry`.
-export const AGENT_TYPES = ["claude_code", "codex", "openclaw", "hermes"] as const;
-export type AgentType = (typeof AGENT_TYPES)[number];
+export { AGENT_TYPES, type AgentType } from "./agent-types";
 
 export interface AdapterRegistryEntry {
 	displayName: string;
@@ -59,7 +55,7 @@ export interface AnnotatedAdapterEntry extends AdapterRegistryEntry {
 }
 
 export function allAdapterEntries(): AnnotatedAdapterEntry[] {
-	return (Object.keys(adapterRegistry) as AgentType[]).map((agentType) => ({
+	return AGENT_TYPES.map((agentType) => ({
 		agentType,
 		...adapterRegistry[agentType],
 	}));

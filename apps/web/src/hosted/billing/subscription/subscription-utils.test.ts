@@ -3,6 +3,8 @@ import type { BillingOffer, HostedComputeSubscription, Plan } from "@/hosted/bil
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
+	canCancelAccountSubscription,
+	canResumeAccountSubscription,
 	commonExplicitBillingOffers,
 	computeFundingMode,
 	computeFundingSource,
@@ -13,8 +15,8 @@ import {
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionRenewing,
 	isComputeSubscriptionTermChangeable,
+	isEndedAccountSubscription,
 	isIncludedBasicSubscription,
-	largestSignupGrantUsd,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
@@ -99,30 +101,6 @@ describe("compute plan resolvers", () => {
 
 		expect(resolveBasicPlan([otherPaid, basic])).toBe(basic);
 		expect(resolveBasicPlan([otherPaid])).toBeUndefined();
-	});
-});
-
-describe("largestSignupGrantUsd", () => {
-	test("returns the largest positive configured grant", () => {
-		expect(
-			largestSignupGrantUsd([
-				plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 0, signup_grant_usd: "5.00" }),
-				plan({
-					slug: COMPUTE_PERFORMANCE_SLUG,
-					price_cents: 1900,
-					signup_grant_usd: "12.50",
-				}),
-			]),
-		).toBe("12.50");
-	});
-
-	test("returns null when no positive grant is configured", () => {
-		expect(largestSignupGrantUsd(undefined)).toBeNull();
-		expect(
-			largestSignupGrantUsd([
-				plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 0, signup_grant_usd: "0" }),
-			]),
-		).toBeNull();
 	});
 });
 
@@ -325,6 +303,29 @@ describe("commonExplicitBillingOffers", () => {
 });
 
 describe("compute subscription action status gates", () => {
+	test("hides only canceled subscriptions whose service period has ended", () => {
+		const nowMs = Date.parse("2026-08-12T12:00:00Z");
+		const ended = {
+			status: "canceled" as const,
+			cancel_at_period_end: false,
+			current_period_end: "2026-08-12T12:00:00Z",
+		};
+
+		expect(isEndedAccountSubscription(ended, nowMs)).toBe(true);
+		expect(
+			isEndedAccountSubscription(
+				{ ...ended, current_period_end: "2026-08-12T12:00:00.001Z" },
+				nowMs,
+			),
+		).toBe(false);
+		expect(isEndedAccountSubscription({ ...ended, status: "canceling" }, nowMs)).toBe(false);
+		expect(isEndedAccountSubscription({ ...ended, cancel_at_period_end: true }, nowMs)).toBe(true);
+		expect(isEndedAccountSubscription({ ...ended, current_period_end: null }, nowMs)).toBe(false);
+		expect(isEndedAccountSubscription({ ...ended, current_period_end: "not-a-date" }, nowMs)).toBe(
+			false,
+		);
+	});
+
 	test("matches the backend cancel and resume status set", () => {
 		expect(isComputeSubscriptionCancelable({ status: "trialing" })).toBe(true);
 		expect(isComputeSubscriptionCancelable({ status: "active" })).toBe(true);
@@ -343,6 +344,40 @@ describe("compute subscription action status gates", () => {
 		expect(isComputeSubscriptionTermChangeable({ status: "past_due" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable({ status: "unpaid" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable(undefined)).toBe(false);
+	});
+
+	test("offers account resume only for a canceling subscription bound to a live agent", () => {
+		const liveCanceling = {
+			status: "canceling" as const,
+			cancel_at_period_end: true,
+			deployment_id: "hdep_live",
+			is_orphan: false,
+		};
+
+		expect(canResumeAccountSubscription(liveCanceling)).toBe(true);
+		expect(canResumeAccountSubscription({ ...liveCanceling, deployment_id: null })).toBe(false);
+		expect(canResumeAccountSubscription({ ...liveCanceling, is_orphan: true })).toBe(false);
+		expect(
+			canResumeAccountSubscription({
+				...liveCanceling,
+				status: "active",
+				cancel_at_period_end: false,
+			}),
+		).toBe(false);
+	});
+
+	test("keeps cancellation available for active orphan subscriptions without repeating it", () => {
+		const orphan = {
+			status: "active" as const,
+			cancel_at_period_end: false,
+			deployment_id: null,
+			is_orphan: true,
+		};
+
+		expect(canCancelAccountSubscription(orphan)).toBe(true);
+		expect(canCancelAccountSubscription({ ...orphan, cancel_at_period_end: true })).toBe(false);
+		expect(canCancelAccountSubscription({ ...orphan, status: "canceling" })).toBe(false);
+		expect(canCancelAccountSubscription({ ...orphan, status: "canceled" })).toBe(false);
 	});
 });
 
@@ -370,7 +405,7 @@ describe("compute subscription lifecycle presentation", () => {
 				status: "past_due",
 			}),
 		).toMatchObject({
-			badgeLabel: "Payment past due",
+			badgeLabel: "Past due",
 			dateAt: null,
 			dateVerb: null,
 			renews: true,

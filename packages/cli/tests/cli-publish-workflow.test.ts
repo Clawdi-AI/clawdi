@@ -100,8 +100,24 @@ describe("CLI publish workflow contract", () => {
 	});
 
 	test("builds and publishes the same verified tarball exactly once", () => {
+		const build = workflowDocument.jobs["build-immutable-artifact"];
+		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
+		const uploadArtifact = build.steps?.find((step) => step.uses === "actions/upload-artifact@v7");
+		const downloadArtifact = publish.steps?.find(
+			(step) => step.uses === "actions/download-artifact@v8",
+		);
 		const publishCommands = workflow.match(/npm publish /g) ?? [];
 
+		expect(uploadArtifact?.with).toEqual({
+			name: `\${{ env.CLI_ARTIFACT_NAME }}`,
+			path: `\${{ runner.temp }}/clawdi-cli-release/`,
+			"if-no-files-found": "error",
+			"retention-days": 1,
+		});
+		expect(downloadArtifact?.with).toEqual({
+			name: `\${{ env.CLI_ARTIFACT_NAME }}`,
+			path: "release",
+		});
 		expect(publishCommands).toHaveLength(1);
 		expect(workflow).not.toContain("publishConfig");
 		expect(workflow).toContain(

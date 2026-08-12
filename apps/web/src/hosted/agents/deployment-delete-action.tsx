@@ -2,7 +2,6 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { type ReactElement, useRef, useState } from "react";
-import { toast } from "sonner";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AlertDialog,
@@ -36,7 +35,9 @@ export function HostedDeploymentDeleteAction({
 	onAccepted?: () => Promise<void> | void;
 }) {
 	const router = useRouter();
-	const deleteDeployment = useDeleteDeployment();
+	const deleteDeployment = useDeleteDeployment(
+		onAccepted ?? (() => router.navigate({ href: "/", replace: true })),
+	);
 	const [open, setOpen] = useState(false);
 	const [choice, setChoice] =
 		useState<DeploymentDeleteRequest["subscription_choice"]>("cancel_subscription");
@@ -70,24 +71,13 @@ export function HostedDeploymentDeleteAction({
 				return;
 			}
 			setOpen(false);
-			try {
-				if (onAccepted) {
-					await onAccepted();
-				} else {
-					await router.navigate({ href: "/agents", replace: true });
-				}
-			} catch {
-				toast.error("Agent removed, but navigation failed", {
-					description: "Use Agents in the sidebar to check its status.",
-				});
-			}
 		} finally {
 			setPending(false);
 			locked.current = false;
 		}
 	}
 
-	const keepDescription = `Keep subscription — redeploy reuses it, no re-charge.${
+	const keepDescription = `Keep subscription — it becomes available to choose for a future Agent.${
 		periodEnd === "—" ? "" : ` Valid through ${periodEnd}.`
 	}`;
 	const cancelDescription = `Stops at period end${periodEnd === "—" ? "." : ` on ${periodEnd}.`}`;

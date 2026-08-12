@@ -8,22 +8,20 @@ import { SettingsPanelHeader } from "@/components/settings/settings-panel-header
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { useHostedDeployments, useWalletLedgerPages } from "@/hosted/billing/hooks";
+import { useHostedDeployments } from "@/hosted/billing/hooks";
 import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
 import { getStripe } from "@/hosted/billing/stripe";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
-import { LedgerTable } from "@/hosted/billing/wallet/ledger-table";
 import { confirmWalletTopup, TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { invalidateWalletActivity } from "@/hosted/billing/wallet/top-up-dialog.logic";
+import { invalidateWalletData } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
-	cleanWalletTopupReturnUrl,
-	readWalletTopupReturn,
+	coordinateWalletTopupReturn,
 	type WalletTopupReturnToast,
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
-import { LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/wallet-constants";
+import { TransactionsSection } from "@/hosted/billing/wallet/transactions-section";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
@@ -56,8 +54,6 @@ export function WalletPage() {
 	const portal = useSensitiveBillingPortal();
 	const runAction = useActionLock();
 	const queryClient = useQueryClient();
-	const ledger = useWalletLedgerPages(LEDGER_PAGE_SIZE);
-	const ledgerEntries = ledger.data?.pages.flatMap((page) => page.items) ?? [];
 	const [topUpOpen, setTopUpOpen] = useState(false);
 
 	async function openBillingPortal() {
@@ -76,56 +72,60 @@ export function WalletPage() {
 	}
 
 	useEffect(() => {
-		const topupReturn = readWalletTopupReturn(window.location.search);
-		if (!topupReturn) return;
-		const { clientSecret } = topupReturn;
 		let cancelled = false;
-
-		async function refreshReturnedTopup() {
+		const resolution = coordinateWalletTopupReturn(async (clientSecret) => {
 			try {
 				const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
 				if (!key) {
-					toast.error("Couldn't refresh top-up", {
-						description: "Stripe isn't configured in this environment.",
-					});
-					return;
+					return {
+						status: null,
+						paymentIntentId: null,
+						errorMessage: "Stripe isn't configured in this environment.",
+					};
 				}
 				const stripe = await getStripe(key);
 				if (!stripe) {
-					toast.error("Couldn't refresh top-up", {
-						description: "Reload the page and try again.",
-					});
-					return;
+					return {
+						status: null,
+						paymentIntentId: null,
+						errorMessage: "Reload the page and try again.",
+					};
 				}
 				const result = await stripe.retrievePaymentIntent(clientSecret);
-				if (cancelled) return;
 				if (result.error) {
-					toast.error("Couldn't refresh top-up", {
-						description: result.error.message ?? "Open Wallet and try again.",
-					});
-					return;
+					return {
+						status: null,
+						paymentIntentId: null,
+						errorMessage: result.error.message ?? "Open Wallet and try again.",
+					};
 				}
 				const paymentIntent = result.paymentIntent;
-				const status = paymentIntent?.status;
-				showWalletTopupReturnToast(walletTopupReturnToast(status));
-				invalidateWalletActivity(queryClient);
-				if (status === "succeeded" || status === "processing" || status === "requires_capture") {
-					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
-				}
+				return {
+					status: paymentIntent?.status ?? null,
+					paymentIntentId: paymentIntent?.id ?? null,
+					errorMessage: null,
+				};
 			} catch {
-				if (!cancelled) {
-					toast.error("Couldn't refresh top-up", {
-						description: "Check your connection and reload Wallet.",
-					});
-				}
-			} finally {
-				if (!cancelled) {
-					window.history.replaceState(null, "", cleanWalletTopupReturnUrl(window.location.href));
-				}
+				return {
+					status: null,
+					paymentIntentId: null,
+					errorMessage: "Check your connection and reload Wallet.",
+				};
 			}
-		}
-
-		void refreshReturnedTopup();
+		});
+		if (!resolution) return;
+		void resolution.then(({ status, paymentIntentId, errorMessage }) => {
+			if (cancelled) return;
+			if (errorMessage) {
+				toast.error("Couldn't refresh top-up", { description: errorMessage });
+				return;
+			}
+			showWalletTopupReturnToast(walletTopupReturnToast(status));
+			invalidateWalletData(queryClient);
+			if (status === "succeeded" || status === "processing" || status === "requires_capture") {
+				void confirmWalletTopup(queryClient, paymentIntentId);
+			}
+		});
 		return () => {
 			cancelled = true;
 		};
@@ -192,34 +192,9 @@ export function WalletPage() {
 					<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
 				</div>
 
-				<X402Card enabled={w.x402_enabled === true} />
+				<X402Card />
 
-				{ledger.error && !ledger.data ? (
-					<ApiErrorPanel
-						normalizer={billingErrorNormalizer}
-						error={ledger.error}
-						title="Couldn’t load activity"
-						onRetry={() => ledger.refetch()}
-					/>
-				) : (
-					<>
-						<LedgerTable
-							entries={ledgerEntries}
-							isLoading={ledger.isLoading}
-							hasMore={ledger.hasNextPage}
-							isFetchingMore={ledger.isFetchingNextPage}
-							onShowMore={() => void ledger.fetchNextPage()}
-						/>
-						{ledger.isFetchNextPageError ? (
-							<ApiErrorPanel
-								normalizer={billingErrorNormalizer}
-								error={ledger.error}
-								title="Couldn’t load more activity"
-								onRetry={() => void ledger.fetchNextPage()}
-							/>
-						) : null}
-					</>
-				)}
+				<TransactionsSection />
 			</div>
 		</div>
 	);

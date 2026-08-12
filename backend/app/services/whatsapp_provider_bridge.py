@@ -341,23 +341,29 @@ class WhatsAppProviderBridge:
         tenant_id: str | None,
         *,
         bot_agent_link_id: UUID,
+        self_lid: str | None = None,
     ) -> BinaryNode | None:
         if tenant_id != str(bot_agent_link_id):
             return None
         async with self._sessionmaker() as db:
             account = await _load_active_whatsapp_account(db, account_id=self._account_id)
             usync_targets = parse_whatsapp_usync_device_targets(node)
-            recipient_lids: dict[str, str] | None = None
             if usync_targets is not None:
-                recipient_lids = await _authorized_usync_recipient_lids(
+                usync_lids = await _authorized_usync_target_lids(
                     db,
                     account=account,
                     targets=usync_targets,
                     bot_agent_link_id=bot_agent_link_id,
+                    self_lid=self_lid,
                 )
-                if recipient_lids is None:
+                if usync_lids is None:
                     return None
-            elif _is_authorized_provider_service_iq(node):
+                return whatsapp_usync_device_result(
+                    node,
+                    target_lids=usync_lids,
+                    self_lid=self_lid,
+                )
+            if _is_authorized_provider_service_iq(node):
                 if not await _active_link_owns_account(
                     db,
                     account=account,
@@ -384,8 +390,6 @@ class WhatsAppProviderBridge:
                     self._forward_iq_inflight -= 1
             if forwarded is not None:
                 return forwarded
-            if recipient_lids is not None:
-                return whatsapp_usync_device_result(node, recipient_lids=recipient_lids)
             return None
 
     async def resolve_recipient_lid(
@@ -396,7 +400,7 @@ class WhatsAppProviderBridge:
     ) -> str | None:
         async with self._sessionmaker() as db:
             account = await _load_active_whatsapp_account(db, account_id=self._account_id)
-            recipient_lids = await _authorized_usync_recipient_lids(
+            recipient_lids = await _authorized_usync_target_lids(
                 db,
                 account=account,
                 targets=(jid,),
@@ -770,16 +774,22 @@ async def _build_bound_jid_resolver(
     return resolved.get
 
 
-async def _authorized_usync_recipient_lids(
+async def _authorized_usync_target_lids(
     db: AsyncSession,
     *,
     account: ChannelAccount,
     targets: tuple[str, ...],
     bot_agent_link_id: UUID,
+    self_lid: str | None = None,
 ) -> dict[str, str] | None:
+    normalized_self_lid = strip_whatsapp_device(self_lid) if self_lid is not None else None
+    resolved: dict[str, str] = {}
     target_bindings: dict[str, ChannelBinding] = {}
     bindings: dict[UUID, ChannelBinding] = {}
     for target in targets:
+        if normalized_self_lid is not None and strip_whatsapp_device(target) == normalized_self_lid:
+            resolved[target] = normalized_self_lid
+            continue
         binding = await find_binding(
             db,
             account=account,
@@ -790,6 +800,13 @@ async def _authorized_usync_recipient_lids(
             return None
         target_bindings[target] = binding
         bindings[binding.id] = binding
+
+    if resolved and not await _active_link_owns_account(
+        db,
+        account=account,
+        bot_agent_link_id=bot_agent_link_id,
+    ):
+        return None
 
     authorized: dict[UUID, ChannelBinding] = {}
     for binding_id in sorted(bindings, key=str):
@@ -817,7 +834,6 @@ async def _authorized_usync_recipient_lids(
     for alias in aliases_result.scalars():
         identifiers[alias.binding_id].add(strip_whatsapp_device(alias.alias_external_chat_id))
 
-    resolved: dict[str, str] = {}
     for target, binding in target_bindings.items():
         target_jid = strip_whatsapp_device(target)
         binding_identifiers = identifiers[binding.id]

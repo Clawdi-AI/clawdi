@@ -620,6 +620,10 @@ def test_managed_runtime_provider_usage_resolves_deployment_credential_identity(
 
     assert sync_events._runtime_state_may_use_provider(state, "clawdi-v2-deployment-42") is True
     assert sync_events._runtime_state_may_use_provider(state, "clawdi-v2-deployment-43") is False
+    assert sync_events._runtime_state_may_use_provider(state, CLAWDI_MANAGED_PROVIDER_ID) is True
+    assert (
+        sync_events._runtime_state_may_use_provider(state, V2_LEGACY_MANAGED_AI_PROVIDER_ID) is True
+    )
 
 
 @pytest.mark.asyncio

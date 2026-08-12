@@ -1151,6 +1151,7 @@ export async function runDeployFlow(
 					billingTermMonths,
 					fundingSource,
 				},
+				subscriptionSelection: { mode: "new" },
 				target: { kind: "new_deployment", deployRequest },
 				idempotencyKey: requestId,
 				quote: fundingSource === "wallet" ? walletQuote : null,

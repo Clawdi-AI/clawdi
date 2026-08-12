@@ -331,23 +331,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/subscription/billing-history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List V2 Subscription Billing History */
-        get: operations["list_v2_subscription_billing_history_v2_subscription_billing_history_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/subscription/plan/change": {
         parameters: {
             query?: never;
@@ -450,6 +433,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Subscriptions */
+        get: operations["list_v2_subscriptions_v2_subscriptions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscriptions/reusable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Reusable Subscriptions */
+        get: operations["list_v2_reusable_subscriptions_v2_subscriptions_reusable_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/usage": {
         parameters: {
             query?: never;
@@ -501,15 +518,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/wallet/ledger": {
+    "/v2/wallet/transactions": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List V2 Wallet Ledger */
-        get: operations["list_v2_wallet_ledger_v2_wallet_ledger_get"];
+        /** List V2 Wallet Transactions */
+        get: operations["list_v2_wallet_transactions_v2_wallet_transactions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -581,6 +598,16 @@ export interface components {
              * @enum {string}
              */
             fundingSource: "stripe" | "wallet";
+            /**
+             * Changekind
+             * @enum {string}
+             */
+            changeKind: "immediate_upgrade" | "scheduled_downgrade" | "funding_source_switch";
+            /**
+             * Billingeffect
+             * @enum {string}
+             */
+            billingEffect: "immediate_proration" | "period_end" | "future_renewals";
             /** Sourceplanslug */
             sourcePlanSlug: string;
             /** Targetplanslug */
@@ -986,6 +1013,7 @@ export interface components {
              * @default []
              */
             providers: components["schemas"]["RuntimeProviderConfiguration"][];
+            terminal_tooling?: components["schemas"]["TerminalToolingConfiguration"] | null;
             /**
              * Features
              * @default []
@@ -1021,6 +1049,25 @@ export interface components {
             name: string;
             /** Version */
             version?: string | null;
+        };
+        /** TerminalProviderIdentity */
+        TerminalProviderIdentity: {
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Auth Kind
+             * @constant
+             */
+            auth_kind: "managed";
+        };
+        /** TerminalToolProviderConfiguration */
+        TerminalToolProviderConfiguration: {
+            provider: components["schemas"]["TerminalProviderIdentity"];
+            primary_model: components["schemas"]["ProviderModelReference"];
+        };
+        /** TerminalToolingConfiguration */
+        TerminalToolingConfiguration: {
+            codex: components["schemas"]["TerminalToolProviderConfiguration"];
         };
         /**
          * V1AgentEnvironmentsResponse
@@ -1146,58 +1193,6 @@ export interface components {
             /** Entitled Until */
             entitled_until: null;
         };
-        /** V2ComputeBillingHistoryItem */
-        V2ComputeBillingHistoryItem: {
-            /** Id */
-            id: string;
-            /**
-             * Funding Source
-             * @enum {string}
-             */
-            funding_source: "stripe" | "wallet";
-            /** Compute Subscription Id */
-            compute_subscription_id: number;
-            /** Plan Slug */
-            plan_slug: string;
-            /** Status */
-            status: string;
-            /** Amount Cents */
-            amount_cents: number;
-            /**
-             * Currency
-             * @default usd
-             */
-            currency: string;
-            /** Amount Usd */
-            amount_usd?: string | null;
-            /** Period Start */
-            period_start?: string | null;
-            /** Period End */
-            period_end?: string | null;
-            /**
-             * Created
-             * Format: date-time
-             */
-            created: string;
-            /** Stripe Invoice Id */
-            stripe_invoice_id?: string | null;
-            /** Stripe Invoice Number */
-            stripe_invoice_number?: string | null;
-            /** Hosted Invoice Url */
-            hosted_invoice_url?: string | null;
-        };
-        /** V2ComputeBillingHistoryResponse */
-        V2ComputeBillingHistoryResponse: {
-            /** Data */
-            data?: components["schemas"]["V2ComputeBillingHistoryItem"][];
-            /**
-             * Has More
-             * @default false
-             */
-            has_more: boolean;
-            /** Next Cursor */
-            next_cursor?: string | null;
-        };
         /** V2ComputeCheckoutRequest */
         V2ComputeCheckoutRequest: {
             /**
@@ -1228,6 +1223,16 @@ export interface components {
             /** Locale */
             locale?: string | null;
             quote?: components["schemas"]["V2ComputeSubscriptionQuoteResponse-Input"] | null;
+            /** Subscription Selection */
+            subscription_selection?: (components["schemas"]["V2ComputeUseExistingSubscription"] | components["schemas"]["V2ComputeCreateNewSubscription"]) | null;
+        };
+        /** V2ComputeCreateNewSubscription */
+        V2ComputeCreateNewSubscription: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "new";
         };
         /** V2ComputeFixPaymentRequest */
         V2ComputeFixPaymentRequest: {
@@ -1279,7 +1284,12 @@ export interface components {
              * Change Kind
              * @enum {string}
              */
-            change_kind: "immediate_upgrade" | "scheduled_downgrade";
+            change_kind: "immediate_upgrade" | "scheduled_downgrade" | "funding_source_switch";
+            /**
+             * Billing Effect
+             * @enum {string}
+             */
+            billing_effect: "immediate_proration" | "period_end" | "future_renewals";
             /**
              * Status
              * @default quoted
@@ -1323,6 +1333,60 @@ export interface components {
             /** Locale */
             locale?: string | null;
         };
+        /** V2ComputeReusableSubscriptionItem */
+        V2ComputeReusableSubscriptionItem: {
+            /**
+             * Subscription Id
+             * Format: sqid
+             * @example csub_K8fJ3pQm
+             */
+            subscription_id: string;
+            /**
+             * Plan Slug
+             * @enum {string}
+             */
+            plan_slug: "compute_basic" | "compute_performance";
+            /**
+             * Billing Term Months
+             * @enum {integer}
+             */
+            billing_term_months: 1 | 12;
+            /**
+             * Funding Source
+             * @enum {string}
+             */
+            funding_source: "stripe" | "wallet";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "trialing" | "active" | "canceling";
+            /** Price Cents */
+            price_cents?: number | null;
+            /** Currency */
+            currency: string;
+            /** Current Period End */
+            current_period_end?: string | null;
+            /**
+             * Entitled Until
+             * Format: date-time
+             */
+            entitled_until: string;
+            /** Cancel At Period End */
+            cancel_at_period_end: boolean;
+        };
+        /** V2ComputeReusableSubscriptionsResponse */
+        V2ComputeReusableSubscriptionsResponse: {
+            /** Items */
+            items?: components["schemas"]["V2ComputeReusableSubscriptionItem"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
         /** V2ComputeSubscriptionActionResponse */
         V2ComputeSubscriptionActionResponse: {
             /** Status */
@@ -1346,12 +1410,62 @@ export interface components {
         };
         /** V2ComputeSubscriptionCancelRequest */
         V2ComputeSubscriptionCancelRequest: {
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Subscription Id */
+            subscription_id?: string | null;
+        };
+        /** V2ComputeSubscriptionListItem */
+        V2ComputeSubscriptionListItem: {
             /**
-             * Deployment Id
+             * Subscription Id
              * Format: sqid
-             * @example hdep_K8fJ3pQm
+             * @example csub_K8fJ3pQm
              */
-            deployment_id: string;
+            subscription_id: string;
+            /** Plan Slug */
+            plan_slug: string;
+            /** Funding Source */
+            funding_source: ("stripe" | "wallet") | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "canceling" | "past_due" | "canceled";
+            /** Price Cents */
+            price_cents?: number | null;
+            /**
+             * Currency
+             * @default usd
+             */
+            currency: string;
+            /**
+             * Billing Term Months
+             * @enum {integer}
+             */
+            billing_term_months: 1 | 12;
+            /** Current Period End */
+            current_period_end?: string | null;
+            /** Cancel At Period End */
+            cancel_at_period_end: boolean;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Agent Name */
+            agent_name: string | null;
+            /** Is Orphan */
+            is_orphan: boolean;
+        };
+        /** V2ComputeSubscriptionListResponse */
+        V2ComputeSubscriptionListResponse: {
+            /** Items */
+            items?: components["schemas"]["V2ComputeSubscriptionListItem"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** V2ComputeSubscriptionQuoteRequest */
         V2ComputeSubscriptionQuoteRequest: {
@@ -1450,12 +1564,24 @@ export interface components {
         };
         /** V2ComputeSubscriptionResumeRequest */
         V2ComputeSubscriptionResumeRequest: {
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Subscription Id */
+            subscription_id?: string | null;
+        };
+        /** V2ComputeUseExistingSubscription */
+        V2ComputeUseExistingSubscription: {
             /**
-             * Deployment Id
-             * Format: sqid
-             * @example hdep_K8fJ3pQm
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
-            deployment_id: string;
+            mode: "existing";
+            /**
+             * Subscription Id
+             * Format: sqid
+             * @example csub_K8fJ3pQm
+             */
+            subscription_id: string;
         };
         /** V2DeleteDeploymentConvergedResponse */
         V2DeleteDeploymentConvergedResponse: {
@@ -1471,7 +1597,7 @@ export interface components {
         V2DeleteDeploymentRequest: {
             /**
              * Subscription Choice
-             * @description Whether deletion keeps the paid subscription available for reuse or cancels it at the provider. Omission safely keeps the subscription.
+             * @description Whether deletion keeps the paid subscription so it becomes reusable after deletion completes, or cancels it at the provider. Omission safely keeps the subscription.
              * @default keep_subscription
              * @enum {string}
              */
@@ -1849,6 +1975,14 @@ export interface components {
             availability: "complete" | "partial" | "unavailable";
             /** Unavailable Sections */
             unavailable_sections: ("totals" | "by_agent" | "by_model" | "by_day")[];
+            /**
+             * Breakdown Limit
+             * @description Maximum rows returned for each agent or model breakdown.
+             * @default 100
+             */
+            breakdown_limit: number;
+            /** Truncated Sections */
+            truncated_sections?: ("by_agent" | "by_model")[];
             /** Total Usd */
             total_usd: string | null;
             /** Total Requests */
@@ -1905,7 +2039,7 @@ export interface components {
             is_featured: boolean;
             /**
              * Description
-             * @description Authoritative single-sentence choice guidance from the atomic Hosted setting.
+             * @description Authoritative single-sentence choice guidance from the curated Hosted managed catalog.
              */
             description: string | null;
             /** @description Factual metadata from the bundled Hosted model catalog. */
@@ -2099,37 +2233,6 @@ export interface components {
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents?: number | null;
         };
-        /** V2WalletLedgerItemResponse */
-        V2WalletLedgerItemResponse: {
-            /** Operation */
-            operation: string;
-            /** Description */
-            description: string;
-            /** Amount Usd */
-            amount_usd: string;
-            /** Status */
-            status: string;
-            /**
-             * Payment Reference
-             * @description Reference for matching a card payment to this wallet entry
-             */
-            payment_reference: string | null;
-            /** Receipt Url */
-            receipt_url?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Applied At */
-            applied_at?: string | null;
-        };
-        /** V2WalletLedgerResponse */
-        V2WalletLedgerResponse: {
-            /** Items */
-            items: components["schemas"]["V2WalletLedgerItemResponse"][];
-            /** Has More */
-            has_more: boolean;
-            /** Next Cursor */
-            next_cursor?: string | null;
-        };
         /** V2WalletResponse */
         V2WalletResponse: {
             /** Balance Usd */
@@ -2177,6 +2280,71 @@ export interface components {
             client_secret?: string | null;
             /** Amount Usd */
             amount_usd?: string | null;
+        };
+        /** V2WalletTransactionContext */
+        V2WalletTransactionContext: {
+            /** Plan */
+            plan: string;
+            /** Period Start */
+            period_start?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Deployment Id */
+            deployment_id?: string | null;
+        };
+        /** V2WalletTransactionItemResponse */
+        V2WalletTransactionItemResponse: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Amount */
+            amount: string;
+            /**
+             * Currency
+             * @default usd
+             * @constant
+             */
+            currency: "usd";
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "credit" | "debit";
+            /** Status */
+            status: string;
+            /**
+             * Funding
+             * @enum {string}
+             */
+            funding: "wallet" | "card";
+            /** Payment Reference */
+            payment_reference?: string | null;
+            /** Receipt Url */
+            receipt_url?: string | null;
+            /** Stripe Invoice Id */
+            stripe_invoice_id?: string | null;
+            /** Stripe Invoice Number */
+            stripe_invoice_number?: string | null;
+            /** Hosted Invoice Url */
+            hosted_invoice_url?: string | null;
+            context?: components["schemas"]["V2WalletTransactionContext"] | null;
+        };
+        /** V2WalletTransactionsResponse */
+        V2WalletTransactionsResponse: {
+            /** Items */
+            items: components["schemas"]["V2WalletTransactionItemResponse"][];
+            /** Has More */
+            has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** V2WorkspaceSkillCapability */
         V2WorkspaceSkillCapability: {
@@ -2521,7 +2689,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The deployment is definitively absent for the caller in both Hosted and Cloud. Repeating the delete returns the same response. */
+            /** @description The deployment is deleted for the caller. Repeating the delete returns the same response. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3321,38 +3489,6 @@ export interface operations {
             };
         };
     };
-    list_v2_subscription_billing_history_v2_subscription_billing_history_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                cursor?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2ComputeBillingHistoryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     change_v2_subscription_plan_v2_subscription_plan_change_post: {
         parameters: {
             query?: never;
@@ -3540,6 +3676,70 @@ export interface operations {
             };
         };
     };
+    list_v2_subscriptions_v2_subscriptions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeSubscriptionListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_v2_reusable_subscriptions_v2_subscriptions_reusable_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeReusableSubscriptionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     hosted_v2_usage_summary_v2_usage_get: {
         parameters: {
             query?: {
@@ -3625,7 +3825,7 @@ export interface operations {
             };
         };
     };
-    list_v2_wallet_ledger_v2_wallet_ledger_get: {
+    list_v2_wallet_transactions_v2_wallet_transactions_get: {
         parameters: {
             query?: {
                 limit?: number;
@@ -3643,7 +3843,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2WalletLedgerResponse"];
+                    "application/json": components["schemas"]["V2WalletTransactionsResponse"];
                 };
             };
             /** @description Validation Error */

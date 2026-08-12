@@ -13,6 +13,8 @@ import type {
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionQuoteResponse,
 	DeployRequest,
+	ReusableSubscription,
+	SubscriptionSelection,
 } from "@/hosted/billing/contracts";
 import type { WalletDebitSummary } from "@/hosted/billing/wallet/wallet-debit-summary";
 
@@ -32,6 +34,11 @@ export type SubscriptionCreateSelection = {
 	fundingSource: SubscriptionFundingSource;
 };
 
+export type SubscriptionSource =
+	| { mode: "included" }
+	| { mode: "existing"; subscriptionId: string }
+	| { mode: "new" };
+
 /** Presentation model plus the exact server assertion used at confirmation. */
 export type SubscriptionCreateQuoteView = {
 	selection: SubscriptionCreateSelection;
@@ -49,6 +56,7 @@ export type SubscriptionCreateTarget =
 
 export type SubscriptionCreateRequestView = {
 	selection: SubscriptionCreateSelection;
+	subscriptionSelection: SubscriptionSelection;
 	target: SubscriptionCreateTarget;
 	uiMode: HostedDeployCheckoutUiMode;
 	idempotencyKey: string;
@@ -112,6 +120,7 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 	const { selection, target } = request;
 	const body: CheckoutRequest = buildHostedDeployCheckoutRequest({
 		selection,
+		subscriptionSelection: request.subscriptionSelection,
 		target:
 			target.kind === "new_deployment"
 				? { kind: "new_deployment", deployRequest: target.deployConfig }
@@ -121,6 +130,16 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 		uiMode: request.uiMode,
 	});
 	return { body, idempotencyKey: request.idempotencyKey };
+}
+
+export function existingSubscriptionCreateSelection(
+	subscription: ReusableSubscription,
+): SubscriptionCreateSelection {
+	return {
+		planSlug: subscription.plan_slug,
+		billingTermMonths: subscription.billing_term_months,
+		fundingSource: subscription.funding_source,
+	};
 }
 
 export function subscriptionCreateOutcome(

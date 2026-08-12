@@ -18,6 +18,7 @@ const HERMES_GENERATED_PROVIDER_FIELDS = [
 	"default_model",
 	"model",
 	"models",
+	"discover_models",
 	"transport",
 	"api_mode",
 	"key_env",

@@ -8,10 +8,12 @@ import {
 } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
+import { z } from "zod";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	CheckoutRequest,
 	ComputeFixPaymentRequest,
+	ComputePlanChangeProgress,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
 	ComputePlanChangeResult,
@@ -65,6 +67,7 @@ export type BillingClientOptions = {
 	fetch?: BillingFetch;
 	operationPollIntervalMs?: number;
 	operationPollLimit?: number;
+	deploymentRequestTimeoutMs?: number;
 	sleep?: (delayMs: number) => Promise<void>;
 };
 
@@ -101,6 +104,28 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 			clearTimeout(timeoutId);
 			caller?.removeEventListener("abort", onAbort);
 		});
+}
+
+export function retryIdempotentBillingTransport(fetcher: BillingFetch): BillingFetch {
+	return async (request) => {
+		const retryRequest = request.clone();
+		try {
+			return await fetcher(request);
+		} catch (error) {
+			const idempotencyKey = request.headers.get("Idempotency-Key");
+			const url = new URL(request.url);
+			if (
+				!(error instanceof BillingNetworkError) ||
+				request.method !== "POST" ||
+				url.pathname !== "/v2/wallet/topup" ||
+				!idempotencyKey?.trim() ||
+				request.signal.aborted
+			) {
+				throw error;
+			}
+			return fetcher(retryRequest);
+		}
+	};
 }
 
 export function unwrapDeploy<T>(result: DeployResult<T>): T {
@@ -191,11 +216,10 @@ function isWorkspaceSkillResourceVersionConflict(error: unknown): error is Billi
 
 function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingApiError {
 	return new DeploymentRequestTerminalError(
-		409,
+		status,
 		status.request_status === "superseded"
 			? "This agent creation was superseded by a newer attempt."
 			: "The agent could not be created.",
-		status,
 	);
 }
 
@@ -207,12 +231,37 @@ function isTransientDeployRequestRead(error: unknown): boolean {
 	);
 }
 
+type ParsedPlanChangeProgress = Pick<
+	ComputePlanChangeProgress,
+	| "@type"
+	| "billingEffect"
+	| "changeKind"
+	| "effectiveAt"
+	| "fundingSource"
+	| "operationId"
+	| "sourcePlanSlug"
+	| "state"
+	| "subscriptionId"
+	| "targetBillingTermMonths"
+	| "targetPlanSlug"
+>;
+
+type DeploymentOperationSuccessResponse = Extract<
+	NonNullable<DeploymentOperation["response"]>,
+	{ "@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse" }
+>;
+
+type ParsedPlanChangeResponse = Pick<DeploymentOperationSuccessResponse, "@type"> & {
+	deployment: Pick<DeploymentOperationSuccessResponse["deployment"], "id">;
+};
+
 type ParsedPlanChangeOperation = {
-	name: string;
+	deploymentId: string;
 	done: boolean;
-	state: string;
-	effectiveAt: string;
 	error: unknown;
+	name: string;
+	progress: ParsedPlanChangeProgress;
+	response: ParsedPlanChangeResponse | null | undefined;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -222,37 +271,103 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function invalidPlanChangeResponse(): BillingApiError {
 	return new BillingApiError(
 		502,
-		"We couldn't verify the plan change status. Check again in a moment.",
+		"We couldn't verify the subscription change status. Check again in a moment.",
 	);
 }
 
+const planChangeProgressSchema: z.ZodType<ParsedPlanChangeProgress> = z.object({
+	"@type": z.literal("type.googleapis.com/clawdi.v2.ComputePlanChangeProgress"),
+	operationId: z.string().min(1),
+	subscriptionId: z.number().int().positive(),
+	fundingSource: z.enum(["stripe", "wallet"]),
+	changeKind: z.enum(["immediate_upgrade", "scheduled_downgrade", "funding_source_switch"]),
+	billingEffect: z.enum(["immediate_proration", "period_end", "future_renewals"]),
+	sourcePlanSlug: z.string().trim().min(1),
+	targetPlanSlug: z.string().trim().min(1),
+	targetBillingTermMonths: z.union([z.literal(1), z.literal(12)]),
+	state: z.enum([
+		"quoted",
+		"wallet_debit_pending",
+		"wallet_debit_applied",
+		"stripe_update_pending",
+		"invoice_pending",
+		"settlement_pending",
+		"awaiting_payment",
+		"awaiting_projection",
+		"compensation_pending",
+		"reversal_pending",
+		"reconciliation_required",
+		"scheduled",
+		"complete",
+		"compensated",
+		"failed",
+		"terminated_paid_unapplied",
+	]),
+	effectiveAt: z.string().trim().min(1),
+});
+
+const planChangeOperationSchema = z.object({
+	name: z.string().min(1),
+	metadata: z.object({
+		deploymentId: z.string().min(1),
+		verb: z.literal("plan_change"),
+		planChange: planChangeProgressSchema,
+	}),
+	done: z.boolean(),
+	error: z.unknown().nullable().optional(),
+	response: z
+		.object({
+			"@type": z.literal("type.googleapis.com/clawdi.v2.DeploymentOperationResponse"),
+			deployment: z.object({ id: z.string().min(1) }),
+		})
+		.nullable()
+		.optional(),
+});
+
 function parsePlanChangeOperation(value: unknown): ParsedPlanChangeOperation {
-	if (!isRecord(value) || typeof value.name !== "string" || typeof value.done !== "boolean") {
+	const parsed = planChangeOperationSchema.safeParse(value);
+	if (!parsed.success) {
 		throw invalidPlanChangeResponse();
 	}
-	const metadata = value.metadata;
-	if (!isRecord(metadata) || metadata.verb !== "plan_change") {
-		throw invalidPlanChangeResponse();
-	}
-	const progress = metadata.planChange;
-	if (
-		!isRecord(progress) ||
-		typeof progress.state !== "string" ||
-		typeof progress.effectiveAt !== "string"
-	) {
-		throw invalidPlanChangeResponse();
-	}
-	operationIdFromName(value.name);
+	const operationId = operationIdFromName(parsed.data.name);
+	const progress = parsed.data.metadata.planChange;
+	if (progress.operationId !== operationId) throw invalidPlanChangeResponse();
 	return {
-		name: value.name,
-		done: value.done,
-		state: progress.state,
-		effectiveAt: progress.effectiveAt,
-		error: value.error,
+		deploymentId: parsed.data.metadata.deploymentId,
+		name: parsed.data.name,
+		done: parsed.data.done,
+		progress,
+		error: parsed.data.error,
+		response: parsed.data.response,
 	};
 }
 
-function planChangeTerminalError(error: unknown): BillingApiError {
+function hasValidPlanChangeSemantics(progress: ParsedPlanChangeProgress): boolean {
+	if (
+		!progress.effectiveAt?.trim() ||
+		(progress.fundingSource !== "stripe" && progress.fundingSource !== "wallet")
+	) {
+		return false;
+	}
+	switch (progress.changeKind) {
+		case "immediate_upgrade":
+			return progress.billingEffect === "immediate_proration";
+		case "scheduled_downgrade":
+			return progress.billingEffect === "period_end";
+		case "funding_source_switch":
+			return (
+				progress.billingEffect === "future_renewals" &&
+				progress.sourcePlanSlug === progress.targetPlanSlug
+			);
+		default:
+			return false;
+	}
+}
+
+function planChangeTerminalError(
+	error: unknown,
+	operation: ParsedPlanChangeOperation,
+): BillingApiError {
 	if (isRecord(error) && Array.isArray(error.details)) {
 		const detail = error.details.find(
 			(item) =>
@@ -263,27 +378,73 @@ function planChangeTerminalError(error: unknown): BillingApiError {
 			typeof detail.status === "number" &&
 			typeof detail.detail === "string"
 		) {
-			return new PlanChangeTerminalError(detail.status, detail.detail, { detail });
+			return new PlanChangeTerminalError(
+				detail.status,
+				detail.detail,
+				{ detail },
+				operation.progress.changeKind,
+				operation.progress.fundingSource,
+				operation.name,
+			);
 		}
 	}
 	return new PlanChangeTerminalError(
 		409,
-		"The plan change could not be completed. Review the price and try again.",
+		"The subscription change could not be completed. Review the details and try again.",
+		undefined,
+		operation.progress.changeKind,
+		operation.progress.fundingSource,
+		operation.name,
 	);
 }
 
 function completedPlanChange(operation: ParsedPlanChangeOperation): ComputePlanChangeResult | null {
+	if (!hasValidPlanChangeSemantics(operation.progress)) {
+		throw invalidPlanChangeResponse();
+	}
 	if (!operation.done) {
-		if (operation.error !== undefined && operation.error !== null) {
+		if (
+			(operation.error !== undefined && operation.error !== null) ||
+			(operation.response !== undefined && operation.response !== null)
+		) {
 			throw invalidPlanChangeResponse();
 		}
 		return null;
 	}
-	if (operation.error !== undefined && operation.error !== null) {
-		throw planChangeTerminalError(operation.error);
+	const hasError = operation.error !== undefined && operation.error !== null;
+	const hasResponse = operation.response !== undefined && operation.response !== null;
+	if (hasError === hasResponse) throw invalidPlanChangeResponse();
+	if (hasError) {
+		throw planChangeTerminalError(operation.error, operation);
 	}
-	if (operation.state === "complete" || operation.state === "scheduled") {
-		return { kind: operation.state, effectiveAt: operation.effectiveAt };
+	if (operation.response?.deployment.id !== operation.deploymentId) {
+		throw invalidPlanChangeResponse();
+	}
+	if (
+		operation.progress.changeKind === "scheduled_downgrade" &&
+		operation.progress.state === "scheduled"
+	) {
+		return {
+			kind: "scheduled",
+			operationName: operation.name,
+			effectiveAt: operation.progress.effectiveAt,
+			changeKind: operation.progress.changeKind,
+			billingEffect: operation.progress.billingEffect,
+			fundingSource: operation.progress.fundingSource,
+		};
+	}
+	if (
+		operation.progress.changeKind !== "scheduled_downgrade" &&
+		operation.progress.state === "complete"
+	) {
+		return {
+			kind: "complete",
+			operationName: operation.name,
+			effectiveAt: operation.progress.effectiveAt,
+			changeKind: operation.progress.changeKind,
+			billingEffect: operation.progress.billingEffect,
+			fundingSource: operation.progress.fundingSource,
+		};
 	}
 	throw invalidPlanChangeResponse();
 }
@@ -299,7 +460,7 @@ export function createBillingClient(
 ) {
 	const api = createClient<DeployPaths>({
 		baseUrl: ROOT_BASE_URL,
-		fetch: options.fetch ?? fetchWithTimeout,
+		fetch: retryIdempotentBillingTransport(options.fetch ?? fetchWithTimeout),
 	});
 	api.use({
 		async onRequest({ request }) {
@@ -309,8 +470,18 @@ export function createBillingClient(
 		},
 	});
 
-	const pollIntervalMs = options.operationPollIntervalMs ?? 1_000;
-	const pollLimit = options.operationPollLimit ?? 120;
+	const configuredPollIntervalMs = options.operationPollIntervalMs ?? 1_000;
+	const pollIntervalMs = Number.isFinite(configuredPollIntervalMs)
+		? Math.max(0, configuredPollIntervalMs)
+		: 1_000;
+	const configuredPollLimit = options.operationPollLimit ?? 120;
+	const pollLimit = Number.isFinite(configuredPollLimit)
+		? Math.max(0, Math.floor(configuredPollLimit))
+		: 120;
+	const configuredDeploymentRequestTimeoutMs = options.deploymentRequestTimeoutMs ?? 120_000;
+	const deploymentRequestTimeoutMs = Number.isFinite(configuredDeploymentRequestTimeoutMs)
+		? Math.max(0, configuredDeploymentRequestTimeoutMs)
+		: 120_000;
 	const sleep =
 		options.sleep ??
 		((delayMs: number) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)));
@@ -322,15 +493,19 @@ export function createBillingClient(
 			}),
 		);
 
-	const getOperation = async (operationId: string): Promise<DeploymentOperation> =>
+	const getOperation = async (
+		operationId: string,
+		signal?: AbortSignal,
+	): Promise<DeploymentOperation> =>
 		unwrapDeploy(
 			await api.GET("/v2/operations/{operation_id}", {
 				params: { path: { operation_id: operationId } },
+				signal,
 			}),
 		);
 
 	const waitForPlanChange = async (
-		initial: unknown,
+		initial: DeploymentOperation,
 		expectedOperationId: string,
 		onAccepted?: (operationName: string) => void,
 	): Promise<ComputePlanChangeResult> => {
@@ -351,25 +526,38 @@ export function createBillingClient(
 
 	const getDeploymentByRequest = async (
 		deployRequestId: string,
+		signal?: AbortSignal,
 	): Promise<HostedDeployRequestStatus> =>
 		unwrapDeploy(
 			await api.GET("/v2/deployments/by-request/{deploy_request_id}", {
 				params: { path: { deploy_request_id: deployRequestId } },
+				signal,
 			}),
 		);
 
 	const waitForDeploymentRequest = async (deployRequestId: string) => {
 		let lastTransientError: unknown;
-		for (let poll = 0; poll <= pollLimit; poll += 1) {
+		const deadline = Date.now() + deploymentRequestTimeoutMs;
+		for (let poll = 0; poll <= pollLimit && Date.now() < deadline; poll += 1) {
+			const requestController = new AbortController();
+			const requestTimeoutId = globalThis.setTimeout(
+				() => requestController.abort(),
+				Math.max(0, deadline - Date.now()),
+			);
 			let status: HostedDeployRequestStatus;
 			try {
-				status = await getDeploymentByRequest(deployRequestId);
+				status = await getDeploymentByRequest(deployRequestId, requestController.signal);
 			} catch (error) {
+				if (requestController.signal.aborted) break;
 				if (!isTransientDeployRequestRead(error)) throw error;
 				lastTransientError = error;
 				if (poll === pollLimit) break;
-				await sleep(pollIntervalMs);
+				const remainingMs = deadline - Date.now();
+				if (remainingMs <= 0) break;
+				await sleep(Math.min(pollIntervalMs, remainingMs));
 				continue;
+			} finally {
+				globalThis.clearTimeout(requestTimeoutId);
 			}
 			const projection = projectHostedDeployRequest(status);
 			if (projection.kind === "terminal") {
@@ -382,8 +570,27 @@ export function createBillingClient(
 				});
 			}
 			if (projection.kind === "operation_name") {
+				const remainingMs = deadline - Date.now();
+				if (remainingMs <= 0) break;
+				const operationController = new AbortController();
+				const operationTimeoutId = globalThis.setTimeout(
+					() => operationController.abort(),
+					remainingMs,
+				);
+				let operation: DeploymentOperation;
+				try {
+					operation = await getOperation(
+						operationIdFromName(projection.operationName),
+						operationController.signal,
+					);
+				} catch (error) {
+					if (operationController.signal.aborted) break;
+					throw error;
+				} finally {
+					globalThis.clearTimeout(operationTimeoutId);
+				}
 				return acceptDeclarativeOperation({
-					operation: await getOperation(operationIdFromName(projection.operationName)),
+					operation,
 					deploymentId: projection.deploymentId,
 				});
 			}
@@ -398,7 +605,9 @@ export function createBillingClient(
 			}
 			lastTransientError = undefined;
 			if (poll === pollLimit) break;
-			await sleep(pollIntervalMs);
+			const remainingMs = deadline - Date.now();
+			if (remainingMs <= 0) break;
+			await sleep(Math.min(pollIntervalMs, remainingMs));
 		}
 		throw new BillingNetworkError("timeout", { cause: lastTransientError });
 	};
@@ -527,9 +736,9 @@ export function createBillingClient(
 		getManagedModelCatalog: async () =>
 			unwrapDeploy(await api.GET("/v2/ai-providers/managed/models")),
 		getWallet: async () => unwrapDeploy(await api.GET("/v2/wallet")),
-		getLedger: async (limit = 50, cursor?: string | null) =>
+		getTransactions: async (limit = 50, cursor?: string | null) =>
 			unwrapDeploy(
-				await api.GET("/v2/wallet/ledger", {
+				await api.GET("/v2/wallet/transactions", {
 					params: { query: { limit, cursor } },
 				}),
 			),
@@ -543,13 +752,19 @@ export function createBillingClient(
 		setAutoReload: async (body: WalletAutoReloadRequest) =>
 			unwrapDeploy(await api.PUT("/v2/wallet/auto-reload", { body })),
 
-		getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
-		getBillingHistory: async (limit = 20, cursor?: string | null) =>
+		getSubscriptions: async (limit = 20, cursor?: string | null) =>
 			unwrapDeploy(
-				await api.GET("/v2/subscription/billing-history", {
+				await api.GET("/v2/subscriptions", {
 					params: { query: { limit, cursor } },
 				}),
 			),
+		getReusableSubscriptions: async (limit = 100, cursor?: string | null) =>
+			unwrapDeploy(
+				await api.GET("/v2/subscriptions/reusable", {
+					params: { query: { limit, cursor } },
+				}),
+			),
+		getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
 		checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/subscription/checkout", {

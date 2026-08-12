@@ -317,9 +317,10 @@ function AgentStatusDot({ visual }: { visual: AgentCardStatusVisual }) {
  * daemon's null-env "pending" state there would turn missing data into a
  * reassuring status. Self-managed and legacy tiles retain their established
  * setup status because their environment record is their source of truth.
+ * Metadata is intentionally limited to the highest-priority available label.
  */
 export function agentTileCardProjection(tile: AgentTile): {
-	meta: string[];
+	meta: [] | [string];
 	statusVisual: AgentCardStatusVisual | null;
 } {
 	const identity = agentIdentity({
@@ -327,17 +328,14 @@ export function agentTileCardProjection(tile: AgentTile): {
 		machine_name: tile.name,
 		agent_type: tile.agentType,
 	});
-	const meta = [
-		identity.secondaryLabel,
-		...(tile.cardStatus?.labels ?? []),
-		agentTileActivityLabel(tile),
-	].filter((value): value is string => Boolean(value));
+	const metaLabel =
+		tile.cardStatus?.labels[0] ?? agentTileActivityLabel(tile) ?? identity.secondaryLabel;
 	const statusVisual = tile.cardStatus
 		? tile.cardStatus.visual
 		: tile.source === "on-clawdi" && !tile.env
 			? null
 			: daemonStatusVisual(tile.env, tile.source === "self-managed" ? "self-managed" : "on-clawdi");
-	return { meta, statusVisual };
+	return { meta: metaLabel ? [metaLabel] : [], statusVisual };
 }
 
 function agentTileActivityLabel(tile: AgentTile): string | null {

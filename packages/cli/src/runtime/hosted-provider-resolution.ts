@@ -4,7 +4,11 @@ import type {
 	AiProviderCatalog,
 	AiProviderType,
 } from "@clawdi/shared";
-import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
+import {
+	isAiProviderApiMode,
+	isAiProviderType,
+	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+} from "@clawdi/shared";
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
@@ -27,7 +31,7 @@ export function hostedAiProviderCatalog(
 			const apiMode = hostedProviderApiMode(input);
 			const apiKeySecretRef =
 				typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
-			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input);
+			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input, runtimeName);
 			if (hostedProviderUnhealthy(input)) return null;
 			if (!baseUrl) return null;
 			const auth = hostedProviderAuth(input, Boolean(apiKeySecretRef));
@@ -179,7 +183,17 @@ export function hostedProviderRequiresApiKey(input: Record<string, unknown>): bo
 	return type === "api_key" || type === "secret_ref";
 }
 
-function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
+function hostedProviderRuntimeEnvName(
+	providerId: string,
+	input: Record<string, unknown>,
+	runtimeName?: string,
+): string {
+	if (
+		(runtimeName === "openclaw" || runtimeName === "hermes") &&
+		isClawdiManagedProviderProjection(input)
+	) {
+		return MANAGED_AI_PROVIDER_RUNTIME_ENV;
+	}
 	const raw = typeof input.runtimeEnvName === "string" ? input.runtimeEnvName : null;
 	if (raw && isEnvKey(raw)) return raw;
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
@@ -198,7 +212,7 @@ function hostedProviderPlaceholderEnv(
 		if (!isClawdiManagedProviderProjection(provider)) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
 		if (!apiKeySecretRef) continue;
-		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
+		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
 		if (!isEnvKey(runtimeEnvName)) continue;
 		env[runtimeEnvName] = MANAGED_EGRESS_PLACEHOLDER_VALUE;
 	}
@@ -218,7 +232,7 @@ function hostedProviderSecretEnv(
 		if (isClawdiManagedProviderProjection(provider)) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
 		if (!apiKeySecretRef) continue;
-		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
+		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
 		if (!isEnvKey(runtimeEnvName)) continue;
 		secretEnv[runtimeEnvName] = apiKeySecretRef;
 	}

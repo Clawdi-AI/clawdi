@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
+import { useStripeAppearance } from "@/hosted/billing/stripe-appearance";
 import type { PaymentIntentClientSecret } from "@/hosted/billing/stripe-client-secret";
 import {
 	type PaymentOutcome,
@@ -62,7 +63,7 @@ function InnerForm({
 				},
 			});
 			if (result.error) {
-				setError(result.error.message ?? "We couldn't process that card. Please try again.");
+				setError(result.error.message ?? "We couldn't process that payment. Please try again.");
 				finishSubmitting();
 				return;
 			}
@@ -71,8 +72,8 @@ function InnerForm({
 			if (!outcome) {
 				setError(
 					status === "requires_action"
-						? "Your bank needs to confirm this payment. Complete the prompt, then select the payment button again."
-						: "This payment is not ready to complete. Review the card details and try again.",
+						? "Your payment method needs confirmation. Complete the prompt, then select the payment button again."
+						: "This payment is not ready to complete. Review the payment details and try again.",
 				);
 				finishSubmitting();
 				return;
@@ -132,6 +133,7 @@ export function StripePaymentForm({
 	const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
 	const [stripe, setStripe] = useState<Stripe | null | undefined>(undefined);
 	const [attempt, setAttempt] = useState(0);
+	const appearance = useStripeAppearance();
 
 	useEffect(() => {
 		if (!key) return;
@@ -155,7 +157,7 @@ export function StripePaymentForm({
 			<Alert data-hosted="true">
 				<AlertCircle aria-hidden />
 				<AlertDescription>
-					Card payments aren’t configured in this environment. Set a Stripe publishable key to
+					Stripe payments aren’t configured in this environment. Set a Stripe publishable key to
 					continue.
 				</AlertDescription>
 			</Alert>
@@ -200,7 +202,7 @@ export function StripePaymentForm({
 
 	return (
 		<div data-hosted="true">
-			<Elements stripe={stripe} options={{ clientSecret, appearance: { theme: "stripe" } }}>
+			<Elements stripe={stripe} options={{ clientSecret, appearance }}>
 				<InnerForm
 					onComplete={onComplete}
 					onCancel={onCancel}

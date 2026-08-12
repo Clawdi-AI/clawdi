@@ -82,6 +82,7 @@ class FakeCustomSidecar:
         self.service_ready_result = True
         self.health_failures_remaining = 0
         self.last_disconnect_reason: str | None = None
+        self.account_lid: str | None = "900000000000001:1@lid"
         self.pairing_recover_calls = 0
         self.health_entered: asyncio.Event | None = None
         self.health_release: asyncio.Event | None = None
@@ -108,6 +109,8 @@ class FakeCustomSidecar:
             status=self.current.status,
             connected=self.current.status == "connected",
             registered=self.current.registered,
+            account_jid=("15551234567:1@s.whatsapp.net" if self.current.registered else None),
+            account_lid=self.account_lid if self.current.registered else None,
             last_disconnect_reason=self.last_disconnect_reason,
         )
 
@@ -359,6 +362,10 @@ async def test_qr_lifecycle_is_idempotent_and_finishes_only_after_connection(
         "connection_mode": "baileys_custom",
         "sidecar_account_id": str(sidecar_account_id),
         "sidecar_config_revision": custom_sidecar_registry_revision(sidecar_account_id),
+        "self_identity": {
+            "id": "15551234567:1@s.whatsapp.net",
+            "lid": "900000000000001:1@lid",
+        },
     }
     assert account.encrypted_provider_token is None
     assert account.provider_token_nonce is None
@@ -457,6 +464,29 @@ async def test_custom_link_prompts_owner_repair_and_preserves_the_durable_accoun
         )
     ).all()
     assert account_ids == [account_id]
+
+
+@pytest.mark.asyncio
+async def test_registered_custom_account_without_lid_requires_explicit_reonboarding(
+    client: httpx.AsyncClient,
+    custom_sidecar: tuple[UUID, FakeCustomSidecar],
+) -> None:
+    _sidecar_account_id, fake = custom_sidecar
+    _onboarding_id, account_id = await _connect_custom_account(
+        client,
+        fake,
+        name="Missing LID phone",
+    )
+    fake.account_lid = None
+
+    link_attempt = await client.post(f"/v1/channels/{account_id}/agent-links", json={})
+    assert link_attempt.status_code == 409
+    assert link_attempt.json() == {"detail": "whatsapp_repair_required"}
+
+    repair = await client.post(f"/v1/channels/whatsapp/onboarding/accounts/{account_id}/repair")
+    assert repair.status_code == 200, repair.text
+    assert repair.json()["state"] == "ready"
+    assert fake.logout_calls == 1
 
 
 @pytest.mark.asyncio

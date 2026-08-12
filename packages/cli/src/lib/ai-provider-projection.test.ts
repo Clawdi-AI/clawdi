@@ -58,7 +58,7 @@ describe("AI provider projection", () => {
 					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_AI_API_KEY",
 					models: [{ id: "managed-model" }],
 				},
 				{
@@ -94,7 +94,7 @@ describe("AI provider projection", () => {
 			{
 				providerId: CLAWDI_MANAGED_PROVIDER_ID,
 				model: "managed-model",
-				envName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+				envName: "CLAWDI_AI_API_KEY",
 				baseUrl: "https://managed.example.test/v1",
 				apiMode: "chat_completions",
 			},
@@ -133,6 +133,7 @@ describe("AI provider projection", () => {
 					string,
 					{
 						api?: string;
+						discover_models?: boolean;
 						key_env?: string;
 						models?: Record<string, unknown>;
 						transport?: string;
@@ -152,6 +153,22 @@ describe("AI provider projection", () => {
 			expect(config.providers?.[testCase.providerId]).not.toHaveProperty("discover_models");
 			expect(content).not.toContain("sentinel-secret-value");
 		}
+
+		const frozen = buildAgentTargetProjection(
+			"hermes",
+			catalog,
+			{ provider_id: CLAWDI_MANAGED_PROVIDER_ID, model: "managed-model" },
+			{ freezeManagedModelCatalog: true },
+		);
+		const frozenProviders = (
+			parseYaml(frozen.files[0]?.content ?? "") as {
+				providers?: Record<string, { discover_models?: boolean }>;
+			}
+		).providers;
+		expect(frozenProviders?.[CLAWDI_MANAGED_PROVIDER_ID]?.discover_models).toBe(false);
+		for (const providerId of ["kimi-coding", "openai-responses", "anthropic-proxy"]) {
+			expect(frozenProviders?.[providerId]).not.toHaveProperty("discover_models");
+		}
 	});
 
 	test("projects the bare managed provider alias with the managed endpoint and key env", () => {
@@ -166,7 +183,7 @@ describe("AI provider projection", () => {
 					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_AI_API_KEY",
 					models: [{ id: "managed-model" }],
 				},
 			],
@@ -189,7 +206,7 @@ describe("AI provider projection", () => {
 		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/managed-model");
 		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toMatchObject({
 			baseUrl: "https://managed.example.test/v1",
-			apiKey: { id: "CLAWDI_MANAGED_OPENAI_API_KEY" },
+			apiKey: { id: "CLAWDI_AI_API_KEY" },
 		});
 		expect(Object.keys(openclawPatch.models?.providers ?? {})).toEqual([
 			CLAWDI_MANAGED_PROVIDER_ID,
@@ -207,7 +224,7 @@ describe("AI provider projection", () => {
 		expect(hermes.files[0]?.content).toContain('"clawdi":');
 		expect(hermes.files[0]?.content).toContain('api: "https://managed.example.test/v1"');
 		expect(hermes.files[0]?.content).toContain('transport: "chat_completions"');
-		expect(hermes.files[0]?.content).toContain('key_env: "CLAWDI_MANAGED_OPENAI_API_KEY"');
+		expect(hermes.files[0]?.content).toContain('key_env: "CLAWDI_AI_API_KEY"');
 		expect(hermes.files[0]?.content).toContain('"managed-model": {}');
 		expect(hermes.files[0]?.content).not.toContain("clawdi-v2");
 	});
@@ -224,7 +241,7 @@ describe("AI provider projection", () => {
 					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_AI_API_KEY",
 					models: [{ id: "managed-model" }],
 				},
 			],
@@ -411,7 +428,7 @@ describe("AI provider projection", () => {
 					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_AI_API_KEY",
 					models: [
 						{ id: "k3", context_window: 1_048_576, max_input_tokens: 1_048_576 },
 						{ id: "kimi-for-coding", context_window: 262_144, max_input_tokens: 262_144 },
@@ -479,7 +496,7 @@ describe("AI provider projection", () => {
 					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_AI_API_KEY",
 					models: [
 						{
 							id: "generic-output-alias",

@@ -19,6 +19,7 @@ from app.services.whatsapp_native_transport import (
     WhatsAppNativeRelayRequest,
     WhatsAppProviderTransportAdapter,
     WhatsAppSidecarUnavailableError,
+    _sidecar_account_lid,
     whatsapp_phone_number_from_pn_jid,
 )
 from app.services.whatsapp_provider_bridge import (
@@ -196,6 +197,7 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                     },
                     "user": {
                         "id": "15551234567:17@s.whatsapp.net",
+                        "lid": "900000000000001:17@lid",
                         "name": "Clawdi Public WhatsApp",
                     },
                 },
@@ -276,6 +278,7 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
     health = await client.health()
     assert health.connected is True
     assert health.account_jid == "15551234567:17@s.whatsapp.net"
+    assert health.account_lid == "900000000000001:17@lid"
     assert client.connected is True
 
     relayed_message_id = await transport.relay_outbound_message(
@@ -351,6 +354,20 @@ def test_whatsapp_phone_number_requires_strict_pn_jid(
     phone_number: str | None,
 ) -> None:
     assert whatsapp_phone_number_from_pn_jid(account_jid) == phone_number
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ({"lid": "900000000000001:7@lid"}, "900000000000001:7@lid"),
+        ({"lid": "15551234567@s.whatsapp.net"}, None),
+        ({"lid": "900000000000001@lid.evil.example"}, None),
+        ({"lid": ""}, None),
+        ({}, None),
+    ],
+)
+def test_sidecar_health_accepts_only_lid_domain(value, expected) -> None:
+    assert _sidecar_account_lid(value) == expected
 
 
 @pytest.mark.asyncio

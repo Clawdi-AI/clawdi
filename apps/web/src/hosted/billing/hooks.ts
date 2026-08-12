@@ -22,7 +22,7 @@ import type {
 	HostedComputeSubscription,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
-import { billingQueryRetry } from "@/hosted/billing/errors";
+import { billingQueryRetry, PlanChangeTerminalError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	type SubscriptionCreateQuoteView,
@@ -103,6 +103,19 @@ export function applyDeploymentSubscriptionResult(
 	);
 }
 
+export function applySubscriptionActionSuccess(
+	qc: QueryClient,
+	body: ComputeSubscriptionCancelRequest | ComputeSubscriptionResumeRequest,
+	next: ComputeSubscriptionActionResult,
+): void {
+	if (body.deployment_id) {
+		applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
+	} else if (body.subscription_id) {
+		qc.invalidateQueries({ queryKey: billingKeys.deployments });
+	}
+	qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
+}
+
 /**
  * Shared billing read: gates fetches on `isDeployApiConfigured()` and applies
  * the transient-only `billingQueryRetry` so deterministic 4xx (auth,
@@ -113,6 +126,13 @@ function useBillingQuery<TData>(
 	options: UseQueryOptions<TData, Error, TData> & { queryFn: () => Promise<TData> },
 ) {
 	return useQuery({ enabled: isDeployApiConfigured(), retry: billingQueryRetry, ...options });
+}
+
+export function billingNextPageParam(page: {
+	has_more: boolean;
+	next_cursor?: string | null;
+}): string | undefined {
+	return page.has_more && page.next_cursor ? page.next_cursor : undefined;
 }
 
 export function useHostedUser() {
@@ -136,25 +156,13 @@ export function useManagedModelCatalog({ enabled = true }: { enabled?: boolean }
 
 // ── Wallet ───────────────────────────────────────────────────────────────────
 
-export function useWalletLedger(limit = 50) {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.ledger(limit),
-		queryFn: () => client.getLedger(limit),
-		// Bumping the limit ("Show more") keeps the current rows on screen
-		// instead of flashing the skeleton while the larger page loads.
-		placeholderData: keepPreviousData,
-	});
-}
-
-export function useWalletLedgerPages(limit = 50) {
+export function useWalletTransactions() {
 	const client = useBillingClient();
 	return useInfiniteQuery({
-		queryKey: billingKeys.ledgerPages(limit),
-		queryFn: ({ pageParam }) => client.getLedger(limit, pageParam),
+		queryKey: billingKeys.transactions,
+		queryFn: ({ pageParam }) => client.getTransactions(50, pageParam),
 		initialPageParam: null as string | null,
-		getNextPageParam: (lastPage) =>
-			lastPage.has_more && lastPage.next_cursor ? lastPage.next_cursor : undefined,
+		getNextPageParam: billingNextPageParam,
 		enabled: isDeployApiConfigured(),
 		retry: billingQueryRetry,
 	});
@@ -168,6 +176,18 @@ export function usePlans() {
 		queryKey: billingKeys.plans,
 		queryFn: () => client.getPlans(),
 		staleTime: 5 * 60_000,
+	});
+}
+
+export function useSubscriptions() {
+	const client = useBillingClient();
+	return useInfiniteQuery({
+		queryKey: billingKeys.subscriptions,
+		queryFn: ({ pageParam }) => client.getSubscriptions(20, pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: billingNextPageParam,
+		enabled: isDeployApiConfigured(),
+		retry: billingQueryRetry,
 	});
 }
 
@@ -203,16 +223,24 @@ export function useQuotePlanChange() {
 	});
 }
 
+export function invalidatePlanChangeQueries(qc: QueryClient): void {
+	qc.invalidateQueries({ queryKey: billingKeys.deployments });
+	qc.invalidateQueries({ queryKey: billingKeys.wallet });
+	qc.invalidateQueries({ queryKey: billingKeys.transactions });
+	qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
+}
+
+export function invalidateSettledPlanChangeQueries(qc: QueryClient, error: Error | null): void {
+	if (error && !(error instanceof PlanChangeTerminalError)) return;
+	invalidatePlanChangeQueries(qc);
+}
+
 export function useChangePlan(onAccepted?: (operationName: string) => void) {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation<ComputePlanChangeResult, Error, ComputePlanChangeRequest>({
 		mutationFn: (body) => client.changePlan(body, onAccepted),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
-		},
+		onSettled: (_result, error) => invalidateSettledPlanChangeQueries(qc, error),
 	});
 }
 
@@ -221,11 +249,7 @@ export function useCheckPlanChange() {
 	const qc = useQueryClient();
 	return useMutation<ComputePlanChangeResult, Error, string>({
 		mutationFn: (operationName) => client.checkPlanChange(operationName),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
-		},
+		onSettled: (_result, error) => invalidateSettledPlanChangeQueries(qc, error),
 	});
 }
 
@@ -234,23 +258,7 @@ export function useCancelSubscription() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionCancelRequest) => client.cancelSubscription(body),
-		onSuccess: (next, body) => {
-			applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
-		},
-	});
-}
-
-export function useComputeBillingHistory(limit = 20) {
-	const client = useBillingClient();
-	return useInfiniteQuery({
-		queryKey: billingKeys.billingHistory(limit),
-		queryFn: ({ pageParam }) => client.getBillingHistory(limit, pageParam),
-		initialPageParam: null as string | null,
-		getNextPageParam: (lastPage) =>
-			lastPage.has_more && lastPage.next_cursor ? lastPage.next_cursor : undefined,
-		enabled: isDeployApiConfigured(),
-		retry: billingQueryRetry,
-		staleTime: 60_000,
+		onSuccess: (next, body) => applySubscriptionActionSuccess(qc, body, next),
 	});
 }
 
@@ -259,9 +267,7 @@ export function useResumeSubscription() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionResumeRequest) => client.resumeSubscription(body),
-		onSuccess: (next, body) => {
-			applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
-		},
+		onSuccess: (next, body) => applySubscriptionActionSuccess(qc, body, next),
 	});
 }
 
@@ -293,6 +299,7 @@ export async function refreshCheckoutReturnQueries(
 	const results = await Promise.allSettled([
 		...requiredRefreshes,
 		qc.invalidateQueries({ queryKey: billingKeys.plans }),
+		qc.invalidateQueries({ queryKey: billingKeys.transactions }),
 		qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
 	]);
 	const requiredRefreshFailures = results
@@ -319,6 +326,7 @@ export function useUsage(
 		queryKey: billingKeys.usage(days, agentId),
 		queryFn: () => client.getUsage(days, agentId),
 		enabled,
+		placeholderData: keepPreviousData,
 	});
 }
 

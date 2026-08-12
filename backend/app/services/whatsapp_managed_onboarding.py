@@ -267,13 +267,15 @@ async def _refresh(
         return await _error(db, onboarding)
     if health.connected and pairing.status == "connected" and pairing.registered:
         phone_number = whatsapp_phone_number_from_pn_jid(health.account_jid)
-        if phone_number is None:
+        if phone_number is None or health.account_jid is None or health.account_lid is None:
             return await _error(db, onboarding)
         await _promote(
             db,
             onboarding=onboarding,
             registry=registry,
             phone_number=phone_number,
+            account_jid=health.account_jid,
+            account_lid=health.account_lid,
         )
         return _response(onboarding)
     if pairing.status == "starting" and not pairing.registered:
@@ -312,6 +314,8 @@ async def _promote(
     onboarding: ChannelWhatsAppOnboardingSession,
     registry: ConfiguredWhatsAppSidecarRegistry,
     phone_number: str,
+    account_jid: str,
+    account_lid: str,
 ) -> None:
     account_id = onboarding.sidecar_account_id
     session_id = onboarding.id
@@ -330,6 +334,7 @@ async def _promote(
                     "connection_mode": "baileys_managed",
                     "sidecar_config_revision": onboarding.sidecar_config_revision,
                     "phone_number": phone_number,
+                    "self_identity": {"id": account_jid, "lid": account_lid},
                 },
             )
             db.add(account)
@@ -339,6 +344,7 @@ async def _promote(
         else:
             config = dict(account.config) if isinstance(account.config, dict) else {}
             config["phone_number"] = phone_number
+            config["self_identity"] = {"id": account_jid, "lid": account_lid}
             account.config = config
         newly_bound = await registry.bind_managed_account(
             account.id, config_revision=onboarding.sidecar_config_revision

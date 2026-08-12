@@ -22,9 +22,14 @@ function account(id: string, visibility: "private" | "public" = "private"): Chan
 	};
 }
 
-function poolBot(id: string, access: "owner" | "public"): ChannelBotPoolItem {
+function poolBot(
+	id: string,
+	access: "owner" | "public",
+	overrides: Partial<ChannelAccount> = {},
+): ChannelBotPoolItem {
 	return {
 		...account(id, access === "public" ? "public" : "private"),
+		...overrides,
 		access,
 		capabilities: {
 			link_agent: true,
@@ -135,6 +140,38 @@ describe("Agent channel card normalization", () => {
 		expect(groups.clawdiBots[0]?.name).toBe("Current shared name");
 		expect(groups.customBots).toHaveLength(1);
 		expect(groups.customBots[0]?.link?.id).toBe(customLink.id);
+	});
+
+	test("orders Telegram first and preserves creation order within each provider", () => {
+		const telegramNewer = poolBot("telegram-newer", "public", {
+			provider: "telegram",
+			name: "A Telegram bot",
+			created_at: "2026-08-02T00:00:00Z",
+		});
+		const telegramOlder = poolBot("telegram-older", "public", {
+			provider: "telegram",
+			name: "Z Telegram bot",
+			created_at: "2026-08-01T00:00:00Z",
+		});
+		const discord = poolBot("discord", "public", { provider: "discord" });
+		const whatsapp = poolBot("whatsapp", "public", { provider: "whatsapp" });
+
+		const groups = buildAgentChannelCardGroups({
+			channels: [],
+			poolProviders: {
+				discord: [discord],
+				telegram: [telegramNewer, telegramOlder],
+				whatsapp: [whatsapp],
+			},
+			links: [],
+		});
+
+		expect(groups.clawdiBots.map((bot) => bot.id)).toEqual([
+			"telegram-older",
+			"telegram-newer",
+			"discord",
+			"whatsapp",
+		]);
 	});
 
 	test("reconciles an idempotent or conflict response only to this bot on this Agent", () => {

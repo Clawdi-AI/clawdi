@@ -230,13 +230,13 @@ export function AgentHome({
 				</div>
 			);
 		}
-		return <ConnectedAgentDetailSkeleton hosted />;
+		return <ConnectedAgentDetailSkeleton hosted section={section} />;
 	}
 
 	// Hold a skeleton until the deployment lookup settles, so a hosted agent
 	// doesn't flash the connected detail (and fire its queries) first.
 	if (isLoading) {
-		return <ConnectedAgentDetailSkeleton hosted />;
+		return <ConnectedAgentDetailSkeleton hosted section={section} />;
 	}
 
 	if (error && requestedHostedAgent && !deployment) {
@@ -285,7 +285,7 @@ export function AgentHome({
 				runtime={runtime}
 				section={section}
 				routeSearch={deploymentRouteSearch}
-				onDeleteAccepted={() => router.navigate({ href: "/agents", replace: true })}
+				onDeleteAccepted={() => router.navigate({ href: "/", replace: true })}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 				deploymentTransitionEscalated={deploymentTransitionEscalated}
 				isCheckingDeployment={manualChecking}

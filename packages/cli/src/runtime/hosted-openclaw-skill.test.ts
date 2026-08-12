@@ -7,6 +7,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,9 +90,39 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	const target = join(workspaceRoot, "skills", "review-pr");
 	const receipt = join(workspaceRoot, "skills", ".clawdi-manifest-receipts", "review-pr.json");
 	const receiptBytes = readFileSync(receipt);
+	const receiptStat = statSync(receipt);
+	expect(receiptStat.mode & 0o777).toBe(0o600);
+	if (process.geteuid) expect(receiptStat.uid).toBe(process.geteuid());
 	rmSync(receipt);
 	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(false);
 	writeFileSync(receipt, receiptBytes);
+	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
+	writeFileSync(join(target, "SKILL.md"), "tenant mutation\n");
+	chmodSync(receipt, 0o622);
+	expect(
+		hostedOpenClawSkillDriver.hasOwnershipReceipt({
+			workspaceRoot,
+			skillId: "review-pr",
+			ownershipIdentity: skill.sourceIdentity,
+		}),
+	).toBe(false);
+	chmodSync(receipt, 0o600);
+	expect(
+		hostedOpenClawSkillDriver.hasOwnershipReceipt({
+			workspaceRoot,
+			skillId: "review-pr",
+			ownershipIdentity: skill.sourceIdentity,
+		}),
+	).toBe(true);
+	expect(
+		hostedOpenClawSkillDriver.installDirectory({
+			home,
+			workspaceRoot,
+			skillId: "review-pr",
+			sourceDir,
+			ownershipIdentity: skill.sourceIdentity,
+		}),
+	).toBe("installed");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
 	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR v2\n");
 	process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE = "1";
