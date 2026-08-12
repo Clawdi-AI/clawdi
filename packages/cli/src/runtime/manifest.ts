@@ -2947,10 +2947,7 @@ function openClawProviderReplacementArgs(content: string): string[] {
 	});
 }
 
-function withOpenClawProviderMode(
-	patchContent: string,
-	mode: "merge" | "replace",
-): string {
+function withOpenClawProviderMode(patchContent: string, mode: "merge" | "replace"): string {
 	const parsed = JSON.parse(patchContent) as unknown;
 	const root = recordValue(parsed);
 	if (!root) return patchContent;

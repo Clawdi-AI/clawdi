@@ -434,9 +434,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		const intendedConfig = JSON.parse(intendedPatch.content);
 		const appliedConfig = JSON.parse(readFileSync(configPath, "utf8"));
 		expect(appliedConfig.models.mode).toBe("replace");
-		expect(appliedConfig.models.providers.clawdi).toEqual(
-			intendedConfig.models.providers.clawdi,
-		);
+		expect(appliedConfig.models.providers.clawdi).toEqual(intendedConfig.models.providers.clawdi);
 		expect(appliedConfig.models.providers.clawdi.models).toEqual(
 			intendedConfig.models.providers.clawdi.models,
 		);
