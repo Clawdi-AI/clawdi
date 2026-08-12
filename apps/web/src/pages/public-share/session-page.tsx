@@ -1,10 +1,5 @@
-import type { components, paths } from "@clawdi/shared/api";
-import { auth } from "@clerk/tanstack-react-start/server";
-import { Link, notFound } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
+import { Link } from "@tanstack/react-router";
 import { Clock, Hash, MessageSquare, Zap } from "lucide-react";
-import createClient from "openapi-fetch";
-import { z } from "zod";
 import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { ModelBadge } from "@/components/meta/model-badge";
@@ -17,16 +12,16 @@ import { NoAccess } from "@/components/share/no-access";
 import { PublicShareControls } from "@/components/share/public-share-controls";
 import { SignInToView } from "@/components/share/sign-in-to-view";
 import { TimeTooltip } from "@/components/time-tooltip";
-import { env } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
 import { formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
+import type { PublicShareResult } from "./session-page.functions";
 
 /**
  * Public share page for a Clawdi session.
  *
  * SSR-capable route component — must work for curl, link unfurlers, and
- * agents that don't run JavaScript. Server-only auth and data access stay
- * behind `getPublicShareData` so client hydration uses the RPC boundary.
+ * agents that don't run JavaScript. The route loader owns server data so
+ * initial hydration reuses dehydrated data without rerunning the loader fetch.
  * Mirrors the dashboard `/sessions/[id]` layout
  * (DetailTitle / DetailMeta / SessionSidebar / DetailStats / message
  * stream) so a visitor's view of a session looks the same as the owner's
@@ -50,68 +45,15 @@ import { formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
  *   404 → `notFound()` (session doesn't exist)
  */
 
-const PAGE_SIZE = 100;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type PublicSharePageResult = Exclude<PublicShareResult, { kind: "not-found" }>;
 
-type PublicShare = components["schemas"]["PublicSessionResponse"];
-type PublicMessagesPage = components["schemas"]["SessionMessagesPage"];
-
-type FetchResult =
-	| { kind: "ok"; share: PublicShare; messagesPage: PublicMessagesPage }
-	| { kind: "unauthorized" }
-	| { kind: "forbidden" }
-	| { kind: "not-found" };
-
-/**
- * Authentication and both API reads stay inside this server function so
- * Clerk's server runtime and the JWT never enter the client route chunk.
- */
-const getPublicShareData = createServerFn({ method: "GET" })
-	.validator(z.object({ sessionId: z.string().regex(UUID_RE) }))
-	.handler(async ({ data }): Promise<FetchResult> => {
-		let token: string | null;
-		if (env.VITE_DEV_AUTH_BYPASS) {
-			token = env.VITE_DEV_AUTH_TOKEN;
-		} else {
-			const { getToken } = await auth();
-			token = await getToken();
-		}
-
-		const api = createClient<paths>({
-			baseUrl: env.VITE_CLAWDI_API_URL,
-			headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-		});
-		const shareResult = await api.GET("/v1/public/sessions/{session_id}", {
-			params: { path: { session_id: data.sessionId } },
-			cache: "no-store",
-		});
-		if (shareResult.response.status === 404) return { kind: "not-found" };
-		if (shareResult.response.status === 401) return { kind: "unauthorized" };
-		if (shareResult.response.status === 403) return { kind: "forbidden" };
-		if (shareResult.error !== undefined) {
-			throw new Error(`backend returned ${shareResult.response.status}`);
-		}
-
-		const messagesResult = await api.GET("/v1/public/sessions/{session_id}/messages", {
-			params: {
-				path: { session_id: data.sessionId },
-				query: { offset: 0, limit: PAGE_SIZE },
-			},
-			cache: "no-store",
-		});
-		const messagesPage =
-			messagesResult.error === undefined
-				? messagesResult.data
-				: { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
-
-		return { kind: "ok", share: shareResult.data, messagesPage };
-	});
-
-export default async function PublicSharePage({ id }: { id: string }) {
-	if (!UUID_RE.test(id)) throw notFound();
-
-	const result = await getPublicShareData({ data: { sessionId: id } });
-	if (result.kind === "not-found") throw notFound();
+export default function PublicSharePage({
+	id,
+	result,
+}: {
+	id: string;
+	result: PublicSharePageResult;
+}) {
 	if (result.kind === "unauthorized") return <SignInToView shareUrl={`/s/${id}`} />;
 	if (result.kind === "forbidden") return <NoAccess />;
 
