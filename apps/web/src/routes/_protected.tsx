@@ -1,9 +1,11 @@
 import { auth } from "@clerk/tanstack-react-start/server";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { setResponseHeader } from "@tanstack/react-start/server";
 import { env } from "@/lib/env";
 
 const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
+	setResponseHeader("cache-control", "no-store");
 	if (env.VITE_DEV_AUTH_BYPASS) return { userId: "dev_browser" };
 	const { userId } = await auth();
 	return { userId };

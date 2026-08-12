@@ -41,6 +41,16 @@ export default defineConfig(({ mode }) => {
 		resolve: {
 			tsconfigPaths: true,
 		},
-		plugins: [tanstackStart(), nitro(), tailwindcss(), viteReact(), ...sentryPlugins],
+		plugins: [
+			tanstackStart({
+				importProtection: {
+					client: { specifiers: ["@clerk/tanstack-react-start/server"] },
+				},
+			}),
+			nitro(),
+			tailwindcss(),
+			viteReact(),
+			...sentryPlugins,
+		],
 	};
 });
