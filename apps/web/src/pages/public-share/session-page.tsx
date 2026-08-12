@@ -1,9 +1,10 @@
 import type { components, paths } from "@clawdi/shared/api";
 import { auth } from "@clerk/tanstack-react-start/server";
 import { Link, notFound } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
 import { Clock, Hash, MessageSquare, Zap } from "lucide-react";
 import createClient from "openapi-fetch";
-import { cache } from "react";
+import { z } from "zod";
 import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { ModelBadge } from "@/components/meta/model-badge";
@@ -23,8 +24,10 @@ import { formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 /**
  * Public share page for a Clawdi session.
  *
- * Server component — must work for curl, link unfurlers, and agents that
- * don't run JavaScript. Mirrors the dashboard `/sessions/[id]` layout
+ * SSR-capable route component — must work for curl, link unfurlers, and
+ * agents that don't run JavaScript. Server-only auth and data access stay
+ * behind `getPublicShareData` so client hydration uses the RPC boundary.
+ * Mirrors the dashboard `/sessions/[id]` layout
  * (DetailTitle / DetailMeta / SessionSidebar / DetailStats / message
  * stream) so a visitor's view of a session looks the same as the owner's
  * — minus owner-only chrome (no visibility toggle, no breadcrumb, no
@@ -54,70 +57,65 @@ type PublicShare = components["schemas"]["PublicSessionResponse"];
 type PublicMessagesPage = components["schemas"]["SessionMessagesPage"];
 
 type FetchResult =
-	| { kind: "ok"; share: PublicShare }
+	| { kind: "ok"; share: PublicShare; messagesPage: PublicMessagesPage }
 	| { kind: "unauthorized" }
 	| { kind: "forbidden" }
 	| { kind: "not-found" };
 
 /**
- * `token` is passed as an argument (rather than calling `auth()` inside)
- * because Clerk's `auth()` returns an object with non-serializable refs
- * that React's `cache()` chokes on. Caller resolves the JWT once outside
- * this boundary.
+ * Authentication and both API reads stay inside this server function so
+ * Clerk's server runtime and the JWT never enter the client route chunk.
  */
-const fetchShare = cache(async (sessionId: string, token: string | null): Promise<FetchResult> => {
-	const api = createPublicApi(token);
-	const result = await api.GET("/v1/public/sessions/{session_id}", {
-		params: { path: { session_id: sessionId } },
-		cache: "no-store",
-	});
-	if (result.response.status === 404) return { kind: "not-found" };
-	if (result.response.status === 401) return { kind: "unauthorized" };
-	if (result.response.status === 403) return { kind: "forbidden" };
-	if (result.error !== undefined) throw new Error(`backend returned ${result.response.status}`);
-	return { kind: "ok", share: result.data };
-});
+const getPublicShareData = createServerFn({ method: "GET" })
+	.validator(z.object({ sessionId: z.string().regex(UUID_RE) }))
+	.handler(async ({ data }): Promise<FetchResult> => {
+		let token: string | null;
+		if (env.VITE_DEV_AUTH_BYPASS) {
+			token = env.VITE_DEV_AUTH_TOKEN;
+		} else {
+			const { getToken } = await auth();
+			token = await getToken();
+		}
 
-function createPublicApi(token: string | null) {
-	return createClient<paths>({
-		baseUrl: env.VITE_CLAWDI_API_URL,
-		headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-	});
-}
+		const api = createClient<paths>({
+			baseUrl: env.VITE_CLAWDI_API_URL,
+			headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+		});
+		const shareResult = await api.GET("/v1/public/sessions/{session_id}", {
+			params: { path: { session_id: data.sessionId } },
+			cache: "no-store",
+		});
+		if (shareResult.response.status === 404) return { kind: "not-found" };
+		if (shareResult.response.status === 401) return { kind: "unauthorized" };
+		if (shareResult.response.status === 403) return { kind: "forbidden" };
+		if (shareResult.error !== undefined) {
+			throw new Error(`backend returned ${shareResult.response.status}`);
+		}
 
-async function getOptionalToken(): Promise<string | null> {
-	if (env.VITE_DEV_AUTH_BYPASS) return env.VITE_DEV_AUTH_TOKEN;
-	const { getToken } = await auth();
-	return await getToken();
-}
+		const messagesResult = await api.GET("/v1/public/sessions/{session_id}/messages", {
+			params: {
+				path: { session_id: data.sessionId },
+				query: { offset: 0, limit: PAGE_SIZE },
+			},
+			cache: "no-store",
+		});
+		const messagesPage =
+			messagesResult.error === undefined
+				? messagesResult.data
+				: { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 
-async function fetchFirstMessages(
-	sessionId: string,
-	token: string | null,
-): Promise<PublicMessagesPage> {
-	const api = createPublicApi(token);
-	const result = await api.GET("/v1/public/sessions/{session_id}/messages", {
-		params: { path: { session_id: sessionId }, query: { offset: 0, limit: PAGE_SIZE } },
-		cache: "no-store",
+		return { kind: "ok", share: shareResult.data, messagesPage };
 	});
-	if (result.error !== undefined) {
-		// Soft-failure: render the header even if messages errored.
-		return { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
-	}
-	return result.data;
-}
 
 export default async function PublicSharePage({ id }: { id: string }) {
 	if (!UUID_RE.test(id)) throw notFound();
 
-	const token = await getOptionalToken();
-	const result = await fetchShare(id, token);
+	const result = await getPublicShareData({ data: { sessionId: id } });
 	if (result.kind === "not-found") throw notFound();
 	if (result.kind === "unauthorized") return <SignInToView shareUrl={`/s/${id}`} />;
 	if (result.kind === "forbidden") return <NoAccess />;
 
-	const share = result.share;
-	const messagesPage = await fetchFirstMessages(id, token);
+	const { share, messagesPage } = result;
 
 	const summaryText = formatSessionSummary(share.summary) || `Session ${share.id.slice(0, 8)}`;
 	const totalTokens = (share.input_tokens ?? 0) + (share.output_tokens ?? 0);
