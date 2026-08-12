@@ -4,19 +4,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 type GlobalWalletBalanceView =
 	typeof import("@/hosted/global-wallet-balance").GlobalWalletBalanceView;
-type HostedWalletBalanceApplicable =
-	typeof import("@/hosted/global-wallet-balance").hostedWalletBalanceApplicable;
+type HeaderWalletBalanceApplicable =
+	typeof import("@/components/header-wallet-balance").headerWalletBalanceApplicable;
 
 let globalWalletBalanceView: GlobalWalletBalanceView | null = null;
-let walletBalanceApplicable: HostedWalletBalanceApplicable | null = null;
+let walletBalanceApplicable: HeaderWalletBalanceApplicable | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
 	process.env.VITE_CLAWDI_DEPLOY_API_URL = "http://localhost:50021";
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/global-wallet-balance");
+	const headerModule = await import("@/components/header-wallet-balance");
 	globalWalletBalanceView = module.GlobalWalletBalanceView;
-	walletBalanceApplicable = module.hostedWalletBalanceApplicable;
+	walletBalanceApplicable = headerModule.headerWalletBalanceApplicable;
 });
 
 describe("global Wallet balance applicability", () => {
@@ -32,6 +33,9 @@ describe("global Wallet balance applicability", () => {
 		expect(
 			walletBalanceApplicable({ canCreateCloudAgents: false, existingCloudDeploymentCount: 0 }),
 		).toBe(false);
+		expect(
+			walletBalanceApplicable({ canCreateCloudAgents: false, existingCloudDeploymentCount: null }),
+		).toBe(false);
 	});
 });
 
@@ -39,11 +43,16 @@ describe("global Wallet balance presentation", () => {
 	test("renders a real balance as the compact global action", () => {
 		if (!globalWalletBalanceView) throw new Error("global Wallet balance was not loaded");
 		const markup = renderToStaticMarkup(
-			createElement(globalWalletBalanceView, { state: "ready", balanceUsd: "1250.5" }),
+			createElement(globalWalletBalanceView, {
+				state: "ready",
+				balanceUsd: "1250.5",
+				onOpenWallet: () => undefined,
+			}),
 		);
 
 		expect(markup).toContain("$1,250.50");
 		expect(markup).toContain("Wallet balance $1,250.50. Open Wallet settings");
+		expect(markup).toContain('title="Wallet balance $1,250.50. Open Wallet settings"');
 		expect(markup).toContain('data-testid="global-wallet-balance"');
 		expect(markup).toContain("lucide-wallet-cards");
 		expect(markup).not.toMatch(/>\s*Wallet\s*</);
@@ -59,6 +68,7 @@ describe("global Wallet balance presentation", () => {
 		);
 
 		expect(loading).toContain('data-slot="skeleton"');
+		expect(loading).toContain("disabled");
 		expect(loading).toContain("Wallet balance loading");
 		expect(unavailable).toContain("Wallet balance unavailable");
 		expect(loading).toContain("lucide-wallet-cards");

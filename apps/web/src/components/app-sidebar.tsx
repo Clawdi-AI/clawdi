@@ -204,6 +204,7 @@ const restrictRailDragToVerticalAxis: Modifier = ({ transform }) => ({
 });
 
 const RAIL_DND_MODIFIERS = [restrictRailDragToVerticalAxis];
+const RAIL_COLD_LOADING_SLOTS = ["primary", "secondary"] as const;
 
 function reorderEnvironmentsForCache(
 	current: SidebarEnvironment[],
@@ -926,14 +927,30 @@ function SortableAgentRailItem({
 	);
 }
 
+function AgentRailLoadingSlots() {
+	return RAIL_COLD_LOADING_SLOTS.map((slot) => (
+		<SidebarMenuItem
+			key={slot}
+			data-testid="app-sidebar-agent-loading-slot"
+			aria-hidden="true"
+			className="flex h-[4.25rem] w-full flex-col items-center justify-center gap-1 px-1 py-1"
+		>
+			<Skeleton className="size-10 shrink-0 rounded-md" />
+			<Skeleton className="h-2.5 w-12 max-w-full" />
+		</SidebarMenuItem>
+	));
+}
+
 function FocusRailContent({
 	agents,
+	loading,
 	activeAgentId,
 	activeDeploymentSelector,
 	onNavigate,
 	showTooltips = true,
 }: {
 	agents: AgentTile[];
+	loading: boolean;
 	activeAgentId: string | null;
 	activeDeploymentSelector: string | null;
 	onNavigate?: () => void;
@@ -1079,6 +1096,9 @@ function FocusRailContent({
 						</IconChip>
 					</RailTileButton>
 				</SidebarMenu>
+				<SidebarMenu className="w-full items-center">
+					<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
+				</SidebarMenu>
 
 				<SidebarSeparator className="mx-auto w-8" />
 
@@ -1114,7 +1134,7 @@ function FocusRailContent({
 							))}
 						</SortableContext>
 					</DndContext>
-					<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
+					{loading ? <AgentRailLoadingSlots /> : null}
 				</SidebarMenu>
 			</SidebarContent>
 		</>
@@ -1306,10 +1326,12 @@ function FocusStatusFallback() {
 
 function RailSidebar({
 	agents,
+	loading,
 	activeAgentId,
 	activeDeploymentSelector,
 }: {
 	agents: AgentTile[];
+	loading: boolean;
 	activeAgentId: string | null;
 	activeDeploymentSelector: string | null;
 }) {
@@ -1323,6 +1345,7 @@ function RailSidebar({
 		>
 			<FocusRailContent
 				agents={agents}
+				loading={loading}
 				activeAgentId={activeAgentId}
 				activeDeploymentSelector={activeDeploymentSelector}
 			/>
@@ -1643,6 +1666,7 @@ export function AppSidebar({
 		? hostedAgentTiles !== null && hostedMembershipResolved
 		: hydratedEnvironments !== undefined;
 	const agents = unifiedAgentListEnabled ? (hostedAgentTiles ?? []) : selfManagedTiles;
+	const agentRailColdLoading = !agentsLoaded && agents.length === 0;
 	const activeAgentTile = activeAgentId
 		? (agents.find((tile) =>
 				agentTileMatchesRouteId(tile, activeAgentId, activeDeploymentSelector),
@@ -1743,6 +1767,7 @@ export function AppSidebar({
 			{!isMobile ? (
 				<RailSidebar
 					agents={agents}
+					loading={agentRailColdLoading}
 					activeAgentId={activeAgentId}
 					activeDeploymentSelector={activeDeploymentSelector}
 				/>
@@ -1794,6 +1819,7 @@ export function AppSidebar({
 						>
 							<FocusRailContent
 								agents={agents}
+								loading={agentRailColdLoading}
 								activeAgentId={activeAgentId}
 								activeDeploymentSelector={activeDeploymentSelector}
 								onNavigate={closeMobileSidebar}

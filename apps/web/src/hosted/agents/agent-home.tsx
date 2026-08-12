@@ -230,13 +230,13 @@ export function AgentHome({
 				</div>
 			);
 		}
-		return <ConnectedAgentDetailSkeleton hosted />;
+		return <ConnectedAgentDetailSkeleton hosted section={section} />;
 	}
 
 	// Hold a skeleton until the deployment lookup settles, so a hosted agent
 	// doesn't flash the connected detail (and fire its queries) first.
 	if (isLoading) {
-		return <ConnectedAgentDetailSkeleton hosted />;
+		return <ConnectedAgentDetailSkeleton hosted section={section} />;
 	}
 
 	if (error && requestedHostedAgent && !deployment) {

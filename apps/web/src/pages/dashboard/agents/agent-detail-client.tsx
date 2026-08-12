@@ -28,7 +28,7 @@ export function AgentDetailClient({
 }) {
 	if (AgentHome) {
 		return (
-			<Suspense fallback={<ConnectedAgentDetailSkeleton hosted />}>
+			<Suspense fallback={<ConnectedAgentDetailSkeleton hosted section={section} />}>
 				<AgentHome environmentId={environmentId} section={section} routeSearch={routeSearch} />
 			</Suspense>
 		);
