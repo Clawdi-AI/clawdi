@@ -779,9 +779,7 @@ export function applySystemdRuntimeUpdate(
 		const state = systemdUnitManagerState(paths, "system", unit);
 		if (forcedStopUnits.has(unit)) return systemdUnitAbsentOrInactive(state);
 		return (
-			state.loadState !== "not-found" &&
-			state.activeState === "active" &&
-			!state.needDaemonReload
+			state.loadState !== "not-found" && state.activeState === "active" && !state.needDaemonReload
 		);
 	});
 	const userConverged = user.present.every((unit) => {
