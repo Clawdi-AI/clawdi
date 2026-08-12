@@ -3052,7 +3052,22 @@ describe("runtime manifest datasource", () => {
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const hermesInstaller = join(root, "install-hermes.sh");
+		const hermesConfig = join(home, ".hermes", "config.yaml");
 		mkdirSync(home, { recursive: true });
+		mkdirSync(dirname(hermesConfig), { recursive: true });
+		writeFileSync(
+			hermesConfig,
+			[
+				"providers:",
+				"  clawdi:",
+				"    api: https://ai-gateway.test/v1",
+				"    key_env: OPENAI_API_KEY",
+				"    models:",
+				"      gpt-5.5: {}",
+				"    transport: openai_chat",
+				"",
+			].join("\n"),
+		);
 		writeFileSync(
 			hermesInstaller,
 			`#!/usr/bin/env bash
@@ -3099,10 +3114,13 @@ chmod +x "$HOME/.local/bin/hermes"
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
-								hermes: hostedHermesRuntime({}),
+								hermes: hostedHermesRuntime({
+									provider_ids: ["clawdi"],
+									primary_model: { provider_id: "clawdi", model: "gpt-5.5" },
+								}),
 							},
 							providers: {
-								default: {
+								clawdi: {
 									kind: "openai-compatible",
 									type: "custom_openai_compatible",
 									baseUrl: "https://ai-gateway.test/v1",
@@ -3125,18 +3143,59 @@ chmod +x "$HOME/.local/bin/hermes"
 			const paths = getRuntimePaths();
 			const loaded = await loadRuntimeManifest(paths);
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+			const provider = hostedAiProviderCatalog(loaded.manifest, "hermes")?.catalog.providers[0];
+			expect(provider?.runtime_env_name).toBe("CLAWDI_MANAGED_OPENAI_API_KEY");
+			expectProviderEgressProfileUsesSecretRef(
+				loaded.manifest.egressProfiles?.profiles,
+				"secret://provider.default.apiKey",
+				"sk-runtime",
+			);
 			const convergence = convergeRuntimeManifest(loaded, paths);
 			expect(convergence.installErrors).toEqual([]);
 			const hermesEnv = readSystemdEnvFile(paths, "hermes-gateway");
 			const hermesDashboardEnv = readSystemdEnvFile(paths, "clawdi-hermes-dashboard");
+			const hermesRunConfig = expectRecord(
+				JSON.parse(readFileSync(join(paths.runConfigRoot, "hermes.json"), "utf-8")),
+				"Hermes run config",
+			);
+			const hermesDashboardRunConfig = expectRecord(
+				JSON.parse(readFileSync(join(paths.runConfigRoot, "hermes+dashboard.json"), "utf-8")),
+				"Hermes dashboard run config",
+			);
+			const providers = expectRecord(readHermesConfigYaml(home).providers, "Hermes providers");
+			const managedProvider = expectRecord(providers.clawdi, "Hermes managed provider");
+			const hermesRunEnv = expectRecord(hermesRunConfig.env, "Hermes run environment");
+			const hermesDashboardRunEnv = expectRecord(
+				hermesDashboardRunConfig.env,
+				"Hermes dashboard run environment",
+			);
 
 			expect(convergence.outputs.systemdSystemUnits).toContain(
 				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
 			);
+			expect(managedProvider.key_env).toBe("CLAWDI_MANAGED_OPENAI_API_KEY");
 			expect(hermesEnv).not.toContain("CLAWDI_OPENCLAW_API_KEY");
-			expect(hermesEnv).toContain('OPENAI_API_KEY="clawdi-egress-placeholder"');
+			expect(hermesEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="clawdi-egress-placeholder"');
+			expect(hermesEnv).not.toMatch(/^OPENAI_API_KEY=/m);
 			expect(hermesDashboardEnv).not.toContain("CLAWDI_OPENCLAW_API_KEY");
-			expect(hermesDashboardEnv).toContain('OPENAI_API_KEY="clawdi-egress-placeholder"');
+			expect(hermesDashboardEnv).toContain(
+				'CLAWDI_MANAGED_OPENAI_API_KEY="clawdi-egress-placeholder"',
+			);
+			expect(hermesDashboardEnv).not.toMatch(/^OPENAI_API_KEY=/m);
+			expect(hermesRunEnv.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
+			expect(hermesRunEnv.OPENAI_API_KEY).toBeUndefined();
+			expect(hermesDashboardRunEnv.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
+			expect(hermesDashboardRunEnv.OPENAI_API_KEY).toBeUndefined();
+			expectEgressProfileBundleUsesSecretRef(
+				convergence.outputs.egressProfileBundle,
+				"secret://provider.default.apiKey",
+				"sk-runtime",
+			);
+			if (!convergence.outputs.egressProfileBundle) {
+				throw new Error("expected managed provider egress profile bundle");
+			}
+			const egressProfileBundle = readFileSync(convergence.outputs.egressProfileBundle, "utf-8");
+			expect(egressProfileBundle).toContain('"value": "clawdi-egress-placeholder"');
 			expect(readSystemdUserServiceConfig(paths, "hermes-gateway")).not.toContain("sk-runtime");
 			expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).not.toContain(
 				"sk-runtime",
