@@ -39,7 +39,6 @@ from app.services.whatsapp_baileys import (
     decide_whatsapp_relay,
     describe_whatsapp_jid_for_log,
     encode_buffer_json,
-    encrypt_whatsapp_group_message_for_sender_key,
     forward_iq_over,
     mint_whatsapp_synthetic_creds,
     parse_agent_bundle,
@@ -54,6 +53,7 @@ from app.services.whatsapp_baileys import (
     whatsapp_text_from_message_proto,
     whatsapp_text_message_proto,
 )
+from tests.whatsapp_helpers import encrypt_whatsapp_group_message_for_sender_key
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 

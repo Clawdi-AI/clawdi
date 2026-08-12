@@ -374,8 +374,6 @@ async def test_channel_debug_health_reports_whatsapp_native_transport_status(
         "mode": "none",
         "reason": "provider-transport-unavailable",
         "supportsOutboundMessages": False,
-        "supportsRawRelay": False,
-        "supportsIqQueries": False,
     }
 
     account_id = UUID(created["id"])
@@ -391,9 +389,7 @@ async def test_channel_debug_health_reports_whatsapp_native_transport_status(
     )
     assert health["nativeTransport"] == {
         "available": True,
-        "mode": "in_process",
+        "mode": "sidecar",
         "reason": None,
         "supportsOutboundMessages": True,
-        "supportsRawRelay": True,
-        "supportsIqQueries": True,
     }

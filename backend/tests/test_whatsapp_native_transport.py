@@ -120,8 +120,6 @@ def test_whatsapp_provider_transport_health_reports_disconnected_adapter():
     assert status.available is False
     assert status.reason == "provider-transport-disconnected"
     assert status.supports_outbound_messages is True
-    assert status.supports_raw_relay is True
-    assert status.supports_iq_queries is True
 
 
 @pytest.mark.asyncio
@@ -433,8 +431,6 @@ async def test_whatsapp_provider_transport_health_reports_sidecar_mode():
     assert status.available is True
     assert status.mode == "sidecar"
     assert status.supports_outbound_messages is True
-    assert status.supports_raw_relay is True
-    assert status.supports_iq_queries is True
 
 
 @pytest.mark.parametrize(

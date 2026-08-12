@@ -33,7 +33,7 @@ export type ProviderMessageEvent = {
 
 export type ProviderMessageEventInput = Omit<ProviderMessageEvent, "sequence">;
 
-export type ProviderInboxConfig = {
+type ProviderInboxConfig = {
 	maxEvents: number;
 	maxBytes: number;
 };
@@ -1173,9 +1173,3 @@ function secureStateFiles(sessionDir: string): void {
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-export const AUDITED_PROVIDER_STATE_METADATA = {
-	schemaVersion: STATE_SCHEMA_VERSION,
-	baileysRelease: AUDITED_BAILEYS_RELEASE,
-	whatsappWebVersion: AUDITED_WHATSAPP_WEB_VERSION_TEXT,
-} as const;

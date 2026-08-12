@@ -50,9 +50,3 @@ class ChannelDeliveryWorker:
                     await asyncio.wait_for(stop_event.wait(), timeout=self._poll_interval_seconds)
                 except TimeoutError:
                     pass
-
-
-async def run_channel_delivery_once(
-    sessionmaker: async_sessionmaker[AsyncSession],
-) -> UUID | None:
-    return await ChannelDeliveryWorker(sessionmaker).run_once()

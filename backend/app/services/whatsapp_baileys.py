@@ -1334,19 +1334,6 @@ class GroupCipherBackend:
             self._store.save(key_name, _copy_sender_key_record(record))
 
 
-def encrypt_whatsapp_group_message_for_sender_key(
-    *,
-    axolotl_bytes: bytes,
-    plaintext: bytes,
-) -> bytes:
-    record: SenderKeyRecordSnapshot = {
-        "version": 1,
-        "key": hashlib.sha256(axolotl_bytes).digest(),
-        "iteration": 0,
-    }
-    return _encrypt_sender_key_record(record, plaintext)
-
-
 def _copy_sender_key_record(
     record: SenderKeyRecordSnapshot,
 ) -> SenderKeyRecordSnapshot:
@@ -1496,22 +1483,6 @@ def decide_whatsapp_relay(
     )
 
 
-async def find_whatsapp_binding_by_jids(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    remote_jid: str,
-    alt_jid: str | None = None,
-) -> ChannelBinding | None:
-    lookup = await resolve_whatsapp_binding_by_jids(
-        db,
-        account=account,
-        remote_jid=remote_jid,
-        alt_jid=alt_jid,
-    )
-    return lookup.binding
-
-
 async def resolve_whatsapp_binding_by_jids(
     db: AsyncSession,
     *,
@@ -1644,16 +1615,6 @@ def _decrypt_whatsapp_auth_cert(row: ChannelWhatsAppAuthCert) -> WhatsAppAuthCer
                 row.intermediate_private_key_nonce,
             )
         ),
-    )
-
-
-def serialize_whatsapp_auth_cert(cert: WhatsAppAuthCert) -> dict[str, JsonValue]:
-    return _encoded_json_object(
-        {
-            "SERIAL": cert.serial,
-            "ISSUER": cert.issuer,
-            "PUBLIC_KEY": buffer_json(cert.root_public_key),
-        }
     )
 
 
@@ -2641,22 +2602,12 @@ def _encrypt_signal_peer_record(
     return bytes([version]) + message_proto + mac
 
 
-def _encrypt_sender_key_record(record: SenderKeyRecordSnapshot, plaintext: bytes) -> bytes:
-    iteration = record["iteration"]
-    nonce = _record_nonce(b"sender-key", iteration)
-    return nonce + AESGCM(record["key"]).encrypt(nonce, plaintext, None)
-
-
 def _decrypt_sender_key_record(record: SenderKeyRecordSnapshot, ciphertext: bytes) -> bytes:
     if len(ciphertext) < 13:
         raise ValueError("sender-key ciphertext too short")
     nonce = ciphertext[:12]
     body = ciphertext[12:]
     return AESGCM(record["key"]).decrypt(nonce, body, None)
-
-
-def _record_nonce(prefix: bytes, counter: int) -> bytes:
-    return hashlib.sha256(prefix + counter.to_bytes(8, "big")).digest()[:12]
 
 
 def _stamp_whatsapp_self_identity(

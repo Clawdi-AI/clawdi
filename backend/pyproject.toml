@@ -288,6 +288,7 @@ strict = [
     "app/services/user_provisioning.py",
     "app/services/vault_crypto.py",
     "app/services/whatsapp_baileys.py",
+    "app/services/whatsapp_delivery_transport.py",
     "app/services/whatsapp_device_onboarding.py",
     "app/services/whatsapp_managed_onboarding.py",
     "app/services/whatsapp_native_transport.py",

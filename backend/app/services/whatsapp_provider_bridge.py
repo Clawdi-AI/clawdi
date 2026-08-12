@@ -22,6 +22,7 @@ from app.models.channel import (
     ChannelBinding,
     ChannelBindingAlias,
 )
+from app.services import whatsapp_delivery_transport
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
     channel_control_command_event_was_handled,
@@ -80,11 +81,9 @@ class WhatsAppProviderNodeRelayResult:
 @dataclass(frozen=True)
 class WhatsAppProviderTransportStatus:
     available: bool
-    mode: Literal["in_process", "sidecar", "none"]
+    mode: Literal["sidecar", "none"]
     reason: str | None
     supports_outbound_messages: bool
-    supports_raw_relay: bool
-    supports_iq_queries: bool
 
     def as_dict(self) -> dict[str, JsonValue]:
         return {
@@ -92,8 +91,6 @@ class WhatsAppProviderTransportStatus:
             "mode": self.mode,
             "reason": self.reason,
             "supportsOutboundMessages": self.supports_outbound_messages,
-            "supportsRawRelay": self.supports_raw_relay,
-            "supportsIqQueries": self.supports_iq_queries,
         }
 
 
@@ -143,17 +140,13 @@ def whatsapp_provider_transport_status(account_id: UUID) -> WhatsAppProviderTran
             mode="none",
             reason="provider-transport-unavailable",
             supports_outbound_messages=False,
-            supports_raw_relay=False,
-            supports_iq_queries=False,
         )
     connected = _transport_connected(transport)
     return WhatsAppProviderTransportStatus(
         available=connected,
-        mode=_transport_mode(transport),
+        mode="sidecar",
         reason=None if connected else "provider-transport-disconnected",
-        supports_outbound_messages=callable(getattr(transport, "relay_outbound_message", None)),
-        supports_raw_relay=callable(getattr(transport, "relay_raw_node", None)),
-        supports_iq_queries=callable(getattr(transport, "query_iq", None)),
+        supports_outbound_messages=True,
     )
 
 
@@ -417,9 +410,7 @@ async def relay_whatsapp_provider_payload(
     text: str,
     provider_payload: object | None,
 ) -> tuple[str | None, dict[str, JsonValue]]:
-    from app.services.whatsapp_sidecar_registry import resolve_whatsapp_delivery_transport
-
-    transport = resolve_whatsapp_delivery_transport(account)
+    transport = whatsapp_delivery_transport.resolve_whatsapp_delivery_transport(account)
     if transport is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -948,13 +939,6 @@ def _transport_connected(transport: WhatsAppProviderTransport) -> bool:
     except Exception:
         return False
     return connected if isinstance(connected, bool) else True
-
-
-def _transport_mode(
-    transport: WhatsAppProviderTransport,
-) -> Literal["in_process", "sidecar"]:
-    mode = getattr(transport, "transport_mode", "in_process")
-    return "sidecar" if mode == "sidecar" else "in_process"
 
 
 def _query_iq(

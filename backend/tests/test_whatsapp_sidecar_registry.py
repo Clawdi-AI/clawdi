@@ -5,7 +5,9 @@ from uuid import UUID
 
 import pytest
 
+import app.services.whatsapp_delivery_transport as delivery_transport_module
 import app.services.whatsapp_sidecar_registry as sidecar_registry_module
+from app.services.whatsapp_delivery_transport import resolve_whatsapp_delivery_transport
 from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarConfig,
     WhatsAppProviderMessageEvent,
@@ -16,13 +18,10 @@ from app.services.whatsapp_provider_bridge import (
 )
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
-    resolve_whatsapp_delivery_transport,
 )
 
 
 class _FakeSidecarClient:
-    transport_mode = "sidecar"
-
     def __init__(self, config: WhatsAppBaileysSidecarConfig) -> None:
         self.config = config
         self.connected = False
@@ -115,12 +114,12 @@ def test_delivery_transport_resolves_custom_session(
             return client
 
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "_configured_delivery_service",
         lambda: service_config,
     )
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "_delivery_sidecar_service",
         FakeDeliveryService(),
     )

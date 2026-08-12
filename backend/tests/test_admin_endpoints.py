@@ -54,8 +54,6 @@ def _configured_clerk_issuer(monkeypatch):
 
 
 class _ManagedOnboardingSidecar:
-    transport_mode = "sidecar"
-
     def __init__(self) -> None:
         self.connected = False
         self.registered = False

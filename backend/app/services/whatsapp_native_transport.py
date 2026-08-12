@@ -190,8 +190,8 @@ class WhatsAppNativeUpstreamClient(Protocol):
 class WhatsAppProviderTransportAdapter:
     """Map authorized provider operations to the physical Baileys transport.
 
-    The wrapped client can be in-process or a narrow HTTP client. It never owns
-    Agent synthetic auth state and exposes no application-level channel adapter.
+    The wrapped client never owns Agent synthetic auth state and exposes no
+    application-level channel adapter.
     """
 
     def __init__(self, client: WhatsAppNativeUpstreamClient) -> None:
@@ -200,11 +200,6 @@ class WhatsAppProviderTransportAdapter:
     @property
     def connected(self) -> bool:
         return self._client.connected
-
-    @property
-    def transport_mode(self) -> Literal["in_process", "sidecar"]:
-        mode = getattr(self._client, "transport_mode", "in_process")
-        return "sidecar" if mode == "sidecar" else "in_process"
 
     async def relay_outbound_message(self, message: WhatsAppOutboundMessage) -> str | None:
         return await self._client.relay_message(
@@ -231,8 +226,6 @@ class WhatsAppBaileysSidecarClient:
     routing, chunking, allowlist, or product database knowledge. The sidecar owns
     only Baileys socket/session/protocol operations.
     """
-
-    transport_mode: Literal["sidecar"] = "sidecar"
 
     def __init__(
         self,
