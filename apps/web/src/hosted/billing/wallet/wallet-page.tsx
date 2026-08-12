@@ -192,7 +192,7 @@ export function WalletPage() {
 					<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
 				</div>
 
-				<X402Card enabled={w.x402_enabled === true} />
+				<X402Card />
 
 				{ledger.error && !ledger.data ? (
 					<ApiErrorPanel
