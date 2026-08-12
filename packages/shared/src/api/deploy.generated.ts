@@ -1920,6 +1920,14 @@ export interface components {
             availability: "complete" | "partial" | "unavailable";
             /** Unavailable Sections */
             unavailable_sections: ("totals" | "by_agent" | "by_model" | "by_day")[];
+            /**
+             * Breakdown Limit
+             * @description Maximum rows returned for each agent or model breakdown.
+             * @default 100
+             */
+            breakdown_limit: number;
+            /** Truncated Sections */
+            truncated_sections?: ("by_agent" | "by_model")[];
             /** Total Usd */
             total_usd: string | null;
             /** Total Requests */

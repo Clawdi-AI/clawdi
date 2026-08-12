@@ -39,6 +39,8 @@ const usage: DeploySchemas["V2HostedUsageSummaryResponse"] = {
 	period_end: "2026-07-31",
 	availability: "complete",
 	unavailable_sections: [],
+	breakdown_limit: 100,
+	truncated_sections: [],
 	total_usd: "0.000001",
 	total_requests: 1,
 	by_agent: [

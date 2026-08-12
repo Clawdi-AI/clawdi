@@ -20,7 +20,10 @@ import type { ComputeBillingHistoryItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatCents, formatUsdExact } from "@/hosted/billing/format";
 import { useComputeBillingHistory } from "@/hosted/billing/hooks";
-import { billingHistoryFundingLabel } from "@/hosted/billing/subscription/billing-history.logic";
+import {
+	billingHistoryEmptyStateCopy,
+	billingHistoryFundingLabel,
+} from "@/hosted/billing/subscription/billing-history.logic";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -87,6 +90,27 @@ function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
 export function BillingHistorySection() {
 	const history = useComputeBillingHistory(20);
 	const rows = history.data?.pages.flatMap((page) => page.data ?? []) ?? [];
+	const emptyState = billingHistoryEmptyStateCopy(history.hasNextPage);
+	const loadMoreControl =
+		history.hasNextPage && !history.isFetchNextPageError ? (
+			<div className="flex justify-center">
+				<Button
+					variant="outline"
+					onClick={() => void history.fetchNextPage()}
+					disabled={history.isFetchingNextPage}
+				>
+					{history.isFetchingNextPage ? "Loading…" : "Load more"}
+				</Button>
+			</div>
+		) : null;
+	const loadMoreError = history.isFetchNextPageError ? (
+		<ApiErrorPanel
+			normalizer={billingErrorNormalizer}
+			error={history.error}
+			onRetry={() => void history.fetchNextPage()}
+			title="Couldn’t load more billing history"
+		/>
+	) : null;
 
 	return (
 		<SettingsSection
@@ -113,13 +137,17 @@ export function BillingHistorySection() {
 					title="Couldn’t load billing history"
 				/>
 			) : rows.length === 0 ? (
-				<EmptyState
-					variant="inset"
-					icon={Receipt}
-					title="No billing history yet"
-					description="Paid compute invoices will appear here after the first collection."
-					className="py-8 md:p-8"
-				/>
+				<>
+					<EmptyState
+						variant="inset"
+						icon={Receipt}
+						title={emptyState.title}
+						description={emptyState.description}
+						className="py-8 md:p-8"
+					/>
+					{loadMoreControl}
+					{loadMoreError}
+				</>
 			) : (
 				<>
 					<ul className="divide-y overflow-hidden rounded-lg border sm:hidden">
@@ -181,25 +209,8 @@ export function BillingHistorySection() {
 							</TableBody>
 						</Table>
 					</div>
-					{history.hasNextPage && !history.isFetchNextPageError ? (
-						<div className="flex justify-center">
-							<Button
-								variant="outline"
-								onClick={() => void history.fetchNextPage()}
-								disabled={history.isFetchingNextPage}
-							>
-								{history.isFetchingNextPage ? "Loading…" : "Load more"}
-							</Button>
-						</div>
-					) : null}
-					{history.isFetchNextPageError ? (
-						<ApiErrorPanel
-							normalizer={billingErrorNormalizer}
-							error={history.error}
-							onRetry={() => void history.fetchNextPage()}
-							title="Couldn’t load more billing history"
-						/>
-					) : null}
+					{loadMoreControl}
+					{loadMoreError}
 				</>
 			)}
 		</SettingsSection>
