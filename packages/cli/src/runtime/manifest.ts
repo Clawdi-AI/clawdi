@@ -1950,7 +1950,7 @@ function openClawProviderAuthSdkPath(
 		return testOverride;
 	}
 	const commandPath = observation?.commandPath;
-	const resolved = resolveOpenClawProviderAuthSdkExport([
+	const resolved = resolveOpenClawProviderAuthSdkExport(home, [
 		commandPath,
 		observation?.appRoot,
 		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
@@ -2850,7 +2850,7 @@ function openClawConfigMutationSdkPath(
 	home: string,
 ): string | null {
 	const commandPath = observation.commandPath;
-	return resolveOpenClawConfigMutationSdkExport([
+	return resolveOpenClawConfigMutationSdkExport(home, [
 		commandPath,
 		observation.appRoot,
 		join(home, ".openclaw", "lib", "node_modules", "openclaw"),

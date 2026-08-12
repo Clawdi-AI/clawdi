@@ -5,9 +5,11 @@ import {
 	chmodSync,
 	chownSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -243,6 +245,14 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	const runtimeUid = 10_001;
 	const runtimeGid = 10_001;
 	const commandPath = join(runtimeHome, ".local", "bin", "openclaw");
+	const expectedNodeVersion = process.env.CLAWDI_TEST_OPENCLAW_NODE_VERSION ?? "";
+	const commandStat = lstatSync(commandPath);
+	expect(commandStat.isFile()).toBe(true);
+	expect(commandStat.isSymbolicLink()).toBe(false);
+	expect(commandStat.size).toBe(172);
+	expect(realpathSync(join(runtimeHome, ".local", "tools", "node"))).toBe(
+		join(runtimeHome, ".local", "tools", `node-v${expectedNodeVersion}`),
+	);
 	const root = mkdtempSync(join(tmpdir(), "clawdi-real-openclaw-size-drop-"));
 	chmodSync(root, 0o755);
 	const clawdiHome = join(root, "clawdi-home");

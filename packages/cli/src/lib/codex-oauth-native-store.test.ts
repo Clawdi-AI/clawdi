@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	HERMES_CODEX_AUTH_HELPER,
 	hermesCodexAuthInvocation,
@@ -47,13 +56,23 @@ describe("native OAuth store contracts", () => {
 		);
 	}
 
-	test("resolves OpenClaw public SDK exports from the installed package", () => {
-		const packageRoot = tempRoot();
+	test("resolves OpenClaw public SDK exports through the official installer node symlink", () => {
+		const home = tempRoot();
+		const versionedNodeRoot = join(home, ".local", "tools", "node-v24.15.0");
+		const packageRoot = join(versionedNodeRoot, "lib", "node_modules", "openclaw");
 		const providerAuthPath = join(packageRoot, "provider-auth.mjs");
 		const configMutationPath = join(packageRoot, "config-mutation.mjs");
-		const commandPath = join(packageRoot, "bin", "openclaw");
-		mkdirSync(join(packageRoot, "bin"), { recursive: true });
-		writeFileSync(commandPath, "#!/bin/sh\n");
+		const commandPath = join(home, ".local", "bin", "openclaw");
+		mkdirSync(dirname(commandPath), { recursive: true });
+		mkdirSync(packageRoot, { recursive: true });
+		symlinkSync(versionedNodeRoot, join(home, ".local", "tools", "node"), "dir");
+		writeFileSync(
+			commandPath,
+			`#!/usr/bin/env bash
+set -euo pipefail
+exec "${join(home, ".local", "tools", "node", "bin", "node")}" "${join(packageRoot, "dist", "entry.js")}" "$@"
+`,
+		);
 		writeFileSync(providerAuthPath, "export const publicProviderAuth = true;\n");
 		writeFileSync(configMutationPath, "export const publicConfigMutation = true;\n");
 		writeFileSync(
@@ -68,8 +87,10 @@ describe("native OAuth store contracts", () => {
 			}),
 		);
 
-		expect(resolveOpenClawProviderAuthSdkExport([commandPath])).toBe(providerAuthPath);
-		expect(resolveOpenClawConfigMutationSdkExport([commandPath])).toBe(configMutationPath);
+		expect(lstatSync(commandPath).isFile()).toBe(true);
+		expect(lstatSync(commandPath).isSymbolicLink()).toBe(false);
+		expect(resolveOpenClawProviderAuthSdkExport(home, [commandPath])).toBe(providerAuthPath);
+		expect(resolveOpenClawConfigMutationSdkExport(home, [commandPath])).toBe(configMutationPath);
 	});
 
 	test("preserves a future Hermes store version and unrelated pool entries", () => {

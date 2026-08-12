@@ -78,11 +78,21 @@ export function nativeOAuthCredentialEvidenceFingerprint(value: unknown): string
 }
 
 function resolveOpenClawSdkExport(
+	home: string,
 	startPaths: ReadonlyArray<string | null | undefined>,
 	exportPath: `openclaw/plugin-sdk/${string}`,
 ): string | null {
 	const packageRoots = new Set<string>();
-	for (const startPath of startPaths) {
+	const officialInstallerPackageRoot = join(
+		home,
+		".local",
+		"tools",
+		"node",
+		"lib",
+		"node_modules",
+		"openclaw",
+	);
+	for (const startPath of [...startPaths, officialInstallerPackageRoot]) {
 		if (!startPath || !existsSync(startPath)) continue;
 		let current = realpathSync(startPath);
 		if (!existsSync(join(current, "package.json"))) current = dirname(current);
@@ -120,15 +130,17 @@ function resolveOpenClawSdkExport(
 }
 
 export function resolveOpenClawProviderAuthSdkExport(
+	home: string,
 	startPaths: ReadonlyArray<string | null | undefined>,
 ): string | null {
-	return resolveOpenClawSdkExport(startPaths, "openclaw/plugin-sdk/provider-auth");
+	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/provider-auth");
 }
 
 export function resolveOpenClawConfigMutationSdkExport(
+	home: string,
 	startPaths: ReadonlyArray<string | null | undefined>,
 ): string | null {
-	return resolveOpenClawSdkExport(startPaths, "openclaw/plugin-sdk/config-mutation");
+	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/config-mutation");
 }
 
 export function nativeOAuthObservation(value: unknown): NativeOAuthCredentialObservation {
