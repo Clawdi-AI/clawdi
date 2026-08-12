@@ -39,6 +39,8 @@ dependencies = [
     "boto3==1.43.14",
     "botocore==1.43.14",
     "xeddsa==1.2.0",
+    # ZoneInfo fallback for slim production images without system zoneinfo.
+    "tzdata==2026.3",
 ]
 
 [project.optional-dependencies]
@@ -323,6 +325,7 @@ DEP002 = [
     "aiofiles",           # FastAPI's UploadFile uses async file I/O internally.
     "psycopg2-binary",    # Sync PG driver kept for alembic offline-mode SQL.
     "mem0ai",             # Optional untyped SDK; loaded by the narrow Mem0 adapter at runtime.
+    "tzdata",             # IANA database loaded indirectly by the stdlib zoneinfo module.
 ]
 
 # `app/services/memory_provider_mem0.py` imports `mem0` only inside
