@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentType } from "../../src/adapters/agent-types";
 import { pull } from "../../src/commands/pull";
 import {
 	readProjectSkillMaterialization,
@@ -22,25 +23,17 @@ import {
 
 const TEST_PROJECT_ID = "00000000-0000-0000-0000-000000000099";
 
-type AgentKey = "claude-code" | "codex" | "hermes" | "openclaw";
-const AGENT_TYPE: Record<AgentKey, string> = {
-	"claude-code": "claude_code",
-	codex: "codex",
-	hermes: "hermes",
-	openclaw: "openclaw",
-};
-
 let tmpHome: string;
 let origHome: string | undefined;
 let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 let origPath: string | undefined;
 
-function setup(agent: AgentKey) {
+function setup(agent: AgentType) {
 	origHome = process.env.HOME;
 	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
-	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
+	seedAuthAndEnv(tmpHome, agent);
 	if (agent === "openclaw") {
 		origPath = process.env.PATH;
 		const bin = join(tmpHome, "bin");
@@ -395,7 +388,7 @@ content
 
 describe("pull — Claude Code fixture", () => {
 	it("imports an explicit workspace Skill into $HOME/.claude/skills/<key>/", async () => {
-		setup("claude-code");
+		setup("claude_code");
 		const tarBytes = await buildSkillTar(
 			"fresh",
 			`---

@@ -34,6 +34,7 @@ import {
 } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+import { AGENT_TYPES, type AgentType } from "../adapters/agent-types";
 import {
 	type CurrentCliInvocation,
 	resolveCurrentCliInvocation,
@@ -660,11 +661,9 @@ function shellEscape(s: string): string {
  * the clawdi unit name shape. Skips agents not in `AGENT_TYPES` so
  * a malicious filename can't smuggle into the iteration.
  */
-type KnownAgent = "claude_code" | "codex" | "openclaw" | "hermes";
-export function listInstalledAgents(): KnownAgent[] {
-	const knownAgents: KnownAgent[] = ["claude_code", "codex", "openclaw", "hermes"];
-	const installed: KnownAgent[] = [];
-	for (const agent of knownAgents) {
+export function listInstalledAgents(): AgentType[] {
+	const installed: AgentType[] = [];
+	for (const agent of AGENT_TYPES) {
 		const p = platform();
 		const path = p === "darwin" ? plistPath(agent) : p === "linux" ? unitPath(agent) : null;
 		if (path && existsSync(path)) installed.push(agent);
@@ -672,7 +671,7 @@ export function listInstalledAgents(): KnownAgent[] {
 	return installed;
 }
 
-export type InstalledDaemonTarget = KnownAgent | "daemon";
+export type InstalledDaemonTarget = AgentType | "daemon";
 
 export function isSingletonDaemonInstalled(): boolean {
 	const p = platform();
