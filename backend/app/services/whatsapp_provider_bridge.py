@@ -348,7 +348,6 @@ class WhatsAppProviderBridge:
         async with self._sessionmaker() as db:
             account = await _load_active_whatsapp_account(db, account_id=self._account_id)
             usync_targets = parse_whatsapp_usync_device_targets(node)
-            usync_lids: dict[str, str] | None = None
             if usync_targets is not None:
                 usync_lids = await _authorized_usync_target_lids(
                     db,
@@ -359,7 +358,12 @@ class WhatsAppProviderBridge:
                 )
                 if usync_lids is None:
                     return None
-            elif _is_authorized_provider_service_iq(node):
+                return whatsapp_usync_device_result(
+                    node,
+                    target_lids=usync_lids,
+                    self_lid=self_lid,
+                )
+            if _is_authorized_provider_service_iq(node):
                 if not await _active_link_owns_account(
                     db,
                     account=account,
@@ -386,12 +390,6 @@ class WhatsAppProviderBridge:
                     self._forward_iq_inflight -= 1
             if forwarded is not None:
                 return forwarded
-            if usync_lids is not None:
-                return whatsapp_usync_device_result(
-                    node,
-                    target_lids=usync_lids,
-                    self_lid=self_lid,
-                )
             return None
 
     async def resolve_recipient_lid(
