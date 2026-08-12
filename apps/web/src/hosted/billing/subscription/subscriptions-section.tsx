@@ -15,7 +15,7 @@ import { Spinner } from "@/components/ui/spinner";
 import type { StatusTone } from "@/components/ui/status-badge";
 import type { ComputeSubscriptionListItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
+import { billingTermLabel, billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import {
 	useCancelSubscription,
 	useResumeSubscription,
@@ -61,18 +61,7 @@ export function subscriptionPaymentSourceLabel(
 
 function priceLabel(subscription: ComputeSubscriptionListItem): string {
 	if (subscription.price_cents == null) return "Unavailable";
-	if (subscription.currency.toLowerCase() === "usd") {
-		return `${formatCents(subscription.price_cents)}${billingTermSuffix(subscription.billing_term_months)}`;
-	}
-	try {
-		const amount = new Intl.NumberFormat("en-US", {
-			style: "currency",
-			currency: subscription.currency,
-		}).format(subscription.price_cents / 100);
-		return `${amount}${billingTermSuffix(subscription.billing_term_months)}`;
-	} catch {
-		return `${(subscription.price_cents / 100).toFixed(2)} ${subscription.currency.toUpperCase()}${billingTermSuffix(subscription.billing_term_months)}`;
-	}
+	return `${formatCurrencyCents(subscription.price_cents, subscription.currency)}${billingTermSuffix(subscription.billing_term_months)}`;
 }
 
 function periodLabel(subscription: ComputeSubscriptionListItem): string {

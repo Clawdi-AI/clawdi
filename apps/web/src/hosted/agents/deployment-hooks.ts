@@ -53,11 +53,23 @@ export function invalidateDeploymentSnapshots(qc: QueryClient) {
 	void qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 }
 
+export function invalidateDeploymentDeleteSnapshots(qc: QueryClient) {
+	invalidateDeploymentSnapshots(qc);
+	void qc.invalidateQueries({ queryKey: billingKeys.reusableSubscriptions });
+}
+
 function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
 	for (const delay of SETTLING_REFRESH_DELAYS_MS) {
 		globalThis.setTimeout(() => {
-			void qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			void qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
+			invalidateDeploymentSnapshots(qc);
+		}, delay);
+	}
+}
+
+function scheduleDeploymentDeleteSettlingRefresh(qc: QueryClient) {
+	for (const delay of SETTLING_REFRESH_DELAYS_MS) {
+		globalThis.setTimeout(() => {
+			invalidateDeploymentDeleteSnapshots(qc);
 		}, delay);
 	}
 }
@@ -65,7 +77,7 @@ function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
 export function projectAcceptedDeploymentTransition(
 	qc: QueryClient,
 	accepted: AcceptedOperation,
-	scheduleRefresh = scheduleDeploymentSettlingRefresh,
+	scheduleRefresh: (queryClient: QueryClient) => void = scheduleDeploymentSettlingRefresh,
 ) {
 	const status = ACCEPTED_OPERATION_TRANSITIONS[accepted.operation.metadata.verb];
 	qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
@@ -97,7 +109,7 @@ export async function settleAcceptedDeploymentDelete(
 	qc: QueryClient,
 	accepted: DeploymentDeleteResult,
 	dismissDetail: () => Promise<void> | void,
-	scheduleRefresh = scheduleDeploymentSettlingRefresh,
+	scheduleRefresh: (queryClient: QueryClient) => void = scheduleDeploymentDeleteSettlingRefresh,
 ): Promise<boolean> {
 	let detailDismissed = true;
 	try {
@@ -273,6 +285,7 @@ export function useDeleteDeployment(dismissDetail: () => Promise<void> | void) {
 				});
 			}
 			retireRuntimeWindows(accepted.deploymentId);
+			invalidateDeploymentDeleteSnapshots(qc);
 			toast.message("Agent removed", {
 				description: "Cleanup continues in the background.",
 			});

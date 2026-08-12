@@ -77,7 +77,7 @@ export function HostedDeploymentDeleteAction({
 		}
 	}
 
-	const keepDescription = `Keep subscription — redeploy reuses it, no re-charge.${
+	const keepDescription = `Keep subscription — it becomes available to choose for a future Agent.${
 		periodEnd === "—" ? "" : ` Valid through ${periodEnd}.`
 	}`;
 	const cancelDescription = `Stops at period end${periodEnd === "—" ? "." : ` on ${periodEnd}.`}`;

@@ -20,8 +20,10 @@ function useInvalidateBillingAfterCheckout() {
 	const queryClient = useQueryClient();
 	return () => {
 		queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
+		queryClient.invalidateQueries({ queryKey: billingKeys.subscriptions });
 		queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
 		queryClient.invalidateQueries({ queryKey: billingKeys.transactions });
+		queryClient.invalidateQueries({ queryKey: billingKeys.reusableSubscriptions });
 		queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 	};
 }

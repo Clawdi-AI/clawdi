@@ -38,6 +38,7 @@ function createRequest(
 	};
 	return {
 		selection,
+		subscriptionSelection: { mode: "new" },
 		target: { kind: "new_deployment", deployConfig },
 		uiMode: "custom",
 		idempotencyKey: "subscription-create-test",
@@ -82,6 +83,7 @@ describe("subscription creation adapter", () => {
 					deploy_request_id: "subscription-create-test",
 				},
 				quote: walletQuote,
+				subscription_selection: { mode: "new" },
 			},
 		});
 
@@ -95,6 +97,7 @@ describe("subscription creation adapter", () => {
 					},
 					target: { kind: "terminal_fallback", deploymentId: "hdep_fallback" },
 					quote: null,
+					subscriptionSelection: { mode: "new" },
 				}),
 			),
 		).toEqual({
@@ -105,6 +108,25 @@ describe("subscription creation adapter", () => {
 				funding_source: "stripe",
 				ui_mode: "custom",
 				upgrade_deployment_id: "hdep_fallback",
+				subscription_selection: { mode: "new" },
+			},
+		});
+
+		expect(
+			subscriptionCreateRequest(
+				createRequest({
+					selection: {
+						planSlug: "compute_performance",
+						billingTermMonths: 12,
+						fundingSource: "wallet",
+					},
+					subscriptionSelection: { mode: "existing", subscription_id: "csub_reusable" },
+					quote: null,
+				}),
+			),
+		).toMatchObject({
+			body: {
+				subscription_selection: { mode: "existing", subscription_id: "csub_reusable" },
 			},
 		});
 	});

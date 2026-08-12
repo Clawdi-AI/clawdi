@@ -8,6 +8,8 @@ export type DeploymentComputeSubscription = NonNullable<
 type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress"];
 type PlanChangeKind = PlanChangeProgress["changeKind"];
 type SubscriptionListResponse = DeployComponents["schemas"]["V2ComputeSubscriptionListResponse"];
+type ReusableSubscriptionsResponse =
+	DeployComponents["schemas"]["V2ComputeReusableSubscriptionsResponse"];
 type PlanChangeBillingEffect = PlanChangeProgress["billingEffect"];
 type PlanChangeQuote = DeployComponents["schemas"]["V2ComputePlanChangeQuoteResponse"];
 type PlanChangeOperation = DeployComponents["schemas"]["LongRunningOperation"];
@@ -752,6 +754,7 @@ export type HostedApiStubOptions = {
 	planBillingCapability?: { enabled: boolean };
 	productAccessRequests?: string[];
 	cancelRequests?: string[];
+	checkoutIdempotencyKeys?: string[];
 	checkoutRequests?: string[];
 	checkoutResponses?: StubResponse[];
 	cloudAgentOverrides?: Record<string, unknown>;
@@ -775,6 +778,8 @@ export type HostedApiStubOptions = {
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
 	resumeRequests?: string[];
+	reusableSubscriptionRequests?: string[];
+	reusableSubscriptionPages?: Record<string, ReusableSubscriptionsResponse>;
 	subscriptionPages?: Record<string, SubscriptionListResponse>;
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
@@ -816,6 +821,18 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			return fulfillJson(
 				r,
 				options.subscriptionPages?.[cursor] ?? {
+					items: [],
+					has_more: false,
+					next_cursor: null,
+				},
+			);
+		}
+		if (p === "/v2/subscriptions/reusable" && r.request().method() === "GET") {
+			options.reusableSubscriptionRequests?.push(r.request().url());
+			const cursor = new URL(r.request().url()).searchParams.get("cursor") ?? "initial";
+			return fulfillJson(
+				r,
+				options.reusableSubscriptionPages?.[cursor] ?? {
 					items: [],
 					has_more: false,
 					next_cursor: null,
@@ -864,6 +881,7 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		}
 		if (p === "/v2/subscription/checkout" && r.request().method() === "POST") {
 			const requestBody = r.request().postData() ?? "";
+			options.checkoutIdempotencyKeys?.push(r.request().headers()["idempotency-key"] ?? "");
 			options.checkoutRequests?.push(requestBody);
 			const request = JSON.parse(requestBody) as { funding_source?: string };
 			const response =

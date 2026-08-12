@@ -14,6 +14,7 @@ import {
 } from "./hosted-stub-api";
 
 type Subscription = DeployComponents["schemas"]["V2ComputeSubscriptionListItem"];
+type ReusableSubscription = DeployComponents["schemas"]["V2ComputeReusableSubscriptionItem"];
 
 const longAgentName =
 	"Production research agent with an intentionally long name for compact subscription layouts";
@@ -76,6 +77,53 @@ async function expectCardsFit(container: Locator) {
 
 async function openSubscriptions(page: Page) {
 	return gotoHostedSettingsDialog(page, "billing-plan");
+}
+
+async function sourceDialogGeometry(dialog: Locator) {
+	const metrics = await dialog.evaluate((element) => {
+		const box = element.getBoundingClientRect();
+		return {
+			clientHeight: element.clientHeight,
+			clientWidth: element.clientWidth,
+			documentClientWidth: document.documentElement.clientWidth,
+			documentScrollWidth: document.documentElement.scrollWidth,
+			height: box.height,
+			innerHeight: window.innerHeight,
+			scrollHeight: element.scrollHeight,
+			scrollWidth: element.scrollWidth,
+			width: box.width,
+		};
+	});
+	return metrics;
+}
+
+async function expectSourceDialogGeometry(
+	dialog: Locator,
+	viewport: { width: number; height: number },
+	requireScroll: boolean,
+) {
+	await expect
+		.poll(async () => {
+			const metrics = await sourceDialogGeometry(dialog);
+			return {
+				documentClientWidth: metrics.documentClientWidth,
+				innerHeight: metrics.innerHeight,
+			};
+		})
+		.toEqual({ documentClientWidth: viewport.width, innerHeight: viewport.height });
+	const metrics = await sourceDialogGeometry(dialog);
+	expect(metrics.documentClientWidth).toBe(viewport.width);
+	expect(metrics.documentScrollWidth).toBeLessThanOrEqual(viewport.width);
+	expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+	expect(metrics.width).toBeLessThanOrEqual(viewport.width + 1);
+	if (requireScroll) {
+		expect(metrics.height).toBeLessThanOrEqual(viewport.height + 1);
+		expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+		await dialog.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+		await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeInViewport();
+	} else {
+		expect(metrics.height).toBeLessThanOrEqual(viewport.height + 1);
+	}
 }
 
 test("subscription cards preserve pagination and reveal loaded history", async ({ page }) => {
@@ -274,8 +322,172 @@ test("agent settings uses the subscription card without changing plan actions", 
 	);
 	await expect(fallbackCard.getByText("Funding", { exact: true })).toBeVisible();
 	await expect(fallbackCard.getByText("Included", { exact: true })).toBeVisible();
-	await expect(
-		fallbackCard.getByRole("button", { name: "Start a new subscription" }),
-	).toBeVisible();
+	await expect(fallbackCard.getByRole("button", { name: "Choose a subscription" })).toBeVisible();
 	expect(errors, `agent subscription cards: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("terminal fallback selects reusable subscriptions and keeps the long dialog reachable", async ({
+	page,
+}) => {
+	const checkoutIdempotencyKeys: string[] = [];
+	const checkoutRequests: string[] = [];
+	const reusableSubscriptionRequests: string[] = [];
+	const errors = collectBrowserErrors(page);
+	const reusable = (
+		subscriptionId: string,
+		overrides: Partial<ReusableSubscription>,
+	): ReusableSubscription => ({
+		subscription_id: subscriptionId,
+		plan_slug: "compute_basic",
+		billing_term_months: 1,
+		funding_source: "stripe",
+		status: "active",
+		price_cents: 900,
+		currency: "usd",
+		current_period_end: "2099-09-12T12:00:00Z",
+		entitled_until: "2099-09-12T12:00:00Z",
+		cancel_at_period_end: false,
+		...overrides,
+	});
+	await stubHostedApi(page, {
+		checkoutIdempotencyKeys,
+		checkoutRequests,
+		checkoutResponses: [
+			{
+				status: 409,
+				body: {
+					detail: {
+						code: "reusable_subscription_unavailable",
+						title: "Reusable subscription unavailable",
+					},
+				},
+			},
+			{
+				status: 200,
+				body: {
+					flow_type: "subscription_activation",
+					funding_source: "wallet",
+					action_url: null,
+					checkout_url: "",
+					client_secret: null,
+					subscription_id: "csub_wallet_canceling",
+					invoice_id: null,
+					deployment_id: "hdep_terminal_fallback",
+					deployment_name: "Fallback Basic",
+					metadata_generation: 2,
+					deploy_request_id: null,
+					debited_usd: null,
+					balance_after_usd: null,
+					current_period_start: "2098-09-12T12:00:00Z",
+					current_period_end: "2099-09-12T12:00:00Z",
+					entitled_until: "2099-09-12T12:00:00Z",
+				},
+			},
+		],
+		deployments: [terminalFallbackDeployment],
+		plans: [basicPlan, performancePlan],
+		reusableSubscriptionRequests,
+		reusableSubscriptionPages: {
+			initial: {
+				items: [reusable("csub_card_active", {})],
+				has_more: true,
+				next_cursor: "second-page",
+			},
+			"second-page": {
+				items: [
+					reusable("csub_wallet_canceling", {
+						plan_slug: "compute_performance",
+						billing_term_months: 12,
+						funding_source: "wallet",
+						status: "canceling",
+						price_cents: 18_000,
+						cancel_at_period_end: true,
+					}),
+				],
+				has_more: false,
+				next_cursor: null,
+			},
+		},
+	});
+
+	const desktop = { width: 1440, height: 900 };
+	const mobile390 = { width: 390, height: 568 };
+	const mobile320 = { width: 320, height: 568 };
+	const sourceDialog = page.getByRole("dialog", { name: "Choose a paid subscription" });
+	const openSourceDialog = async (viewport: { width: number; height: number }) => {
+		await page.setViewportSize(viewport);
+		await page
+			.locator("#compute-plan-controls")
+			.getByRole("button", { name: "Choose a subscription" })
+			.click();
+		await expect(sourceDialog).toBeVisible();
+		await expect(sourceDialog.getByRole("button", { name: /Basic subscription/ })).toBeVisible();
+		await expect(
+			sourceDialog.getByRole("button", { name: /Performance subscription/ }),
+		).toBeVisible();
+		return sourceDialog;
+	};
+	const closeSourceDialog = async () => {
+		await page.keyboard.press("Escape");
+		await expect(sourceDialog).toBeHidden();
+	};
+	await page.setViewportSize(desktop);
+	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	let dialog = await openSourceDialog(desktop);
+	await expect(dialog.getByText("Active", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Canceling", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Renews", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Ends", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("$180.00/yr", { exact: true })).toBeVisible();
+	await expectSourceDialogGeometry(dialog, desktop, false);
+	await closeSourceDialog();
+
+	dialog = await openSourceDialog(mobile390);
+	await expectSourceDialogGeometry(dialog, mobile390, true);
+	await closeSourceDialog();
+
+	dialog = await openSourceDialog(mobile320);
+	await expectSourceDialogGeometry(dialog, mobile320, true);
+
+	const active = dialog.getByRole("button", { name: /Basic subscription/ });
+	const canceling = dialog.getByRole("button", { name: /Performance subscription/ });
+	await active.click();
+	await expect(active).toHaveAttribute("aria-pressed", "true");
+	await canceling.click();
+	await expect(canceling).toHaveAttribute("aria-pressed", "true");
+	await expect(active).toHaveAttribute("aria-pressed", "false");
+	await dialog.getByRole("button", { name: "Use subscription" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	await expect(page.getByText("Subscription no longer available", { exact: true })).toBeVisible();
+	await expect(active).toHaveAttribute("aria-pressed", "false");
+	await expect(canceling).toHaveAttribute("aria-pressed", "false");
+	await expect(dialog.getByRole("button", { name: /New paid subscription/ })).toHaveAttribute(
+		"aria-pressed",
+		"false",
+	);
+	await expect.poll(() => reusableSubscriptionRequests.length).toBeGreaterThanOrEqual(4);
+	const cursors = reusableSubscriptionRequests.slice(0, 4).map((url) => {
+		return new URL(url).searchParams.get("cursor");
+	});
+	expect(cursors).toEqual([null, "second-page", null, "second-page"]);
+
+	await canceling.click();
+	await expect(canceling).toHaveAttribute("aria-pressed", "true");
+	await dialog.getByRole("button", { name: "Use subscription" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(2);
+	expect(JSON.parse(checkoutRequests[1] ?? "{}")).toMatchObject({
+		funding_source: "wallet",
+		plan_slug: "compute_performance",
+		billing_term_months: 12,
+		subscription_selection: {
+			mode: "existing",
+			subscription_id: "csub_wallet_canceling",
+		},
+		upgrade_deployment_id: "hdep_terminal_fallback",
+	});
+	expect(checkoutIdempotencyKeys).toHaveLength(2);
+	expect(checkoutIdempotencyKeys[0]).not.toBe(checkoutIdempotencyKeys[1]);
+	expect(errors, `reusable subscription picker: ${errors.join(" | ")}`).toEqual([
+		"Failed to load resource: the server responded with a status of 409 (Conflict)",
+	]);
 });
