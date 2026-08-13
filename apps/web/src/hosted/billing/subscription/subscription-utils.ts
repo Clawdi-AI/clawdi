@@ -93,9 +93,11 @@ export type ComputeFundingMode = "included_basic" | "subscription" | "unknown";
 
 export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "unknown";
 
+type ComputeFundingSubscription = Pick<HostedComputeSubscription, "funding_source" | "price_cents">;
+
 export function isIncludedBasicSubscription(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedComputeSubscription | null | undefined,
+	computeSubscription: ComputeFundingSubscription | null | undefined,
 ): boolean {
 	return (
 		isBasicCompute(planSlug) &&
@@ -107,22 +109,25 @@ export function isIncludedBasicSubscription(
 
 export function computeFundingMode(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedComputeSubscription | null | undefined,
+	computeSubscription: ComputeFundingSubscription | null | undefined,
 ): ComputeFundingMode {
-	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
-	if (computeSubscription) return "subscription";
-	return "unknown";
+	const source = computeFundingSource(planSlug, computeSubscription);
+	if (source === "included_basic") return "included_basic";
+	return source === "stripe" || source === "wallet" ? "subscription" : "unknown";
 }
 
 export function computeFundingSource(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedComputeSubscription | null | undefined,
+	computeSubscription: ComputeFundingSubscription | null | undefined,
 ): ComputeFundingSource {
 	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
+	if (computeSubscription?.funding_source === "stripe") return "stripe";
 	if (computeSubscription?.funding_source === "wallet") return "wallet";
-	// Additive rollout compatibility: subscriptions from the pre-wallet
-	// deployment projection had no funding_source and were necessarily Stripe.
-	if (computeSubscription) return "stripe";
+	// Pre-wallet deployment projections can omit Card funding. A positive paid price
+	// disambiguates that legacy shape from Included Basic and malformed null funding.
+	if (computeSubscription?.funding_source == null && (computeSubscription?.price_cents ?? 0) > 0) {
+		return "stripe";
+	}
 	return "unknown";
 }
 
@@ -181,19 +186,33 @@ export function isComputeSubscriptionRenewing(
 
 export type ComputeSubscriptionLifecycle = {
 	badgeLabel: string;
+	badgeTone: "success" | "warning" | "destructive" | "neutral";
 	dateAt: string | null;
 	dateVerb: string | null;
 	renews: boolean;
 };
 
+type ComputeSubscriptionLifecycleInput = {
+	status: string;
+	cancel_at_period_end: boolean;
+	current_period_end?: string | null;
+	cancel_at?: string | null;
+	canceled_at?: string | null;
+	pending_plan_slug?: string | null;
+};
+
 export function computeSubscriptionLifecycle(
-	subscription: HostedComputeSubscription,
+	subscription: ComputeSubscriptionLifecycleInput,
 ): ComputeSubscriptionLifecycle {
 	const status = subscription.status.toLowerCase();
 	const canceledAt = subscription.canceled_at ?? subscription.current_period_end ?? null;
-	if (subscription.cancel_at_period_end && COMPUTE_RENEWING_STATUSES.has(status)) {
+	if (
+		status === "canceling" ||
+		(subscription.cancel_at_period_end && COMPUTE_RENEWING_STATUSES.has(status))
+	) {
 		return {
 			badgeLabel: "Canceling",
+			badgeTone: "warning",
 			dateAt: subscription.cancel_at ?? subscription.current_period_end ?? null,
 			dateVerb: "Ends",
 			renews: false,
@@ -202,6 +221,7 @@ export function computeSubscriptionLifecycle(
 	if (status === "active") {
 		return {
 			badgeLabel: "Active",
+			badgeTone: subscription.pending_plan_slug ? "warning" : "success",
 			dateAt: subscription.current_period_end ?? null,
 			dateVerb: "Renews",
 			renews: true,
@@ -210,6 +230,7 @@ export function computeSubscriptionLifecycle(
 	if (status === "trialing") {
 		return {
 			badgeLabel: "Trial",
+			badgeTone: subscription.pending_plan_slug ? "warning" : "success",
 			dateAt: subscription.current_period_end ?? null,
 			dateVerb: "Renews",
 			renews: true,
@@ -218,28 +239,60 @@ export function computeSubscriptionLifecycle(
 	if (status === "past_due") {
 		return {
 			badgeLabel: "Past due",
+			badgeTone: "destructive",
 			dateAt: null,
 			dateVerb: null,
 			renews: true,
 		};
 	}
 	if (status === "unpaid") {
-		return { badgeLabel: "Unpaid", dateAt: canceledAt, dateVerb: "Ended", renews: false };
+		return {
+			badgeLabel: "Unpaid",
+			badgeTone: "destructive",
+			dateAt: canceledAt,
+			dateVerb: "Ended",
+			renews: false,
+		};
 	}
 	if (status === "paused") {
-		return { badgeLabel: "Paused", dateAt: null, dateVerb: null, renews: false };
+		return {
+			badgeLabel: "Paused",
+			badgeTone: "neutral",
+			dateAt: null,
+			dateVerb: null,
+			renews: false,
+		};
 	}
 	if (status === "incomplete") {
-		return { badgeLabel: "Setup incomplete", dateAt: null, dateVerb: null, renews: false };
+		return {
+			badgeLabel: "Setup incomplete",
+			badgeTone: "warning",
+			dateAt: null,
+			dateVerb: null,
+			renews: false,
+		};
 	}
 	if (status === "canceled") {
-		return { badgeLabel: "Canceled", dateAt: canceledAt, dateVerb: "Canceled", renews: false };
+		return {
+			badgeLabel: "Canceled",
+			badgeTone: "neutral",
+			dateAt: canceledAt,
+			dateVerb: "Canceled",
+			renews: false,
+		};
 	}
 	if (status === "expired" || status === "incomplete_expired") {
-		return { badgeLabel: "Expired", dateAt: canceledAt, dateVerb: "Expired", renews: false };
+		return {
+			badgeLabel: "Expired",
+			badgeTone: "neutral",
+			dateAt: canceledAt,
+			dateVerb: "Expired",
+			renews: false,
+		};
 	}
 	return {
 		badgeLabel: status.replace(/_/g, " ").replace(/\b\w/g, (character) => character.toUpperCase()),
+		badgeTone: "neutral",
 		dateAt: null,
 		dateVerb: null,
 		renews: false,

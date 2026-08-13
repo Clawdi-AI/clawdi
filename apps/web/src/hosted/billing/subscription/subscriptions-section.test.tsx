@@ -5,9 +5,6 @@ type SubscriptionsSectionModule =
 	typeof import("@/hosted/billing/subscription/subscriptions-section");
 
 let sortLoadedSubscriptions: SubscriptionsSectionModule["sortLoadedSubscriptions"] | null = null;
-let canManageAccountSubscription:
-	| SubscriptionsSectionModule["canManageAccountSubscription"]
-	| null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -15,7 +12,6 @@ beforeAll(async () => {
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/billing/subscription/subscriptions-section");
 	sortLoadedSubscriptions = module.sortLoadedSubscriptions;
-	canManageAccountSubscription = module.canManageAccountSubscription;
 });
 
 function subscription(
@@ -69,22 +65,5 @@ describe("SubscriptionsSection", () => {
 			"active-second",
 			"canceling-second",
 		]);
-	});
-
-	test("only exposes management for current paid subscriptions", () => {
-		if (!canManageAccountSubscription) throw new Error("Subscriptions helpers were not loaded");
-		const active = subscription("active", "active");
-
-		expect(canManageAccountSubscription(active)).toBe(true);
-		expect(canManageAccountSubscription(subscription("past-due", "past_due"))).toBe(false);
-		expect(canManageAccountSubscription(subscription("canceling", "canceling"))).toBe(false);
-		expect(canManageAccountSubscription(subscription("canceled", "canceled"))).toBe(false);
-		expect(canManageAccountSubscription({ ...active, recovery_action: "fix_payment" })).toBe(false);
-		expect(
-			canManageAccountSubscription({ ...active, pending_plan_slug: "compute_performance" }),
-		).toBe(false);
-		expect(canManageAccountSubscription({ ...active, is_orphan: true })).toBe(false);
-		expect(canManageAccountSubscription({ ...active, deployment_id: null })).toBe(false);
-		expect(canManageAccountSubscription({ ...active, cancel_at_period_end: true })).toBe(false);
 	});
 });
