@@ -439,7 +439,7 @@ async def telegram_bot_api(
         webhook_url = optional_str(params.get("url"))
         if webhook_url is None:
             return _telegram_error_response("Bad Request: url is required", 400)
-        webhook_error = await _validate_telegram_webhook_url(account, webhook_url)
+        webhook_error = await _validate_telegram_webhook_url(webhook_url)
         if webhook_error is not None:
             return webhook_error
         _set_link_config(
@@ -1060,12 +1060,12 @@ async def _deliver_telegram_agent_webhook_for_binding(
         link=current_link,
     ):
         return False
-    return await deliver_telegram_agent_webhook(current_account, current_link, payload)
+    return await deliver_telegram_agent_webhook(current_link, payload)
 
 
-async def _validate_telegram_webhook_url(account: ChannelAccount, url: str) -> JSONResponse | None:
+async def _validate_telegram_webhook_url(url: str) -> JSONResponse | None:
     try:
-        await validate_agent_webhook_url(account, url)
+        await validate_agent_webhook_url(url)
     except HTTPException as exc:
         return _telegram_error_response(f"Bad Request: {exc.detail}", 400)
     return None
@@ -1515,16 +1515,6 @@ def _telegram_materialize_command_target(target: _TelegramJsonObject) -> _Telegr
     if isinstance(language_code, str) and language_code:
         payload["language_code"] = language_code
     return payload
-
-
-def telegram_binding_command_projections(
-    shadow: dict[str, _TelegramCommands],
-    binding: ChannelBinding,
-) -> list[_TelegramJsonObject]:
-    return [
-        _telegram_materialize_command_target(target)
-        for target in _telegram_binding_command_targets(shadow, binding)
-    ]
 
 
 def _telegram_projection_identity(payload: _TelegramJsonObject) -> str:

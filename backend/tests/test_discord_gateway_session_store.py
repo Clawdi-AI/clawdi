@@ -14,14 +14,13 @@ def test_discord_gateway_session_store_expires_idle_sessions():
     store.put("session-a", state)
 
     now = 10.0
-    assert store.get("session-a") is state
+    assert store.touch("session-a") is True
     store.disconnect("session-a")
     now = 14.9
-    assert store.get("session-a") is state
+    assert store.touch("session-a") is True
     now = 20.0
 
-    assert store.get("session-a") is None
-    assert len(store) == 0
+    assert store.touch("session-a") is False
 
 
 def test_discord_gateway_session_store_uses_deterministic_lru_eviction():
@@ -39,8 +38,9 @@ def test_discord_gateway_session_store_uses_deterministic_lru_eviction():
     store.put("session-c", {})
     store.disconnect("session-c")
 
-    assert store.session_ids() == ("session-a", "session-c")
-    assert store.get("session-b") is None
+    assert store.touch("session-b") is False
+    assert store.touch("session-a") is True
+    assert store.touch("session-c") is True
 
 
 def test_discord_gateway_session_store_stays_bounded_under_churn():
@@ -54,8 +54,8 @@ def test_discord_gateway_session_store_stays_bounded_under_churn():
         store.put(f"session-{index}", {"last_sequence": index})
         store.disconnect(f"session-{index}")
 
-    assert len(store) == 3
-    assert store.session_ids() == ("session-97", "session-98", "session-99")
+    assert store.touch("session-96") is False
+    assert all(store.touch(f"session-{index}") for index in range(97, 100))
 
 
 def test_discord_gateway_session_store_never_evicts_connected_sessions():
@@ -72,5 +72,5 @@ def test_discord_gateway_session_store_never_evicts_connected_sessions():
         store.disconnect(f"idle-{index}")
     now = 100.0
 
-    assert store.get("active") is active
-    assert store.session_ids() == ("active",)
+    assert store.touch("active") is True
+    assert all(store.touch(f"idle-{index}") is False for index in range(3))

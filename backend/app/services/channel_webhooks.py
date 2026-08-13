@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from app.models.channel import ChannelAccount, ChannelBotAgentLink
+from app.models.channel import ChannelBotAgentLink
 from app.services.metrics import webhook_deliveries
 from app.services.safe_public_http import SafePublicHttpClient, SafePublicHttpError
 from app.services.url_security import UnsafeOutboundUrlError, validate_outbound_url
@@ -39,7 +39,7 @@ def telegram_link_webhook_url(link: ChannelBotAgentLink) -> str | None:
     return _optional_str(telegram_link_webhook_config(link).get("url"))
 
 
-async def validate_agent_webhook_url(_account: ChannelAccount, url: str) -> None:
+async def validate_agent_webhook_url(url: str) -> None:
     try:
         await validate_outbound_url(
             url,
@@ -54,7 +54,6 @@ async def validate_agent_webhook_url(_account: ChannelAccount, url: str) -> None
 
 
 async def deliver_telegram_agent_webhook(
-    _account: ChannelAccount,
     link: ChannelBotAgentLink,
     payload: JsonObject,
 ) -> bool:
