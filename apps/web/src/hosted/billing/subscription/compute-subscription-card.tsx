@@ -3,8 +3,9 @@ import { UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentLabel } from "@/components/dashboard/agent-label";
+import { entityCardChassisClass } from "@/components/entity-card";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
-import { billingTermLabel, billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
+import { billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,7 @@ export type ComputeSubscriptionCardView = {
 	facts: readonly [
 		{ label: "Plan"; value: string },
 		{ label: "Payment"; value: string },
-		{ label: "Price"; value: string; meta: string },
+		{ label: "Price"; value: string },
 		{ label: "Schedule"; value: string },
 	];
 };
@@ -85,7 +86,6 @@ export function computeSubscriptionCardView({
 						: priceCents == null
 							? "Unavailable"
 							: `${formatCurrencyCents(priceCents, currency)}${billingTermSuffix(billingTermMonths)}`,
-				meta: included ? "Included plan" : billingTermLabel(billingTermMonths),
 			},
 			{
 				label: "Schedule",
@@ -160,7 +160,11 @@ export function ComputeSubscriptionCard({
 	className?: string;
 }) {
 	const Heading = headingLevel === 4 ? "h4" : "h3";
-	const plan = view.facts[0];
+	const [plan, payment, price] = view.facts;
+	const hideIncludedPrice = payment.value === "Included" && price.value === "No charge";
+	const visibleMetadataFacts = view.facts
+		.slice(1)
+		.filter((fact) => !(fact.label === "Price" && hideIncludedPrice));
 	const identityLabel = view.identity.kind === "agent" ? view.identity.name : view.identity.label;
 
 	return (
@@ -168,13 +172,13 @@ export function ComputeSubscriptionCard({
 			data-hosted="true"
 			data-slot="compute-subscription-card"
 			data-subscription-status={view.status.label.toLowerCase().replaceAll(" ", "-")}
-			className={cn(
-				"flex h-full min-w-0 flex-col overflow-hidden rounded-lg border bg-card",
-				className,
-			)}
+			className={entityCardChassisClass({
+				variant: "compact",
+				className: cn("flex h-full min-w-0 flex-col gap-4", className),
+			})}
 		>
 			<Heading className="sr-only">{`${identityLabel}: ${plan.value}`}</Heading>
-			<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-4 py-3.5">
+			<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
 				<SubscriptionIdentity identity={view.identity} />
 				<div className="flex min-w-0 flex-wrap justify-end gap-1.5">
 					<StatusBadge status={view.status.tone} withDot>
@@ -184,36 +188,30 @@ export function ComputeSubscriptionCard({
 				</div>
 			</header>
 
-			<dl className="grid min-w-0 grid-cols-2 border-t">
-				{view.facts.map((fact, index) => (
-					<div
-						key={fact.label}
-						className={cn(
-							"min-w-0 px-4 py-3",
-							index % 2 === 1 && "border-l",
-							index >= 2 && "border-t",
-						)}
-					>
-						<dt className="text-xs text-muted-foreground">{fact.label}</dt>
-						<dd className="mt-0.5 min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
-							{fact.value}
-						</dd>
-						{"meta" in fact ? (
-							<span className="mt-0.5 block text-xs text-muted-foreground">{fact.meta}</span>
-						) : null}
+			<dl className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5">
+				<div className="min-w-0 basis-full">
+					<dt className="sr-only">{plan.label}</dt>
+					<dd className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
+						{plan.value}
+					</dd>
+				</div>
+				{visibleMetadataFacts.map((fact) => (
+					<div key={fact.label} className="min-w-0 text-xs text-muted-foreground">
+						<dt className="sr-only">{fact.label}</dt>
+						<dd className="[overflow-wrap:anywhere]">{fact.value}</dd>
 					</div>
 				))}
 			</dl>
 
 			{notice ? (
-				<div data-slot="compute-subscription-notice" className="min-w-0 border-t px-4 py-2.5">
+				<div data-slot="compute-subscription-notice" className="min-w-0 pt-1">
 					{notice}
 				</div>
 			) : null}
 			{actions ? (
 				<div
 					data-slot="compute-subscription-actions"
-					className="mt-auto flex min-w-0 flex-wrap items-center justify-end gap-2 border-t bg-muted/15 px-3 py-2"
+					className="mt-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
 				>
 					{actions}
 				</div>

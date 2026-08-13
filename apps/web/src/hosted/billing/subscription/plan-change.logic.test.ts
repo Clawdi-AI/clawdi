@@ -379,7 +379,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: false,
 				cancelAtPeriodEnd: false,
 				status: "active",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toBe("Subscription changes are temporarily unavailable.");
 	});
@@ -390,7 +390,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: true,
 				status: "active",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toBe("Resume this subscription before changing its plan, billing term, or payment source.");
 	});
@@ -401,7 +401,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: false,
 				status: "active",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toBeNull();
 		expect(
@@ -409,7 +409,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: false,
 				status: "past_due",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toBeNull();
 		expect(
@@ -417,7 +417,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: false,
 				status: "trialing",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toContain("Resolve the subscription status");
 	});
