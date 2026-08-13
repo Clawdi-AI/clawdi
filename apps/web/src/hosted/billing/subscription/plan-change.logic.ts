@@ -7,7 +7,10 @@ import type {
 import { isPaymentMethodRequiredError } from "@/hosted/billing/errors";
 import { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG } from "./subscription-utils";
 
-export type PlanChangeSelection = Omit<ComputePlanChangeQuoteRequest, "subscription_id"> & {
+export type PlanChangeSelection = Omit<
+	ComputePlanChangeQuoteRequest,
+	"subscription_id" | "deployment_id"
+> & {
 	funding_source: NonNullable<ComputePlanChangeQuoteRequest["funding_source"]>;
 };
 
@@ -313,17 +316,17 @@ export function planChangeUnavailableReason({
 	canCreateCloudAgents,
 	cancelAtPeriodEnd,
 	status,
-	subscriptionId,
+	hasSubscriptionTarget,
 }: {
 	canCreateCloudAgents: boolean;
 	cancelAtPeriodEnd: boolean;
 	status: string;
-	subscriptionId: number | null;
+	hasSubscriptionTarget: boolean;
 }): string | null {
 	if (!canCreateCloudAgents) return "Subscription changes are temporarily unavailable.";
 	if (cancelAtPeriodEnd)
 		return "Resume this subscription before changing its plan, billing term, or payment source.";
-	if (!subscriptionId)
+	if (!hasSubscriptionTarget)
 		return "Subscription changes will be available after details finish syncing.";
 	if (status !== "active" && status !== "past_due") {
 		return "Resolve the subscription status before changing its plan, billing term, or payment source.";

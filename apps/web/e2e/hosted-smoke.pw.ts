@@ -3996,7 +3996,10 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	});
 	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
 
-	await page.getByRole("button", { name: "Change plan, term, or payment source" }).click();
+	await page
+		.locator('[data-slot="compute-subscription-card"]')
+		.getByRole("button", { name: "Manage", exact: true })
+		.click();
 	const changeDialog = page.getByRole("dialog");
 	await expect(changeDialog.getByRole("button", { name: "Card", exact: true })).toHaveAttribute(
 		"aria-pressed",
@@ -4010,7 +4013,7 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
 
 	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
-		subscription_id: 42,
+		deployment_id: "hdep_paid",
 		target_plan_slug: "compute_performance",
 		target_billing_term_months: 12,
 		funding_source: "stripe",
@@ -4025,7 +4028,9 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	await changeDialog.getByRole("button", { name: "Close", exact: true }).last().click();
 	await expect(changeDialog).not.toBeVisible();
 	await expect(
-		page.getByRole("button", { name: "Check subscription change status" }),
+		page
+			.locator('[data-slot="compute-subscription-card"]')
+			.getByRole("button", { name: "Manage", exact: true }),
 	).toBeVisible();
 	await expect(page.getByText("Plan changed", { exact: true })).toBeVisible();
 	expect(errors, `paid card upgrade: ${errors.join(" | ")}`).toEqual([]);
@@ -4071,14 +4076,17 @@ test("paid card subscription switches future renewals to Wallet", async ({ page 
 	});
 	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
 
-	await page.getByRole("button", { name: "Change plan, term, or payment source" }).click();
+	await page
+		.locator('[data-slot="compute-subscription-card"]')
+		.getByRole("button", { name: "Manage", exact: true })
+		.click();
 	const changeDialog = page.getByRole("dialog");
 	await changeDialog.getByRole("button", { name: "Wallet", exact: true }).click();
 	await changeDialog.getByRole("button", { name: "Review change" }).click();
 
 	await expect.poll(() => planQuoteRequests.length).toBe(1);
 	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
-		subscription_id: 42,
+		deployment_id: "hdep_paid",
 		target_plan_slug: "compute_basic",
 		target_billing_term_months: 12,
 		funding_source: "wallet",

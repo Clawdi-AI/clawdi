@@ -216,7 +216,7 @@ describe("structural secret boundaries without the denylist", () => {
 			"hosted/billing/subscription/welcome-wallet-card.tsx",
 			"hosted/billing/subscription/subscription-create-dialog.tsx",
 			"hosted/billing/components/compute-dunning-banner.tsx",
-			"hosted/agents/hosted-agent-detail.tsx",
+			"hosted/billing/subscription/plan-change-controller.tsx",
 		];
 		for (const path of walletConsumers) {
 			expect(source(path)).toContain("useWalletSnapshot");

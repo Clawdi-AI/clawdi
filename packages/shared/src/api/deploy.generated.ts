@@ -1244,7 +1244,9 @@ export interface components {
         /** V2ComputePlanChangeQuoteRequest */
         V2ComputePlanChangeQuoteRequest: {
             /** Subscription Id */
-            subscription_id: number;
+            subscription_id?: number | null;
+            /** Deployment Id */
+            deployment_id?: string | null;
             /**
              * Target Plan Slug
              * @enum {string}
