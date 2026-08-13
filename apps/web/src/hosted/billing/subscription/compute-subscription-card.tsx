@@ -1,7 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
-import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { entityCardChassisClass } from "@/components/entity-card";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
@@ -21,14 +20,9 @@ export type ComputeSubscriptionIdentity =
 	| { kind: "unavailable"; label: string };
 
 export type ComputeSubscriptionCardView = {
-	identity: ComputeSubscriptionIdentity;
 	status: { label: string; tone: StatusTone };
-	facts: readonly [
-		{ label: "Plan"; value: string },
-		{ label: "Payment"; value: string },
-		{ label: "Price"; value: string },
-		{ label: "Schedule"; value: string },
-	];
+	plan: string;
+	commercialFacts: readonly { label: string; value: string; emphasis?: boolean }[];
 };
 
 export type ComputeSubscriptionPaymentSource = "included" | "stripe" | "wallet" | "unavailable";
@@ -41,7 +35,6 @@ export function computeSubscriptionPlanLabel(planSlug: string): string {
 }
 
 export function computeSubscriptionCardView({
-	identity,
 	status,
 	planSlug,
 	fundingSource,
@@ -52,7 +45,6 @@ export function computeSubscriptionCardView({
 	scheduleAt,
 	scheduleFallback,
 }: {
-	identity: ComputeSubscriptionIdentity;
 	status: ComputeSubscriptionCardView["status"];
 	planSlug: string;
 	fundingSource: ComputeSubscriptionPaymentSource;
@@ -64,43 +56,34 @@ export function computeSubscriptionCardView({
 	scheduleFallback?: string;
 }): ComputeSubscriptionCardView {
 	const included = fundingSource === "included";
+	const schedule =
+		scheduleVerb && scheduleAt
+			? `${scheduleVerb} ${formatShortDate(scheduleAt)}`
+			: scheduleFallback || "Unavailable";
 	return {
-		identity,
 		status,
-		facts: [
-			{ label: "Plan", value: computeSubscriptionPlanLabel(planSlug) },
-			{
-				label: "Payment",
-				value:
-					fundingSource === "included"
-						? "Included"
-						: fundingSource === "wallet"
-							? "Wallet"
-							: fundingSource === "stripe"
-								? "Card"
-								: "Unavailable",
-			},
-			{
-				label: "Price",
-				value:
-					included || priceCents === 0
-						? "No charge"
-						: priceCents == null
-							? "Unavailable"
-							: `${formatCurrencyCents(priceCents, currency)}${billingTermSuffix(billingTermMonths)}`,
-			},
-			{
-				label: "Schedule",
-				value:
-					scheduleVerb && scheduleAt
-						? `${scheduleVerb} ${formatShortDate(scheduleAt)}`
-						: scheduleFallback
-							? scheduleFallback
-							: included
-								? "Current"
-								: "Unavailable",
-			},
-		],
+		plan: computeSubscriptionPlanLabel(planSlug),
+		commercialFacts: included
+			? [{ label: "Price", value: "Free", emphasis: true }]
+			: [
+					{
+						label: "Price",
+						value:
+							priceCents == null
+								? "Unavailable"
+								: `${formatCurrencyCents(priceCents, currency)}${billingTermSuffix(billingTermMonths)}`,
+					},
+					{
+						label: "Payment",
+						value:
+							fundingSource === "wallet"
+								? "Wallet"
+								: fundingSource === "stripe"
+									? "Card"
+									: "Unavailable",
+					},
+					{ label: "Schedule", value: schedule },
+				],
 	};
 }
 
@@ -118,7 +101,7 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 		);
 	}
 
-	const label = identity.agentType ? (
+	const label = (
 		<AgentLabel
 			name={identity.name}
 			machineName={null}
@@ -127,13 +110,6 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 			size="md"
 			className={cn("min-w-0", identity.href && "transition-opacity hover:opacity-80")}
 		/>
-	) : (
-		<div className="flex min-w-0 items-center gap-3">
-			<AgentIcon agent={null} size="md" avatarUrl={identity.avatarUrl} />
-			<span className="truncate text-sm font-medium" title={identity.name}>
-				{identity.name}
-			</span>
-		</div>
 	);
 
 	return identity.href ? (
@@ -150,6 +126,7 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 
 export function ComputeSubscriptionCard({
 	view,
+	identity,
 	badges,
 	notice,
 	actions,
@@ -157,6 +134,7 @@ export function ComputeSubscriptionCard({
 	className,
 }: {
 	view: ComputeSubscriptionCardView;
+	identity?: ComputeSubscriptionIdentity;
 	badges?: ReactNode;
 	notice?: ReactNode;
 	actions?: ReactNode;
@@ -164,12 +142,6 @@ export function ComputeSubscriptionCard({
 	className?: string;
 }) {
 	const Heading = headingLevel === 4 ? "h4" : "h3";
-	const [plan, payment, price] = view.facts;
-	const hideIncludedPrice = payment.value === "Included" && price.value === "No charge";
-	const visibleMetadataFacts = view.facts
-		.slice(1)
-		.filter((fact) => !(fact.label === "Price" && hideIncludedPrice));
-	const identityLabel = view.identity.kind === "agent" ? view.identity.name : view.identity.label;
 
 	return (
 		<article
@@ -181,9 +153,10 @@ export function ComputeSubscriptionCard({
 				className: cn("flex h-full min-w-0 flex-col gap-4", className),
 			})}
 		>
-			<Heading className="sr-only">{`${identityLabel}: ${plan.value}`}</Heading>
 			<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-				<SubscriptionIdentity identity={view.identity} />
+				<Heading className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
+					{view.plan}
+				</Heading>
 				<div className="flex min-w-0 flex-wrap justify-end gap-1.5">
 					<StatusBadge status={view.status.tone} withDot>
 						{view.status.label}
@@ -193,19 +166,29 @@ export function ComputeSubscriptionCard({
 			</header>
 
 			<dl className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5">
-				<div className="min-w-0 basis-full">
-					<dt className="sr-only">{plan.label}</dt>
-					<dd className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
-						{plan.value}
-					</dd>
-				</div>
-				{visibleMetadataFacts.map((fact) => (
+				{view.commercialFacts.map((fact) => (
 					<div key={fact.label} className="min-w-0 text-xs text-muted-foreground">
 						<dt className="sr-only">{fact.label}</dt>
-						<dd className="[overflow-wrap:anywhere]">{fact.value}</dd>
+						<dd
+							className={cn(
+								"[overflow-wrap:anywhere]",
+								fact.emphasis && "text-sm font-semibold text-foreground",
+							)}
+						>
+							{fact.value}
+						</dd>
 					</div>
 				))}
 			</dl>
+
+			{identity ? (
+				<div data-slot="compute-subscription-identity" className="flex min-w-0 items-center gap-3">
+					<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
+					<div className="min-w-0 flex-1">
+						<SubscriptionIdentity identity={identity} />
+					</div>
+				</div>
+			) : null}
 
 			{notice ? (
 				<div data-slot="compute-subscription-notice" className="min-w-0 pt-1">

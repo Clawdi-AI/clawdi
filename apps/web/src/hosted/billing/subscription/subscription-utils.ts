@@ -41,10 +41,17 @@ type AccountSubscriptionActionState = Pick<
 	"cancel_at_period_end" | "deployment_id" | "is_orphan" | "status"
 >;
 
+type AccountSubscriptionCancelState = AccountSubscriptionActionState &
+	Pick<ComputeSubscriptionListItem, "funding_source">;
+
 export function canCancelAccountSubscription(
-	subscription: AccountSubscriptionActionState,
+	subscription: AccountSubscriptionCancelState,
 ): boolean {
-	return !subscription.cancel_at_period_end && isComputeSubscriptionCancelable(subscription);
+	return (
+		(subscription.funding_source === "stripe" || subscription.funding_source === "wallet") &&
+		!subscription.cancel_at_period_end &&
+		isComputeSubscriptionCancelable(subscription)
+	);
 }
 
 export function canResumeAccountSubscription(
