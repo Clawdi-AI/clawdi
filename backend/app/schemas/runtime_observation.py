@@ -54,6 +54,13 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     error: str | None = Field(default=None, max_length=4000)
     converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
     truncated: Literal[False] | None = None
+    generation: int | None = Field(default=None, ge=1, le=9_007_199_254_740_991)
+    manifest_etag: str | None = Field(
+        alias="manifestETag",
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
     apply_receipt_id: str = Field(alias="applyReceiptId", min_length=16, max_length=128)
     boot_nonce: str = Field(alias="bootNonce", min_length=16, max_length=128)
     boot_session_id: str = Field(alias="bootSessionId", min_length=1, max_length=128)
@@ -93,6 +100,10 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     def validate_companion_identity(self) -> RuntimeObservationEventV2:
         if self.applied.generation < 1:
             raise ValueError("runtime observation generation must be at least 1")
+        if (self.generation is None) != (self.manifest_etag is None):
+            raise ValueError("generation and manifestETag must be present together")
+        if self.generation is not None and self.generation != self.applied.generation:
+            raise ValueError("generation must match applied.generation")
         if self.reported_at != self.captured_at:
             raise ValueError("reportedAt must equal capturedAt")
         if self.predecessor_boot_session_id == self.boot_session_id:

@@ -32,12 +32,13 @@ function tempRuntimePaths(): RuntimePaths {
 }
 
 function appliedState(generation: number): RuntimeAppliedStateV2 {
+	const sourceRevision = (generation === 1 ? "a" : "b").repeat(64);
 	return {
 		schemaVersion: "clawdi.runtimeAppliedState.v2",
 		appliedAt: `2026-07-22T00:00:0${generation}.000Z`,
 		instanceId: "hri_producer",
-		etag: `"transport-${generation}"`,
-		sourceRevision: (generation === 1 ? "a" : "b").repeat(64),
+		etag: `"sha256:${sourceRevision}"`,
+		sourceRevision,
 		generation,
 		manifestETag: `"manifest-${generation}"`,
 		applyReceiptId: `apply-receipt-000${generation}`,
@@ -154,12 +155,18 @@ describe("hosted runtime observation producer", () => {
 
 		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 		expect(submitted).toMatchObject({
+			generation: 3,
+			manifestETag: '"manifest-3"',
 			bootSessionId: "event-or-boot-identity",
 			sequence: 1,
 			eventId: "event-or-boot-identity",
 			applyReceiptId: "apply-receipt-0003",
 			bootNonce: "boot-nonce-000001",
-			applied: { generation: 3, etag: '"manifest-3"' },
+			applied: {
+				generation: 3,
+				etag: `"sha256:${"b".repeat(64)}"`,
+				sourceRevision: "b".repeat(64),
+			},
 		});
 	});
 
@@ -208,20 +215,24 @@ describe("hosted runtime observation producer", () => {
 
 		expect(events).toHaveLength(2);
 		expect(events[0]).toMatchObject({
+			generation: 1,
+			manifestETag: '"manifest-1"',
 			bootSessionId: "boot-000000000001",
 			sequence: 1,
 			eventId: "event-00000000001",
 			applyReceiptId: "apply-receipt-0001",
 			bootNonce: "boot-nonce-000001",
-			applied: { generation: 1, etag: '"manifest-1"' },
+			applied: { generation: 1, etag: `"sha256:${"a".repeat(64)}"` },
 		});
 		expect(events[1]).toMatchObject({
+			generation: 2,
+			manifestETag: '"manifest-2"',
 			bootSessionId: "boot-000000000002",
 			sequence: 1,
 			eventId: "event-00000000002",
 			applyReceiptId: "apply-receipt-0002",
 			bootNonce: "boot-nonce-000001",
-			applied: { generation: 2, etag: '"manifest-2"' },
+			applied: { generation: 2, etag: `"sha256:${"b".repeat(64)}"` },
 		});
 	});
 
@@ -259,6 +270,25 @@ describe("hosted runtime observation producer", () => {
 		});
 
 		expect(await producer.sendOnce()).toEqual({ outcome: "idle" });
+		expect(submits).toBe(0);
+	});
+
+	test("does not submit diagnostics with an invalid runtime bundle validator", async () => {
+		const paths = tempRuntimePaths();
+		writeApplyIdentityFile(paths, 1);
+		writeRuntimeAppliedState({ ...appliedState(1), etag: `"sha256:${"f".repeat(64)}"` }, paths);
+		let submits = 0;
+		const producer = new HostedRuntimeObservationProducer({
+			abort: new AbortController().signal,
+			paths,
+			contextPath: runtimeContextPath(paths),
+			submit: async () => {
+				submits += 1;
+				return "accepted";
+			},
+		});
+
+		expect(await producer.sendOnce()).toEqual({ outcome: "failed" });
 		expect(submits).toBe(0);
 	});
 
