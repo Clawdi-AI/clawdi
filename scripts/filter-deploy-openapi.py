@@ -80,6 +80,8 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/usage": {"get"},
     "/v2/wallet": {"get"},
     "/v2/wallet/auto-reload": {"put"},
+    "/v2/wallet/auto-reload/setup-intent": {"post"},
+    "/v2/wallet/auto-reload/setup-intent/finalize": {"post"},
     "/v2/wallet/transactions": {"get"},
     "/v2/wallet/topup": {"post"},
 }

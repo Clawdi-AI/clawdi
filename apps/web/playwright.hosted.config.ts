@@ -8,7 +8,11 @@ if (!Number.isInteger(hostedPort) || hostedPort < 1 || hostedPort > 65_535) {
 }
 const baseURL = process.env.E2E_HOSTED_BASE_URL ?? `http://127.0.0.1:${hostedPort}`;
 // Must match the stub host in e2e/hosted-stub-api.ts / hosted-fixtures.ts.
-const deployApiURL = process.env.E2E_HOSTED_DEPLOY_API_URL ?? "http://127.0.0.1:8001";
+const deployApiPort = Number(process.env.E2E_HOSTED_DEPLOY_API_PORT ?? 8001);
+if (!Number.isInteger(deployApiPort) || deployApiPort < 1 || deployApiPort > 65_535) {
+	throw new Error("E2E_HOSTED_DEPLOY_API_PORT must be a valid TCP port.");
+}
+const deployApiURL = process.env.E2E_HOSTED_DEPLOY_API_URL ?? `http://127.0.0.1:${deployApiPort}`;
 const stripePublishableKey = process.env.E2E_STRIPE_PUBLISHABLE_KEY ?? "pk_test_browser";
 
 export default defineConfig({
@@ -41,9 +45,9 @@ export default defineConfig({
 			// Deploy API mock for the deploy-wizard spec (in-page stubs cover
 			// everything else). PYTHONPATH puts the backend root on sys.path so
 			// the mock can import `app.*` helpers.
-			command: "uv run python scripts/mock_deploy_api.py --host 127.0.0.1 --port 8001",
+			command: `uv run python scripts/mock_deploy_api.py --host 127.0.0.1 --port ${deployApiPort}`,
 			cwd: "../../backend",
-			url: "http://127.0.0.1:8001/health",
+			url: `${deployApiURL}/health`,
 			reuseExistingServer: Boolean(process.env.E2E_HOSTED_DEPLOY_API_URL),
 			timeout: 60_000,
 			env: { PYTHONPATH: "." },
