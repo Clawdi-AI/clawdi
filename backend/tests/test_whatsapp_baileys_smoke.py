@@ -35,8 +35,8 @@ from app.services.whatsapp_baileys import (
     encode_buffer_json,
     load_or_create_whatsapp_auth_cert,
     mint_whatsapp_agent_credential,
-    serialize_whatsapp_auth_cert,
 )
+from tests.whatsapp_helpers import serialize_whatsapp_auth_cert
 
 
 def _baileys_protocol_smoke_gate(env: Mapping[str, str]) -> tuple[bool, str | None]:

@@ -38,8 +38,6 @@ from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegi
 
 
 class FakeManagedSidecar:
-    transport_mode = "sidecar"
-
     def __init__(self) -> None:
         self.connected = False
         self.registered = False

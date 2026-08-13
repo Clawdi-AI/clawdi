@@ -36,7 +36,6 @@ from app.services.whatsapp_baileys import (
     StoredWhatsAppCredential,
     WhatsAppAuthCert,
     decode_buffer_json,
-    encrypt_whatsapp_group_message_for_sender_key,
     mint_whatsapp_agent_credential,
     serialize_creds,
     whatsapp_signal_senders_from_config,
@@ -74,6 +73,7 @@ from app.services.whatsapp_noise import (
     pack_frame,
     unpack_frame,
 )
+from tests.whatsapp_helpers import encrypt_whatsapp_group_message_for_sender_key
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 

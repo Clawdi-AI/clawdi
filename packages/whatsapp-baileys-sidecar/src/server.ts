@@ -16,7 +16,7 @@ import {
 	RuntimeNotConnectedError,
 } from "./types.js";
 
-export type ServerConfig = {
+type ServerConfig = {
 	apiToken: string;
 	maxBodyBytes?: number;
 };
