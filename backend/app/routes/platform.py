@@ -54,6 +54,11 @@ from app.services.hosted_runtime_secrets import (
     runtime_secret_values_idempotency_identity,
     sync_hosted_runtime_secret_values,
 )
+from app.services.hosted_v1_ownership import (
+    HostedV1OwnershipConflict,
+    assert_no_active_hosted_v1_ownership,
+    lock_hosted_v1_ownership_mutations,
+)
 from app.services.platform_contract import (
     PlatformReplay,
     lock_platform_idempotency,
@@ -603,6 +608,27 @@ async def platform_create_agent(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_hosted_v1_ownership_mutations(db)
+    existing_agent = await db.scalar(
+        select(AgentEnvironment)
+        .where(
+            AgentEnvironment.id == body.agent_id,
+            AgentEnvironment.user_id == owner.id,
+        )
+        .with_for_update()
+    )
+    if existing_agent is not None:
+        try:
+            await assert_no_active_hosted_v1_ownership(db, agent_id=body.agent_id)
+        except HostedV1OwnershipConflict as exc:
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "hosted_v1_ownership_conflict",
+                    "message": str(exc),
+                },
+            ) from None
     await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
@@ -811,6 +837,26 @@ async def platform_upsert_runtime_state(
         request=request,
         idempotency_key=idempotency_key,
     )
+    try:
+        await assert_no_active_hosted_v1_ownership(db, agent_id=agent_id)
+    except HostedV1OwnershipConflict as exc:
+        await _reject(
+            db,
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "hosted_v1_ownership_conflict",
+                "message": str(exc),
+            },
+            result="hosted_v1_ownership_conflict",
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="hosted_runtime_state",
+            resource_id=str(agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=agent_id,
+        )
     new_workspace_skill_keys: set[str] = (
         set(body.skills.entries) if body.skills is not None else set()
     )

@@ -17,6 +17,7 @@ from app.main import app
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
 from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
+from app.models.hosted_v1_ownership import HostedV1AgentOwnership
 from app.models.platform_idempotency import PlatformMutationIdempotency
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
@@ -485,6 +486,95 @@ async def test_platform_agent_reregistration_updates_its_name(
     agent = await db_session.get(AgentEnvironment, agent_id)
     assert agent is not None
     assert agent.default_name == "Writing"
+
+
+@pytest.mark.asyncio
+async def test_platform_agent_reregistration_rejects_active_hosted_v1_ownership(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    agent = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"hosted-v1-{uuid.uuid4().hex}",
+        machine_name="Hosted V1 Agent",
+        agent_type="openclaw",
+        os="linux",
+    )
+    key = ApiKey(
+        user_id=seed_user.id,
+        key_hash=hashlib.sha256(uuid.uuid4().bytes).hexdigest(),
+        key_prefix="clawdi_hosted_v1",
+        label="Hosted V1 runtime",
+        scopes=None,
+        managed=False,
+    )
+    db_session.add(key)
+    await db_session.flush()
+    db_session.add(
+        HostedV1AgentOwnership(
+            environment_id=agent.id,
+            api_key_id=key.id,
+            deployment_id="hosted-v1-platform-conflict",
+            agent_type="openclaw",
+        )
+    )
+    await db_session.commit()
+    idempotency_key = f"hosted-v1-reregister-{uuid.uuid4().hex}"
+    before = (
+        agent.machine_id,
+        agent.machine_name,
+        agent.default_name,
+        agent.agent_version,
+        agent.os,
+        agent.last_seen_at,
+        agent.registration_key,
+        agent.updated_at,
+    )
+
+    response = await platform_client.post(
+        "/v1/platform/agents",
+        headers=_headers(idempotency_key),
+        json={
+            **_agent_body(_clerk_owner(seed_user), agent.id),
+            "machine_id": "mutated-machine",
+            "machine_name": "Mutated Agent",
+            "default_name": "Mutated Name",
+            "agent_version": "9.9.9",
+            "os_name": "mutated-os",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "hosted_v1_ownership_conflict"
+    await db_session.refresh(agent)
+    assert (
+        agent.machine_id,
+        agent.machine_name,
+        agent.default_name,
+        agent.agent_version,
+        agent.os,
+        agent.last_seen_at,
+        agent.registration_key,
+        agent.updated_at,
+    ) == before
+    assert (
+        await db_session.scalar(
+            select(PlatformMutationIdempotency.id).where(
+                PlatformMutationIdempotency.idempotency_key == idempotency_key
+            )
+        )
+        is None
+    )
+    assert (
+        await db_session.scalar(
+            select(ControlPlaneAuditEvent.id).where(
+                ControlPlaneAuditEvent.details["idempotency_key"].astext == idempotency_key
+            )
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

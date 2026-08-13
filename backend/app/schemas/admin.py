@@ -45,6 +45,7 @@ from app.schemas.runtime import (
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
+AdminHostedV1AgentType = Literal["hermes", "openclaw"]
 _SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
 _ADMIN_CLERK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -55,10 +56,21 @@ def _validate_admin_clerk_id(value: str) -> str:
     return value
 
 
+def _validate_hosted_v1_deployment_id(value: str) -> str:
+    if value != value.strip():
+        raise ValueError("deployment_id must not have surrounding whitespace")
+    return value
+
+
 AdminClerkId = Annotated[
     str,
     Field(min_length=1, max_length=200),
     AfterValidator(_validate_admin_clerk_id),
+]
+AdminHostedV1DeploymentId = Annotated[
+    str,
+    Field(min_length=1, max_length=200),
+    AfterValidator(_validate_hosted_v1_deployment_id),
 ]
 
 
@@ -105,6 +117,36 @@ class AdminAgentCreate(BaseModel):
     agent_type: str
     agent_version: str | None = None
     os_name: str = "linux"
+
+
+class AdminHostedV1OwnershipUpsert(BaseModel):
+    """First-party Hosted V1 ownership claim for an existing Agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_clerk_id: AdminClerkId
+    deployment_id: AdminHostedV1DeploymentId
+    agent_type: AdminHostedV1AgentType
+    key_id: UUID
+    replace_existing: bool = False
+
+
+class AdminHostedV1OwnershipResponse(BaseModel):
+    ownership_id: UUID
+    agent_id: UUID
+    deployment_id: str
+    agent_type: AdminHostedV1AgentType
+    key_id: UUID
+    created_at: datetime
+
+
+class AdminHostedV1OwnershipRelease(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_clerk_id: AdminClerkId
+    deployment_id: AdminHostedV1DeploymentId
+    agent_type: AdminHostedV1AgentType
+    key_id: UUID
 
 
 class AdminApiKeyCreate(BaseModel):

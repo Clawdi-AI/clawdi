@@ -102,6 +102,7 @@ from app.services.agent_lifecycle import (
     archive_agent_and_project,
 )
 from app.services.file_store import get_file_store
+from app.services.hosted_v1_ownership import active_hosted_v1_ownership
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_provider import get_memory_provider
 from app.services.runtime_generation import resolve_runtime_apply_generation
@@ -267,14 +268,22 @@ async def _register_agent_identity(
     connected_registration = False
     if is_connected_agent_principal(auth):
         hosted_state = await db.get(HostedRuntimeState, registered.env.id)
+        hosted_v1_ownership = await active_hosted_v1_ownership(
+            db,
+            agent_id=registered.env.id,
+        )
         environment_bound_key_id = await db.scalar(
             select(ApiKey.id).where(ApiKey.environment_id == registered.env.id).limit(1)
         )
-        connected_registration = hosted_state is None and environment_bound_key_id is None
+        connected_registration = (
+            hosted_state is None
+            and hosted_v1_ownership is None
+            and environment_bound_key_id is None
+        )
     if connected_registration:
         # This is origin evidence, not capability evidence. A current Connected
         # Agent must still renew its separate short-lived Project Skill lease.
-        # Existing Hosted V2 state or a Legacy V1 environment-bound key is
+        # Existing Hosted ownership or a Legacy V1 environment-bound key is
         # positive deployment evidence and prevents an account-level CLI token
         # from reclassifying that durable Agent identity.
         registered.env.connected_agent_registered_at = datetime.now(UTC)

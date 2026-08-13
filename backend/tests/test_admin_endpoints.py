@@ -2624,6 +2624,268 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
 
 
 @pytest.mark.asyncio
+async def test_admin_hosted_v1_ownership_is_idempotent_conflict_safe_and_releasable(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from sqlalchemy import func, select
+
+    from app.models.hosted_v1_ownership import HostedV1AgentOwnership
+    from app.services.api_key import mint_api_key
+    from tests.conftest import create_env_with_project
+
+    first = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"hosted-v1-first-{uuid.uuid4().hex}",
+        machine_name="Hosted V1 first",
+        agent_type="openclaw",
+    )
+    replacement = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"hosted-v1-replacement-{uuid.uuid4().hex}",
+        machine_name="Hosted V1 replacement",
+        agent_type="openclaw",
+    )
+    key = (
+        await mint_api_key(
+            db_session,
+            user_id=seed_user.id,
+            label="Hosted V1 inventory key",
+        )
+    ).api_key
+    rotated_key = (
+        await mint_api_key(
+            db_session,
+            user_id=seed_user.id,
+            label="Rotated Hosted V1 inventory key",
+        )
+    ).api_key
+    assert key.environment_id is None
+    assert key.managed is False
+    assert rotated_key.environment_id is None
+    assert rotated_key.managed is False
+    first_id = first.id
+    rotated_key_id = rotated_key.id
+    path = f"/v1/admin/agents/{first_id}/hosted-v1-ownership"
+    body = {
+        "target_clerk_id": seed_user.clerk_id,
+        "deployment_id": "hosted-v1-deployment",
+        "agent_type": "openclaw",
+        "key_id": str(key.id),
+    }
+
+    adopted = await admin_client.put(path, headers=_AUTH, json=body)
+    replayed = await admin_client.put(path, headers=_AUTH, json=body)
+    assert adopted.status_code == replayed.status_code == 200
+    assert replayed.json() == adopted.json()
+    assert adopted.json()["key_id"] == str(key.id)
+
+    replacement_path = f"/v1/admin/agents/{replacement.id}/hosted-v1-ownership"
+    conflict = await admin_client.put(
+        replacement_path,
+        headers=_AUTH,
+        json={**body, "replace_existing": True},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "hosted_v1_ownership_conflict"
+
+    moved_deployment = await admin_client.put(
+        path,
+        headers=_AUTH,
+        json={
+            **body,
+            "deployment_id": "another-hosted-v1-deployment",
+            "replace_existing": True,
+        },
+    )
+    assert moved_deployment.status_code == 409
+    assert moved_deployment.json()["detail"]["code"] == "hosted_v1_ownership_conflict"
+
+    replaced = await admin_client.put(
+        path,
+        headers=_AUTH,
+        json={**body, "key_id": str(rotated_key_id), "replace_existing": True},
+    )
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["agent_id"] == str(first_id)
+    assert replaced.json()["key_id"] == str(rotated_key_id)
+    rows = list(
+        (
+            await db_session.scalars(
+                select(HostedV1AgentOwnership).order_by(HostedV1AgentOwnership.created_at)
+            )
+        ).all()
+    )
+    assert len(rows) == 2
+    assert rows[0].archived_at is not None
+    assert rows[0].archive_reason == "replaced"
+    assert rows[1].archived_at is None
+
+    wrong_release = await admin_client.request(
+        "DELETE",
+        path,
+        headers=_AUTH,
+        json={
+            **body,
+            "key_id": str(rotated_key_id),
+            "deployment_id": "another-deployment",
+        },
+    )
+    assert wrong_release.status_code == 409
+
+    released = await admin_client.request(
+        "DELETE",
+        path,
+        headers=_AUTH,
+        json={**body, "key_id": str(rotated_key_id)},
+    )
+    replayed_release = await admin_client.request(
+        "DELETE",
+        path,
+        headers=_AUTH,
+        json={**body, "key_id": str(rotated_key_id)},
+    )
+    assert released.status_code == replayed_release.status_code == 204
+    await db_session.refresh(rows[1])
+    assert rows[1].archived_at is not None
+    assert rows[1].archive_reason == "released"
+
+    readopted = await admin_client.put(
+        path,
+        headers=_AUTH,
+        json={**body, "key_id": str(rotated_key_id)},
+    )
+    assert readopted.status_code == 200, readopted.text
+    deleted = await admin_client.delete(
+        f"/v1/admin/agents/{first_id}",
+        headers=_AUTH,
+    )
+    assert deleted.status_code == 204, deleted.text
+    active_count = await db_session.scalar(
+        select(func.count(HostedV1AgentOwnership.id)).where(
+            HostedV1AgentOwnership.environment_id == first_id,
+            HostedV1AgentOwnership.archived_at.is_(None),
+        )
+    )
+    assert active_count == 0
+    latest = await db_session.get(
+        HostedV1AgentOwnership,
+        uuid.UUID(readopted.json()["ownership_id"]),
+    )
+    assert latest is not None
+    assert latest.archive_reason == "agent_archived"
+
+
+@pytest.mark.asyncio
+async def test_admin_hosted_v1_ownership_rejects_connected_and_hosted_v2_agents(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from datetime import UTC, datetime
+
+    from app.services.api_key import mint_api_key
+    from tests.conftest import create_env_with_project, create_test_hosted_runtime_state
+
+    target_clerk_id = seed_user.clerk_id
+    assert target_clerk_id is not None
+    valid_key = (
+        await mint_api_key(
+            db_session,
+            user_id=seed_user.id,
+            label="Rejected Hosted V1 inventory key",
+        )
+    ).api_key
+    wrong_binding = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"hosted-v1-wrong-binding-{uuid.uuid4().hex}",
+        machine_name="Hosted V1 wrong binding",
+        agent_type="openclaw",
+    )
+    key_validation_agent = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"hosted-v1-key-validation-{uuid.uuid4().hex}",
+        machine_name="Hosted V1 key validation",
+        agent_type="openclaw",
+    )
+    bound_key = (
+        await mint_api_key(
+            db_session,
+            user_id=seed_user.id,
+            label="Wrongly bound Hosted V1 inventory key",
+            environment_id=wrong_binding.id,
+        )
+    ).api_key
+    revoked_key = (
+        await mint_api_key(
+            db_session,
+            user_id=seed_user.id,
+            label="Revoked Hosted V1 inventory key",
+        )
+    ).api_key
+    revoked_key.revoked_at = datetime.now(UTC)
+    valid_key_id = valid_key.id
+    bound_key_id = bound_key.id
+    revoked_key_id = revoked_key.id
+    key_validation_agent_id = key_validation_agent.id
+    await db_session.commit()
+    connected = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"connected-owned-{uuid.uuid4().hex}",
+        machine_name="Connected owned",
+        agent_type="openclaw",
+    )
+    connected.connected_agent_registered_at = datetime.now(UTC)
+    connected_id = connected.id
+    hosted_v2 = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"hosted-v2-owned-{uuid.uuid4().hex}",
+        machine_name="Hosted V2 owned",
+        agent_type="openclaw",
+    )
+    hosted_v2_id = hosted_v2.id
+    await create_test_hosted_runtime_state(db_session, hosted_v2, runtime_name="openclaw")
+
+    for agent_id, deployment_id in (
+        (connected_id, "connected-deployment"),
+        (hosted_v2_id, "hosted-v2-deployment"),
+    ):
+        response = await admin_client.put(
+            f"/v1/admin/agents/{agent_id}/hosted-v1-ownership",
+            headers=_AUTH,
+            json={
+                "target_clerk_id": target_clerk_id,
+                "deployment_id": deployment_id,
+                "agent_type": "openclaw",
+                "key_id": str(valid_key_id),
+            },
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "hosted_v1_ownership_conflict"
+
+    for key_id in (bound_key_id, revoked_key_id):
+        response = await admin_client.put(
+            f"/v1/admin/agents/{key_validation_agent_id}/hosted-v1-ownership",
+            headers=_AUTH,
+            json={
+                "target_clerk_id": target_clerk_id,
+                "deployment_id": f"invalid-key-{key_id}",
+                "agent_type": "openclaw",
+                "key_id": str(key_id),
+            },
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "hosted_v1_ownership_conflict"
+
+
+@pytest.mark.asyncio
 async def test_admin_runtime_secret_validation_redacts_plaintext(
     admin_client,
     db_session,

@@ -15,6 +15,7 @@ from app.main import app
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.hosted_v1_ownership import HostedV1AgentOwnership
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
@@ -23,6 +24,7 @@ from app.routes import skills as skill_routes
 from app.routes.skills import _compute_file_tree_hash
 from app.services import project_runtime_skills
 from app.services.agent_environments import local_machine_registration_key
+from app.services.api_key import mint_api_key
 from app.services.file_store import get_file_store
 from app.services.project_runtime_skills import CONNECTED_PROJECT_SKILL_CAPABILITY_TTL
 from app.services.runtime_source import (
@@ -696,6 +698,133 @@ async def test_ambiguous_legacy_registration_shape_rejects_workspace_observation
         ),
         "skill_key": "shared-key",
     }
+
+
+@pytest.mark.asyncio
+async def test_active_hosted_v1_ownership_allows_only_workspace_observation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    environment_project: Project,
+):
+    agent_id = environment_project.origin_environment_id
+    assert agent_id is not None
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    agent.agent_type = "openclaw"
+    key = (
+        await mint_api_key(
+            db_session,
+            user_id=seed_user.id,
+            label="Hosted V1 workspace inventory key",
+        )
+    ).api_key
+    other_key = (
+        await mint_api_key(
+            db_session,
+            user_id=seed_user.id,
+            label="Unrelated Hosted V1 workspace key",
+        )
+    ).api_key
+    db_session.add(
+        HostedV1AgentOwnership(
+            environment_id=agent_id,
+            api_key_id=key.id,
+            deployment_id="hosted-v1-skills",
+            agent_type="openclaw",
+        )
+    )
+    project_skill = await _upload_project_skill(client, workspace_project.id, "project-only")
+    assert project_skill.status_code == 200, project_skill.text
+    db_session.add(
+        AgentProjectBinding(
+            agent_id=agent_id,
+            project_id=workspace_project.id,
+            binding_type="context",
+            priority=1,
+            default_write_enabled=False,
+            created_by_user_id=seed_user.id,
+        )
+    )
+    await db_session.commit()
+    assert key.environment_id is None
+    assert other_key.environment_id is None
+
+    _set_auth(AuthContext(user=seed_user, api_key=other_key))
+    rejected_other_key = await _upload_agent_workspace_skill(
+        client,
+        agent_id=agent_id,
+        skill_key="other-key",
+    )
+    assert rejected_other_key.status_code == 409, rejected_other_key.text
+    assert rejected_other_key.json()["detail"]["code"] == "project_skill_delivery_update_required"
+
+    _set_auth(AuthContext(user=seed_user, api_key=key))
+    observed = await _upload_agent_workspace_skill(
+        client,
+        agent_id=agent_id,
+        skill_key="local-only",
+    )
+    assert observed.status_code == 200, observed.text
+
+    key.revoked_at = datetime.now(UTC)
+    await db_session.commit()
+    rejected_revoked_key = await _upload_agent_workspace_skill(
+        client,
+        agent_id=agent_id,
+        skill_key="revoked-key",
+    )
+    assert rejected_revoked_key.status_code == 409, rejected_revoked_key.text
+
+    _set_auth(
+        AuthContext(
+            user=seed_user,
+            oauth_cli=True,
+            oauth_access_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+    )
+    reregistered = await client.post(
+        "/v1/agents",
+        json={
+            "machine_id": agent.machine_id,
+            "machine_name": agent.machine_name,
+            "agent_type": agent.agent_type,
+            "agent_version": agent.agent_version,
+            "os": agent.os,
+        },
+    )
+    assert reregistered.status_code == 200, reregistered.text
+    await db_session.refresh(agent)
+    assert agent.connected_agent_registered_at is None
+
+    rejected = await _upload_agent_workspace_skill(
+        client,
+        agent_id=agent_id,
+        skill_key="oauth-key",
+    )
+    _set_auth(AuthContext(user=seed_user))
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"]["code"] == "project_skill_delivery_update_required"
+
+    # Positive V1 evidence does not grant Cloud Project link/write readiness.
+    another_project = Project(
+        user_id=seed_user.id,
+        name="Another Hosted V1 Project",
+        slug=f"hosted-v1-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(another_project)
+    await db_session.commit()
+    uploaded = await _upload_project_skill(client, another_project.id, "another-project-skill")
+    assert uploaded.status_code == 200, uploaded.text
+    rejected_link = await _link(
+        client,
+        agent_id=agent_id,
+        project_id=another_project.id,
+    )
+    assert rejected_link.status_code == 409
+    assert rejected_link.json()["detail"]["code"] == "project_skill_delivery_update_required"
 
 
 @pytest.mark.asyncio

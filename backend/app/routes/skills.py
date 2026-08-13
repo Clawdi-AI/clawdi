@@ -1380,6 +1380,7 @@ async def _do_upload_skill(
                 db,
                 agent_id=authority_agent_id,
                 skill_keys={skill_key},
+                hosted_v1_api_key_id=auth.api_key.id if auth.api_key is not None else None,
             )
             return
         await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)

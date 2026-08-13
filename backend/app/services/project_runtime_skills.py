@@ -28,6 +28,7 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.runtime import PersistedHostedRuntimeSkills
 from app.schemas.runtime_observed import HostedRuntimeObservedV2
+from app.services.hosted_v1_ownership import authenticated_hosted_v1_ownership
 from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.sync_events import queue_runtime_manifest_changed
 
@@ -554,6 +555,7 @@ async def assert_agent_workspace_skill_write_compatible(
     *,
     agent_id: UUID,
     skill_keys: set[str],
+    hosted_v1_api_key_id: UUID | None = None,
 ) -> None:
     """Fail before Agent Workspace intent would duplicate a linked Project Skill."""
     await lock_agent_runtime_graph(db, agent_id)
@@ -591,6 +593,12 @@ async def assert_agent_workspace_skill_write_compatible(
             },
         )
     if project_skill_keys:
+        if hosted_v1_api_key_id is not None and await authenticated_hosted_v1_ownership(
+            db,
+            agent_id=agent_id,
+            api_key_id=hosted_v1_api_key_id,
+        ):
+            return
         (
             agent,
             state,
@@ -600,8 +608,6 @@ async def assert_agent_workspace_skill_write_compatible(
             db,
             agent_id=agent_id,
         )
-        # Historical Hosted V1 and Connected rows can have the same legacy
-        # shape. Never bypass readiness without durable hosted ownership state.
         _assert_agent_supports_project_skills(
             agent,
             state,

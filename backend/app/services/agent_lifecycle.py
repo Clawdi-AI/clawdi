@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_key import ApiKey
+from app.models.hosted_v1_ownership import HostedV1AgentOwnership
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 
@@ -73,6 +74,17 @@ async def archive_agent_and_project(
     archived_at = now or datetime.now(UTC)
     locked_agent.archived_at = archived_at
     project.archived_at = archived_at
+    ownership = await db.scalar(
+        select(HostedV1AgentOwnership)
+        .where(
+            HostedV1AgentOwnership.environment_id == locked_agent.id,
+            HostedV1AgentOwnership.archived_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if ownership is not None:
+        ownership.archived_at = archived_at
+        ownership.archive_reason = "agent_archived"
     key_ids = list(
         (
             await db.scalars(

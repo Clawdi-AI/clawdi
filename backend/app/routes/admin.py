@@ -76,6 +76,9 @@ from app.schemas.admin import (
     AdminDeploymentManagedAiProviderResponse,
     AdminDeploymentManagedAiProviderUpsert,
     AdminEnvironmentCreate,
+    AdminHostedV1OwnershipRelease,
+    AdminHostedV1OwnershipResponse,
+    AdminHostedV1OwnershipUpsert,
     AdminManagedAiProviderResponse,
     AdminManagedAiProviderUpsert,
     AdminPlatformWhatsAppPairingSessionCreate,
@@ -149,6 +152,13 @@ from app.services.hosted_runtime_secrets import (
     hosted_runtime_secret_values_changed,
     load_hosted_runtime_secrets_for_update,
     sync_hosted_runtime_secret_values,
+)
+from app.services.hosted_v1_ownership import (
+    HostedV1OwnershipConflict,
+    adopt_hosted_v1_ownership,
+    assert_hosted_v1_registration_compatible,
+    assert_no_active_hosted_v1_ownership,
+    release_hosted_v1_ownership,
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_API_MODE,
@@ -1654,6 +1664,11 @@ async def _admin_register_environment(
             commit=False,
         )
         env = registered.env
+        await assert_hosted_v1_registration_compatible(
+            db,
+            agent_id=env.id,
+            agent_type=body.agent_type,
+        )
         # Admin registration is a hosted/managed origin, including the
         # historical implicit Legacy V1 shape that had registration_key.
         clear_connected_agent_registration(env)
@@ -1661,6 +1676,15 @@ async def _admin_register_environment(
     except AgentEnvironmentIdConflict as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    except HostedV1OwnershipConflict as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "hosted_v1_ownership_conflict",
+                "message": str(exc),
+            },
+        ) from None
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
@@ -1697,6 +1721,126 @@ async def admin_register_agent(
         db,
         default_name=body.default_name,
     )
+
+
+@router.put(
+    "/agents/{agent_id}/hosted-v1-ownership",
+    response_model=AdminHostedV1OwnershipResponse,
+)
+async def admin_adopt_hosted_v1_ownership(
+    agent_id: UUID,
+    body: AdminHostedV1OwnershipUpsert,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminHostedV1OwnershipResponse:
+    """Adopt an existing Agent using durable Hosted V1 inventory evidence."""
+
+    target = await _find_admin_owner(
+        db,
+        PlatformOwner(kind=PRINCIPAL_KIND_CLERK, ref=body.target_clerk_id),
+    )
+    try:
+        adopted = await adopt_hosted_v1_ownership(
+            db,
+            agent_id=agent_id,
+            owner_user_id=target.id,
+            api_key_id=body.key_id,
+            deployment_id=body.deployment_id,
+            agent_type=body.agent_type,
+            replace_existing=body.replace_existing,
+        )
+    except HostedV1OwnershipConflict as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "hosted_v1_ownership_conflict",
+                "message": str(exc),
+            },
+        ) from None
+
+    ownership = adopted.ownership
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="hosted_v1_ownership.adopt",
+        resource_type="hosted_v1_agent_ownership",
+        resource_id=str(ownership.id),
+        environment_id=agent_id,
+        target_user_id=target.id,
+        source="api.admin",
+        details={
+            "deployment_id": body.deployment_id,
+            "agent_type": body.agent_type,
+            "key_id": str(body.key_id),
+            "result": "replaced" if adopted.archived else "active",
+            "replaced_ownership_ids": [str(row.id) for row in adopted.archived],
+        },
+    )
+    await db.commit()
+    await db.refresh(ownership)
+    return AdminHostedV1OwnershipResponse(
+        ownership_id=ownership.id,
+        agent_id=ownership.environment_id,
+        deployment_id=ownership.deployment_id,
+        agent_type=body.agent_type,
+        key_id=ownership.api_key_id,
+        created_at=ownership.created_at,
+    )
+
+
+@router.delete(
+    "/agents/{agent_id}/hosted-v1-ownership",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def admin_release_hosted_v1_ownership(
+    agent_id: UUID,
+    body: AdminHostedV1OwnershipRelease,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Release the exact active Hosted V1 claim; absence is idempotent."""
+
+    target = await _find_admin_owner(
+        db,
+        PlatformOwner(kind=PRINCIPAL_KIND_CLERK, ref=body.target_clerk_id),
+    )
+    try:
+        released = await release_hosted_v1_ownership(
+            db,
+            agent_id=agent_id,
+            owner_user_id=target.id,
+            api_key_id=body.key_id,
+            deployment_id=body.deployment_id,
+            agent_type=body.agent_type,
+        )
+    except HostedV1OwnershipConflict as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "hosted_v1_ownership_conflict",
+                "message": str(exc),
+            },
+        ) from None
+
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="hosted_v1_ownership.release",
+        resource_type="hosted_v1_agent_ownership",
+        resource_id=str(released.id) if released is not None else None,
+        environment_id=agent_id,
+        target_user_id=target.id,
+        source="api.admin",
+        details={
+            "deployment_id": body.deployment_id,
+            "agent_type": body.agent_type,
+            "key_id": str(body.key_id),
+            "result": "released" if released is not None else "absent",
+        },
+    )
+    await db.commit()
 
 
 @router.post(
@@ -1861,6 +2005,17 @@ async def _admin_upsert_runtime_state(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+
+    try:
+        await assert_no_active_hosted_v1_ownership(db, agent_id=environment_id)
+    except HostedV1OwnershipConflict as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "hosted_v1_ownership_conflict",
+                "message": str(exc),
+            },
+        ) from None
 
     new_workspace_skill_keys: set[str] = (
         set(body.skills.entries) if body.skills is not None else set()
