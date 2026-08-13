@@ -80,14 +80,11 @@ is the first picker-visible model after
 so it is the current upstream-owned default. Clawdi does not encode that model
 choice.
 
-Deployment is two-stage. Phase A publishes the dual-read/canonical-write
-`clawdi@0.13.69`; the backend continues to emit legacy `OPENAI_API_KEY`. Phase B
-is a separate backend change gated on the exact CLI being published, desired
-package specs advancing, and `activeCliVersion` proving that the current running
-CLI is that exact version. Installed CLI diagnostics are not execution authority.
-The current flow parses the strict manifest before `applyRuntimeCliDesiredState`,
-so enabling canonical backend emission earlier would strand an older CLI before
-self-upgrade.
+The backend always emits terminal-Codex `OPENAI_API_KEY`; the CLI accepts that
+v1 compatibility input and writes `CLAWDI_AI_API_KEY` locally. The immutable
+image bootstrap CLI parses the strict manifest before a managed CLI can upgrade
+or start, so desired package specs and managed observations cannot authorize a
+wire-name change. That requires an explicit immutable bootstrap capability.
 
 ## Hermes
 

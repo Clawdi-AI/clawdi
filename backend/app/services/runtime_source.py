@@ -50,12 +50,10 @@ from app.schemas.runtime import (
     HostedRuntimeTools,
     PersistedHostedRuntimeSkills,
     is_canonical_secret_ref,
-    parse_exact_semver,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
     validate_hosted_runtime_mcp_desired_state,
 )
-from app.schemas.runtime_observed import HostedRuntimeObservedV2
 from app.services.channels import (
     HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS,
     channel_runtime_account_key,
@@ -76,7 +74,6 @@ from app.services.project_runtime_skills import (
     agent_supports_project_skills,
     project_skill_file_signature,
 )
-from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 from app.services.vault_crypto import decrypt
 from app.services.whatsapp_baileys import (
@@ -90,8 +87,7 @@ RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
-_CODEX_TOOL_LEGACY_RUNTIME_ENV = "OPENAI_API_KEY"
-_CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION = (0, 13, 69)
+_CODEX_TOOL_RUNTIME_ENV = "OPENAI_API_KEY"
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
@@ -111,47 +107,6 @@ def expected_runtime_bundle_v2_etag(source_revision: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", source_revision):
         raise ValueError("runtime bundle source revision must be a SHA-256 digest")
     return f'"sha256:{source_revision}"'
-
-
-def _codex_tool_runtime_env(
-    state: HostedRuntimeState,
-    observation: HostedRuntimeConfigObservation | None,
-) -> str:
-    desired_version = state.cli_package_spec.removeprefix("clawdi@")
-    parsed_version = parse_exact_semver(desired_version)
-    if parsed_version is None or (
-        parsed_version[:3] < _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION
-        or (
-            parsed_version[:3] == _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION
-            and parsed_version[3]
-        )
-    ):
-        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
-    if observation is None:
-        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
-    try:
-        observed = HostedRuntimeObservedV2.model_validate(observation.diagnostics)
-    except ValidationError:
-        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
-    expected_generation = resolve_runtime_apply_generation(
-        generation=state.generation,
-        apply_generation=state.apply_generation,
-    )
-    # The env-name change creates the next source revision, so gate only on the
-    # last applied record's internal identity instead of this render's revision.
-    if not (
-        observed.status == "ok"
-        and observed.converge_error is None
-        and observed.active_cli_version == desired_version
-        and observed.applied is not None
-        and observed.applied.instance_id == state.instance_id
-        and observed.applied.generation == expected_generation
-        and observation.observed_config_generation == expected_generation
-        and observation.observed_manifest_etag == observed.applied.etag
-        and observation.observed_source_revision == observed.applied.source_revision
-    ):
-        return _CODEX_TOOL_LEGACY_RUNTIME_ENV
-    return _MANAGED_PROVIDER_RUNTIME_ENV
 
 
 @dataclass(frozen=True)
@@ -780,7 +735,7 @@ def render_runtime_source(
         "baseUrl": codex_provider_material.get("baseUrl"),
         "apiMode": _CODEX_TOOL_API_MODE,
         "managed_by": codex_provider_material.get("managed_by"),
-        "runtimeEnvName": _codex_tool_runtime_env(state, row.observation),
+        "runtimeEnvName": _CODEX_TOOL_RUNTIME_ENV,
         "apiKeySecretRef": codex_provider_material.get("apiKeySecretRef"),
     }
     try:

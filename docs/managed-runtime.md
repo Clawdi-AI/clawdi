@@ -648,25 +648,13 @@ setting analogous to OpenClaw or Hermes, and Clawdi does not invent one or
 encode a model choice. Manifest v1 `primary_model` remains required only
 because strict parsing precedes a `clawdiCli.packageSpec` self-upgrade; the new
 CLI validates and ignores it.
-Legacy terminal-Codex `OPENAI_API_KEY` and provider `models` are also read-only
-v1 compatibility inputs; local output always uses `CLAWDI_AI_API_KEY` and
-remains catalog-free. Removing those wire fields needs a new schema after older
-CLIs can reach this compatibility release.
-
-This change is Phase A: publish `clawdi@0.13.69`, which reads both legacy and
-canonical terminal-Codex env names while writing only the canonical local env.
-Phase B keeps backend emission deployment-scoped: terminal Codex receives
-`CLAWDI_AI_API_KEY` only when the desired CLI is `clawdi@0.13.69` or later and
-strict v2 `activeCliVersion` proves the current running CLI is the exact desired
-version, along with the current apply generation and instance. Installed CLI
-diagnostics do not satisfy this gate. Observation generation, ETag, and source
-revision must agree with that applied record. Every missing, invalid, stale, or
-mismatched state retains `OPENAI_API_KEY`, including upgrades and rollbacks.
-Phase B may therefore deploy before the fleet upgrades: each deployment remains
-on the legacy env name until its own CLI and observation have converged.
-The gate does not compare that last applied revision with the revision currently
-being rendered: changing the env name creates a new revision, and the internally
-consistent applied record keeps the canonical projection stable while it catches up.
+Terminal-Codex `OPENAI_API_KEY` and provider `models` remain v1 compatibility
+inputs; local output always uses `CLAWDI_AI_API_KEY` and remains catalog-free.
+Cloud always emits `OPENAI_API_KEY` for terminal Codex because the immutable
+image bootstrap CLI parses the manifest before the managed CLI can upgrade or
+start. Desired versions and managed CLI observations cannot prove that cold-boot
+parser capability. A future wire-name change requires an explicit immutable
+bootstrap capability; it must not be inferred from managed CLI state.
 
 This mode controls default configuration ownership, not pod-wide network
 isolation. Egress matching is domain based, so another pod process could call a
