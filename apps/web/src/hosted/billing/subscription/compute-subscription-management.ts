@@ -1,4 +1,8 @@
-import type { ComputePlanSlug, HostedDeployment } from "@/hosted/billing/contracts";
+import type {
+	ComputePlanSlug,
+	HostedComputeSubscription,
+	HostedDeployment,
+} from "@/hosted/billing/contracts";
 import { deploymentStatusFromResource, isRunningStatus } from "@/hosted/deployment-status";
 import {
 	activePlanChangeOperationName,
@@ -22,9 +26,9 @@ export type ComputeSubscriptionEntitlement = {
 	priceCents: number | null | undefined;
 	billingTermMonths: number;
 	status: string;
-	paymentState: string;
+	paymentState: HostedComputeSubscription["payment_state"];
 	cancelAtPeriodEnd: boolean;
-	recoveryAction: string | null | undefined;
+	recoveryAction: HostedComputeSubscription["recovery_action"];
 	pendingPlanSlug: string | null | undefined;
 	isOrphan?: boolean;
 };
@@ -44,12 +48,27 @@ function isComputePlanSlug(value: string | null | undefined): value is ComputePl
 	return value === COMPUTE_BASIC_SLUG || value === COMPUTE_PERFORMANCE_SLUG;
 }
 
-function blocksManagement(entitlement: ComputeSubscriptionEntitlement): boolean {
+function isPaymentSourceOnlyManagement(
+	entitlement: ComputeSubscriptionEntitlement,
+	paid: boolean,
+): boolean {
+	return (
+		paid &&
+		(entitlement.status === "past_due" ||
+			entitlement.paymentState === "past_due" ||
+			entitlement.paymentState === "requires_action") &&
+		entitlement.paymentState !== "unpaid" &&
+		entitlement.recoveryAction !== "start_new"
+	);
+}
+
+function blocksManagement(entitlement: ComputeSubscriptionEntitlement, paid: boolean): boolean {
+	const paymentSourceOnly = isPaymentSourceOnlyManagement(entitlement, paid);
 	return (
 		entitlement.cancelAtPeriodEnd ||
 		(entitlement.status !== "active" && entitlement.status !== "past_due") ||
-		entitlement.paymentState !== "ok" ||
-		entitlement.recoveryAction != null ||
+		(!paymentSourceOnly &&
+			(entitlement.paymentState !== "ok" || entitlement.recoveryAction != null)) ||
 		entitlement.pendingPlanSlug != null
 	);
 }
@@ -115,7 +134,7 @@ export function computeSubscriptionManagement({
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
 	const projectedOperationName = deployment ? activePlanChangeOperationName(deployment) : null;
-	if (projectedOperationName === null && blocksManagement(initialEntitlement)) {
+	if (projectedOperationName === null && blocksManagement(initialEntitlement, paid)) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
 
@@ -134,10 +153,11 @@ export function computeSubscriptionManagement({
 		entitlement = projectedEntitlement;
 	}
 
-	if (projectedOperationName === null && blocksManagement(entitlement)) {
+	if (projectedOperationName === null && blocksManagement(entitlement, paid)) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
 
+	const paymentSourceOnly = isPaymentSourceOnlyManagement(entitlement, paid);
 	const target: PlanChangeTarget = {
 		deploymentId,
 		currentPlanSlug: planSlug,
@@ -147,10 +167,10 @@ export function computeSubscriptionManagement({
 		status:
 			entitlement.status === "unpaid" || entitlement.paymentState === "unpaid"
 				? "unpaid"
-				: entitlement.status === "past_due" || entitlement.paymentState === "past_due"
+				: paymentSourceOnly
 					? "past_due"
 					: entitlement.status,
-		paymentSourceOnly: entitlement.status === "past_due" || entitlement.paymentState === "past_due",
+		paymentSourceOnly,
 		cancelAtPeriodEnd: entitlement.cancelAtPeriodEnd,
 		isPaidCompute: !includedBasic,
 		allowCombinedChange: includedBasic,

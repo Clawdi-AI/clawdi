@@ -166,6 +166,20 @@ describe("normalizeBillingError", () => {
 		);
 	});
 
+	test("maps funding authority conflicts by stable code without exposing internals", () => {
+		const error = new BillingApiError(
+			409,
+			"Stripe and local funding-source authority are inconsistent",
+			{ detail: { code: "funding_authority_inconsistent" } },
+		);
+		const message = normalizeBillingError(error);
+		expect(message).toBe(
+			"Subscription billing details need reconciliation. Contact support before changing this subscription.",
+		);
+		expect(message).not.toContain("Stripe");
+		expect(message).not.toContain("authority");
+	});
+
 	test("unknown shapes get a safe message", () => {
 		expect(normalizeBillingError(null)).toMatch(/something went wrong/i);
 	});

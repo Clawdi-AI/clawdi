@@ -9,60 +9,11 @@ import {
 } from "@/hosted/billing/contracts";
 
 export { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG };
-export const COMPUTE_SUBSCRIPTION_CANCELABLE_STATUSES = new Set(["trialing", "active", "past_due"]);
-export const COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES = new Set(["active"]);
 
 export type ResolvedBillingOffer = {
 	offer: BillingOffer;
 	billingTermMonths: number;
 };
-
-type ComputeSubscriptionStatusInput =
-	| {
-			status?: string | null;
-	  }
-	| null
-	| undefined;
-
-export function isComputeSubscriptionCancelable(
-	subscription: ComputeSubscriptionStatusInput,
-): boolean {
-	return COMPUTE_SUBSCRIPTION_CANCELABLE_STATUSES.has(subscription?.status ?? "");
-}
-
-export function isComputeSubscriptionTermChangeable(
-	subscription: ComputeSubscriptionStatusInput,
-): boolean {
-	return COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES.has(subscription?.status ?? "");
-}
-
-type AccountSubscriptionActionState = Pick<
-	ComputeSubscriptionListItem,
-	"cancel_at_period_end" | "deployment_id" | "is_orphan" | "status"
->;
-
-type AccountSubscriptionCancelState = AccountSubscriptionActionState &
-	Pick<ComputeSubscriptionListItem, "funding_source">;
-
-export function canCancelAccountSubscription(
-	subscription: AccountSubscriptionCancelState,
-): boolean {
-	return (
-		(subscription.funding_source === "stripe" || subscription.funding_source === "wallet") &&
-		!subscription.cancel_at_period_end &&
-		isComputeSubscriptionCancelable(subscription)
-	);
-}
-
-export function canResumeAccountSubscription(
-	subscription: AccountSubscriptionActionState,
-): boolean {
-	return (
-		!subscription.is_orphan &&
-		Boolean(subscription.deployment_id) &&
-		(subscription.cancel_at_period_end || subscription.status === "canceling")
-	);
-}
 
 export function isHistoricalAccountSubscription(
 	subscription: Pick<ComputeSubscriptionListItem, "status">,
@@ -136,7 +87,7 @@ export function computeSubscriptionId(
 }
 
 export function pendingComputePlanSlug(
-	subscription: HostedComputeSubscription | null | undefined,
+	subscription: Pick<HostedComputeSubscription, "pending_plan_slug"> | null | undefined,
 ): ComputePlanSlug | null {
 	if (!subscription) return null;
 	return subscription.pending_plan_slug === COMPUTE_BASIC_SLUG ||

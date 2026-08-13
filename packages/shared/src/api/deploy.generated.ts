@@ -331,6 +331,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscription/plan/cancel-scheduled-change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Scheduled V2 Subscription Plan Change */
+        post: operations["cancel_scheduled_v2_subscription_plan_change_v2_subscription_plan_cancel_scheduled_change_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscription/plan/change": {
         parameters: {
             query?: never;
@@ -1227,6 +1244,13 @@ export interface components {
             /** Entitled Until */
             entitled_until: null;
         };
+        /** V2ComputeCancelScheduledPlanChangeRequest */
+        V2ComputeCancelScheduledPlanChangeRequest: {
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Subscription Id */
+            subscription_id?: string | null;
+        };
         /** V2ComputeCheckoutRequest */
         V2ComputeCheckoutRequest: {
             /**
@@ -1441,6 +1465,10 @@ export interface components {
             invoice_due_at?: string | null;
             /** Recovery Action */
             recovery_action?: ("top_up" | "fix_payment" | "start_new") | null;
+            /** Pending Plan Slug */
+            pending_plan_slug?: string | null;
+            /** Action State */
+            action_state?: ("removed" | "pending" | "reconciling") | null;
             /** Message */
             message?: string | null;
         };
@@ -1467,7 +1495,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "active" | "canceling" | "past_due" | "canceled";
+            status: "trialing" | "active" | "canceling" | "past_due" | "canceled";
             /** Price Cents */
             price_cents?: number | null;
             /**
@@ -3618,6 +3646,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2PortalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_scheduled_v2_subscription_plan_change_v2_subscription_plan_cancel_scheduled_change_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2ComputeCancelScheduledPlanChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeSubscriptionActionResponse"];
                 };
             };
             /** @description Validation Error */

@@ -1035,7 +1035,7 @@ describe("declarative deployment mutations", () => {
 });
 
 describe("account compute subscriptions", () => {
-	it("lists subscriptions and targets cancel or resume by subscription id", async () => {
+	it("lists subscriptions and uses the generated subscription action endpoints", async () => {
 		const requests: Request[] = [];
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
@@ -1084,14 +1084,20 @@ describe("account compute subscriptions", () => {
 		});
 		await client.cancelSubscription({ subscription_id: "csub_test" });
 		await client.resumeSubscription({ subscription_id: "csub_test" });
+		await client.cancelScheduledPlanChange({ subscription_id: "csub_test" });
+		await client.cancelScheduledPlanChange({ deployment_id: "hdep_test" });
 
 		expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
 			["GET", "/v2/subscriptions"],
 			["POST", "/v2/subscription/cancel"],
 			["POST", "/v2/subscription/resume"],
+			["POST", "/v2/subscription/plan/cancel-scheduled-change"],
+			["POST", "/v2/subscription/plan/cancel-scheduled-change"],
 		]);
 		expect(await requests[1]?.json()).toEqual({ subscription_id: "csub_test" });
 		expect(await requests[2]?.json()).toEqual({ subscription_id: "csub_test" });
+		expect(await requests[3]?.json()).toEqual({ subscription_id: "csub_test" });
+		expect(await requests[4]?.json()).toEqual({ deployment_id: "hdep_test" });
 		expect(new URL(requests[0]?.url ?? "").searchParams).toEqual(
 			new URLSearchParams({ limit: "3", cursor: "cursor-current" }),
 		);

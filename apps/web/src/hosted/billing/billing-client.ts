@@ -12,6 +12,7 @@ import { z } from "zod";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	CheckoutRequest,
+	ComputeCancelScheduledPlanChangeRequest,
 	ComputeFixPaymentRequest,
 	ComputePlanChangeProgress,
 	ComputePlanChangeQuoteRequest,
@@ -816,6 +817,8 @@ export function createBillingClient(
 			}),
 		cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
+		cancelScheduledPlanChange: async (body: ComputeCancelScheduledPlanChangeRequest) =>
+			unwrapDeploy(await api.POST("/v2/subscription/plan/cancel-scheduled-change", { body })),
 		fixPayment: async (body: ComputeFixPaymentRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/fix-payment", { body })),
 		portal: async (body: PortalRequest) =>

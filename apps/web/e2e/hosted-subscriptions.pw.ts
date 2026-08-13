@@ -8,6 +8,7 @@ import {
 	gotoHostedAgentSettings,
 	gotoHostedSettingsDialog,
 	includedBasicDeployment,
+	mutationDeploymentReadFixture,
 	paidBasicDeployment,
 	performancePlan,
 	sharedLegacyCloudAgent,
@@ -297,6 +298,8 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 }, testInfo) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
+	const fixPaymentRequests: string[] = [];
+	const scheduledPlanCancellationRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments: [
 			accountActiveDeployment,
@@ -306,6 +309,8 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 		],
 		cloudAgents: accountCloudAgents,
 		plans: [basicPlan, performancePlan],
+		fixPaymentRequests,
+		scheduledPlanCancellationRequests,
 		subscriptionPages: {
 			initial: {
 				items: [],
@@ -345,10 +350,19 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 						next_payment_attempt_at: "2099-08-10T12:00:00Z",
 						recovery_action: "top_up",
 					}),
-					subscription("canceling", "canceling", {
+					subscription("orphan_past_due", "past_due", {
+						deployment_id: null,
+						agent_name: null,
+						is_orphan: true,
+						payment_state: "requires_action",
+						recovery_action: "fix_payment",
+					}),
+					subscription("csub_canceling", "canceling", {
 						cancel_at_period_end: true,
 						current_period_end: "2025-08-12T12:00:00Z",
+						deployment_id: "hdep_canceling",
 						agent_name: "Canceling agent",
+						pending_plan_slug: "compute_basic",
 					}),
 					subscription("ended_second", "canceled", {
 						current_period_end: "2099-09-11T12:00:00Z",
@@ -382,16 +396,17 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog.getByText("Canceling agent", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Active", { exact: true })).toHaveCount(2);
 	await expect(dialog.getByText("Canceling", { exact: true })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(4);
-	await expect(dialog.getByRole("button", { name: "Manage", exact: true })).toHaveCount(2);
-	await expect(dialog.getByRole("button", { name: "Resume subscription" })).toBeVisible();
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(5);
+	await expect(dialog.getByRole("button", { name: "Manage", exact: true })).toHaveCount(3);
+	await expect(dialog.getByRole("button", { name: "Cancel scheduled change" })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Show history (2)" })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(4);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(5);
 	const currentCards = dialog.locator('[data-slot="compute-subscription-card"]');
 	const activeCard = currentCards.nth(0);
 	const includedCard = currentCards.nth(1);
 	const pastDueCard = currentCards.nth(2);
-	const cancelingCard = currentCards.nth(3);
+	const orphanPastDueCard = currentCards.nth(3);
+	const cancelingCard = currentCards.nth(4);
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
 	await expect(activeCard.locator("h4")).toHaveText("Performance compute");
 	await expect(activeCard.getByText("Used by", { exact: true })).toBeVisible();
@@ -413,13 +428,41 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(includedCard.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
 	await expect(pastDueCard.getByText("Past due", { exact: true })).toBeVisible();
 	await expect(pastDueCard.getByText("Retries Aug 10, 2099", { exact: true })).toBeVisible();
-	await expect(pastDueCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
+	const pastDueManage = pastDueCard.getByRole("button", { name: "Manage", exact: true });
+	await expect(pastDueManage).toBeEnabled();
 	await expect(pastDueCard.getByRole("button", { name: "Top up", exact: true })).toBeVisible();
+	await expect(pastDueCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
+	await expect(orphanPastDueCard.getByText("Deleted agent", { exact: true })).toBeVisible();
+	const orphanFixPayment = orphanPastDueCard.getByRole("button", { name: "Fix payment" });
+	await expect(orphanFixPayment).toBeEnabled();
+	await orphanFixPayment.click();
+	await expect.poll(() => fixPaymentRequests.map((body) => JSON.parse(body))).toEqual([{}]);
+	await expect(
+		orphanPastDueCard.getByRole("button", { name: "Cancel subscription" }),
+	).toBeVisible();
 	await expect(cancelingCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
+	const cancelScheduledAccount = cancelingCard.getByRole("button", {
+		name: "Cancel scheduled change",
+	});
+	await expect(cancelScheduledAccount).toBeEnabled();
+	await expect(cancelingCard.getByRole("button", { name: "Resume subscription" })).toHaveCount(0);
+	await cancelScheduledAccount.click();
+	await expect
+		.poll(() => scheduledPlanCancellationRequests.map((body) => JSON.parse(body)))
+		.toEqual([{ subscription_id: "csub_canceling" }]);
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "Scheduled plan change canceled" }),
+	).toBeVisible();
 	const currentStatuses = await currentCards.evaluateAll((cards) =>
 		cards.map((card) => card.getAttribute("data-subscription-status")),
 	);
-	expect(currentStatuses).toEqual(["active", "active", "past-due", "canceling"]);
+	expect(currentStatuses).toEqual([
+		"active",
+		"active",
+		"past-due",
+		"payment-action-required",
+		"canceling",
+	]);
 	const desktopCardBoxes = await currentCards.evaluateAll((cards) =>
 		cards.map((card) => card.getBoundingClientRect().toJSON()),
 	);
@@ -433,15 +476,24 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await dialog.screenshot({ path: testInfo.outputPath("account-compute-plans-desktop.png") });
 
 	await dialog.getByRole("button", { name: "Show history (2)" }).click();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(6);
-	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(6);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(7);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(7);
 	await expect(dialog.getByText("Ended", { exact: true })).toHaveCount(2);
 	const visibleStatuses = await dialog
 		.locator('[data-slot="compute-subscription-card"]')
 		.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-subscription-status")));
-	expect(visibleStatuses).toEqual(["active", "active", "past-due", "canceling", "ended", "ended"]);
+	expect(visibleStatuses).toEqual([
+		"active",
+		"active",
+		"past-due",
+		"payment-action-required",
+		"canceling",
+		"ended",
+		"ended",
+	]);
 	const orphanCard = dialog
 		.locator('[data-slot="compute-subscription-card"]')
+		.filter({ hasText: "Ended" })
 		.filter({ hasText: "Deleted agent" });
 	await expect(orphanCard).toBeVisible();
 	await expect(orphanCard.getByText("Orphaned", { exact: true })).toBeVisible();
@@ -487,7 +539,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(fullManagementDialog).toBeHidden();
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Hide history" })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(6);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(7);
 	expect(page.url()).toBe(accountSettingsUrl);
 
 	await includedManage.click();
@@ -507,6 +559,18 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(includedManagementDialog).toBeHidden();
 	await expect(dialog).toBeVisible();
 
+	await pastDueManage.click();
+	const pastDueManagementDialog = page.getByRole("dialog", { name: "Change payment source" });
+	await expect(pastDueManagementDialog).toBeVisible();
+	await expect(
+		pastDueManagementDialog.getByRole("group", { name: "Subscription management mode" }),
+	).toHaveCount(0);
+	await expect(pastDueManagementDialog.getByLabel("Compute plan")).toHaveCount(0);
+	await expect(pastDueManagementDialog.getByLabel("Payment source")).toBeVisible();
+	await pastDueManagementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(pastDueManagementDialog).toBeHidden();
+	await expect(dialog).toBeVisible();
+
 	await pastDueCard.getByRole("button", { name: "Top up", exact: true }).click();
 	const topUpDialog = page.getByRole("dialog", { name: "Top up Wallet", exact: true });
 	await expect(topUpDialog).toBeVisible();
@@ -514,11 +578,11 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(topUpDialog).toBeHidden();
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Hide history" })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(6);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(7);
 	expect(page.url()).toBe(accountSettingsUrl);
 
 	await dialog.getByRole("button", { name: "Hide history" }).click();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(4);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(5);
 	await expect(dialog.getByText("ended_first", { exact: true })).toHaveCount(0);
 
 	await page.setViewportSize({ width: 320, height: 1000 });
@@ -556,6 +620,8 @@ test("agent settings uses compact canonical subscription management", async ({
 }, testInfo) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
+	const planQuoteRequests: string[] = [];
+	const scheduledPlanCancellationRequests: string[] = [];
 	await stubHostedApi(page, {
 		cloudAgentOverrides: {
 			display_name: "Paid research agent",
@@ -576,11 +642,52 @@ test("agent settings uses compact canonical subscription management", async ({
 				name: "Card authentication required",
 				compute_subscription: {
 					...paidBasicDeployment.compute_subscription,
-					status: "past_due",
+					status: "active",
 					payment_state: "requires_action",
 					latest_failed_invoice_id: "in_card_action_required",
 					latest_failed_invoice_hosted_url: "https://billing.example/invoice/action-required",
 					recovery_action: "fix_payment",
+				},
+			},
+			{
+				...mutationDeploymentReadFixture({
+					...paidBasicDeployment,
+					id: "hdep_plan_change_pending",
+					name: "Plan change pending",
+					compute_subscription: {
+						...paidBasicDeployment.compute_subscription,
+						status: "past_due",
+						payment_state: "requires_action",
+						recovery_action: "fix_payment",
+					},
+				}),
+				accepted_operation: {
+					name: "operations/pending-plan-change",
+					metadata: {
+						"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+						deploymentId: "hdep_plan_change_pending",
+						verb: "plan_change",
+						targetGeneration: 1,
+						manifestETag: "plan-change-pending",
+						createTime: "2026-07-16T00:00:00Z",
+						updateTime: "2026-07-16T00:00:00Z",
+					},
+					done: false,
+					error: null,
+					response: null,
+				},
+			},
+			{
+				...paidBasicDeployment,
+				id: "hdep_scheduled_downgrade",
+				name: "Scheduled downgrade",
+				config_info: {
+					...paidBasicDeployment.config_info,
+					compute_plan_slug: "compute_performance",
+				},
+				compute_subscription: {
+					...paidBasicDeployment.compute_subscription,
+					pending_plan_slug: "compute_basic",
 				},
 			},
 			{
@@ -595,9 +702,28 @@ test("agent settings uses compact canonical subscription management", async ({
 			ineligibleIncludedDeployment,
 		],
 		plans: [basicPlan, performancePlan],
+		planQuoteRequests,
+		scheduledPlanCancellationRequests,
+		scheduledPlanCancellationResponses: [
+			{
+				status: 200,
+				delayMs: 100,
+				body: {
+					status: "active",
+					funding_source: "stripe",
+					billing_term_months: 12,
+					cancel_at_period_end: false,
+					pending_plan_slug: "compute_basic",
+					action_state: "reconciling",
+				},
+			},
+		],
 	});
 
 	await gotoHostedAgentSettings(page, paidEnvironmentId, "Basic", "?source=on-clawdi&d=hdep_paid");
+	await page.goto(`${page.url()}&subscription_action=start_new`);
+	await expect(page.getByRole("dialog", { name: "Choose a paid subscription" })).toHaveCount(0);
+	await expect.poll(() => new URL(page.url()).searchParams.has("subscription_action")).toBe(false);
 	const activeCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
@@ -635,7 +761,7 @@ test("agent settings uses compact canonical subscription management", async ({
 		"warning",
 	);
 	await expect(cancelingCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
-	await expect(cancelingCard.getByRole("button", { name: "Resume subscription" })).toBeVisible();
+	await expect(cancelingCard.getByRole("button", { name: "Resume subscription" })).toBeEnabled();
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, "hdep_card_due", "Basic");
@@ -647,7 +773,37 @@ test("agent settings uses compact canonical subscription management", async ({
 		"destructive",
 	);
 	await expect(pastDueCard.getByText("Retries Jul 16, 2026", { exact: true })).toBeVisible();
-	await expect(pastDueCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
+	const pastDueManage = pastDueCard.getByRole("button", { name: "Manage", exact: true });
+	await expect(pastDueManage).toBeEnabled();
+	await expect(pastDueCard.getByRole("button", { name: "Fix payment", exact: true })).toBeVisible();
+	await expect(pastDueCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
+	await pastDueManage.click();
+	const pastDueManagementDialog = page.getByRole("dialog", { name: "Change payment source" });
+	await expect(pastDueManagementDialog).toBeVisible();
+	await expect(
+		pastDueManagementDialog.getByRole("group", { name: "Subscription management mode" }),
+	).toHaveCount(0);
+	await expect(pastDueManagementDialog.getByLabel("Compute plan")).toHaveCount(0);
+	await expect(pastDueManagementDialog.getByLabel("Payment source")).toBeVisible();
+	await pastDueManagementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(pastDueManagementDialog).toBeHidden();
+	await expectCardsFit(page.locator("body"));
+
+	await gotoHostedAgentSettings(page, "hdep_scheduled_downgrade", "Performance");
+	const scheduledDowngradeCard = page
+		.locator('[data-slot="compute-subscription-card"]')
+		.filter({ hasText: "Performance compute" });
+	const cancelScheduledAgent = scheduledDowngradeCard.getByRole("button", {
+		name: "Cancel scheduled change",
+	});
+	await cancelScheduledAgent.click();
+	await expect(cancelScheduledAgent).toBeDisabled();
+	await expect
+		.poll(() => scheduledPlanCancellationRequests.map((body) => JSON.parse(body)))
+		.toEqual([{ deployment_id: "hdep_scheduled_downgrade" }]);
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "Billing details are reconciling" }),
+	).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, "hdep_card_action_required", "Basic");
@@ -657,12 +813,54 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(
 		actionRequiredCard.getByText("Payment action required", { exact: true }),
 	).toHaveAttribute("data-status", "warning");
-	await expect(actionRequiredCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(
-		0,
-	);
+	const actionRequiredManage = actionRequiredCard.getByRole("button", {
+		name: "Manage",
+		exact: true,
+	});
+	await expect(actionRequiredManage).toBeEnabled();
+	await expect(actionRequiredCard.getByRole("button", { name: "Fix payment" })).toBeVisible();
+	await expect(
+		actionRequiredCard.getByRole("button", { name: "Cancel subscription" }),
+	).toBeVisible();
+	await actionRequiredManage.click();
+	const actionRequiredManagementDialog = page.getByRole("dialog", {
+		name: "Change payment source",
+	});
+	await expect(actionRequiredManagementDialog).toBeVisible();
+	await expect(
+		actionRequiredManagementDialog.getByRole("group", {
+			name: "Subscription management mode",
+		}),
+	).toHaveCount(0);
+	await expect(actionRequiredManagementDialog.getByLabel("Compute plan")).toHaveCount(0);
+	await expect(actionRequiredManagementDialog.getByLabel("Payment source")).toBeVisible();
+	await actionRequiredManagementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(actionRequiredManagementDialog).toBeHidden();
+	await expectCardsFit(page.locator("body"));
+
+	await gotoHostedAgentSettings(page, "hdep_plan_change_pending", "Basic");
+	const pendingChangeCard = page
+		.locator('[data-slot="compute-subscription-card"]')
+		.filter({ hasText: "Basic compute" });
+	const cardCheckChange = pendingChangeCard.getByRole("button", {
+		name: "Check subscription change status",
+	});
+	await expect(cardCheckChange).toBeVisible();
+	await cardCheckChange.click();
+	await expect(
+		page.getByRole("dialog", { name: "Check subscription change status" }),
+	).toBeVisible();
+	expect(planQuoteRequests).toEqual([]);
+	await page.keyboard.press("Escape");
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	await page.goto(`${page.url()}&subscription_action=start_new`);
+	const routedCreateDialog = page.getByRole("dialog", { name: "Choose a paid subscription" });
+	await expect(routedCreateDialog).toBeVisible();
+	await expect.poll(() => new URL(page.url()).searchParams.has("subscription_action")).toBe(false);
+	await page.keyboard.press("Escape");
+	await expect(routedCreateDialog).toBeHidden();
 	const fallbackCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
