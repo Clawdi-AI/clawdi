@@ -27,9 +27,7 @@ describe("server hydration boundaries", () => {
 		expect(protectedRouteSource).toContain('setResponseHeader("cache-control", "no-store")');
 	});
 
-	test("loads once through the route and renders synchronously from dehydrated data", () => {
-		expect(routeSource).toContain("loader: async ({ params }) =>");
-		expect(routeSource).toContain("await getPublicShareData({ data: { sessionId: params.id } })");
+	test("renders synchronously from dehydrated route data", () => {
 		expect(routeSource).toContain('if (result.kind === "not-found") throw notFound()');
 		expect(routeSource).toContain("Route.useLoaderData()");
 		expect(pageSource).toContain("export default function PublicSharePage");

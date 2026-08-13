@@ -1,6 +1,7 @@
 "use client";
 
 import * as Sentry from "@sentry/tanstackstart-react";
+import { useRouter } from "@tanstack/react-router";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -12,9 +13,9 @@ const isDevelopment =
 /**
  * Root error boundary for the whole app.
  *
- * The router catches any unhandled render/data error and mounts this component
- * with the error + a `reset()` to retry. Keeping it minimal: user sees a
- * clear message + a retry button + a dev-only error detail, nothing more.
+ * The router catches any unhandled render/data error and mounts this component.
+ * Keeping it minimal: user sees a clear message + a retry button + a dev-only
+ * error detail, nothing more.
  */
 export default function RootError({
 	error,
@@ -23,6 +24,8 @@ export default function RootError({
 	error: Error & { digest?: string };
 	reset: () => void;
 }) {
+	const router = useRouter();
+
 	useEffect(() => {
 		if (import.meta.env.VITE_SENTRY_DSN) {
 			Sentry.captureException(error);
@@ -32,6 +35,10 @@ export default function RootError({
 		// without serializing a possibly secret-bearing payload into browser logs.
 		console.error("Unhandled app error");
 	}, [error]);
+
+	const retry = () => {
+		void router.invalidate().catch(() => reset());
+	};
 
 	return (
 		<div className="min-h-dvh flex items-center justify-center p-6 bg-background">
@@ -50,7 +57,7 @@ export default function RootError({
 						{error.digest ? `\n\ndigest: ${error.digest}` : ""}
 					</pre>
 				)}
-				<Button onClick={reset} variant="default">
+				<Button onClick={retry} variant="default">
 					<RotateCcw className="size-4" />
 					Try Again
 				</Button>

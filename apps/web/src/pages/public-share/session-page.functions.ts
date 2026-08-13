@@ -1,7 +1,7 @@
 import type { components, paths } from "@clawdi/shared/api";
 import { auth } from "@clerk/tanstack-react-start/server";
 import { createServerFn } from "@tanstack/react-start";
-import { setResponseHeader } from "@tanstack/react-start/server";
+import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import createClient from "openapi-fetch";
 import { z } from "zod";
 import { env } from "@/lib/env";
@@ -26,6 +26,7 @@ export const getPublicShareData = createServerFn({ method: "GET" })
 	.validator(z.object({ sessionId: z.string().regex(UUID_RE) }))
 	.handler(async ({ data }): Promise<PublicShareResult> => {
 		setResponseHeader("cache-control", "no-store");
+		const signal = getRequest().signal;
 
 		let token: string | null;
 		if (env.VITE_DEV_AUTH_BYPASS) {
@@ -42,6 +43,7 @@ export const getPublicShareData = createServerFn({ method: "GET" })
 		const shareResult = await api.GET("/v1/public/sessions/{session_id}", {
 			params: { path: { session_id: data.sessionId } },
 			cache: "no-store",
+			signal,
 		});
 		if (shareResult.response.status === 404) return { kind: "not-found" };
 		if (shareResult.response.status === 401) return { kind: "unauthorized" };
@@ -56,6 +58,7 @@ export const getPublicShareData = createServerFn({ method: "GET" })
 				query: { offset: 0, limit: PAGE_SIZE },
 			},
 			cache: "no-store",
+			signal,
 		});
 		const messagesPage =
 			messagesResult.error === undefined
