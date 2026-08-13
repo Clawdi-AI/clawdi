@@ -24,19 +24,6 @@ CANONICAL_CODEX_TOOLS = {
 }
 
 
-def active_cli_diagnostics(package_spec: str) -> dict[str, str]:
-    version = package_spec.removeprefix("clawdi@")
-    return {
-        "status": "installed",
-        "source": "npm",
-        "packageSpec": package_spec,
-        "registry": "https://registry.npmjs.org",
-        "activePath": "/test/managed/clawdi",
-        "activeTarget": f"/test/managed/packages/{version}/clawdi",
-        "version": version,
-    }
-
-
 def filebrowser_companion(deployment_id: str, access_revision: str = "a" * 64) -> dict[str, Any]:
     audience = f"clawdi-files:{deployment_id}"
     release = "https://github.com/gtsteffaniak/filebrowser/releases/download/v1.5.0-stable"
