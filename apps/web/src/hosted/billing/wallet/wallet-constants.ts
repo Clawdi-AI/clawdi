@@ -16,6 +16,7 @@ export const TOPUP_PRESETS_CENTS = [1000, 2500, 5000, 10_000, 25_000];
 // Auto-reload amount bounds; threshold ≥ $1, and 0 means no monthly limit.
 export const AUTORELOAD_AMOUNT_MIN_CENTS = 500;
 export const AUTORELOAD_AMOUNT_MAX_CENTS = 50_000;
+export const AUTORELOAD_MONTHLY_CAP_MAX_CENTS = 2_147_483_647;
 export const AUTORELOAD_THRESHOLD_MIN_USD = 1;
 
 function amountRangeLabel(minCents: number, maxCents: number): string {

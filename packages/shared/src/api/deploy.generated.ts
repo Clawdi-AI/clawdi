@@ -518,6 +518,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/wallet/auto-reload/setup-intent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Wallet Auto Reload Setup Intent */
+        post: operations["create_wallet_auto_reload_setup_intent_v2_wallet_auto_reload_setup_intent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/wallet/auto-reload/setup-intent/finalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finalize Wallet Auto Reload Setup Intent */
+        post: operations["finalize_wallet_auto_reload_setup_intent_v2_wallet_auto_reload_setup_intent_finalize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/wallet/transactions": {
         parameters: {
             query?: never;
@@ -2237,6 +2271,17 @@ export interface components {
             /** Error Code */
             error_code?: string | null;
         };
+        /** V2WalletAutoReloadCardSummary */
+        V2WalletAutoReloadCardSummary: {
+            /** Brand */
+            brand: string;
+            /** Last4 */
+            last4: string;
+            /** Exp Month */
+            exp_month: number;
+            /** Exp Year */
+            exp_year: number;
+        };
         /** V2WalletAutoReloadRequest */
         V2WalletAutoReloadRequest: {
             /** Auto Reload Enabled */
@@ -2248,6 +2293,63 @@ export interface components {
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents?: number | null;
         };
+        /** V2WalletAutoReloadSetupFinalizeRequest */
+        V2WalletAutoReloadSetupFinalizeRequest: {
+            /** Setup Identity */
+            setup_identity: string;
+            /** Setup Intent Id */
+            setup_intent_id: string;
+        };
+        /** V2WalletAutoReloadSetupRequest */
+        V2WalletAutoReloadSetupRequest: {
+            /**
+             * Consent Version
+             * @constant
+             */
+            consent_version: "wallet_auto_reload_off_session_v2";
+            /** Auto Reload Threshold Usd */
+            auto_reload_threshold_usd: number | string;
+            /** Auto Reload Amount Cents */
+            auto_reload_amount_cents: number;
+            /** Auto Reload Monthly Cap Cents */
+            auto_reload_monthly_cap_cents: number;
+        };
+        /** V2WalletAutoReloadSetupResponse */
+        V2WalletAutoReloadSetupResponse: {
+            /** Setup Identity */
+            setup_identity: string;
+            /** Setup Intent Id */
+            setup_intent_id: string;
+            /** Client Secret */
+            client_secret: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "requires_payment_method" | "requires_confirmation" | "requires_action" | "processing" | "canceled" | "succeeded";
+            /**
+             * Currency
+             * @default usd
+             * @constant
+             */
+            currency: "usd";
+            /**
+             * Consent Version
+             * @constant
+             */
+            consent_version: "wallet_auto_reload_off_session_v2";
+            /**
+             * Amount Policy
+             * @constant
+             */
+            amount_policy: "wallet_reload_configured_plus_negative_balance_v1";
+            /** Auto Reload Threshold Usd */
+            auto_reload_threshold_usd: string;
+            /** Auto Reload Amount Cents */
+            auto_reload_amount_cents: number;
+            /** Auto Reload Monthly Cap Cents */
+            auto_reload_monthly_cap_cents: number;
+        };
         /** V2WalletResponse */
         V2WalletResponse: {
             /** Balance Usd */
@@ -2256,6 +2358,31 @@ export interface components {
             x402_enabled: boolean;
             /** Auto Reload Enabled */
             auto_reload_enabled: boolean;
+            /** Auto Reload Has Payment Method */
+            auto_reload_has_payment_method: boolean;
+            auto_reload_card?: components["schemas"]["V2WalletAutoReloadCardSummary"] | null;
+            /**
+             * Auto Reload Currency
+             * @default usd
+             * @constant
+             */
+            auto_reload_currency: "usd";
+            /**
+             * Auto Reload Required Consent Version
+             * @default wallet_auto_reload_off_session_v2
+             * @constant
+             */
+            auto_reload_required_consent_version: "wallet_auto_reload_off_session_v2";
+            /**
+             * Auto Reload Amount Policy
+             * @default wallet_reload_configured_plus_negative_balance_v1
+             * @constant
+             */
+            auto_reload_amount_policy: "wallet_reload_configured_plus_negative_balance_v1";
+            /** Auto Reload Consent Version */
+            auto_reload_consent_version?: "wallet_auto_reload_off_session_v2" | null;
+            /** Auto Reload Consented At */
+            auto_reload_consented_at?: string | null;
             /** Auto Reload Threshold Usd */
             auto_reload_threshold_usd: string;
             /** Auto Reload Amount Cents */
@@ -3817,6 +3944,74 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["V2WalletAutoReloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_wallet_auto_reload_setup_intent_v2_wallet_auto_reload_setup_intent_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletAutoReloadSetupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletAutoReloadSetupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finalize_wallet_auto_reload_setup_intent_v2_wallet_auto_reload_setup_intent_finalize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletAutoReloadSetupFinalizeRequest"];
             };
         };
         responses: {

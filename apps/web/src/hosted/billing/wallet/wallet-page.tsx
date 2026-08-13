@@ -9,7 +9,10 @@ import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { useHostedDeployments } from "@/hosted/billing/hooks";
-import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
+import {
+	useSensitiveBillingPortal,
+	useSensitiveFinalizeWalletAutoReloadSetup,
+} from "@/hosted/billing/sensitive-actions";
 import { getStripe } from "@/hosted/billing/stripe";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
@@ -17,7 +20,6 @@ import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { confirmWalletTopup, TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { invalidateWalletData } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
-	coordinateWalletTopupReturn,
 	type WalletTopupReturnToast,
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
@@ -26,6 +28,11 @@ import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	coordinateWalletPaymentReturn,
+	coordinateWalletSetupReturn,
+	type WalletSetupReturnFinalizer,
+} from "@/lib/wallet-stripe-return";
 
 const DESCRIPTION = "Add funds and manage how your Clawdi usage is paid.";
 const WALLET_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
@@ -52,9 +59,46 @@ export function WalletPage() {
 	const wallet = useWalletSnapshot();
 	const deployments = useHostedDeployments();
 	const portal = useSensitiveBillingPortal();
+	const finalizeSetup = useSensitiveFinalizeWalletAutoReloadSetup();
 	const runAction = useActionLock();
 	const queryClient = useQueryClient();
 	const [topUpOpen, setTopUpOpen] = useState(false);
+
+	const finalizeReturnedSetup: WalletSetupReturnFinalizer = async (confirmed) => {
+		try {
+			await finalizeSetup.execute({
+				setup_identity: confirmed.setupIdentity,
+				setup_intent_id: confirmed.setupIntentId,
+			});
+			invalidateWalletData(queryClient);
+			return null;
+		} catch (error) {
+			return normalizeBillingError(error);
+		}
+	};
+
+	function showReturnedSetupFinalizeError(
+		confirmed: Parameters<WalletSetupReturnFinalizer>[0],
+		errorMessage: string,
+	) {
+		toast.warning("Card authorized; Wallet hasn’t saved it yet", {
+			description: errorMessage,
+			action: {
+				label: "Retry saving",
+				onClick: () => {
+					void finalizeReturnedSetup(confirmed).then((retryError) => {
+						if (retryError) {
+							showReturnedSetupFinalizeError(confirmed, retryError);
+							return;
+						}
+						toast.success("Auto-reload card authorized", {
+							description: "Your Wallet card authorization is saved.",
+						});
+					});
+				},
+			},
+		});
+	}
 
 	async function openBillingPortal() {
 		try {
@@ -73,14 +117,14 @@ export function WalletPage() {
 
 	useEffect(() => {
 		let cancelled = false;
-		const resolution = coordinateWalletTopupReturn(async (clientSecret) => {
+		const resolution = coordinateWalletPaymentReturn(async (pending) => {
 			try {
 				const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
 				if (!key) {
 					return {
 						status: null,
 						paymentIntentId: null,
-						errorMessage: "Stripe isn't configured in this environment.",
+						errorMessage: "Payments are temporarily unavailable. Please try again later.",
 					};
 				}
 				const stripe = await getStripe(key);
@@ -91,7 +135,7 @@ export function WalletPage() {
 						errorMessage: "Reload the page and try again.",
 					};
 				}
-				const result = await stripe.retrievePaymentIntent(clientSecret);
+				const result = await stripe.retrievePaymentIntent(pending.clientSecret);
 				if (result.error) {
 					return {
 						status: null,
@@ -114,14 +158,35 @@ export function WalletPage() {
 			}
 		});
 		if (!resolution) return;
-		void resolution.then(({ status, paymentIntentId, errorMessage }) => {
+		void resolution.then(({ flow, status, paymentIntentId, errorMessage }) => {
 			if (cancelled) return;
 			if (errorMessage) {
-				toast.error("Couldn't refresh top-up", { description: errorMessage });
+				toast.error(
+					flow === "manual_topup"
+						? "Couldn't refresh top-up"
+						: "Couldn't refresh auto-reload payment",
+					{ description: errorMessage },
+				);
+				return;
+			}
+			invalidateWalletData(queryClient);
+			if (flow === "auto_reload") {
+				if (status === "succeeded") {
+					toast.success("Auto-reload payment confirmed", {
+						description: "Wallet is refreshing your balance and auto-reload status.",
+					});
+				} else if (status === "processing" || status === "requires_capture") {
+					toast.info("Auto-reload payment processing", {
+						description: "Wallet will update after the payment settles.",
+					});
+				} else {
+					toast.error("Auto-reload payment didn't finish", {
+						description: "Review the pending payment in Wallet and try again.",
+					});
+				}
 				return;
 			}
 			showWalletTopupReturnToast(walletTopupReturnToast(status));
-			invalidateWalletData(queryClient);
 			if (status === "succeeded" || status === "processing" || status === "requires_capture") {
 				void confirmWalletTopup(queryClient, paymentIntentId);
 			}
@@ -130,6 +195,78 @@ export function WalletPage() {
 			cancelled = true;
 		};
 	}, [queryClient]);
+
+	useEffect(() => {
+		let cancelled = false;
+		const resolution = coordinateWalletSetupReturn(async (pending) => {
+			try {
+				const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
+				if (!key) {
+					return {
+						status: null,
+						setupIntentId: null,
+						setupIdentity: pending.setupIdentity,
+						errorMessage: "Card authorization is temporarily unavailable. Please try again later.",
+					};
+				}
+				const stripe = await getStripe(key);
+				if (!stripe) {
+					return {
+						status: null,
+						setupIntentId: null,
+						setupIdentity: pending.setupIdentity,
+						errorMessage: "Reload the page and try the card authorization again.",
+					};
+				}
+				const result = await stripe.retrieveSetupIntent(pending.clientSecret);
+				if (result.error) {
+					return {
+						status: null,
+						setupIntentId: null,
+						setupIdentity: pending.setupIdentity,
+						errorMessage: result.error.message ?? "Open Wallet and start a new card authorization.",
+					};
+				}
+				return {
+					status: result.setupIntent?.status ?? null,
+					setupIntentId: result.setupIntent?.id ?? null,
+					setupIdentity: pending.setupIdentity,
+					errorMessage: null,
+				};
+			} catch {
+				return {
+					status: null,
+					setupIntentId: null,
+					setupIdentity: pending.setupIdentity,
+					errorMessage: "Check your connection and reload Wallet.",
+				};
+			}
+		}, finalizeReturnedSetup);
+		if (!resolution) return;
+		void resolution.then(({ status, setupIdentity, setupIntentId, errorMessage }) => {
+			if (cancelled) return;
+			if (errorMessage) {
+				if (status === "succeeded" && setupIntentId) {
+					showReturnedSetupFinalizeError({ setupIdentity, setupIntentId }, errorMessage);
+				} else {
+					toast.error("Couldn’t finish card authorization", { description: errorMessage });
+				}
+				return;
+			}
+			if (status === "succeeded") {
+				toast.success("Auto-reload card authorized", {
+					description: "Your Wallet card authorization is saved.",
+				});
+				return;
+			}
+			toast.error("Card authorization didn’t finish", {
+				description: "Review auto-reload settings and start a new card authorization.",
+			});
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [finalizeSetup.execute, queryClient]);
 
 	if (wallet.isLoading) {
 		return (

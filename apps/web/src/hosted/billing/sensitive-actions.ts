@@ -6,6 +6,8 @@ import type {
 	ComputeFixPaymentRequest,
 	PortalRequest,
 	WalletAutoReloadRequest,
+	WalletAutoReloadSetupFinalizeRequest,
+	WalletAutoReloadSetupRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
@@ -39,6 +41,21 @@ export function useSensitiveTopUp() {
 export function useSensitiveSetAutoReload() {
 	const client = useBillingClient();
 	return useSensitiveAction((body: WalletAutoReloadRequest) => client.setAutoReload(body));
+}
+
+export function useSensitiveCreateWalletAutoReloadSetup() {
+	const client = useBillingClient();
+	return useSensitiveAction(
+		({ body, idempotencyKey }: { body: WalletAutoReloadSetupRequest; idempotencyKey: string }) =>
+			client.createWalletAutoReloadSetup(body, idempotencyKey),
+	);
+}
+
+export function useSensitiveFinalizeWalletAutoReloadSetup() {
+	const client = useBillingClient();
+	return useSensitiveAction((body: WalletAutoReloadSetupFinalizeRequest) =>
+		client.finalizeWalletAutoReloadSetup(body),
+	);
 }
 
 export function useSensitiveCreateSubscription() {
