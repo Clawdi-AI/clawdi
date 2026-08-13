@@ -164,7 +164,6 @@ import {
 	PlanChangePendingError,
 	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
 	billingKeys,
 	useCancelSubscription,
@@ -176,7 +175,10 @@ import {
 	useResumeSubscription,
 } from "@/hosted/billing/hooks";
 import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
-import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
+import {
+	ComputeSubscriptionCard,
+	computeSubscriptionCardView,
+} from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	activePlanChangeOperationName,
 	isCombinedPaidPlanChange,
@@ -706,7 +708,7 @@ export function HostedAgentDetail({
 						<HostedAgentSettingsTab
 							environmentId={environmentId}
 							deployment={deployment}
-							projectionAvailable={projection.status === "resolved"}
+							agent={agent}
 							onDeleteAccepted={onDeleteAccepted}
 						/>
 					) : null}
@@ -3428,24 +3430,28 @@ function LinkedChannelRow({
 function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
-	projectionAvailable,
+	agent,
 	onDeleteAccepted,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
-	projectionAvailable: boolean;
+	agent: components["schemas"]["AgentResponse"] | null;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
 			<div className="flex flex-col gap-8">
-				{projectionAvailable ? (
+				{agent ? (
 					<AgentSettingsPanel environmentId={environmentId} />
 				) : (
 					<ProjectionDependentUnavailable label="Profile settings" />
 				)}
 				<LanguageTimezoneSettingsSection deployment={deployment} />
-				<ComputeSettingsSections deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
+				<ComputeSettingsSections
+					deployment={deployment}
+					agent={agent}
+					onDeleteAccepted={onDeleteAccepted}
+				/>
 			</div>
 		</UnsavedNavigationBoundary>
 	);
@@ -3542,9 +3548,11 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 
 function ComputeSettingsSections({
 	deployment,
+	agent,
 	onDeleteAccepted,
 }: {
 	deployment: HostedDeployment;
+	agent: components["schemas"]["AgentResponse"] | null;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	const router = useRouter();
@@ -3683,7 +3691,6 @@ function ComputeSettingsSections({
 	const subscriptionLifecycle = currentSubscription
 		? computeSubscriptionLifecycle(currentSubscription)
 		: null;
-	const subscriptionLifecycleDateLabel = formatShortDate(subscriptionLifecycle?.dateAt);
 	const currentSubscriptionStatus = currentSubscription?.status.toLowerCase();
 	const computePlanStatusTone: StatusTone =
 		currentSubscriptionStatus === "past_due" ||
@@ -3702,22 +3709,52 @@ function ComputeSettingsSections({
 					? "success"
 					: "neutral";
 	const computePlanStatusLabel =
-		!isPaidCompute || !subscriptionLifecycle
-			? "Current"
-			: currentSubscriptionStatus === "past_due" ||
-					currentSubscription?.payment_state === "past_due"
-				? "Past due"
-				: currentSubscriptionStatus === "unpaid" || currentSubscription?.payment_state === "unpaid"
-					? "Unpaid"
-					: currentSubscription?.payment_state === "requires_action"
-						? "Payment action required"
-						: currentSubscriptionStatus === "canceling" || subscriptionCancelPending
-							? "Canceling"
-							: subscriptionLifecycle.badgeLabel;
+		fundingMode === "unknown"
+			? "Unavailable"
+			: !isPaidCompute || !subscriptionLifecycle
+				? "Current"
+				: currentSubscriptionStatus === "past_due" ||
+						currentSubscription?.payment_state === "past_due"
+					? "Past due"
+					: currentSubscriptionStatus === "unpaid" ||
+							currentSubscription?.payment_state === "unpaid"
+						? "Unpaid"
+						: currentSubscription?.payment_state === "requires_action"
+							? "Payment action required"
+							: currentSubscriptionStatus === "canceling" || subscriptionCancelPending
+								? "Canceling"
+								: subscriptionLifecycle.badgeLabel;
 	const computePlanStatus = {
 		label: computePlanStatusLabel,
 		tone: computePlanStatusTone,
 	};
+	const computeCardView = computeSubscriptionCardView({
+		identity: {
+			kind: "agent",
+			name: agent
+				? agentDisplayName(agent)
+				: agentDisplayName({
+						default_name: deployment.resource.name,
+						agent_type: deployment.resource.spec.runtime,
+					}),
+			agentType: deployment.resource.spec.runtime,
+			avatarUrl: agent?.avatar_url,
+		},
+		status: computePlanStatus,
+		planSlug: computePlanSlug ?? rawComputePlanSlug,
+		fundingSource: isIncludedBasic
+			? "included"
+			: currentSubscription?.funding_source === "wallet"
+				? "wallet"
+				: currentSubscription
+					? "stripe"
+					: "unavailable",
+		priceCents: currentPriceCents,
+		currency: currentSubscription?.currency ?? "usd",
+		billingTermMonths: currentBillingTerm,
+		scheduleVerb: subscriptionLifecycle?.dateVerb ?? null,
+		scheduleAt: subscriptionLifecycle?.dateAt,
+	});
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
 				pendingPlanSlug,
@@ -4062,49 +4099,14 @@ function ComputeSettingsSections({
 			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
 				<ComputeSubscriptionCard
 					headingLevel={3}
-					title={
-						<span className="flex min-w-0 items-center gap-1.5">
-							{tierLabel === "Performance" ? (
-								<Zap className="size-4 shrink-0" />
-							) : (
-								<Cpu className="size-4 shrink-0" />
-							)}
-							<span>{tierLabel} compute</span>
-						</span>
-					}
-					status={computePlanStatus}
-					description="Basic includes one free active slot per user. Paid Basic and Performance each use one subscription per agent."
+					view={computeCardView}
+					className="max-w-2xl"
 					badges={
 						hasWalletFallback ? (
 							<Badge variant="outline" className="font-normal text-muted-foreground">
 								Wallet fallback
 							</Badge>
 						) : null
-					}
-					details={
-						isPaidCompute && currentSubscription
-							? [
-									{ label: "Payment", value: isWalletFunded ? "Wallet" : "Card" },
-									{ label: "Term", value: billingTermLabel(currentBillingTerm) },
-									{
-										label: "Price",
-										value:
-											currentPriceCents === null
-												? "Unavailable"
-												: `${formatCents(currentPriceCents)}${billingTermSuffix(currentBillingTerm)}`,
-									},
-									{
-										label: "Schedule",
-										value:
-											subscriptionLifecycle?.dateVerb && subscriptionLifecycle.dateAt
-												? `${subscriptionLifecycle.dateVerb} ${subscriptionLifecycleDateLabel}`
-												: "Unavailable",
-									},
-								]
-							: [
-									{ label: "Funding", value: "Included" },
-									{ label: "Billing", value: "No subscription charge" },
-								]
 					}
 					notice={
 						pendingPlanCopy ? (
@@ -4115,7 +4117,7 @@ function ComputeSettingsSections({
 						hasTerminalFallback || isIncludedBasic || (isPaidCompute && currentSubscription) ? (
 							<div
 								id="compute-plan-controls"
-								className="flex w-full scroll-mt-6 flex-col gap-2 sm:ml-auto sm:w-auto sm:min-w-64 sm:items-end"
+								className="flex w-full scroll-mt-6 flex-wrap items-center justify-end gap-2"
 							>
 								{isIncludedBasic && blockingPlansError ? (
 									<div className="w-full sm:w-72">
@@ -4127,7 +4129,7 @@ function ComputeSettingsSections({
 										/>
 									</div>
 								) : hasTerminalFallback || isIncludedBasic ? (
-									<div className="flex w-full flex-col gap-2 sm:w-64">
+									<>
 										<Button
 											size="sm"
 											disabled={
@@ -4157,90 +4159,102 @@ function ComputeSettingsSections({
 										</Button>
 										{hasTerminalFallback ? (
 											canStartNewSubscription ? null : (
-												<p className="text-xs text-muted-foreground">{createUnavailableMessage}</p>
+												<p className="basis-full text-right text-xs text-muted-foreground">
+													{createUnavailableMessage}
+												</p>
 											)
 										) : canUpgrade ? null : (
-											<p className="text-xs text-muted-foreground">{upgradeUnavailableMessage}</p>
+											<p className="basis-full text-right text-xs text-muted-foreground">
+												{upgradeUnavailableMessage}
+											</p>
 										)}
-									</div>
+									</>
 								) : isPaidCompute && currentSubscription ? (
-									<div className="flex w-full flex-col gap-2 sm:w-72">
-										{subscriptionCancelPending ? (
-											<>
+									subscriptionCancelPending ? (
+										<>
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												disabled
+												title={planChangeUnavailable ?? undefined}
+											>
+												<Settings data-icon="inline-start" />
+												Manage
+											</Button>
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												disabled={resumeSubscription.isPending || !subscriptionCancelable}
+												onClick={() =>
+													void runAction(resumeComputeSubscription).catch(() => undefined)
+												}
+											>
+												{resumeSubscription.isPending ? (
+													<Spinner data-icon="inline-start" />
+												) : (
+													<RefreshCw data-icon="inline-start" />
+												)}
+												Resume subscription
+											</Button>
+											<p className="basis-full text-right text-xs text-muted-foreground">
+												{planChangeUnavailable}
+											</p>
+										</>
+									) : (
+										<>
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												disabled={
+													pendingPlanChangeName === null &&
+													(planChangeUnavailable !== null || !!pendingPlanSlug)
+												}
+												onClick={() => setPlanChangeDialogOpen(true)}
+											>
+												<Settings data-icon="inline-start" />
+												Manage
+											</Button>
+											<ConfirmAction
+												title={`Cancel ${tierLabel} subscription?`}
+												description={
+													<p>
+														Cancellation takes effect {subscriptionPeriodLabel}. The agent then
+														falls back to included Basic funding if available; otherwise, it stops.
+													</p>
+												}
+												confirmLabel="Cancel at period end"
+												destructive
+												onConfirm={() => runAction(cancelComputeSubscription)}
+											>
 												<Button
 													type="button"
 													variant="outline"
 													size="sm"
-													disabled={resumeSubscription.isPending || !subscriptionCancelable}
-													onClick={() =>
-														void runAction(resumeComputeSubscription).catch(() => undefined)
-													}
+													disabled={cancelSubscription.isPending || !subscriptionCancelable}
 												>
-													{resumeSubscription.isPending ? (
+													{cancelSubscription.isPending ? (
 														<Spinner data-icon="inline-start" />
 													) : (
-														<RefreshCw data-icon="inline-start" />
+														<Link2Off data-icon="inline-start" />
 													)}
-													Resume subscription
+													Cancel subscription
 												</Button>
-												<p className="text-xs text-muted-foreground">{planChangeUnavailable}</p>
-											</>
-										) : (
-											<>
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													disabled={
-														pendingPlanChangeName === null &&
-														(planChangeUnavailable !== null || !!pendingPlanSlug)
-													}
-													onClick={() => setPlanChangeDialogOpen(true)}
-												>
-													{pendingPlanChangeName
-														? "Check subscription change status"
-														: paymentSourceOnly
-															? "Change payment source"
-															: "Change plan, term, or payment source"}
-												</Button>
-												<ConfirmAction
-													title={`Cancel ${tierLabel} subscription?`}
-													description={
-														<p>
-															Cancellation takes effect {subscriptionPeriodLabel}. The agent then
-															falls back to included Basic funding if available; otherwise, it
-															stops.
-														</p>
-													}
-													confirmLabel="Cancel at period end"
-													destructive
-													onConfirm={() => runAction(cancelComputeSubscription)}
-												>
-													<Button
-														type="button"
-														variant="outline"
-														size="sm"
-														disabled={cancelSubscription.isPending || !subscriptionCancelable}
-													>
-														{cancelSubscription.isPending ? (
-															<Spinner data-icon="inline-start" />
-														) : (
-															<Link2Off data-icon="inline-start" />
-														)}
-														Cancel subscription
-													</Button>
-												</ConfirmAction>
-												{pendingPlanSlug ? (
-													<p className="text-xs text-muted-foreground">
-														A plan change is already scheduled. It will apply on the effective date
-														shown above.
-													</p>
-												) : planChangeUnavailable ? (
-													<p className="text-xs text-muted-foreground">{planChangeUnavailable}</p>
-												) : null}
-											</>
-										)}
-									</div>
+											</ConfirmAction>
+											{pendingPlanSlug ? (
+												<p className="basis-full text-right text-xs text-muted-foreground">
+													A plan change is already scheduled. It will apply on the effective date
+													shown above.
+												</p>
+											) : planChangeUnavailable ? (
+												<p className="basis-full text-right text-xs text-muted-foreground">
+													{planChangeUnavailable}
+												</p>
+											) : null}
+										</>
+									)
 								) : null}
 							</div>
 						) : null
