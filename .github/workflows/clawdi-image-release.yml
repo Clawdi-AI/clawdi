@@ -103,7 +103,7 @@ jobs:
                 { ...context.repo, run_id: run.id, filter: "latest", per_page: 100 },
               );
               const deployJobs = jobs.filter(
-                (job) => job.name === "deploy-vps" || /^deploy-vps [0-9a-f]{40}$/.test(job.name),
+                (job) => job.name === "deploy-vps" || job.name.startsWith("deploy-vps "),
               );
               if (deployJobs.length > 1) {
                 core.setFailed(`Release run ${run.id} has ambiguous deploy-vps history`);
@@ -112,7 +112,13 @@ jobs:
               const deploy = deployJobs[0];
               if (!deploy || deploy.conclusion !== "success") continue;
               const namedSha = /^deploy-vps ([0-9a-f]{40})$/.exec(deploy.name)?.[1];
-              const deployedSha = namedSha ?? (run.event === "workflow_run" ? run.head_sha : "");
+              if (deploy.name !== "deploy-vps" && !namedSha) {
+                core.setFailed(`Release run ${run.id} has invalid named deployment authority`);
+                return;
+              }
+              const legacyAutomaticSha = run.event === "workflow_run" ? run.head_sha : undefined;
+              if (!namedSha && legacyAutomaticSha === undefined) continue;
+              const deployedSha = namedSha ?? legacyAutomaticSha;
               if (!/^[0-9a-f]{40}$/.test(deployedSha) || !deploy.completed_at) {
                 core.setFailed(`Release run ${run.id} has invalid deployment authority metadata`);
                 return;

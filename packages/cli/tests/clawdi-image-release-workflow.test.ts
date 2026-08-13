@@ -137,9 +137,13 @@ describe("backend image release workflow contract", () => {
 		const authorityScript = String(authority?.with?.script ?? "");
 		expect(authorityScript).toContain("listWorkflowRuns");
 		expect(authorityScript).toContain("listJobsForWorkflowRun");
-		expect(authorityScript).toContain("/^deploy-vps [0-9a-f]{40}$/.test(job.name)");
+		expect(authorityScript).toContain('job.name.startsWith("deploy-vps ")');
 		expect(authorityScript).toContain('deploy.conclusion !== "success"');
-		expect(authorityScript).toContain('run.event === "workflow_run" ? run.head_sha : ""');
+		expect(authorityScript).toContain('run.event === "workflow_run" ? run.head_sha : undefined');
+		expect(authorityScript).toContain(
+			"if (!namedSha && legacyAutomaticSha === undefined) continue",
+		);
+		expect(authorityScript).toContain('deploy.name !== "deploy-vps" && !namedSha');
 		expect(authorityScript).toContain("right.completedAt.localeCompare(left.completedAt)");
 		expect(authorityScript).toContain('core.setOutput("base_sha", deployed[0].sha)');
 		expect(authorityScript).not.toContain("github.event.before");
