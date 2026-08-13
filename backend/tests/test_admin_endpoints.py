@@ -2794,6 +2794,7 @@ async def test_admin_hosted_v1_ownership_is_idempotent_conflict_safe_and_releasa
     replayed = await admin_client.put(path, headers=_AUTH, json=body)
     assert adopted.status_code == replayed.status_code == 200
     assert replayed.json() == adopted.json()
+    assert adopted.json()["target_clerk_id"] == seed_user.clerk_id
     assert adopted.json()["key_id"] == str(key.id)
 
     replacement_path = f"/v1/admin/agents/{replacement.id}/hosted-v1-ownership"

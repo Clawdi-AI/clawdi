@@ -1828,6 +1828,9 @@ async def admin_adopt_hosted_v1_ownership(
         db,
         PlatformOwner(kind=PRINCIPAL_KIND_CLERK, ref=body.target_clerk_id),
     )
+    target_clerk_id = target.clerk_id
+    if target_clerk_id is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Target owner is not a Clerk user")
     try:
         adopted = await adopt_hosted_v1_ownership(
             db,
@@ -1871,6 +1874,7 @@ async def admin_adopt_hosted_v1_ownership(
     return AdminHostedV1OwnershipResponse(
         ownership_id=ownership.id,
         agent_id=ownership.environment_id,
+        target_clerk_id=target_clerk_id,
         deployment_id=ownership.deployment_id,
         agent_type=body.agent_type,
         key_id=ownership.api_key_id,

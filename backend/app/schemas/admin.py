@@ -134,6 +134,7 @@ class AdminHostedV1OwnershipUpsert(BaseModel):
 class AdminHostedV1OwnershipResponse(BaseModel):
     ownership_id: UUID
     agent_id: UUID
+    target_clerk_id: AdminClerkId
     deployment_id: str
     agent_type: AdminHostedV1AgentType
     key_id: UUID
