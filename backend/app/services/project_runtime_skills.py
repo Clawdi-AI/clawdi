@@ -41,7 +41,6 @@ PROJECT_SKILL_RECONCILE_VERSION = 1
 CONNECTED_PROJECT_SKILL_CAPABILITY_TTL = timedelta(minutes=10)
 MAX_AGENT_PROJECT_SKILLS = 1000
 _CONNECTED_PROJECT_SKILL_AGENT_TYPES = frozenset({"claude_code", "codex", "hermes", "openclaw"})
-_LEGACY_V1_HOSTED_AGENT_TYPES = frozenset({"hermes", "openclaw"})
 
 
 def _advisory_key(namespace: str, value: UUID) -> int:
@@ -426,21 +425,6 @@ def _assert_agent_supports_project_skills(
         )
 
 
-def _is_legacy_v1_hosted_compatibility_shape(
-    agent: AgentEnvironment,
-    state: HostedRuntimeState | None,
-) -> bool:
-    """Match the implicit hosted identity shape that predates Hosted V2 state."""
-    return bool(
-        state is None
-        and agent.agent_type in _LEGACY_V1_HOSTED_AGENT_TYPES
-        and agent.registration_key is not None
-        and agent.connected_agent_registered_at is None
-        and agent.project_skill_reconcile_version is None
-        and agent.project_skill_reconcile_observed_at is None
-    )
-
-
 def agent_supports_project_skills(
     agent: AgentEnvironment,
     state: HostedRuntimeState | None,
@@ -616,15 +600,8 @@ async def assert_agent_workspace_skill_write_compatible(
             db,
             agent_id=agent_id,
         )
-        # Hosted V1 never materializes linked Project Skills. Its sync upload is
-        # only an Agent Workspace observation, so the name check above is the
-        # complete compatibility boundary. Hosted V2 and Connected Agents must
-        # still prove delivery readiness before changing that observation.
-        if _is_legacy_v1_hosted_compatibility_shape(
-            agent,
-            state,
-        ):
-            return
+        # Historical Hosted V1 and Connected rows can have the same legacy
+        # shape. Never bypass readiness without durable hosted ownership state.
         _assert_agent_supports_project_skills(
             agent,
             state,

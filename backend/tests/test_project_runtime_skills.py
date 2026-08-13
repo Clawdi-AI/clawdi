@@ -623,7 +623,7 @@ async def test_legacy_v1_hosted_identity_cannot_report_or_read_project_desired(
 
 
 @pytest.mark.asyncio
-async def test_legacy_v1_hosted_agent_without_bound_key_accepts_workspace_observation(
+async def test_ambiguous_legacy_registration_shape_rejects_workspace_observation(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
@@ -661,13 +661,17 @@ async def test_legacy_v1_hosted_agent_without_bound_key_accepts_workspace_observ
     assert environment_bound_key_count == 0
     _set_auth(_unbound_cli_auth(seed_user))
 
-    accepted = await _upload_agent_workspace_skill(
+    rejected = await _upload_agent_workspace_skill(
         client,
         agent_id=agent_id,
         skill_key="local-only",
     )
-    assert accepted.status_code == 200, accepted.text
-    stored = (
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"] == {
+        "code": "project_skill_delivery_update_required",
+        "message": "Update this Agent, then try again.",
+    }
+    assert (
         await db_session.execute(
             select(Skill).where(
                 Skill.project_id == environment_project.id,
@@ -675,18 +679,16 @@ async def test_legacy_v1_hosted_agent_without_bound_key_accepts_workspace_observ
                 Skill.is_active,
             )
         )
-    ).scalar_one()
-    assert stored.authority == SKILL_AUTHORITY_AGENT_SYNC
-    assert stored.authority_agent_id == agent_id
+    ).scalar_one_or_none() is None
 
-    rejected = await _upload_agent_workspace_skill(
+    conflicting = await _upload_agent_workspace_skill(
         client,
         agent_id=agent_id,
         skill_key="shared-key",
     )
     _set_auth(AuthContext(user=seed_user))
-    assert rejected.status_code == 409, rejected.text
-    assert rejected.json()["detail"] == {
+    assert conflicting.status_code == 409, conflicting.text
+    assert conflicting.json()["detail"] == {
         "code": "agent_workspace_project_skill_name_conflict",
         "message": (
             'Skill "shared-key" already comes from a linked Project. '
