@@ -83,9 +83,8 @@ choice.
 Deployment is two-stage. Phase A publishes the dual-read/canonical-write
 `clawdi@0.13.69`; the backend continues to emit legacy `OPENAI_API_KEY`. Phase B
 is a separate backend change gated on the exact CLI being published, desired
-package specs advancing, and strict `diagnostics.cli` evidence proving that exact
-package is installed and active. An in-place update preserves the long-running
-daemon, so `activeCliVersion` may correctly remain its older running version.
+package specs advancing, and `activeCliVersion` proving that the current running
+CLI is that exact version. Installed CLI diagnostics are not execution authority.
 The current flow parses the strict manifest before `applyRuntimeCliDesiredState`,
 so enabling canonical backend emission earlier would strand an older CLI before
 self-upgrade.
