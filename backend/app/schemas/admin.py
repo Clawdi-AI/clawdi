@@ -236,6 +236,16 @@ class AdminDeploymentManagedAiProviderUpsert(BaseModel):
     capabilities: dict[str, Any] | None = None
 
 
+class AdminDeploymentManagedAiProviderRuntimeMetadataReplace(BaseModel):
+    """Replace runtime metadata without changing managed credentials."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    owner: PlatformOwner
+    base_url: str = Field(min_length=1, max_length=1000)
+    models: list[AiProviderModel] | None
+
+
 class AdminDeploymentManagedAiProviderResponse(BaseModel):
     id: UUID
     owner: PlatformOwner
