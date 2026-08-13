@@ -823,7 +823,10 @@ the public `hermes -z` consumer in an isolated HOME against task-local
 OpenAI-compatible inference and Streamable HTTP MCP fixtures. Hermes startup
 must discover the enabled portable canary, advertise its exact MCP tool to the
 stub model, execute the model's tool call through its own MCP runtime, return a
-nonce-bearing result, and finish with the unique expected token. This detects
+nonce-bearing result, and finish with the unique expected token. The canary's
+portable `mcp.json` also carries a unique nonce-bearing literal header, which
+the loopback controller requires on every MCP request before recording protocol
+or tool evidence. This detects
 older binaries that install the package while silently skipping remote entries;
 it does not import Hermes Python modules or rewrite Hermes configuration
 formats. The canary package points only to loopback and never connects to a

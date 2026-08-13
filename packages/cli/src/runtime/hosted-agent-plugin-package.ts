@@ -97,7 +97,7 @@ export interface PreparedHostedAgentPlugin {
 	installation: PreparedHostedAgentPluginInstallation;
 	receiptNativeId: string | null;
 	mcpServerNames: readonly string[];
-	hasStreamableHttpMcp?: boolean;
+	hasStreamableHttpMcp: boolean;
 	tree: readonly PreparedAgentPluginTreeFile[];
 }
 

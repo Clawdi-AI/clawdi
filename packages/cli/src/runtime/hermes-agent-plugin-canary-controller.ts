@@ -15,6 +15,7 @@ export interface HermesAgentPluginCanaryControllerOptions {
 }
 
 interface CanaryEvidence {
+	mcpHeader: boolean;
 	mcpInitialize: boolean;
 	mcpInitialized: boolean;
 	mcpToolsList: boolean;
@@ -171,6 +172,7 @@ export async function runHermesAgentPluginCanaryController(
 ): Promise<void> {
 	assertControllerOptions(options);
 	const evidence: CanaryEvidence = {
+		mcpHeader: false,
 		mcpInitialize: false,
 		mcpInitialized: false,
 		mcpToolsList: false,
@@ -196,6 +198,17 @@ export async function runHermesAgentPluginCanaryController(
 		try {
 			const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
 			if (pathname === "/mcp") {
+				if (request.headers["x-clawdi-agent-plugin-canary"] !== `clawdi-${options.nonce}`) {
+					fail("portable Agent Plugin canary header was missing or invalid");
+					writeJson(response, 401, {
+						jsonrpc: "2.0",
+						error: { code: -32_000, message: "Unauthorized" },
+						id: null,
+					});
+					return;
+				}
+				evidence.mcpHeader = true;
+				persistEvidence();
 				if (request.method === "HEAD") {
 					writeJson(response, 405, { error: "POST required" });
 					return;
