@@ -33,7 +33,6 @@ export function readHostedRuntimeObserved(
 	options: {
 		reportedAt?: string;
 		appliedState?: RuntimeAppliedState | null;
-		etagAuthority?: "bundle" | "control-plane";
 	} = {},
 ): HostedRuntimeObserved | null {
 	if (paths.mode !== "hosted") return null;
@@ -46,10 +45,7 @@ export function readHostedRuntimeObserved(
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
 		? {
-				etag:
-					options.etagAuthority === "control-plane"
-						? (appliedState.manifestETag ?? appliedState.etag)
-						: appliedState.etag,
+				etag: appliedState.etag,
 				sourceRevision: appliedState.sourceRevision,
 				generation: resolveRuntimeApplyGeneration(appliedState),
 				instanceId: appliedState.instanceId,

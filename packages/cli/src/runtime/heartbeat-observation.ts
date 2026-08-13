@@ -10,6 +10,7 @@ import {
 	runtimeAppliedApplyIdentity,
 } from "./applied-state";
 import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
+import { assertRuntimeBundleAuthority } from "./manifest-source";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -87,7 +88,10 @@ const observedSupervisorSchema = z
 	})
 	.strict();
 
-export type HostedRuntimeObservedEvent = components["schemas"]["RuntimeObservationEventV2"];
+export type HostedRuntimeObservedEvent = components["schemas"]["RuntimeObservationEventV2"] & {
+	generation: number;
+	manifestETag: string;
+};
 
 const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = z
 	.object({
@@ -105,6 +109,8 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 		error: z.string().nullable().optional(),
 		convergeError: z.string().nullable().optional(),
 		truncated: z.literal(false).nullable().optional(),
+		generation: positiveSafeIntegerSchema,
+		manifestETag: z.string().min(1).max(128),
 		applyReceiptId: z.string().min(16).max(128),
 		bootNonce: z.string().min(16).max(128),
 		bootSessionId: z.string().min(1).max(128),
@@ -351,11 +357,23 @@ export class HostedRuntimeHeartbeatSession {
 		const snapshot = readHostedRuntimeObserved(this.paths, {
 			reportedAt: capturedAt,
 			appliedState: this.capturedAppliedState,
-			etagAuthority: "control-plane",
 		});
 		if (!snapshot) return null;
+		if (!snapshot.applied) {
+			throw new Error("runtime heartbeat snapshot is missing captured applied state");
+		}
+		if (
+			snapshot.applied.generation !== this.currentBootIdentity.generation ||
+			snapshot.applied.etag !== this.capturedAppliedState.etag ||
+			snapshot.applied.sourceRevision !== this.capturedAppliedState.sourceRevision
+		) {
+			throw new Error("runtime heartbeat snapshot does not match captured applied state");
+		}
+		assertRuntimeBundleAuthority(snapshot.applied.sourceRevision, snapshot.applied.etag);
 		const event = hostedRuntimeObservedEventSchema.parse({
 			...snapshot,
+			generation: this.currentBootIdentity.generation,
+			manifestETag: this.currentBootIdentity.manifestETag,
 			applyReceiptId: this.currentBootIdentity.applyReceiptId,
 			bootNonce: this.currentBootIdentity.bootNonce,
 			bootSessionId: this.currentBootIdentity.bootSessionId,

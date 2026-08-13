@@ -43,12 +43,13 @@ function tempRuntimePaths(): RuntimePaths {
 }
 
 function legacyAppliedState(generation: number): RuntimeAppliedStateV2 {
+	const sourceRevision = (generation === 8 ? "d" : "c").repeat(64);
 	return {
 		schemaVersion: "clawdi.runtimeAppliedState.v2",
 		appliedAt: `2026-07-16T00:00:0${generation}.000Z`,
 		instanceId: "hri_heartbeat",
-		etag: `"transport-bundle-${generation}"`,
-		sourceRevision: (generation === 8 ? "d" : "c").repeat(64),
+		etag: `"sha256:${sourceRevision}"`,
+		sourceRevision,
 		generation,
 		contentIdentity: {
 			sourcePath: "https://runtime.test/v1/runtime/manifest",
@@ -125,6 +126,8 @@ describe("hosted runtime heartbeat observation", () => {
 
 		const event = session.nextEvent()?.event;
 		expect(event).toMatchObject({
+			generation: 1,
+			manifestETag: '"frozen-manifest-1"',
 			applyReceiptId: "apply-receipt-0001",
 			bootNonce: "boot-nonce-000001",
 			bootSessionId: "boot-session-split",
@@ -132,7 +135,8 @@ describe("hosted runtime heartbeat observation", () => {
 			eventId: "event-split-000001",
 			applied: {
 				generation: 1,
-				etag: '"frozen-manifest-1"',
+				etag: `"sha256:${"c".repeat(64)}"`,
+				sourceRevision: "c".repeat(64),
 			},
 		});
 	});
@@ -162,6 +166,8 @@ describe("hosted runtime heartbeat observation", () => {
 		const first = session.nextEvent();
 		if (!first) throw new Error("expected first companion event");
 		expect(first.event).toMatchObject({
+			generation: 7,
+			manifestETag: '"frozen-manifest-7"',
 			applyReceiptId: "apply-receipt-0007",
 			bootNonce: "boot-nonce-000007",
 			bootSessionId: "boot-session-0001",
@@ -171,10 +177,11 @@ describe("hosted runtime heartbeat observation", () => {
 			reportedAt: "2026-07-16T01:00:00.000Z",
 			applied: {
 				generation: 7,
-				etag: '"frozen-manifest-7"',
+				etag: `"sha256:${"c".repeat(64)}"`,
+				sourceRevision: "c".repeat(64),
 			},
 		});
-		expect(first.event.applied?.etag).not.toBe('"transport-bundle-7"');
+		expect(first.event.applied.etag).not.toBe(first.event.manifestETag);
 		expect(first.payloadJson).toBe(JSON.stringify(first.event));
 		expect(first.payloadSha256).toBe(createHash("sha256").update(first.payloadJson).digest("hex"));
 		expect(session.acknowledge(first.event.eventId)).toBe(true);
@@ -183,6 +190,8 @@ describe("hosted runtime heartbeat observation", () => {
 		const second = session.nextEvent();
 		if (!second) throw new Error("expected second companion event");
 		expect(second.event).toMatchObject({
+			generation: 7,
+			manifestETag: '"frozen-manifest-7"',
 			applyReceiptId: "apply-receipt-0007",
 			bootNonce: "boot-nonce-000007",
 			bootSessionId: "boot-session-0001",
@@ -190,7 +199,7 @@ describe("hosted runtime heartbeat observation", () => {
 			eventId: "event-0000000002",
 			applied: {
 				generation: 7,
-				etag: '"frozen-manifest-7"',
+				etag: `"sha256:${"c".repeat(64)}"`,
 			},
 		});
 	});
@@ -218,6 +227,8 @@ describe("hosted runtime heartbeat observation", () => {
 		const rotated = session.nextEvent();
 		if (!rotated) throw new Error("expected rotated tuple event");
 		expect(rotated.event).toMatchObject({
+			generation: 8,
+			manifestETag: '"frozen-manifest-8"',
 			applyReceiptId: "apply-receipt-0008",
 			bootNonce: "boot-nonce-000008",
 			bootSessionId: "boot-session-0002",
@@ -225,7 +236,8 @@ describe("hosted runtime heartbeat observation", () => {
 			eventId: "event-0000000002",
 			applied: {
 				generation: 8,
-				etag: '"frozen-manifest-8"',
+				etag: `"sha256:${"d".repeat(64)}"`,
+				sourceRevision: "d".repeat(64),
 			},
 		});
 	});
@@ -468,7 +480,9 @@ describe("hosted runtime heartbeat observation", () => {
 		expect(session.hasCompanionIdentity).toBe(false);
 		expect(session.nextEvent()).toBeNull();
 		expect(existsSync(runtimeHeartbeatObservationStatePath(paths, "env_legacy"))).toBe(false);
-		expect(readHostedRuntimeObserved(paths)?.applied?.etag).toBe('"transport-bundle-7"');
+		expect(readHostedRuntimeObserved(paths)?.applied?.etag).toBe(
+			`"sha256:${"c".repeat(64)}"`,
+		);
 	});
 
 	test("rejects a boot session ID outside the frozen 128-character bound", () => {

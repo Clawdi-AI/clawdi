@@ -6562,6 +6562,10 @@ export interface components {
             convergeError?: string | null;
             /** Truncated */
             truncated?: false | null;
+            /** Generation */
+            generation?: number | null;
+            /** Manifestetag */
+            manifestETag?: string | null;
             /** Applyreceiptid */
             applyReceiptId: string;
             /** Bootnonce */

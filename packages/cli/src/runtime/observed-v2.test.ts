@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getCliVersion } from "../lib/version";
-import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-state";
+import { writeRuntimeAppliedState } from "./applied-state";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths } from "./paths";
 
@@ -53,18 +53,6 @@ describe("hosted runtime observed v2", () => {
 		expect(observed?.activeCliVersion).toBe(getCliVersion());
 		expect(observed?.applied).toEqual({
 			etag: '"bundle-applied"',
-			sourceRevision: "a".repeat(64),
-			generation: 1,
-			instanceId: "hri_observed",
-			appliedProviderIds: ["managed"],
-		});
-		const companion = readHostedRuntimeObserved(paths, {
-			reportedAt: "2026-07-13T06:01:00.000Z",
-			appliedState: readRuntimeAppliedState(paths),
-			etagAuthority: "control-plane",
-		});
-		expect(companion?.applied).toEqual({
-			etag: '"frozen-companion-manifest"',
 			sourceRevision: "a".repeat(64),
 			generation: 1,
 			instanceId: "hri_observed",

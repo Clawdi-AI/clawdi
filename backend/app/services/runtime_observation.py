@@ -291,8 +291,10 @@ def _canonical_observation_payload(value: RuntimeObservationEventV2) -> tuple[di
 
 def _companion_identity(value: RuntimeObservationEventV2) -> RuntimeApplyIdentity:
     return RuntimeApplyIdentity(
-        generation=value.applied.generation,
-        manifest_etag=value.applied.etag,
+        generation=value.generation if value.generation is not None else value.applied.generation,
+        manifest_etag=(
+            value.manifest_etag if value.manifest_etag is not None else value.applied.etag
+        ),
         apply_receipt_id=value.apply_receipt_id,
         boot_nonce=value.boot_nonce,
     )
