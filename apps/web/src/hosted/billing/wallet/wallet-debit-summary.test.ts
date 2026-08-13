@@ -12,7 +12,10 @@ function summary(overrides: Partial<WalletDebitSummary> = {}): WalletDebitSummar
 
 describe("walletDebitShortfallUsd", () => {
 	test("derives an exact decimal shortfall from the presentation model", () => {
-		expect(walletDebitShortfallUsd(summary({ balanceAfterUsd: "-1.2505" }))).toBe(1.2505);
+		expect(walletDebitShortfallUsd(summary({ balanceAfterUsd: "-1.2505" }))).toBe("1.2505");
+		expect(
+			walletDebitShortfallUsd(summary({ balanceAfterUsd: "-9007199254740993.000000000000000001" })),
+		).toBe("9007199254740993.000000000000000001");
 		expect(walletDebitShortfallUsd(summary())).toBeNull();
 	});
 });

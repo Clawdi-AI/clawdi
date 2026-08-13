@@ -1,4 +1,4 @@
-import { formatCents } from "@/hosted/billing/format";
+import { compareDecimals, formatCents } from "@/hosted/billing/format";
 
 /**
  * Wallet UI bounds. These mirror the hosted API validation so the form catches
@@ -33,6 +33,5 @@ export const AUTORELOAD_AMOUNT_RANGE_LABEL = amountRangeLabel(
 export const LOW_BALANCE_USD = 2;
 
 export function isLowBalance(balanceUsd: string): boolean {
-	const balance = Number(balanceUsd);
-	return Number.isFinite(balance) && balance < LOW_BALANCE_USD;
+	return compareDecimals(balanceUsd, String(LOW_BALANCE_USD)) === -1;
 }
