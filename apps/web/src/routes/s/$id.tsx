@@ -7,9 +7,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export const Route = createFileRoute("/s/$id")({
 	head: () => routeHeadTitle("Shared Session"),
-	loader: async ({ params }) => {
+	loader: async ({ abortController, params }) => {
 		if (!UUID_RE.test(params.id)) throw notFound();
-		const result = await getPublicShareData({ data: { sessionId: params.id } });
+		const result = await getPublicShareData({
+			data: { sessionId: params.id },
+			signal: abortController.signal,
+		});
 		if (result.kind === "not-found") throw notFound();
 		return result;
 	},
