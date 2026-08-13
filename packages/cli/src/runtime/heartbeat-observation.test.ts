@@ -480,9 +480,7 @@ describe("hosted runtime heartbeat observation", () => {
 		expect(session.hasCompanionIdentity).toBe(false);
 		expect(session.nextEvent()).toBeNull();
 		expect(existsSync(runtimeHeartbeatObservationStatePath(paths, "env_legacy"))).toBe(false);
-		expect(readHostedRuntimeObserved(paths)?.applied?.etag).toBe(
-			`"sha256:${"c".repeat(64)}"`,
-		);
+		expect(readHostedRuntimeObserved(paths)?.applied?.etag).toBe(`"sha256:${"c".repeat(64)}"`);
 	});
 
 	test("rejects a boot session ID outside the frozen 128-character bound", () => {
