@@ -14,6 +14,7 @@ const TARGET_CPU = "x64";
 const EXPECTED_DOCKER_CONTEXT_SOURCES = new Set([
 	"package.json",
 	"bun.lock",
+	"patches/libsignal@6.0.0.patch",
 	"tsconfig.base.json",
 	"apps/web/package.json",
 	"packages/cli/package.json",
@@ -26,6 +27,7 @@ const EXPECTED_DOCKER_CONTEXT_SOURCES = new Set([
 
 const DIRECT_FILE_INPUTS = [
 	`${SIDECAR_ROOT}/Dockerfile`,
+	"patches/libsignal@6.0.0.patch",
 	"tsconfig.base.json",
 	`${SIDECAR_ROOT}/package.json`,
 	`${SIDECAR_ROOT}/tsconfig.json`,

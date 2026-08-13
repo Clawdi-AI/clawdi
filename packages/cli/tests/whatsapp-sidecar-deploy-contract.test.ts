@@ -19,6 +19,7 @@ const dockerfile = readFileSync(
 	"utf8",
 );
 const lockfile = readFileSync(resolve(repoRoot, "bun.lock"), "utf8");
+const libsignalPatch = readFileSync(resolve(repoRoot, "patches/libsignal@6.0.0.patch"), "utf8");
 const cliPackage = readFileSync(resolve(repoRoot, "packages/cli/package.json"), "utf8");
 const cliVersion = (JSON.parse(cliPackage) as { version: string }).version;
 const cliRevisionProbeVersion = `${cliVersion}-revision-probe`;
@@ -209,6 +210,10 @@ describe("WhatsApp sidecar production deployment contract", () => {
 				new Map([["bun.lock", replaceOnce(lockfile, "sha512-WK+X8ju8", "sha512-XK+X8ju8")]]),
 			],
 			[
+				"transitive dependency patch",
+				new Map([["patches/libsignal@6.0.0.patch", `${libsignalPatch}\n# revision probe\n`]]),
+			],
+			[
 				"compiler configuration",
 				new Map([
 					[
@@ -255,6 +260,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 				"baileys",
 				"baileys/pino",
 				"baileys/pino/pino-abstract-transport",
+				"libsignal",
 				"pino",
 				"protobufjs",
 				"typescript",

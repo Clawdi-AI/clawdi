@@ -1,0 +1,16 @@
+diff --git a/src/session_record.js b/src/session_record.js
+index 7626a3927fadcdf7f66b3d0c9cf8c63d33da579b..0d80fe08307fc0322fc1cd18b803b146746f89f5 100644
+--- a/src/session_record.js
++++ b/src/session_record.js
+@@ -270 +270 @@ class SessionRecord {
+-            console.warn("Session already closed", session);
++            console.warn("Session already closed");
+@@ -273 +273 @@ class SessionRecord {
+-        console.info("Closing session:", session);
++        console.info("Closing session:");
+@@ -281 +281 @@ class SessionRecord {
+-        console.info("Opening session:", session);
++        console.info("Opening session:");
+@@ -301 +301 @@ class SessionRecord {
+-                console.info("Removing old closed session:", oldestSession);
++                console.info("Removing old closed session:");

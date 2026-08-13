@@ -121,6 +121,9 @@
   "trustedDependencies": [
     "sharp",
   ],
+  "patchedDependencies": {
+    "libsignal@6.0.0": "patches/libsignal@6.0.0.patch",
+  },
   "overrides": {
     "dompurify": "3.4.11",
     "fast-uri": "4.1.0",

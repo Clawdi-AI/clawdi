@@ -56,5 +56,8 @@
 		"protobufjs": "7.6.5",
 		"qs": "6.15.3",
 		"tar": "7.5.19"
+	},
+	"patchedDependencies": {
+		"libsignal@6.0.0": "patches/libsignal@6.0.0.patch"
 	}
 }
