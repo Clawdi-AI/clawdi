@@ -74,6 +74,7 @@ from app.schemas.admin import (
     AdminChannelVisibility,
     AdminChannelWebhookSecretResponse,
     AdminDeploymentManagedAiProviderResponse,
+    AdminDeploymentManagedAiProviderRuntimeMetadataReplace,
     AdminDeploymentManagedAiProviderUpsert,
     AdminEnvironmentCreate,
     AdminManagedAiProviderResponse,
@@ -163,6 +164,7 @@ from app.services.managed_ai_provider import (
     find_clawdi_managed_provider,
     is_v2_deployment_managed_provider_id,
     lock_deployment_managed_provider_mutation,
+    replace_deployment_managed_provider_metadata,
     upsert_clawdi_managed_provider,
 )
 from app.services.principal_lifecycle import (
@@ -1032,6 +1034,95 @@ async def admin_upsert_clawdi_managed_ai_provider(
         owner.ref,
         provider.provider_id,
     )
+    return await _admin_deployment_managed_provider_response(
+        db,
+        provider=provider,
+        owner=owner,
+        target=target,
+    )
+
+
+@router.put(
+    "/ai-providers/{provider_id}/runtime-metadata",
+    response_model=AdminDeploymentManagedAiProviderResponse,
+)
+async def admin_replace_deployment_managed_ai_provider_metadata(
+    provider_id: str,
+    body: AdminDeploymentManagedAiProviderRuntimeMetadataReplace,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminDeploymentManagedAiProviderResponse:
+    """Replace deployment-managed runtime metadata without changing auth state."""
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
+    owner = body.owner
+    action = "ai_provider.managed.runtime_metadata.replace"
+    target = await _find_deployment_managed_provider_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action=action,
+    )
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    provider = await find_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    if provider is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+    try:
+        _require_managed_provider_contract(provider)
+        previous_non_auth_signature = runtime_manifest_provider_non_auth_signature(provider)
+        changed = replace_deployment_managed_provider_metadata(
+            provider,
+            base_url=body.base_url,
+            models=(
+                [model.model_dump(exclude_none=True) for model in body.models]
+                if body.models is not None
+                else None
+            ),
+        )
+    except (HTTPException, ValueError) as exc:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider_uuid=provider.id,
+            outcome="failed",
+        )
+        await db.commit()
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    if changed:
+        await db.flush()
+        if previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider):
+            await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    await db.commit()
+    await db.refresh(provider)
     return await _admin_deployment_managed_provider_response(
         db,
         provider=provider,

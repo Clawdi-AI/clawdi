@@ -197,6 +197,25 @@ async def upsert_clawdi_managed_provider(
     return provider
 
 
+def replace_deployment_managed_provider_metadata(
+    provider: AiProvider,
+    *,
+    base_url: str,
+    models: list[dict[str, JsonValue]] | None,
+) -> bool:
+    """Replace runtime metadata without touching provider auth state."""
+
+    if not is_v2_deployment_managed_provider_id(provider.provider_id):
+        raise ValueError("unsupported deployment managed provider id")
+    validate_managed_provider_base_url(base_url)
+    normalized_base_url = base_url.strip()
+    if provider.base_url == normalized_base_url and provider.models == models:
+        return False
+    provider.base_url = normalized_base_url
+    provider.models = models
+    return True
+
+
 async def find_clawdi_managed_provider(
     db: AsyncSession,
     *,
