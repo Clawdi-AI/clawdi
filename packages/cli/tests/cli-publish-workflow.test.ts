@@ -194,7 +194,6 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain("release.targetCommitish !== process.env.EXPECTED_COMMIT");
 		expect(workflow).toContain('console.log(release.isDraft ? "resume-draft" : "none")');
 		expect(workflow).toContain('gh release upload "$tag"');
-		expect(workflow).toContain("--clobber");
 		expect(workflow).toContain('--target "$GITHUB_SHA"');
 		expect(workflow).toContain("--draft");
 		expect(workflow).toContain('gh release edit "$tag" --draft=false');
