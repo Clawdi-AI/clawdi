@@ -63,6 +63,17 @@ const accountIncludedDeployment = {
 		clawdi_cloud_environments: { hermes: includedEnvironmentId },
 	},
 };
+const ineligibleIncludedDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_included_ineligible",
+	name: "Included Basic temporarily unavailable",
+	status: "starting",
+	upgrade_available: false,
+	upgrade_eligibility: {
+		eligible: false,
+		reason: "deployment_must_be_running_or_stopped",
+	},
+};
 const accountCloudAgents = [
 	{
 		...sharedLegacyCloudAgent,
@@ -364,7 +375,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog.getByText("Active", { exact: true })).toHaveCount(2);
 	await expect(dialog.getByText("Canceling", { exact: true })).toBeVisible();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(4);
-	await expect(dialog.getByRole("button", { name: "Manage", exact: true })).toHaveCount(1);
+	await expect(dialog.getByRole("button", { name: "Manage", exact: true })).toHaveCount(2);
 	await expect(dialog.getByRole("button", { name: "Resume subscription" })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Show history (2)" })).toBeVisible();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(4);
@@ -387,8 +398,10 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(includedCard.locator("h4")).toHaveText("Basic compute");
 	await expect(includedCard.getByText("Free", { exact: true })).toBeVisible();
 	await expect(includedCard.getByText("Included agent", { exact: true })).toBeVisible();
+	const includedManage = includedCard.getByRole("button", { name: "Manage", exact: true });
+	await expect(includedManage).toBeVisible();
+	await expect(includedManage.locator("svg.lucide-settings")).toHaveCount(1);
 	await expect(includedCard.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
-	await expect(includedCard.locator('[data-slot="compute-subscription-actions"]')).toHaveCount(0);
 	await expect(pastDueCard.getByText("Past due", { exact: true })).toBeVisible();
 	await expect(pastDueCard.getByText("Retries Aug 10, 2099", { exact: true })).toBeVisible();
 	await expect(pastDueCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
@@ -471,6 +484,23 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(6);
 	expect(page.url()).toBe(accountSettingsUrl);
 
+	await includedManage.click();
+	const includedManagementDialog = page.getByRole("dialog", {
+		name: "Change compute subscription",
+	});
+	await expect(includedManagementDialog).toBeVisible();
+	await expect(
+		includedManagementDialog.getByRole("group", { name: "Subscription management mode" }),
+	).toHaveCount(0);
+	await expect(includedManagementDialog.getByLabel("Compute plan")).toHaveText(/Performance/);
+	await expect(includedManagementDialog.getByLabel("Payment source")).toBeVisible();
+	await expect(
+		includedManagementDialog.getByRole("button", { name: "Cancel subscription" }),
+	).toHaveCount(0);
+	await includedManagementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(includedManagementDialog).toBeHidden();
+	await expect(dialog).toBeVisible();
+
 	await pastDueCard.getByRole("button", { name: "Top up", exact: true }).click();
 	const topUpDialog = page.getByRole("dialog", { name: "Top up Wallet", exact: true });
 	await expect(topUpDialog).toBeVisible();
@@ -514,9 +544,9 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	expect(errors, `subscription cards: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("agent settings uses the subscription card without changing plan actions", async ({
+test("agent settings uses compact canonical subscription management", async ({
 	page,
-}) => {
+}, testInfo) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page, {
@@ -555,6 +585,7 @@ test("agent settings uses the subscription card without changing plan actions", 
 			},
 			terminalFallbackDeployment,
 			includedBasicDeployment,
+			ineligibleIncludedDeployment,
 		],
 		plans: [basicPlan, performancePlan],
 	});
@@ -572,6 +603,7 @@ test("agent settings uses the subscription card without changing plan actions", 
 	await expect(activeCard.getByText("Paid research agent", { exact: true })).toHaveCount(0);
 	await expect(activeCard.locator("img")).toHaveCount(0);
 	await expect(activeCard.locator('[data-slot="compute-subscription-identity"]')).toHaveCount(0);
+	await expect(activeCard).toHaveAttribute("data-layout", "management");
 	const agentManage = activeCard.getByRole("button", { name: "Manage", exact: true });
 	await expect(agentManage).toBeVisible();
 	await expect(agentManage.locator("svg.lucide-settings")).toHaveCount(1);
@@ -635,17 +667,73 @@ test("agent settings uses the subscription card without changing plan actions", 
 	await expect(fallbackCard.getByText("Free", { exact: true })).toBeVisible();
 	await expect(fallbackCard.getByRole("button", { name: "Choose a subscription" })).toBeVisible();
 
+	await page.setViewportSize({ width: 1440, height: 900 });
 	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
-	await page.getByRole("button", { name: "Upgrade to Performance", exact: true }).click();
-	const includedUpgradeDialog = page.getByRole("dialog", { name: "Change compute subscription" });
-	await expect(includedUpgradeDialog).toBeVisible();
+	const includedCard = page
+		.locator('[data-slot="compute-subscription-card"]')
+		.filter({ hasText: "Basic compute" });
+	await expect(includedCard).toHaveAttribute("data-layout", "management");
+	await expect(includedCard.getByText("Free", { exact: true })).toBeVisible();
+	await expect(includedCard.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
+	const includedManage = includedCard.getByRole("button", { name: "Manage", exact: true });
+	await expect(includedManage).toBeEnabled();
+	await expect(includedManage.locator("svg.lucide-settings")).toHaveCount(1);
+	const desktopIncludedBox = await includedCard.boundingBox();
+	if (!desktopIncludedBox) throw new Error("Included Basic card has no desktop layout box");
+	expect(desktopIncludedBox.height).toBeLessThan(120);
+	await includedCard.screenshot({ path: testInfo.outputPath("agent-compute-plan-desktop.png") });
+	await expectCardsFit(page.locator("body"));
+	await includedManage.click();
+	const includedManagementDialog = page.getByRole("dialog", {
+		name: "Change compute subscription",
+	});
+	await expect(includedManagementDialog).toBeVisible();
 	await expect(
-		includedUpgradeDialog.getByRole("group", { name: "Subscription management mode" }),
+		includedManagementDialog.getByRole("group", { name: "Subscription management mode" }),
 	).toHaveCount(0);
-	await expect(includedUpgradeDialog.getByLabel("Compute plan")).toBeVisible();
-	await expect(includedUpgradeDialog.getByLabel("Payment source")).toBeVisible();
+	await expect(includedManagementDialog.getByLabel("Compute plan")).toBeVisible();
+	await expect(includedManagementDialog.getByLabel("Payment source")).toBeVisible();
+	await includedManagementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+
+	await page.setViewportSize({ width: 320, height: 568 });
+	await expect(includedCard).toBeVisible();
+	await expectCardsFit(page.locator("body"));
 	await expectNoHorizontalOverflow(page);
-	await includedUpgradeDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	const mobileIncludedBox = await includedCard.boundingBox();
+	if (!mobileIncludedBox) throw new Error("Included Basic card has no mobile layout box");
+	expect(mobileIncludedBox.height).toBeLessThan(180);
+	await includedCard.screenshot({ path: testInfo.outputPath("agent-compute-plan-mobile-320.png") });
+
+	await gotoHostedAgentSettings(page, "hdep_included_ineligible", "Basic");
+	const unavailableCard = page
+		.locator('[data-slot="compute-subscription-card"]')
+		.filter({ hasText: "Basic compute" });
+	const unavailableReason = unavailableCard.getByText(
+		"Wait until this agent is running or stopped before trying to upgrade again.",
+		{ exact: true },
+	);
+	const unavailableManage = unavailableCard.getByRole("button", { name: "Manage", exact: true });
+	await expect(unavailableManage).toBeDisabled();
+	await expect(unavailableReason).toBeVisible();
+	const unavailableLayout = await unavailableCard.evaluate((card) => {
+		const notice = card.querySelector<HTMLElement>('[data-slot="compute-subscription-notice"]');
+		const actions = card.querySelector<HTMLElement>('[data-slot="compute-subscription-actions"]');
+		if (!notice || !actions) return null;
+		const noticeBox = notice.getBoundingClientRect();
+		const actionsBox = actions.getBoundingClientRect();
+		return {
+			gap: actionsBox.top - noticeBox.bottom,
+			scrollWidth: card.scrollWidth,
+			clientWidth: card.clientWidth,
+		};
+	});
+	expect(unavailableLayout).not.toBeNull();
+	expect(unavailableLayout?.gap).toBeGreaterThanOrEqual(0);
+	expect(unavailableLayout?.gap).toBeLessThanOrEqual(12);
+	expect(unavailableLayout?.scrollWidth).toBeLessThanOrEqual(
+		(unavailableLayout?.clientWidth ?? 0) + 1,
+	);
+	await expectNoHorizontalOverflow(page);
 	expect(errors, `agent subscription cards: ${errors.join(" | ")}`).toEqual([]);
 });
 

@@ -1,8 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { UserRoundX } from "lucide-react";
+import { Settings, UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { entityCardChassisClass } from "@/components/entity-card";
+import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
@@ -124,12 +125,29 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 	);
 }
 
+export function ComputeSubscriptionManageAction({
+	onClick,
+	disabled = false,
+}: {
+	onClick: () => void;
+	disabled?: boolean;
+}) {
+	return (
+		<Button type="button" variant="outline" size="sm" disabled={disabled} onClick={onClick}>
+			<Settings data-icon="inline-start" />
+			Manage
+		</Button>
+	);
+}
+
 export function ComputeSubscriptionCard({
 	view,
 	identity,
 	badges,
 	notice,
 	actions,
+	actionsId,
+	layout = "catalog",
 	headingLevel = 3,
 	className,
 }: {
@@ -138,69 +156,101 @@ export function ComputeSubscriptionCard({
 	badges?: ReactNode;
 	notice?: ReactNode;
 	actions?: ReactNode;
+	actionsId?: string;
+	layout?: "catalog" | "management";
 	headingLevel?: 3 | 4;
 	className?: string;
 }) {
 	const Heading = headingLevel === 4 ? "h4" : "h3";
+	const managementLayout = layout === "management";
 
 	return (
 		<article
 			data-hosted="true"
 			data-slot="compute-subscription-card"
+			data-layout={layout}
 			data-subscription-status={view.status.label.toLowerCase().replaceAll(" ", "-")}
 			className={entityCardChassisClass({
 				variant: "compact",
-				className: cn("flex h-full min-w-0 flex-col gap-4", className),
+				className: cn(
+					managementLayout
+						? "grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+						: "flex h-full min-w-0 flex-col gap-4",
+					className,
+				),
 			})}
 		>
-			<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-				<Heading className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
-					{view.plan}
-				</Heading>
-				<div className="flex min-w-0 flex-wrap justify-end gap-1.5">
-					<StatusBadge status={view.status.tone} withDot>
-						{view.status.label}
-					</StatusBadge>
-					{badges}
-				</div>
-			</header>
-
-			<dl className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5">
-				{view.commercialFacts.map((fact) => (
-					<div key={fact.label} className="min-w-0 text-xs text-muted-foreground">
-						<dt className="sr-only">{fact.label}</dt>
-						<dd
-							className={cn(
-								"[overflow-wrap:anywhere]",
-								fact.emphasis && "text-sm font-semibold text-foreground",
-							)}
-						>
-							{fact.value}
-						</dd>
+			<div className={cn("min-w-0", managementLayout && "flex flex-col gap-1.5")}>
+				<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+					<Heading className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
+						{view.plan}
+					</Heading>
+					<div className="flex min-w-0 flex-wrap justify-end gap-1.5">
+						<StatusBadge status={view.status.tone} withDot>
+							{view.status.label}
+						</StatusBadge>
+						{badges}
 					</div>
-				))}
-			</dl>
+				</header>
 
-			{identity ? (
-				<div data-slot="compute-subscription-identity" className="flex min-w-0 items-center gap-3">
-					<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
-					<div className="min-w-0 flex-1">
-						<SubscriptionIdentity identity={identity} />
-					</div>
-				</div>
-			) : null}
-
-			{notice ? (
-				<div data-slot="compute-subscription-notice" className="min-w-0 pt-1">
-					{notice}
-				</div>
-			) : null}
-			{actions ? (
-				<div
-					data-slot="compute-subscription-actions"
-					className="mt-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
+				<dl
+					className={cn(
+						"flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5",
+						!managementLayout && "mt-4",
+					)}
 				>
-					{actions}
+					{view.commercialFacts.map((fact) => (
+						<div key={fact.label} className="min-w-0 text-xs text-muted-foreground">
+							<dt className="sr-only">{fact.label}</dt>
+							<dd
+								className={cn(
+									"[overflow-wrap:anywhere]",
+									fact.emphasis && "text-sm font-semibold text-foreground",
+								)}
+							>
+								{fact.value}
+							</dd>
+						</div>
+					))}
+				</dl>
+
+				{identity ? (
+					<div
+						data-slot="compute-subscription-identity"
+						className={cn("flex min-w-0 items-center gap-3", !managementLayout && "mt-4")}
+					>
+						<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
+						<div className="min-w-0 flex-1">
+							<SubscriptionIdentity identity={identity} />
+						</div>
+					</div>
+				) : null}
+			</div>
+
+			{notice || actions ? (
+				<div
+					className={cn(
+						"flex min-w-0 flex-col gap-1.5",
+						managementLayout ? "items-start sm:items-end" : "mt-auto",
+					)}
+				>
+					{notice ? (
+						<div
+							data-slot="compute-subscription-notice"
+							className={cn("min-w-0", managementLayout && "sm:text-right")}
+						>
+							{notice}
+						</div>
+					) : null}
+					{actions ? (
+						<div
+							id={actionsId}
+							data-slot="compute-subscription-actions"
+							className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end"
+						>
+							{actions}
+						</div>
+					) : null}
 				</div>
 			) : null}
 		</article>
