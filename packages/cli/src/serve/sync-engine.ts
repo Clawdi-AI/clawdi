@@ -35,12 +35,13 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { AgentAdapter, CollectSessionsResult } from "../adapters/base";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { assertUploadableSkillText, SkillTextValidationError } from "../lib/frontmatter";
 import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
 import { isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
@@ -1022,9 +1023,9 @@ async function enqueueIfChanged(
 		});
 		return;
 	}
-	let hash: string;
+	let hash: string | null;
 	try {
-		hash = await computeSkillFolderHash(dir, undefined, skillKey);
+		hash = await computeUploadableSkillFolderHash(dir, skillKey);
 	} catch (e) {
 		// The path can disappear between the existence check and hash walk.
 		// Preserve the exact claim and enqueue its durable absence report.
@@ -1043,6 +1044,7 @@ async function enqueueIfChanged(
 		}
 		throw e;
 	}
+	if (hash === null) return;
 	if (lastPushedHash.get(skillKey) === hash) {
 		// No-op local touch; the exact projection claim already matches.
 		log.debug("engine.skill_unchanged", { skill_key: skillKey });
@@ -1070,6 +1072,20 @@ async function enqueueIfChanged(
 		version,
 		queue_depth: queue.depth,
 	});
+}
+
+async function computeUploadableSkillFolderHash(
+	dir: string,
+	skillKey: string,
+): Promise<string | null> {
+	try {
+		assertUploadableSkillText(readFileSync(join(dir, "SKILL.md"), "utf-8"));
+		return await computeSkillFolderHash(dir, undefined, skillKey);
+	} catch (error) {
+		if (!(error instanceof SkillTextValidationError)) throw error;
+		log.warn("engine.invalid_skill_text_skipped", { skill_key: skillKey, error: error.message });
+		return null;
+	}
 }
 
 /** Auth failure on projection/listing: not "permanent for this item"
@@ -1111,6 +1127,7 @@ export function classifyHeartbeatFailure(consecutiveFailures: number): FailureCl
  */
 export function isPermanentUploadError(e: unknown): boolean {
 	if (e instanceof SkillKeyValidationError) return true;
+	if (e instanceof SkillTextValidationError) return true;
 	// A dedicated Agent sync 404 is deliberately ambiguous between an older
 	// backend without the route and a current backend hiding an unproven Agent
 	// identity. Never redirect it to a generic Project write, release a claim,
@@ -1985,7 +2002,8 @@ export async function reconcileAgentSkillProjection(input: {
 			continue;
 		}
 
-		const hash = await computeSkillFolderHash(join(rootDir, skillKey), undefined, skillKey);
+		const hash = await computeUploadableSkillFolderHash(join(rootDir, skillKey), skillKey);
+		if (hash === null) continue;
 		const pendingOperation = queue
 			.all()
 			.find(

@@ -232,6 +232,20 @@ describe("Agent filesystem projection reconcile", () => {
 		});
 	});
 
+	it("does not queue a skill whose YAML metadata decodes to NUL", async () => {
+		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
+			const local = join(root, "decoded-nul");
+			mkdirSync(local, { recursive: true });
+			const skillMd = '---\nname: "invalid\\0name"\ndescription: metadata\n---\n# Body\n';
+			expect(Buffer.from(skillMd).includes(0)).toBe(false);
+			writeFileSync(join(local, "SKILL.md"), skillMd);
+			keys.add("decoded-nul");
+
+			await reconcile(new Map());
+			expect(queue.depth).toBe(0);
+		});
+	});
+
 	it("treats a current Agent-Project SSE key as an absence or local reproject hint", async () => {
 		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
 			await reconcile(new Map(), new Set(["legacy-absent"]));

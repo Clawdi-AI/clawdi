@@ -10,6 +10,7 @@ import {
 	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 	SKILL_SYNC_PROTOCOL_HEADER,
 } from "./skill-sync-protocol";
+import { assertUploadableSkillArchive } from "./tar";
 import { getCliVersion } from "./version";
 
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
@@ -362,6 +363,7 @@ export class ApiClient {
 		contentHash?: string,
 	): Promise<SkillUploadResponse> {
 		assertValidSkillKey(skillKey);
+		await assertUploadableSkillArchive(file, skillKey);
 		// `content_hash` is optional server-side for legacy clients. Omit the
 		// field entirely when the caller doesn't have one — server falls
 		// back to computing it from the uploaded tar.
@@ -392,6 +394,7 @@ export class ApiClient {
 		contentHash?: string,
 	): Promise<SkillUploadResponse> {
 		assertValidSkillKey(skillKey);
+		await assertUploadableSkillArchive(file, skillKey);
 		const fields: Record<string, string> = { skill_key: skillKey };
 		if (contentHash) fields.content_hash = contentHash;
 		try {

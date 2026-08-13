@@ -13,6 +13,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { createGunzip } from "node:zlib";
 import * as tar from "tar";
 import { isReservedSkillArchivePath } from "../runtime/managed-skill-reservation";
+import { assertUploadableSkillText } from "./frontmatter";
 import { assertValidSkillKey } from "./skill-key";
 
 /**
@@ -85,6 +86,32 @@ export const SKILL_ARCHIVE_EXTRACTION_LIMITS = Object.freeze({
 
 function isRegularArchiveFile(type: string | undefined): boolean {
 	return type === "File" || type === "OldFile" || type === "ContiguousFile";
+}
+
+/** Validate the exact SKILL.md bytes about to cross the upload boundary. */
+export async function assertUploadableSkillArchive(bytes: Buffer, skillKey: string): Promise<void> {
+	const expectedPath = `${skillKey}/SKILL.md`;
+	const reads: Array<Promise<void>> = [];
+	const stream = tar.list({
+		gzip: true,
+		onReadEntry: (entry) => {
+			if (entry.path !== expectedPath || !isRegularArchiveFile(entry.type)) {
+				entry.resume();
+				return;
+			}
+			reads.push(
+				entry.concat().then((content) => {
+					assertUploadableSkillText(Buffer.from(content).toString("utf-8"));
+				}),
+			);
+		},
+	});
+	await new Promise<void>((resolvePromise, reject) => {
+		stream.on("end", resolvePromise);
+		stream.on("error", reject);
+		stream.end(bytes);
+	});
+	await Promise.all(reads);
 }
 
 function isAllowedArchiveEntry(type: string | undefined): boolean {

@@ -192,6 +192,33 @@ describe("push — Hermes fixture", () => {
 		expect(uploads).toHaveLength(1);
 	});
 
+	it("skips YAML-decoded NUL metadata while preserving valid skills", async () => {
+		setup("hermes");
+		const invalidDir = join(tmpHome, ".hermes", "skills", "decoded-nul");
+		mkdirSync(invalidDir, { recursive: true });
+		const skillMd = '---\nname: "invalid\\0name"\ndescription: metadata\n---\n# Body\n';
+		expect(Buffer.from(skillMd).includes(0)).toBe(false);
+		writeFileSync(join(invalidDir, "SKILL.md"), skillMd);
+
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: "/v1/agents/env-test/skills/sync/upload",
+				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
+			},
+		]);
+		try {
+			await push({ agent: "hermes", modules: "skills", all: true });
+		} finally {
+			restore();
+		}
+
+		const uploads = captured.filter((c) => c.path === "/v1/agents/env-test/skills/sync/upload");
+		expect(uploads).toHaveLength(1);
+		expect(uploads[0]?.multipartFields?.skill_key).toBe("core/demo");
+	});
+
 	it("a skill already in the skills-lock is skipped on the next push", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([

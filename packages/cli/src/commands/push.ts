@@ -7,6 +7,7 @@ import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
+import { SkillTextValidationError } from "../lib/frontmatter";
 import { sha256Hex } from "../lib/hash";
 import { parseModules } from "../lib/prompts";
 import {
@@ -628,7 +629,7 @@ async function uploadOneAgent(
 		const skillSpinner = p.spinner();
 		skillSpinner.start(`Uploading ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
 		let pushed = 0;
-		const skipped: { key: string; reason: string }[] = [];
+		const skipped: { key: string; reason: string; category: "too large" | "invalid text" }[] = [];
 		try {
 			for (const skill of skills) {
 				// Pass skill_key so nested Hermes layouts archive
@@ -674,15 +675,25 @@ async function uploadOneAgent(
 						(e.status === 413 ||
 							(typeof e.body === "string" &&
 								/(?:^|[^0-9])413(?:[^0-9]|$)|payload too large/i.test(e.body)));
-					if (!is413) throw e;
-					const mb = (snapshot.archive.length / 1024 / 1024).toFixed(1);
-					skipped.push({ key: skill.skillKey, reason: `${mb} MB exceeds upload limit` });
+					if (e instanceof SkillTextValidationError) {
+						skipped.push({ key: skill.skillKey, reason: e.message, category: "invalid text" });
+					} else {
+						if (!is413) throw e;
+						const mb = (snapshot.archive.length / 1024 / 1024).toFixed(1);
+						skipped.push({
+							key: skill.skillKey,
+							reason: `${mb} MB exceeds upload limit`,
+							category: "too large",
+						});
+					}
 				}
 				skillSpinner.message(`Uploading skills (${pushed + skipped.length}/${skills.length})...`);
 			}
 			const summary = [`Pushed ${pushed} skill${pushed === 1 ? "" : "s"}`];
 			if (skipped.length > 0) {
-				summary.push(`skipped ${skipped.length} (too large)`);
+				summary.push(
+					`skipped ${skipped.length} (${[...new Set(skipped.map((item) => item.category))].join(", ")})`,
+				);
 			}
 			skillSpinner.stop(summary.join(", "));
 			for (const s of skipped) {

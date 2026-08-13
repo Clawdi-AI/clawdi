@@ -1,3 +1,35 @@
+import { parse as parseYaml } from "yaml";
+
+export class SkillTextValidationError extends Error {
+	constructor() {
+		super("SKILL.md must not contain NUL characters, including YAML-decoded escapes.");
+		this.name = "SkillTextValidationError";
+	}
+}
+
+/** Reject text that the server cannot persist without changing its content. */
+export function assertUploadableSkillText(raw: string): void {
+	if (raw.includes("\0")) throw new SkillTextValidationError();
+
+	const match = raw.match(/^---\s*\n(.*?)\n---\s*\n/s);
+	if (!match) return;
+
+	let parsed: unknown;
+	try {
+		parsed = parseYaml(match[1] ?? "", { mapAsMap: true, merge: true, uniqueKeys: false });
+	} catch {
+		// The server accepts malformed frontmatter as an empty metadata block.
+		return;
+	}
+	if (!(parsed instanceof Map)) return;
+
+	for (const [key, value] of parsed) {
+		if (typeof key !== "string") continue;
+		if (key.includes("\0")) throw new SkillTextValidationError();
+		if (typeof value === "string" && value.includes("\0")) throw new SkillTextValidationError();
+	}
+}
+
 /**
  * Minimal SKILL.md frontmatter parser.
  *
