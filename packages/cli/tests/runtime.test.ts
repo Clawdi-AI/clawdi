@@ -1244,6 +1244,71 @@ exit 0
 	chmodSync(openclawBin, 0o700);
 }
 
+function writeOpenClawConfigMutationFixture(
+	home: string,
+	initialConfig: Record<string, unknown> = {},
+): { configPath: string; commandLog: string; mutationLog: string } {
+	const commandPath = join(home, ".local", "bin", "openclaw");
+	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const commandLog = join(home, ".openclaw-test-commands.log");
+	const mutationLog = join(home, ".openclaw-test-mutation.json");
+	mkdirSync(dirname(commandPath), { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(dirname(configPath), { recursive: true });
+	writeFileSync(configPath, `${JSON.stringify(initialConfig, null, 2)}\n`);
+	writeFileSync(commandLog, "");
+	writeFileSync(
+		commandPath,
+		`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> '${commandLog}'
+if [ "\${1:-}" = "--version" ]; then printf 'openclaw test-version\n'; exit 0; fi
+if [ "$*" = "agents list --json" ]; then printf '[{"id":"main","workspace":"${home}/.openclaw/workspace"}]\n'; exit 0; fi
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then cat >/dev/null; fi
+exit 0
+`,
+	);
+	chmodSync(commandPath, 0o700);
+	writeFileSync(
+		join(packageRoot, "package.json"),
+		JSON.stringify({
+			name: "openclaw",
+			type: "module",
+			exports: { "./plugin-sdk/config-mutation": "./config-mutation.mjs" },
+		}),
+	);
+	writeFileSync(
+		join(packageRoot, "config-mutation.mjs"),
+		`import { readFileSync, writeFileSync } from "node:fs";
+export async function mutateConfigFile(options) {
+  if (options.base !== "source") throw new Error("expected source config mutation");
+  if (options.afterWrite?.mode !== "none") throw new Error("expected no SDK-owned restart");
+  const before = JSON.parse(readFileSync(${JSON.stringify(configPath)}, "utf8"));
+  const draft = structuredClone(before);
+  await options.mutate(draft, { snapshot: {}, previousHash: null, attempt: 1 });
+  const next = JSON.stringify(draft, null, 2) + "\\n";
+  const beforeBytes = Buffer.byteLength(JSON.stringify(before, null, 2) + "\\n");
+  const nextBytes = Buffer.byteLength(next);
+  if (nextBytes < Math.floor(beforeBytes * 0.5) && options.writeOptions?.allowConfigSizeDrop !== true) {
+    throw new Error(\`size-drop:\${beforeBytes}->\${nextBytes}\`);
+  }
+  writeFileSync(${JSON.stringify(configPath)}, next);
+  writeFileSync(${JSON.stringify(mutationLog)}, JSON.stringify({
+    base: options.base,
+    afterWrite: options.afterWrite,
+    allowConfigSizeDrop: options.writeOptions?.allowConfigSizeDrop,
+    explicitSetPaths: options.writeOptions?.explicitSetPaths,
+    unsetPaths: options.writeOptions?.unsetPaths,
+    beforeBytes,
+    nextBytes,
+  }));
+}
+`,
+	);
+	return { configPath, commandLog, mutationLog };
+}
+
 function openClawDiscordPluginInspectFixture(pluginSource: string): Record<string, unknown> {
 	return {
 		plugin: {
@@ -3667,12 +3732,6 @@ chmod +x "$HOME/.local/bin/hermes"
 		const home = join(root, "model-switch", "home", "clawdi");
 		const state = join(root, "model-switch", "var", "lib", "clawdi");
 		const run = join(root, "model-switch", "run", "clawdi");
-		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPackage = join(home, ".local", "lib", "node_modules", "openclaw");
-		const openclawConfig = join(home, ".openclaw", "openclaw.json");
-		const commandLog = join(root, "openclaw-model-switch-command.txt");
-		const mutationLog = join(root, "openclaw-model-switch-mutation.json");
-		const configMutationSdk = join(openclawPackage, "config-mutation.mjs");
 		const legacyModels = Array.from({ length: 24 }, (_, index) => ({
 			id: `legacy-${index}`,
 			name: `Legacy managed model ${index}`,
@@ -3682,12 +3741,11 @@ chmod +x "$HOME/.local/bin/hermes"
 			contextWindow: 200_000,
 			maxTokens: 64_000,
 		}));
-		mkdirSync(dirname(openclawBin), { recursive: true });
-		mkdirSync(openclawPackage, { recursive: true });
-		mkdirSync(dirname(openclawConfig), { recursive: true });
-		writeFileSync(
-			openclawConfig,
-			`${JSON.stringify({
+		const {
+			configPath: openclawConfig,
+			commandLog,
+			mutationLog,
+		} = writeOpenClawConfigMutationFixture(home, {
 				gateway: { mode: "local", port: 19_001 },
 				logging: { level: "debug" },
 				models: {
@@ -3705,54 +3763,7 @@ chmod +x "$HOME/.local/bin/hermes"
 						},
 					},
 				},
-			})}\n`,
-		);
-		writeFileSync(commandLog, "");
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >> '${commandLog}'
-exit 0
-`,
-		);
-		chmodSync(openclawBin, 0o700);
-		writeFileSync(
-			join(openclawPackage, "package.json"),
-			JSON.stringify({
-				name: "openclaw",
-				type: "module",
-				exports: { "./plugin-sdk/config-mutation": "./config-mutation.mjs" },
-			}),
-		);
-		writeFileSync(
-			configMutationSdk,
-			`import { readFileSync, writeFileSync } from "node:fs";
-export async function mutateConfigFile(options) {
-  if (options.base !== "source") throw new Error("expected source config mutation");
-  if (options.afterWrite?.mode !== "none") throw new Error("expected no SDK-owned restart");
-  const before = JSON.parse(readFileSync(${JSON.stringify(openclawConfig)}, "utf8"));
-  const draft = structuredClone(before);
-  await options.mutate(draft, { snapshot: {}, previousHash: null, attempt: 1 });
-  const next = JSON.stringify(draft, null, 2) + "\\n";
-  const beforeBytes = Buffer.byteLength(JSON.stringify(before, null, 2) + "\\n");
-  const nextBytes = Buffer.byteLength(next);
-  if (nextBytes < Math.floor(beforeBytes * 0.5) && options.writeOptions?.allowConfigSizeDrop !== true) {
-    throw new Error(\`size-drop:\${beforeBytes}->\${nextBytes}\`);
-  }
-  writeFileSync(${JSON.stringify(openclawConfig)}, next);
-  writeFileSync(${JSON.stringify(mutationLog)}, JSON.stringify({
-    base: options.base,
-    afterWrite: options.afterWrite,
-    allowConfigSizeDrop: options.writeOptions?.allowConfigSizeDrop,
-    explicitSetPaths: options.writeOptions?.explicitSetPaths,
-    unsetPaths: options.writeOptions?.unsetPaths,
-    beforeBytes,
-    nextBytes,
-  }));
-}
-`,
-		);
+		});
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -5790,6 +5801,154 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(hermesProvider.discover_models).toBe(false);
 		expect(hermesProvider.models).toEqual({ "gpt-5.5": {} });
 	});
+
+	it.each(["openclaw", "hermes"] as const)(
+		"replaces the managed %s model catalog without restarting its active runtime",
+		(runtimeName) => {
+			const caseRoot = join(root, runtimeName);
+			const home = join(caseRoot, "home", "clawdi");
+			const state = join(caseRoot, "var", "lib", "clawdi");
+			const run = join(caseRoot, "run", "clawdi");
+			const systemctlLog = join(caseRoot, "systemctl.log");
+			const systemctlStateRoot = join(caseRoot, "systemctl-state");
+			let openclawConfig: string | null = null;
+			mkdirSync(home, { recursive: true });
+			if (runtimeName === "openclaw") {
+				openclawConfig = writeOpenClawConfigMutationFixture(home).configPath;
+			} else {
+				writeHermesVersionBinary(home, "0.19.1");
+			}
+			writeFakeSystemdManager({
+				path: join(caseRoot, "bin", "systemctl"),
+				logPath: systemctlLog,
+				stateRoot: systemctlStateRoot,
+				environmentRoot: join(run, "systemd", "env"),
+			});
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = state;
+			process.env.CLAWDI_RUN_DIR = run;
+			process.env.CLAWDI_SYSTEMCTL_PATH = join(caseRoot, "bin", "systemctl");
+			process.env.CLAWDI_SYSTEMD_APPLY = "1";
+			process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+
+			const previous = hostedSingleProviderModeLoad(home, runtimeName, "configured", 1);
+			const next = hostedSingleProviderModeLoad(home, runtimeName, "configured", 1);
+			const previousProvider = expectRecord(
+				previous.manifest.projection?.providers?.["clawdi-managed"],
+				"previous managed provider",
+			);
+			const nextProvider = expectRecord(
+				next.manifest.projection?.providers?.["clawdi-managed"],
+				"next managed provider",
+			);
+			previousProvider.models = [
+				{ id: "gpt-5.5", label: "GPT-5.5 old", context_window: 128_000 },
+				{ id: "stale-model", label: "Stale model" },
+			];
+			nextProvider.models = [
+				{
+					id: "gpt-5.5",
+					label: "GPT-5.5 refreshed",
+					context_window: 512_000,
+					max_tokens: 64_000,
+					supports_vision: true,
+				},
+				{ id: "new-model", label: "New model" },
+			];
+
+			const paths = getRuntimePaths();
+			const first = convergeRuntimeManifest(previous, paths);
+			expect(first.installErrors).toEqual([]);
+			writeTestRuntimeAppliedState(paths, previous, first);
+			const before = readSystemdUnitSnapshot(paths);
+			seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, before);
+			for (const unit of before.user.keys()) {
+				writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
+			}
+			const runtimeUnit = runtimeName === "openclaw" ? "openclaw-gateway" : "hermes-gateway";
+			const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit));
+			const transaction = new SystemdRuntimeTransaction();
+			writeFileSync(systemctlLog, "");
+
+			const second = convergeRuntimeManifest(next, paths);
+			expect(second.installErrors).toEqual([]);
+			const activation = applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
+				transaction,
+				stage: "final-activation",
+			});
+
+			expect(activation).toEqual({
+				applied: true,
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
+			});
+			expect(
+				systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit)),
+			).toBe(initialRevision);
+			const systemctlCalls = readFileSync(systemctlLog, "utf-8");
+			expect(systemctlCalls).toContain(`--user show ${runtimeUnit}.service`);
+			expect(systemctlCalls).not.toMatch(
+				/(?:^|\s)(?:start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
+			);
+
+			if (runtimeName === "openclaw") {
+				if (!openclawConfig) throw new Error("OpenClaw config fixture is missing");
+				const config = expectRecord(
+					JSON.parse(readFileSync(openclawConfig, "utf-8")),
+					"OpenClaw config",
+				);
+				const models = expectRecord(config.models, "OpenClaw models");
+				const providers = expectRecord(models.providers, "OpenClaw providers");
+				const provider = expectRecord(
+					providers["clawdi-managed"],
+					"OpenClaw managed provider",
+				);
+				expect(provider.models).toEqual([
+					expect.objectContaining({
+						id: "gpt-5.5",
+						name: "GPT-5.5 refreshed",
+						contextWindow: 512_000,
+						maxTokens: 64_000,
+						input: ["text", "image"],
+					}),
+					expect.objectContaining({ id: "new-model", name: "New model" }),
+				]);
+				expect(JSON.stringify(provider)).not.toContain("stale-model");
+			} else {
+				const provider = expectRecord(
+					expectRecord(readHermesConfigYaml(home).providers, "Hermes providers")[
+						"clawdi-managed"
+					],
+					"Hermes managed provider",
+				);
+				expect(provider.models).toEqual({
+					"gpt-5.5": {
+						context_length: 512_000,
+						max_tokens: 64_000,
+						supports_vision: true,
+					},
+					"new-model": {},
+				});
+			}
+
+			const beforeBaseUrlChange = readSystemdUnitSnapshot(paths);
+			nextProvider.baseUrl = "https://replacement.provider.example.test/v1";
+			writeFileSync(systemctlLog, "");
+			const third = convergeRuntimeManifest(next, paths);
+			expect(third.installErrors).toEqual([]);
+			const baseUrlActivation = applySystemdRuntimeUpdate(
+				paths,
+				beforeBaseUrlChange,
+				readSystemdUnitSnapshot(paths),
+				{ transaction, stage: "final-activation" },
+			);
+			expect(baseUrlActivation.userUnitsChanged).toEqual([`${runtimeUnit}.service`]);
+			expect(readFileSync(systemctlLog, "utf-8")).toContain(
+				`--user restart ${runtimeUnit}.service`,
+			);
+		},
+	);
 
 	it("uses the same native Hermes projection before and after 0.18.0", () => {
 		const home = join(root, "home", "clawdi");

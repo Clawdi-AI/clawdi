@@ -2474,7 +2474,11 @@ function previewHostedAiProviderProjectionRevision(
 		}
 		return runtimeImpactRevision({
 			openClawProviderProjection: "json-patch",
-			patch: providerPatch.content,
+			patch: providerProjectionProgramImpact(
+				"openclaw",
+				JSON.parse(providerPatch.content) as unknown,
+				projectionInput,
+			),
 		});
 	}
 	return applyHostedHermesAiProviderProjection(
@@ -2484,6 +2488,37 @@ function previewHostedAiProviderProjectionRevision(
 		home,
 		false,
 	).revision;
+}
+
+function providerProjectionProgramImpact(
+	runtime: "openclaw" | "hermes",
+	patch: unknown,
+	projectionInput: HostedAiProviderProjectionInput,
+): unknown {
+	const root = recordValue(patch);
+	const managedProviderIds = new Set(
+		projectionInput.catalog.providers
+			.filter((provider) => provider.managed_by === "clawdi")
+			.map((provider) => provider.id),
+	);
+	if (!root || managedProviderIds.size === 0) return patch;
+
+	const providerContainer = runtime === "openclaw" ? recordValue(root.models) : root;
+	if (!providerContainer) return patch;
+	const providers = recordValue(providerContainer.providers);
+	if (!providers) return patch;
+	const programProviders = Object.fromEntries(
+		Object.entries(providers).map(([providerId, provider]) => {
+			const providerConfig = recordValue(provider);
+			if (!managedProviderIds.has(providerId) || !providerConfig) return [providerId, provider];
+			const { models: _models, ...programConfig } = providerConfig;
+			return [providerId, programConfig];
+		}),
+	);
+	if (runtime === "openclaw") {
+		return { ...root, models: { ...providerContainer, providers: programProviders } };
+	}
+	return { ...root, providers: programProviders };
 }
 
 function applyHostedCodexManagedProviderProjection(
@@ -2732,7 +2767,7 @@ function applyHostedHermesAiProviderProjection(
 		providerIds: activeProviderIds,
 		revision: runtimeImpactRevision({
 			hermesProviderProjection: "yaml-merge",
-			patch: patchContent,
+			patch: providerProjectionProgramImpact("hermes", parseYaml(patchContent), projectionInput),
 		}),
 	};
 }
