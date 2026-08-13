@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -9,6 +10,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.agent_project_binding import AgentProjectBinding
+from app.models.api_key import ApiKey
+from app.models.hosted_v1_ownership import HostedV1AgentOwnership
 from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
@@ -171,6 +174,28 @@ async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed
         agent_type="openclaw",
     )
     await create_test_hosted_runtime_state(db_session, agent, runtime_name="openclaw")
+    owner_agent = await create_env_with_project(
+        db_session,
+        user_id=owner.id,
+        machine_id=f"owned-agent-{nonce[:8]}",
+        machine_name="owned-agent",
+        agent_type="openclaw",
+    )
+    ownership_key = ApiKey(
+        user_id=owner.id,
+        key_hash=hashlib.sha256(uuid.uuid4().bytes).hexdigest(),
+        key_prefix="clawdi_cleanup",
+        label="Hosted V1 cleanup",
+        managed=False,
+    )
+    db_session.add(ownership_key)
+    await db_session.flush()
+    ownership = HostedV1AgentOwnership(
+        environment_id=owner_agent.id,
+        api_key_id=ownership_key.id,
+        deployment_id=f"cleanup-{nonce}",
+        agent_type="openclaw",
+    )
     lifecycle = PrincipalLifecycle(
         issuer=_ISSUER,
         subject=owner.clerk_id,
@@ -182,6 +207,7 @@ async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed
         [
             project,
             lifecycle,
+            ownership,
             ProjectMembership(
                 project_id=project.id,
                 member_user_id=seed_user.id,
@@ -204,6 +230,7 @@ async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed
     lifecycle_id = lifecycle.id
     project_id = project.id
     owner_id = owner.id
+    ownership_id = ownership.id
     queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=agent.id)
 
     try:
@@ -211,6 +238,11 @@ async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed
         await db_session.commit()
 
         assert result.user_disabled is True
+        archived_ownership = await db_session.get(HostedV1AgentOwnership, ownership_id)
+        assert archived_ownership is not None
+        await db_session.refresh(archived_ownership)
+        assert archived_ownership.archived_at == now
+        assert archived_ownership.archive_reason == "agent_archived"
         assert queue.get_nowait() == {
             "type": "runtime_manifest_changed",
             "environment_id": str(agent.id),
@@ -233,6 +265,9 @@ async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed
         await db_session.rollback()
         await db_session.execute(
             delete(PrincipalLifecycle).where(PrincipalLifecycle.id == lifecycle_id)
+        )
+        await db_session.execute(
+            delete(HostedV1AgentOwnership).where(HostedV1AgentOwnership.id == ownership_id)
         )
         await db_session.execute(delete(Project).where(Project.id == project_id))
         await db_session.execute(delete(User).where(User.id == owner_id))

@@ -10,6 +10,7 @@ from app.models.api_key import ApiKey
 from app.models.hosted_v1_ownership import HostedV1AgentOwnership
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
+from app.services.hosted_v1_ownership import lock_hosted_v1_ownership_mutations
 
 
 class AgentLifecycleBoundaryError(RuntimeError):
@@ -31,8 +32,10 @@ async def archive_agent_and_project(
 
     Relationships and resource rows are intentionally untouched. Bound keys
     are revoked in the same transaction so an archived identity has no cached
-    or persistent operational authority.
+    or persistent operational authority. Callers must already hold the user's
+    authority lock before entering this ownership mutation.
     """
+    await lock_hosted_v1_ownership_mutations(db)
     locked_agent = await db.scalar(
         select(AgentEnvironment)
         .where(

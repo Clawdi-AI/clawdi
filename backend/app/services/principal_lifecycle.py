@@ -29,6 +29,7 @@ from app.models.channel import (
 )
 from app.models.device_authorization import DeviceAuthorization
 from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_v1_ownership import HostedV1AgentOwnership
 from app.models.principal_lifecycle import (
     ClerkPrincipalAuthority,
     ClerkWebhookEventReceipt,
@@ -47,6 +48,7 @@ from app.models.session_permission import SessionPermission
 from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.services.ai_provider_auth_transition import transition_ai_provider_auth
 from app.services.ai_provider_oauth_lifecycle import terminal_oauth_attempt
+from app.services.hosted_v1_ownership import lock_hosted_v1_ownership_mutations
 from app.services.project_runtime_skills import (
     lock_project_runtime_graphs,
     queue_project_runtime_manifest_changed,
@@ -537,6 +539,8 @@ async def complete_principal_cleanup(
         await db.flush()
         return PrincipalCleanupResult(user_disabled=False)
 
+    await lock_hosted_v1_ownership_mutations(db)
+
     # Owner deletion removes every other user's access to the owner's Projects.
     # Take all Project locks before any affected Agent lock, notify managed
     # Agents, and remove their links in this same transaction. Otherwise those
@@ -587,6 +591,15 @@ async def complete_principal_cleanup(
             )
         ).all()
     )
+    if agent_ids:
+        await db.execute(
+            update(HostedV1AgentOwnership)
+            .where(
+                HostedV1AgentOwnership.environment_id.in_(agent_ids),
+                HostedV1AgentOwnership.archived_at.is_(None),
+            )
+            .values(archived_at=current_time, archive_reason="agent_archived")
+        )
     await db.execute(
         update(Project)
         .where(

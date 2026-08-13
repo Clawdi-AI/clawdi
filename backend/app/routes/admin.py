@@ -159,6 +159,7 @@ from app.services.hosted_v1_ownership import (
     adopt_hosted_v1_ownership,
     assert_hosted_v1_registration_compatible,
     assert_no_active_hosted_v1_ownership,
+    lock_hosted_v1_ownership_mutations,
     release_hosted_v1_ownership,
 )
 from app.services.managed_ai_provider import (
@@ -183,6 +184,7 @@ from app.services.principal_lifecycle import (
     PrincipalTerminatedError,
     assert_user_authority_active,
     load_clerk_user_for_issuer,
+    lock_user_authority_shared,
     resolve_clerk_owner_issuer,
 )
 from app.services.project_runtime_skills import (
@@ -634,6 +636,7 @@ async def _assert_admin_target_owns_environment(
     target_clerk_id: str | None,
 ) -> UUID:
     if target_clerk_id is None:
+        await lock_user_authority_shared(db, env.user_id)
         return env.user_id
 
     try:
@@ -1978,6 +1981,7 @@ async def _admin_delete_environment(
         env=env,
         target_clerk_id=target_clerk_id,
     )
+    await lock_hosted_v1_ownership_mutations(db)
     await lock_ai_provider_owner(db, target_user_id)
     env = (
         await db.execute(
@@ -2083,6 +2087,7 @@ async def _admin_upsert_runtime_state(
         env=env,
         target_clerk_id=body.target_clerk_id,
     )
+    await lock_hosted_v1_ownership_mutations(db)
     await lock_ai_provider_owner(db, target_user_id)
     env = (
         await db.execute(

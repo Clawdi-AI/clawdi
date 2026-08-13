@@ -553,8 +553,11 @@ async def test_platform_agent_reregistration_rejects_active_hosted_v1_ownership(
         },
     )
 
-    assert response.status_code == 409, response.text
-    assert response.json()["detail"]["code"] == "hosted_v1_ownership_conflict"
+    assert response.status_code == (403 if cross_owner else 409), response.text
+    if cross_owner:
+        assert response.json()["detail"] == "Agent is not owned by requested owner"
+    else:
+        assert response.json()["detail"]["code"] == "hosted_v1_ownership_conflict"
     await db_session.refresh(agent)
     assert (
         agent.machine_id,
@@ -574,14 +577,12 @@ async def test_platform_agent_reregistration_rejects_active_hosted_v1_ownership(
         )
         is None
     )
-    assert (
-        await db_session.scalar(
-            select(ControlPlaneAuditEvent.id).where(
-                ControlPlaneAuditEvent.details["idempotency_key"].astext == idempotency_key
-            )
+    audit_result = await db_session.scalar(
+        select(ControlPlaneAuditEvent.details["result"].astext).where(
+            ControlPlaneAuditEvent.details["idempotency_key"].astext == idempotency_key
         )
-        is None
     )
+    assert audit_result == ("owner_mismatch" if cross_owner else "hosted_v1_ownership_conflict")
 
 
 @pytest.mark.asyncio

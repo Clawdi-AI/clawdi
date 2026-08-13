@@ -599,22 +599,6 @@ async def platform_create_agent(
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse | Response:
     action = "agent_environment.create"
-    await lock_hosted_v1_ownership_mutations(db)
-    existing_agent = await db.scalar(
-        select(AgentEnvironment).where(AgentEnvironment.id == body.agent_id).with_for_update()
-    )
-    if existing_agent is not None:
-        try:
-            await assert_no_active_hosted_v1_ownership(db, agent_id=body.agent_id)
-        except HostedV1OwnershipConflict as exc:
-            await db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "hosted_v1_ownership_conflict",
-                    "message": str(exc),
-                },
-            ) from None
     owner = await _resolve_owner(
         db,
         owner=body.owner,
@@ -624,6 +608,7 @@ async def platform_create_agent(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_hosted_v1_ownership_mutations(db)
     await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
@@ -653,6 +638,7 @@ async def platform_create_agent(
             registration_key=None,
             default_name=body.default_name,
             commit=False,
+            reject_hosted_v1_ownership=True,
         )
     except AgentEnvironmentIdConflict:
         exists = await db.scalar(
@@ -677,6 +663,25 @@ async def platform_create_agent(
             request=request,
             idempotency_key=idempotency_key,
             environment_id=body.agent_id if exists is not None else None,
+        )
+        raise AssertionError("unreachable")
+    except HostedV1OwnershipConflict as exc:
+        await _reject(
+            db,
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "hosted_v1_ownership_conflict",
+                "message": str(exc),
+            },
+            result="hosted_v1_ownership_conflict",
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="agent_environment",
+            resource_id=str(body.agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=body.agent_id,
         )
         raise AssertionError("unreachable")
     response = EnvironmentCreatedResponse(id=str(registered.env.id))
@@ -718,6 +723,7 @@ async def platform_delete_agent(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_hosted_v1_ownership_mutations(db)
     await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
@@ -805,6 +811,7 @@ async def platform_upsert_runtime_state(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_hosted_v1_ownership_mutations(db)
     await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,

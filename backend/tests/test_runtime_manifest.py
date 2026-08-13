@@ -35,6 +35,7 @@ from app.models.channel import (
     ChannelWhatsAppAuthCert,
 )
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.hosted_v1_ownership import HostedV1AgentOwnership
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
@@ -55,9 +56,15 @@ from app.schemas.runtime import (
     validate_clawdi_cli_package_spec,
 )
 from app.services import sync_events
+from app.services.api_key import mint_api_key
 from app.services.audit import _sanitize_audit_details
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
+from app.services.hosted_v1_ownership import (
+    adopt_hosted_v1_ownership,
+    lock_hosted_v1_ownership_mutations,
+)
 from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
+from app.services.principal_lifecycle import assert_user_authority_active
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     expected_runtime_bundle_v2_etag,
@@ -1560,6 +1567,74 @@ async def test_concurrent_same_generation_runtime_state_updates_allow_one_winner
             assert await _runtime_state_audit_count(verify_db, env.id) == audit_count + 1
     finally:
         sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_hosted_v1_adoption_serializes_with_initial_hosted_v2_state(
+    db_session,
+    engine,
+    seed_user,
+    monkeypatch,
+):
+    from app.routes import admin as admin_routes
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"hosted-ownership-race-{uuid4().hex[:8]}",
+        machine_name="Hosted ownership race",
+        agent_type="openclaw",
+    )
+    key = (
+        await mint_api_key(
+            db_session,
+            user_id=seed_user.id,
+            label="Hosted V1 ownership race",
+        )
+    ).api_key
+    runtime_body = AdminRuntimeStateUpsert.model_validate(_runtime_state_body(str(env.id)))
+    v2_lock_attempted = asyncio.Event()
+
+    async def observed_lock(db: AsyncSession) -> None:
+        v2_lock_attempted.set()
+        await lock_hosted_v1_ownership_mutations(db)
+
+    monkeypatch.setattr(admin_routes, "lock_hosted_v1_ownership_mutations", observed_lock)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as v1_db, session_factory() as v2_db:
+        await assert_user_authority_active(v1_db, seed_user.id)
+        await lock_hosted_v1_ownership_mutations(v1_db)
+        v2_task = asyncio.create_task(_admin_upsert_runtime_state(env.id, runtime_body, v2_db))
+        await asyncio.wait_for(v2_lock_attempted.wait(), timeout=1)
+        assert not v2_task.done()
+
+        await adopt_hosted_v1_ownership(
+            v1_db,
+            agent_id=env.id,
+            owner_user_id=seed_user.id,
+            api_key_id=key.id,
+            deployment_id="hosted-v1-race-winner",
+            agent_type="openclaw",
+            replace_existing=False,
+        )
+        await v1_db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await v2_task
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "hosted_v1_ownership_conflict"
+
+    async with session_factory() as verify_db:
+        ownership = await verify_db.scalar(
+            select(HostedV1AgentOwnership).where(
+                HostedV1AgentOwnership.environment_id == env.id,
+                HostedV1AgentOwnership.archived_at.is_(None),
+            )
+        )
+        assert ownership is not None
+        assert await verify_db.get(HostedRuntimeState, env.id) is None
+        await verify_db.delete(ownership)
+        await verify_db.commit()
 
 
 @pytest.mark.asyncio

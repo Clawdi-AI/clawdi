@@ -134,7 +134,7 @@ async def adopt_hosted_v1_ownership(
     agent_type: str,
     replace_existing: bool,
 ) -> HostedV1OwnershipAdoption:
-    """Create a claim or rotate its key without changing its identity."""
+    """Create or rotate a claim after the caller has locked user authority."""
 
     if agent_type not in HOSTED_V1_AGENT_TYPES:
         raise HostedV1OwnershipConflict("Unsupported Hosted V1 agent type")
@@ -230,7 +230,7 @@ async def release_hosted_v1_ownership(
     deployment_id: str,
     agent_type: str,
 ) -> HostedV1AgentOwnership | None:
-    """Release only the exact active claim; an absent claim is idempotent."""
+    """Release an exact claim after the caller has locked user authority."""
 
     await lock_hosted_v1_ownership_mutations(db)
     agent = await db.scalar(

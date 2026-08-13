@@ -102,7 +102,10 @@ from app.services.agent_lifecycle import (
     archive_agent_and_project,
 )
 from app.services.file_store import get_file_store
-from app.services.hosted_v1_ownership import active_hosted_v1_ownership
+from app.services.hosted_v1_ownership import (
+    active_hosted_v1_ownership,
+    lock_hosted_v1_ownership_mutations,
+)
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_provider import get_memory_provider
 from app.services.runtime_generation import resolve_runtime_apply_generation
@@ -1736,6 +1739,7 @@ async def _delete_agent_identity(
     db: AsyncSession,
 ) -> None:
     """Archive an Agent and its exclusive Project without breaking identity."""
+    await lock_hosted_v1_ownership_mutations(db)
     result = await db.execute(
         select(AgentEnvironment).where(
             AgentEnvironment.id == agent_id,

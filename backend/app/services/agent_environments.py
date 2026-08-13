@@ -19,6 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.services.agent_lifecycle import reactivate_agent_and_project
+from app.services.hosted_v1_ownership import (
+    assert_no_active_hosted_v1_ownership,
+    lock_hosted_v1_ownership_mutations,
+)
 from app.services.principal_lifecycle import assert_user_authority_active
 
 _AGENT_TYPE_LABELS = {
@@ -68,6 +72,7 @@ async def register_agent_environment(
     registration_key: str | None = None,
     default_name: str | None = None,
     commit: bool = True,
+    reject_hosted_v1_ownership: bool = False,
 ) -> AgentEnvironmentRegistration:
     """Create or refresh an agent row.
 
@@ -76,13 +81,15 @@ async def register_agent_environment(
     retries converge through the database unique constraint on
     `(user_id, registration_key)`. At least one of `environment_id` or
     `registration_key` must be supplied so every create path has a stable
-    identity or an idempotency key.
+    identity or an idempotency key. User authority is always acquired before
+    the Hosted V1 ownership lock, including after an internal rollback.
     """
 
     if environment_id is None and registration_key is None:
         raise ValueError("register_agent_environment requires environment_id or registration_key")
 
     await assert_user_authority_active(db, user_id)
+    await lock_hosted_v1_ownership_mutations(db)
 
     if environment_id is not None:
         existing = (
@@ -96,6 +103,8 @@ async def register_agent_environment(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if reject_hosted_v1_ownership:
+                await assert_no_active_hosted_v1_ownership(db, agent_id=existing.id)
             if existing.archived_at is not None:
                 await reactivate_agent_and_project(db, agent=existing)
             await _refresh_agent_environment(
@@ -134,6 +143,8 @@ async def register_agent_environment(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if reject_hosted_v1_ownership:
+                await assert_no_active_hosted_v1_ownership(db, agent_id=existing.id)
             if existing.archived_at is not None:
                 await reactivate_agent_and_project(db, agent=existing)
             await _refresh_agent_environment(
@@ -193,11 +204,11 @@ async def register_agent_environment(
         return AgentEnvironmentRegistration(env=env, created=True)
     except IntegrityError:
         await db.rollback()
-        # The rollback releases transaction-scoped advisory locks. Reacquire
-        # the shared authority fence before inspecting or mutating the winner.
-        # A termination queued behind the failed create therefore fences the
-        # user before this retry can refresh or reactivate authority.
+        # Rollback releases both transaction-scoped locks. Preserve the global
+        # user-authority -> Hosted V1 ownership -> Agent row order before
+        # inspecting or mutating the winner.
         await assert_user_authority_active(db, user_id)
+        await lock_hosted_v1_ownership_mutations(db)
         if environment_id is not None:
             winner = (
                 await db.execute(
@@ -218,6 +229,8 @@ async def register_agent_environment(
                 raise AgentEnvironmentIdConflict(
                     f"environment {environment_id} could not be registered"
                 ) from None
+            if reject_hosted_v1_ownership:
+                await assert_no_active_hosted_v1_ownership(db, agent_id=winner.id)
             await _refresh_agent_environment(
                 db,
                 winner,
@@ -249,6 +262,8 @@ async def register_agent_environment(
         ).scalar_one_or_none()
         if winner is None:
             raise
+        if reject_hosted_v1_ownership:
+            await assert_no_active_hosted_v1_ownership(db, agent_id=winner.id)
         if winner.archived_at is not None:
             await reactivate_agent_and_project(db, agent=winner)
             await _refresh_agent_environment(
