@@ -33,6 +33,11 @@ function subscription(
 		deployment_id: `hdep_${subscriptionId}`,
 		agent_name: subscriptionId,
 		is_orphan: false,
+		payment_state: "ok",
+		latest_failed_invoice_hosted_url: null,
+		next_payment_attempt_at: null,
+		recovery_action: null,
+		pending_plan_slug: null,
 	};
 }
 
@@ -71,9 +76,13 @@ describe("SubscriptionsSection", () => {
 		const active = subscription("active", "active");
 
 		expect(canManageAccountSubscription(active)).toBe(true);
-		expect(canManageAccountSubscription(subscription("past-due", "past_due"))).toBe(true);
+		expect(canManageAccountSubscription(subscription("past-due", "past_due"))).toBe(false);
 		expect(canManageAccountSubscription(subscription("canceling", "canceling"))).toBe(false);
 		expect(canManageAccountSubscription(subscription("canceled", "canceled"))).toBe(false);
+		expect(canManageAccountSubscription({ ...active, recovery_action: "fix_payment" })).toBe(false);
+		expect(
+			canManageAccountSubscription({ ...active, pending_plan_slug: "compute_performance" }),
+		).toBe(false);
 		expect(canManageAccountSubscription({ ...active, is_orphan: true })).toBe(false);
 		expect(canManageAccountSubscription({ ...active, deployment_id: null })).toBe(false);
 		expect(canManageAccountSubscription({ ...active, cancel_at_period_end: true })).toBe(false);

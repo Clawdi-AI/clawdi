@@ -166,6 +166,7 @@ import {
 	ComputeSubscriptionCard,
 	computeSubscriptionCardView,
 } from "@/hosted/billing/subscription/compute-subscription-card";
+import { computeSubscriptionRecoveryPresentation } from "@/hosted/billing/subscription/compute-subscription-recovery";
 import {
 	activePlanChangeOperationName,
 	performanceUpgradeUnavailableReason,
@@ -3407,7 +3408,7 @@ function HostedAgentSettingsTab({
 }) {
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
-			<div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
+			<div className="flex w-full flex-col gap-8">
 				{agent ? (
 					<AgentSettingsPanel environmentId={environmentId} />
 				) : (
@@ -3458,7 +3459,7 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 			title="Language & timezone"
 			description="Language and time zone used by this agent."
 		>
-			<div className="flex max-w-2xl flex-col gap-4">
+			<div className="flex w-full flex-col gap-4">
 				<LiveNote>Changes apply to this agent.</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
 					<div className="flex flex-col gap-1.5">
@@ -3635,42 +3636,28 @@ function ComputeSettingsSections({
 		? computeSubscriptionLifecycle(currentSubscription)
 		: null;
 	const currentSubscriptionStatus = currentSubscription?.status.toLowerCase();
-	const computePlanStatusTone: StatusTone =
-		currentSubscriptionStatus === "past_due" ||
-		currentSubscriptionStatus === "unpaid" ||
-		currentSubscription?.payment_state === "past_due" ||
-		currentSubscription?.payment_state === "unpaid"
-			? "destructive"
-			: currentSubscriptionStatus === "canceling" ||
-					currentSubscription?.payment_state === "requires_action" ||
-					subscriptionCancelPending ||
-					pendingPlanSlug
+	const lifecycleStatus: { label: string; tone: StatusTone } = {
+		label:
+			fundingMode === "unknown"
+				? "Unavailable"
+				: !isPaidCompute || !subscriptionLifecycle
+					? "Current"
+					: currentSubscriptionStatus === "canceling" || subscriptionCancelPending
+						? "Canceling"
+						: subscriptionLifecycle.badgeLabel,
+		tone:
+			currentSubscriptionStatus === "canceling" || subscriptionCancelPending || pendingPlanSlug
 				? "warning"
 				: isIncludedBasic ||
 						currentSubscriptionStatus === "active" ||
 						currentSubscriptionStatus === "trialing"
 					? "success"
-					: "neutral";
-	const computePlanStatusLabel =
-		fundingMode === "unknown"
-			? "Unavailable"
-			: !isPaidCompute || !subscriptionLifecycle
-				? "Current"
-				: currentSubscriptionStatus === "past_due" ||
-						currentSubscription?.payment_state === "past_due"
-					? "Past due"
-					: currentSubscriptionStatus === "unpaid" ||
-							currentSubscription?.payment_state === "unpaid"
-						? "Unpaid"
-						: currentSubscription?.payment_state === "requires_action"
-							? "Payment action required"
-							: currentSubscriptionStatus === "canceling" || subscriptionCancelPending
-								? "Canceling"
-								: subscriptionLifecycle.badgeLabel;
-	const computePlanStatus = {
-		label: computePlanStatusLabel,
-		tone: computePlanStatusTone,
+					: "neutral",
 	};
+	const computeRecovery = computeSubscriptionRecoveryPresentation(
+		currentSubscription,
+		lifecycleStatus,
+	);
 	const computeCardView = computeSubscriptionCardView({
 		identity: {
 			kind: "agent",
@@ -3683,7 +3670,7 @@ function ComputeSettingsSections({
 			agentType: deployment.resource.spec.runtime,
 			avatarUrl: agent?.avatar_url,
 		},
-		status: computePlanStatus,
+		status: computeRecovery.status,
 		planSlug: computePlanSlug ?? rawComputePlanSlug,
 		fundingSource: isIncludedBasic
 			? "included"
@@ -3695,8 +3682,9 @@ function ComputeSettingsSections({
 		priceCents: currentPriceCents,
 		currency: currentSubscription?.currency ?? "usd",
 		billingTermMonths: currentBillingTerm,
-		scheduleVerb: subscriptionLifecycle?.dateVerb ?? null,
-		scheduleAt: subscriptionLifecycle?.dateAt,
+		scheduleVerb: computeRecovery.schedule?.verb ?? subscriptionLifecycle?.dateVerb ?? null,
+		scheduleAt: computeRecovery.schedule?.at ?? subscriptionLifecycle?.dateAt,
+		scheduleFallback: computeRecovery.schedule?.fallback ?? undefined,
 	});
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
@@ -3835,7 +3823,7 @@ function ComputeSettingsSections({
 				<ComputeSubscriptionCard
 					headingLevel={3}
 					view={computeCardView}
-					className="max-w-2xl"
+					className="w-full"
 					badges={
 						hasWalletFallback ? (
 							<Badge variant="outline" className="font-normal text-muted-foreground">
@@ -3906,52 +3894,46 @@ function ComputeSettingsSections({
 									</>
 								) : isPaidCompute && currentSubscription ? (
 									subscriptionCancelPending ? (
-										<>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled
-												title={planChangeUnavailable ?? undefined}
-											>
-												<Settings data-icon="inline-start" />
-												Manage
-											</Button>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled={resumeSubscription.isPending || !subscriptionCancelable}
-												onClick={() =>
-													void runAction(resumeComputeSubscription).catch(() => undefined)
-												}
-											>
-												{resumeSubscription.isPending ? (
-													<Spinner data-icon="inline-start" />
-												) : (
-													<RefreshCw data-icon="inline-start" />
-												)}
-												Resume subscription
-											</Button>
-											<p className="basis-full text-right text-xs text-muted-foreground">
-												{planChangeUnavailable}
-											</p>
-										</>
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											disabled={resumeSubscription.isPending || !subscriptionCancelable}
+											onClick={() =>
+												void runAction(resumeComputeSubscription).catch(() => undefined)
+											}
+										>
+											{resumeSubscription.isPending ? (
+												<Spinner data-icon="inline-start" />
+											) : (
+												<RefreshCw data-icon="inline-start" />
+											)}
+											Resume subscription
+										</Button>
 									) : (
 										<>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled={
-													!hasPendingPlanChange &&
-													(planChangeUnavailable !== null || !!pendingPlanSlug)
-												}
-												onClick={() => setPlanChangeOpen(true)}
-											>
-												<Settings data-icon="inline-start" />
-												Manage
-											</Button>
+											{hasPendingPlanChange ? (
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													onClick={() => setPlanChangeOpen(true)}
+												>
+													<RefreshCw data-icon="inline-start" />
+													Check change status
+												</Button>
+											) : computeRecovery.hasPaymentIssue || pendingPlanSlug ? null : (
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													disabled={planChangeUnavailable !== null}
+													onClick={() => setPlanChangeOpen(true)}
+												>
+													<Settings data-icon="inline-start" />
+													Manage
+												</Button>
+											)}
 											<ConfirmAction
 												title={`Cancel ${tierLabel} subscription?`}
 												description={

@@ -18,11 +18,21 @@ import {
 	selectPlanChangeFundingSource,
 	selectPlanChangeOffer,
 	shouldRecoverWalletToCardSwitch,
+	shouldResetUnacceptedPlanChangeQuote,
 	visiblePlanChangeOperationName,
 	walletBalanceAfterDebit,
 } from "./plan-change.logic";
 
 describe("plan change recovery", () => {
+	test("resets only direct quote conflicts before an operation is accepted", () => {
+		expect(shouldResetUnacceptedPlanChangeQuote(new BillingApiError(409, "quote expired"))).toBe(
+			true,
+		);
+		expect(shouldResetUnacceptedPlanChangeQuote(new BillingApiError(422, "invalid"))).toBe(false);
+		expect(
+			shouldResetUnacceptedPlanChangeQuote(new BillingApiError(409, "operation conflict")),
+		).toBe(false);
+	});
 	type AcceptedOperation = NonNullable<HostedDeployment["accepted_operation"]>;
 	const acceptedPlanChange: AcceptedOperation = {
 		name: "operations/plan-change-pending",
