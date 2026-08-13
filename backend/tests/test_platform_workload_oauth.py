@@ -1168,6 +1168,24 @@ async def test_workload_resource_auth_enforces_scope_status_version_and_revocati
 ):
     owner = _owner(seed_user)
     token = await _access_token(workload_harness, "platform:agents:create")
+    runtime_source_id = uuid.uuid4()
+    runtime_source_token = await _access_token(
+        workload_harness,
+        "platform:runtime-state:write",
+    )
+    authorized_read = await workload_harness.client.get(
+        f"/v1/platform/agents/{runtime_source_id}/runtime-state",
+        headers={"Authorization": f"Bearer {runtime_source_token}"},
+        params=owner,
+    )
+    assert authorized_read.status_code == 404, authorized_read.text
+
+    wrong_scope_read = await workload_harness.client.get(
+        f"/v1/platform/agents/{runtime_source_id}/runtime-state",
+        headers={"Authorization": f"Bearer {token}"},
+        params=owner,
+    )
+    assert wrong_scope_read.status_code == 403, wrong_scope_read.text
 
     wrong_scope = await workload_harness.client.request(
         "DELETE",

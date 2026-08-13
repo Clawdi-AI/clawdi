@@ -2125,7 +2125,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Platform Get Runtime Source Authority */
+        get: operations["platform_get_runtime_source_authority_v1_platform_agents__agent_id__runtime_state_get"];
         /** Platform Upsert Runtime State */
         put: operations["platform_upsert_runtime_state_v1_platform_agents__agent_id__runtime_state_put"];
         post?: never;
@@ -6829,6 +6830,22 @@ export interface components {
             bootSessionId: string;
             /** Sequence */
             sequence: number;
+        };
+        /** RuntimeSourceAuthorityResponse */
+        RuntimeSourceAuthorityResponse: {
+            /**
+             * Environmentid
+             * Format: uuid
+             */
+            environmentId: string;
+            /** Deploymentid */
+            deploymentId: string;
+            /** Instanceid */
+            instanceId: string;
+            /** Sourcerevision */
+            sourceRevision: string;
+            /** Etag */
+            etag: string;
         };
         /** SearchHit */
         SearchHit: {
@@ -11922,6 +11939,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_get_runtime_source_authority_v1_platform_agents__agent_id__runtime_state_get: {
+        parameters: {
+            query: {
+                kind: "clerk" | "partner_tenant";
+                ref: string;
+            };
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSourceAuthorityResponse"];
+                };
             };
             /** @description Validation Error */
             422: {
