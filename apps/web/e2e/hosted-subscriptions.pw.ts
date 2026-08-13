@@ -319,6 +319,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 						agent_name: "Former deleted agent",
 						deployment_id: null,
 						is_orphan: true,
+						recovery_action: "start_new",
 					}),
 				],
 				has_more: true,
@@ -350,7 +351,8 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 						agent_name: "Canceling agent",
 					}),
 					subscription("ended_second", "canceled", {
-						current_period_end: "2024-08-12T12:00:00Z",
+						current_period_end: "2099-09-11T12:00:00Z",
+						recovery_action: "start_new",
 					}),
 				],
 				has_more: false,
@@ -433,18 +435,11 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await dialog.getByRole("button", { name: "Show history (2)" }).click();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(6);
 	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(6);
-	await expect(dialog.getByText("Canceled", { exact: true })).toHaveCount(2);
+	await expect(dialog.getByText("Ended", { exact: true })).toHaveCount(2);
 	const visibleStatuses = await dialog
 		.locator('[data-slot="compute-subscription-card"]')
 		.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-subscription-status")));
-	expect(visibleStatuses).toEqual([
-		"active",
-		"active",
-		"past-due",
-		"canceling",
-		"canceled",
-		"canceled",
-	]);
+	expect(visibleStatuses).toEqual(["active", "active", "past-due", "canceling", "ended", "ended"]);
 	const orphanCard = dialog
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Deleted agent" });
@@ -455,10 +450,13 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(orphanCard.getByText("No linked agent", { exact: true })).toHaveCount(0);
 	await expect(dialog.getByText("ended_second", { exact: true })).toBeVisible();
 	await expect(orphanCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
-	const canceledCards = dialog
-		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Canceled" });
-	await expect(canceledCards.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
+	await expect(orphanCard.locator('[data-slot="compute-subscription-notice"]')).toHaveCount(0);
+	const endedCards = dialog.locator('[data-subscription-status="ended"]');
+	await expect(endedCards.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
+	await expect(endedCards.getByText("Schedule", { exact: true })).toHaveCount(0);
+	await expect(endedCards.getByText(/(Aug 12, 2025|Sep 11, 2099)/)).toHaveCount(0);
+	await expect(dialog.getByText("Start a new subscription from Agent settings.")).toHaveCount(1);
+	await expect(dialog.getByText(/This subscription ended\./)).toHaveCount(0);
 	await expectCardsFit(dialog);
 
 	const accountSettingsUrl = page.url();

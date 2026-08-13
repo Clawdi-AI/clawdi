@@ -52,7 +52,7 @@ import {
 	canResumeAccountSubscription,
 	computeFundingSource,
 	computeSubscriptionLifecycle,
-	isEndedAccountSubscription,
+	isHistoricalAccountSubscription,
 	pendingPlanScheduleCopy,
 	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -334,9 +334,7 @@ function SubscriptionRow({
 			case "fix_payment":
 				return "Resolve the open invoice before managing this subscription.";
 			case "start_new":
-				return agentHref
-					? "This subscription ended. Start a new subscription from Agent settings."
-					: "This subscription ended.";
+				return agentHref ? "Start a new subscription from Agent settings." : null;
 			case undefined:
 				return null;
 		}
@@ -366,6 +364,7 @@ function SubscriptionRow({
 		scheduleVerb: recovery.schedule?.verb ?? lifecycle.dateVerb,
 		scheduleAt: recovery.schedule?.at ?? lifecycle.dateAt,
 		scheduleFallback: recovery.schedule?.fallback ?? undefined,
+		includeSchedule: !isHistoricalAccountSubscription(subscription),
 	});
 
 	return (
@@ -471,7 +470,6 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const deployments = useHostedDeployments();
 	const hostedAccess = useHostedProductAccess();
 	const [showHistory, setShowHistory] = useState(false);
-	const [historyCutoffMs] = useState(Date.now);
 	const [selectedSubscription, setSelectedSubscription] =
 		useState<ComputeSubscriptionListItem | null>(null);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
@@ -482,14 +480,10 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 			.filter((tile) => tile.source === "on-clawdi")
 			.map((tile) => [tile.id.toLowerCase(), tile] as const),
 	);
-	const endedRows = rows.filter((subscription) =>
-		isEndedAccountSubscription(subscription, historyCutoffMs),
-	);
+	const endedRows = rows.filter(isHistoricalAccountSubscription);
 	const visibleRows = showHistory
 		? orderedRows
-		: orderedRows.filter(
-				(subscription) => !isEndedAccountSubscription(subscription, historyCutoffMs),
-			);
+		: orderedRows.filter((subscription) => !isHistoricalAccountSubscription(subscription));
 	const canLoadMore = subscriptions.hasNextPage && !subscriptions.isFetchNextPageError;
 	const historyControlVisible = endedRows.length > 0 || showHistory;
 	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;

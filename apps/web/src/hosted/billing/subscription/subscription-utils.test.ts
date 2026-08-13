@@ -15,7 +15,7 @@ import {
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionRenewing,
 	isComputeSubscriptionTermChangeable,
-	isEndedAccountSubscription,
+	isHistoricalAccountSubscription,
 	isIncludedBasicSubscription,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
@@ -303,27 +303,15 @@ describe("commonExplicitBillingOffers", () => {
 });
 
 describe("compute subscription action status gates", () => {
-	test("hides only canceled subscriptions whose service period has ended", () => {
-		const nowMs = Date.parse("2026-08-12T12:00:00Z");
+	test("treats terminal canceled status as history regardless of service period", () => {
 		const ended = {
 			status: "canceled" as const,
 			cancel_at_period_end: false,
-			current_period_end: "2026-08-12T12:00:00Z",
+			current_period_end: "2099-08-12T12:00:00Z",
 		};
 
-		expect(isEndedAccountSubscription(ended, nowMs)).toBe(true);
-		expect(
-			isEndedAccountSubscription(
-				{ ...ended, current_period_end: "2026-08-12T12:00:00.001Z" },
-				nowMs,
-			),
-		).toBe(false);
-		expect(isEndedAccountSubscription({ ...ended, status: "canceling" }, nowMs)).toBe(false);
-		expect(isEndedAccountSubscription({ ...ended, cancel_at_period_end: true }, nowMs)).toBe(true);
-		expect(isEndedAccountSubscription({ ...ended, current_period_end: null }, nowMs)).toBe(false);
-		expect(isEndedAccountSubscription({ ...ended, current_period_end: "not-a-date" }, nowMs)).toBe(
-			false,
-		);
+		expect(isHistoricalAccountSubscription(ended)).toBe(true);
+		expect(isHistoricalAccountSubscription({ ...ended, status: "canceling" })).toBe(false);
 	});
 
 	test("matches the backend cancel and resume status set", () => {
@@ -440,8 +428,9 @@ describe("compute subscription lifecycle presentation", () => {
 			{ badgeLabel: "Setup incomplete", renews: false },
 		);
 		expect(computeSubscriptionLifecycle({ ...subscription(), status: "canceled" })).toMatchObject({
-			badgeLabel: "Canceled",
-			dateVerb: "Canceled",
+			badgeLabel: "Ended",
+			dateAt: null,
+			dateVerb: null,
 			renews: false,
 		});
 		expect(computeSubscriptionLifecycle({ ...subscription(), status: "expired" })).toMatchObject({

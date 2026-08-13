@@ -45,6 +45,7 @@ export function computeSubscriptionCardView({
 	scheduleVerb,
 	scheduleAt,
 	scheduleFallback,
+	includeSchedule = true,
 }: {
 	status: ComputeSubscriptionCardView["status"];
 	planSlug: string;
@@ -55,6 +56,7 @@ export function computeSubscriptionCardView({
 	scheduleVerb: string | null;
 	scheduleAt: string | null | undefined;
 	scheduleFallback?: string;
+	includeSchedule?: boolean;
 }): ComputeSubscriptionCardView {
 	const included = fundingSource === "included";
 	const schedule =
@@ -83,7 +85,7 @@ export function computeSubscriptionCardView({
 									? "Card"
 									: "Unavailable",
 					},
-					{ label: "Schedule", value: schedule },
+					...(includeSchedule ? [{ label: "Schedule", value: schedule }] : []),
 				],
 	};
 }

@@ -64,17 +64,10 @@ export function canResumeAccountSubscription(
 	);
 }
 
-export function isEndedAccountSubscription(
-	subscription: Pick<
-		ComputeSubscriptionListItem,
-		"cancel_at_period_end" | "current_period_end" | "status"
-	>,
-	nowMs: number,
+export function isHistoricalAccountSubscription(
+	subscription: Pick<ComputeSubscriptionListItem, "status">,
 ): boolean {
-	if (subscription.status !== "canceled") return false;
-	if (!subscription.current_period_end) return false;
-	const periodEndMs = Date.parse(subscription.current_period_end);
-	return Number.isFinite(periodEndMs) && periodEndMs <= nowMs;
+	return subscription.status === "canceled";
 }
 
 export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {
@@ -274,10 +267,10 @@ export function computeSubscriptionLifecycle(
 	}
 	if (status === "canceled") {
 		return {
-			badgeLabel: "Canceled",
+			badgeLabel: "Ended",
 			badgeTone: "neutral",
-			dateAt: canceledAt,
-			dateVerb: "Canceled",
+			dateAt: null,
+			dateVerb: null,
 			renews: false,
 		};
 	}
