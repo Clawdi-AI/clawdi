@@ -425,6 +425,21 @@ def _assert_agent_supports_project_skills(
         )
 
 
+def _is_legacy_v1_hosted_agent(
+    agent: AgentEnvironment,
+    state: HostedRuntimeState | None,
+    *,
+    has_environment_bound_key: bool,
+) -> bool:
+    """Identify the historical Hosted V1 runtime shape without widening V2 or Connected."""
+    return bool(
+        state is None
+        and agent.registration_key is not None
+        and agent.connected_agent_registered_at is None
+        and has_environment_bound_key
+    )
+
+
 def agent_supports_project_skills(
     agent: AgentEnvironment,
     state: HostedRuntimeState | None,
@@ -600,6 +615,16 @@ async def assert_agent_workspace_skill_write_compatible(
             db,
             agent_id=agent_id,
         )
+        # Hosted V1 never materializes linked Project Skills. Its sync upload is
+        # only an Agent Workspace observation, so the name check above is the
+        # complete compatibility boundary. Hosted V2 and Connected Agents must
+        # still prove delivery readiness before changing that observation.
+        if _is_legacy_v1_hosted_agent(
+            agent,
+            state,
+            has_environment_bound_key=has_environment_bound_key,
+        ):
+            return
         _assert_agent_supports_project_skills(
             agent,
             state,

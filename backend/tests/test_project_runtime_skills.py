@@ -73,6 +73,25 @@ async def _link(
     )
 
 
+async def _upload_agent_workspace_skill(
+    client: httpx.AsyncClient,
+    *,
+    agent_id: uuid.UUID,
+    skill_key: str,
+) -> httpx.Response:
+    return await client.post(
+        f"/v1/agents/{agent_id}/skills/sync/upload",
+        data={"skill_key": skill_key},
+        files={
+            "file": (
+                f"{skill_key}.tar.gz",
+                _skill_archive(skill_key, "Agent Workspace"),
+                "application/gzip",
+            )
+        },
+    )
+
+
 def _set_auth(auth: AuthContext) -> None:
     async def current_auth() -> AuthContext:
         return auth
@@ -603,6 +622,82 @@ async def test_legacy_v1_hosted_identity_cannot_report_or_read_project_desired(
 
 
 @pytest.mark.asyncio
+async def test_legacy_v1_hosted_agent_accepts_nonconflicting_workspace_observation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    environment_project: Project,
+):
+    agent_id = environment_project.origin_environment_id
+    assert agent_id is not None
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    assert agent.registration_key is not None
+    assert agent.connected_agent_registered_at is None
+    assert await db_session.get(HostedRuntimeState, agent_id) is None
+
+    project_skill = await _upload_project_skill(client, workspace_project.id, "shared-key")
+    assert project_skill.status_code == 200, project_skill.text
+    db_session.add(
+        AgentProjectBinding(
+            agent_id=agent_id,
+            project_id=workspace_project.id,
+            binding_type="context",
+            priority=1,
+            default_write_enabled=False,
+            created_by_user_id=seed_user.id,
+        )
+    )
+    legacy_v1_runtime_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="3" * 64,
+        key_prefix="clawdi_test",
+        label="legacy-v1-workspace-upload",
+        environment_id=agent_id,
+        scopes=None,
+        managed=False,
+    )
+    db_session.add(legacy_v1_runtime_key)
+    await db_session.commit()
+    _set_auth(AuthContext(user=seed_user, api_key=legacy_v1_runtime_key))
+
+    accepted = await _upload_agent_workspace_skill(
+        client,
+        agent_id=agent_id,
+        skill_key="local-only",
+    )
+    assert accepted.status_code == 200, accepted.text
+    stored = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == environment_project.id,
+                Skill.skill_key == "local-only",
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    assert stored.authority == SKILL_AUTHORITY_AGENT_SYNC
+    assert stored.authority_agent_id == agent_id
+
+    rejected = await _upload_agent_workspace_skill(
+        client,
+        agent_id=agent_id,
+        skill_key="shared-key",
+    )
+    _set_auth(AuthContext(user=seed_user))
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"] == {
+        "code": "agent_workspace_project_skill_name_conflict",
+        "message": (
+            'Skill "shared-key" already comes from a linked Project. '
+            "Remove or rename one copy, then try again."
+        ),
+        "skill_key": "shared-key",
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("unsupported_evidence", ["unobserved", "old-cli"])
 async def test_unsupported_hosted_v2_deployment_rejects_link_and_project_skill_render(
     client: httpx.AsyncClient,
@@ -657,6 +752,19 @@ async def test_unsupported_hosted_v2_deployment_rejects_link_and_project_skill_r
         )
     )
     await db_session.commit()
+    _set_auth(_connected_agent_auth(seed_user))
+    hosted_v2_workspace_write = await _upload_agent_workspace_skill(
+        client,
+        agent_id=channel_agent.id,
+        skill_key="hosted-v2-workspace-write",
+    )
+    _set_auth(AuthContext(user=seed_user))
+    assert hosted_v2_workspace_write.status_code == 409, hosted_v2_workspace_write.text
+    assert hosted_v2_workspace_write.json()["detail"] == {
+        "code": "project_skill_delivery_update_required",
+        "message": "Update this Agent, then try again.",
+    }
+
     await _make_runtime_renderable(
         db_session,
         user=seed_user,
