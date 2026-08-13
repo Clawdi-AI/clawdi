@@ -386,6 +386,25 @@ async def test_authorized_successor_atomically_tombstones_predecessor(
         )
     assert late_predecessor.value.code == "runtime_environment_retired"
 
+    predecessor_tombstone = heads["boot-session-predecessor"].tombstoned_at
+    receipt = await retire_runtime_environment(
+        db_session,
+        environment_id=environment.id,
+        expected_deployment_id=_DEPLOYMENT_ID,
+        retirement_id="handoff-environment-retirement",
+        owner_id=owner_id,
+    )
+    await db_session.commit()
+
+    await db_session.refresh(heads["boot-session-predecessor"])
+    await db_session.refresh(heads["boot-session-successor"])
+    assert heads["boot-session-predecessor"].tombstoned_at == predecessor_tombstone
+    assert heads["boot-session-successor"].state == "retired"
+    assert receipt["finalSessionHighWaterMarks"] == [
+        {"bootSessionId": "boot-session-predecessor", "sequence": 1},
+        {"bootSessionId": "boot-session-successor", "sequence": 1},
+    ]
+
 
 @pytest.mark.asyncio
 async def test_handoff_cannot_hide_an_unauthorized_active_head(

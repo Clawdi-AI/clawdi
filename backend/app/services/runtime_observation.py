@@ -689,7 +689,8 @@ async def retire_runtime_environment(
     fence.final_stream_position = final_position
     fence.final_session_high_waters = high_waters
     for head in heads:
-        _retire_runtime_observation_head(head, tombstoned_at=now)
+        if head.state == RUNTIME_OBSERVATION_HEAD_ACTIVE:
+            _retire_runtime_observation_head(head, tombstoned_at=now)
     await db.flush()
     return RuntimeEnvironmentRetirementResult(
         receipt=receipt,
