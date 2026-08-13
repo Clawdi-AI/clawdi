@@ -1,64 +1,63 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { isValidElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import type { ComputeSubscriptionListItem } from "@/hosted/billing/contracts";
 
 type SubscriptionsSectionModule =
 	typeof import("@/hosted/billing/subscription/subscriptions-section");
 
-let SubscriptionAgentLink: SubscriptionsSectionModule["SubscriptionAgentLink"] | null = null;
-let SubscriptionLoadMore: SubscriptionsSectionModule["SubscriptionLoadMore"] | null = null;
-let subscriptionPaymentSourceLabel:
-	| SubscriptionsSectionModule["subscriptionPaymentSourceLabel"]
-	| null = null;
+let sortLoadedSubscriptions: SubscriptionsSectionModule["sortLoadedSubscriptions"] | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
 	process.env.VITE_CLAWDI_DEPLOY_API_URL = "http://localhost:50021";
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/billing/subscription/subscriptions-section");
-	SubscriptionAgentLink = module.SubscriptionAgentLink;
-	SubscriptionLoadMore = module.SubscriptionLoadMore;
-	subscriptionPaymentSourceLabel = module.subscriptionPaymentSourceLabel;
+	sortLoadedSubscriptions = module.sortLoadedSubscriptions;
 });
 
+function subscription(
+	subscriptionId: string,
+	status: ComputeSubscriptionListItem["status"],
+): ComputeSubscriptionListItem {
+	return {
+		subscription_id: subscriptionId,
+		plan_slug: "compute_basic",
+		funding_source: "stripe",
+		status,
+		currency: "usd",
+		billing_term_months: 1,
+		cancel_at_period_end: status === "canceling",
+		agent_name: subscriptionId,
+		is_orphan: false,
+	};
+}
+
 describe("SubscriptionsSection", () => {
-	test("links a named agent to its billing plan and keeps deleted agents unlinked", () => {
-		if (!SubscriptionAgentLink || !SubscriptionLoadMore) {
-			throw new Error("Subscriptions section components were not loaded");
-		}
-		const namedAgent = SubscriptionAgentLink({
-			deploymentId: "hdep_live",
-			agentName: "Production agent",
-		});
-		if (!isValidElement(namedAgent)) throw new Error("Expected a named agent link");
-		expect(namedAgent.props).toMatchObject({
-			children: "Production agent",
-			to: "/agents/$id/$section",
-			params: { id: "hdep_live", section: "settings" },
-			search: { source: "on-clawdi", settings: "billing-plan" },
-		});
+	test("stably prioritizes loaded current subscriptions without mutating query data", () => {
+		if (!sortLoadedSubscriptions) throw new Error("Subscriptions helpers were not loaded");
+		const loaded = [
+			subscription("canceled", "canceled"),
+			subscription("canceling-first", "canceling"),
+			subscription("active-first", "active"),
+			subscription("past-due", "past_due"),
+			subscription("active-second", "active"),
+			subscription("canceling-second", "canceling"),
+		];
 
-		for (const deletedAgent of [
-			renderToStaticMarkup(<SubscriptionAgentLink deploymentId={null} agentName={null} />),
-			renderToStaticMarkup(<SubscriptionAgentLink deploymentId="hdep_stale" agentName={null} />),
-			renderToStaticMarkup(<SubscriptionAgentLink deploymentId={null} agentName="Stale agent" />),
-		]) {
-			expect(deletedAgent).toContain("Deleted agent");
-			expect(deletedAgent).not.toContain("href=");
-		}
-
-		const loadMore = renderToStaticMarkup(
-			<SubscriptionLoadMore isLoading={false} onLoadMore={() => undefined} />,
-		);
-		expect(loadMore).toContain("Load more");
-	});
-
-	test("labels Included, Card, and Wallet from the generated funding source", () => {
-		if (!subscriptionPaymentSourceLabel) {
-			throw new Error("Subscription payment source helper was not loaded");
-		}
-		expect(subscriptionPaymentSourceLabel(null)).toBe("Included");
-		expect(subscriptionPaymentSourceLabel("stripe")).toBe("Card");
-		expect(subscriptionPaymentSourceLabel("wallet")).toBe("Wallet");
+		expect(sortLoadedSubscriptions(loaded).map((item) => item.subscription_id)).toEqual([
+			"active-first",
+			"active-second",
+			"past-due",
+			"canceling-first",
+			"canceling-second",
+			"canceled",
+		]);
+		expect(loaded.map((item) => item.subscription_id)).toEqual([
+			"canceled",
+			"canceling-first",
+			"active-first",
+			"past-due",
+			"active-second",
+			"canceling-second",
+		]);
 	});
 });

@@ -355,7 +355,7 @@ function SettingsPanel({
 		case "billing-plan":
 			return SubscriptionPage ? (
 				<Suspense fallback={<HostedRouteSkeleton />}>
-					<SubscriptionPage />
+					<SubscriptionPage agentTiles={agentTiles} />
 				</Suspense>
 			) : (
 				<GeneralPanel />
