@@ -169,5 +169,20 @@ describe("computeSubscriptionManagement", () => {
 			action: "enabled",
 			target: { projectedOperationName: "operations/pending-plan-change" },
 		});
+
+		const pendingPaymentRecovery = computeSubscriptionManagement({
+			entitlement: entitlement({
+				fundingSource: "stripe",
+				priceCents: 900,
+				status: "active",
+				paymentState: "past_due",
+			}),
+			deployment: pendingFallback,
+			...available,
+		});
+		expect(pendingPaymentRecovery).toMatchObject({
+			action: "enabled",
+			target: { status: "past_due", paymentSourceOnly: true },
+		});
 	});
 });

@@ -3671,14 +3671,6 @@ function ComputeSettingsSections({
 			)
 		: null;
 	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
-	const paymentSourceOnly =
-		currentSubscription?.status === "past_due" || currentSubscription?.payment_state === "past_due";
-	const planChangeStatus =
-		currentSubscription?.status === "unpaid" || currentSubscription?.payment_state === "unpaid"
-			? "unpaid"
-			: paymentSourceOnly
-				? "past_due"
-				: currentSubscription?.status;
 	const computeManagement: ComputeSubscriptionManagementResult = currentSubscription
 		? computeSubscriptionManagement({
 				entitlement: {
@@ -3687,7 +3679,7 @@ function ComputeSettingsSections({
 					fundingSource: currentSubscription.funding_source,
 					priceCents: currentSubscription.price_cents,
 					billingTermMonths: currentSubscription.billing_term_months,
-					status: planChangeStatus ?? currentSubscription.status,
+					status: currentSubscription.status,
 					paymentState: currentSubscription.payment_state,
 					cancelAtPeriodEnd: subscriptionCancelPending,
 					recoveryAction: currentSubscription.recovery_action,

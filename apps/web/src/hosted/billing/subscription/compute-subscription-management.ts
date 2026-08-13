@@ -141,8 +141,13 @@ export function computeSubscriptionManagement({
 		initialPlanSlug: includedBasic ? COMPUTE_PERFORMANCE_SLUG : planSlug,
 		currentBillingTermMonths: planChangeBillingTerm(entitlement.billingTermMonths),
 		currentFundingSource: entitlement.fundingSource === "wallet" ? "wallet" : "stripe",
-		status: entitlement.status,
-		paymentSourceOnly: false,
+		status:
+			entitlement.status === "unpaid" || entitlement.paymentState === "unpaid"
+				? "unpaid"
+				: entitlement.status === "past_due" || entitlement.paymentState === "past_due"
+					? "past_due"
+					: entitlement.status,
+		paymentSourceOnly: entitlement.status === "past_due" || entitlement.paymentState === "past_due",
 		cancelAtPeriodEnd: entitlement.cancelAtPeriodEnd,
 		isPaidCompute: !includedBasic,
 		allowCombinedChange: includedBasic,
