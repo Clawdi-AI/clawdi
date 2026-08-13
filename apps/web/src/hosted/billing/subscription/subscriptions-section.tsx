@@ -1,6 +1,14 @@
 "use client";
 
-import { CreditCard, History, Link2Off, RefreshCw, Settings } from "lucide-react";
+import {
+	CreditCard,
+	ExternalLink,
+	History,
+	Link2Off,
+	RefreshCw,
+	Settings,
+	WalletCards,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -13,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import type { StatusTone } from "@/components/ui/status-badge";
 import type { ComputePlanSlug, ComputeSubscriptionListItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import {
@@ -23,11 +30,16 @@ import {
 	useResumeSubscription,
 	useSubscriptions,
 } from "@/hosted/billing/hooks";
+import { useSensitiveFixPayment } from "@/hosted/billing/sensitive-actions";
 import {
 	ComputeSubscriptionCard,
 	computeSubscriptionCardView,
 	computeSubscriptionPlanLabel,
 } from "@/hosted/billing/subscription/compute-subscription-card";
+import {
+	type ComputeRecoveryTarget,
+	computeSubscriptionRecoveryPresentation,
+} from "@/hosted/billing/subscription/compute-subscription-recovery";
 import { activePlanChangeOperationName } from "@/hosted/billing/subscription/plan-change.logic";
 import {
 	PlanChangeController,
@@ -37,26 +49,25 @@ import {
 	canCancelAccountSubscription,
 	canResumeAccountSubscription,
 	isEndedAccountSubscription,
+	pendingPlanScheduleCopy,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-const STATUS_PRESENTATION: Record<
-	ComputeSubscriptionListItem["status"],
-	{ label: string; tone: StatusTone }
-> = {
+const STATUS_PRESENTATION = {
 	active: { label: "Active", tone: "success" },
 	canceling: { label: "Canceling", tone: "warning" },
 	past_due: { label: "Past due", tone: "destructive" },
 	canceled: { label: "Canceled", tone: "neutral" },
-};
+} as const;
 
 function subscriptionScheduleVerb(status: ComputeSubscriptionListItem["status"]): string {
 	if (status === "canceling") return "Ends";
 	if (status === "canceled") return "Ended";
-	if (status === "past_due") return "Due";
 	return "Renews";
 }
 
@@ -155,6 +166,79 @@ function SubscriptionActions({
 	);
 }
 
+function SubscriptionRecoveryAction({
+	target,
+	deploymentId,
+	agentHref,
+}: {
+	target: ComputeRecoveryTarget;
+	deploymentId: string | null;
+	agentHref: string | null;
+}) {
+	const fixPayment = useSensitiveFixPayment();
+	const runAction = useActionLock();
+	const wallet = useWalletSnapshot({ enabled: target.kind === "top_up" });
+	const [topUpOpen, setTopUpOpen] = useState(false);
+
+	async function openPaymentRecovery() {
+		if (target.kind === "invoice") {
+			window.location.href = target.url;
+			return;
+		}
+		if (target.kind !== "fix_payment") return;
+		try {
+			const result = await fixPayment.execute({ deployment_id: deploymentId });
+			const url = result.url || result.portal_url;
+			if (url) {
+				window.location.href = url;
+				return;
+			}
+			toast.message("Payment update unavailable", {
+				description: "Refresh this page and try again in a moment.",
+			});
+		} catch (error) {
+			toast.error("Couldn't open payment settings", {
+				description: normalizeBillingError(error),
+			});
+		}
+	}
+
+	if (target.kind === "top_up") {
+		return (
+			<>
+				<Button type="button" size="sm" onClick={() => setTopUpOpen(true)} disabled={!wallet.data}>
+					<WalletCards data-icon="inline-start" />
+					Top up
+				</Button>
+				{wallet.data ? <TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} /> : null}
+			</>
+		);
+	}
+	if (target.kind === "start_new") {
+		return agentHref ? (
+			<Button render={<a href={agentHref} />} nativeButton={false} type="button" size="sm">
+				<Settings data-icon="inline-start" />
+				Open Agent settings
+			</Button>
+		) : null;
+	}
+	return (
+		<Button
+			type="button"
+			size="sm"
+			onClick={() => void runAction(openPaymentRecovery)}
+			disabled={fixPayment.isPending}
+		>
+			{target.kind === "invoice" ? (
+				<ExternalLink data-icon="inline-start" />
+			) : (
+				<CreditCard data-icon="inline-start" />
+			)}
+			Fix payment
+		</Button>
+	);
+}
+
 function subscriptionAgentHref(subscription: ComputeSubscriptionListItem): string | null {
 	if (subscription.is_orphan || !subscription.deployment_id || !subscription.agent_name)
 		return null;
@@ -173,7 +257,10 @@ export function canManageAccountSubscription(subscription: ComputeSubscriptionLi
 		!subscription.is_orphan &&
 		Boolean(subscription.deployment_id?.trim()) &&
 		!subscription.cancel_at_period_end &&
-		(subscription.status === "active" || subscription.status === "past_due") &&
+		subscription.status === "active" &&
+		subscription.payment_state === "ok" &&
+		subscription.recovery_action === null &&
+		subscription.pending_plan_slug === null &&
 		computePlanSlug(subscription.plan_slug) !== null &&
 		(subscription.funding_source === "stripe" || subscription.funding_source === "wallet")
 	);
@@ -201,7 +288,7 @@ function accountPlanChangeTarget(
 		currentBillingTermMonths: subscription.billing_term_months,
 		currentFundingSource: fundingSource,
 		status: subscription.status,
-		paymentSourceOnly: subscription.status === "past_due",
+		paymentSourceOnly: false,
 		cancelAtPeriodEnd: subscription.cancel_at_period_end,
 		isPaidCompute: true,
 		allowCombinedChange: false,
@@ -234,11 +321,41 @@ function SubscriptionRow({
 	agentTile?: AgentTile;
 	onManage: (subscription: ComputeSubscriptionListItem) => void;
 }) {
-	const status = STATUS_PRESENTATION[subscription.status];
+	const recovery = computeSubscriptionRecoveryPresentation(
+		subscription,
+		STATUS_PRESENTATION[subscription.status],
+	);
 	const agentHref = subscriptionAgentHref(subscription);
 	const canManage = canManageAccountSubscription(subscription);
+	const pendingPlanSlug = computePlanSlug(subscription.pending_plan_slug ?? "");
+	const pendingPlanCopy = pendingPlanSlug
+		? pendingPlanScheduleCopy(
+				pendingPlanSlug,
+				subscription.current_period_end,
+				formatShortDate(subscription.current_period_end),
+			)
+		: null;
+	const recoveryActionAvailable =
+		recovery.recoveryTarget !== null &&
+		(recovery.recoveryTarget.kind !== "start_new" || agentHref !== null);
+	const recoveryNotice = (() => {
+		switch (recovery.recoveryTarget?.kind) {
+			case "top_up":
+				return "Top up Wallet before managing this subscription.";
+			case "invoice":
+			case "fix_payment":
+				return "Resolve the open invoice before managing this subscription.";
+			case "start_new":
+				return agentHref
+					? "This subscription ended. Start a new subscription from Agent settings."
+					: "This subscription ended.";
+			case undefined:
+				return null;
+		}
+	})();
 	const hasActions =
 		canManage ||
+		recoveryActionAvailable ||
 		canCancelAccountSubscription(subscription) ||
 		canResumeAccountSubscription(subscription);
 	const view = computeSubscriptionCardView({
@@ -251,14 +368,15 @@ function SubscriptionRow({
 					href: agentHref,
 				}
 			: { kind: "unavailable", label: "Deleted agent" },
-		status,
+		status: recovery.status,
 		planSlug: subscription.plan_slug,
 		fundingSource: subscription.funding_source === null ? "included" : subscription.funding_source,
 		priceCents: subscription.price_cents,
 		currency: subscription.currency,
 		billingTermMonths: subscription.billing_term_months,
-		scheduleVerb: subscriptionScheduleVerb(subscription.status),
-		scheduleAt: subscription.current_period_end,
+		scheduleVerb: recovery.schedule?.verb ?? subscriptionScheduleVerb(subscription.status),
+		scheduleAt: recovery.schedule?.at ?? subscription.current_period_end,
+		scheduleFallback: recovery.schedule?.fallback ?? undefined,
 	});
 
 	return (
@@ -267,13 +385,32 @@ function SubscriptionRow({
 				headingLevel={4}
 				view={view}
 				badges={subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
+				notice={
+					recoveryNotice || pendingPlanCopy ? (
+						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+							{recoveryNotice ? <p>{recoveryNotice}</p> : null}
+							{pendingPlanCopy ? (
+								<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
+							) : null}
+						</div>
+					) : null
+				}
 				actions={
 					hasActions ? (
-						<SubscriptionActions
-							subscription={subscription}
-							canManage={canManage}
-							onManage={() => onManage(subscription)}
-						/>
+						<>
+							{recoveryActionAvailable && recovery.recoveryTarget ? (
+								<SubscriptionRecoveryAction
+									target={recovery.recoveryTarget}
+									deploymentId={subscription.deployment_id ?? null}
+									agentHref={agentHref}
+								/>
+							) : null}
+							<SubscriptionActions
+								subscription={subscription}
+								canManage={canManage}
+								onManage={() => onManage(subscription)}
+							/>
+						</>
 					) : null
 				}
 			/>

@@ -250,7 +250,7 @@ export function AgentSettingsPanel({
 				title="Name"
 				description="Use a short name that distinguishes this agent from others."
 			>
-				<div className="flex max-w-2xl flex-col gap-3">
+				<div className="flex w-full flex-col gap-3">
 					<div className="flex flex-col gap-2 lg:flex-row">
 						<Label htmlFor="agent-display-name" className="sr-only">
 							Agent name

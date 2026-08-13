@@ -10,7 +10,6 @@ import {
 	includedBasicDeployment,
 	paidBasicDeployment,
 	performancePlan,
-	planChangeQuoteResponse,
 	sharedLegacyCloudAgent,
 	stubHostedApi,
 	terminalFallbackDeployment,
@@ -99,6 +98,11 @@ function subscription(
 		deployment_id: `hdep_${subscriptionId}`,
 		agent_name: subscriptionId,
 		is_orphan: false,
+		payment_state: "ok",
+		latest_failed_invoice_hosted_url: null,
+		next_payment_attempt_at: null,
+		recovery_action: null,
+		pending_plan_slug: null,
 		...overrides,
 	};
 }
@@ -165,9 +169,19 @@ async function expectNoHorizontalOverflow(page: Page) {
 	expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
 }
 
-async function expectAgentSettingsSectionsAligned(page: Page, maxWidth: number) {
+async function expectAgentSettingsSectionsAligned(
+	page: Page,
+	width: { min?: number; max?: number },
+) {
 	const main = page.locator("main");
-	const sectionNames = ["Name", "Language & timezone", "Compute plan", "Lifecycle", "Danger zone"];
+	const sectionNames = [
+		"Name",
+		"Avatar",
+		"Language & timezone",
+		"Compute plan",
+		"Lifecycle",
+		"Danger zone",
+	];
 	const boxes = await Promise.all(
 		sectionNames.map(async (name) => {
 			const section = main
@@ -189,7 +203,8 @@ async function expectAgentSettingsSectionsAligned(page: Page, maxWidth: number) 
 
 	const [reference] = boxes;
 	if (!reference) throw new Error("Expected Agent Settings section boxes");
-	expect(reference.width).toBeLessThanOrEqual(maxWidth + 1);
+	if (width.min !== undefined) expect(reference.width).toBeGreaterThanOrEqual(width.min - 1);
+	if (width.max !== undefined) expect(reference.width).toBeLessThanOrEqual(width.max + 1);
 	for (const box of boxes.slice(1)) {
 		expect(Math.abs(box.x - reference.x), "section left edge").toBeLessThanOrEqual(1);
 		expect(Math.abs(box.width - reference.width), "section width").toBeLessThanOrEqual(1);
@@ -254,26 +269,9 @@ async function expectSourceDialogGeometry(
 test("subscription cards preserve pagination and reveal loaded history", async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
-	const planQuoteRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments: [accountActiveDeployment, accountPastDueDeployment, accountCancelingDeployment],
 		cloudAgents: accountCloudAgents,
-		planQuoteRequests,
-		planQuoteResponses: [
-			planChangeQuoteResponse({
-				operationId: "op_account_past_due_to_card",
-				subscriptionId: 42,
-				fundingSource: "stripe",
-				currentPlanSlug: "compute_basic",
-				targetPlanSlug: "compute_basic",
-				currentBillingTermMonths: 1,
-				targetBillingTermMonths: 1,
-				changeKind: "funding_source_switch",
-				effectiveAt: "2026-07-16T00:00:00Z",
-				amountCents: 0,
-				amountUsd: "0.00",
-			}),
-		],
 		plans: [basicPlan, performancePlan],
 		subscriptionPages: {
 			initial: {
@@ -302,6 +300,9 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 						price_cents: 900,
 						billing_term_months: 1,
 						agent_name: "Past due agent",
+						payment_state: "past_due",
+						next_payment_attempt_at: "2099-08-10T12:00:00Z",
+						recovery_action: "top_up",
 					}),
 					subscription("canceling", "canceling", {
 						cancel_at_period_end: true,
@@ -336,7 +337,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog.getByText("Active", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Canceling", { exact: true })).toBeVisible();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(3);
-	await expect(dialog.getByRole("button", { name: "Manage", exact: true })).toHaveCount(2);
+	await expect(dialog.getByRole("button", { name: "Manage", exact: true })).toHaveCount(1);
 	await expect(dialog.getByRole("button", { name: "Resume subscription" })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Show history (2)" })).toBeVisible();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(3);
@@ -352,7 +353,9 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(activeCard.getByText("Card", { exact: true })).toBeVisible();
 	await expect(activeCard.getByText("$190.00/yr", { exact: true })).toBeVisible();
 	await expect(pastDueCard.getByText("Past due", { exact: true })).toBeVisible();
-	await expect(pastDueCard.getByText("Due Aug 12, 2099", { exact: true })).toBeVisible();
+	await expect(pastDueCard.getByText("Retries Aug 10, 2099", { exact: true })).toBeVisible();
+	await expect(pastDueCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
+	await expect(pastDueCard.getByRole("button", { name: "Top up", exact: true })).toBeVisible();
 	await expect(cancelingCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
 	const currentStatuses = await currentCards.evaluateAll((cards) =>
 		cards.map((card) => card.getAttribute("data-subscription-status")),
@@ -424,36 +427,11 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(5);
 	expect(page.url()).toBe(accountSettingsUrl);
 
-	await pastDueCard.getByRole("button", { name: "Manage", exact: true }).click();
-	const paymentSourceDialog = page.getByRole("dialog", { name: "Change payment source" });
-	await expect(paymentSourceDialog).toBeVisible();
-	await expect(dialog).toBeVisible();
-	expect(page.url()).toBe(accountSettingsUrl);
-	await expect(
-		paymentSourceDialog.getByRole("group", { name: "Subscription management mode" }),
-	).toHaveCount(0);
-	await expect(paymentSourceDialog.getByText("Current plan", { exact: true })).toBeVisible();
-	await expect(paymentSourceDialog.getByText("Basic", { exact: true })).toBeVisible();
-	await expect(paymentSourceDialog.getByText("Monthly", { exact: true })).toBeVisible();
-	await expect(paymentSourceDialog.getByLabel("Compute plan")).toHaveCount(0);
-	await expect(
-		paymentSourceDialog.getByRole("button", { name: "Wallet", exact: true }),
-	).toHaveAttribute("aria-pressed", "true");
-	await paymentSourceDialog.getByRole("button", { name: "Card", exact: true }).click();
-	await paymentSourceDialog.getByRole("button", { name: "Review change" }).click();
-	await expect.poll(() => planQuoteRequests.length).toBe(1);
-	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
-		deployment_id: "hdep_past_due",
-		target_plan_slug: "compute_basic",
-		target_billing_term_months: 1,
-		funding_source: "stripe",
-	});
-	const confirmPaymentSourceDialog = page.getByRole("dialog", {
-		name: "Confirm payment source change",
-	});
-	await expect(confirmPaymentSourceDialog).toBeVisible();
-	await confirmPaymentSourceDialog.getByRole("button", { name: "Back", exact: true }).click();
-	await expect(paymentSourceDialog).toBeHidden();
+	await pastDueCard.getByRole("button", { name: "Top up", exact: true }).click();
+	const topUpDialog = page.getByRole("dialog", { name: "Top up Wallet", exact: true });
+	await expect(topUpDialog).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(topUpDialog).toBeHidden();
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Hide history" })).toBeVisible();
 	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(5);
@@ -517,16 +495,18 @@ test("agent settings uses the subscription card without changing plan actions", 
 				name: "Card authentication required",
 				compute_subscription: {
 					...paidBasicDeployment.compute_subscription,
+					status: "past_due",
 					payment_state: "requires_action",
 					latest_failed_invoice_id: "in_card_action_required",
 					latest_failed_invoice_hosted_url: "https://billing.example/invoice/action-required",
+					recovery_action: "fix_payment",
 				},
 			},
 			{
 				...cardPastDueDeployment,
 				compute_subscription: {
 					...cardPastDueDeployment.compute_subscription,
-					status: "active",
+					recovery_action: "fix_payment",
 				},
 			},
 			terminalFallbackDeployment,
@@ -552,13 +532,13 @@ test("agent settings uses the subscription card without changing plan actions", 
 	await expect(agentManage.locator("svg.lucide-settings")).toHaveCount(1);
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
 	const activeCardWidth = await activeCard.evaluate((card) => card.getBoundingClientRect().width);
-	expect(activeCardWidth).toBeLessThanOrEqual(672);
+	expect(activeCardWidth).toBeGreaterThan(896);
 	await expectCardsFit(page.locator("body"));
-	await expectAgentSettingsSectionsAligned(page, 896);
+	await expectAgentSettingsSectionsAligned(page, { min: 896 });
 
 	await page.setViewportSize({ width: 320, height: 568 });
 	await expectCardsFit(page.locator("body"));
-	await expectAgentSettingsSectionsAligned(page, 320);
+	await expectAgentSettingsSectionsAligned(page, { max: 320 });
 	await expectNoHorizontalOverflow(page);
 	await expect(activeCard.getByRole("button", { name: "Manage", exact: true })).toBeVisible();
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
@@ -571,7 +551,7 @@ test("agent settings uses the subscription card without changing plan actions", 
 		"data-status",
 		"warning",
 	);
-	await expect(cancelingCard.getByRole("button", { name: "Manage", exact: true })).toBeDisabled();
+	await expect(cancelingCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
 	await expect(cancelingCard.getByRole("button", { name: "Resume subscription" })).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 
@@ -583,13 +563,8 @@ test("agent settings uses the subscription card without changing plan actions", 
 		"data-status",
 		"destructive",
 	);
-	await expect(pastDueCard.getByRole("button", { name: "Manage", exact: true })).toBeVisible();
-	await pastDueCard.getByRole("button", { name: "Manage", exact: true }).click();
-	const paymentSourceDialog = page.getByRole("dialog", { name: "Change payment source" });
-	await expect(paymentSourceDialog).toBeVisible();
-	await expect(paymentSourceDialog.getByLabel("Compute plan")).toHaveCount(0);
-	await expect(paymentSourceDialog.getByText("Current plan", { exact: true })).toBeVisible();
-	await paymentSourceDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(pastDueCard.getByText("Retries Jul 16, 2026", { exact: true })).toBeVisible();
+	await expect(pastDueCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, "hdep_card_action_required", "Basic");
@@ -599,9 +574,9 @@ test("agent settings uses the subscription card without changing plan actions", 
 	await expect(
 		actionRequiredCard.getByText("Payment action required", { exact: true }),
 	).toHaveAttribute("data-status", "warning");
-	await expect(
-		actionRequiredCard.getByRole("button", { name: "Manage", exact: true }),
-	).toBeVisible();
+	await expect(actionRequiredCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(
+		0,
+	);
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");

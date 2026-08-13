@@ -4,7 +4,11 @@ import type {
 	ComputePlanSlug,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
-import { isPaymentMethodRequiredError } from "@/hosted/billing/errors";
+import {
+	BillingApiError,
+	isPaymentMethodRequiredError,
+	PlanChangeTerminalError,
+} from "@/hosted/billing/errors";
 import { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG } from "./subscription-utils";
 
 export type PlanChangeSelection = Omit<
@@ -66,6 +70,15 @@ export function visiblePlanChangeOperationName(
 	return projectedOperationName !== null && ignoredOperationNames.includes(projectedOperationName)
 		? null
 		: projectedOperationName;
+}
+
+export function shouldResetUnacceptedPlanChangeQuote(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		error.status === 409 &&
+		!(error instanceof PlanChangeTerminalError) &&
+		/quote.*expired|expired.*quote/i.test(error.detail)
+	);
 }
 
 function isHostedComputeUpgradeIneligibilityReason(

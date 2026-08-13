@@ -50,6 +50,7 @@ export function computeSubscriptionCardView({
 	billingTermMonths,
 	scheduleVerb,
 	scheduleAt,
+	scheduleFallback,
 }: {
 	identity: ComputeSubscriptionIdentity;
 	status: ComputeSubscriptionCardView["status"];
@@ -60,6 +61,7 @@ export function computeSubscriptionCardView({
 	billingTermMonths: number;
 	scheduleVerb: string | null;
 	scheduleAt: string | null | undefined;
+	scheduleFallback?: string;
 }): ComputeSubscriptionCardView {
 	const included = fundingSource === "included";
 	return {
@@ -92,9 +94,11 @@ export function computeSubscriptionCardView({
 				value:
 					scheduleVerb && scheduleAt
 						? `${scheduleVerb} ${formatShortDate(scheduleAt)}`
-						: included
-							? "Current"
-							: "Unavailable",
+						: scheduleFallback
+							? scheduleFallback
+							: included
+								? "Current"
+								: "Unavailable",
 			},
 		],
 	};

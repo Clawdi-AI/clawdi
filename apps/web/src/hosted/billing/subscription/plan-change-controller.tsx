@@ -24,6 +24,7 @@ import {
 	type PlanChangeSelection,
 	planChangeUnavailableReason,
 	shouldRecoverWalletToCardSwitch,
+	shouldResetUnacceptedPlanChangeQuote,
 	visiblePlanChangeOperationName,
 } from "@/hosted/billing/subscription/plan-change.logic";
 import { PlanChangeDialog } from "@/hosted/billing/subscription/plan-change-dialog";
@@ -310,6 +311,14 @@ function PlanChangeControllerState({
 				setPaymentMethodRequired(true);
 				return;
 			}
+		}
+		if (shouldResetUnacceptedPlanChangeQuote(error)) {
+			setQuote(null);
+			setPaymentMethodRequired(false);
+			toast.error("Subscription quote is no longer current", {
+				description: "Review the latest choices and request a fresh quote.",
+			});
+			return;
 		}
 		if (walletTopUp.handleFundingError(error)) return;
 		toast.error("Couldn’t update subscription", {

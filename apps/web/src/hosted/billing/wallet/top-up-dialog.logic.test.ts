@@ -29,6 +29,7 @@ function queryClientWithWalletData(): QueryClient {
 		term_price_cents: 1_500,
 	});
 	qc.setQueryData(billingKeys.deployments, []);
+	qc.setQueryData(billingKeys.subscriptions, { pages: [], pageParams: [] });
 	qc.setQueryData(["get", "/v1/agents"], []);
 	return qc;
 }
@@ -74,6 +75,7 @@ describe("handleTopupStartResult", () => {
 				?.isInvalidated,
 		).toBe(true);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
 		expect(setup.resetAttempt).toHaveBeenCalledTimes(1);
 		expect(setup.closeDialog).toHaveBeenCalledTimes(1);
@@ -121,6 +123,7 @@ describe("handleTopupStartResult", () => {
 				?.isInvalidated,
 		).toBe(false);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
+		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(false);
 		expect(setup.closeDialog).not.toHaveBeenCalled();
 		expect(setup.resetAttempt).not.toHaveBeenCalled();
 		expect(setup.toastInfo).not.toHaveBeenCalled();

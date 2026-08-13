@@ -1456,6 +1456,19 @@ export interface components {
             agent_name: string | null;
             /** Is Orphan */
             is_orphan: boolean;
+            /**
+             * Payment State
+             * @enum {string}
+             */
+            payment_state: "ok" | "past_due" | "requires_action" | "unpaid";
+            /** Latest Failed Invoice Hosted Url */
+            latest_failed_invoice_hosted_url: string | null;
+            /** Next Payment Attempt At */
+            next_payment_attempt_at: string | null;
+            /** Recovery Action */
+            recovery_action: ("top_up" | "fix_payment" | "start_new") | null;
+            /** Pending Plan Slug */
+            pending_plan_slug: string | null;
         };
         /** V2ComputeSubscriptionListResponse */
         V2ComputeSubscriptionListResponse: {
