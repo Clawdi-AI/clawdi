@@ -3415,11 +3415,7 @@ function HostedAgentSettingsTab({
 					<ProjectionDependentUnavailable label="Profile settings" />
 				)}
 				<LanguageTimezoneSettingsSection deployment={deployment} />
-				<ComputeSettingsSections
-					deployment={deployment}
-					agent={agent}
-					onDeleteAccepted={onDeleteAccepted}
-				/>
+				<ComputeSettingsSections deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
 			</div>
 		</UnsavedNavigationBoundary>
 	);
@@ -3516,11 +3512,9 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 
 function ComputeSettingsSections({
 	deployment,
-	agent,
 	onDeleteAccepted,
 }: {
 	deployment: HostedDeployment;
-	agent: components["schemas"]["AgentResponse"] | null;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	const router = useRouter();
@@ -3659,17 +3653,6 @@ function ComputeSettingsSections({
 		lifecycleStatus,
 	);
 	const computeCardView = computeSubscriptionCardView({
-		identity: {
-			kind: "agent",
-			name: agent
-				? agentDisplayName(agent)
-				: agentDisplayName({
-						default_name: deployment.resource.name,
-						agent_type: deployment.resource.spec.runtime,
-					}),
-			agentType: deployment.resource.spec.runtime,
-			avatarUrl: agent?.avatar_url,
-		},
 		status: computeRecovery.status,
 		planSlug: computePlanSlug ?? rawComputePlanSlug,
 		fundingSource: isIncludedBasic
