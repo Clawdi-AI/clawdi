@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AuthenticationCreds, BufferJSON, proto } from "baileys";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
 import { Database } from "./sqlite-database.js";
@@ -29,6 +29,7 @@ const WEB_VERSION = parseAuditedWhatsAppWebVersion("2.3000.1043857760");
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
+	vi.useRealTimers();
 	for (const directory of temporaryDirectories.splice(0)) {
 		try {
 			const database = new Database(join(directory, "provider-state.sqlite"));
@@ -300,6 +301,49 @@ describe("SQLite provider state", () => {
 		second.appendProviderEvents([providerEvent("second")]);
 		expect(second.providerEvents(100)[0]?.sequence).toBe(2);
 		second.close();
+	});
+
+	it("returns pending provider events without waiting", async () => {
+		const state = makeState(makeDirectory());
+		state.appendProviderEvents([providerEvent("pending")]);
+
+		expect(await state.waitForProviderEvents(100, 8_000)).toEqual(state.providerEvents(100));
+		state.close();
+	});
+
+	it("wakes every provider event waiter when events are appended", async () => {
+		const state = makeState(makeDirectory());
+		const first = state.waitForProviderEvents(100, 8_000);
+		const second = state.waitForProviderEvents(100, 8_000);
+
+		state.appendProviderEvents([providerEvent("appended")]);
+
+		const results = await Promise.all([first, second]);
+		expect(results.map((events) => events.map((event) => event.messageId))).toEqual([
+			["appended"],
+			["appended"],
+		]);
+		state.close();
+	});
+
+	it("returns an empty provider event batch when the wait expires", async () => {
+		vi.useFakeTimers();
+		const state = makeState(makeDirectory());
+		const waiting = state.waitForProviderEvents(100, 8_000);
+
+		await vi.advanceTimersByTimeAsync(8_000);
+
+		await expect(waiting).resolves.toEqual([]);
+		state.close();
+	});
+
+	it("resolves provider event waiters when the state closes", async () => {
+		const state = makeState(makeDirectory());
+		const waiting = state.waitForProviderEvents(100, 8_000);
+
+		state.close();
+
+		await expect(waiting).resolves.toEqual([]);
 	});
 
 	it("atomically clears physical auth, Signal, retry, and inbox state across restart", async () => {

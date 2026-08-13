@@ -231,7 +231,8 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                 },
             )
         if request.url.path == f"{SESSION_PREFIX}/provider-events":
-            assert dict(request.url.params) == {"limit": "25"}
+            assert dict(request.url.params) == {"limit": "25", "waitMs": "8000"}
+            assert request.extensions["timeout"]["read"] == 10.0
             return httpx.Response(
                 200,
                 json={
@@ -303,7 +304,7 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
         {"tag": "iq", "attrs": {"id": "query", "type": "get"}},
         15_000,
     )
-    events = await client.provider_events(limit=25)
+    events = await client.provider_events(limit=25, wait_ms=8_000)
     await client.acknowledge_provider_events(through_sequence=events[0].sequence)
 
     await http_client.aclose()

@@ -637,6 +637,9 @@ function createHarness(options: HarnessOptions = {}) {
 		providerEvents() {
 			return [];
 		},
+		async waitForProviderEvents() {
+			return [];
+		},
 		acknowledgeProviderEvents() {},
 		resetPhysicalAuth() {
 			physicalAuthResets += 1;

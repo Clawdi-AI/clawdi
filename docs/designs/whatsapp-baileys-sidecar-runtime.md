@@ -142,7 +142,7 @@ must use HTTPS.
 | `POST` | `/v1/sessions/{id}/relay-message` | Relay an authorized Baileys message proto with its message id and attributes. |
 | `POST` | `/v1/sessions/{id}/raw-node` | Send an ownership-checked receipt or other allowed BinaryNode. |
 | `POST` | `/v1/sessions/{id}/query-iq` | Forward the bounded IQ subset required by the synthetic Noise session. |
-| `GET` | `/v1/sessions/{id}/provider-events` | Read ordered physical `messages.upsert` proto events after synchronous SQLite persistence. |
+| `GET` | `/v1/sessions/{id}/provider-events` | Read ordered physical `messages.upsert` proto events after synchronous SQLite persistence; optional `waitMs` long-polls for up to 8000ms, paired with the backend's explicit 10s read timeout. |
 | `POST` | `/v1/sessions/{id}/provider-events/ack` | Delete physical events only after FastAPI commits them. |
 
 These are provider-transport operations behind an internal bearer, not a

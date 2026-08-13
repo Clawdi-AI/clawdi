@@ -32,6 +32,8 @@ _RAW_NODE_PATH = "/v1/raw-node"
 _QUERY_IQ_PATH = "/v1/query-iq"
 _PROVIDER_EVENTS_PATH = "/v1/provider-events"
 _PROVIDER_EVENTS_ACK_PATH = "/v1/provider-events/ack"
+_PROVIDER_EVENTS_MAX_WAIT_MS = 8_000
+_PROVIDER_EVENTS_READ_TIMEOUT_SECONDS = 10.0
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 type _NativeNodeValue = (
@@ -408,8 +410,20 @@ class WhatsAppBaileysSidecarClient:
             decoded_node[key] = value
         return decoded_node
 
-    async def provider_events(self, *, limit: int = 100) -> list[WhatsAppProviderMessageEvent]:
-        response = await self._request("GET", _PROVIDER_EVENTS_PATH, params={"limit": limit})
+    async def provider_events(
+        self,
+        *,
+        limit: int = 100,
+        wait_ms: int = 0,
+    ) -> list[WhatsAppProviderMessageEvent]:
+        if not 0 <= wait_ms <= _PROVIDER_EVENTS_MAX_WAIT_MS:
+            raise ValueError("baileys provider events wait must be between 0 and 8000 milliseconds")
+        response = await self._request(
+            "GET",
+            _PROVIDER_EVENTS_PATH,
+            params={"limit": limit, "waitMs": wait_ms},
+            timeout=httpx.Timeout(_PROVIDER_EVENTS_READ_TIMEOUT_SECONDS),
+        )
         data = _response_json(response)
         if not isinstance(data, dict):
             raise ValueError("baileys provider events response must contain an event list")
@@ -433,18 +447,21 @@ class WhatsAppBaileysSidecarClient:
         json_body: JsonValue = None,
         params: Mapping[str, str | int] | None = None,
         session_scoped: bool = True,
+        timeout: httpx.Timeout | float | None = None,
     ) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self._api_token}"}
         request_path = self._session_path(path) if session_scoped else path
         try:
             if self._config.unix_socket_path is not None:
                 _assert_whatsapp_sidecar_unix_socket_ready(self._config.unix_socket_path)
+            request_timeout = self._client.timeout if timeout is None else timeout
             if json_body is None:
                 response = await self._client.request(
                     method,
                     request_path,
                     headers=headers,
                     params=params,
+                    timeout=request_timeout,
                 )
             else:
                 response = await self._client.request(
@@ -453,6 +470,7 @@ class WhatsAppBaileysSidecarClient:
                     headers=headers,
                     json=json_body,
                     params=params,
+                    timeout=request_timeout,
                 )
         except WhatsAppSidecarUnavailableError:
             self._connected = False

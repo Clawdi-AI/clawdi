@@ -39,6 +39,12 @@ from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services import sync_events
+from app.services.channel_wakeups import (
+    channel_deliveries_enqueued,
+    channel_inbound_messages_enqueued,
+    notify_channel_delivery_enqueued,
+    notify_channel_inbound_message_enqueued,
+)
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
@@ -712,12 +718,34 @@ async def test_postgres_listener_ignores_malformed_notification_before_valid_eve
 
 
 @pytest.mark.asyncio
+async def test_postgres_listener_wakes_channel_consumers(db_session: AsyncSession):
+    delivery_waiter = channel_deliveries_enqueued.subscribe()
+    inbound_waiter = channel_inbound_messages_enqueued.subscribe()
+    await sync_events.start_postgres_listener()
+    try:
+        await notify_channel_delivery_enqueued(db_session)
+        await notify_channel_inbound_message_enqueued(db_session)
+        await asyncio.sleep(0)
+        assert not delivery_waiter.is_set()
+        assert not inbound_waiter.is_set()
+
+        await db_session.commit()
+
+        await asyncio.wait_for(delivery_waiter.wait(), timeout=2)
+        await asyncio.wait_for(inbound_waiter.wait(), timeout=2)
+    finally:
+        await sync_events.stop_postgres_listener()
+        channel_deliveries_enqueued.unsubscribe(delivery_waiter)
+        channel_inbound_messages_enqueued.unsubscribe(inbound_waiter)
+
+
+@pytest.mark.asyncio
 async def test_postgres_listener_start_failure_allows_clean_restart(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """A failed first connection leaves the public lifecycle restartable."""
 
-    async def fail_connect(_dsn, _channel, _notification, _terminated):
+    async def fail_connect(_dsn, _channels, _terminated):
         raise RuntimeError("listener failed")
 
     with monkeypatch.context() as failed_connection:
