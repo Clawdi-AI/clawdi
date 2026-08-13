@@ -5,6 +5,7 @@ FROM oven/bun:1.3.13 AS deps
 WORKDIR /app
 
 COPY package.json bun.lock turbo.json tsconfig.base.json biome.json ./
+COPY patches/libsignal@6.0.0.patch patches/libsignal@6.0.0.patch
 COPY apps/web/package.json apps/web/package.json
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/shared/package.json packages/shared/package.json

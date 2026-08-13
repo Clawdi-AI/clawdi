@@ -125,6 +125,7 @@ jobs:
               - ".dockerignore"
               - "package.json"
               - "bun.lock"
+              - "patches/libsignal@6.0.0.patch"
               - ".github/workflows/client-ci.yml"
 
   # Lint, typecheck, build, and client package tests in one job.
