@@ -191,7 +191,11 @@ import {
 	runtimeServiceNameSchema,
 	writeRuntimeRunConfig,
 } from "./run-config";
-import { runtimeImpactRevision, runtimeProgramRevision } from "./runtime-impact-revision";
+import {
+	daemonProgramRevision,
+	runtimeImpactRevision,
+	runtimeProgramRevision,
+} from "./runtime-impact-revision";
 import {
 	buildRuntimeSystemdUserProgram,
 	installOfficialRuntimeService,
@@ -307,9 +311,10 @@ interface RuntimeSystemdApplyHooks {
 }
 
 export interface RuntimePrivateAppliedAuthority {
-	// These are secret-dependent verifiers and may only be persisted in the
-	// root-owned 0600 applied-state authority.
+	// These private activation verifiers may only be persisted in the root-owned
+	// 0600 applied-state authority.
 	daemonAuthTokenRevision?: string;
+	daemonProgramRevision?: string;
 	egressSidecarSecretRevision?: string;
 }
 
@@ -5875,6 +5880,7 @@ export function convergeRuntimeManifest(
 	let systemdActivationAttempted = false;
 	let restartDaemon = false;
 	let desiredDaemonAuthTokenRevision: string | undefined;
+	let desiredDaemonProgramRevision: string | undefined;
 	let restartEgressSidecar = false;
 	let desiredEgressSidecarSecretRevision: string | undefined;
 	let rollbackEgressSecretOverride: RuntimeEgressSecretMaterial | undefined;
@@ -6104,7 +6110,10 @@ export function convergeRuntimeManifest(
 		const runtimeAuthToken = daemonAuthTokenFile ? readRuntimeAuthToken(paths) : null;
 		if (runtimeAuthToken) {
 			desiredDaemonAuthTokenRevision = daemonAuthTokenRevision(runtimeAuthToken);
-			restartDaemon = desiredDaemonAuthTokenRevision !== appliedState?.daemonAuthTokenRevision;
+			desiredDaemonProgramRevision = daemonProgramRevision(manifest);
+			restartDaemon =
+				desiredDaemonAuthTokenRevision !== appliedState?.daemonAuthTokenRevision ||
+				desiredDaemonProgramRevision !== appliedState?.daemonProgramRevision;
 		}
 		try {
 			withRuntimeUserFileAccess(() =>
@@ -6582,17 +6591,24 @@ export function convergeRuntimeManifest(
 		};
 		if (installErrors.length === 0) {
 			hostedRuntimeContract.assertPlatformRoots();
-			const daemonRevisionPreviouslyCommitted =
+			const daemonAuthTokenRevisionPreviouslyCommitted =
 				desiredDaemonAuthTokenRevision !== undefined &&
 				desiredDaemonAuthTokenRevision === appliedState?.daemonAuthTokenRevision;
+			const daemonProgramRevisionPreviouslyCommitted =
+				desiredDaemonProgramRevision !== undefined &&
+				desiredDaemonProgramRevision === appliedState?.daemonProgramRevision;
 			const egressRevisionPreviouslyCommitted =
 				desiredEgressSidecarSecretRevision !== undefined &&
 				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
 			commitRuntimeInstallReceipts(installReceiptTargets, paths);
 			opts.commitAuthority?.(convergence, {
 				...(desiredDaemonAuthTokenRevision !== undefined &&
-				(systemdActivationApplied || daemonRevisionPreviouslyCommitted)
+				(systemdActivationApplied || daemonAuthTokenRevisionPreviouslyCommitted)
 					? { daemonAuthTokenRevision: desiredDaemonAuthTokenRevision }
+					: {}),
+				...(desiredDaemonProgramRevision !== undefined &&
+				(systemdActivationApplied || daemonProgramRevisionPreviouslyCommitted)
+					? { daemonProgramRevision: desiredDaemonProgramRevision }
 					: {}),
 				...(desiredEgressSidecarSecretRevision !== undefined &&
 				(systemdActivationApplied || egressRevisionPreviouslyCommitted)

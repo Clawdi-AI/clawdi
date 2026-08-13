@@ -65,6 +65,10 @@ export type Plan = Schemas["V2PlanResponse"];
 export type PortalRequest = Schemas["V2ComputePortalRequest"];
 export type WalletAutoReloadAction = Schemas["V2WalletAutoReloadActionResponse"];
 export type WalletAutoReloadRequest = Schemas["V2WalletAutoReloadRequest"];
+export type WalletAutoReloadSetupFinalizeRequest =
+	Schemas["V2WalletAutoReloadSetupFinalizeRequest"];
+export type WalletAutoReloadSetupRequest = Schemas["V2WalletAutoReloadSetupRequest"];
+export type WalletAutoReloadSetupResult = Schemas["V2WalletAutoReloadSetupResponse"];
 export type WalletState = Schemas["V2WalletResponse"];
 export type WalletTopupRequest = Schemas["V2WalletTopupRequest"];
 export type WalletTopupResult = Schemas["V2WalletTopupResponse"];

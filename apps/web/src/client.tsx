@@ -1,5 +1,5 @@
-// Remove Stripe return secrets before telemetry modules evaluate.
-import "./wallet-topup-return.bootstrap";
+// Remove Wallet Stripe return secrets before telemetry modules evaluate.
+import "./wallet-stripe-return.bootstrap";
 
 import "./instrument.client";
 

@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { isIdempotencyKeyReusedError, normalizeBillingError } from "@/hosted/billing/errors";
-import { formatCents } from "@/hosted/billing/format";
+import { formatCents, usdInputToCents } from "@/hosted/billing/format";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useSensitiveTopUp } from "@/hosted/billing/sensitive-actions";
 import type { PaymentIntentClientSecret } from "@/hosted/billing/stripe-client-secret";
@@ -96,7 +96,7 @@ export function TopUpDialog({
 	const topupKeyRef = useRef<string | null>(null);
 	const paymentReferenceRef = useRef<string | null>(null);
 
-	const amountCents = Number(dollars) * 100;
+	const amountCents = usdInputToCents(dollars) ?? Number.NaN;
 	const valid = validTopUpAmountCents(amountCents);
 	const amountInvalid = amountTouched && !valid;
 	function finishTopup(status: PaymentOutcome) {

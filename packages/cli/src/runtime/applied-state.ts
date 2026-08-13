@@ -50,6 +50,10 @@ export const runtimeAppliedStateSchema = z
 			.string()
 			.regex(/^[a-f0-9]{64}$/)
 			.optional(),
+		daemonProgramRevision: z
+			.string()
+			.regex(/^[a-f0-9]{32}$/)
+			.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
 	})

@@ -26,32 +26,47 @@ const NOW = "2026-07-22T00:00:00Z";
 
 describe("idempotent billing transport", () => {
 	it("retries one network failure with the exact request", async () => {
-		const seen: Array<{ body: string; key: string | null; auth: string | null }> = [];
-		const transport = retryIdempotentBillingTransport(async (request) => {
-			seen.push({
-				body: await request.text(),
-				key: request.headers.get("Idempotency-Key"),
-				auth: request.headers.get("Authorization"),
+		for (const requestCase of [
+			{ path: "/v2/wallet/topup", body: '{"amount_cents":1200}', key: "topup-1" },
+			{
+				path: "/v2/wallet/auto-reload/setup-intent",
+				body: '{"consent_version":"wallet_auto_reload_off_session_v2"}',
+				key: "setup-1",
+			},
+		] as const) {
+			const seen: Array<{ body: string; key: string | null; auth: string | null }> = [];
+			const transport = retryIdempotentBillingTransport(async (request) => {
+				seen.push({
+					body: await request.text(),
+					key: request.headers.get("Idempotency-Key"),
+					auth: request.headers.get("Authorization"),
+				});
+				if (seen.length === 1) throw new BillingNetworkError("offline");
+				return new Response(null, { status: 204 });
 			});
-			if (seen.length === 1) throw new BillingNetworkError("offline");
-			return new Response(null, { status: 204 });
-		});
-		const response = await transport(
-			new Request("https://api.clawdi.ai/v2/wallet/topup", {
-				method: "POST",
-				headers: { "Idempotency-Key": "topup-1", Authorization: "Bearer token" },
-				body: '{"amount_usd":12}',
-			}),
-		);
-		expect(response.status).toBe(204);
-		expect(seen).toEqual([
-			{ body: '{"amount_usd":12}', key: "topup-1", auth: "Bearer token" },
-			{ body: '{"amount_usd":12}', key: "topup-1", auth: "Bearer token" },
-		]);
+			const response = await transport(
+				new Request(`https://api.clawdi.ai${requestCase.path}`, {
+					method: "POST",
+					headers: { "Idempotency-Key": requestCase.key, Authorization: "Bearer token" },
+					body: requestCase.body,
+				}),
+			);
+			expect(response.status).toBe(204);
+			expect(seen).toEqual([
+				{ body: requestCase.body, key: requestCase.key, auth: "Bearer token" },
+				{ body: requestCase.body, key: requestCase.key, auth: "Bearer token" },
+			]);
+		}
 	});
 
 	it("does not retry responses, aborts, or a second network failure", async () => {
-		for (const scenario of ["response", "abort", "other-endpoint", "second-failure"] as const) {
+		for (const scenario of [
+			"response",
+			"abort",
+			"other-endpoint",
+			"setup-finalize",
+			"second-failure",
+		] as const) {
 			let calls = 0;
 			const controller = new AbortController();
 			const transport = retryIdempotentBillingTransport(async () => {
@@ -60,7 +75,12 @@ describe("idempotent billing transport", () => {
 				if (scenario === "abort") controller.abort();
 				throw new BillingNetworkError("offline");
 			});
-			const path = scenario === "other-endpoint" ? "/v2/subscription/checkout" : "/v2/wallet/topup";
+			const path =
+				scenario === "other-endpoint"
+					? "/v2/subscription/checkout"
+					: scenario === "setup-finalize"
+						? "/v2/wallet/auto-reload/setup-intent/finalize"
+						: "/v2/wallet/topup";
 			const request = new Request(`https://api.clawdi.ai${path}`, {
 				method: "POST",
 				headers: { "Idempotency-Key": "topup-1" },
@@ -70,6 +90,53 @@ describe("idempotent billing transport", () => {
 			else await expect(transport(request)).rejects.toBeInstanceOf(BillingNetworkError);
 			expect(calls).toBe(scenario === "second-failure" ? 2 : 1);
 		}
+	});
+
+	it("uses the generated Wallet Setup endpoints and trusts only setup identities on finalize", async () => {
+		const requests: Request[] = [];
+		const setupIdentity = `wsetup_${"a".repeat(64)}`;
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			if (request.url.endsWith("/setup-intent")) {
+				return jsonResponse({
+					setup_identity: setupIdentity,
+					setup_intent_id: "seti_wallet",
+					client_secret: "seti_wallet_secret_private",
+					status: "requires_payment_method",
+					currency: "usd",
+					consent_version: "wallet_auto_reload_off_session_v2",
+					amount_policy: "wallet_reload_configured_plus_negative_balance_v1",
+					auto_reload_threshold_usd: "5",
+					auto_reload_amount_cents: 2_500,
+					auto_reload_monthly_cap_cents: 10_000,
+				});
+			}
+			return jsonResponse({});
+		});
+		const settings = {
+			consent_version: "wallet_auto_reload_off_session_v2",
+			auto_reload_threshold_usd: "5",
+			auto_reload_amount_cents: 2_500,
+			auto_reload_monthly_cap_cents: 10_000,
+		} as const;
+
+		await client.createWalletAutoReloadSetup(settings, "setup-key");
+		await client.finalizeWalletAutoReloadSetup({
+			setup_identity: setupIdentity,
+			setup_intent_id: "seti_wallet",
+		});
+
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+			"/v2/wallet/auto-reload/setup-intent",
+			"/v2/wallet/auto-reload/setup-intent/finalize",
+		]);
+		expect(requests[0]?.headers.get("Idempotency-Key")).toBe("setup-key");
+		expect(requests[1]?.headers.get("Idempotency-Key")).toBeNull();
+		expect(await requests[0]?.json()).toEqual(settings);
+		expect(await requests[1]?.json()).toEqual({
+			setup_identity: setupIdentity,
+			setup_intent_id: "seti_wallet",
+		});
 	});
 });
 
