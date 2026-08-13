@@ -599,23 +599,9 @@ async def platform_create_agent(
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse | Response:
     action = "agent_environment.create"
-    owner = await _resolve_owner(
-        db,
-        owner=body.owner,
-        resource_type="agent_environment",
-        resource_id=str(body.agent_id),
-        action=action,
-        request=request,
-        idempotency_key=idempotency_key,
-    )
     await lock_hosted_v1_ownership_mutations(db)
     existing_agent = await db.scalar(
-        select(AgentEnvironment)
-        .where(
-            AgentEnvironment.id == body.agent_id,
-            AgentEnvironment.user_id == owner.id,
-        )
-        .with_for_update()
+        select(AgentEnvironment).where(AgentEnvironment.id == body.agent_id).with_for_update()
     )
     if existing_agent is not None:
         try:
@@ -629,6 +615,15 @@ async def platform_create_agent(
                     "message": str(exc),
                 },
             ) from None
+    owner = await _resolve_owner(
+        db,
+        owner=body.owner,
+        resource_type="agent_environment",
+        resource_id=str(body.agent_id),
+        action=action,
+        request=request,
+        idempotency_key=idempotency_key,
+    )
     await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,

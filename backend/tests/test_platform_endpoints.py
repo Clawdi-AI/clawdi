@@ -489,10 +489,12 @@ async def test_platform_agent_reregistration_updates_its_name(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cross_owner", [False, True])
 async def test_platform_agent_reregistration_rejects_active_hosted_v1_ownership(
     platform_client,
     db_session,
     seed_user,
+    cross_owner,
 ):
     agent = await create_env_with_project(
         db_session,
@@ -521,6 +523,11 @@ async def test_platform_agent_reregistration_rejects_active_hosted_v1_ownership(
         )
     )
     await db_session.commit()
+    requested_owner = seed_user
+    if cross_owner:
+        requested_owner = User(clerk_id=f"platform_cross_owner_{uuid.uuid4().hex}")
+        db_session.add(requested_owner)
+        await db_session.commit()
     idempotency_key = f"hosted-v1-reregister-{uuid.uuid4().hex}"
     before = (
         agent.machine_id,
@@ -537,7 +544,7 @@ async def test_platform_agent_reregistration_rejects_active_hosted_v1_ownership(
         "/v1/platform/agents",
         headers=_headers(idempotency_key),
         json={
-            **_agent_body(_clerk_owner(seed_user), agent.id),
+            **_agent_body(_clerk_owner(requested_owner), agent.id),
             "machine_id": "mutated-machine",
             "machine_name": "Mutated Agent",
             "default_name": "Mutated Name",
