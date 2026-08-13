@@ -7,6 +7,7 @@ import {
 	collectBrowserErrors,
 	gotoHostedAgentSettings,
 	gotoHostedSettingsDialog,
+	includedBasicDeployment,
 	paidBasicDeployment,
 	performancePlan,
 	planChangeQuoteResponse,
@@ -162,6 +163,41 @@ async function expectNoHorizontalOverflow(page: Page) {
 		scrollWidth: document.documentElement.scrollWidth,
 	}));
 	expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
+}
+
+async function expectAgentSettingsSectionsAligned(page: Page, maxWidth: number) {
+	const main = page.locator("main");
+	const sectionNames = ["Name", "Language & timezone", "Compute plan", "Lifecycle", "Danger zone"];
+	const boxes = await Promise.all(
+		sectionNames.map(async (name) => {
+			const section = main
+				.getByRole("heading", { name, exact: true })
+				.locator("xpath=ancestor::section[1]");
+			await expect(section).toBeVisible();
+			const box = await section.boundingBox();
+			if (!box) throw new Error(`${name} settings section has no layout box`);
+			const overflow = await section.evaluate((element) => ({
+				clientWidth: element.clientWidth,
+				scrollWidth: element.scrollWidth,
+			}));
+			expect(overflow.scrollWidth, `${name} section overflow`).toBeLessThanOrEqual(
+				overflow.clientWidth + 1,
+			);
+			return box;
+		}),
+	);
+
+	const [reference] = boxes;
+	if (!reference) throw new Error("Expected Agent Settings section boxes");
+	expect(reference.width).toBeLessThanOrEqual(maxWidth + 1);
+	for (const box of boxes.slice(1)) {
+		expect(Math.abs(box.x - reference.x), "section left edge").toBeLessThanOrEqual(1);
+		expect(Math.abs(box.width - reference.width), "section width").toBeLessThanOrEqual(1);
+		expect(
+			Math.abs(box.x + box.width / 2 - (reference.x + reference.width / 2)),
+			"section center axis",
+		).toBeLessThanOrEqual(1);
+	}
 }
 
 async function openSubscriptions(page: Page) {
@@ -359,14 +395,28 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 
 	const accountSettingsUrl = page.url();
 	await activeCard.getByRole("button", { name: "Manage", exact: true }).click();
-	const fullManagementDialog = page.getByRole("dialog", { name: "Change compute subscription" });
+	const fullManagementDialog = page.getByRole("dialog", { name: "Manage compute subscription" });
 	await expect(fullManagementDialog).toBeVisible();
 	await expect(dialog).toBeVisible();
 	expect(page.url()).toBe(accountSettingsUrl);
+	await expect(
+		fullManagementDialog.getByRole("group", { name: "Subscription management mode" }),
+	).toBeVisible();
+	await expect(
+		fullManagementDialog.getByRole("button", { name: "Plan & billing", exact: true }),
+	).toHaveAttribute("aria-pressed", "true");
+	await expect(fullManagementDialog.getByLabel("Payment source")).toHaveCount(0);
 	await expect(fullManagementDialog.getByLabel("Compute plan")).toHaveText(/Performance/);
 	await fullManagementDialog.getByLabel("Compute plan").click();
 	await page.getByRole("option", { name: "Basic", exact: true }).click();
 	await expect(fullManagementDialog.getByLabel("Compute plan")).toHaveText(/Basic/);
+	await fullManagementDialog.getByRole("button", { name: "Payment source", exact: true }).click();
+	await expect(fullManagementDialog.getByLabel("Compute plan")).toHaveCount(0);
+	await expect(fullManagementDialog.getByText("Current plan", { exact: true })).toBeVisible();
+	await expect(fullManagementDialog.getByLabel("Payment source")).toBeVisible();
+	await fullManagementDialog.getByRole("button", { name: "Plan & billing", exact: true }).click();
+	await expect(fullManagementDialog.getByLabel("Compute plan")).toHaveText(/Performance/);
+	await expect(fullManagementDialog.getByLabel("Payment source")).toHaveCount(0);
 	await fullManagementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 	await expect(fullManagementDialog).toBeHidden();
 	await expect(dialog).toBeVisible();
@@ -379,6 +429,9 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(paymentSourceDialog).toBeVisible();
 	await expect(dialog).toBeVisible();
 	expect(page.url()).toBe(accountSettingsUrl);
+	await expect(
+		paymentSourceDialog.getByRole("group", { name: "Subscription management mode" }),
+	).toHaveCount(0);
 	await expect(paymentSourceDialog.getByText("Current plan", { exact: true })).toBeVisible();
 	await expect(paymentSourceDialog.getByText("Basic", { exact: true })).toBeVisible();
 	await expect(paymentSourceDialog.getByText("Monthly", { exact: true })).toBeVisible();
@@ -477,6 +530,7 @@ test("agent settings uses the subscription card without changing plan actions", 
 				},
 			},
 			terminalFallbackDeployment,
+			includedBasicDeployment,
 		],
 		plans: [basicPlan, performancePlan],
 	});
@@ -500,9 +554,11 @@ test("agent settings uses the subscription card without changing plan actions", 
 	const activeCardWidth = await activeCard.evaluate((card) => card.getBoundingClientRect().width);
 	expect(activeCardWidth).toBeLessThanOrEqual(672);
 	await expectCardsFit(page.locator("body"));
+	await expectAgentSettingsSectionsAligned(page, 896);
 
 	await page.setViewportSize({ width: 320, height: 568 });
 	await expectCardsFit(page.locator("body"));
+	await expectAgentSettingsSectionsAligned(page, 320);
 	await expectNoHorizontalOverflow(page);
 	await expect(activeCard.getByRole("button", { name: "Manage", exact: true })).toBeVisible();
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
@@ -559,6 +615,18 @@ test("agent settings uses the subscription card without changing plan actions", 
 	await expect(fallbackCard.getByText("Payment", { exact: true })).toBeVisible();
 	await expect(fallbackCard.getByText("Included", { exact: true })).toBeVisible();
 	await expect(fallbackCard.getByRole("button", { name: "Choose a subscription" })).toBeVisible();
+
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+	await page.getByRole("button", { name: "Upgrade to Performance", exact: true }).click();
+	const includedUpgradeDialog = page.getByRole("dialog", { name: "Change compute subscription" });
+	await expect(includedUpgradeDialog).toBeVisible();
+	await expect(
+		includedUpgradeDialog.getByRole("group", { name: "Subscription management mode" }),
+	).toHaveCount(0);
+	await expect(includedUpgradeDialog.getByLabel("Compute plan")).toBeVisible();
+	await expect(includedUpgradeDialog.getByLabel("Payment source")).toBeVisible();
+	await expectNoHorizontalOverflow(page);
+	await includedUpgradeDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 	expect(errors, `agent subscription cards: ${errors.join(" | ")}`).toEqual([]);
 });
 

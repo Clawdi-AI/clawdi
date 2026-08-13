@@ -3407,7 +3407,7 @@ function HostedAgentSettingsTab({
 }) {
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
-			<div className="flex flex-col gap-8">
+			<div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
 				{agent ? (
 					<AgentSettingsPanel environmentId={environmentId} />
 				) : (
