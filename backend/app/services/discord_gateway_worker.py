@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import random
-import uuid
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol
@@ -108,7 +107,6 @@ class DiscordGatewayWorker:
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
         *,
-        worker_id: str | None = None,
         lock_engine: AsyncEngine | None = None,
         scan_interval_seconds: float = 10.0,
         reconnect_initial_seconds: float = 1.0,
@@ -116,7 +114,6 @@ class DiscordGatewayWorker:
         connect_factory: _GatewayConnectFactory = connect,
     ) -> None:
         self._sessionmaker = sessionmaker
-        self._worker_id = worker_id or f"discord-gateway-{uuid.uuid4()}"
         self._lock_engine = lock_engine or _sessionmaker_bind(sessionmaker)
         self._scan_interval_seconds = scan_interval_seconds
         self._reconnect_initial_seconds = reconnect_initial_seconds

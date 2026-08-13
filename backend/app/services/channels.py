@@ -247,10 +247,6 @@ CHANNEL_RETENTION_PROVIDERS = (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_WHATSAPP,
 )
-DISCORD_EPHEMERAL_REFERENCE_KINDS = (
-    DISCORD_REF_INTERACTION_ID_TOKEN,
-    DISCORD_REF_INTERACTION_TOKEN,
-)
 # Discord interaction tokens are valid for 15 minutes. Keep a five-minute
 # grace period for clock skew and in-flight follow-ups, then remove the exact
 # credential fields independently of the message retention horizon.
@@ -2388,14 +2384,14 @@ def discord_guild_command_denied_reason(
     return DISCORD_GUILD_PERMISSION_DENIED
 
 
-def discord_pair_install_denied_reason(
+def _discord_pair_install_admission(
     payload: JsonObject,
     *,
     command: ChannelControlCommand | None,
     guild_id: str | None,
     external_user_id: str | None,
     trusted_interaction: bool,
-) -> str | None:
+) -> tuple[str | None, bool]:
     """Require the Discord installation that owns a pairing mutation.
 
     ``authorizing_integration_owners`` is Discord's authoritative mapping from
@@ -2406,24 +2402,6 @@ def discord_pair_install_denied_reason(
     active scope and the original pairing actor. A present-but-mismatched owner
     is never accepted.
     """
-    denied_reason, _cleanup_owner_missing = _discord_pair_install_admission(
-        payload,
-        command=command,
-        guild_id=guild_id,
-        external_user_id=external_user_id,
-        trusted_interaction=trusted_interaction,
-    )
-    return denied_reason
-
-
-def _discord_pair_install_admission(
-    payload: JsonObject,
-    *,
-    command: ChannelControlCommand | None,
-    guild_id: str | None,
-    external_user_id: str | None,
-    trusted_interaction: bool,
-) -> tuple[str | None, bool]:
     if command is None or command.kind not in {"pair", "unpair"}:
         return None, False
     data = _discord_event_data(payload)
@@ -2632,11 +2610,6 @@ def discord_control_reply_for_command(
     if command is not None and command.kind == "unknown" and command.command:
         return f"Unknown command: {command.command}. Use {HELP_COMMAND} for instructions."
     return pairing_reply_for_command(command, result)
-
-
-def extract_pair_code(text: str | None) -> str | None:
-    command = parse_channel_control_command(text)
-    return command.code if command is not None and command.kind == "pair" else None
 
 
 async def send_control_command_reply(
@@ -3025,7 +2998,7 @@ async def _record_inbound_message_with_status(
 ) -> tuple[ChannelMessage, bool]:
     event_id = provider_event_id or provider_message_id
     if event_id is not None:
-        existing = await _find_existing_inbound_message(
+        existing = await find_existing_inbound_provider_event(
             db,
             account=account,
             external_chat_id=external_chat_id,
@@ -3056,7 +3029,7 @@ async def _record_inbound_message_with_status(
             db.add(message)
             await db.flush()
     except IntegrityError:
-        existing = await _find_existing_inbound_message(
+        existing = await find_existing_inbound_provider_event(
             db,
             account=account,
             external_chat_id=external_chat_id,
@@ -3068,33 +3041,6 @@ async def _record_inbound_message_with_status(
         raise
     inbound_messages.labels(channel=account.provider).inc()
     return message, True
-
-
-async def _find_existing_inbound_message(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    external_chat_id: str,
-    provider_event_id: str | None,
-    provider_event_scope: str,
-) -> ChannelMessage | None:
-    if provider_event_id is None:
-        return None
-    filters = [
-        ChannelMessage.account_id == account.id,
-        ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
-        ChannelMessage.provider_event_scope == provider_event_scope,
-        ChannelMessage.provider_event_id == provider_event_id,
-    ]
-    if provider_event_scope == PROVIDER_EVENT_SCOPE_CHAT:
-        filters.append(ChannelMessage.external_chat_id == external_chat_id)
-    result = await db.execute(
-        select(ChannelMessage)
-        .where(*filters)
-        .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
 
 
 async def find_existing_inbound_provider_event(

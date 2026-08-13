@@ -218,17 +218,6 @@ class _DiscordGatewaySessionStore:
             self._prune(now)
             self._enforce_bound()
 
-    def get(self, session_id: str) -> _DiscordGatewaySessionState | None:
-        now = self._now()
-        with self._lock:
-            self._prune(now)
-            entry = self._entries.get(session_id)
-            if entry is None:
-                return None
-            entry.touched_at = now
-            self._entries.move_to_end(session_id)
-            return entry.state
-
     def touch(self, session_id: str) -> bool:
         now = self._now()
         with self._lock:
@@ -240,25 +229,9 @@ class _DiscordGatewaySessionStore:
             self._entries.move_to_end(session_id)
             return True
 
-    def clear(self) -> None:
-        with self._lock:
-            self._entries.clear()
-
     def discard(self, session_id: str) -> None:
         with self._lock:
             self._entries.pop(session_id, None)
-
-    def __len__(self) -> int:
-        now = self._now()
-        with self._lock:
-            self._prune(now)
-            return len(self._entries)
-
-    def session_ids(self) -> tuple[str, ...]:
-        now = self._now()
-        with self._lock:
-            self._prune(now)
-            return tuple(self._entries)
 
     def _prune(self, now: float) -> None:
         expired = [

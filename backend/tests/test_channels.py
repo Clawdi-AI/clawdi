@@ -69,7 +69,6 @@ from app.routes.channel_routers import public as public_router
 from app.routes.channel_routers import shared as shared_router
 from app.routes.channel_routers import telegram as telegram_router
 from app.routes.channel_routers.discord import (
-    _DISCORD_GATEWAY_SESSIONS,
     _discord_gateway_authority,
     _discord_gateway_url,
     _discord_guild_create_payload,
@@ -2699,7 +2698,7 @@ async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed
 
     agent_deliveries: list[dict[str, Any]] = []
 
-    async def _record_agent_delivery(_account, _link, payload):
+    async def _record_agent_delivery(_link, payload):
         agent_deliveries.append(payload)
         return True
 
@@ -7154,7 +7153,10 @@ def test_telegram_binding_command_projection_follows_provider_precedence(
         external_chat_type=chat_type,
     )
 
-    projections = telegram_router.telegram_binding_command_projections(shadow, binding)
+    projections = [
+        telegram_router._telegram_materialize_command_target(target)
+        for target in telegram_router._telegram_binding_command_targets(shadow, binding)
+    ]
     projected = {
         (payload["scope"]["type"], payload.get("language_code", "")): payload["commands"][3][
             "command"
@@ -9439,7 +9441,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
     second_channel_agent,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    _DISCORD_GATEWAY_SESSIONS.clear()
+    _reset_discord_gateway_sessions(monkeypatch)
     created = (
         await client.post(
             "/v1/channels",
@@ -14785,7 +14787,7 @@ def _install_discord_gateway_protocol_fakes(
     channels: dict[str, str | None] | None = None,
     provider_channels: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
-    _DISCORD_GATEWAY_SESSIONS.clear()
+    _reset_discord_gateway_sessions(monkeypatch)
     event_queue = events if events is not None else []
     for event in event_queue:
         if event.id is None:
@@ -14922,6 +14924,17 @@ def _install_discord_gateway_protocol_fakes(
     return provider_paths
 
 
+def _reset_discord_gateway_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> discord_router._DiscordGatewaySessionStore:
+    store = discord_router._DiscordGatewaySessionStore(
+        max_sessions=discord_router._DISCORD_GATEWAY_MAX_SESSIONS,
+        ttl_seconds=discord_router._DISCORD_GATEWAY_SESSION_TTL_SECONDS,
+    )
+    monkeypatch.setattr(discord_router, "_DISCORD_GATEWAY_SESSIONS", store)
+    return store
+
+
 def _install_discord_gateway_test_session_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep TestClient's worker loop off pytest's session-bound asyncpg pool."""
     gateway_engine = create_async_engine(
@@ -14995,7 +15008,7 @@ def test_discord_gateway_resume_validates_session_id_and_token(monkeypatch):
             )
             assert websocket.receive_json()["t"] == "RESUMED"
 
-        _DISCORD_GATEWAY_SESSIONS.clear()
+        _reset_discord_gateway_sessions(monkeypatch)
         with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json(
@@ -15099,7 +15112,7 @@ async def test_discord_gateway_new_identify_replays_unacknowledged_db_message_af
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    _DISCORD_GATEWAY_SESSIONS.clear()
+    _reset_discord_gateway_sessions(monkeypatch)
     channel_id = "restart-replay-channel"
     guild_id = "restart-replay-guild"
     created = await _create_paired_discord_channel(
@@ -15164,7 +15177,7 @@ async def test_discord_gateway_new_identify_replays_unacknowledged_db_message_af
     assert message.delivered_at is None
 
     # Process-local Resume state is gone, but the durable pending row remains.
-    _DISCORD_GATEWAY_SESSIONS.clear()
+    _reset_discord_gateway_sessions(monkeypatch)
     with TestClient(app) as sync_client:
         with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
@@ -15198,7 +15211,7 @@ async def test_discord_gateway_resume_sequence_acks_and_replays_exact_db_message
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    _DISCORD_GATEWAY_SESSIONS.clear()
+    _reset_discord_gateway_sessions(monkeypatch)
     channel_id = "resume-ack-channel"
     guild_id = "resume-ack-guild"
     created = await _create_paired_discord_channel(
@@ -15258,8 +15271,10 @@ async def test_discord_gateway_resume_sequence_acks_and_replays_exact_db_message
 
     # Model cancellation after the frame/checkpoint was registered and sent but
     # before the connection-local durable inbox cursor was advanced.
-    session_state = _DISCORD_GATEWAY_SESSIONS.get(ready["d"]["session_id"])
+    session_id = ready["d"]["session_id"]
+    session_state = discord_router._DISCORD_GATEWAY_SESSIONS.connect(session_id)
     assert session_state is not None
+    discord_router._DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
     session_state["last_inbox_sequence"] = 0
 
     with TestClient(app) as sync_client:
@@ -20147,13 +20162,13 @@ def test_discord_pair_install_contract_requires_matching_context_and_owner(
     command = channel_service.ChannelControlCommand(kind="pair", code="BCDFGHJKLM")
 
     assert (
-        channel_service.discord_pair_install_denied_reason(
+        channel_service._discord_pair_install_admission(
             payload,
             command=command,
             guild_id=guild_id,
             external_user_id=external_user_id,
             trusted_interaction=True,
-        )
+        )[0]
         == expected
     )
 
