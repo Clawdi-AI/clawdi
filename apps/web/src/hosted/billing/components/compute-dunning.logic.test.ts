@@ -93,8 +93,7 @@ describe("computeDunningState", () => {
 
 		expect(state).toMatchObject({
 			fundingSource: "wallet",
-			recoveryAction: "top_up",
-			ctaTarget: "top_up",
+			recoveryTarget: { kind: "top_up", action: "top_up" },
 		});
 		expect(state?.description).toContain("update automatically");
 		expect(state?.description).not.toMatch(/grace|retry/i);
@@ -105,11 +104,11 @@ describe("computeDunningState", () => {
 	test("routes card past due to payment remediation", () => {
 		const deploymentWithPastDueCard = deployment({
 			computeSubscription: subscription({ status: "past_due", payment_state: "past_due" }),
+			factKind: "funding_revoked",
 		});
 		expect(computeDunningState(deploymentWithPastDueCard)).toMatchObject({
 			fundingSource: "stripe",
-			recoveryAction: "fix_payment",
-			ctaTarget: "fix_payment",
+			recoveryTarget: { kind: "fix_payment", action: "fix_payment" },
 		});
 	});
 
@@ -126,9 +125,11 @@ describe("computeDunningState", () => {
 
 		expect(state).toMatchObject({
 			paymentState: "requires_action",
-			recoveryAction: "fix_payment",
-			ctaTarget: "invoice",
-			invoiceUrl: "https://invoice.stripe.test/action",
+			recoveryTarget: {
+				kind: "invoice",
+				action: "fix_payment",
+				url: "https://invoice.stripe.test/action",
+			},
 		});
 	});
 
@@ -161,8 +162,7 @@ describe("computeDunningState", () => {
 			);
 			expect(state).toMatchObject({
 				fundingSource,
-				recoveryAction: "start_new",
-				ctaTarget: "start_new",
+				recoveryTarget: { kind: "start_new", action: "start_new" },
 				tone: "destructive",
 			});
 			expect(state?.description).toContain("Start a new subscription");
@@ -181,8 +181,7 @@ describe("computeDunningState", () => {
 		expect(running).toMatchObject({
 			paymentState: "unpaid",
 			fundingSource: "wallet",
-			recoveryAction: "start_new",
-			ctaTarget: "start_new",
+			recoveryTarget: { kind: "start_new", action: "start_new" },
 			fallbackOccurredAt: "2026-07-18T12:00:00Z",
 			fallbackPlanLabel: "Performance compute",
 			fallbackReason: "payment_failure",
@@ -265,8 +264,7 @@ describe("computeDunningState", () => {
 			expect(state).toMatchObject({
 				...expected,
 				fallbackReason: reason,
-				ctaTarget: "start_new",
-				recoveryAction: "start_new",
+				recoveryTarget: { kind: "start_new", action: "start_new" },
 			});
 		}
 	});

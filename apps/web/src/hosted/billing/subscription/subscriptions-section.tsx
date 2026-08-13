@@ -1,16 +1,7 @@
 "use client";
 
-import {
-	CreditCard,
-	ExternalLink,
-	History,
-	Link2Off,
-	RefreshCw,
-	Settings,
-	WalletCards,
-} from "lucide-react";
+import { CreditCard, History } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
@@ -18,22 +9,14 @@ import { entityCardChassisClass } from "@/components/entity-card";
 import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
 import type { ComputeSubscriptionListItem, HostedDeployment } from "@/hosted/billing/contracts";
-import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import {
-	useCancelSubscription,
-	useHostedDeployments,
-	usePlans,
-	useResumeSubscription,
-	useSubscriptions,
-} from "@/hosted/billing/hooks";
-import { useSensitiveFixPayment } from "@/hosted/billing/sensitive-actions";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
+import { useHostedDeployments, usePlans, useSubscriptions } from "@/hosted/billing/hooks";
+import { ComputeSubscriptionActionList } from "@/hosted/billing/subscription/compute-subscription-action-list";
+import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
 import {
 	ComputeSubscriptionCard,
-	ComputeSubscriptionManageAction,
 	computeSubscriptionCardView,
 	computeSubscriptionPlanLabel,
 } from "@/hosted/billing/subscription/compute-subscription-card";
@@ -42,202 +25,35 @@ import {
 	type ComputeSubscriptionManagementResult,
 	computeSubscriptionManagement,
 } from "@/hosted/billing/subscription/compute-subscription-management";
-import {
-	type ComputeRecoveryTarget,
-	computeSubscriptionRecoveryPresentation,
-} from "@/hosted/billing/subscription/compute-subscription-recovery";
+import { computeSubscriptionRecoveryPresentation } from "@/hosted/billing/subscription/compute-subscription-recovery";
 import { PlanChangeController } from "@/hosted/billing/subscription/plan-change-controller";
 import {
-	canCancelAccountSubscription,
-	canResumeAccountSubscription,
 	computeFundingSource,
 	computeSubscriptionLifecycle,
 	isHistoricalAccountSubscription,
+	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
 	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
-import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-function SubscriptionActions({
-	subscription,
-	management,
-	onManage,
-}: {
-	subscription: ComputeSubscriptionListItem;
-	management: ComputeSubscriptionManagementResult;
-	onManage: () => void;
-}) {
-	const cancelSubscription = useCancelSubscription();
-	const resumeSubscription = useResumeSubscription();
-	const runAction = useActionLock();
-	const canCancel = canCancelAccountSubscription(subscription);
-	const canResume = canResumeAccountSubscription(subscription);
-	const pending = cancelSubscription.isPending || resumeSubscription.isPending;
-
-	async function cancel() {
-		try {
-			const result = await cancelSubscription.mutateAsync({
-				subscription_id: subscription.subscription_id,
-			});
-			toast.success(
-				result.cancel_at_period_end ? "Cancellation scheduled" : "Subscription canceled",
-				{
-					description: result.current_period_end
-						? `Access continues through ${formatShortDate(result.current_period_end)}.`
-						: undefined,
-				},
-			);
-		} catch (error) {
-			toast.error("Couldn't cancel subscription", { description: normalizeBillingError(error) });
-			throw error;
-		}
-	}
-
-	async function resume() {
-		try {
-			await resumeSubscription.mutateAsync({ subscription_id: subscription.subscription_id });
-			toast.success("Subscription resumed");
-		} catch (error) {
-			toast.error("Couldn't resume subscription", { description: normalizeBillingError(error) });
-			throw error;
-		}
-	}
-
-	if (management.action === "hidden" && !canCancel && !canResume) {
-		return null;
-	}
-
-	return (
-		<>
-			{management.action !== "hidden" ? (
-				<ComputeSubscriptionManageAction
-					onClick={onManage}
-					disabled={management.action === "disabled"}
-				/>
-			) : null}
-			{canResume ? (
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					disabled={pending}
-					onClick={() => void runAction(resume).catch(() => undefined)}
-				>
-					{resumeSubscription.isPending ? <Spinner /> : <RefreshCw />}
-					Resume subscription
-				</Button>
-			) : null}
-			{canCancel ? (
-				<ConfirmAction
-					title={`Cancel ${computeSubscriptionPlanLabel(subscription.plan_slug)} subscription?`}
-					description={
-						<p>
-							The subscription will stop renewing
-							{subscription.current_period_end
-								? ` and remain active through ${formatShortDate(subscription.current_period_end)}`
-								: ""}
-							. This cannot restore a deleted agent.
-						</p>
-					}
-					confirmLabel="Cancel subscription"
-					destructive
-					onConfirm={() => runAction(cancel)}
-				>
-					<Button type="button" variant="outline" size="sm" disabled={pending}>
-						{cancelSubscription.isPending ? <Spinner /> : <Link2Off />}
-						Cancel subscription
-					</Button>
-				</ConfirmAction>
-			) : null}
-		</>
-	);
-}
-
-function SubscriptionRecoveryAction({
-	target,
-	deploymentId,
-	agentHref,
-}: {
-	target: ComputeRecoveryTarget;
-	deploymentId: string | null;
-	agentHref: string | null;
-}) {
-	const fixPayment = useSensitiveFixPayment();
-	const runAction = useActionLock();
-	const wallet = useWalletSnapshot({ enabled: target.kind === "top_up" });
-	const [topUpOpen, setTopUpOpen] = useState(false);
-
-	async function openPaymentRecovery() {
-		if (target.kind === "invoice") {
-			window.location.href = target.url;
-			return;
-		}
-		if (target.kind !== "fix_payment") return;
-		try {
-			const result = await fixPayment.execute({ deployment_id: deploymentId });
-			const url = result.url || result.portal_url;
-			if (url) {
-				window.location.href = url;
-				return;
-			}
-			toast.message("Payment update unavailable", {
-				description: "Refresh this page and try again in a moment.",
-			});
-		} catch (error) {
-			toast.error("Couldn't open payment settings", {
-				description: normalizeBillingError(error),
-			});
-		}
-	}
-
-	if (target.kind === "top_up") {
-		return (
-			<>
-				<Button type="button" size="sm" onClick={() => setTopUpOpen(true)} disabled={!wallet.data}>
-					<WalletCards data-icon="inline-start" />
-					Top up
-				</Button>
-				{wallet.data ? <TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} /> : null}
-			</>
-		);
-	}
-	if (target.kind === "start_new") {
-		return agentHref ? (
-			<Button render={<a href={agentHref} />} nativeButton={false} type="button" size="sm">
-				<Settings data-icon="inline-start" />
-				Open Agent settings
-			</Button>
-		) : null;
-	}
-	return (
-		<Button
-			type="button"
-			size="sm"
-			onClick={() => void runAction(openPaymentRecovery)}
-			disabled={fixPayment.isPending}
-		>
-			{target.kind === "invoice" ? (
-				<ExternalLink data-icon="inline-start" />
-			) : (
-				<CreditCard data-icon="inline-start" />
-			)}
-			Fix payment
-		</Button>
-	);
-}
-
 function subscriptionAgentHref(subscription: ComputeSubscriptionListItem): string | null {
-	if (subscription.is_orphan || !subscription.deployment_id || !subscription.agent_name)
-		return null;
+	if (subscription.is_orphan || !subscription.deployment_id) return null;
 	return agentSectionHref(subscription.deployment_id, "settings", {
 		source: "on-clawdi",
 		settings: "billing-plan",
+	});
+}
+
+function subscriptionStartNewHref(subscription: ComputeSubscriptionListItem): string | null {
+	if (subscription.is_orphan || !subscription.deployment_id) return null;
+	return agentSectionHref(subscription.deployment_id, "settings", {
+		source: "on-clawdi",
+		settings: "billing-plan",
+		subscription_action: "start_new",
 	});
 }
 
@@ -267,7 +83,7 @@ function subscriptionManagement(
 			paymentState: subscription.payment_state,
 			cancelAtPeriodEnd: subscription.cancel_at_period_end,
 			recoveryAction: subscription.recovery_action,
-			pendingPlanSlug: subscription.pending_plan_slug,
+			pendingPlanSlug: pendingComputePlanSlug(subscription),
 			isOrphan: subscription.is_orphan,
 		},
 		deployment,
@@ -311,11 +127,24 @@ function SubscriptionRow({
 		tone: lifecycle.badgeTone,
 	});
 	const agentHref = subscriptionAgentHref(subscription);
-	const pendingPlanSlug =
-		subscription.pending_plan_slug === "compute_basic" ||
-		subscription.pending_plan_slug === "compute_performance"
-			? subscription.pending_plan_slug
-			: null;
+	const startNewHref = subscriptionStartNewHref(subscription);
+	const pendingPlanSlug = pendingComputePlanSlug(subscription);
+	const actions = resolveComputeSubscriptionActions({
+		entitlement: {
+			deploymentId: subscription.deployment_id,
+			planSlug: subscription.plan_slug,
+			fundingSource: subscription.funding_source,
+			priceCents: subscription.price_cents,
+			status: subscription.status,
+			paymentState: subscription.payment_state,
+			cancelAtPeriodEnd: subscription.cancel_at_period_end,
+			pendingPlanSlug,
+			isOrphan: subscription.is_orphan,
+		},
+		management,
+		recoveryTarget: recovery.recoveryTarget,
+		hasPendingOperation: management.target?.projectedOperationName != null,
+	});
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
 				pendingPlanSlug,
@@ -323,32 +152,27 @@ function SubscriptionRow({
 				formatShortDate(subscription.current_period_end),
 			)
 		: null;
-	const recoveryActionAvailable =
-		recovery.recoveryTarget !== null &&
-		(recovery.recoveryTarget.kind !== "start_new" || agentHref !== null);
 	const recoveryNotice = (() => {
 		switch (recovery.recoveryTarget?.kind) {
 			case "top_up":
-				return "Top up Wallet before managing this subscription.";
+				return "Top up Wallet to settle the outstanding balance. Payment source changes apply to future renewals.";
 			case "invoice":
 			case "fix_payment":
-				return "Resolve the open invoice before managing this subscription.";
+				return "Resolve the outstanding payment to restore this subscription. Payment source changes apply to future renewals.";
 			case "start_new":
-				return agentHref ? "Start a new subscription from Agent settings." : null;
+				return startNewHref ? "Start a new subscription from Agent settings." : null;
 			case undefined:
 				return null;
 		}
 	})();
 	const hasActions =
-		management.action !== "hidden" ||
-		recoveryActionAvailable ||
-		canCancelAccountSubscription(subscription) ||
-		canResumeAccountSubscription(subscription);
+		actions.some((candidate) => candidate.kind !== "start_new") || startNewHref !== null;
 	const fundingSource = computeFundingSource(subscription.plan_slug, subscription);
 	const managementReason =
-		management.unavailableReason === COMPUTE_PLANS_UNAVAILABLE_REASON
+		actions.find((candidate) => candidate.kind === "manage")?.disabledReason ===
+		COMPUTE_PLANS_UNAVAILABLE_REASON
 			? null
-			: management.unavailableReason;
+			: (actions.find((candidate) => candidate.kind === "manage")?.disabledReason ?? null);
 	const view = computeSubscriptionCardView({
 		status: recovery.status,
 		planSlug: subscription.plan_slug,
@@ -397,20 +221,37 @@ function SubscriptionRow({
 				}
 				actions={
 					hasActions ? (
-						<>
-							{recoveryActionAvailable && recovery.recoveryTarget ? (
-								<SubscriptionRecoveryAction
-									target={recovery.recoveryTarget}
-									deploymentId={subscription.deployment_id ?? null}
-									agentHref={agentHref}
-								/>
-							) : null}
-							<SubscriptionActions
-								subscription={subscription}
-								management={management}
-								onManage={() => onManage(subscription)}
-							/>
-						</>
+						<ComputeSubscriptionActionList
+							actions={actions}
+							target={{
+								kind: "subscription",
+								subscriptionId: subscription.subscription_id,
+								deploymentId: subscription.deployment_id ?? null,
+							}}
+							onManage={() => onManage(subscription)}
+							onStartNew={
+								startNewHref
+									? { kind: "link", href: startNewHref, label: "Open Agent settings" }
+									: null
+							}
+							cancelCopy={{
+								title: `Cancel ${computeSubscriptionPlanLabel(subscription.plan_slug)} subscription?`,
+								description: (
+									<p>
+										The subscription will stop renewing
+										{subscription.current_period_end
+											? ` and remain active through ${formatShortDate(subscription.current_period_end)}`
+											: ""}
+										. This cannot restore a deleted agent.
+									</p>
+								),
+								confirmLabel: "Cancel subscription",
+								successDescription: (result) =>
+									result.current_period_end
+										? `Access continues through ${formatShortDate(result.current_period_end)}.`
+										: undefined,
+							}}
+						/>
 					) : null
 				}
 			/>
@@ -418,12 +259,21 @@ function SubscriptionRow({
 	);
 }
 
-const SUBSCRIPTION_STATUS_PRIORITY: Record<ComputeSubscriptionListItem["status"], number> = {
-	active: 0,
-	past_due: 1,
-	canceling: 2,
-	canceled: 3,
-};
+function subscriptionStatusPriority(status: string): number {
+	switch (status) {
+		case "trialing":
+		case "active":
+			return 0;
+		case "past_due":
+			return 1;
+		case "canceling":
+			return 2;
+		case "canceled":
+			return 3;
+		default:
+			return 4;
+	}
+}
 
 export function sortLoadedSubscriptions(
 	subscriptions: readonly ComputeSubscriptionListItem[],
@@ -432,8 +282,8 @@ export function sortLoadedSubscriptions(
 		.map((subscription, index) => ({ subscription, index }))
 		.sort(
 			(a, b) =>
-				SUBSCRIPTION_STATUS_PRIORITY[a.subscription.status] -
-					SUBSCRIPTION_STATUS_PRIORITY[b.subscription.status] || a.index - b.index,
+				subscriptionStatusPriority(a.subscription.status) -
+					subscriptionStatusPriority(b.subscription.status) || a.index - b.index,
 		)
 		.map(({ subscription }) => subscription);
 }

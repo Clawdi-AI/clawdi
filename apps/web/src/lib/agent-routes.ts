@@ -12,6 +12,7 @@ export type AgentRouteSearch = Record<string, unknown> & {
 	tab?: string;
 	project?: string;
 	vault?: string;
+	subscription_action?: "start_new";
 };
 export type AgentRouteQuery =
 	| string
@@ -195,6 +196,10 @@ function optionalSearchString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
+function subscriptionAction(value: unknown): AgentRouteSearch["subscription_action"] {
+	return value === "start_new" ? value : undefined;
+}
+
 /** Validate the shared agent-route search boundary while retaining additive query state. */
 export function validateAgentRouteSearch(search: Record<string, unknown>): AgentRouteSearch {
 	return {
@@ -204,6 +209,7 @@ export function validateAgentRouteSearch(search: Record<string, unknown>): Agent
 		tab: optionalSearchString(search.tab),
 		project: optionalSearchString(search.project),
 		vault: optionalSearchString(search.vault),
+		subscription_action: subscriptionAction(search.subscription_action),
 	};
 }
 

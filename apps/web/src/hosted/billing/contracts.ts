@@ -12,6 +12,8 @@ export type BillingOffer = Schemas["V2BillingOfferResponse"];
 export type CheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
 export type ComputePlanSlug = Schemas["V2HostedDeployRequest"]["compute_plan_slug"];
 export type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActionResponse"];
+export type ComputeCancelScheduledPlanChangeRequest =
+	Schemas["V2ComputeCancelScheduledPlanChangeRequest"];
 export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCancelRequest"];
 export type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];

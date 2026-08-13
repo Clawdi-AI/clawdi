@@ -13,6 +13,7 @@ import {
 import { useCallback, useEffect, useRef } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
+	ComputeCancelScheduledPlanChangeRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
 	ComputePlanChangeResult,
@@ -58,6 +59,10 @@ function subscriptionFromAction(
 		billing_term_months: next.billing_term_months,
 		currency: previous?.currency ?? "usd",
 		cancel_at_period_end: next.cancel_at_period_end,
+		pending_plan_slug:
+			next.pending_plan_slug === undefined
+				? (previous?.pending_plan_slug ?? null)
+				: next.pending_plan_slug,
 		current_period_end: next.current_period_end ?? previous?.current_period_end ?? null,
 		cancel_at: next.cancel_at ?? null,
 		latest_failed_invoice_id:
@@ -103,17 +108,26 @@ export function applyDeploymentSubscriptionResult(
 	);
 }
 
-export function applySubscriptionActionSuccess(
+export async function invalidateComputeSubscriptionInventory(
+	qc: QueryClient,
+	refetchType: "active" | "all" = "active",
+): Promise<void> {
+	await Promise.all(
+		[billingKeys.deployments, billingKeys.subscriptions, billingKeys.reusableSubscriptions].map(
+			(queryKey) => qc.invalidateQueries({ queryKey, refetchType }),
+		),
+	);
+}
+
+export async function applySubscriptionActionSuccess(
 	qc: QueryClient,
 	body: ComputeSubscriptionCancelRequest | ComputeSubscriptionResumeRequest,
 	next: ComputeSubscriptionActionResult,
-): void {
+): Promise<void> {
 	if (body.deployment_id) {
 		applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
-	} else if (body.subscription_id) {
-		qc.invalidateQueries({ queryKey: billingKeys.deployments });
 	}
-	qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
+	await invalidateComputeSubscriptionInventory(qc);
 }
 
 /**
@@ -268,6 +282,16 @@ export function useResumeSubscription() {
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionResumeRequest) => client.resumeSubscription(body),
 		onSuccess: (next, body) => applySubscriptionActionSuccess(qc, body, next),
+	});
+}
+
+export function useCancelScheduledPlanChange() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: ComputeCancelScheduledPlanChangeRequest) =>
+			client.cancelScheduledPlanChange(body),
+		onSettled: () => invalidateComputeSubscriptionInventory(qc, "all"),
 	});
 }
 

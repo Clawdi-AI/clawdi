@@ -224,7 +224,7 @@ describe("structural secret boundaries without the denylist", () => {
 			"hosted/billing/wallet/wallet-page.tsx",
 			"hosted/billing/subscription/welcome-wallet-card.tsx",
 			"hosted/billing/subscription/subscription-create-dialog.tsx",
-			"hosted/billing/components/compute-dunning-banner.tsx",
+			"hosted/billing/subscription/compute-subscription-recovery-action.tsx",
 			"hosted/billing/subscription/plan-change-controller.tsx",
 		];
 		for (const path of walletConsumers) {

@@ -780,6 +780,8 @@ export type HostedApiStubOptions = {
 	resumeRequests?: string[];
 	reusableSubscriptionRequests?: string[];
 	reusableSubscriptionPages?: Record<string, ReusableSubscriptionsResponse>;
+	scheduledPlanCancellationRequests?: string[];
+	scheduledPlanCancellationResponses?: StubResponse[];
 	subscriptionPages?: Record<string, SubscriptionListResponse>;
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
@@ -977,6 +979,24 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
 				: fulfillJson(r, response);
+		}
+		if (p === "/v2/subscription/plan/cancel-scheduled-change" && r.request().method() === "POST") {
+			options.scheduledPlanCancellationRequests?.push(r.request().postData() ?? "");
+			const response = options.scheduledPlanCancellationResponses?.shift() ?? {
+				status: 200,
+				body: {
+					status: "active",
+					funding_source: "stripe",
+					billing_term_months: 12,
+					cancel_at_period_end: false,
+					pending_plan_slug: null,
+					action_state: "removed",
+				},
+			};
+			if (response.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
+			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/wallet/topup" && r.request().method() === "POST") {
 			options.topUpRequests?.push(r.request().postData() ?? "");

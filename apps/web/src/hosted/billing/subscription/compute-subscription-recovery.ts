@@ -4,21 +4,23 @@ import type {
 	HostedComputeSubscription,
 } from "@/hosted/billing/contracts";
 
-type RecoveryFields =
-	| Pick<
+export type ComputeSubscriptionRecoveryFields =
+	| (Pick<
 			ComputeSubscriptionListItem,
 			| "latest_failed_invoice_hosted_url"
 			| "next_payment_attempt_at"
 			| "payment_state"
 			| "recovery_action"
-	  >
-	| Pick<
+	  > &
+			Partial<Pick<ComputeSubscriptionListItem, "funding_source">>)
+	| (Pick<
 			HostedComputeSubscription,
 			| "latest_failed_invoice_hosted_url"
 			| "next_payment_attempt_at"
 			| "payment_state"
 			| "recovery_action"
-	  >;
+	  > &
+			Partial<Pick<HostedComputeSubscription, "funding_source">>);
 
 export type ComputeRecoveryTarget =
 	| { kind: "invoice"; action: "fix_payment"; url: string }
@@ -36,7 +38,9 @@ export type ComputeSubscriptionRecoveryPresentation = {
 		| null;
 };
 
-function recoveryTarget(subscription: RecoveryFields): ComputeRecoveryTarget | null {
+export function computeSubscriptionRecoveryTarget(
+	subscription: ComputeSubscriptionRecoveryFields,
+): ComputeRecoveryTarget | null {
 	const action = subscription.recovery_action;
 	if (action === "top_up") return { kind: "top_up", action };
 	if (action === "start_new") return { kind: "start_new", action };
@@ -46,11 +50,25 @@ function recoveryTarget(subscription: RecoveryFields): ComputeRecoveryTarget | n
 			? { kind: "invoice", action, url: invoiceUrl }
 			: { kind: "fix_payment", action };
 	}
+	if (subscription.payment_state === "unpaid") {
+		return { kind: "start_new", action: "start_new" };
+	}
+	if (subscription.payment_state === "requires_action") {
+		const invoiceUrl = subscription.latest_failed_invoice_hosted_url?.trim();
+		return invoiceUrl
+			? { kind: "invoice", action: "fix_payment", url: invoiceUrl }
+			: { kind: "fix_payment", action: "fix_payment" };
+	}
+	if (subscription.payment_state === "past_due") {
+		return subscription.funding_source === "wallet"
+			? { kind: "top_up", action: "top_up" }
+			: { kind: "fix_payment", action: "fix_payment" };
+	}
 	return null;
 }
 
 export function computeSubscriptionRecoveryPresentation(
-	subscription: RecoveryFields | null | undefined,
+	subscription: ComputeSubscriptionRecoveryFields | null | undefined,
 	lifecycleStatus: ComputeSubscriptionRecoveryPresentation["status"],
 ): ComputeSubscriptionRecoveryPresentation {
 	if (!subscription) {
@@ -76,7 +94,7 @@ export function computeSubscriptionRecoveryPresentation(
 				return null;
 		}
 	})();
-	const target = recoveryTarget(subscription);
+	const target = computeSubscriptionRecoveryTarget(subscription);
 
 	return {
 		status: paymentStatus ?? lifecycleStatus,

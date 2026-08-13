@@ -137,6 +137,7 @@ import {
 	type CheckoutReturnNavigationTarget,
 	useCheckoutReturnHandler,
 } from "@/hosted/billing/checkout-return";
+import { computeDunningState } from "@/hosted/billing/components/compute-dunning.logic";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import type { DeploymentUpdateRequest, HostedDeployment } from "@/hosted/billing/contracts";
 import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
@@ -154,16 +155,11 @@ import {
 	billingQueryRetry,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
-import {
-	billingKeys,
-	useCancelSubscription,
-	useManagedModelCatalog,
-	usePlans,
-	useResumeSubscription,
-} from "@/hosted/billing/hooks";
+import { billingKeys, useManagedModelCatalog, usePlans } from "@/hosted/billing/hooks";
+import { ComputeSubscriptionActionList } from "@/hosted/billing/subscription/compute-subscription-action-list";
+import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
 import {
 	ComputeSubscriptionCard,
-	ComputeSubscriptionManageAction,
 	computeSubscriptionCardView,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
@@ -180,11 +176,9 @@ import { SubscriptionCreateDialog } from "@/hosted/billing/subscription/subscrip
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
-	computeFundingMode,
 	computeFundingSource,
 	computeSubscriptionLifecycle,
 	computeTierLabel,
-	isComputeSubscriptionCancelable,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
@@ -530,7 +524,10 @@ export function HostedAgentDetail({
 			className={cn(
 				isLiveToolTab
 					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] w-full flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
-					: cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6"),
+					: cn(
+							activeTab === "settings" ? "w-full" : CENTERED_PAGE_WIDTH_CLASS.page,
+							"flex flex-col gap-6 px-4 lg:px-6",
+						),
 			)}
 		>
 			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
@@ -559,7 +556,9 @@ export function HostedAgentDetail({
 						}
 					/>
 				)}
-				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
+				{isLiveToolTab || activeTab === "settings" ? null : (
+					<ComputeDunningBanner deployment={deployment} />
+				)}
 				{!deploymentStatus.known && activeTab !== "overview" ? (
 					<DeploymentStatusUnavailableState
 						deployment={deployment}
@@ -676,6 +675,7 @@ export function HostedAgentDetail({
 							environmentId={environmentId}
 							deployment={deployment}
 							agent={agent}
+							routeSearch={routeSearch}
 							onDeleteAccepted={onDeleteAccepted}
 						/>
 					) : null}
@@ -3398,11 +3398,13 @@ function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
 	agent,
+	routeSearch,
 	onDeleteAccepted,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null;
+	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	return (
@@ -3414,7 +3416,11 @@ function HostedAgentSettingsTab({
 					<ProjectionDependentUnavailable label="Profile settings" />
 				)}
 				<LanguageTimezoneSettingsSection deployment={deployment} />
-				<ComputeSettingsSections deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
+				<ComputeSettingsSections
+					deployment={deployment}
+					routeSearch={routeSearch}
+					onDeleteAccepted={onDeleteAccepted}
+				/>
 			</div>
 		</UnsavedNavigationBoundary>
 	);
@@ -3511,9 +3517,11 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 
 function ComputeSettingsSections({
 	deployment,
+	routeSearch,
 	onDeleteAccepted,
 }: {
 	deployment: HostedDeployment;
+	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	const router = useRouter();
@@ -3561,8 +3569,6 @@ function ComputeSettingsSections({
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
 	const [hasPendingPlanChange, setHasPendingPlanChange] = useState(false);
-	const cancelSubscription = useCancelSubscription();
-	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const canStop = canStopDeployment(deploymentStatus);
@@ -3576,21 +3582,16 @@ function ComputeSettingsSections({
 			? "stop"
 			: "start";
 	const canRunPrimaryLifecycleAction = primaryLifecycleAction === "stop" ? canStop : canStart;
-	const fundingFact = deployment.commercial_display?.latest_funding_fact;
 	const rawComputePlanSlug = deployment.current_plan_slug;
 	const computePlanSlug =
 		rawComputePlanSlug === COMPUTE_BASIC_SLUG || rawComputePlanSlug === COMPUTE_PERFORMANCE_SLUG
 			? rawComputePlanSlug
 			: undefined;
 	const currentSubscription = deployment.commercial_display?.compute_subscription;
-	const fundingMode = computeFundingMode(computePlanSlug, currentSubscription);
 	const fundingSource = computeFundingSource(computePlanSlug, currentSubscription);
-	const isIncludedBasic = fundingMode === "included_basic";
-	const isPaidCompute = fundingMode === "subscription";
-	const terminalFundingFact =
-		isIncludedBasic && fundingFact?.fact_kind === "funding_revoked" ? fundingFact : null;
-	const hasWalletFallback = terminalFundingFact?.funding_source === "wallet";
-	const hasTerminalFallback = terminalFundingFact !== null;
+	const dunningState = computeDunningState(deployment);
+	const terminalRecovery = dunningState?.recoveryTarget.kind === "start_new" ? dunningState : null;
+	const hasWalletFallback = terminalRecovery?.fundingSource === "wallet";
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);
 	const currentBillingTerm = planChangeBillingTerm(currentSubscription?.billing_term_months ?? 1);
@@ -3633,6 +3634,8 @@ function ComputeSettingsSections({
 			? { label: subscriptionLifecycle.badgeLabel, tone: subscriptionLifecycle.badgeTone }
 			: { label: "Unavailable", tone: "neutral" },
 	);
+	const actionRecoveryTarget = terminalRecovery?.recoveryTarget ?? computeRecovery.recoveryTarget;
+	const canOfferStartNew = actionRecoveryTarget?.kind === "start_new";
 	const computeCardView = computeSubscriptionCardView({
 		status: computeRecovery.status,
 		planSlug: computePlanSlug ?? rawComputePlanSlug,
@@ -3656,7 +3659,6 @@ function ComputeSettingsSections({
 				subscriptionPeriodLabel,
 			)
 		: null;
-	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
 	const computeManagement: ComputeSubscriptionManagementResult = currentSubscription
 		? computeSubscriptionManagement({
 				entitlement: {
@@ -3688,15 +3690,14 @@ function ComputeSettingsSections({
 	const computeManagementReason = plansErrorBlocksIncluded
 		? null
 		: computeManagement.unavailableReason;
-	const canStartNewSubscription = hostedAccess.canCreateCloudAgents && hasTerminalFallback;
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
-		terminalFundingFact?.prior_plan_slug,
+		terminalRecovery?.recoveryPlanSlug ?? pendingPlanSlug ?? computePlanSlug,
 		{
 			basicAvailable: !!basicPlan,
 			performanceAvailable: !!perfPlan,
 		},
 	);
-	const createUnavailableMessage = !hasTerminalFallback
+	const createUnavailableMessage = !canOfferStartNew
 		? null
 		: plans.isLoading
 			? "Checking paid compute availability…"
@@ -3705,48 +3706,54 @@ function ComputeSettingsSections({
 				: !(basicPlan || perfPlan)
 					? "Paid compute plans are unavailable right now."
 					: null;
-	const pendingComputeChangeAction = hasPendingComputeChange ? (
-		<Button type="button" variant="outline" size="sm" onClick={() => setPlanChangeOpen(true)}>
-			<RefreshCw data-icon="inline-start" />
-			Check subscription change status
-		</Button>
-	) : null;
+	const computeActions = resolveComputeSubscriptionActions({
+		entitlement: {
+			deploymentId: deployment.resource.id,
+			planSlug: computePlanSlug,
+			fundingSource: currentSubscription?.funding_source,
+			priceCents: currentSubscription?.price_cents,
+			status: currentSubscription?.status ?? "unavailable",
+			paymentState: currentSubscription?.payment_state ?? "ok",
+			cancelAtPeriodEnd: subscriptionCancelPending,
+			pendingPlanSlug,
+		},
+		management: computeManagement,
+		recoveryTarget: actionRecoveryTarget,
+		hasPendingOperation: hasPendingComputeChange,
+		startNewUnavailableReason: createUnavailableMessage,
+	});
 	useEffect(() => {
 		if (hostedAccess.isLoading || hostedAccess.canCreateCloudAgents) return;
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
 	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading]);
-
-	async function cancelComputeSubscription() {
-		if (!subscriptionCancelable || subscriptionCancelPending) {
-			return;
+	useEffect(() => {
+		if (routeSearch.subscription_action !== "start_new") return;
+		if (hostedAccess.isLoading || plans.isLoading) return;
+		if (canOfferStartNew && hostedAccess.canCreateCloudAgents && (basicPlan || perfPlan)) {
+			setSubscriptionCreateOpen(true);
 		}
-		try {
-			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.resource.id });
-			toast.success("Subscription cancellation scheduled", {
-				description: res.current_period_end
-					? `Cancellation takes effect ${formatShortDate(
-							res.current_period_end,
-						)}. The agent then falls back to included Basic funding if available; otherwise, it stops.`
-					: "The agent falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
-			});
-		} catch (error) {
-			toast.error("Couldn’t cancel subscription", { description: normalizeBillingError(error) });
-			throw error;
-		}
-	}
-
-	async function resumeComputeSubscription() {
-		if (!subscriptionCancelable || !subscriptionCancelPending) {
-			return;
-		}
-		try {
-			await resumeSubscription.mutateAsync({ deployment_id: deployment.resource.id });
-			toast.success("Subscription resumed");
-		} catch (error) {
-			toast.error("Couldn’t resume subscription", { description: normalizeBillingError(error) });
-		}
-	}
+		void router.navigate({
+			to: ".",
+			search: (current) => {
+				const next = { ...current };
+				delete next.subscription_action;
+				return next;
+			},
+			hash: true,
+			replace: true,
+			resetScroll: false,
+		});
+	}, [
+		basicPlan,
+		canOfferStartNew,
+		hostedAccess.canCreateCloudAgents,
+		hostedAccess.isLoading,
+		perfPlan,
+		plans.isLoading,
+		routeSearch.subscription_action,
+		router,
+	]);
 
 	async function runLifecycleAction(action: "restart" | "stop" | "start") {
 		await lifecycle.mutateAsync({ id: deployment.resource.id, action });
@@ -3754,7 +3761,7 @@ function ComputeSettingsSections({
 
 	return (
 		<div className="flex flex-col gap-8">
-			{hasTerminalFallback ? (
+			{canOfferStartNew ? (
 				<SubscriptionCreateDialog
 					open={subscriptionCreateOpen}
 					onOpenChange={setSubscriptionCreateOpen}
@@ -3807,80 +3814,30 @@ function ComputeSettingsSections({
 						) : null
 					}
 					actions={
-						hasTerminalFallback || isIncludedBasic || (isPaidCompute && currentSubscription) ? (
-							hasTerminalFallback ? (
-								(pendingComputeChangeAction ?? (
-									<Button
-										size="sm"
-										disabled={!canStartNewSubscription}
-										onClick={() => setSubscriptionCreateOpen(true)}
-									>
-										<Plus data-icon="inline-start" />
-										Choose a subscription
-									</Button>
-								))
-							) : isIncludedBasic ? (
-								(pendingComputeChangeAction ?? (
-									<ComputeSubscriptionManageAction
-										onClick={() => setPlanChangeOpen(true)}
-										disabled={computeManagement.action !== "enabled"}
-									/>
-								))
-							) : isPaidCompute && currentSubscription ? (
-								subscriptionCancelPending ? (
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										disabled={resumeSubscription.isPending || !subscriptionCancelable}
-										onClick={() => void runAction(resumeComputeSubscription).catch(() => undefined)}
-									>
-										{resumeSubscription.isPending ? (
-											<Spinner data-icon="inline-start" />
-										) : (
-											<RefreshCw data-icon="inline-start" />
-										)}
-										Resume subscription
-									</Button>
-								) : (
-									<>
-										{pendingComputeChangeAction ??
-											(computeRecovery.hasPaymentIssue || pendingPlanSlug ? null : (
-												<ComputeSubscriptionManageAction
-													onClick={() => setPlanChangeOpen(true)}
-													disabled={computeManagement.action !== "enabled"}
-												/>
-											))}
-										<ConfirmAction
-											title={`Cancel ${tierLabel} subscription?`}
-											description={
-												<p>
-													Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls
-													back to included Basic funding if available; otherwise, it stops.
-												</p>
-											}
-											confirmLabel="Cancel at period end"
-											destructive
-											onConfirm={() => runAction(cancelComputeSubscription)}
-										>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled={cancelSubscription.isPending || !subscriptionCancelable}
-											>
-												{cancelSubscription.isPending ? (
-													<Spinner data-icon="inline-start" />
-												) : (
-													<Link2Off data-icon="inline-start" />
-												)}
-												Cancel subscription
-											</Button>
-										</ConfirmAction>
-									</>
-								)
-							) : null
-						) : null
+						<ComputeSubscriptionActionList
+							actions={computeActions}
+							target={{ kind: "deployment", deploymentId: deployment.resource.id }}
+							onManage={() => setPlanChangeOpen(true)}
+							onStartNew={{
+								kind: "button",
+								onClick: () => setSubscriptionCreateOpen(true),
+								label: "Choose a subscription",
+							}}
+							cancelCopy={{
+								title: `Cancel ${tierLabel} subscription?`,
+								description: (
+									<p>
+										Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls back
+										to included Basic funding if available; otherwise, it stops.
+									</p>
+								),
+								confirmLabel: "Cancel at period end",
+								successDescription: (result) =>
+									result.current_period_end
+										? `Cancellation takes effect ${formatShortDate(result.current_period_end)}. The agent then falls back to included Basic funding if available; otherwise, it stops.`
+										: "The agent falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
+							}}
+						/>
 					}
 				/>
 			</SettingsSection>

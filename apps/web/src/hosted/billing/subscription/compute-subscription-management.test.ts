@@ -142,21 +142,27 @@ describe("computeSubscriptionManagement", () => {
 		).toMatchObject({ action: "enabled" });
 	});
 
-	test("keeps healthy past-due subscriptions available for payment-source-only management", () => {
-		expect(
-			computeSubscriptionManagement({
-				entitlement: entitlement({
-					fundingSource: "stripe",
-					priceCents: 900,
-					status: "past_due",
-					paymentState: "ok",
+	test("keeps paid payment recovery payment-source-only across lifecycle projections", () => {
+		for (const [fundingSource, status, paymentState, recoveryAction] of [
+			["stripe", "active", "requires_action", "fix_payment"],
+			["wallet", "active", "past_due", "top_up"],
+		] as const) {
+			expect(
+				computeSubscriptionManagement({
+					entitlement: entitlement({
+						fundingSource,
+						priceCents: 900,
+						status,
+						paymentState,
+						recoveryAction,
+					}),
+					...available,
 				}),
-				...available,
-			}),
-		).toMatchObject({
-			action: "enabled",
-			target: { status: "past_due", paymentSourceOnly: true },
-		});
+			).toMatchObject({
+				action: "enabled",
+				target: { status: "past_due", paymentSourceOnly: true },
+			});
+		}
 	});
 
 	test("keeps Included Basic management disabled until the gated deployment projection is available", () => {
