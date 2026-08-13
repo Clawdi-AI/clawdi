@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, get_auth_short_session
@@ -22,6 +22,7 @@ from app.models.user import User
 from app.routes import skills as skill_routes
 from app.routes.skills import _compute_file_tree_hash
 from app.services import project_runtime_skills
+from app.services.agent_environments import local_machine_registration_key
 from app.services.file_store import get_file_store
 from app.services.project_runtime_skills import CONNECTED_PROJECT_SKILL_CAPABILITY_TTL
 from app.services.runtime_source import (
@@ -100,7 +101,7 @@ def _set_auth(auth: AuthContext) -> None:
     app.dependency_overrides[get_auth_short_session] = current_auth
 
 
-def _connected_agent_auth(user: User) -> AuthContext:
+def _unbound_cli_auth(user: User) -> AuthContext:
     return AuthContext(
         user=user,
         api_key=ApiKey(
@@ -122,7 +123,7 @@ async def _report_connected_project_skill_capability(
     user: User,
     agent_id: uuid.UUID,
 ) -> httpx.Response:
-    _set_auth(_connected_agent_auth(user))
+    _set_auth(_unbound_cli_auth(user))
     try:
         agent = await db_session.get(AgentEnvironment, agent_id)
         assert agent is not None
@@ -494,7 +495,7 @@ async def test_connected_capability_report_rejects_hosted_v2_deployment(
     seed_user: User,
     channel_agent: AgentEnvironment,
 ):
-    _set_auth(_connected_agent_auth(seed_user))
+    _set_auth(_unbound_cli_auth(seed_user))
     try:
         hosted_v2_report = await client.put(
             "/v1/runtime/project-skill-capability",
@@ -622,7 +623,7 @@ async def test_legacy_v1_hosted_identity_cannot_report_or_read_project_desired(
 
 
 @pytest.mark.asyncio
-async def test_legacy_v1_hosted_agent_accepts_nonconflicting_workspace_observation(
+async def test_legacy_v1_hosted_agent_without_bound_key_accepts_workspace_observation(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
@@ -633,8 +634,12 @@ async def test_legacy_v1_hosted_agent_accepts_nonconflicting_workspace_observati
     assert agent_id is not None
     agent = await db_session.get(AgentEnvironment, agent_id)
     assert agent is not None
+    agent.agent_type = "hermes"
+    agent.registration_key = local_machine_registration_key(agent.machine_id, agent.agent_type)
     assert agent.registration_key is not None
     assert agent.connected_agent_registered_at is None
+    assert agent.project_skill_reconcile_version is None
+    assert agent.project_skill_reconcile_observed_at is None
     assert await db_session.get(HostedRuntimeState, agent_id) is None
 
     project_skill = await _upload_project_skill(client, workspace_project.id, "shared-key")
@@ -649,18 +654,12 @@ async def test_legacy_v1_hosted_agent_accepts_nonconflicting_workspace_observati
             created_by_user_id=seed_user.id,
         )
     )
-    legacy_v1_runtime_key = ApiKey(
-        user_id=seed_user.id,
-        key_hash="3" * 64,
-        key_prefix="clawdi_test",
-        label="legacy-v1-workspace-upload",
-        environment_id=agent_id,
-        scopes=None,
-        managed=False,
-    )
-    db_session.add(legacy_v1_runtime_key)
     await db_session.commit()
-    _set_auth(AuthContext(user=seed_user, api_key=legacy_v1_runtime_key))
+    environment_bound_key_count = await db_session.scalar(
+        select(func.count(ApiKey.id)).where(ApiKey.environment_id == agent_id)
+    )
+    assert environment_bound_key_count == 0
+    _set_auth(_unbound_cli_auth(seed_user))
 
     accepted = await _upload_agent_workspace_skill(
         client,
@@ -752,7 +751,7 @@ async def test_unsupported_hosted_v2_deployment_rejects_link_and_project_skill_r
         )
     )
     await db_session.commit()
-    _set_auth(_connected_agent_auth(seed_user))
+    _set_auth(_unbound_cli_auth(seed_user))
     hosted_v2_workspace_write = await _upload_agent_workspace_skill(
         client,
         agent_id=channel_agent.id,
