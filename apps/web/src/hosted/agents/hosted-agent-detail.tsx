@@ -25,7 +25,6 @@ import {
 	TerminalSquare,
 	Trash2,
 	X,
-	Zap,
 } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -164,18 +163,18 @@ import {
 } from "@/hosted/billing/hooks";
 import {
 	ComputeSubscriptionCard,
+	ComputeSubscriptionManageAction,
 	computeSubscriptionCardView,
 } from "@/hosted/billing/subscription/compute-subscription-card";
+import {
+	COMPUTE_PLANS_UNAVAILABLE_REASON,
+	type ComputeSubscriptionManagementResult,
+	computeSubscriptionManagement,
+} from "@/hosted/billing/subscription/compute-subscription-management";
 import { computeSubscriptionRecoveryPresentation } from "@/hosted/billing/subscription/compute-subscription-recovery";
 import {
-	activePlanChangeOperationName,
-	performanceUpgradeUnavailableReason,
-} from "@/hosted/billing/subscription/plan-change.logic";
-import {
 	PlanChangeController,
-	type PlanChangeTarget,
 	planChangeBillingTerm,
-	planChangeTargetUnavailableReason,
 } from "@/hosted/billing/subscription/plan-change-controller";
 import { SubscriptionCreateDialog } from "@/hosted/billing/subscription/subscription-create-dialog";
 import {
@@ -3588,7 +3587,6 @@ function ComputeSettingsSections({
 	const fundingSource = computeFundingSource(computePlanSlug, currentSubscription);
 	const isIncludedBasic = fundingMode === "included_basic";
 	const isPaidCompute = fundingMode === "subscription";
-	const isWalletFunded = fundingSource === "wallet";
 	const terminalFundingFact =
 		isIncludedBasic && fundingFact?.fact_kind === "funding_revoked" ? fundingFact : null;
 	const hasWalletFallback = terminalFundingFact?.funding_source === "wallet";
@@ -3629,38 +3627,20 @@ function ComputeSettingsSections({
 	const subscriptionLifecycle = currentSubscription
 		? computeSubscriptionLifecycle(currentSubscription)
 		: null;
-	const currentSubscriptionStatus = currentSubscription?.status.toLowerCase();
-	const lifecycleStatus: { label: string; tone: StatusTone } = {
-		label:
-			fundingMode === "unknown"
-				? "Unavailable"
-				: !isPaidCompute || !subscriptionLifecycle
-					? "Current"
-					: currentSubscriptionStatus === "canceling" || subscriptionCancelPending
-						? "Canceling"
-						: subscriptionLifecycle.badgeLabel,
-		tone:
-			currentSubscriptionStatus === "canceling" || subscriptionCancelPending || pendingPlanSlug
-				? "warning"
-				: isIncludedBasic ||
-						currentSubscriptionStatus === "active" ||
-						currentSubscriptionStatus === "trialing"
-					? "success"
-					: "neutral",
-	};
 	const computeRecovery = computeSubscriptionRecoveryPresentation(
 		currentSubscription,
-		lifecycleStatus,
+		subscriptionLifecycle
+			? { label: subscriptionLifecycle.badgeLabel, tone: subscriptionLifecycle.badgeTone }
+			: { label: "Unavailable", tone: "neutral" },
 	);
 	const computeCardView = computeSubscriptionCardView({
 		status: computeRecovery.status,
 		planSlug: computePlanSlug ?? rawComputePlanSlug,
-		fundingSource: isIncludedBasic
-			? "included"
-			: currentSubscription?.funding_source === "wallet"
-				? "wallet"
-				: currentSubscription
-					? "stripe"
+		fundingSource:
+			fundingSource === "included_basic"
+				? "included"
+				: fundingSource === "stripe" || fundingSource === "wallet"
+					? fundingSource
 					: "unavailable",
 		priceCents: currentPriceCents,
 		currency: currentSubscription?.currency ?? "usd",
@@ -3677,49 +3657,37 @@ function ComputeSettingsSections({
 			)
 		: null;
 	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
-	const paymentSourceOnly =
-		currentSubscription?.status === "past_due" || currentSubscription?.payment_state === "past_due";
-	const planChangeStatus =
-		currentSubscription?.status === "unpaid" || currentSubscription?.payment_state === "unpaid"
-			? "unpaid"
-			: paymentSourceOnly
-				? "past_due"
-				: currentSubscription?.status;
-	const planChangeTarget: PlanChangeTarget | null =
-		currentSubscription && computePlanSlug && planChangeStatus
-			? {
+	const computeManagement: ComputeSubscriptionManagementResult = currentSubscription
+		? computeSubscriptionManagement({
+				entitlement: {
 					deploymentId: deployment.resource.id,
-					currentPlanSlug: computePlanSlug,
-					initialPlanSlug: isIncludedBasic ? COMPUTE_PERFORMANCE_SLUG : computePlanSlug,
-					currentBillingTermMonths: currentBillingTerm,
-					currentFundingSource: isWalletFunded ? "wallet" : "stripe",
-					status: planChangeStatus,
-					paymentSourceOnly,
+					planSlug: computePlanSlug,
+					fundingSource: currentSubscription.funding_source,
+					priceCents: currentSubscription.price_cents,
+					billingTermMonths: currentSubscription.billing_term_months,
+					status: currentSubscription.status,
+					paymentState: currentSubscription.payment_state,
 					cancelAtPeriodEnd: subscriptionCancelPending,
-					isPaidCompute,
-					allowCombinedChange: isIncludedBasic,
-					projectedOperationName: activePlanChangeOperationName(deployment),
-				}
-			: null;
-	const planChangeUnavailable = planChangeTarget
-		? planChangeTargetUnavailableReason({
+					recoveryAction: currentSubscription.recovery_action,
+					pendingPlanSlug,
+				},
+				deployment,
 				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
-				target: planChangeTarget,
+				plansLoading: plans.isLoading,
+				plansError: blockingPlansError !== null,
+				performancePlanAvailable: Boolean(perfPlan),
 			})
-		: "Choose a subscription to change this agent’s paid compute.";
-	const upgradeUnavailableMessage = performanceUpgradeUnavailableReason({
-		plansLoading: plans.isLoading,
-		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
-		isIncludedBasic,
-		performancePlanAvailable: Boolean(perfPlan),
-		pendingPlanSlug,
-		planChangeUnavailable,
-		deploymentStatusSupportsUpgrade:
-			isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped",
-		upgradeAvailable: deployment.upgrade_available,
-		upgradeEligibilityReason: deployment.upgrade_eligibility.reason,
-	});
-	const canUpgrade = deployment.upgrade_available && upgradeUnavailableMessage === null;
+		: { action: "hidden", target: null, unavailableReason: null };
+	const hasPendingComputeChange =
+		hasPendingPlanChange ||
+		(computeManagement.action === "enabled" &&
+			computeManagement.target.projectedOperationName !== null);
+	const plansErrorBlocksIncluded =
+		blockingPlansError !== null &&
+		computeManagement.unavailableReason === COMPUTE_PLANS_UNAVAILABLE_REASON;
+	const computeManagementReason = plansErrorBlocksIncluded
+		? null
+		: computeManagement.unavailableReason;
 	const canStartNewSubscription = hostedAccess.canCreateCloudAgents && hasTerminalFallback;
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
 		terminalFundingFact?.prior_plan_slug,
@@ -3728,17 +3696,21 @@ function ComputeSettingsSections({
 			performanceAvailable: !!perfPlan,
 		},
 	);
-	const createUnavailableMessage = plans.isLoading
-		? "Checking paid compute availability…"
-		: !hostedAccess.canCreateCloudAgents
-			? hasTerminalFallback
+	const createUnavailableMessage = !hasTerminalFallback
+		? null
+		: plans.isLoading
+			? "Checking paid compute availability…"
+			: !hostedAccess.canCreateCloudAgents
 				? "New subscriptions are temporarily unavailable."
-				: "Upgrades are temporarily unavailable."
-			: hasTerminalFallback && !(basicPlan || perfPlan)
-				? "Paid compute plans are unavailable right now."
-				: isIncludedBasic && planChangeUnavailable
-					? planChangeUnavailable
-					: upgradeUnavailableMessage;
+				: !(basicPlan || perfPlan)
+					? "Paid compute plans are unavailable right now."
+					: null;
+	const pendingComputeChangeAction = hasPendingComputeChange ? (
+		<Button type="button" variant="outline" size="sm" onClick={() => setPlanChangeOpen(true)}>
+			<RefreshCw data-icon="inline-start" />
+			Check subscription change status
+		</Button>
+	) : null;
 	useEffect(() => {
 		if (hostedAccess.isLoading || hostedAccess.canCreateCloudAgents) return;
 		setSubscriptionCreateOpen(false);
@@ -3792,20 +3764,29 @@ function ComputeSettingsSections({
 					initialBillingTermMonths={currentBillingTerm}
 				/>
 			) : null}
-			{planChangeTarget ? (
+			{computeManagement.target ? (
 				<PlanChangeController
 					open={planChangeOpen}
 					onOpenChange={setPlanChangeOpen}
 					onPendingChange={setHasPendingPlanChange}
-					target={planChangeTarget}
+					target={computeManagement.target}
 					plans={plans.data ?? []}
 				/>
 			) : null}
 
 			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
+				{plansErrorBlocksIncluded ? (
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={blockingPlansError}
+						onRetry={() => void plans.refetch()}
+						title="Couldn't load compute plans"
+					/>
+				) : null}
 				<ComputeSubscriptionCard
 					headingLevel={3}
 					view={computeCardView}
+					actionsId="compute-plan-controls"
 					className="w-full"
 					badges={
 						hasWalletFallback ? (
@@ -3815,148 +3796,90 @@ function ComputeSettingsSections({
 						) : null
 					}
 					notice={
-						pendingPlanCopy ? (
-							<p className="text-xs font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
+						pendingPlanCopy || computeManagementReason || createUnavailableMessage ? (
+							<div className="flex flex-col gap-1 text-xs text-muted-foreground">
+								{pendingPlanCopy ? (
+									<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
+								) : null}
+								{computeManagementReason ? <p>{computeManagementReason}</p> : null}
+								{createUnavailableMessage ? <p>{createUnavailableMessage}</p> : null}
+							</div>
 						) : null
 					}
 					actions={
 						hasTerminalFallback || isIncludedBasic || (isPaidCompute && currentSubscription) ? (
-							<div
-								id="compute-plan-controls"
-								className="flex scroll-mt-6 flex-wrap items-center justify-end gap-2"
-							>
-								{isIncludedBasic && blockingPlansError ? (
-									<div className="w-full sm:w-72">
-										<ApiErrorPanel
-											normalizer={billingErrorNormalizer}
-											error={blockingPlansError}
-											onRetry={() => void plans.refetch()}
-											title="Couldn’t check paid compute availability"
-										/>
-									</div>
-								) : hasTerminalFallback || isIncludedBasic ? (
-									<>
-										<Button
-											size="sm"
-											disabled={
-												!hasPendingPlanChange &&
-												(hasTerminalFallback
-													? !canStartNewSubscription
-													: plans.isLoading || !canUpgrade || !perfPlan)
-											}
-											onClick={() =>
-												hasPendingPlanChange
-													? setPlanChangeOpen(true)
-													: hasTerminalFallback
-														? setSubscriptionCreateOpen(true)
-														: setPlanChangeOpen(true)
-											}
-										>
-											{hasTerminalFallback ? (
-												<Plus data-icon="inline-start" />
-											) : (
-												<Zap data-icon="inline-start" />
-											)}
-											{hasPendingPlanChange
-												? "Check subscription change status"
-												: hasTerminalFallback
-													? "Choose a subscription"
-													: "Upgrade to Performance"}
-										</Button>
-										{hasTerminalFallback ? (
-											canStartNewSubscription ? null : (
-												<p className="basis-full text-right text-xs text-muted-foreground">
-													{createUnavailableMessage}
-												</p>
-											)
-										) : canUpgrade ? null : (
-											<p className="basis-full text-right text-xs text-muted-foreground">
-												{upgradeUnavailableMessage}
-											</p>
+							hasTerminalFallback ? (
+								(pendingComputeChangeAction ?? (
+									<Button
+										size="sm"
+										disabled={!canStartNewSubscription}
+										onClick={() => setSubscriptionCreateOpen(true)}
+									>
+										<Plus data-icon="inline-start" />
+										Choose a subscription
+									</Button>
+								))
+							) : isIncludedBasic ? (
+								(pendingComputeChangeAction ?? (
+									<ComputeSubscriptionManageAction
+										onClick={() => setPlanChangeOpen(true)}
+										disabled={computeManagement.action !== "enabled"}
+									/>
+								))
+							) : isPaidCompute && currentSubscription ? (
+								subscriptionCancelPending ? (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										disabled={resumeSubscription.isPending || !subscriptionCancelable}
+										onClick={() => void runAction(resumeComputeSubscription).catch(() => undefined)}
+									>
+										{resumeSubscription.isPending ? (
+											<Spinner data-icon="inline-start" />
+										) : (
+											<RefreshCw data-icon="inline-start" />
 										)}
-									</>
-								) : isPaidCompute && currentSubscription ? (
-									subscriptionCancelPending ? (
-										<Button
-											type="button"
-											variant="outline"
-											size="sm"
-											disabled={resumeSubscription.isPending || !subscriptionCancelable}
-											onClick={() =>
-												void runAction(resumeComputeSubscription).catch(() => undefined)
+										Resume subscription
+									</Button>
+								) : (
+									<>
+										{pendingComputeChangeAction ??
+											(computeRecovery.hasPaymentIssue || pendingPlanSlug ? null : (
+												<ComputeSubscriptionManageAction
+													onClick={() => setPlanChangeOpen(true)}
+													disabled={computeManagement.action !== "enabled"}
+												/>
+											))}
+										<ConfirmAction
+											title={`Cancel ${tierLabel} subscription?`}
+											description={
+												<p>
+													Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls
+													back to included Basic funding if available; otherwise, it stops.
+												</p>
 											}
+											confirmLabel="Cancel at period end"
+											destructive
+											onConfirm={() => runAction(cancelComputeSubscription)}
 										>
-											{resumeSubscription.isPending ? (
-												<Spinner data-icon="inline-start" />
-											) : (
-												<RefreshCw data-icon="inline-start" />
-											)}
-											Resume subscription
-										</Button>
-									) : (
-										<>
-											{hasPendingPlanChange ? (
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													onClick={() => setPlanChangeOpen(true)}
-												>
-													<RefreshCw data-icon="inline-start" />
-													Check change status
-												</Button>
-											) : computeRecovery.hasPaymentIssue || pendingPlanSlug ? null : (
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													disabled={planChangeUnavailable !== null}
-													onClick={() => setPlanChangeOpen(true)}
-												>
-													<Settings data-icon="inline-start" />
-													Manage
-												</Button>
-											)}
-											<ConfirmAction
-												title={`Cancel ${tierLabel} subscription?`}
-												description={
-													<p>
-														Cancellation takes effect {subscriptionPeriodLabel}. The agent then
-														falls back to included Basic funding if available; otherwise, it stops.
-													</p>
-												}
-												confirmLabel="Cancel at period end"
-												destructive
-												onConfirm={() => runAction(cancelComputeSubscription)}
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												disabled={cancelSubscription.isPending || !subscriptionCancelable}
 											>
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													disabled={cancelSubscription.isPending || !subscriptionCancelable}
-												>
-													{cancelSubscription.isPending ? (
-														<Spinner data-icon="inline-start" />
-													) : (
-														<Link2Off data-icon="inline-start" />
-													)}
-													Cancel subscription
-												</Button>
-											</ConfirmAction>
-											{pendingPlanSlug ? (
-												<p className="basis-full text-right text-xs text-muted-foreground">
-													A plan change is already scheduled. It will apply on the effective date
-													shown above.
-												</p>
-											) : planChangeUnavailable ? (
-												<p className="basis-full text-right text-xs text-muted-foreground">
-													{planChangeUnavailable}
-												</p>
-											) : null}
-										</>
-									)
-								) : null}
-							</div>
+												{cancelSubscription.isPending ? (
+													<Spinner data-icon="inline-start" />
+												) : (
+													<Link2Off data-icon="inline-start" />
+												)}
+												Cancel subscription
+											</Button>
+										</ConfirmAction>
+									</>
+								)
+							) : null
 						) : null
 					}
 				/>

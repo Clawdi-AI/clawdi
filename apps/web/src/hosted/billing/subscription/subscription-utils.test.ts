@@ -408,6 +408,19 @@ describe("compute subscription lifecycle presentation", () => {
 	});
 
 	test("labels terminal and non-entitled states honestly", () => {
+		expect(
+			computeSubscriptionLifecycle({
+				...subscription(),
+				status: "canceling",
+				cancel_at: "2026-07-15T00:00:00Z",
+			}),
+		).toMatchObject({
+			badgeLabel: "Canceling",
+			badgeTone: "warning",
+			dateAt: "2026-07-15T00:00:00Z",
+			dateVerb: "Ends",
+			renews: false,
+		});
 		expect(computeSubscriptionLifecycle({ ...subscription(), status: "paused" })).toMatchObject({
 			badgeLabel: "Paused",
 			renews: false,

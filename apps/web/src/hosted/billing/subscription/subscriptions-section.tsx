@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import type { ComputePlanSlug, ComputeSubscriptionListItem } from "@/hosted/billing/contracts";
+import type { ComputeSubscriptionListItem, HostedDeployment } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import {
 	useCancelSubscription,
@@ -33,51 +33,44 @@ import {
 import { useSensitiveFixPayment } from "@/hosted/billing/sensitive-actions";
 import {
 	ComputeSubscriptionCard,
+	ComputeSubscriptionManageAction,
 	computeSubscriptionCardView,
 	computeSubscriptionPlanLabel,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
+	COMPUTE_PLANS_UNAVAILABLE_REASON,
+	type ComputeSubscriptionManagementResult,
+	computeSubscriptionManagement,
+} from "@/hosted/billing/subscription/compute-subscription-management";
+import {
 	type ComputeRecoveryTarget,
 	computeSubscriptionRecoveryPresentation,
 } from "@/hosted/billing/subscription/compute-subscription-recovery";
-import { activePlanChangeOperationName } from "@/hosted/billing/subscription/plan-change.logic";
-import {
-	PlanChangeController,
-	type PlanChangeTarget,
-} from "@/hosted/billing/subscription/plan-change-controller";
+import { PlanChangeController } from "@/hosted/billing/subscription/plan-change-controller";
 import {
 	canCancelAccountSubscription,
 	canResumeAccountSubscription,
+	computeFundingSource,
+	computeSubscriptionLifecycle,
 	isEndedAccountSubscription,
 	pendingPlanScheduleCopy,
+	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
-
-const STATUS_PRESENTATION = {
-	active: { label: "Active", tone: "success" },
-	canceling: { label: "Canceling", tone: "warning" },
-	past_due: { label: "Past due", tone: "destructive" },
-	canceled: { label: "Canceled", tone: "neutral" },
-} as const;
-
-function subscriptionScheduleVerb(status: ComputeSubscriptionListItem["status"]): string {
-	if (status === "canceling") return "Ends";
-	if (status === "canceled") return "Ended";
-	return "Renews";
-}
 
 function SubscriptionActions({
 	subscription,
-	canManage,
+	management,
 	onManage,
 }: {
 	subscription: ComputeSubscriptionListItem;
-	canManage: boolean;
+	management: ComputeSubscriptionManagementResult;
 	onManage: () => void;
 }) {
 	const cancelSubscription = useCancelSubscription();
@@ -116,17 +109,17 @@ function SubscriptionActions({
 		}
 	}
 
-	if (!canManage && !canCancel && !canResume) {
+	if (management.action === "hidden" && !canCancel && !canResume) {
 		return null;
 	}
 
 	return (
 		<>
-			{canManage ? (
-				<Button type="button" variant="outline" size="sm" onClick={onManage}>
-					<Settings data-icon="inline-start" />
-					Manage
-				</Button>
+			{management.action !== "hidden" ? (
+				<ComputeSubscriptionManageAction
+					onClick={onManage}
+					disabled={management.action === "disabled"}
+				/>
 			) : null}
 			{canResume ? (
 				<Button
@@ -248,52 +241,41 @@ function subscriptionAgentHref(subscription: ComputeSubscriptionListItem): strin
 	});
 }
 
-function computePlanSlug(value: string): ComputePlanSlug | null {
-	return value === "compute_basic" || value === "compute_performance" ? value : null;
-}
-
-export function canManageAccountSubscription(subscription: ComputeSubscriptionListItem): boolean {
-	return (
-		!subscription.is_orphan &&
-		Boolean(subscription.deployment_id?.trim()) &&
-		!subscription.cancel_at_period_end &&
-		subscription.status === "active" &&
-		subscription.payment_state === "ok" &&
-		subscription.recovery_action === null &&
-		subscription.pending_plan_slug === null &&
-		computePlanSlug(subscription.plan_slug) !== null &&
-		(subscription.funding_source === "stripe" || subscription.funding_source === "wallet")
-	);
-}
-
-function accountPlanChangeTarget(
+function subscriptionManagement(
 	subscription: ComputeSubscriptionListItem,
-	projectedOperationName: string | null,
-): PlanChangeTarget | null {
-	const deploymentId = subscription.deployment_id?.trim();
-	const planSlug = computePlanSlug(subscription.plan_slug);
-	const fundingSource = subscription.funding_source;
-	if (
-		!canManageAccountSubscription(subscription) ||
-		!deploymentId ||
-		!planSlug ||
-		(fundingSource !== "stripe" && fundingSource !== "wallet")
-	) {
-		return null;
-	}
-	return {
-		deploymentId,
-		currentPlanSlug: planSlug,
-		initialPlanSlug: planSlug,
-		currentBillingTermMonths: subscription.billing_term_months,
-		currentFundingSource: fundingSource,
-		status: subscription.status,
-		paymentSourceOnly: false,
-		cancelAtPeriodEnd: subscription.cancel_at_period_end,
-		isPaidCompute: true,
-		allowCombinedChange: false,
-		projectedOperationName,
-	};
+	deployment: HostedDeployment | undefined,
+	{
+		canCreateCloudAgents,
+		plansLoading,
+		plansError,
+		performancePlanAvailable,
+	}: {
+		canCreateCloudAgents: boolean;
+		plansLoading: boolean;
+		plansError: boolean;
+		performancePlanAvailable: boolean;
+	},
+): ComputeSubscriptionManagementResult {
+	return computeSubscriptionManagement({
+		entitlement: {
+			deploymentId: subscription.deployment_id,
+			planSlug: subscription.plan_slug,
+			fundingSource: subscription.funding_source,
+			priceCents: subscription.price_cents,
+			billingTermMonths: subscription.billing_term_months,
+			status: subscription.status,
+			paymentState: subscription.payment_state,
+			cancelAtPeriodEnd: subscription.cancel_at_period_end,
+			recoveryAction: subscription.recovery_action,
+			pendingPlanSlug: subscription.pending_plan_slug,
+			isOrphan: subscription.is_orphan,
+		},
+		deployment,
+		canCreateCloudAgents,
+		plansLoading,
+		plansError,
+		performancePlanAvailable,
+	});
 }
 
 export function SubscriptionLoadMore({
@@ -315,19 +297,25 @@ export function SubscriptionLoadMore({
 function SubscriptionRow({
 	subscription,
 	agentTile,
+	management,
 	onManage,
 }: {
 	subscription: ComputeSubscriptionListItem;
 	agentTile?: AgentTile;
+	management: ComputeSubscriptionManagementResult;
 	onManage: (subscription: ComputeSubscriptionListItem) => void;
 }) {
-	const recovery = computeSubscriptionRecoveryPresentation(
-		subscription,
-		STATUS_PRESENTATION[subscription.status],
-	);
+	const lifecycle = computeSubscriptionLifecycle(subscription);
+	const recovery = computeSubscriptionRecoveryPresentation(subscription, {
+		label: lifecycle.badgeLabel,
+		tone: lifecycle.badgeTone,
+	});
 	const agentHref = subscriptionAgentHref(subscription);
-	const canManage = canManageAccountSubscription(subscription);
-	const pendingPlanSlug = computePlanSlug(subscription.pending_plan_slug ?? "");
+	const pendingPlanSlug =
+		subscription.pending_plan_slug === "compute_basic" ||
+		subscription.pending_plan_slug === "compute_performance"
+			? subscription.pending_plan_slug
+			: null;
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
 				pendingPlanSlug,
@@ -354,19 +342,29 @@ function SubscriptionRow({
 		}
 	})();
 	const hasActions =
-		canManage ||
+		management.action !== "hidden" ||
 		recoveryActionAvailable ||
 		canCancelAccountSubscription(subscription) ||
 		canResumeAccountSubscription(subscription);
+	const fundingSource = computeFundingSource(subscription.plan_slug, subscription);
+	const managementReason =
+		management.unavailableReason === COMPUTE_PLANS_UNAVAILABLE_REASON
+			? null
+			: management.unavailableReason;
 	const view = computeSubscriptionCardView({
 		status: recovery.status,
 		planSlug: subscription.plan_slug,
-		fundingSource: subscription.funding_source === null ? "included" : subscription.funding_source,
+		fundingSource:
+			fundingSource === "included_basic"
+				? "included"
+				: fundingSource === "stripe" || fundingSource === "wallet"
+					? fundingSource
+					: "unavailable",
 		priceCents: subscription.price_cents,
 		currency: subscription.currency,
 		billingTermMonths: subscription.billing_term_months,
-		scheduleVerb: recovery.schedule?.verb ?? subscriptionScheduleVerb(subscription.status),
-		scheduleAt: recovery.schedule?.at ?? subscription.current_period_end,
+		scheduleVerb: recovery.schedule?.verb ?? lifecycle.dateVerb,
+		scheduleAt: recovery.schedule?.at ?? lifecycle.dateAt,
 		scheduleFallback: recovery.schedule?.fallback ?? undefined,
 	});
 
@@ -388,9 +386,10 @@ function SubscriptionRow({
 				}
 				badges={subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
 				notice={
-					recoveryNotice || pendingPlanCopy ? (
+					recoveryNotice || pendingPlanCopy || managementReason ? (
 						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
 							{recoveryNotice ? <p>{recoveryNotice}</p> : null}
+							{managementReason ? <p>{managementReason}</p> : null}
 							{pendingPlanCopy ? (
 								<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
 							) : null}
@@ -409,7 +408,7 @@ function SubscriptionRow({
 							) : null}
 							<SubscriptionActions
 								subscription={subscription}
-								canManage={canManage}
+								management={management}
 								onManage={() => onManage(subscription)}
 							/>
 						</>
@@ -470,6 +469,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const subscriptions = useSubscriptions();
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
+	const hostedAccess = useHostedProductAccess();
 	const [showHistory, setShowHistory] = useState(false);
 	const [historyCutoffMs] = useState(Date.now);
 	const [selectedSubscription, setSelectedSubscription] =
@@ -492,33 +492,54 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 			);
 	const canLoadMore = subscriptions.hasNextPage && !subscriptions.isFetchNextPageError;
 	const historyControlVisible = endedRows.length > 0 || showHistory;
+	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
+	const deploymentsById = new Map(
+		(deployments.data ?? []).map((deployment) => [
+			deployment.resource.id.toLowerCase(),
+			deployment,
+		]),
+	);
+	const managementOptions = {
+		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
+		plansLoading: plans.isLoading,
+		plansError: blockingPlansError !== null,
+		performancePlanAvailable: Boolean(resolvePerformancePlan(plans.data)),
+	};
 	const selectedDeployment = selectedSubscription?.deployment_id
-		? deployments.data?.find(
-				(deployment) =>
-					deployment.resource.id.toLowerCase() ===
-					selectedSubscription.deployment_id?.toLowerCase(),
-			)
+		? deploymentsById.get(selectedSubscription.deployment_id.toLowerCase())
 		: undefined;
-	const selectedTarget = selectedSubscription
-		? accountPlanChangeTarget(
-				selectedSubscription,
-				selectedDeployment ? activePlanChangeOperationName(selectedDeployment) : null,
-			)
+	const selectedManagement = selectedSubscription
+		? subscriptionManagement(selectedSubscription, selectedDeployment, managementOptions)
 		: null;
+	const plansErrorBlocksVisibleIncluded =
+		blockingPlansError !== null &&
+		visibleRows.some((subscription) => {
+			const deployment = subscription.deployment_id
+				? deploymentsById.get(subscription.deployment_id.toLowerCase())
+				: undefined;
+			return (
+				subscriptionManagement(subscription, deployment, managementOptions).unavailableReason ===
+				COMPUTE_PLANS_UNAVAILABLE_REASON
+			);
+		});
 
 	function manageSubscription(subscription: ComputeSubscriptionListItem) {
-		if (!canManageAccountSubscription(subscription)) return;
+		const deployment = subscription.deployment_id
+			? deploymentsById.get(subscription.deployment_id.toLowerCase())
+			: undefined;
+		if (subscriptionManagement(subscription, deployment, managementOptions).action !== "enabled")
+			return;
 		setSelectedSubscription(subscription);
 		setPlanChangeOpen(true);
 	}
 
 	return (
 		<>
-			{selectedTarget ? (
+			{selectedManagement?.action === "enabled" ? (
 				<PlanChangeController
 					open={planChangeOpen}
 					onOpenChange={setPlanChangeOpen}
-					target={selectedTarget}
+					target={selectedManagement.target}
 					plans={plans.data ?? []}
 				/>
 			) : null}
@@ -539,6 +560,14 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 					/>
 				) : rows.length || subscriptions.hasNextPage ? (
 					<>
+						{plansErrorBlocksVisibleIncluded ? (
+							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								error={blockingPlansError}
+								onRetry={() => void plans.refetch()}
+								title="Couldn't load compute plans"
+							/>
+						) : null}
 						{historyControlVisible ? (
 							<div className="flex justify-end">
 								<Button
@@ -566,6 +595,13 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 												? agentTilesByDeploymentId.get(subscription.deployment_id.toLowerCase())
 												: undefined
 										}
+										management={subscriptionManagement(
+											subscription,
+											subscription.deployment_id
+												? deploymentsById.get(subscription.deployment_id.toLowerCase())
+												: undefined,
+											managementOptions,
+										)}
 										onManage={manageSubscription}
 									/>
 								))}

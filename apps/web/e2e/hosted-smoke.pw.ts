@@ -4278,10 +4278,10 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 		.getByRole("button", { name: "Manage", exact: true })
 		.click();
 	const changeDialog = page.getByRole("dialog");
-	await expect(changeDialog.getByRole("button", { name: "Card", exact: true })).toHaveAttribute(
-		"aria-pressed",
-		"true",
-	);
+	await expect(changeDialog).toHaveAccessibleName("Manage compute subscription");
+	await expect(
+		changeDialog.getByRole("button", { name: "Plan & billing", exact: true }),
+	).toHaveAttribute("aria-pressed", "true");
 	await changeDialog.getByRole("combobox", { name: "Compute plan" }).click();
 	await page.getByRole("option", { name: "Performance", exact: true }).click();
 	await changeDialog.getByRole("button", { name: "Review change" }).click();
@@ -4358,6 +4358,8 @@ test("paid card subscription switches future renewals to Wallet", async ({ page 
 		.getByRole("button", { name: "Manage", exact: true })
 		.click();
 	const changeDialog = page.getByRole("dialog");
+	await expect(changeDialog).toHaveAccessibleName("Manage compute subscription");
+	await changeDialog.getByRole("button", { name: "Payment source", exact: true }).click();
 	await changeDialog.getByRole("button", { name: "Wallet", exact: true }).click();
 	await changeDialog.getByRole("button", { name: "Review change" }).click();
 
