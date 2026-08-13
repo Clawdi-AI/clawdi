@@ -39,6 +39,7 @@ import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
 	type RuntimeManifest,
+	type RuntimePrivateAppliedAuthority,
 	runtimeInstallerMutationTargets,
 	runtimeRecoverableSecretValues,
 	runtimeUserMutationTargets,
@@ -362,7 +363,7 @@ function commitTestRuntimeAuthority(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
 	convergence: ReturnType<typeof convergeRuntimeManifest>,
-	authority: { egressSidecarSecretRevision?: string },
+	authority: RuntimePrivateAppliedAuthority,
 ): void {
 	commitRuntimeAppliedState({
 		load,
@@ -371,6 +372,8 @@ function commitTestRuntimeAuthority(
 		sourceRevision: runtimeContentSha256({ generation: load.manifest.generation }),
 		convergence,
 		applyIdentity: null,
+		daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+		daemonProgramRevision: authority.daemonProgramRevision,
 		egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 	});
 }

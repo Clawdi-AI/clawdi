@@ -92,6 +92,18 @@ describe("runtime applied state", () => {
 				daemonAuthTokenRevision: "not-a-private-revision",
 			}).success,
 		).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				daemonProgramRevision: "d".repeat(32),
+			}).success,
+		).toBe(true);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				daemonProgramRevision: "not-a-private-revision",
+			}).success,
+		).toBe(false);
 	});
 
 	test("reads old state through the named fallback and preserves explicit apply generation", () => {
