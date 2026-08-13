@@ -53,4 +53,29 @@ describe("ApiClient.uploadSkill", () => {
 		}
 		expect(fetchCalls).toBe(0);
 	});
+
+	it("skips decoded-NUL inspection above the server frontmatter limit", async () => {
+		let fetchCalls = 0;
+		globalThis.fetch = Object.assign(
+			async () => {
+				fetchCalls++;
+				return Response.json({ skill_key: "oversized-frontmatter", version: 1, file_count: 1 });
+			},
+			{ preconnect: originalFetch.preconnect },
+		);
+
+		const frontmatter = `name: valid\ndescription: "${"a".repeat(64 * 1024)}\\0"`;
+		const raw = `---\n${frontmatter}\n---\n# Body\n`;
+		expect(Buffer.byteLength(frontmatter, "utf8")).toBeGreaterThan(64 * 1024);
+		expect(Buffer.from(raw).includes(0)).toBe(false);
+
+		const api = new ApiClient({ requireAuth: false });
+		await api.uploadSkill(
+			"00000000-0000-0000-0000-000000000000",
+			"oversized-frontmatter",
+			await tarSingleFile("oversized-frontmatter", raw),
+			"skill.tar.gz",
+		);
+		expect(fetchCalls).toBe(1);
+	});
 });

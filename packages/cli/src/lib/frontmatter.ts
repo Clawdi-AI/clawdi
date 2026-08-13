@@ -1,5 +1,7 @@
 import { parse as parseYaml } from "yaml";
 
+const FRONTMATTER_BYTES_MAX = 64 * 1024;
+
 export class SkillTextValidationError extends Error {
 	constructor() {
 		super("SKILL.md must not contain NUL characters, including YAML-decoded escapes.");
@@ -13,10 +15,12 @@ export function assertUploadableSkillText(raw: string): void {
 
 	const match = raw.match(/^---\s*\n(.*?)\n---\s*\n/s);
 	if (!match) return;
+	const frontmatter = match[1] ?? "";
+	if (Buffer.byteLength(frontmatter, "utf8") > FRONTMATTER_BYTES_MAX) return;
 
 	let parsed: unknown;
 	try {
-		parsed = parseYaml(match[1] ?? "", { mapAsMap: true, merge: true, uniqueKeys: false });
+		parsed = parseYaml(frontmatter, { mapAsMap: true, merge: true, uniqueKeys: false });
 	} catch {
 		// The server accepts malformed frontmatter as an empty metadata block.
 		return;
