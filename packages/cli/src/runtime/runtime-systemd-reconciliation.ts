@@ -97,7 +97,11 @@ export interface RuntimeInstallReceiptTarget {
 
 export interface OfficialRuntimeServicePlan {
 	targets: Map<string, RuntimeInstallReceiptTarget>;
-	pending: Array<{ program: RuntimeSystemdUserProgram; target: RuntimeInstallReceiptTarget }>;
+	pending: Array<{
+		unitName: string;
+		program: RuntimeSystemdUserProgram;
+		target: RuntimeInstallReceiptTarget;
+	}>;
 }
 
 export interface HermesDashboardArtifactPlan {
@@ -552,7 +556,7 @@ export function planOfficialRuntimeServices(
 		);
 		const target = { desiredRevision, currentRevision, expectedCurrentRevision };
 		targets.set(key, target);
-		if (expectedCurrentRevision === null) pending.push({ program, target });
+		if (expectedCurrentRevision === null) pending.push({ unitName: key, program, target });
 	}
 	return { targets, pending };
 }

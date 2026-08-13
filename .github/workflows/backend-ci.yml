@@ -21,6 +21,7 @@ on:
       - "scripts/test-kamal-whatsapp-sidecar-render.sh"
       - "scripts/deploy-whatsapp-sidecar.sh"
       - "scripts/whatsapp-sidecar-deployment-revision.ts"
+      - "scripts/clawdi-image-release-plan.ts"
       - "scripts/test-deploy-whatsapp-sidecar.sh"
       - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
@@ -48,6 +49,7 @@ on:
       - "scripts/test-kamal-whatsapp-sidecar-render.sh"
       - "scripts/deploy-whatsapp-sidecar.sh"
       - "scripts/whatsapp-sidecar-deployment-revision.ts"
+      - "scripts/clawdi-image-release-plan.ts"
       - "scripts/test-deploy-whatsapp-sidecar.sh"
       - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
@@ -100,6 +102,7 @@ jobs:
               - "scripts/test-kamal-whatsapp-sidecar-render.sh"
               - "scripts/deploy-whatsapp-sidecar.sh"
               - "scripts/whatsapp-sidecar-deployment-revision.ts"
+              - "scripts/clawdi-image-release-plan.ts"
               - "scripts/test-deploy-whatsapp-sidecar.sh"
               - "scripts/check_postgres_image_parity.py"
               - "config/deploy.yml"
@@ -124,6 +127,7 @@ jobs:
               - "scripts/test-kamal-whatsapp-sidecar-render.sh"
               - "scripts/deploy-whatsapp-sidecar.sh"
               - "scripts/whatsapp-sidecar-deployment-revision.ts"
+              - "scripts/clawdi-image-release-plan.ts"
               - "scripts/test-deploy-whatsapp-sidecar.sh"
               - "config/deploy.yml"
               - "package.json"
@@ -133,7 +137,6 @@ jobs:
               - ".github/actions/setup-bun-ci/**"
               - ".github/workflows/backend-ci.yml"
               - ".github/workflows/clawdi-image-release.yml"
-
   lint-and-typecheck:
     needs: changes
     if: needs.changes.outputs.any == 'true'

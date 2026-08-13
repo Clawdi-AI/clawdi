@@ -20,6 +20,10 @@ import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
+	type TestConvergeOptions,
+	withTestSystemdTransaction,
+} from "../test-support/systemd-apply";
+import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
@@ -145,11 +149,12 @@ function tempRuntimePaths(): RuntimePaths {
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts: Parameters<typeof convergeRuntimeManifestWithContract>[2] = {},
+	opts: TestConvergeOptions = {},
 ) {
 	ensureRuntimeStateDirs(paths);
 	return convergeRuntimeManifestWithContract(load, paths, {
 		...opts,
+		systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
 		hostedRuntimeContract: opts.hostedRuntimeContract ?? {
 			expectedIdentity: {
 				home: paths.userHome,
