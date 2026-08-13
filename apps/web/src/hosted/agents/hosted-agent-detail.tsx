@@ -167,6 +167,7 @@ import {
 	computeSubscriptionCardView,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
+	COMPUTE_PLANS_UNAVAILABLE_REASON,
 	type ComputeSubscriptionManagementResult,
 	computeSubscriptionManagement,
 } from "@/hosted/billing/subscription/compute-subscription-management";
@@ -180,6 +181,7 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	computeFundingMode,
+	computeFundingSource,
 	computeSubscriptionLifecycle,
 	computeTierLabel,
 	isComputeSubscriptionCancelable,
@@ -3582,6 +3584,7 @@ function ComputeSettingsSections({
 			: undefined;
 	const currentSubscription = deployment.commercial_display?.compute_subscription;
 	const fundingMode = computeFundingMode(computePlanSlug, currentSubscription);
+	const fundingSource = computeFundingSource(computePlanSlug, currentSubscription);
 	const isIncludedBasic = fundingMode === "included_basic";
 	const isPaidCompute = fundingMode === "subscription";
 	const terminalFundingFact =
@@ -3593,6 +3596,7 @@ function ComputeSettingsSections({
 	const currentBillingTerm = planChangeBillingTerm(currentSubscription?.billing_term_months ?? 1);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
+	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
 	const currentPaidPlan =
 		computePlanSlug === COMPUTE_BASIC_SLUG
 			? basicPlan
@@ -3623,38 +3627,20 @@ function ComputeSettingsSections({
 	const subscriptionLifecycle = currentSubscription
 		? computeSubscriptionLifecycle(currentSubscription)
 		: null;
-	const currentSubscriptionStatus = currentSubscription?.status.toLowerCase();
-	const lifecycleStatus: { label: string; tone: StatusTone } = {
-		label:
-			fundingMode === "unknown"
-				? "Unavailable"
-				: !isPaidCompute || !subscriptionLifecycle
-					? "Current"
-					: currentSubscriptionStatus === "canceling" || subscriptionCancelPending
-						? "Canceling"
-						: subscriptionLifecycle.badgeLabel,
-		tone:
-			currentSubscriptionStatus === "canceling" || subscriptionCancelPending || pendingPlanSlug
-				? "warning"
-				: isIncludedBasic ||
-						currentSubscriptionStatus === "active" ||
-						currentSubscriptionStatus === "trialing"
-					? "success"
-					: "neutral",
-	};
 	const computeRecovery = computeSubscriptionRecoveryPresentation(
 		currentSubscription,
-		lifecycleStatus,
+		subscriptionLifecycle
+			? { label: subscriptionLifecycle.badgeLabel, tone: subscriptionLifecycle.badgeTone }
+			: { label: "Unavailable", tone: "neutral" },
 	);
 	const computeCardView = computeSubscriptionCardView({
 		status: computeRecovery.status,
 		planSlug: computePlanSlug ?? rawComputePlanSlug,
-		fundingSource: isIncludedBasic
-			? "included"
-			: currentSubscription?.funding_source === "wallet"
-				? "wallet"
-				: currentSubscription
-					? "stripe"
+		fundingSource:
+			fundingSource === "included_basic"
+				? "included"
+				: fundingSource === "stripe" || fundingSource === "wallet"
+					? fundingSource
 					: "unavailable",
 		priceCents: currentPriceCents,
 		currency: currentSubscription?.currency ?? "usd",
@@ -3688,6 +3674,7 @@ function ComputeSettingsSections({
 				deployment,
 				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
 				plansLoading: plans.isLoading,
+				plansError: blockingPlansError !== null,
 				performancePlanAvailable: Boolean(perfPlan),
 			})
 		: { action: "hidden", target: null, unavailableReason: null };
@@ -3695,6 +3682,12 @@ function ComputeSettingsSections({
 		hasPendingPlanChange ||
 		(computeManagement.action === "enabled" &&
 			computeManagement.target.projectedOperationName !== null);
+	const plansErrorBlocksIncluded =
+		blockingPlansError !== null &&
+		computeManagement.unavailableReason === COMPUTE_PLANS_UNAVAILABLE_REASON;
+	const computeManagementReason = plansErrorBlocksIncluded
+		? null
+		: computeManagement.unavailableReason;
 	const canStartNewSubscription = hostedAccess.canCreateCloudAgents && hasTerminalFallback;
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
 		terminalFundingFact?.prior_plan_slug,
@@ -3782,10 +3775,17 @@ function ComputeSettingsSections({
 			) : null}
 
 			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
+				{plansErrorBlocksIncluded ? (
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={blockingPlansError}
+						onRetry={() => void plans.refetch()}
+						title="Couldn't load compute plans"
+					/>
+				) : null}
 				<ComputeSubscriptionCard
 					headingLevel={3}
 					view={computeCardView}
-					layout="management"
 					actionsId="compute-plan-controls"
 					className="w-full"
 					badges={
@@ -3796,14 +3796,12 @@ function ComputeSettingsSections({
 						) : null
 					}
 					notice={
-						pendingPlanCopy || computeManagement.unavailableReason || createUnavailableMessage ? (
+						pendingPlanCopy || computeManagementReason || createUnavailableMessage ? (
 							<div className="flex flex-col gap-1 text-xs text-muted-foreground">
 								{pendingPlanCopy ? (
 									<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
 								) : null}
-								{computeManagement.unavailableReason ? (
-									<p>{computeManagement.unavailableReason}</p>
-								) : null}
+								{computeManagementReason ? <p>{computeManagementReason}</p> : null}
 								{createUnavailableMessage ? <p>{createUnavailableMessage}</p> : null}
 							</div>
 						) : null

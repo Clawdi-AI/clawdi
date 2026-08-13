@@ -45,6 +45,7 @@ function includedDeployment() {
 const available = {
 	canCreateCloudAgents: true,
 	plansLoading: false,
+	plansError: false,
 	performancePlanAvailable: true,
 };
 
@@ -79,6 +80,82 @@ describe("computeSubscriptionManagement", () => {
 				isPaidCompute: true,
 				allowCombinedChange: false,
 			},
+		});
+	});
+
+	test("limits plans errors to Included upgrades without blocking paid or pending management", () => {
+		expect(
+			computeSubscriptionManagement({
+				entitlement: entitlement({ fundingSource: "stripe", priceCents: 900 }),
+				...available,
+				plansError: true,
+			}),
+		).toMatchObject({ action: "enabled" });
+		expect(
+			computeSubscriptionManagement({
+				entitlement: entitlement(),
+				deployment: includedDeployment(),
+				...available,
+				plansError: true,
+			}),
+		).toMatchObject({
+			action: "disabled",
+			unavailableReason: expect.stringContaining("Retry loading compute plans"),
+		});
+		expect(
+			computeSubscriptionManagement({
+				entitlement: entitlement({ fundingSource: null, priceCents: 900 }),
+				...available,
+			}),
+		).toMatchObject({
+			action: "enabled",
+			target: { currentFundingSource: "stripe", isPaidCompute: true },
+		});
+		expect(
+			computeSubscriptionManagement({
+				entitlement: entitlement({ planSlug: "compute_performance", priceCents: 0 }),
+				...available,
+			}),
+		).toEqual({ action: "hidden", target: null, unavailableReason: null });
+
+		const pending = includedDeployment();
+		pending.accepted_operation = {
+			name: "operations/pending-plan-change",
+			metadata: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+				deploymentId: "hdep_included",
+				verb: "plan_change",
+				targetGeneration: 2,
+				manifestETag: "etag_plan_change",
+				createTime: "2026-07-16T00:00:00Z",
+				updateTime: "2026-07-16T00:00:00Z",
+			},
+			done: false,
+		};
+		expect(
+			computeSubscriptionManagement({
+				entitlement: entitlement(),
+				deployment: pending,
+				...available,
+				plansError: true,
+			}),
+		).toMatchObject({ action: "enabled" });
+	});
+
+	test("keeps healthy past-due subscriptions available for payment-source-only management", () => {
+		expect(
+			computeSubscriptionManagement({
+				entitlement: entitlement({
+					fundingSource: "stripe",
+					priceCents: 900,
+					status: "past_due",
+					paymentState: "ok",
+				}),
+				...available,
+			}),
+		).toMatchObject({
+			action: "enabled",
+			target: { status: "past_due", paymentSourceOnly: true },
 		});
 	});
 

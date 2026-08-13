@@ -4,7 +4,22 @@ import {
 	FundingSourceSwitchSummary,
 	PaymentMethodRequiredRecovery,
 	planChangeDialogStep,
+	planChangeManagementModes,
 } from "./plan-change-dialog";
+
+test("falls back to payment source management when plan offers are unavailable", () => {
+	expect(
+		planChangeManagementModes({
+			allowCombinedChange: false,
+			paymentSourceOnly: false,
+			hasUsablePlans: false,
+		}),
+	).toEqual({
+		hasModePicker: true,
+		initialMode: "payment-source",
+		planBillingAvailable: false,
+	});
+});
 
 describe("funding source switch quote", () => {
 	test("shows zero due now and future-renewal semantics without debit copy", () => {

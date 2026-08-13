@@ -147,7 +147,6 @@ export function ComputeSubscriptionCard({
 	notice,
 	actions,
 	actionsId,
-	layout = "catalog",
 	headingLevel = 3,
 	className,
 }: {
@@ -157,30 +156,22 @@ export function ComputeSubscriptionCard({
 	notice?: ReactNode;
 	actions?: ReactNode;
 	actionsId?: string;
-	layout?: "catalog" | "management";
 	headingLevel?: 3 | 4;
 	className?: string;
 }) {
 	const Heading = headingLevel === 4 ? "h4" : "h3";
-	const managementLayout = layout === "management";
 
 	return (
 		<article
 			data-hosted="true"
 			data-slot="compute-subscription-card"
-			data-layout={layout}
 			data-subscription-status={view.status.label.toLowerCase().replaceAll(" ", "-")}
 			className={entityCardChassisClass({
 				variant: "compact",
-				className: cn(
-					managementLayout
-						? "grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-						: "flex h-full min-w-0 flex-col gap-4",
-					className,
-				),
+				className: cn("flex min-w-0 flex-wrap items-center gap-3", className),
 			})}
 		>
-			<div className={cn("min-w-0", managementLayout && "flex flex-col gap-1.5")}>
+			<div className="flex min-w-[min(12rem,100%)] flex-1 flex-col gap-1.5">
 				<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
 					<Heading className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
 						{view.plan}
@@ -193,12 +184,7 @@ export function ComputeSubscriptionCard({
 					</div>
 				</header>
 
-				<dl
-					className={cn(
-						"flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5",
-						!managementLayout && "mt-4",
-					)}
-				>
+				<dl className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5">
 					{view.commercialFacts.map((fact) => (
 						<div key={fact.label} className="min-w-0 text-xs text-muted-foreground">
 							<dt className="sr-only">{fact.label}</dt>
@@ -217,7 +203,7 @@ export function ComputeSubscriptionCard({
 				{identity ? (
 					<div
 						data-slot="compute-subscription-identity"
-						className={cn("flex min-w-0 items-center gap-3", !managementLayout && "mt-4")}
+						className="flex min-w-0 items-center gap-3"
 					>
 						<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
 						<div className="min-w-0 flex-1">
@@ -228,17 +214,9 @@ export function ComputeSubscriptionCard({
 			</div>
 
 			{notice || actions ? (
-				<div
-					className={cn(
-						"flex min-w-0 flex-col gap-1.5",
-						managementLayout ? "items-start sm:items-end" : "mt-auto",
-					)}
-				>
+				<div className="ml-auto flex min-w-0 flex-col items-start gap-1.5 sm:items-end">
 					{notice ? (
-						<div
-							data-slot="compute-subscription-notice"
-							className={cn("min-w-0", managementLayout && "sm:text-right")}
-						>
+						<div data-slot="compute-subscription-notice" className="min-w-0 sm:text-right">
 							{notice}
 						</div>
 					) : null}

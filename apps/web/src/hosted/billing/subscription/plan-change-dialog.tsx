@@ -61,6 +61,27 @@ const PLAN_ITEMS = [
 
 type ManagementMode = "plan-billing" | "payment-source";
 
+export function planChangeManagementModes({
+	allowCombinedChange,
+	paymentSourceOnly,
+	hasUsablePlans,
+}: {
+	allowCombinedChange: boolean;
+	paymentSourceOnly: boolean;
+	hasUsablePlans: boolean;
+}): {
+	hasModePicker: boolean;
+	initialMode: ManagementMode;
+	planBillingAvailable: boolean;
+} {
+	const planBillingAvailable = allowCombinedChange || hasUsablePlans;
+	return {
+		hasModePicker: !allowCombinedChange && !paymentSourceOnly,
+		initialMode: paymentSourceOnly || !planBillingAvailable ? "payment-source" : "plan-billing",
+		planBillingAvailable,
+	};
+}
+
 function planSlug(value: string | null): ComputePlanSlug | null {
 	return value === "compute_basic" || value === "compute_performance" ? value : null;
 }
@@ -205,10 +226,16 @@ export function PlanChangeDialog({
 			),
 		[currentBillingTermMonths, currentFundingSource, currentPlanSlug, initialPlanSlug],
 	);
-	const [selection, setSelection] = useState(initialSelection);
-	const [managementMode, setManagementMode] = useState<ManagementMode>(
-		paymentSourceOnly ? "payment-source" : "plan-billing",
+	const hasUsablePlans = plans.some(
+		(plan) => explicitPlanOffers(plan).length > 0 || planOffers(plan).length > 0,
 	);
+	const managementModes = planChangeManagementModes({
+		allowCombinedChange,
+		paymentSourceOnly,
+		hasUsablePlans,
+	});
+	const [selection, setSelection] = useState(initialSelection);
+	const [managementMode, setManagementMode] = useState<ManagementMode>(managementModes.initialMode);
 	const exit = useDialogExitLifecycle({ open, value: quote, emptyValue: null });
 	const displayedQuote = exit.renderedValue;
 	const step = planChangeDialogStep({
@@ -265,14 +292,14 @@ export function PlanChangeDialog({
 	const walletReady =
 		!planChangeNeedsWalletBalance(selection, currentPlanSlug, currentBillingTermMonths) ||
 		walletBalanceUsd !== null;
-	const hasManagementModes = !allowCombinedChange && !paymentSourceOnly;
+	const hasManagementModes = managementModes.hasModePicker;
 	const paymentSourceMode = paymentSourceOnly || managementMode === "payment-source";
 
 	useEffect(() => {
 		if (!open) return;
 		setSelection(initialSelection);
-		setManagementMode(paymentSourceOnly ? "payment-source" : "plan-billing");
-	}, [initialSelection, open, paymentSourceOnly]);
+		setManagementMode(managementModes.initialMode);
+	}, [initialSelection, managementModes.initialMode, open]);
 
 	function updateManagementMode(nextMode: ManagementMode) {
 		setManagementMode(nextMode);
@@ -555,7 +582,11 @@ export function PlanChangeDialog({
 								className="grid w-full grid-cols-2"
 								aria-label="Subscription management mode"
 							>
-								<ToggleGroupItem value="plan-billing" className="min-w-0 px-2">
+								<ToggleGroupItem
+									value="plan-billing"
+									className="min-w-0 px-2"
+									disabled={!managementModes.planBillingAvailable}
+								>
 									Plan &amp; billing
 								</ToggleGroupItem>
 								<ToggleGroupItem value="payment-source" className="min-w-0 px-2">

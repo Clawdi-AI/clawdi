@@ -9,7 +9,11 @@ import {
 	planChangeBillingTerm,
 	planChangeTargetUnavailableReason,
 } from "./plan-change-controller";
-import { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG } from "./subscription-utils";
+import {
+	COMPUTE_BASIC_SLUG,
+	COMPUTE_PERFORMANCE_SLUG,
+	computeFundingSource,
+} from "./subscription-utils";
 
 export type ComputeSubscriptionEntitlement = {
 	deploymentId: string | null | undefined;
@@ -30,6 +34,9 @@ export type ComputeSubscriptionManagementResult =
 	| { action: "disabled"; target: null; unavailableReason: string }
 	| { action: "enabled"; target: PlanChangeTarget; unavailableReason: null };
 
+export const COMPUTE_PLANS_UNAVAILABLE_REASON =
+	"Retry loading compute plans to manage this subscription.";
+
 const PROJECTION_UNAVAILABLE_REASON =
 	"Subscription changes will be available after this agent’s compute details finish syncing.";
 
@@ -37,18 +44,10 @@ function isComputePlanSlug(value: string | null | undefined): value is ComputePl
 	return value === COMPUTE_BASIC_SLUG || value === COMPUTE_PERFORMANCE_SLUG;
 }
 
-function isIncludedBasic(entitlement: ComputeSubscriptionEntitlement): boolean {
-	return (
-		entitlement.planSlug === COMPUTE_BASIC_SLUG &&
-		entitlement.fundingSource == null &&
-		entitlement.priceCents === 0
-	);
-}
-
 function blocksManagement(entitlement: ComputeSubscriptionEntitlement): boolean {
 	return (
 		entitlement.cancelAtPeriodEnd ||
-		entitlement.status !== "active" ||
+		(entitlement.status !== "active" && entitlement.status !== "past_due") ||
 		entitlement.paymentState !== "ok" ||
 		entitlement.recoveryAction != null ||
 		entitlement.pendingPlanSlug != null
@@ -62,8 +61,7 @@ function projectedIncludedBasicEntitlement(
 	if (
 		deployment.current_plan_slug !== COMPUTE_BASIC_SLUG ||
 		!subscription ||
-		subscription.funding_source != null ||
-		subscription.price_cents !== 0
+		computeFundingSource(deployment.current_plan_slug, subscription) !== "included_basic"
 	) {
 		return null;
 	}
@@ -86,12 +84,14 @@ export function computeSubscriptionManagement({
 	deployment,
 	canCreateCloudAgents,
 	plansLoading,
+	plansError,
 	performancePlanAvailable,
 }: {
 	entitlement: ComputeSubscriptionEntitlement;
 	deployment?: HostedDeployment | null;
 	canCreateCloudAgents: boolean;
 	plansLoading: boolean;
+	plansError: boolean;
 	performancePlanAvailable: boolean;
 }): ComputeSubscriptionManagementResult {
 	if (initialEntitlement.isOrphan) {
@@ -105,9 +105,12 @@ export function computeSubscriptionManagement({
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
 
-	const includedBasic = isIncludedBasic(initialEntitlement);
-	const paid =
-		initialEntitlement.fundingSource === "stripe" || initialEntitlement.fundingSource === "wallet";
+	const fundingSource = computeFundingSource(initialEntitlement.planSlug, {
+		funding_source: initialEntitlement.fundingSource,
+		price_cents: initialEntitlement.priceCents,
+	});
+	const includedBasic = fundingSource === "included_basic";
+	const paid = fundingSource === "stripe" || fundingSource === "wallet";
 	if (!includedBasic && !paid) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
@@ -140,7 +143,7 @@ export function computeSubscriptionManagement({
 		currentPlanSlug: planSlug,
 		initialPlanSlug: includedBasic ? COMPUTE_PERFORMANCE_SLUG : planSlug,
 		currentBillingTermMonths: planChangeBillingTerm(entitlement.billingTermMonths),
-		currentFundingSource: entitlement.fundingSource === "wallet" ? "wallet" : "stripe",
+		currentFundingSource: fundingSource === "wallet" ? "wallet" : "stripe",
 		status:
 			entitlement.status === "unpaid" || entitlement.paymentState === "unpaid"
 				? "unpaid"
@@ -159,6 +162,13 @@ export function computeSubscriptionManagement({
 
 	if (projectedOperationName) {
 		return { action: "enabled", target, unavailableReason: null };
+	}
+	if (includedBasic && plansError) {
+		return {
+			action: "disabled",
+			target: null,
+			unavailableReason: COMPUTE_PLANS_UNAVAILABLE_REASON,
+		};
 	}
 
 	const targetUnavailableReason = planChangeTargetUnavailableReason({

@@ -38,6 +38,7 @@ import {
 	computeSubscriptionPlanLabel,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
+	COMPUTE_PLANS_UNAVAILABLE_REASON,
 	type ComputeSubscriptionManagementResult,
 	computeSubscriptionManagement,
 } from "@/hosted/billing/subscription/compute-subscription-management";
@@ -49,6 +50,8 @@ import { PlanChangeController } from "@/hosted/billing/subscription/plan-change-
 import {
 	canCancelAccountSubscription,
 	canResumeAccountSubscription,
+	computeFundingSource,
+	computeSubscriptionLifecycle,
 	isEndedAccountSubscription,
 	pendingPlanScheduleCopy,
 	resolvePerformancePlan,
@@ -60,19 +63,6 @@ import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
-
-const STATUS_PRESENTATION = {
-	active: { label: "Active", tone: "success" },
-	canceling: { label: "Canceling", tone: "warning" },
-	past_due: { label: "Past due", tone: "destructive" },
-	canceled: { label: "Canceled", tone: "neutral" },
-} as const;
-
-function subscriptionScheduleVerb(status: ComputeSubscriptionListItem["status"]): string {
-	if (status === "canceling") return "Ends";
-	if (status === "canceled") return "Ended";
-	return "Renews";
-}
 
 function SubscriptionActions({
 	subscription,
@@ -257,10 +247,12 @@ function subscriptionManagement(
 	{
 		canCreateCloudAgents,
 		plansLoading,
+		plansError,
 		performancePlanAvailable,
 	}: {
 		canCreateCloudAgents: boolean;
 		plansLoading: boolean;
+		plansError: boolean;
 		performancePlanAvailable: boolean;
 	},
 ): ComputeSubscriptionManagementResult {
@@ -281,6 +273,7 @@ function subscriptionManagement(
 		deployment,
 		canCreateCloudAgents,
 		plansLoading,
+		plansError,
 		performancePlanAvailable,
 	});
 }
@@ -312,10 +305,11 @@ function SubscriptionRow({
 	management: ComputeSubscriptionManagementResult;
 	onManage: (subscription: ComputeSubscriptionListItem) => void;
 }) {
-	const recovery = computeSubscriptionRecoveryPresentation(
-		subscription,
-		STATUS_PRESENTATION[subscription.status],
-	);
+	const lifecycle = computeSubscriptionLifecycle(subscription);
+	const recovery = computeSubscriptionRecoveryPresentation(subscription, {
+		label: lifecycle.badgeLabel,
+		tone: lifecycle.badgeTone,
+	});
 	const agentHref = subscriptionAgentHref(subscription);
 	const pendingPlanSlug =
 		subscription.pending_plan_slug === "compute_basic" ||
@@ -352,15 +346,25 @@ function SubscriptionRow({
 		recoveryActionAvailable ||
 		canCancelAccountSubscription(subscription) ||
 		canResumeAccountSubscription(subscription);
+	const fundingSource = computeFundingSource(subscription.plan_slug, subscription);
+	const managementReason =
+		management.unavailableReason === COMPUTE_PLANS_UNAVAILABLE_REASON
+			? null
+			: management.unavailableReason;
 	const view = computeSubscriptionCardView({
 		status: recovery.status,
 		planSlug: subscription.plan_slug,
-		fundingSource: subscription.funding_source === null ? "included" : subscription.funding_source,
+		fundingSource:
+			fundingSource === "included_basic"
+				? "included"
+				: fundingSource === "stripe" || fundingSource === "wallet"
+					? fundingSource
+					: "unavailable",
 		priceCents: subscription.price_cents,
 		currency: subscription.currency,
 		billingTermMonths: subscription.billing_term_months,
-		scheduleVerb: recovery.schedule?.verb ?? subscriptionScheduleVerb(subscription.status),
-		scheduleAt: recovery.schedule?.at ?? subscription.current_period_end,
+		scheduleVerb: recovery.schedule?.verb ?? lifecycle.dateVerb,
+		scheduleAt: recovery.schedule?.at ?? lifecycle.dateAt,
 		scheduleFallback: recovery.schedule?.fallback ?? undefined,
 	});
 
@@ -382,10 +386,10 @@ function SubscriptionRow({
 				}
 				badges={subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
 				notice={
-					recoveryNotice || pendingPlanCopy || management.unavailableReason ? (
+					recoveryNotice || pendingPlanCopy || managementReason ? (
 						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
 							{recoveryNotice ? <p>{recoveryNotice}</p> : null}
-							{management.unavailableReason ? <p>{management.unavailableReason}</p> : null}
+							{managementReason ? <p>{managementReason}</p> : null}
 							{pendingPlanCopy ? (
 								<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
 							) : null}
@@ -488,6 +492,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 			);
 	const canLoadMore = subscriptions.hasNextPage && !subscriptions.isFetchNextPageError;
 	const historyControlVisible = endedRows.length > 0 || showHistory;
+	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
 	const deploymentsById = new Map(
 		(deployments.data ?? []).map((deployment) => [
 			deployment.resource.id.toLowerCase(),
@@ -497,6 +502,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const managementOptions = {
 		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
 		plansLoading: plans.isLoading,
+		plansError: blockingPlansError !== null,
 		performancePlanAvailable: Boolean(resolvePerformancePlan(plans.data)),
 	};
 	const selectedDeployment = selectedSubscription?.deployment_id
@@ -505,6 +511,17 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const selectedManagement = selectedSubscription
 		? subscriptionManagement(selectedSubscription, selectedDeployment, managementOptions)
 		: null;
+	const plansErrorBlocksVisibleIncluded =
+		blockingPlansError !== null &&
+		visibleRows.some((subscription) => {
+			const deployment = subscription.deployment_id
+				? deploymentsById.get(subscription.deployment_id.toLowerCase())
+				: undefined;
+			return (
+				subscriptionManagement(subscription, deployment, managementOptions).unavailableReason ===
+				COMPUTE_PLANS_UNAVAILABLE_REASON
+			);
+		});
 
 	function manageSubscription(subscription: ComputeSubscriptionListItem) {
 		const deployment = subscription.deployment_id
@@ -543,6 +560,14 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 					/>
 				) : rows.length || subscriptions.hasNextPage ? (
 					<>
+						{plansErrorBlocksVisibleIncluded ? (
+							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								error={blockingPlansError}
+								onRetry={() => void plans.refetch()}
+								title="Couldn't load compute plans"
+							/>
+						) : null}
 						{historyControlVisible ? (
 							<div className="flex justify-end">
 								<Button
