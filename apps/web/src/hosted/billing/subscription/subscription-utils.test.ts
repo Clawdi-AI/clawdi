@@ -371,6 +371,7 @@ describe("compute subscription action status gates", () => {
 			status: "active" as const,
 			cancel_at_period_end: false,
 			deployment_id: null,
+			funding_source: "stripe" as const,
 			is_orphan: true,
 		};
 
@@ -378,6 +379,18 @@ describe("compute subscription action status gates", () => {
 		expect(canCancelAccountSubscription({ ...orphan, cancel_at_period_end: true })).toBe(false);
 		expect(canCancelAccountSubscription({ ...orphan, status: "canceling" })).toBe(false);
 		expect(canCancelAccountSubscription({ ...orphan, status: "canceled" })).toBe(false);
+	});
+
+	test("never offers cancellation for an included free subscription", () => {
+		expect(
+			canCancelAccountSubscription({
+				status: "active",
+				cancel_at_period_end: false,
+				deployment_id: "hdep_included",
+				funding_source: null,
+				is_orphan: false,
+			}),
+		).toBe(false);
 	});
 });
 

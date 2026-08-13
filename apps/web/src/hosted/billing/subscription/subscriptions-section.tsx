@@ -359,15 +359,6 @@ function SubscriptionRow({
 		canCancelAccountSubscription(subscription) ||
 		canResumeAccountSubscription(subscription);
 	const view = computeSubscriptionCardView({
-		identity: agentHref
-			? {
-					kind: "agent",
-					name: agentTile?.name ?? subscription.agent_name ?? "Agent",
-					agentType: agentTile?.agentType ?? null,
-					avatarUrl: agentTile?.avatarUrl,
-					href: agentHref,
-				}
-			: { kind: "unavailable", label: "Deleted agent" },
 		status: recovery.status,
 		planSlug: subscription.plan_slug,
 		fundingSource: subscription.funding_source === null ? "included" : subscription.funding_source,
@@ -384,6 +375,17 @@ function SubscriptionRow({
 			<ComputeSubscriptionCard
 				headingLevel={4}
 				view={view}
+				identity={
+					agentHref
+						? {
+								kind: "agent",
+								name: agentTile?.name ?? subscription.agent_name ?? "Agent",
+								agentType: agentTile?.agentType ?? null,
+								avatarUrl: agentTile?.avatarUrl,
+								href: agentHref,
+							}
+						: { kind: "unavailable", label: "Deleted agent" }
+				}
 				badges={subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
 				notice={
 					recoveryNotice || pendingPlanCopy ? (
@@ -445,19 +447,18 @@ function SubscriptionListSkeleton() {
 			{Array.from({ length: 3 }, (_, index) => `subscription-skeleton-${index}`).map((key) => (
 				<div key={key} className={entityCardChassisClass({ variant: "compact" })}>
 					<div className="flex items-start justify-between gap-3">
-						<div className="flex min-w-0 items-center gap-3">
-							<Skeleton className="size-8 shrink-0 rounded-md" />
-							<Skeleton className="h-5 w-36 max-w-full" />
-						</div>
+						<Skeleton className="h-5 w-36 max-w-full" />
 						<Skeleton className="h-5 w-16" />
 					</div>
-					<div className="space-y-2.5">
-						<Skeleton className="h-5 w-28" />
-						<div className="flex flex-wrap gap-x-4 gap-y-1.5">
-							<Skeleton className="h-4 w-12" />
-							<Skeleton className="h-4 w-20" />
-							<Skeleton className="h-4 w-24" />
-						</div>
+					<div className="flex flex-wrap gap-x-4 gap-y-1.5">
+						<Skeleton className="h-4 w-16" />
+						<Skeleton className="h-4 w-12" />
+						<Skeleton className="h-4 w-24" />
+					</div>
+					<div className="flex items-center gap-3">
+						<Skeleton className="h-4 w-12" />
+						<Skeleton className="size-6 shrink-0 rounded-md" />
+						<Skeleton className="h-4 w-28 max-w-full" />
 					</div>
 				</div>
 			))}
