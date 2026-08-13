@@ -142,3 +142,13 @@ class PlatformRuntimeStateResponse(BaseModel):
     instance_id: str
     generation: int
     apply_generation: int | None = None
+
+
+class RuntimeSourceAuthorityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    environment_id: UUID = Field(alias="environmentId")
+    deployment_id: str = Field(alias="deploymentId", min_length=1, max_length=200)
+    instance_id: str = Field(alias="instanceId", min_length=1, max_length=200)
+    source_revision: str = Field(alias="sourceRevision", pattern=r"^[0-9a-f]{64}$")
+    etag: str = Field(pattern=r'^"sha256:[0-9a-f]{64}"$')

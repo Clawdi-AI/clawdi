@@ -24,7 +24,12 @@ from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES, PlatformRuntimeStateUpsert
 from app.services.hosted_runtime_secrets import runtime_secret_values_idempotency_identity
 from app.services.platform_contract import platform_request_hash, store_platform_response
-from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
+from app.services.runtime_source import (
+    expected_runtime_bundle_v2_etag,
+    load_runtime_source_batch,
+    render_runtime_source,
+    vault_key_identity,
+)
 from app.services.user_provisioning import lazy_create_partner_user_with_personal_project
 from app.services.vault_crypto import decrypt
 from tests.conftest import create_env_with_project
@@ -557,6 +562,7 @@ async def test_platform_runtime_state_accepts_and_projects_filebrowser_companion
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
 async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_revision(
     platform_client,
     db_session,
@@ -596,10 +602,30 @@ async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_re
     first_source = render_runtime_source(
         batch,
         environment_id=agent_id,
-        public_api_url="https://cloud.test",
-        vault_key_identity="test-key-version",
+        public_api_url=settings.public_api_url,
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
         decrypt_secrets=False,
     )
+    source_authority = await platform_client.get(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_ADMIN_AUTH,
+        params=owner,
+    )
+    assert source_authority.status_code == 200, source_authority.text
+    assert set(source_authority.json()) == {
+        "environmentId",
+        "deploymentId",
+        "instanceId",
+        "sourceRevision",
+        "etag",
+    }
+    assert source_authority.json() == {
+        "environmentId": str(agent_id),
+        "deploymentId": "deployment-1",
+        "instanceId": "instance-1",
+        "sourceRevision": first_source.source_revision,
+        "etag": expected_runtime_bundle_v2_etag(first_source.source_revision),
+    }
 
     second = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
@@ -625,8 +651,8 @@ async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_re
     repeated_source = render_runtime_source(
         repeated_batch,
         environment_id=agent_id,
-        public_api_url="https://cloud.test",
-        vault_key_identity="test-key-version",
+        public_api_url=settings.public_api_url,
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
         decrypt_secrets=False,
     )
     assert repeated_source.secret_values == {}
@@ -1067,6 +1093,14 @@ async def test_platform_existing_resources_reject_owner_mismatch(
     await db_session.refresh(other_key)
     owner = _clerk_owner(seed_user)
     try:
+        cross_owner_read = await platform_client.get(
+            f"/v1/platform/agents/{other_agent.id}/runtime-state",
+            headers=_ADMIN_AUTH,
+            params=owner,
+        )
+        assert cross_owner_read.status_code == 404, cross_owner_read.text
+        assert cross_owner_read.json() == {"detail": "Runtime source not found"}
+
         calls = [
             (
                 "POST",
@@ -1415,7 +1449,11 @@ async def test_platform_routes_are_canonical_and_exposed_in_openapi(platform_cli
         "/v1/platform/oauth/token",
     }
     assert all(not path.startswith("/api/platform") for path in paths)
-    assert set(paths["/v1/platform/agents/{agent_id}/runtime-state"]) == {"put", "delete"}
+    assert set(paths["/v1/platform/agents/{agent_id}/runtime-state"]) == {
+        "get",
+        "put",
+        "delete",
+    }
     companions_schema = response.json()["components"]["schemas"]["PlatformRuntimeStateUpsert"][
         "properties"
     ]["companions"]
