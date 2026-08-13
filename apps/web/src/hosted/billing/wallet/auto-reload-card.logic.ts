@@ -8,7 +8,7 @@ import {
 	billingErrorDetail,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
-import { usdInputToCents } from "@/hosted/billing/format";
+import { persistedUsdToCents, usdInputToCents } from "@/hosted/billing/format";
 import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import {
 	AUTORELOAD_AMOUNT_MAX_CENTS,
@@ -150,10 +150,10 @@ export function autoReloadFormState({
 
 export function autoReloadDraftFromWallet(wallet: WalletCacheSnapshot): AutoReloadDraft {
 	const monthlyLimitEnabled = wallet.auto_reload_monthly_cap_cents !== 0;
-	const thresholdCents = usdInputToCents(wallet.auto_reload_threshold_usd);
+	const thresholdCents = persistedUsdToCents(wallet.auto_reload_threshold_usd);
 	return {
 		enabled: wallet.auto_reload_enabled,
-		threshold: thresholdCents === null ? wallet.auto_reload_threshold_usd : dollars(thresholdCents),
+		threshold: thresholdCents === null ? "" : dollars(thresholdCents),
 		amount: dollars(wallet.auto_reload_amount_cents),
 		cap: dollars(
 			monthlyLimitEnabled ? wallet.auto_reload_monthly_cap_cents : wallet.auto_reload_amount_cents,

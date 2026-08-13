@@ -1,3 +1,5 @@
+import { negativeDecimalMagnitude } from "@/hosted/billing/format";
+
 export type WalletDebitSummary = {
 	balanceBeforeUsd: string;
 	debitAmountUsd: string;
@@ -6,8 +8,7 @@ export type WalletDebitSummary = {
 
 export function walletDebitShortfallUsd(
 	summary: WalletDebitSummary | null | undefined,
-): number | null {
+): string | null {
 	if (!summary) return null;
-	const balanceAfter = Number(summary.balanceAfterUsd);
-	return Number.isFinite(balanceAfter) && balanceAfter < 0 ? -balanceAfter : null;
+	return negativeDecimalMagnitude(summary.balanceAfterUsd);
 }

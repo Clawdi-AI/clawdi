@@ -187,15 +187,16 @@ describe("walletTopupCreditIsApplied", () => {
 
 describe("topUpAmountCentsForUsdShortfall", () => {
 	test("rounds up to whole dollars and clamps to the allowed top-up range", () => {
-		expect(topUpAmountCentsForUsdShortfall(4)).toBe(1_000);
-		expect(topUpAmountCentsForUsdShortfall(14)).toBe(1_400);
-		expect(topUpAmountCentsForUsdShortfall(25.001)).toBe(2_600);
-		expect(topUpAmountCentsForUsdShortfall(2_500)).toBe(200_000);
+		expect(topUpAmountCentsForUsdShortfall("4")).toBe(1_000);
+		expect(topUpAmountCentsForUsdShortfall("14")).toBe(1_400);
+		expect(topUpAmountCentsForUsdShortfall("25.001")).toBe(2_600);
+		expect(topUpAmountCentsForUsdShortfall("25.000000000000000001")).toBe(2_600);
+		expect(topUpAmountCentsForUsdShortfall("2500")).toBe(200_000);
 	});
 
 	test("ignores missing or invalid USD inputs", () => {
 		expect(topUpAmountCentsForUsdShortfall(null)).toBeNull();
-		expect(topUpAmountCentsForUsdShortfall(Number.NaN)).toBeNull();
+		expect(topUpAmountCentsForUsdShortfall("NaN")).toBeNull();
 	});
 });
 

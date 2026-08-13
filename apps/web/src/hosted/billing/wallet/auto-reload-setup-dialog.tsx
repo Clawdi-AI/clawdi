@@ -18,7 +18,7 @@ import type {
 	WalletState,
 } from "@/hosted/billing/contracts";
 import { normalizeBillingError } from "@/hosted/billing/errors";
-import { formatCents, usdInputToCents } from "@/hosted/billing/format";
+import { formatCents, persistedUsdToCents, usdInputToCents } from "@/hosted/billing/format";
 import {
 	type IdempotencyAttempt,
 	idempotencyAttemptFor,
@@ -54,7 +54,7 @@ function setupResultMatchesRequest(
 		result.currency === "usd" &&
 		result.consent_version === request.consent_version &&
 		result.amount_policy === amountPolicy &&
-		usdInputToCents(result.auto_reload_threshold_usd) ===
+		persistedUsdToCents(result.auto_reload_threshold_usd) ===
 			usdInputToCents(String(request.auto_reload_threshold_usd)) &&
 		result.auto_reload_amount_cents === request.auto_reload_amount_cents &&
 		result.auto_reload_monthly_cap_cents === request.auto_reload_monthly_cap_cents &&

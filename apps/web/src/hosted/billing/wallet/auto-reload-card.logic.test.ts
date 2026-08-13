@@ -69,7 +69,7 @@ const wallet: WalletState = {
 	auto_reload_amount_policy: "wallet_reload_configured_plus_negative_balance_v1",
 	auto_reload_consent_version: null,
 	auto_reload_consented_at: null,
-	auto_reload_threshold_usd: "5",
+	auto_reload_threshold_usd: "5.000000000000000000",
 	auto_reload_amount_cents: 2_500,
 	auto_reload_monthly_cap_cents: 10_000,
 	auto_reload_monthly_spent_cents: 2_500,
@@ -106,6 +106,7 @@ describe("auto-reload explicit-save state", () => {
 	test("includes all parameters when disabling auto-reload", () => {
 		const draft = autoReloadDraftFromWallet({ ...wallet, auto_reload_enabled: true });
 
+		expect(draft.threshold).toBe("5");
 		expect(autoReloadRequest({ ...draft, enabled: false })).toEqual({
 			auto_reload_enabled: false,
 			auto_reload_threshold_usd: "5",

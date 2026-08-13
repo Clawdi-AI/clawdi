@@ -3,10 +3,11 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { billingErrorDetail } from "@/hosted/billing/errors";
+import { canonicalDecimal, compareDecimals } from "@/hosted/billing/format";
 import { topUpAmountCentsForUsdShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 
 export type WalletFundingError =
-	| { kind: "insufficient_balance"; shortfallUsd: number | null }
+	| { kind: "insufficient_balance"; shortfallUsd: string | null }
 	| { kind: "open_refund_debt"; shortfallUsd: null }
 	| { kind: "other"; shortfallUsd: null };
 
@@ -20,10 +21,9 @@ export const SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY: WalletFundingErrorCopy = {
 	refundDebt: "Top up before starting this wallet subscription.",
 };
 
-export function decimalUsd(value: unknown): number | null {
-	if (typeof value !== "string" && typeof value !== "number") return null;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+export function decimalUsd(value: unknown): string | null {
+	const parsed = canonicalDecimal(value);
+	return parsed !== null && compareDecimals(parsed, "0") !== -1 ? parsed : null;
 }
 
 export function classifyWalletFundingError(error: unknown): WalletFundingError {
@@ -49,7 +49,7 @@ export function useWalletTopUpDialog(errorCopy: WalletFundingErrorCopy) {
 		(nextOpen: boolean) => (nextOpen ? setOpen(true) : reset()),
 		[reset],
 	);
-	const show = useCallback((shortfallUsd: number | null = null) => {
+	const show = useCallback((shortfallUsd: string | null = null) => {
 		setInitialAmountCents(topUpAmountCentsForUsdShortfall(shortfallUsd));
 		setOpen(true);
 	}, []);
