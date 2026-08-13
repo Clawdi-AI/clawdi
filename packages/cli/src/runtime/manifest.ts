@@ -306,6 +306,8 @@ interface RuntimeSystemdApplySignal {
 interface RuntimeSystemdApplyHooks {
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
+	transactionState: () => "pristine" | "mutated";
+	installOfficialService: (unit: string, install: () => string | null) => string | null;
 	quiesce: () => void;
 	rollback: (signal: RuntimeSystemdApplySignal) => void;
 }
@@ -5877,7 +5879,6 @@ export function convergeRuntimeManifest(
 		throw error;
 	}
 	let systemdActivationApplied = false;
-	let systemdActivationAttempted = false;
 	let restartDaemon = false;
 	let desiredDaemonAuthTokenRevision: string | undefined;
 	let desiredDaemonProgramRevision: string | undefined;
@@ -6498,7 +6499,6 @@ export function convergeRuntimeManifest(
 			systemdUnits.egressSidecarActive &&
 			opts.systemdApply
 		) {
-			systemdActivationAttempted = true;
 			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 				restartDaemon,
 				restartEgressSidecar,
@@ -6514,7 +6514,10 @@ export function convergeRuntimeManifest(
 
 		for (const item of officialServicePlan.pending) {
 			hostedRuntimeContract.assertPlatformRoots();
-			const error = installOfficialRuntimeService(item, paths);
+			const install = () => installOfficialRuntimeService(item, paths);
+			const error = opts.systemdApply
+				? opts.systemdApply.installOfficialService(item.unitName, install)
+				: install();
 			if (error) throw new Error(error);
 		}
 		const artifactError = prepareHermesDashboardArtifact(
@@ -6528,7 +6531,6 @@ export function convergeRuntimeManifest(
 		const bootFinished = join(instanceRoot, "boot-finished");
 		writeRuntimePrivateFileAtomic(paths, bootFinished, `${generatedAt}\n`);
 		if (opts.systemdApply) {
-			systemdActivationAttempted = true;
 			const activation = opts.systemdApply.activate({
 				restartDaemon,
 				restartEgressSidecar,
@@ -6647,8 +6649,9 @@ export function convergeRuntimeManifest(
 		return convergence;
 	} catch (error) {
 		const applyError = error instanceof Error ? error.message : String(error);
-		let candidateQuiesced = !systemdActivationAttempted;
-		if (systemdActivationAttempted) {
+		const systemdMutated = opts.systemdApply?.transactionState() === "mutated";
+		let candidateQuiesced = !systemdMutated;
+		if (systemdMutated) {
 			try {
 				opts.systemdApply?.quiesce();
 				candidateQuiesced = true;
@@ -6711,7 +6714,7 @@ export function convergeRuntimeManifest(
 				);
 			}
 		}
-		if (opts.systemdApply && filesystemRollbackSucceeded) {
+		if (opts.systemdApply && filesystemRollbackSucceeded && systemdMutated) {
 			try {
 				opts.systemdApply.rollback({
 					restartDaemon,
@@ -6728,11 +6731,11 @@ export function convergeRuntimeManifest(
 					}`,
 				);
 			}
-		} else if (opts.systemdApply && candidateQuiesced) {
+		} else if (opts.systemdApply && systemdMutated && candidateQuiesced) {
 			installErrors.push(
 				"runtime systemd rollback skipped because filesystem authority restoration failed",
 			);
-		} else if (opts.systemdApply) {
+		} else if (opts.systemdApply && systemdMutated) {
 			installErrors.push(
 				"runtime systemd reconciliation skipped because candidate services did not quiesce",
 			);

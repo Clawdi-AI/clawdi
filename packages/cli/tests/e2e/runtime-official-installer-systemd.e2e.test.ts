@@ -19,8 +19,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	applySystemdRuntimeUpdate,
-	quiesceSystemdRuntimeCandidate,
 	readSystemdUnitSnapshot,
+	SystemdRuntimeTransaction,
 } from "../../src/commands/runtime";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import {
@@ -915,30 +915,28 @@ http.createServer((request, response) => {
 	};
 	const converge = () => {
 		const before = readSystemdUnitSnapshot(paths);
-		let failed = before;
+		const transaction = new SystemdRuntimeTransaction();
 		return convergeRuntimeManifest(load, paths, {
 			fileBrowserInstallOptions: {
 				download: (_url, destination) => writeFileSync(destination, binary),
 			},
 			systemdApply: {
-				quiesce: () => {
-					failed = readSystemdUnitSnapshot(paths);
-					quiesceSystemdRuntimeCandidate(paths, failed);
-				},
+				transactionState: () => transaction.state,
+				installOfficialService: (unit, install) =>
+					transaction.installOfficialService(paths, unit, install),
+				quiesce: () => transaction.quiesce(paths),
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
 					userUnitsChanged: [],
 				}),
 				activate: () => {
-					failed = readSystemdUnitSnapshot(paths);
-					return applySystemdRuntimeUpdate(paths, before, failed);
-				},
-				rollback: () => {
-					applySystemdRuntimeUpdate(paths, failed, readSystemdUnitSnapshot(paths), {
-						recoverFailedUnits: false,
+					return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
+						transaction,
+						stage: "final-activation",
 					});
 				},
+				rollback: () => transaction.rollback(paths),
 			},
 		});
 	};
@@ -1084,6 +1082,8 @@ http.createServer((request, response) => {
 	const activeUnits = readSystemdUnitSnapshot(paths);
 	expect(
 		applySystemdRuntimeUpdate(paths, activeUnits, activeUnits, {
+			transaction: new SystemdRuntimeTransaction(),
+			stage: "final-activation",
 			activationScope: { systemUnits: [], userUnits: ["openclaw-gateway.service"] },
 		}),
 	).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });

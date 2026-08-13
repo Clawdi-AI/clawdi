@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
+import {
+	calculateClawdiImageRevisions,
+	classifyClawdiImageRelease,
+} from "../../../scripts/clawdi-image-release-plan";
 
 interface WorkflowStep {
 	id?: string;
@@ -15,7 +19,9 @@ interface WorkflowStep {
 interface WorkflowJob {
 	concurrency?: unknown;
 	if?: string;
+	name?: string;
 	needs?: string;
+	outputs?: Record<string, string>;
 	steps?: WorkflowStep[];
 }
 
@@ -49,6 +55,14 @@ const backendMainSource = readFileSync(
 	resolve(import.meta.dir, "../../../backend/app/main.py"),
 	"utf8",
 );
+const backendPackageSource = readFileSync(
+	resolve(import.meta.dir, "../../../backend/pyproject.toml"),
+	"utf8",
+);
+const backendTestSource = readFileSync(
+	resolve(import.meta.dir, "../../../backend/tests/test_smoke.py"),
+	"utf8",
+);
 const channelWorkerSource = readFileSync(
 	resolve(import.meta.dir, "../../../backend/app/workers/channels.py"),
 	"utf8",
@@ -59,6 +73,14 @@ const deployConfigSource = readFileSync(
 );
 const releaseRunbook = readFileSync(
 	resolve(import.meta.dir, "../../../docs/runbooks/release.md"),
+	"utf8",
+);
+const repoRoot = resolve(import.meta.dir, "../../..");
+const lockfileSource = readFileSync(resolve(repoRoot, "bun.lock"), "utf8");
+const cliPackageSource = readFileSync(resolve(repoRoot, "packages/cli/package.json"), "utf8");
+const cliVersion = (JSON.parse(cliPackageSource) as { version: string }).version;
+const releaseClassifierSource = readFileSync(
+	resolve(repoRoot, "scripts/clawdi-image-release-plan.ts"),
 	"utf8",
 );
 
@@ -84,7 +106,7 @@ describe("backend image release workflow contract", () => {
 		expect(backendCi.concurrency?.["cancel-in-progress"]).toBe(true);
 	});
 
-	test("builds a started release from its exact successful Backend CI head SHA", () => {
+	test("compares the exact Backend CI head against cumulative successful deployment authority", () => {
 		expect(imageRelease.on?.workflow_run).toEqual({
 			workflows: ["Backend CI"],
 			types: ["completed"],
@@ -108,17 +130,29 @@ describe("backend image release workflow contract", () => {
 		expect(imageRelease.jobs.build?.steps?.find((step) => step.id === "rev")?.run).toContain(
 			"git rev-parse HEAD",
 		);
-		expect(imageReleaseSource).not.toContain("git diff-tree");
-		expect(imageReleaseSource).not.toContain("git ls-tree -r --full-tree");
-		expect(imageReleaseSource).not.toContain("runtime-changes");
-		expect(imageReleaseSource).not.toContain("build_required");
-		const sidecarRevision = imageRelease.jobs.build?.steps?.find(
-			(step) => step.name === "Resolve WhatsApp sidecar deployment revision",
+		const authority = imageRelease.jobs.build?.steps?.find(
+			(step) => step.name === "Resolve last successful deployment authority",
 		);
-		expect(sidecarRevision?.run).toContain(
-			"bun run scripts/whatsapp-sidecar-deployment-revision.ts",
+		expect(authority?.uses).toBe("actions/github-script@v8");
+		const authorityScript = String(authority?.with?.script ?? "");
+		expect(authorityScript).toContain("listWorkflowRuns");
+		expect(authorityScript).toContain("listJobsForWorkflowRun");
+		expect(authorityScript).toContain("/^deploy-vps [0-9a-f]{40}$/.test(job.name)");
+		expect(authorityScript).toContain('deploy.conclusion !== "success"');
+		expect(authorityScript).toContain('run.event === "workflow_run" ? run.head_sha : ""');
+		expect(authorityScript).toContain("right.completedAt.localeCompare(left.completedAt)");
+		expect(authorityScript).toContain('core.setOutput("base_sha", deployed[0].sha)');
+		expect(authorityScript).not.toContain("github.event.before");
+		const releasePlan = imageRelease.jobs.build?.steps?.find(
+			(step) => step.name === "Resolve image release plan",
 		);
-		const revisionStepIndex = imageRelease.jobs.build?.steps?.indexOf(sidecarRevision ?? {});
+		expect(releasePlan?.run).toContain("bun run scripts/whatsapp-sidecar-deployment-revision.ts");
+		expect(releasePlan?.run).toContain('test "$(jq -r .headSha "$plan")"');
+		expect(releasePlan?.run).toContain('git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"');
+		expect(releasePlan?.run).toContain('if [ "$AUTHORITY_FOUND" != true ]');
+		expect(releasePlan?.run).toContain("No unambiguous successful deployment authority was found");
+		expect(releasePlan?.run).toContain("release_required=true");
+		const revisionStepIndex = imageRelease.jobs.build?.steps?.indexOf(releasePlan ?? {});
 		const setupBunIndex = imageRelease.jobs.build?.steps?.findIndex(
 			(step) => step.uses === "oven-sh/setup-bun@v2",
 		);
@@ -128,13 +162,16 @@ describe("backend image release workflow contract", () => {
 		const backendBuild = imageRelease.jobs.build?.steps?.find(
 			(step) => step.name === "Build and push backend image",
 		);
-		expect(backendBuild?.if).toBeUndefined();
+		expect(backendBuild?.if).toBe("steps.release-plan.outputs.release_required == 'true'");
 		expect(imageReleaseSource).toContain(
 			`tags: \${{ env.BACKEND_IMAGE_NAME }}:\${{ steps.rev.outputs.sha }}`,
 		);
 
 		const deployCheckout = imageRelease.jobs["deploy-vps"]?.steps?.find(
 			(step) => step.uses === "actions/checkout@v7",
+		);
+		expect(imageRelease.jobs["deploy-vps"]?.name).toBe(
+			`deploy-vps \${{ needs.build.outputs.image_tag }}`,
 		);
 		expect(deployCheckout?.with?.ref).toBe(`\${{ needs.build.outputs.image_tag }}`);
 		expect(imageReleaseSource).toContain(
@@ -143,6 +180,127 @@ describe("backend image release workflow contract", () => {
 		expect(releaseRunbook).toContain("commit-addressed OCI image tag");
 		expect(releaseRunbook).toContain("tags remain mutable");
 		expect(releaseRunbook).not.toContain("immutable OCI image tag");
+	});
+
+	test("keeps CLI and release orchestration outside every automatic image release input", () => {
+		const baseline = calculateClawdiImageRevisions(repoRoot);
+		const probeVersion = `${cliVersion}-image-release-probe`;
+		const head = calculateClawdiImageRevisions(
+			repoRoot,
+			new Map([
+				[
+					"packages/cli/package.json",
+					replaceOnce(
+						cliPackageSource,
+						`"version": "${cliVersion}"`,
+						`"version": "${probeVersion}"`,
+					),
+				],
+				[
+					"bun.lock",
+					replaceOnce(lockfileSource, `"version": "${cliVersion}"`, `"version": "${probeVersion}"`),
+				],
+				[
+					".github/workflows/clawdi-image-release.yml",
+					replaceOnce(
+						imageReleaseSource,
+						'workflow_id: "clawdi-image-release.yml"',
+						'workflow_id: "clawdi-image-release-probe.yml"',
+					),
+				],
+				["scripts/clawdi-image-release-plan.ts", `${releaseClassifierSource}\n// probe\n`],
+			]),
+		);
+		const plan = classifyClawdiImageRelease({
+			base: baseline,
+			baseSha: "a".repeat(40),
+			head,
+			headSha: "b".repeat(40),
+		});
+
+		expect(head).toEqual(baseline);
+		expect(plan.changed).toEqual({ backend: false, deployment: false, sidecar: false });
+		expect(plan.releaseRequired).toBe(false);
+
+		const releaseGate = "steps.release-plan.outputs.release_required == 'true'";
+		for (const name of [
+			"Build and push backend image",
+			"Build and push WhatsApp sidecar image",
+			"Resolve OCI label metadata",
+		]) {
+			expect(imageRelease.jobs.build?.steps?.find((step) => step.name === name)?.if).toBe(
+				releaseGate,
+			);
+		}
+		expect(imageRelease.jobs["deploy-vps"]?.if).toBe(
+			"needs.build.outputs.release_required == 'true'",
+		);
+	});
+
+	test("classifies the deploy-vps execution contract without circular release authority", () => {
+		const baseline = calculateClawdiImageRevisions(repoRoot);
+		const changedCommand = calculateClawdiImageRevisions(
+			repoRoot,
+			new Map([
+				[
+					".github/workflows/clawdi-image-release.yml",
+					replaceOnce(
+						imageReleaseSource,
+						"kamal deploy -P --version",
+						"kamal deploy --verbose -P --version",
+					),
+				],
+			]),
+		);
+
+		expect(changedCommand.backend).toBe(baseline.backend);
+		expect(changedCommand.sidecar).toBe(baseline.sidecar);
+		expect(changedCommand.deployment).not.toBe(baseline.deployment);
+		expect(
+			imageRelease.jobs["deploy-vps"]?.steps?.some(
+				(step) => step.uses === "./.github/actions/setup-bun-ci",
+			),
+		).toBe(true);
+	});
+
+	test("matches the explicit backend Docker COPY and ignore contract", () => {
+		const baseline = calculateClawdiImageRevisions(repoRoot);
+		const ignored = calculateClawdiImageRevisions(
+			repoRoot,
+			new Map([
+				["package.json", `${readFileSync(resolve(repoRoot, "package.json"), "utf8")}\n`],
+				["bun.lock", `${lockfileSource}\n`],
+				["backend/tests/test_smoke.py", `${backendTestSource}\n# probe\n`],
+			]),
+		);
+		expect(ignored.backend).toBe(baseline.backend);
+
+		for (const [path, source] of [
+			["backend/Dockerfile", backendDockerfile],
+			["backend/pyproject.toml", backendPackageSource],
+			["backend/app/main.py", backendMainSource],
+		] as const) {
+			const changed = calculateClawdiImageRevisions(
+				repoRoot,
+				new Map([[path, `${source}\n# image-input-probe\n`]]),
+			);
+			expect(changed.backend).not.toBe(baseline.backend);
+		}
+		expect(() =>
+			calculateClawdiImageRevisions(
+				repoRoot,
+				new Map([
+					[
+						"backend/Dockerfile",
+						replaceOnce(
+							backendDockerfile,
+							"COPY backend/pyproject.toml",
+							"COPY package.json /tmp/package.json\nCOPY backend/pyproject.toml",
+						),
+					],
+				]),
+			),
+		).toThrow("backend Docker COPY contract changed");
 	});
 
 	test("admits privileged workflow_run releases only from same-repository pushes", () => {
@@ -173,7 +331,9 @@ describe("backend image release workflow contract", () => {
 			expect(job.concurrency).toBeUndefined();
 		}
 		expect(imageRelease.jobs["deploy-vps"]?.needs).toBe("build");
-		expect(imageRelease.jobs["deploy-vps"]?.if).toBeUndefined();
+		expect(imageRelease.jobs["deploy-vps"]?.if).toBe(
+			"needs.build.outputs.release_required == 'true'",
+		);
 		expect(imageRelease.on?.workflow_dispatch?.inputs?.ref?.description).toContain(
 			"Do not use an older ref while an automatic release is running or pending.",
 		);
@@ -267,3 +427,11 @@ describe("backend image release workflow contract", () => {
 		expect(releaseRunbook).toContain("expand/contract sequence");
 	});
 });
+
+function replaceOnce(source: string, current: string, replacement: string): string {
+	const first = source.indexOf(current);
+	if (first < 0 || source.indexOf(current, first + current.length) >= 0) {
+		throw new Error(`expected one image release fixture occurrence of ${current}`);
+	}
+	return `${source.slice(0, first)}${replacement}${source.slice(first + current.length)}`;
+}

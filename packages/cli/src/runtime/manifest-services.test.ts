@@ -12,6 +12,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+	type TestConvergeOptions,
+	withTestSystemdTransaction,
+} from "../test-support/systemd-apply";
 import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import {
 	readRuntimeInstallReceipts,
@@ -41,7 +45,7 @@ const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts?: Parameters<typeof convergeRuntimeManifestWithContext>[2],
+	opts: TestConvergeOptions = {},
 ) {
 	ensureRuntimeStateDirs(paths);
 	return convergeRuntimeManifestWithContext(
@@ -67,6 +71,7 @@ function convergeRuntimeManifest(
 		paths,
 		{
 			...opts,
+			systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
 			hostedOpenClawSkillDriver: opts?.hostedOpenClawSkillDriver ?? {
 				...hostedOpenClawSkillDriver,
 				resolveWorkspace: () => join(paths.userHome, ".openclaw", "workspace"),

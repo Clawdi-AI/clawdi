@@ -34,27 +34,41 @@ const DIRECT_FILE_INPUTS = [
 	`${SIDECAR_ROOT}/tsconfig.build.json`,
 ] as const;
 
+export interface RevisionSnapshot {
+	listFiles(root: string): string[];
+	readText(path: string): string;
+}
+
 type TextOverrides = ReadonlyMap<string, string>;
 
 export function calculateWhatsAppSidecarDeploymentRevision(
 	repositoryRoot: string,
 	overrides: TextOverrides = new Map(),
 ): string {
-	const readText = (path: string): string =>
-		overrides.get(path) ?? readFileSync(join(repositoryRoot, path), "utf8");
-	const dockerfile = readText(`${SIDECAR_ROOT}/Dockerfile`);
-	assertDockerInputContract(dockerfile, readText(".dockerignore"));
+	return calculateWhatsAppSidecarDeploymentRevisionFromSnapshot({
+		listFiles: (root) => filesystemFiles(repositoryRoot, root),
+		readText: (path) => overrides.get(path) ?? readFileSync(join(repositoryRoot, path), "utf8"),
+	});
+}
+
+export function calculateWhatsAppSidecarDeploymentRevisionFromSnapshot(
+	snapshot: RevisionSnapshot,
+): string {
+	const dockerfile = snapshot.readText(`${SIDECAR_ROOT}/Dockerfile`);
+	assertDockerInputContract(dockerfile, snapshot.readText(".dockerignore"));
 
 	const inputs = new Map<string, string>();
-	for (const path of DIRECT_FILE_INPUTS) inputs.set(path, readText(path));
-	for (const path of runtimeSourceFiles(repositoryRoot)) inputs.set(path, readText(path));
+	for (const path of DIRECT_FILE_INPUTS) inputs.set(path, snapshot.readText(path));
+	for (const path of snapshot.listFiles(SIDECAR_SOURCE_ROOT)) {
+		if (!path.endsWith(".test.ts")) inputs.set(path, snapshot.readText(path));
+	}
 	inputs.set(
 		"bun.lock#whatsapp-sidecar-dependency-closure",
-		stableStringify(sidecarDependencyClosure(readText("bun.lock"))),
+		stableStringify(sidecarDependencyClosure(snapshot.readText("bun.lock"))),
 	);
 	inputs.set(
 		"config/deploy.yml#accessories.whatsapp-baileys",
-		extractWhatsAppSidecarAccessory(readText("config/deploy.yml")),
+		extractWhatsAppSidecarAccessory(snapshot.readText("config/deploy.yml")),
 	);
 
 	const hash = createHash("sha256");
@@ -174,10 +188,10 @@ function platformMatches(constraint: unknown, target: string): boolean {
 	return !denied && (allowed.length === 0 || allowed.includes(target));
 }
 
-function runtimeSourceFiles(repositoryRoot: string): string[] {
-	const absoluteRoot = join(repositoryRoot, SIDECAR_SOURCE_ROOT);
+function filesystemFiles(repositoryRoot: string, root: string): string[] {
+	const absoluteRoot = join(repositoryRoot, root);
 	return readdirSync(absoluteRoot, { recursive: true, withFileTypes: true })
-		.filter((entry) => entry.isFile() && !entry.name.endsWith(".test.ts"))
+		.filter((entry) => entry.isFile())
 		.map((entry) => relative(repositoryRoot, join(entry.parentPath, entry.name)))
 		.sort();
 }

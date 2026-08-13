@@ -507,6 +507,35 @@ export interface SystemdUnitSnapshot {
 	user: Map<string, string>;
 }
 
+type SystemdRuntimeScope = "system" | "user";
+
+type SystemdRuntimeMutationStage =
+	| "egress-prerequisite"
+	| "official-installer"
+	| "final-activation"
+	| "quiesce"
+	| "rollback";
+
+type SystemdRuntimeMutationAction =
+	| "daemon-reload"
+	| "disable"
+	| "enable"
+	| "enable-and-start"
+	| "install"
+	| "reset-failed"
+	| "restart"
+	| "start"
+	| "stop";
+
+export interface SystemdRuntimeMutationJournalEntry {
+	sequence: number;
+	stage: SystemdRuntimeMutationStage;
+	scope: SystemdRuntimeScope;
+	action: SystemdRuntimeMutationAction;
+	units: string[];
+	outcome: "pending" | "succeeded" | "failed";
+}
+
 interface SystemdUnitManagerState {
 	loadState: string;
 	activeState: string;
@@ -526,6 +555,69 @@ const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 const RUNTIME_DAEMON_SYSTEM_UNIT = "clawdi-daemon.service";
 const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 const RUNTIME_REVISION_RE = /^[a-f0-9]{32}$/;
+
+const SYSTEMD_ACTIVATION_STAGES = new Set<SystemdRuntimeMutationStage>([
+	"egress-prerequisite",
+	"official-installer",
+	"final-activation",
+]);
+
+const systemdRuntimeTransactionInitialStates = new WeakMap<
+	SystemdRuntimeTransaction,
+	{ system: Map<string, SystemdUnitManagerState>; user: Map<string, SystemdUnitManagerState> }
+>();
+
+export class SystemdRuntimeTransaction {
+	// Journal entries contain only systemd unit names and command outcomes. Command
+	// output, environment, process metadata, and secret material never enter it.
+	readonly journal: SystemdRuntimeMutationJournalEntry[] = [];
+
+	constructor() {
+		systemdRuntimeTransactionInitialStates.set(this, {
+			system: new Map(),
+			user: new Map(),
+		});
+	}
+
+	get state(): "pristine" | "mutated" {
+		return this.journal.some((entry) => SYSTEMD_ACTIVATION_STAGES.has(entry.stage))
+			? "mutated"
+			: "pristine";
+	}
+
+	installOfficialService(
+		paths: ReturnType<typeof getRuntimePaths>,
+		unit: string,
+		install: () => string | null,
+	): string | null {
+		return runSystemdRuntimeOfficialInstaller(paths, this, unit, install);
+	}
+
+	quiesce(paths: ReturnType<typeof getRuntimePaths>): void {
+		quiesceSystemdRuntimeCandidate(paths, this);
+	}
+
+	rollback(paths: ReturnType<typeof getRuntimePaths>): void {
+		rollbackSystemdRuntimeTransaction(paths, this);
+	}
+}
+
+function systemdRuntimeTransactionTouchedUnits(transaction: SystemdRuntimeTransaction): {
+	systemUnits: string[];
+	userUnits: string[];
+} {
+	const systemUnits = new Set<string>();
+	const userUnits = new Set<string>();
+	for (const entry of transaction.journal) {
+		if (!SYSTEMD_ACTIVATION_STAGES.has(entry.stage) || entry.action === "daemon-reload") continue;
+		const target = entry.scope === "system" ? systemUnits : userUnits;
+		for (const unit of entry.units) target.add(unit);
+	}
+	return {
+		systemUnits: [...systemUnits].sort(),
+		userUnits: [...userUnits].sort(),
+	};
+}
 
 export function readSystemdUnitSnapshot(
 	paths: ReturnType<typeof getRuntimePaths>,
@@ -604,6 +696,8 @@ export function applySystemdRuntimeUpdate(
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
 	opts: {
+		transaction: SystemdRuntimeTransaction;
+		stage: Extract<SystemdRuntimeMutationStage, "egress-prerequisite" | "final-activation">;
 		forceRestartSystemUnits?: readonly string[];
 		forceStopSystemUnits?: readonly string[];
 		recoverFailedUnits?: boolean;
@@ -613,8 +707,9 @@ export function applySystemdRuntimeUpdate(
 		};
 		preserveActiveUnits?: boolean;
 		skipActivatedSystemUnits?: readonly string[];
-	} = {},
+	},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
+	const { transaction, stage } = opts;
 	const allSystem = changedSystemdUnits(before.system, after.system);
 	const allUser = changedSystemdUnits(before.user, after.user);
 	const filterChanges = (
@@ -661,37 +756,59 @@ export function applySystemdRuntimeUpdate(
 			userUnitsChanged: [...userUnitsChanged].sort(),
 		};
 	}
+	const systemStates = preflightSystemdRuntimeUnits(paths, transaction, "system", [
+		...system.present,
+		...system.removed,
+		...forcedSystemStops,
+	]);
+	const userStates = preflightSystemdRuntimeUnits(paths, transaction, "user", [
+		...user.present,
+		...user.removed,
+	]);
 	const systemManagerNeedsReload = new Set(
-		system.present.filter(
-			(unit) => systemdUnitManagerState(paths, "system", unit).needDaemonReload,
-		),
+		system.present.filter((unit) => systemStates.get(unit)?.needDaemonReload),
 	);
 	const userManagerNeedsReload = new Set(
-		user.present.filter((unit) => systemdUnitManagerState(paths, "user", unit).needDaemonReload),
+		user.present.filter((unit) => userStates.get(unit)?.needDaemonReload),
 	);
 	const changedSystemUnits = new Set(system.changed);
 	const changedUserUnits = new Set(user.changed);
 	const userProcessRevisionDrift = new Set(
 		user.present.filter((unit) => {
-			const state = systemdUnitManagerState(paths, "user", unit);
-			return state.activeState === "active" && !systemdProcessRevisionMatches(paths, unit, state);
+			const state = requiredSystemdUnitState(userStates, "user", unit);
+			if (state.activeState !== "active") return false;
+			return !systemdProcessRevisionMatches(paths, unit, state);
 		}),
 	);
 
 	for (const unit of system.removed) {
-		const state = systemdUnitManagerState(paths, "system", unit);
+		const state = requiredSystemdUnitState(systemStates, "system", unit);
 		if (unit === RUNTIME_WATCH_SYSTEM_UNIT && !systemdUnitAbsentOrInactive(state)) continue;
-		if (!systemdUnitAbsentOrInactive(state)) systemctl(["stop", unit]);
+		if (!systemdUnitAbsentOrInactive(state)) {
+			runJournaledSystemdMutation(transaction, stage, "system", "stop", [unit], () =>
+				systemctl(["stop", unit]),
+			);
+		}
 	}
 	for (const unit of user.removed) {
-		const state = systemdUnitManagerState(paths, "user", unit);
-		if (!systemdUnitAbsentOrInactive(state)) runtimeUserSystemctl(paths, ["stop", unit]);
-		if (!systemdUnitAbsentOrDisabled(state)) runtimeUserSystemctl(paths, ["disable", unit]);
+		const state = requiredSystemdUnitState(userStates, "user", unit);
+		if (!systemdUnitAbsentOrInactive(state)) {
+			runJournaledSystemdMutation(transaction, stage, "user", "stop", [unit], () =>
+				runtimeUserSystemctl(paths, ["stop", unit]),
+			);
+		}
+		if (!systemdUnitAbsentOrDisabled(state)) {
+			runJournaledSystemdMutation(transaction, stage, "user", "disable", [unit], () =>
+				runtimeUserSystemctl(paths, ["disable", unit]),
+			);
+		}
 	}
 	for (const unit of forcedSystemStops) {
-		const state = systemdUnitManagerState(paths, "system", unit);
+		const state = requiredSystemdUnitState(systemStates, "system", unit);
 		if (!systemdUnitAbsentOrInactive(state)) {
-			systemctl(["stop", unit]);
+			runJournaledSystemdMutation(transaction, stage, "system", "stop", [unit], () =>
+				systemctl(["stop", unit]),
+			);
 			systemUnitsChanged.add(unit);
 		}
 	}
@@ -702,7 +819,9 @@ export function applySystemdRuntimeUpdate(
 		system.removed.length > 0 ||
 		systemManagerNeedsReload.size > 0
 	) {
-		systemctl(["daemon-reload"]);
+		runJournaledSystemdMutation(transaction, stage, "system", "daemon-reload", [], () =>
+			systemctl(["daemon-reload"]),
+		);
 	}
 	if (
 		user.added.length > 0 ||
@@ -710,7 +829,9 @@ export function applySystemdRuntimeUpdate(
 		user.removed.length > 0 ||
 		userManagerNeedsReload.size > 0
 	) {
-		runtimeUserSystemctl(paths, ["daemon-reload"]);
+		runJournaledSystemdMutation(transaction, stage, "user", "daemon-reload", [], () =>
+			runtimeUserSystemctl(paths, ["daemon-reload"]),
+		);
 	}
 
 	const addedSystemUnits = new Set(system.added);
@@ -721,7 +842,7 @@ export function applySystemdRuntimeUpdate(
 	const startSystemUnits: string[] = [];
 	const restartSystemUnits: string[] = [];
 	for (const unit of system.present) {
-		const state = systemdUnitManagerState(paths, "system", unit);
+		const state = requiredSystemdUnitState(systemStates, "system", unit);
 		if (forcedStopUnits.has(unit)) continue;
 		if (skipActivatedSystemUnits.has(unit)) continue;
 		if (state.activeState === "failed" && recoverFailedUnits) {
@@ -748,9 +869,26 @@ export function applySystemdRuntimeUpdate(
 	}
 	// Each reconciliation makes at most one recovery attempt per failed unit.
 	// Transitional units remain untouched and fail final proof below.
-	if (resetFailedSystemUnits.length > 0) systemctl(["reset-failed", ...resetFailedSystemUnits]);
-	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
-	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
+	if (resetFailedSystemUnits.length > 0) {
+		runJournaledSystemdMutation(
+			transaction,
+			stage,
+			"system",
+			"reset-failed",
+			resetFailedSystemUnits,
+			() => systemctl(["reset-failed", ...resetFailedSystemUnits]),
+		);
+	}
+	if (startSystemUnits.length > 0) {
+		runJournaledSystemdMutation(transaction, stage, "system", "start", startSystemUnits, () =>
+			systemctl(["start", ...startSystemUnits]),
+		);
+	}
+	if (restartSystemUnits.length > 0) {
+		runJournaledSystemdMutation(transaction, stage, "system", "restart", restartSystemUnits, () =>
+			systemctl(["restart", ...restartSystemUnits]),
+		);
+	}
 
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
@@ -758,7 +896,7 @@ export function applySystemdRuntimeUpdate(
 	const enableAndStartUserUnits: string[] = [];
 	const restartUserUnits: string[] = [];
 	for (const unit of user.present) {
-		const state = systemdUnitManagerState(paths, "user", unit);
+		const state = requiredSystemdUnitState(userStates, "user", unit);
 		const enabled = systemdUnitEnabled(state);
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedUserUnits.push(unit);
@@ -787,14 +925,40 @@ export function applySystemdRuntimeUpdate(
 		}
 	}
 	if (resetFailedUserUnits.length > 0) {
-		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
+		runJournaledSystemdMutation(
+			transaction,
+			stage,
+			"user",
+			"reset-failed",
+			resetFailedUserUnits,
+			() => runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]),
+		);
 	}
 	if (enableAndStartUserUnits.length > 0) {
-		runtimeUserSystemctl(paths, ["enable", "--now", ...enableAndStartUserUnits]);
+		runJournaledSystemdMutation(
+			transaction,
+			stage,
+			"user",
+			"enable-and-start",
+			enableAndStartUserUnits,
+			() => runtimeUserSystemctl(paths, ["enable", "--now", ...enableAndStartUserUnits]),
+		);
 	}
-	if (enableUserUnits.length > 0) runtimeUserSystemctl(paths, ["enable", ...enableUserUnits]);
-	if (startUserUnits.length > 0) runtimeUserSystemctl(paths, ["start", ...startUserUnits]);
-	if (restartUserUnits.length > 0) runtimeUserSystemctl(paths, ["restart", ...restartUserUnits]);
+	if (enableUserUnits.length > 0) {
+		runJournaledSystemdMutation(transaction, stage, "user", "enable", enableUserUnits, () =>
+			runtimeUserSystemctl(paths, ["enable", ...enableUserUnits]),
+		);
+	}
+	if (startUserUnits.length > 0) {
+		runJournaledSystemdMutation(transaction, stage, "user", "start", startUserUnits, () =>
+			runtimeUserSystemctl(paths, ["start", ...startUserUnits]),
+		);
+	}
+	if (restartUserUnits.length > 0) {
+		runJournaledSystemdMutation(transaction, stage, "user", "restart", restartUserUnits, () =>
+			runtimeUserSystemctl(paths, ["restart", ...restartUserUnits]),
+		);
+	}
 
 	const systemConverged = system.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "system", unit);
@@ -805,13 +969,15 @@ export function applySystemdRuntimeUpdate(
 	});
 	const userConverged = user.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "user", unit);
-		return (
-			state.loadState !== "not-found" &&
-			state.activeState === "active" &&
-			!state.needDaemonReload &&
-			systemdUnitEnabled(state) &&
-			systemdProcessRevisionMatches(paths, unit, state)
-		);
+		if (
+			state.loadState === "not-found" ||
+			state.activeState !== "active" ||
+			state.needDaemonReload ||
+			!systemdUnitEnabled(state)
+		) {
+			return false;
+		}
+		return systemdProcessRevisionMatches(paths, unit, state);
 	});
 	const removedSystemConverged = system.removed.every(
 		(unit) =>
@@ -829,19 +995,220 @@ export function applySystemdRuntimeUpdate(
 	};
 }
 
-export function quiesceSystemdRuntimeCandidate(
+function quiesceSystemdRuntimeCandidate(
 	paths: ReturnType<typeof getRuntimePaths>,
-	candidate: SystemdUnitSnapshot,
+	transaction: SystemdRuntimeTransaction,
 ): void {
 	if (!shouldApplySystemdRuntimeUpdate(paths)) return;
-	const userUnits = [...candidate.user.keys()]
+	const candidateUnits = systemdRuntimeCandidateUnits(transaction);
+	const userUnits = [...candidateUnits.user]
 		.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT)
 		.sort();
-	if (userUnits.length > 0) runtimeUserSystemctl(paths, ["stop", ...userUnits]);
-	const systemUnits = [...candidate.system.keys()]
+	for (const unit of userUnits) {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		if (systemdUnitAbsentOrInactive(state)) continue;
+		runJournaledSystemdMutation(transaction, "quiesce", "user", "stop", [unit], () =>
+			runtimeUserSystemctl(paths, ["stop", unit]),
+		);
+	}
+	const systemUnits = [...candidateUnits.system]
 		.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT)
 		.sort();
-	if (systemUnits.length > 0) systemctl(["stop", ...systemUnits]);
+	for (const unit of systemUnits) {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		if (systemdUnitAbsentOrInactive(state)) continue;
+		runJournaledSystemdMutation(transaction, "quiesce", "system", "stop", [unit], () =>
+			systemctl(["stop", unit]),
+		);
+	}
+}
+
+function systemdRuntimeCandidateUnits(transaction: SystemdRuntimeTransaction): {
+	system: Set<string>;
+	user: Set<string>;
+} {
+	const candidateActions = new Set<SystemdRuntimeMutationAction>([
+		"enable-and-start",
+		"install",
+		"restart",
+		"start",
+	]);
+	const candidateUnits = { system: new Set<string>(), user: new Set<string>() };
+	for (const entry of transaction.journal) {
+		if (!SYSTEMD_ACTIVATION_STAGES.has(entry.stage) || !candidateActions.has(entry.action)) {
+			continue;
+		}
+		for (const unit of entry.units) candidateUnits[entry.scope].add(unit);
+	}
+	return candidateUnits;
+}
+
+function rollbackSystemdRuntimeTransaction(
+	paths: ReturnType<typeof getRuntimePaths>,
+	transaction: SystemdRuntimeTransaction,
+): void {
+	const activationJournal = transaction.journal.filter((entry) =>
+		SYSTEMD_ACTIVATION_STAGES.has(entry.stage),
+	);
+	const touched = systemdRuntimeTransactionTouchedUnits(transaction);
+	const reloadSystem = activationJournal.some(
+		(entry) => entry.scope === "system" && entry.action === "daemon-reload",
+	);
+	const reloadUser = activationJournal.some(
+		(entry) =>
+			entry.scope === "user" && (entry.action === "daemon-reload" || entry.action === "install"),
+	);
+	if (reloadSystem) {
+		runJournaledSystemdMutation(transaction, "rollback", "system", "daemon-reload", [], () =>
+			systemctl(["daemon-reload"]),
+		);
+	}
+	if (reloadUser) {
+		runJournaledSystemdMutation(transaction, "rollback", "user", "daemon-reload", [], () =>
+			runtimeUserSystemctl(paths, ["daemon-reload"]),
+		);
+	}
+	for (const unit of touched.systemUnits) {
+		const initial = systemdRuntimeTransactionStates(transaction).system.get(unit);
+		if (!initial || initial.loadState === "not-found" || initial.activeState !== "active") continue;
+		restoreActiveSystemdUnit(paths, transaction, "system", unit);
+	}
+	for (const unit of touched.userUnits) {
+		const initial = systemdRuntimeTransactionStates(transaction).user.get(unit);
+		if (!initial || initial.loadState === "not-found") continue;
+		const initiallyEnabled = systemdUnitEnabled(initial);
+		const currentlyEnabled = systemdUnitEnabled(systemdUnitManagerState(paths, "user", unit));
+		if (initiallyEnabled !== currentlyEnabled) {
+			const action = initiallyEnabled ? "enable" : "disable";
+			runJournaledSystemdMutation(transaction, "rollback", "user", action, [unit], () =>
+				runtimeUserSystemctl(paths, [action, unit]),
+			);
+		}
+		if (initial.activeState !== "active") continue;
+		restoreActiveSystemdUnit(paths, transaction, "user", unit);
+		const restored = systemdUnitManagerState(paths, "user", unit);
+		if (systemdUnitEnabled(restored) !== initiallyEnabled) {
+			throw new Error(`systemd rollback did not restore user unit ${unit} enablement`);
+		}
+		if (!systemdProcessRevisionMatches(paths, unit, restored)) {
+			throw new Error(`systemd rollback restored stale runtime revision for ${unit}`);
+		}
+	}
+}
+
+function restoreActiveSystemdUnit(
+	paths: ReturnType<typeof getRuntimePaths>,
+	transaction: SystemdRuntimeTransaction,
+	scope: SystemdRuntimeScope,
+	unit: string,
+): void {
+	let current = systemdUnitManagerState(paths, scope, unit);
+	const mutate = (
+		action: Extract<SystemdRuntimeMutationAction, "reset-failed" | "start" | "stop">,
+	) =>
+		runJournaledSystemdMutation(transaction, "rollback", scope, action, [unit], () =>
+			scope === "system" ? systemctl([action, unit]) : runtimeUserSystemctl(paths, [action, unit]),
+		);
+	if (current.activeState === "failed") {
+		mutate("reset-failed");
+		current = systemdUnitManagerState(paths, scope, unit);
+	}
+	if (current.activeState !== "active") {
+		if (current.activeState !== "inactive") {
+			throw new Error(
+				`systemd rollback could not restore ${scope} unit ${unit} from ${current.activeState}`,
+			);
+		}
+		mutate("start");
+		current = systemdUnitManagerState(paths, scope, unit);
+	}
+	if (current.activeState !== "active") {
+		throw new Error(`systemd rollback did not restore ${scope} unit ${unit} activity`);
+	}
+}
+
+function runSystemdRuntimeOfficialInstaller(
+	paths: ReturnType<typeof getRuntimePaths>,
+	transaction: SystemdRuntimeTransaction,
+	unit: string,
+	install: () => string | null,
+): string | null {
+	const states = preflightSystemdRuntimeUnits(paths, transaction, "user", [unit]);
+	const state = requiredSystemdUnitState(states, "user", unit);
+	if (state.activeState === "active") {
+		systemdProcessRevisionMatches(paths, unit, state);
+	}
+	return runJournaledSystemdMutation(
+		transaction,
+		"official-installer",
+		"user",
+		"install",
+		[unit],
+		install,
+		(error) => error !== null,
+	);
+}
+
+function preflightSystemdRuntimeUnits(
+	paths: ReturnType<typeof getRuntimePaths>,
+	transaction: SystemdRuntimeTransaction,
+	scope: SystemdRuntimeScope,
+	units: readonly string[],
+): Map<string, SystemdUnitManagerState> {
+	const states = new Map<string, SystemdUnitManagerState>();
+	const initialStates = systemdRuntimeTransactionStates(transaction)[scope];
+	for (const unit of [...new Set(units)].sort()) {
+		const state = systemdUnitManagerState(paths, scope, unit);
+		states.set(unit, state);
+		if (!initialStates.has(unit)) initialStates.set(unit, state);
+	}
+	return states;
+}
+
+function systemdRuntimeTransactionStates(transaction: SystemdRuntimeTransaction): {
+	system: Map<string, SystemdUnitManagerState>;
+	user: Map<string, SystemdUnitManagerState>;
+} {
+	const states = systemdRuntimeTransactionInitialStates.get(transaction);
+	if (!states) throw new Error("systemd runtime transaction is not initialized");
+	return states;
+}
+function requiredSystemdUnitState(
+	states: ReadonlyMap<string, SystemdUnitManagerState>,
+	scope: SystemdRuntimeScope,
+	unit: string,
+): SystemdUnitManagerState {
+	const state = states.get(unit);
+	if (!state) throw new Error(`systemd ${scope} unit ${unit} was not preflighted`);
+	return state;
+}
+
+function runJournaledSystemdMutation<T>(
+	transaction: SystemdRuntimeTransaction,
+	stage: SystemdRuntimeMutationStage,
+	scope: SystemdRuntimeScope,
+	action: SystemdRuntimeMutationAction,
+	units: readonly string[],
+	mutation: () => T,
+	failed: (result: T) => boolean = () => false,
+): T {
+	const entry: SystemdRuntimeMutationJournalEntry = {
+		sequence: transaction.journal.length + 1,
+		stage,
+		scope,
+		action,
+		units: [...new Set(units)].sort(),
+		outcome: "pending",
+	};
+	transaction.journal.push(entry);
+	try {
+		const result = mutation();
+		entry.outcome = failed(result) ? "failed" : "succeeded";
+		return result;
+	} catch (error) {
+		entry.outcome = "failed";
+		throw error;
+	}
 }
 
 function systemdUnitManagerState(
@@ -1899,7 +2266,7 @@ async function applyRuntimeDesiredState(
 			authToken: load.applyContext?.manifestSource.auth.token,
 		}));
 	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
-	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
+	const systemdTransaction = new SystemdRuntimeTransaction();
 	let systemdApply = {
 		applied: false,
 		systemUnitsChanged: [] as string[],
@@ -1918,14 +2285,19 @@ async function applyRuntimeDesiredState(
 			opts.authorityCommit?.(committedConvergence, authority);
 		},
 		systemdApply: {
+			transactionState: () => systemdTransaction.state,
+			installOfficialService: (unit, install) =>
+				systemdTransaction.installOfficialService(paths, unit, install),
 			activateEgressPrerequisite: ({ restartEgressSidecar }) => {
-				failedSystemdUnits = readSystemdUnitSnapshot(paths);
+				const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
 					const prerequisite = applySystemdRuntimeUpdate(
 						paths,
 						previousSystemdUnits,
-						failedSystemdUnits,
+						candidateSystemdUnits,
 						{
+							transaction: systemdTransaction,
+							stage: "egress-prerequisite",
 							activationScope: {
 								systemUnits: [RUNTIME_SIDECAR_SYSTEM_UNIT],
 								userUnits: [],
@@ -1952,10 +2324,10 @@ async function applyRuntimeDesiredState(
 			activate: ({ restartDaemon, restartEgressSidecar, staleSystemUnits, staleUserUnits }) => {
 				// Official installers run after the prerequisite phase and add their
 				// base units, so final reconciliation must observe a fresh rendered state.
-				failedSystemdUnits = readSystemdUnitSnapshot(paths);
+				const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
 					const activationTarget = withoutStaleSystemdUnits(
-						failedSystemdUnits,
+						candidateSystemdUnits,
 						staleSystemUnits,
 						staleUserUnits,
 					);
@@ -1964,6 +2336,8 @@ async function applyRuntimeDesiredState(
 						previousSystemdUnits,
 						activationTarget,
 						{
+							transaction: systemdTransaction,
+							stage: "final-activation",
 							forceRestartSystemUnits: [
 								...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
 								...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
@@ -1997,36 +2371,8 @@ async function applyRuntimeDesiredState(
 					);
 				}
 			},
-			quiesce: () => {
-				quiesceSystemdRuntimeCandidate(paths, readSystemdUnitSnapshot(paths));
-			},
-			rollback: ({
-				restartDaemon,
-				restartEgressSidecar,
-				stopEgressSidecar,
-				reconcileUserUnits,
-				staleSystemUnits,
-			}) => {
-				const restoredSystemdUnits = readSystemdUnitSnapshot(paths);
-				const rollbackSource = failedSystemdUnits ?? {
-					system: new Map(previousSystemdUnits.system),
-					user: new Map(previousSystemdUnits.user),
-				};
-				for (const unit of reconcileUserUnits) {
-					if (!rollbackSource.user.has(unit)) {
-						rollbackSource.user.set(unit, "# failed runtime apply candidate\n");
-					}
-				}
-				applySystemdRuntimeUpdate(paths, rollbackSource, restoredSystemdUnits, {
-					forceRestartSystemUnits: [
-						...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
-						...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
-						...staleSystemUnits,
-					],
-					forceStopSystemUnits: stopEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
-					recoverFailedUnits: false,
-				});
-			},
+			quiesce: () => systemdTransaction.quiesce(paths),
+			rollback: () => systemdTransaction.rollback(paths),
 		},
 	});
 	return { kind: "converged", cliUpdate, convergence, systemdApply };
