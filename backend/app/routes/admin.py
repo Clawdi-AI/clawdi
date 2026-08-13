@@ -1084,7 +1084,6 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
         )
     try:
         _require_managed_provider_contract(provider)
-        previous_non_auth_signature = runtime_manifest_provider_non_auth_signature(provider)
         changed = replace_deployment_managed_provider_metadata(
             provider,
             base_url=body.base_url,
@@ -1110,8 +1109,7 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     if changed:
         await db.flush()
-        if previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider):
-            await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
+        await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
     _record_deployment_managed_provider_audit(
         db,
         action=action,
