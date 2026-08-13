@@ -3746,23 +3746,23 @@ chmod +x "$HOME/.local/bin/hermes"
 			commandLog,
 			mutationLog,
 		} = writeOpenClawConfigMutationFixture(home, {
-				gateway: { mode: "local", port: 19_001 },
-				logging: { level: "debug" },
-				models: {
-					providers: {
-						"user-owned": {
-							baseUrl: "https://user.provider.example.test/v1",
-							api: "openai-completions",
-							models: [{ id: "user-model", name: "User model" }],
-						},
-						clawdi: {
-							baseUrl: "https://managed.provider.example.test/v1",
-							api: "openai-responses",
-							apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
-							models: legacyModels,
-						},
+			gateway: { mode: "local", port: 19_001 },
+			logging: { level: "debug" },
+			models: {
+				providers: {
+					"user-owned": {
+						baseUrl: "https://user.provider.example.test/v1",
+						api: "openai-completions",
+						models: [{ id: "user-model", name: "User model" }],
+					},
+					clawdi: {
+						baseUrl: "https://managed.provider.example.test/v1",
+						api: "openai-responses",
+						apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+						models: legacyModels,
 					},
 				},
+			},
 		});
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -5802,153 +5802,144 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(hermesProvider.models).toEqual({ "gpt-5.5": {} });
 	});
 
-	it.each(["openclaw", "hermes"] as const)(
-		"replaces the managed %s model catalog without restarting its active runtime",
-		(runtimeName) => {
-			const caseRoot = join(root, runtimeName);
-			const home = join(caseRoot, "home", "clawdi");
-			const state = join(caseRoot, "var", "lib", "clawdi");
-			const run = join(caseRoot, "run", "clawdi");
-			const systemctlLog = join(caseRoot, "systemctl.log");
-			const systemctlStateRoot = join(caseRoot, "systemctl-state");
-			let openclawConfig: string | null = null;
-			mkdirSync(home, { recursive: true });
-			if (runtimeName === "openclaw") {
-				openclawConfig = writeOpenClawConfigMutationFixture(home).configPath;
-			} else {
-				writeHermesVersionBinary(home, "0.19.1");
-			}
-			writeFakeSystemdManager({
-				path: join(caseRoot, "bin", "systemctl"),
-				logPath: systemctlLog,
-				stateRoot: systemctlStateRoot,
-				environmentRoot: join(run, "systemd", "env"),
-			});
-			process.env.HOME = home;
-			process.env.CLAWDI_RUNTIME_MODE = "hosted";
-			process.env.CLAWDI_SERVICE_STATE_DIR = state;
-			process.env.CLAWDI_RUN_DIR = run;
-			process.env.CLAWDI_SYSTEMCTL_PATH = join(caseRoot, "bin", "systemctl");
-			process.env.CLAWDI_SYSTEMD_APPLY = "1";
-			process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+	it.each([
+		"openclaw",
+		"hermes",
+	] as const)("replaces the managed %s model catalog without restarting its active runtime", (runtimeName) => {
+		const caseRoot = join(root, runtimeName);
+		const home = join(caseRoot, "home", "clawdi");
+		const state = join(caseRoot, "var", "lib", "clawdi");
+		const run = join(caseRoot, "run", "clawdi");
+		const systemctlLog = join(caseRoot, "systemctl.log");
+		const systemctlStateRoot = join(caseRoot, "systemctl-state");
+		let openclawConfig: string | null = null;
+		mkdirSync(home, { recursive: true });
+		if (runtimeName === "openclaw") {
+			openclawConfig = writeOpenClawConfigMutationFixture(home).configPath;
+		} else {
+			writeHermesVersionBinary(home, "0.19.1");
+		}
+		writeFakeSystemdManager({
+			path: join(caseRoot, "bin", "systemctl"),
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+			environmentRoot: join(run, "systemd", "env"),
+		});
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(caseRoot, "bin", "systemctl");
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 
-			const previous = hostedSingleProviderModeLoad(home, runtimeName, "configured", 1);
-			const next = hostedSingleProviderModeLoad(home, runtimeName, "configured", 1);
-			const previousProvider = expectRecord(
-				previous.manifest.projection?.providers?.["clawdi-managed"],
-				"previous managed provider",
+		const previous = hostedSingleProviderModeLoad(home, runtimeName, "configured", 1);
+		const next = hostedSingleProviderModeLoad(home, runtimeName, "configured", 1);
+		const previousProvider = expectRecord(
+			previous.manifest.projection?.providers?.["clawdi-managed"],
+			"previous managed provider",
+		);
+		const nextProvider = expectRecord(
+			next.manifest.projection?.providers?.["clawdi-managed"],
+			"next managed provider",
+		);
+		previousProvider.models = [
+			{ id: "gpt-5.5", label: "GPT-5.5 old", context_window: 128_000 },
+			{ id: "stale-model", label: "Stale model" },
+		];
+		nextProvider.models = [
+			{
+				id: "gpt-5.5",
+				label: "GPT-5.5 refreshed",
+				context_window: 512_000,
+				max_tokens: 64_000,
+				supports_vision: true,
+			},
+			{ id: "new-model", label: "New model" },
+		];
+
+		const paths = getRuntimePaths();
+		const first = convergeRuntimeManifest(previous, paths);
+		expect(first.installErrors).toEqual([]);
+		writeTestRuntimeAppliedState(paths, previous, first);
+		const before = readSystemdUnitSnapshot(paths);
+		seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, before);
+		for (const unit of before.user.keys()) {
+			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
+		}
+		const runtimeUnit = runtimeName === "openclaw" ? "openclaw-gateway" : "hermes-gateway";
+		const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit));
+		const transaction = new SystemdRuntimeTransaction();
+		writeFileSync(systemctlLog, "");
+
+		const second = convergeRuntimeManifest(next, paths);
+		expect(second.installErrors).toEqual([]);
+		const activation = applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
+			transaction,
+			stage: "final-activation",
+		});
+
+		expect(activation).toEqual({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: [],
+		});
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit))).toBe(initialRevision);
+		const systemctlCalls = readFileSync(systemctlLog, "utf-8");
+		expect(systemctlCalls).toContain(`--user show ${runtimeUnit}.service`);
+		expect(systemctlCalls).not.toMatch(
+			/(?:^|\s)(?:start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
+		);
+
+		if (runtimeName === "openclaw") {
+			if (!openclawConfig) throw new Error("OpenClaw config fixture is missing");
+			const config = expectRecord(
+				JSON.parse(readFileSync(openclawConfig, "utf-8")),
+				"OpenClaw config",
 			);
-			const nextProvider = expectRecord(
-				next.manifest.projection?.providers?.["clawdi-managed"],
-				"next managed provider",
-			);
-			previousProvider.models = [
-				{ id: "gpt-5.5", label: "GPT-5.5 old", context_window: 128_000 },
-				{ id: "stale-model", label: "Stale model" },
-			];
-			nextProvider.models = [
-				{
+			const models = expectRecord(config.models, "OpenClaw models");
+			const providers = expectRecord(models.providers, "OpenClaw providers");
+			const provider = expectRecord(providers["clawdi-managed"], "OpenClaw managed provider");
+			expect(provider.models).toEqual([
+				expect.objectContaining({
 					id: "gpt-5.5",
-					label: "GPT-5.5 refreshed",
-					context_window: 512_000,
+					name: "GPT-5.5 refreshed",
+					contextWindow: 512_000,
+					maxTokens: 64_000,
+					input: ["text", "image"],
+				}),
+				expect.objectContaining({ id: "new-model", name: "New model" }),
+			]);
+			expect(JSON.stringify(provider)).not.toContain("stale-model");
+		} else {
+			const provider = expectRecord(
+				expectRecord(readHermesConfigYaml(home).providers, "Hermes providers")["clawdi-managed"],
+				"Hermes managed provider",
+			);
+			expect(provider.models).toEqual({
+				"gpt-5.5": {
+					context_length: 512_000,
 					max_tokens: 64_000,
 					supports_vision: true,
 				},
-				{ id: "new-model", label: "New model" },
-			];
-
-			const paths = getRuntimePaths();
-			const first = convergeRuntimeManifest(previous, paths);
-			expect(first.installErrors).toEqual([]);
-			writeTestRuntimeAppliedState(paths, previous, first);
-			const before = readSystemdUnitSnapshot(paths);
-			seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, before);
-			for (const unit of before.user.keys()) {
-				writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
-			}
-			const runtimeUnit = runtimeName === "openclaw" ? "openclaw-gateway" : "hermes-gateway";
-			const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit));
-			const transaction = new SystemdRuntimeTransaction();
-			writeFileSync(systemctlLog, "");
-
-			const second = convergeRuntimeManifest(next, paths);
-			expect(second.installErrors).toEqual([]);
-			const activation = applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
-				transaction,
-				stage: "final-activation",
+				"new-model": {},
 			});
+		}
 
-			expect(activation).toEqual({
-				applied: true,
-				systemUnitsChanged: [],
-				userUnitsChanged: [],
-			});
-			expect(
-				systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit)),
-			).toBe(initialRevision);
-			const systemctlCalls = readFileSync(systemctlLog, "utf-8");
-			expect(systemctlCalls).toContain(`--user show ${runtimeUnit}.service`);
-			expect(systemctlCalls).not.toMatch(
-				/(?:^|\s)(?:start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
-			);
-
-			if (runtimeName === "openclaw") {
-				if (!openclawConfig) throw new Error("OpenClaw config fixture is missing");
-				const config = expectRecord(
-					JSON.parse(readFileSync(openclawConfig, "utf-8")),
-					"OpenClaw config",
-				);
-				const models = expectRecord(config.models, "OpenClaw models");
-				const providers = expectRecord(models.providers, "OpenClaw providers");
-				const provider = expectRecord(
-					providers["clawdi-managed"],
-					"OpenClaw managed provider",
-				);
-				expect(provider.models).toEqual([
-					expect.objectContaining({
-						id: "gpt-5.5",
-						name: "GPT-5.5 refreshed",
-						contextWindow: 512_000,
-						maxTokens: 64_000,
-						input: ["text", "image"],
-					}),
-					expect.objectContaining({ id: "new-model", name: "New model" }),
-				]);
-				expect(JSON.stringify(provider)).not.toContain("stale-model");
-			} else {
-				const provider = expectRecord(
-					expectRecord(readHermesConfigYaml(home).providers, "Hermes providers")[
-						"clawdi-managed"
-					],
-					"Hermes managed provider",
-				);
-				expect(provider.models).toEqual({
-					"gpt-5.5": {
-						context_length: 512_000,
-						max_tokens: 64_000,
-						supports_vision: true,
-					},
-					"new-model": {},
-				});
-			}
-
-			const beforeBaseUrlChange = readSystemdUnitSnapshot(paths);
-			nextProvider.baseUrl = "https://replacement.provider.example.test/v1";
-			writeFileSync(systemctlLog, "");
-			const third = convergeRuntimeManifest(next, paths);
-			expect(third.installErrors).toEqual([]);
-			const baseUrlActivation = applySystemdRuntimeUpdate(
-				paths,
-				beforeBaseUrlChange,
-				readSystemdUnitSnapshot(paths),
-				{ transaction, stage: "final-activation" },
-			);
-			expect(baseUrlActivation.userUnitsChanged).toEqual([`${runtimeUnit}.service`]);
-			expect(readFileSync(systemctlLog, "utf-8")).toContain(
-				`--user restart ${runtimeUnit}.service`,
-			);
-		},
-	);
+		const beforeBaseUrlChange = readSystemdUnitSnapshot(paths);
+		nextProvider.baseUrl = "https://replacement.provider.example.test/v1";
+		writeFileSync(systemctlLog, "");
+		const third = convergeRuntimeManifest(next, paths);
+		expect(third.installErrors).toEqual([]);
+		const baseUrlActivation = applySystemdRuntimeUpdate(
+			paths,
+			beforeBaseUrlChange,
+			readSystemdUnitSnapshot(paths),
+			{ transaction, stage: "final-activation" },
+		);
+		expect(baseUrlActivation.userUnitsChanged).toEqual([`${runtimeUnit}.service`]);
+		expect(readFileSync(systemctlLog, "utf-8")).toContain(`--user restart ${runtimeUnit}.service`);
+	});
 
 	it("uses the same native Hermes projection before and after 0.18.0", () => {
 		const home = join(root, "home", "clawdi");
