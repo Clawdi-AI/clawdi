@@ -15,6 +15,8 @@ describe("Stripe appearance", () => {
 		expect(dark.variables?.colorBackground).toBe("oklch(0.175 0.004 95)");
 		expect(dark.variables?.colorText).toBe("oklch(0.92 0.004 95)");
 		expect(light.variables?.colorBackground).not.toBe(dark.variables?.colorBackground);
+		expect(light.variables?.fontSizeBase).toBe("16px");
+		expect(light.rules?.[".Input"]?.fontSize).toBe("16px");
 	});
 
 	test("updates immediately and on a live root theme change", () => {

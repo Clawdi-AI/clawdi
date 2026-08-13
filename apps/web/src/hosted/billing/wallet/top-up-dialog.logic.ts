@@ -45,8 +45,7 @@ export function topUpAmountCentsForUsdShortfall(shortfallUsd: number | null): nu
 	if (shortfallUsd === null || !Number.isFinite(shortfallUsd) || shortfallUsd <= 0) {
 		return null;
 	}
-	const rawCents = shortfallUsd * 100;
-	const roundedCents = Math.ceil(rawCents / TOPUP_INCREMENT_CENTS) * TOPUP_INCREMENT_CENTS;
+	const roundedCents = Math.ceil(shortfallUsd) * TOPUP_INCREMENT_CENTS;
 	return Math.min(TOPUP_MAX_CENTS, Math.max(TOPUP_MIN_CENTS, roundedCents));
 }
 

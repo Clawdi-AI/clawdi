@@ -1,6 +1,6 @@
 import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
-import type { ManagedModelCatalogItem } from "../src/hosted/billing/contracts";
+import type { ManagedModelCatalogItem, WalletState } from "../src/hosted/billing/contracts";
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
 import {
 	type DeploymentMutationFixture,
@@ -31,6 +31,10 @@ declare global {
 		__stripeCheckoutClientSecrets?: string[];
 		__stripeCheckoutLoadCalls?: number;
 		__stripeConfirmCalls?: number;
+		__stripeWalletAppearanceThemes?: string[];
+		__stripeWalletClientSecrets?: string[];
+		__stripeWalletConfirmCalls?: number;
+		__stripeWalletReturnUrls?: string[];
 	}
 }
 
@@ -344,7 +348,7 @@ const hostedMemories = {
 
 // Must match the API hosts configured in playwright.hosted.config.ts.
 const CLOUD_API = "http://127.0.0.1:8000";
-const DEPLOY_API = "http://127.0.0.1:8001";
+const DEPLOY_API = process.env.E2E_HOSTED_DEPLOY_API_URL ?? "http://127.0.0.1:8001";
 
 async function _expectVisibleLobeHubIconsContained(page: Page, minimumCount: number) {
 	const icons = page.locator('[data-icon-source="lobehub"]:visible');
@@ -866,10 +870,17 @@ const _interruptedIdentitylessDeployment = {
 	failure_reason: "creation_interrupted",
 };
 
-const walletState = {
+const walletState: WalletState = {
 	balance_usd: "25.00",
 	x402_enabled: false,
 	auto_reload_enabled: false,
+	auto_reload_has_payment_method: false,
+	auto_reload_card: null,
+	auto_reload_currency: "usd",
+	auto_reload_required_consent_version: "wallet_auto_reload_off_session_v2",
+	auto_reload_amount_policy: "wallet_reload_configured_plus_negative_balance_v1",
+	auto_reload_consent_version: null,
+	auto_reload_consented_at: null,
 	auto_reload_threshold_usd: "5.00",
 	auto_reload_amount_cents: 2_500,
 	auto_reload_monthly_cap_cents: 10_000,
@@ -1353,6 +1364,9 @@ type HostedApiStubOptions = {
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
+	walletSetupCreates?: Array<{ body: string; idempotencyKey: string | null }>;
+	walletSetupFinalizeFailures?: number;
+	walletSetupFinalizes?: string[];
 	unfinishedDeploymentRequests?: boolean;
 	usageResponse?: unknown;
 	updateDeploymentRequests?: Array<{
@@ -1409,6 +1423,65 @@ async function stubCompletedStripeCheckout(page: Page) {
 					}),
 				};
 			},
+			{ version: "dahlia" },
+		);
+		Object.defineProperty(window, "Stripe", { configurable: true, value: mockStripe });
+	});
+}
+
+async function stubWalletStripeSetup(page: Page) {
+	await page.addInitScript(() => {
+		const browserState = window;
+		browserState.__stripeWalletAppearanceThemes = [];
+		browserState.__stripeWalletClientSecrets = [];
+		browserState.__stripeWalletConfirmCalls = 0;
+		browserState.__stripeWalletReturnUrls = [];
+		let latestClientSecret = "";
+		const recordTheme = (appearance?: { theme?: string }) => {
+			if (appearance?.theme) browserState.__stripeWalletAppearanceThemes?.push(appearance.theme);
+		};
+		const mockStripe = Object.assign(
+			() => ({
+				confirmCardPayment: async () => ({}),
+				elements: (options: { appearance?: { theme?: string }; clientSecret?: string }) => {
+					latestClientSecret = options.clientSecret ?? "";
+					browserState.__stripeWalletClientSecrets?.push(latestClientSecret);
+					recordTheme(options.appearance);
+					return {
+						create: () => ({
+							destroy: () => undefined,
+							mount: (node: HTMLElement) => {
+								node.textContent = "Mock Wallet card form";
+							},
+							off: () => undefined,
+							on: (event: string, callback: () => void) => {
+								if (event === "ready") window.setTimeout(callback, 0);
+							},
+							update: () => undefined,
+						}),
+						getElement: () => null,
+						submit: async () => ({}),
+						update: (next: { appearance?: { theme?: string } }) => recordTheme(next.appearance),
+					};
+				},
+				createPaymentMethod: async () => ({}),
+				createToken: async () => ({}),
+				confirmSetup: async (options: { confirmParams?: { return_url?: string } }) => {
+					browserState.__stripeWalletConfirmCalls =
+						(browserState.__stripeWalletConfirmCalls ?? 0) + 1;
+					browserState.__stripeWalletReturnUrls?.push(options.confirmParams?.return_url ?? "");
+					return {
+						setupIntent: {
+							id: latestClientSecret.split("_secret_", 1)[0] ?? "",
+							status: "succeeded",
+						},
+					};
+				},
+				retrievePaymentIntent: async () => ({
+					paymentIntent: { id: "pi_auto_reload_return", status: "succeeded" },
+				}),
+				_registerWrapper: () => undefined,
+			}),
 			{ version: "dahlia" },
 		);
 		Object.defineProperty(window, "Stripe", { configurable: true, value: mockStripe });
@@ -1482,7 +1555,17 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const acceptedDeleteIds = new Set<string>();
 	const completedDeleteIds = options.completedDeleteIds ?? new Set<string>();
 	const plans = options.plans ?? [];
-	let currentWallet = options.walletState ?? walletState;
+	let currentWallet: WalletState = options.walletState ?? walletState;
+	let walletSetupFinalizeFailures = options.walletSetupFinalizeFailures ?? 0;
+	const walletSetupSettings = new Map<
+		string,
+		{
+			auto_reload_amount_cents: number;
+			auto_reload_monthly_cap_cents: number;
+			auto_reload_threshold_usd: number | string;
+			consent_version: "wallet_auto_reload_off_session_v2";
+		}
+	>();
 	const deploymentRequests = new Map<string, DeploymentMutationFixture>();
 	const acceptedDeployments = new Map<string, DeploymentMutationFixture>();
 	// Deploy API (/me, /v2/*).
@@ -1520,7 +1603,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			const response = options.walletResponses?.shift();
 			await options.walletResponseGates?.shift();
 			if (response) {
-				if (response.status < 400) currentWallet = response.body as typeof walletState;
+				if (response.status < 400) currentWallet = response.body as WalletState;
 				return fulfillJson(r, response.body, response.status);
 			}
 			return fulfillJson(r, currentWallet);
@@ -1533,11 +1616,78 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
 			}
 			if (response) {
-				if (response.status < 400) currentWallet = response.body as typeof walletState;
+				if (response.status < 400) currentWallet = response.body as WalletState;
 				return fulfillJson(r, response.body, response.status);
 			}
 			const request = JSON.parse(requestBody) as Partial<typeof walletState>;
-			currentWallet = { ...currentWallet, ...request };
+			currentWallet =
+				request.auto_reload_enabled === false
+					? {
+							...currentWallet,
+							...request,
+							auto_reload_card: null,
+							auto_reload_consented_at: null,
+							auto_reload_consent_version: null,
+							auto_reload_has_payment_method: false,
+							auto_reload_status: "off",
+						}
+					: { ...currentWallet, ...request };
+			return fulfillJson(r, currentWallet);
+		}
+		if (p === "/v2/wallet/auto-reload/setup-intent" && r.request().method() === "POST") {
+			const body = r.request().postData() ?? "";
+			options.walletSetupCreates?.push({
+				body,
+				idempotencyKey: r.request().headers()["idempotency-key"] ?? null,
+			});
+			const request = JSON.parse(body) as {
+				auto_reload_amount_cents: number;
+				auto_reload_monthly_cap_cents: number;
+				auto_reload_threshold_usd: number | string;
+				consent_version: "wallet_auto_reload_off_session_v2";
+			};
+			const attempt = options.walletSetupCreates?.length ?? walletSetupSettings.size + 1;
+			const setupIdentity = `wsetup_${(attempt === 1 ? "a" : "b").repeat(64)}`;
+			const setupIntentId = `seti_wallet_${attempt}`;
+			walletSetupSettings.set(setupIdentity, request);
+			return fulfillJson(r, {
+				...request,
+				amount_policy: "wallet_reload_configured_plus_negative_balance_v1",
+				client_secret: `${setupIntentId}_secret_mock_${attempt}`,
+				currency: "usd",
+				setup_identity: setupIdentity,
+				setup_intent_id: setupIntentId,
+				status: "requires_payment_method",
+			});
+		}
+		if (p === "/v2/wallet/auto-reload/setup-intent/finalize" && r.request().method() === "POST") {
+			const body = r.request().postData() ?? "";
+			options.walletSetupFinalizes?.push(body);
+			if (walletSetupFinalizeFailures > 0) {
+				walletSetupFinalizeFailures -= 1;
+				return fulfillJson(r, { detail: "temporarily_unavailable" }, 503);
+			}
+			const request = JSON.parse(body) as { setup_identity: string; setup_intent_id: string };
+			const settings = walletSetupSettings.get(request.setup_identity);
+			if (!settings) return fulfillJson(r, { detail: "setup_not_found" }, 404);
+			const replacement = request.setup_intent_id === "seti_wallet_2";
+			currentWallet = {
+				...currentWallet,
+				auto_reload_amount_cents: settings.auto_reload_amount_cents,
+				auto_reload_card: {
+					brand: replacement ? "mastercard" : "visa",
+					exp_month: replacement ? 8 : 12,
+					exp_year: 2032,
+					last4: replacement ? "4444" : "4242",
+				},
+				auto_reload_consented_at: "2026-08-13T12:00:00Z",
+				auto_reload_consent_version: settings.consent_version,
+				auto_reload_enabled: true,
+				auto_reload_has_payment_method: true,
+				auto_reload_monthly_cap_cents: settings.auto_reload_monthly_cap_cents,
+				auto_reload_status: "active",
+				auto_reload_threshold_usd: String(settings.auto_reload_threshold_usd),
+			};
 			return fulfillJson(r, currentWallet);
 		}
 		if (p === "/v2/wallet/transactions" && r.request().method() === "GET") {
@@ -3711,6 +3861,133 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 		path: testInfo.outputPath("responsive-breadcrumb-320x568.png"),
 		fullPage: false,
 	});
+});
+
+test("Wallet auto-reload authorizes and replaces its dedicated card responsively", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const walletSetupCreates: Array<{ body: string; idempotencyKey: string | null }> = [];
+	const walletSetupFinalizes: string[] = [];
+	await stubWalletStripeSetup(page);
+	await stubHostedApi(page, {
+		walletSetupCreates,
+		walletSetupFinalizeFailures: 1,
+		walletSetupFinalizes,
+	});
+	await page.setViewportSize({ width: 1280, height: 800 });
+	const settingsDialog = await _gotoHostedSettingsDialog(page, "billing-wallet");
+	const autoReload = settingsDialog.getByTestId("auto-reload-section");
+	await expect(autoReload.getByRole("switch", { name: "Auto-reload" })).not.toBeChecked();
+	await autoReload.getByRole("switch", { name: "Auto-reload" }).click();
+	await autoReload.getByRole("button", { name: "Review and authorize" }).click();
+
+	let setupDialog = page.getByRole("dialog", { name: "Authorize a card for auto-reload" });
+	await expect(setupDialog).toContainText(
+		"Each reload adds $25.00, plus any amount needed to bring a negative balance back to $0.",
+	);
+	await expect(setupDialog).toContainText(
+		"charges it off-session when your balance drops below $5.00",
+	);
+	await expect(setupDialog).toContainText("You can disable auto-reload at any time.");
+	await expect(setupDialog.getByText("Mock Wallet card form", { exact: true })).toBeVisible();
+	await expectNoHorizontalOverflow(setupDialog, "desktop Wallet card setup");
+	await _expectControlsDoNotOverlap(
+		[
+			setupDialog.getByRole("button", { name: "Cancel" }),
+			setupDialog.getByRole("button", { name: "Authorize card and enable auto-reload" }),
+		],
+		"desktop Wallet card setup actions",
+	);
+	await expect.poll(() => walletSetupCreates.length).toBe(1);
+	const firstStart = walletSetupCreates[0];
+	expect(firstStart?.idempotencyKey).toBeTruthy();
+	expect(JSON.parse(firstStart?.body ?? "{}")).toEqual({
+		auto_reload_amount_cents: 2_500,
+		auto_reload_monthly_cap_cents: 10_000,
+		auto_reload_threshold_usd: "5",
+		consent_version: "wallet_auto_reload_off_session_v2",
+	});
+	expect(await page.evaluate(() => window.__stripeWalletAppearanceThemes)).toContain("stripe");
+	const initialClientSecrets = await page.evaluate(() => window.__stripeWalletClientSecrets ?? []);
+	expect(new Set(initialClientSecrets)).toEqual(new Set(["seti_wallet_1_secret_mock_1"]));
+
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await expect
+		.poll(() => page.evaluate(() => window.__stripeWalletAppearanceThemes))
+		.toContain("night");
+	expect(await page.evaluate(() => window.__stripeWalletClientSecrets)).toHaveLength(
+		initialClientSecrets.length,
+	);
+	await setupDialog.getByRole("button", { name: "Authorize card and enable auto-reload" }).click();
+	await expect.poll(() => walletSetupFinalizes.length).toBe(1);
+	await expect(
+		setupDialog.getByRole("button", { name: "Retry enabling auto-reload" }),
+	).toBeVisible();
+	expect(await page.evaluate(() => window.__stripeWalletConfirmCalls)).toBe(1);
+	await setupDialog.getByRole("button", { name: "Retry enabling auto-reload" }).click();
+	await expect.poll(() => walletSetupFinalizes.length).toBe(2);
+	await expect(setupDialog).toHaveCount(0);
+	await expect(autoReload.getByText("Visa ending in 4242", { exact: true })).toBeVisible();
+	await expect(autoReload.getByRole("button", { name: "Replace card" })).toBeVisible();
+	expect(JSON.parse(walletSetupFinalizes[0] ?? "{}")).toEqual({
+		setup_identity: `wsetup_${"a".repeat(64)}`,
+		setup_intent_id: "seti_wallet_1",
+	});
+	expect(walletSetupFinalizes[1]).toBe(walletSetupFinalizes[0]);
+	const firstReturnUrl = new URL(
+		(await page.evaluate(() => window.__stripeWalletReturnUrls?.[0])) ?? "",
+	);
+	expect(firstReturnUrl.searchParams.get("wallet_setup_return")).toBe("1");
+	expect(firstReturnUrl.searchParams.get("wallet_setup_id")).toBe(`wsetup_${"a".repeat(64)}`);
+	expect(firstReturnUrl.search).not.toContain("secret");
+
+	await page.setViewportSize({ width: 375, height: 700 });
+	await autoReload.getByRole("button", { name: "Replace card" }).click();
+	setupDialog = page.getByRole("dialog", { name: "Replace auto-reload card" });
+	await expect(setupDialog.getByText("Mock Wallet card form", { exact: true })).toBeVisible();
+	await expectNoHorizontalOverflow(page.locator("html"), "mobile Wallet settings document");
+	await expectNoHorizontalOverflow(setupDialog, "mobile Wallet card setup");
+	await _expectControlsDoNotOverlap(
+		[
+			setupDialog.getByRole("button", { name: "Cancel" }),
+			setupDialog.getByRole("button", { name: "Authorize card and enable auto-reload" }),
+		],
+		"mobile Wallet card setup actions",
+	);
+	await expect.poll(() => walletSetupCreates.length).toBe(2);
+	const secondStart = walletSetupCreates[1];
+	expect(secondStart?.body).toBe(firstStart?.body);
+	expect(secondStart?.idempotencyKey).toBeTruthy();
+	expect(secondStart?.idempotencyKey).not.toBe(firstStart?.idempotencyKey);
+	expect(new Set(await page.evaluate(() => window.__stripeWalletClientSecrets ?? []))).toEqual(
+		new Set(["seti_wallet_1_secret_mock_1", "seti_wallet_2_secret_mock_2"]),
+	);
+	await setupDialog.getByRole("button", { name: "Authorize card and enable auto-reload" }).click();
+	await expect.poll(() => walletSetupFinalizes.length).toBe(3);
+	await expect(autoReload.getByText("Mastercard ending in 4444", { exact: true })).toBeVisible();
+	expect(await page.evaluate(() => window.__stripeWalletConfirmCalls)).toBe(2);
+	await autoReload.getByRole("switch", { name: "Auto-reload" }).click();
+	await autoReload.getByRole("button", { name: "Disable auto-reload" }).click();
+	await expect(autoReload.getByRole("switch", { name: "Auto-reload" })).not.toBeChecked();
+	await expect(autoReload.getByText("Mastercard ending in 4444", { exact: true })).toHaveCount(0);
+	await expect(autoReload.getByRole("button", { name: "Replace card" })).toHaveCount(0);
+	await page.goto(
+		"/channels?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=pi_auto_reload_return&payment_intent_client_secret=pi_auto_reload_return_secret_mock&redirect_status=succeeded#billing",
+	);
+	await expect(page.getByText("Auto-reload payment confirmed", { exact: true })).toBeVisible();
+	await expect(page.getByText("Payment accepted", { exact: true })).toHaveCount(0);
+	await expect
+		.poll(() => page.evaluate(() => `${window.location.search}${window.location.hash}`))
+		.toBe("?settings=billing-wallet&keep=1#billing");
+	const expectedFinalizeErrors = errors.filter((error) =>
+		error.includes("503 (Service Unavailable)"),
+	);
+	expect(expectedFinalizeErrors).toHaveLength(1);
+	const unexpectedErrors = errors.filter((error) => !expectedFinalizeErrors.includes(error));
+	expect(unexpectedErrors, `Wallet card authorization: ${unexpectedErrors.join(" | ")}`).toEqual(
+		[],
+	);
 });
 
 test("paid checkout navigates on deployment acceptance without LRO convergence", async ({

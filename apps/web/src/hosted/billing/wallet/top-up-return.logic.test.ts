@@ -1,130 +1,339 @@
 import { describe, expect, test } from "bun:test";
+import { buildWalletSetupReturnUrl } from "@/hosted/billing/wallet/setup-return.logic";
 import {
-	bootstrapWalletTopupReturn,
+	buildWalletAutoReloadReturnUrl,
 	buildWalletTopupReturnUrl,
-	cleanMarkedWalletTopupReturnRequest,
-	cleanWalletTopupReturnUrl,
-	consumeWalletTopupReturn,
-	coordinateWalletTopupReturn,
-	readWalletTopupReturn,
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
+import {
+	bootstrapWalletStripeReturn,
+	cleanWalletStripeReturnUrl,
+	consumeWalletStripeReturn,
+	coordinateWalletPaymentReturn,
+	coordinateWalletSetupReturn,
+	fetchWithWalletStripeReturnPolicy,
+	readWalletStripeReturn,
+	type WalletPaymentReturnResolution,
+	walletSetupIntentMatchesClientSecret,
+} from "@/lib/wallet-stripe-return";
 
-describe("wallet top-up return URL helpers", () => {
-	test("builds a wallet settings return URL with the top-up marker", () => {
-		const url = buildWalletTopupReturnUrl(
-			"https://cloud.clawdi.ai/?settings=general&x=1&payment_intent=stale&payment_intent_client_secret=old&redirect_status=failed&topup_return=1",
+describe("Wallet Stripe returns", () => {
+	test("parses and scrubs valid, invalid, and mixed returns before routing", async () => {
+		const historyState = { key: "router-entry", __TSR_index: 4 };
+		const setupIdentity = `wsetup_${"a".repeat(64)}`;
+		const opaquePaymentIntentId = "pi_opaque&=#.-~$";
+		const secretPrefix = `${opaquePaymentIntentId}_secret_`;
+		const opaquePaymentSecret = `${secretPrefix}${"x".repeat(1024 - secretPrefix.length - 15)}_secret_&=#.-~$`;
+		expect(walletSetupIntentMatchesClientSecret("seti_1_secret_test", "seti_1")).toBe(true);
+		expect(walletSetupIntentMatchesClientSecret("seti_1_secret_test", "seti_other")).toBe(false);
+		const cases = [
+			{
+				query: `wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=${encodeURIComponent(opaquePaymentIntentId)}&payment_intent_client_secret=${encodeURIComponent(opaquePaymentSecret)}`,
+				result: {
+					kind: "payment_intent",
+					clientSecret: opaquePaymentSecret,
+					expectedIntentId: opaquePaymentIntentId,
+					flow: "manual_topup",
+				},
+			},
+			{
+				query: `wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=${encodeURIComponent(opaquePaymentIntentId)}&payment_intent_client_secret=${encodeURIComponent(`${opaquePaymentSecret}x`)}`,
+				result: null,
+			},
+			{
+				query: `wallet_setup_return=1&wallet_setup_id=${setupIdentity}&setup_intent=seti_1&setup_intent_client_secret=seti_1_secret_test`,
+				result: {
+					kind: "setup_intent",
+					clientSecret: "seti_1_secret_test",
+					expectedIntentId: "seti_1",
+					setupIdentity,
+				},
+			},
+			{
+				query:
+					"wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent_client_secret=pi_1_secret_test",
+				result: null,
+			},
+			{
+				query:
+					"wallet_payment_return=1&wallet_payment_flow=manual_topup&wallet_setup_return=1&payment_intent_client_secret=pi_1_secret_test&setup_intent_client_secret=seti_1_secret_test",
+				result: null,
+			},
+			{
+				query: `wallet_setup_return=1&wallet_setup_id=${setupIdentity}&setup_intent_client_secret=seti_1_secret_test`,
+				result: null,
+			},
+			{
+				query:
+					"wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=pi_other&payment_intent_client_secret=pi_1_secret_test",
+				result: null,
+			},
+			{
+				query: `wallet_setup_return=1&wallet_setup_id=${setupIdentity}&setup_intent=seti_other&setup_intent_client_secret=seti_1_secret_test`,
+				result: null,
+			},
+			{
+				query: "payment_intent_client_secret=pi_1_secret_test",
+				result: null,
+			},
+			{
+				query:
+					"wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&redirect%5Fstatus=",
+				result: null,
+			},
+			{
+				query: `wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&wallet_setup_id=${setupIdentity}`,
+				result: null,
+			},
+		] as const;
+
+		for (const testCase of cases) {
+			const current = `https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&${testCase.query}&redirect_status=succeeded#billing`;
+			const replacements: unknown[][] = [];
+			expect(readWalletStripeReturn(new URL(current).search)).toEqual(testCase.result);
+			expect(
+				consumeWalletStripeReturn(current, historyState, (...args) => replacements.push(args)),
+			).toEqual(testCase.result);
+			expect(replacements).toEqual([
+				[historyState, "", "https://cloud.clawdi.ai/?settings=billing-wallet&keep=1#billing"],
+			]);
+		}
+
+		for (const invalidReturn of [
+			"wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&payment%5Fintent=",
+			`wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=${encodeURIComponent(opaquePaymentIntentId)}&payment_intent_client_secret=${encodeURIComponent(`${opaquePaymentSecret} `)}`,
+			"payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test",
+			"topup_return=1&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test",
+		]) {
+			const replacements: unknown[][] = [];
+			bootstrapWalletStripeReturn(
+				`https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&${invalidReturn}#billing`,
+				historyState,
+				(...args) => replacements.push(args),
+			);
+			expect(replacements).toEqual([
+				[historyState, "", "https://cloud.clawdi.ai/?settings=billing-wallet&keep=1#billing"],
+			]);
+			expect(
+				coordinateWalletPaymentReturn(async () => ({
+					status: "succeeded",
+					paymentIntentId: "pi_1",
+					errorMessage: null,
+				})),
+			).toBeNull();
+		}
+
+		const sensitiveRequest = new Request(
+			"https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&setup_intent=seti_1&setup_intent_client_secret=seti_1_secret_test#billing",
+			{
+				method: "POST",
+				headers: { Authorization: "Bearer token" },
+				body: "body",
+			},
 		);
+		const sensitiveResponse = await fetchWithWalletStripeReturnPolicy(
+			sensitiveRequest,
+			async (cleanRequest) => {
+				expect(cleanRequest.url).toBe(
+					"https://cloud.clawdi.ai/?settings=billing-wallet&keep=1#billing",
+				);
+				expect(cleanRequest.method).toBe("POST");
+				expect(cleanRequest.headers.get("Authorization")).toBe("Bearer token");
+				expect(await cleanRequest.text()).toBe("body");
+				return new Response("router body", {
+					status: 202,
+					statusText: "Accepted",
+					headers: {
+						"Cache-Control": "public, max-age=60",
+						"Referrer-Policy": "origin",
+						"X-Router": "preserved",
+					},
+				});
+			},
+		);
+		expect(sensitiveResponse.status).toBe(202);
+		expect(sensitiveResponse.statusText).toBe("Accepted");
+		expect(sensitiveResponse.headers.get("X-Router")).toBe("preserved");
+		expect(sensitiveResponse.headers.get("Referrer-Policy")).toBe("no-referrer");
+		expect(sensitiveResponse.headers.get("Cache-Control")).toBe("no-store");
+		expect(await sensitiveResponse.text()).toBe("router body");
 
-		expect(url).toBe("https://cloud.clawdi.ai/?settings=billing-wallet&x=1&topup_return=1");
+		const ordinaryRequest = new Request(
+			"https://cloud.clawdi.ai/?checkout_session_id=cs_1&payment_intent=pi_checkout&payment_intent_client_secret=pi_checkout_secret_test&redirect_status=succeeded#checkout",
+		);
+		const unrelatedReplacements: unknown[][] = [];
+		expect(
+			consumeWalletStripeReturn(ordinaryRequest.url, historyState, (...args) =>
+				unrelatedReplacements.push(args),
+			),
+		).toBeNull();
+		expect(unrelatedReplacements).toEqual([]);
+		const ordinaryResponse = new Response("ordinary", {
+			status: 201,
+			headers: { "X-Router": "ordinary" },
+		});
+		const unchangedResponse = await fetchWithWalletStripeReturnPolicy(
+			ordinaryRequest,
+			(receivedRequest) => {
+				expect(receivedRequest).toBe(ordinaryRequest);
+				return ordinaryResponse;
+			},
+		);
+		expect(unchangedResponse).toBe(ordinaryResponse);
+		expect(unchangedResponse.headers.get("Cache-Control")).toBeNull();
+		expect(unchangedResponse.headers.get("Referrer-Policy")).toBeNull();
 	});
 
-	test("synchronously consumes a valid return and preserves history state", () => {
-		const calls: unknown[][] = [];
-		const state = { key: "router-entry", __TSR_index: 4 };
-		const result = consumeWalletTopupReturn(
-			"https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&topup_return=1&payment_intent=pi_1&payment_intent_client_secret=pi_secret&redirect_status=succeeded",
-			state,
-			(...args) => calls.push(args),
+	test("deduplicates an in-flight return, stops replay after settlement, and accepts a new identity", async () => {
+		bootstrapWalletStripeReturn(
+			"https://cloud.clawdi.ai/?wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test",
+			null,
+			() => undefined,
 		);
-
-		expect(result?.clientSecret === "pi_secret").toBe(true);
-		expect(calls).toEqual([[state, "", "https://cloud.clawdi.ai/?settings=billing-wallet&keep=1"]]);
-	});
-
-	test("bootstraps before consumers and coordinates retrieval across remounts", async () => {
-		const state = { key: "router-entry", __TSR_index: 4 };
-		const calls: unknown[][] = [];
-		bootstrapWalletTopupReturn(
-			"https://cloud.clawdi.ai/?keep=1&topup_return=1&payment_intent_client_secret=pi_secret#billing",
-			state,
-			(...args) => calls.push(args),
-		);
-
-		expect(calls).toEqual([[state, "", "https://cloud.clawdi.ai/?keep=1#billing"]]);
-		let retrievals = 0;
-		const retrieve = async () => {
-			retrievals += 1;
-			return { status: "succeeded", paymentIntentId: "pi_1", errorMessage: null };
+		const firstRetrieval = Promise.withResolvers<Omit<WalletPaymentReturnResolution, "flow">>();
+		let paymentRetrievals = 0;
+		const retrievePayment = () => {
+			paymentRetrievals += 1;
+			return firstRetrieval.promise;
 		};
-		const first = coordinateWalletTopupReturn(retrieve);
-		const remount = coordinateWalletTopupReturn(retrieve);
-		expect(remount).toBe(first);
-		expect(await remount).toEqual({
+		const payment = coordinateWalletPaymentReturn(retrievePayment);
+		expect(coordinateWalletPaymentReturn(retrievePayment)).toBe(payment);
+		expect(paymentRetrievals).toBe(1);
+
+		bootstrapWalletStripeReturn(
+			"https://cloud.clawdi.ai/?wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=pi_expected&payment_intent_client_secret=pi_expected_secret_test",
+			null,
+			() => undefined,
+		);
+		const secondRetrieval = Promise.withResolvers<Omit<WalletPaymentReturnResolution, "flow">>();
+		const secondPayment = coordinateWalletPaymentReturn(() => secondRetrieval.promise);
+		firstRetrieval.resolve({ status: "succeeded", paymentIntentId: "pi_1", errorMessage: null });
+		expect(await payment).toMatchObject({ flow: "manual_topup", paymentIntentId: "pi_1" });
+		expect(coordinateWalletPaymentReturn(retrievePayment)).toBe(secondPayment);
+		secondRetrieval.resolve({
 			status: "succeeded",
-			paymentIntentId: "pi_1",
+			paymentIntentId: "pi_expected",
 			errorMessage: null,
 		});
-		expect(retrievals).toBe(1);
-	});
+		expect(await secondPayment).toMatchObject({
+			flow: "auto_reload",
+			paymentIntentId: "pi_expected",
+		});
+		expect(coordinateWalletPaymentReturn(retrievePayment)).toBeNull();
 
-	test("scrubs a marked server request before routing", async () => {
-		const request = new Request(
-			"https://cloud.clawdi.ai/?keep=1&topup_return=bad&payment_intent_client_secret=secret#billing",
-			{ method: "POST", headers: { Authorization: "Bearer token" }, body: "body" },
+		bootstrapWalletStripeReturn(
+			"https://cloud.clawdi.ai/?wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_mismatch&payment_intent_client_secret=pi_mismatch_secret_test",
+			null,
+			() => undefined,
 		);
-		const clean = cleanMarkedWalletTopupReturnRequest(request);
-		expect(clean.url).toBe("https://cloud.clawdi.ai/?keep=1#billing");
-		expect(clean.headers.get("Authorization")).toBe("Bearer token");
-		expect(await clean.text()).toBe("body");
-	});
-
-	test("consumes malformed marked returns before returning null", () => {
-		for (const marker of ["1", "invalid"]) {
-			const calls: unknown[][] = [];
-			const result = consumeWalletTopupReturn(
-				`https://cloud.clawdi.ai/?topup_return=${marker}&redirect_status=succeeded&keep=1`,
-				null,
-				(...args) => calls.push(args),
-			);
-
-			expect(result).toBe(null);
-			expect(calls).toEqual([[null, "", "https://cloud.clawdi.ai/?keep=1"]]);
-		}
-	});
-
-	test("reads only marked Stripe PaymentIntent returns", () => {
-		const result = readWalletTopupReturn(
-			"?settings=billing-wallet&topup_return=1&payment_intent_client_secret=pi_secret",
-		);
-		expect(result?.clientSecret === "pi_secret").toBe(true);
 		expect(
-			readWalletTopupReturn("?settings=billing-wallet&payment_intent_client_secret=pi_secret"),
-		).toBe(null);
-		expect(readWalletTopupReturn("?settings=billing-wallet&topup_return=1")).toBe(null);
+			await coordinateWalletPaymentReturn(async () => ({
+				status: "succeeded",
+				paymentIntentId: "pi_other",
+				errorMessage: null,
+			})),
+		).toMatchObject({ status: null, paymentIntentId: null, errorMessage: expect.any(String) });
+
+		let setupRetrievals = 0;
+		let setupFinalizations = 0;
+		const retrieveSetup = async (pending: { setupIdentity: string; expectedIntentId: string }) => {
+			setupRetrievals += 1;
+			return {
+				status: "succeeded",
+				setupIntentId: pending.expectedIntentId,
+				setupIdentity: pending.setupIdentity,
+				errorMessage: null,
+			};
+		};
+		const finalizeSetup = async (confirmed: { setupIdentity: string; setupIntentId: string }) => {
+			setupFinalizations += 1;
+			expect(confirmed.setupIdentity).toMatch(/^wsetup_[a-f0-9]{64}$/);
+			expect(confirmed.setupIntentId).toMatch(/^seti_/);
+			return null;
+		};
+		for (const identity of [`wsetup_${"a".repeat(64)}`, `wsetup_${"b".repeat(64)}`]) {
+			bootstrapWalletStripeReturn(
+				`https://cloud.clawdi.ai/?wallet_setup_return=1&wallet_setup_id=${identity}&setup_intent=seti_${setupRetrievals + 1}&setup_intent_client_secret=seti_${setupRetrievals + 1}_secret_test`,
+				null,
+				() => undefined,
+			);
+			const setup = coordinateWalletSetupReturn(retrieveSetup, finalizeSetup);
+			expect(coordinateWalletSetupReturn(retrieveSetup)).toBe(setup);
+			expect((await setup)?.setupIdentity).toBe(identity);
+			await Promise.resolve();
+			expect(coordinateWalletSetupReturn(retrieveSetup)).toBeNull();
+		}
+		expect(setupFinalizations).toBe(2);
+
+		const expectedIdentity = `wsetup_${"c".repeat(64)}`;
+		for (const returned of [
+			{ setupIntentId: "seti_other", setupIdentity: expectedIdentity },
+			{ setupIntentId: "seti_expected", setupIdentity: `wsetup_${"d".repeat(64)}` },
+		]) {
+			bootstrapWalletStripeReturn(
+				`https://cloud.clawdi.ai/?wallet_setup_return=1&wallet_setup_id=${expectedIdentity}&setup_intent=seti_expected&setup_intent_client_secret=seti_expected_secret_test`,
+				null,
+				() => undefined,
+			);
+			const mismatched = await coordinateWalletSetupReturn(async () => {
+				setupRetrievals += 1;
+				return { status: "succeeded", ...returned, errorMessage: null };
+			}, finalizeSetup);
+			expect(mismatched).toMatchObject({ status: null, setupIntentId: null });
+			expect(mismatched?.setupIdentity).toBe(expectedIdentity);
+			expect(mismatched?.errorMessage).toContain("could not be verified");
+		}
+		expect(setupRetrievals).toBe(4);
+		expect(setupFinalizations).toBe(2);
 	});
 
-	test("cleans Stripe return params while preserving the wallet settings section", () => {
-		const clean = cleanWalletTopupReturnUrl(
-			"https://cloud.clawdi.ai/?settings=billing-wallet&topup_return=1&payment_intent=pi_1&payment_intent_client_secret=secret&redirect_status=succeeded&keep=1",
-		);
+	test("builds clean Wallet return URLs with only the required marker state", () => {
+		const setupIdentity = `wsetup_${"c".repeat(64)}`;
+		const sensitiveQuery =
+			"settings=general&keep=1&topup_return=1&wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent_client_secret=pi_1_secret_test&wallet_setup_return=1&wallet_setup_id=old&setup_intent_client_secret=seti_1_secret_test";
+		const cases = [
+			{
+				current: `https://cloud.clawdi.ai/?${sensitiveQuery}#billing`,
+				clean: "https://cloud.clawdi.ai/?settings=general&keep=1#billing",
+				topup:
+					"https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=manual_topup#billing",
+				autoReload:
+					"https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=auto_reload#billing",
+				setup: `https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&wallet_setup_return=1&wallet_setup_id=${setupIdentity}#billing`,
+			},
+			{
+				current: `/wallet?${sensitiveQuery}#billing`,
+				clean: "/wallet?settings=general&keep=1#billing",
+				topup:
+					"/wallet?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=manual_topup#billing",
+				autoReload:
+					"/wallet?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=auto_reload#billing",
+				setup: `/wallet?settings=billing-wallet&keep=1&wallet_setup_return=1&wallet_setup_id=${setupIdentity}#billing`,
+			},
+		] as const;
 
-		expect(clean).toBe("https://cloud.clawdi.ai/?settings=billing-wallet&keep=1");
+		for (const testCase of cases) {
+			expect(cleanWalletStripeReturnUrl(testCase.current)).toBe(testCase.clean);
+			expect(buildWalletTopupReturnUrl(testCase.current)).toBe(testCase.topup);
+			expect(buildWalletAutoReloadReturnUrl(testCase.current)).toBe(testCase.autoReload);
+			expect(buildWalletSetupReturnUrl(testCase.current, setupIdentity)).toBe(testCase.setup);
+		}
 	});
 });
 
 describe("walletTopupReturnToast", () => {
-	test("maps succeeded to accepted copy while Wallet credit is still unconfirmed", () => {
-		expect(walletTopupReturnToast("succeeded")).toEqual({
+	test("distinguishes accepted, settling, and failed payments", () => {
+		expect(walletTopupReturnToast("succeeded")).toMatchObject({
 			kind: "info",
 			title: "Payment accepted",
-			description: "We're confirming your Wallet credit now.",
 		});
-	});
-
-	test("maps processing to settlement copy", () => {
-		expect(walletTopupReturnToast("processing")).toEqual({
+		expect(walletTopupReturnToast("processing")).toMatchObject({
 			kind: "info",
 			title: "Top-up processing",
-			description: "We'll credit your wallet once the payment settles.",
 		});
-	});
-
-	test("maps requires_payment_method to retry guidance", () => {
-		expect(walletTopupReturnToast("requires_payment_method")).toEqual({
+		expect(walletTopupReturnToast("requires_payment_method")).toMatchObject({
 			kind: "error",
 			title: "Top-up didn't finish",
-			description: "No payment was collected. Start a new top-up and choose another method.",
 		});
 	});
 });

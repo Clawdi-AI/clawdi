@@ -89,15 +89,41 @@ describe("idempotencyFingerprint", () => {
 });
 
 describe("idempotencyAttemptFor", () => {
-	test("reuses a key for the same logical attempt", () => {
+	test("scopes setup keys to one unchanged dialog session", () => {
 		let counter = 0;
 		const mint = (prefix: string) => `${prefix}-${++counter}`;
-		const first = idempotencyAttemptFor(null, "checkout", "same-attempt", mint);
-		const retry = idempotencyAttemptFor(first, "checkout", "same-attempt", mint);
+		const fingerprint = idempotencyFingerprint({
+			amountCents: 2_500,
+			monthlyCapCents: 10_000,
+			thresholdCents: 500,
+		});
+		const first = idempotencyAttemptFor(null, "wallet-auto-reload-setup", fingerprint, mint, {
+			storage: null,
+		});
+		const retry = idempotencyAttemptFor(first, "wallet-auto-reload-setup", fingerprint, mint, {
+			storage: null,
+		});
+		const changedFingerprint = idempotencyFingerprint({
+			amountCents: 5_000,
+			monthlyCapCents: 10_000,
+			thresholdCents: 500,
+		});
+		const changed = idempotencyAttemptFor(
+			first,
+			"wallet-auto-reload-setup",
+			changedFingerprint,
+			mint,
+			{ storage: null },
+		);
+		const reopened = idempotencyAttemptFor(null, "wallet-auto-reload-setup", fingerprint, mint, {
+			storage: null,
+		});
 
 		expect(retry).toBe(first);
-		expect(retry.key).toBe("checkout-1");
-		expect(counter).toBe(1);
+		expect(retry.key).toBe("wallet-auto-reload-setup-1");
+		expect(changed.key).toBe("wallet-auto-reload-setup-2");
+		expect(reopened.key).toBe("wallet-auto-reload-setup-3");
+		expect(counter).toBe(3);
 	});
 
 	test("mints a new key when plan, term, or deploy config changes", () => {

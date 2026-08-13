@@ -33,6 +33,8 @@ import type {
 	HostedWorkspaceSkillMutationResponse,
 	PortalRequest,
 	WalletAutoReloadRequest,
+	WalletAutoReloadSetupFinalizeRequest,
+	WalletAutoReloadSetupRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import {
@@ -53,6 +55,10 @@ const BASE_URL = env.VITE_CLAWDI_DEPLOY_API_URL;
 const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);
 
 const REQUEST_TIMEOUT_MS = 20_000;
+const RETRYABLE_IDEMPOTENT_POST_PATHS = new Set([
+	"/v2/wallet/topup",
+	"/v2/wallet/auto-reload/setup-intent",
+]);
 
 export { isDeployApiConfigured };
 
@@ -117,7 +123,7 @@ export function retryIdempotentBillingTransport(fetcher: BillingFetch): BillingF
 			if (
 				!(error instanceof BillingNetworkError) ||
 				request.method !== "POST" ||
-				url.pathname !== "/v2/wallet/topup" ||
+				!RETRYABLE_IDEMPOTENT_POST_PATHS.has(url.pathname) ||
 				!idempotencyKey?.trim() ||
 				request.signal.aborted
 			) {
@@ -751,6 +757,18 @@ export function createBillingClient(
 			),
 		setAutoReload: async (body: WalletAutoReloadRequest) =>
 			unwrapDeploy(await api.PUT("/v2/wallet/auto-reload", { body })),
+		createWalletAutoReloadSetup: async (
+			body: WalletAutoReloadSetupRequest,
+			idempotencyKey: string,
+		) =>
+			unwrapDeploy(
+				await api.POST("/v2/wallet/auto-reload/setup-intent", {
+					body,
+					params: { header: { "Idempotency-Key": idempotencyKey } },
+				}),
+			),
+		finalizeWalletAutoReloadSetup: async (body: WalletAutoReloadSetupFinalizeRequest) =>
+			unwrapDeploy(await api.POST("/v2/wallet/auto-reload/setup-intent/finalize", { body })),
 
 		getSubscriptions: async (limit = 20, cursor?: string | null) =>
 			unwrapDeploy(

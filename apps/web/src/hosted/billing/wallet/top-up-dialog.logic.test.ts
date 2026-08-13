@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { WalletTopupResult, WalletTransaction } from "@/hosted/billing/contracts";
+import { usdInputToCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	handleTopupStartResult,
@@ -200,6 +201,12 @@ describe("topUpAmountCentsForUsdShortfall", () => {
 
 describe("validTopUpAmountCents", () => {
 	test("enforces visible bounds and whole-dollar increments", () => {
+		expect(usdInputToCents("25")).toBe(2_500);
+		expect(validTopUpAmountCents(usdInputToCents("25.01") ?? Number.NaN)).toBe(false);
+		for (const invalid of ["0", "-1", "01", ".50", "1.", "1.001", "1e2", " NaN", "Infinity"]) {
+			expect(usdInputToCents(invalid)).toBeNull();
+		}
+		expect(usdInputToCents("90071992547410")).toBeNull();
 		expect(validTopUpAmountCents(1_000)).toBe(true);
 		expect(validTopUpAmountCents(200_000)).toBe(true);
 		expect(validTopUpAmountCents(999)).toBe(false);

@@ -1,7 +1,7 @@
-import { bootstrapWalletTopupReturn } from "@/lib/wallet-topup-return";
+import { bootstrapWalletStripeReturn } from "@/lib/wallet-stripe-return";
 
 if (typeof window !== "undefined") {
-	bootstrapWalletTopupReturn(
+	bootstrapWalletStripeReturn(
 		window.location.href,
 		window.history.state,
 		window.history.replaceState.bind(window.history),

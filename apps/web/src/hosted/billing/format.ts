@@ -8,6 +8,8 @@ const USD = new Intl.NumberFormat("en-US", {
 });
 
 const DECIMAL_USD = /^([+-]?)(\d+)(?:\.(\d+))?$/;
+const USD_INPUT = /^(?:0|[1-9]\d*)(?:\.(\d{1,2}))?$/;
+const MAX_SAFE_CENTS = BigInt(Number.MAX_SAFE_INTEGER);
 
 function incrementDecimalDigits(digits: string): string {
 	const incremented = [...digits];
@@ -75,6 +77,18 @@ export function formatUsdExact(dollars: string): string {
 	const displayFraction = roundedCents.slice(-2);
 	const groupedWhole = roundedWhole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 	return `${normalizedSign}$${groupedWhole}.${displayFraction}`;
+}
+
+/** Parse a canonical positive USD form value without floating-point conversion. */
+export function usdInputToCents(value: string): number | null {
+	if (!value || value.length > 17) return null;
+	const match = USD_INPUT.exec(value);
+	if (!match) return null;
+	const separator = value.indexOf(".");
+	const whole = separator === -1 ? value : value.slice(0, separator);
+	const fraction = (match[1] ?? "").padEnd(2, "0");
+	const cents = BigInt(whole) * 100n + BigInt(fraction);
+	return cents > 0n && cents <= MAX_SAFE_CENTS ? Number(cents) : null;
 }
 
 /** "$57 / 3 mo" style term label. */

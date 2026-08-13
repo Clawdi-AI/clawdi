@@ -18,6 +18,7 @@ import {
 	type PaymentOutcome,
 	StripePaymentForm,
 } from "@/hosted/billing/wallet/stripe-payment-form";
+import { buildWalletAutoReloadReturnUrl } from "@/hosted/billing/wallet/top-up-return.logic";
 import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 
 /**
@@ -169,6 +170,7 @@ export function AutoReloadActionConfirm({
 					<div className="w-full">
 						<StripePaymentForm
 							clientSecret={clientSecret}
+							returnUrl={buildWalletAutoReloadReturnUrl}
 							onComplete={onComplete}
 							onCancel={cancelConfirmation}
 							summary={`Auto-reload charge: ${charge}`}
