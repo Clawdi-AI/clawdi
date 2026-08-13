@@ -296,6 +296,7 @@ export function commitRuntimeAppliedState(input: {
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	applyIdentity: RuntimeApplyIdentity | null;
 	daemonAuthTokenRevision?: string;
+	daemonProgramRevision?: string;
 	egressSidecarSecretRevision?: string;
 }): void {
 	if (
@@ -331,6 +332,9 @@ export function commitRuntimeAppliedState(input: {
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
 			...(input.daemonAuthTokenRevision
 				? { daemonAuthTokenRevision: input.daemonAuthTokenRevision }
+				: {}),
+			...(input.daemonProgramRevision
+				? { daemonProgramRevision: input.daemonProgramRevision }
 				: {}),
 			...(input.egressSidecarSecretRevision
 				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
@@ -1424,6 +1428,7 @@ async function runtimeInitLocked(
 						convergence,
 						applyIdentity,
 						daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+						daemonProgramRevision: authority.daemonProgramRevision,
 						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 					}),
 				manifestIdentity: {
@@ -1720,6 +1725,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 					convergence,
 					applyIdentity,
 					daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+					daemonProgramRevision: authority.daemonProgramRevision,
 					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 				}),
 			continueOnCliUpdateError: true,
