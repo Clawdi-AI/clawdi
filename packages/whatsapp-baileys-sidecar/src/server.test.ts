@@ -110,6 +110,10 @@ class FakeRuntime implements BaileysRuntime {
 		return this.providerInbox.slice(0, limit);
 	}
 
+	async waitForProviderEvents(limit: number, _waitMs: number): Promise<ProviderMessageEvent[]> {
+		return this.providerEvents(limit);
+	}
+
 	acknowledgeProviderEvents(throughSequence: number): void {
 		this.providerInbox = this.providerInbox.filter((event) => event.sequence > throughSequence);
 	}
@@ -372,7 +376,9 @@ describe("sidecar HTTP contract", () => {
 		];
 		const { url } = await startTestServer(runtime);
 
-		const listed = await authedFetch(`${url}${SESSION_PREFIX}/provider-events?limit=10`);
+		const listed = await authedFetch(
+			`${url}${SESSION_PREFIX}/provider-events?limit=10&waitMs=8000`,
+		);
 		const listedBody = await listed.json();
 		const acknowledged = await authedFetch(`${url}${SESSION_PREFIX}/provider-events/ack`, {
 			method: "POST",
@@ -395,6 +401,20 @@ describe("sidecar HTTP contract", () => {
 		expect(acknowledged.status).toBe(200);
 		expect(await acknowledged.json()).toEqual({ ok: true, throughSequence: 1 });
 		expect(runtime.providerInbox).toEqual([]);
+	});
+
+	it.each([
+		"-1",
+		"1.5",
+		"invalid",
+		"8001",
+	])("rejects invalid provider event wait %s", async (waitMs) => {
+		const { url } = await startTestServer(new FakeRuntime());
+
+		const response = await authedFetch(`${url}${SESSION_PREFIX}/provider-events?waitMs=${waitMs}`);
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({ error: "waitMs_must_be_0_to_8000" });
 	});
 });
 

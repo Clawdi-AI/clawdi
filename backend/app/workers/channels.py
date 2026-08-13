@@ -20,6 +20,7 @@ from app.services.discord_gateway_worker import DiscordGatewayWorker
 from app.services.metrics import metrics_content_type, render_metrics
 from app.services.principal_lifecycle_cleanup_worker import PrincipalLifecycleCleanupWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
+from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 
 configure_application_logging()
 log = logging.getLogger(__name__)
@@ -162,10 +163,14 @@ async def run_channel_workers(
     stop: asyncio.Event,
     health: ChannelWorkerHealth | None = None,
 ) -> None:
-    workers = build_channel_workers()
-    if health is not None:
-        health.ready = True
-    await asyncio.gather(*(worker.run_forever(stop) for worker in workers))
+    await start_postgres_listener()
+    try:
+        workers = build_channel_workers()
+        if health is not None:
+            health.ready = True
+        await asyncio.gather(*(worker.run_forever(stop) for worker in workers))
+    finally:
+        await stop_postgres_listener()
 
 
 async def main() -> None:

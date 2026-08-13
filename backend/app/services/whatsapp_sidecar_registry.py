@@ -50,6 +50,7 @@ _UNRELEASED_STATES = (
     "scanned",
     WHATSAPP_ONBOARDING_STATE_ERROR,
 )
+_PROVIDER_EVENTS_WAIT_MS = 8_000
 
 
 class WhatsAppSidecarClient(WhatsAppNativeUpstreamClient, Protocol):
@@ -59,7 +60,12 @@ class WhatsAppSidecarClient(WhatsAppNativeUpstreamClient, Protocol):
 
     async def refresh_health(self) -> bool: ...
 
-    async def provider_events(self, *, limit: int = 100) -> list[WhatsAppProviderMessageEvent]: ...
+    async def provider_events(
+        self,
+        *,
+        limit: int = 100,
+        wait_ms: int = 0,
+    ) -> list[WhatsAppProviderMessageEvent]: ...
 
     async def acknowledge_provider_events(self, *, through_sequence: int) -> None: ...
 
@@ -574,9 +580,14 @@ class ConfiguredWhatsAppSidecarRegistry:
     ) -> None:
         while True:
             try:
-                events = await client.provider_events(limit=100)
+                events = await client.provider_events(
+                    limit=100,
+                    wait_ms=_PROVIDER_EVENTS_WAIT_MS,
+                )
                 if not events:
-                    await asyncio.sleep(0.25)
+                    # A compatible older endpoint may ignore wait_ms and return
+                    # immediately. Yield without reintroducing timed polling.
+                    await asyncio.sleep(0)
                     continue
                 for event in events:
                     async with async_session_factory() as db:

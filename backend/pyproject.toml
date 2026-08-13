@@ -239,6 +239,7 @@ strict = [
     "app/services/channel_debug_events.py",
     "app/services/channel_delivery_worker.py",
     "app/services/channel_message_retention_worker.py",
+    "app/services/channel_wakeups.py",
     "app/services/channel_webhook_delivery_worker.py",
     "app/services/channel_webhooks.py",
     "app/services/channels.py",

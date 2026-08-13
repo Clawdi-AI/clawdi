@@ -122,7 +122,7 @@ class FakeManagedSidecar:
         self.stopped = True
         return WhatsAppSidecarPairingStatus(status="stopped", registered=False)
 
-    async def provider_events(self, *, limit: int = 100):
+    async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
         return []
 
     async def acknowledge_provider_events(self, *, through_sequence: int) -> None:

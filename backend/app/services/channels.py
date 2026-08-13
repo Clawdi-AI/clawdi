@@ -74,6 +74,10 @@ from app.services.channel_config import (
     validate_required_discord_interactions_config,
 )
 from app.services.channel_debug_events import record_channel_debug_event
+from app.services.channel_wakeups import (
+    notify_channel_delivery_enqueued,
+    notify_channel_inbound_message_enqueued,
+)
 from app.services.discord_rate_limiter import discord_rate_limiter
 from app.services.metrics import (
     inbound_messages,
@@ -3039,6 +3043,7 @@ async def _record_inbound_message_with_status(
         if existing is not None:
             return existing, False
         raise
+    await notify_channel_inbound_message_enqueued(db)
     inbound_messages.labels(channel=account.provider).inc()
     return message, True
 
@@ -4648,6 +4653,7 @@ async def enqueue_channel_outbound_message(
     )
     db.add(delivery)
     await db.flush()
+    await notify_channel_delivery_enqueued(db)
     return message, delivery
 
 

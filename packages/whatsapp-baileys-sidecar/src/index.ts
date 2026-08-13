@@ -99,8 +99,12 @@ const shutdown = createSharedShutdown(async (signal: "SIGINT" | "SIGTERM"): Prom
 			signal,
 		}),
 	);
-	await new Promise<void>((resolve) => server.close(() => resolve()));
-	await supervisor.stop();
+	const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
+	try {
+		await supervisor.stop();
+	} finally {
+		await serverClosed;
+	}
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

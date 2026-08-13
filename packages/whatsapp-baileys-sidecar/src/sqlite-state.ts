@@ -102,6 +102,7 @@ export class SQLiteProviderState {
 
 	private readonly db: Database;
 	private readonly creds: AuthenticationCreds;
+	private readonly providerEventWaiters = new Set<() => void>();
 	private closed = false;
 
 	constructor(
@@ -237,6 +238,7 @@ export class SQLiteProviderState {
 				for (const event of prepared) insert.run(event.value, event.byteCount, createdAt);
 			});
 		});
+		this.signalProviderEventWaiters();
 	}
 
 	providerEvents(limit: number): ProviderMessageEvent[] {
@@ -260,6 +262,29 @@ export class SQLiteProviderState {
 				return parseProviderMessageEvent(row.event_json, row.sequence);
 			});
 		});
+	}
+
+	async waitForProviderEvents(limit: number, waitMs: number): Promise<ProviderMessageEvent[]> {
+		if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 8_000) {
+			throw new Error("provider inbox wait must be between 0 and 8000 milliseconds");
+		}
+		if (this.closed) return [];
+		const pending = this.providerEvents(limit);
+		if (pending.length > 0 || waitMs === 0) return pending;
+
+		await new Promise<void>((resolve) => {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const finish = () => {
+				if (!this.providerEventWaiters.delete(finish)) return;
+				if (timer !== undefined) clearTimeout(timer);
+				resolve();
+			};
+			this.providerEventWaiters.add(finish);
+			timer = setTimeout(finish, waitMs);
+			if (this.closed) finish();
+		});
+
+		return this.closed ? [] : this.providerEvents(limit);
 	}
 
 	acknowledgeProviderEvents(throughSequence: number): void {
@@ -361,11 +386,16 @@ export class SQLiteProviderState {
 	close(): void {
 		if (this.closed) return;
 		this.closed = true;
+		this.signalProviderEventWaiters();
 		try {
 			this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 		} finally {
 			this.db.close();
 		}
+	}
+
+	private signalProviderEventWaiters(): void {
+		for (const resolve of [...this.providerEventWaiters]) resolve();
 	}
 
 	getRetryCounter<T>(key: string): T | undefined {

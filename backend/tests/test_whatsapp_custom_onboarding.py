@@ -173,7 +173,7 @@ class FakeCustomSidecar:
     async def query(self, _node, _timeout_ms):
         return None
 
-    async def provider_events(self, *, limit: int = 100):
+    async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
         return self.provider_event_queue[:limit]
 
     async def acknowledge_provider_events(self, *, through_sequence: int) -> None:
