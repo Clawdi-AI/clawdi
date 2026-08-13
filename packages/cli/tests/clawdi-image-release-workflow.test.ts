@@ -47,6 +47,10 @@ const imageReleaseSource = readFileSync(
 	"utf8",
 );
 const imageRelease = parse(imageReleaseSource) as WorkflowDocument;
+const cliPublishSource = readFileSync(
+	resolve(import.meta.dir, "../../../.github/workflows/cli-publish.yml"),
+	"utf8",
+);
 const backendDockerfile = readFileSync(
 	resolve(import.meta.dir, "../../../backend/Dockerfile"),
 	"utf8",
@@ -239,6 +243,15 @@ describe("backend image release workflow contract", () => {
 		expect(imageRelease.jobs["deploy-vps"]?.if).toBe(
 			"needs.build.outputs.release_required == 'true'",
 		);
+	});
+
+	test("resumes partial CLI drafts without replacing verified assets", () => {
+		expect(cliPublishSource).toContain("--json assets,isDraft,targetCommitish");
+		expect(cliPublishSource).toContain('createHash("sha256")');
+		expect(cliPublishSource).toContain("matches[0].digest !== digest || matches[0].size !== size");
+		expect(cliPublishSource).toContain('if [ -n "$missing_assets" ]; then');
+		expect(cliPublishSource).toContain(`gh release upload "$tag" "\${assets_to_upload[@]}"`);
+		expect(cliPublishSource).not.toContain("--clobber");
 	});
 
 	test("classifies the deploy-vps execution contract without circular release authority", () => {

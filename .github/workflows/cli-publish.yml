@@ -238,7 +238,7 @@ jobs:
             fi
           fi
           release_action=create-draft
-          if existing_release=$(gh release view "$tag" --json isDraft,targetCommitish 2>/dev/null); then
+          if existing_release=$(gh release view "$tag" --json assets,isDraft,targetCommitish 2>/dev/null); then
             release_action=$(RELEASE_JSON="$existing_release" EXPECTED_COMMIT="$GITHUB_SHA" node - <<'NODE'
           const release = JSON.parse(process.env.RELEASE_JSON);
           if (release.targetCommitish !== process.env.EXPECTED_COMMIT) {
@@ -267,11 +267,40 @@ jobs:
           EOF
           )
           if [ "$release_action" = "resume-draft" ]; then
-            gh release upload "$tag" \
-              release/clawdi-cli-*.tar.gz \
-              release/clawdi-cli-manifest.txt \
-              release/install.sh \
-              --clobber
+            assets=(
+              release/clawdi-cli-*.tar.gz
+              release/clawdi-cli-manifest.txt
+              release/install.sh
+            )
+            missing_assets=$(RELEASE_JSON="$existing_release" node - "${assets[@]}" <<'NODE'
+          const { createHash } = require("node:crypto");
+          const { readFileSync, statSync } = require("node:fs");
+          const { basename } = require("node:path");
+          const remoteAssets = JSON.parse(process.env.RELEASE_JSON).assets;
+          for (const localPath of process.argv.slice(2)) {
+            const name = basename(localPath);
+            const matches = remoteAssets.filter((asset) => asset.name === name);
+            if (matches.length > 1) {
+              console.error(`GitHub release has duplicate assets named ${name}`);
+              process.exit(65);
+            }
+            if (matches.length === 0) {
+              console.log(localPath);
+              continue;
+            }
+            const digest = `sha256:${createHash("sha256").update(readFileSync(localPath)).digest("hex")}`;
+            const size = statSync(localPath).size;
+            if (matches[0].digest !== digest || matches[0].size !== size) {
+              console.error(`GitHub release asset ${name} does not match this workflow artifact`);
+              process.exit(65);
+            }
+          }
+          NODE
+            )
+            if [ -n "$missing_assets" ]; then
+              mapfile -t assets_to_upload <<< "$missing_assets"
+              gh release upload "$tag" "${assets_to_upload[@]}"
+            fi
             gh release edit "$tag" --draft=false
             exit 0
           fi
