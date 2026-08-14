@@ -69,8 +69,8 @@ Cloud-api reuses these existing runtime primitives:
   `runtime_deployment_id` identity binding;
 - the first-party `X-Admin-Key` gate, mutation idempotency, and control-plane
   audit events for Hosted-facing provisioning and retirement calls;
-- PostgreSQL transactions and `FOR UPDATE` locks for ingestion and retirement
-  serialization.
+- PostgreSQL transactions and `FOR UPDATE` locks for ingestion, retirement,
+  desired-state cleanup, and late-write serialization.
 
 `POST /v1/agents/{agent_id}/sync-heartbeat` remains the frozen v1 liveness and
 latest-observation transport. It neither accepts strict-v2 identity fields nor
@@ -82,7 +82,7 @@ Four PostgreSQL tables form the additive companion boundary:
 
 | Table | Contract |
 | --- | --- |
-| `v2_runtime_environment_fences` | Permanent environment/owner/deployment binding, active or retired state, replay floor, and immutable final retirement receipt/high-waters. |
+| `v2_runtime_environment_fences` | Permanent environment/owner/deployment binding, active or retired state, replay floor, immutable final retirement receipt/high-waters, and the durable runtime-state cleanup receipt. |
 | `v2_runtime_observation_inbox` | Immutable accepted identities with the five-field boot identity, boot-scoped sequence, global event id, timestamps, payload hash, and health. Private diagnostic payloads may be compacted in place after retention eligibility, while identity and hash columns remain permanently unique. |
 | `v2_runtime_observation_heads` | One immutable boot-session binding with non-regressing accepted sequence, stream position, capture time, and freshness; retirement compacts it to a tombstone. |
 | `v2_runtime_observation_consumer_cursors` | Environment-and-consumer ACK state, replay horizon, and explicit fail-closed expiry/reset boundary used by safe prefix retention. |
@@ -100,7 +100,9 @@ separately requires its scope. The database constrains only the identity
 binding, while the issuer and migration own the canonical authorization bundle.
 
 Hosted-facing `/v2` registration, read, acknowledgement, reset, retirement, and
-provisioning calls all require the first-party `X-Admin-Key`. The server binds
+provisioning calls require the first-party `X-Admin-Key`. Retired runtime-state
+cleanup also accepts a platform workload token with the existing
+`platform:runtime-environments:retire` scope. The server binds
 observation cursors to its fixed Hosted controller identity, and immutable
 owner/deployment authority is resolved from the environment fence rather than
 caller-selected request data, so opaque cursors cannot cross consumers or
@@ -116,8 +118,15 @@ heads atomically. Replaying the same retirement ID returns the persisted
 receipt; a different ID or deployment binding conflicts. V1 agent deletion and
 key revocation retain their pre-companion behavior and do not consult the v2
 fence. Trusted Hosted controller ordering obtains the retirement receipt before
-using those existing teardown surfaces; the permanent fence itself is never
-deleted.
+requesting `POST /v2/runtime/environments/{environment_id}/runtime-state/cleanup`
+with the exact environment, deployment, retirement, and stable cleanup
+identities. Cleanup derives owner authority from the permanent fence, removes
+only matching desired state, releases its OAuth claims, and stores an immutable
+versioned absence receipt. Exact retries return that receipt; identity reuse or
+mismatch conflicts. Runtime-state writers lock `User`, then the fence, then
+subordinate state and OAuth rows. A retired fence rejects new writes, including
+legacy admin v2 writers, while old successful platform idempotency replays do
+not execute a write. The permanent fence itself is never deleted.
 
 Retention advances the replay floor only across a contiguous per-environment
 stream prefix. Every row in a normal replay-horizon prefix must be old enough

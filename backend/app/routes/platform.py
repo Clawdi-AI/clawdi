@@ -90,6 +90,7 @@ from app.services.runtime_manifest_resources import (
     enabled_runtime_manifest_skill_ids,
     lock_runtime_manifest_skill_reservations,
 )
+from app.services.runtime_observation import RuntimeObservationProtocolError
 from app.services.runtime_source import (
     RuntimeSourceError,
     RuntimeSourceNotFoundError,
@@ -98,6 +99,7 @@ from app.services.runtime_source import (
     render_runtime_source,
     vault_key_identity,
 )
+from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_runtime_manifest_changed,
@@ -895,6 +897,29 @@ async def platform_upsert_runtime_state(
     )
     if replay is not None:
         return _replay_response(replay)
+    try:
+        await lock_runtime_state_write_fence(
+            db,
+            environment_id=agent_id,
+            owner_id=owner.id,
+            deployment_id=body.deployment_id,
+        )
+    except RuntimeObservationProtocolError as exc:
+        await _reject(
+            db,
+            status_code=exc.status_code,
+            detail=exc.detail(),
+            result=exc.code,
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="hosted_runtime_state",
+            resource_id=str(agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=agent_id,
+        )
+        raise AssertionError("unreachable")
     agent = await _load_owned_agent(
         db,
         agent_id=agent_id,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -462,6 +463,118 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         assert event.details["credential_id"] is None
         assert event.details["token_jti"] is None
         assert all(secret not in str(event.details) for secret in _TEST_SECRET_VALUES.values())
+
+
+@pytest.mark.committed_db
+@pytest.mark.asyncio
+async def test_retirement_fences_late_runtime_state_writes_and_old_replay(
+    platform_client,
+    engine,
+    db_session,
+    seed_user,
+):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.services.runtime_observation import (
+        provision_runtime_environment_fence,
+        retire_runtime_environment,
+    )
+    from app.services.runtime_state_cleanup import cleanup_retired_runtime_state
+
+    owner = _clerk_owner(seed_user)
+    agent = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"retired-write-{uuid.uuid4().hex}",
+        machine_name="retired-write-agent",
+        agent_type="openclaw",
+        os="linux",
+    )
+    provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    await db_session.commit()
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _fresh_session():
+        async with session_factory() as session:
+            yield session
+
+    previous_session_override = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = _fresh_session
+    try:
+        client = platform_client
+        body = _runtime_body(owner, agent.id, provider_id=provider_id)
+        initial_headers = _headers("retired-write-initial")
+        initial = await client.put(
+            f"/v1/platform/agents/{agent.id}/runtime-state",
+            headers=initial_headers,
+            json=body,
+        )
+        assert initial.status_code == 200, initial.text
+
+        deployment_id = str(body["deployment_id"])
+        async with session_factory() as setup_session:
+            await provision_runtime_environment_fence(
+                setup_session,
+                environment_id=agent.id,
+                owner_id=seed_user.id,
+                deployment_id=deployment_id,
+            )
+            await setup_session.commit()
+
+        retirement_id = f"retirement-{agent.id}"
+        async with session_factory() as retirement_session:
+            await retire_runtime_environment(
+                retirement_session,
+                environment_id=agent.id,
+                expected_deployment_id=deployment_id,
+                retirement_id=retirement_id,
+                owner_id=seed_user.id,
+            )
+            late_body = {**body, "generation": 2}
+            late_put = asyncio.create_task(
+                client.put(
+                    f"/v1/platform/agents/{agent.id}/runtime-state",
+                    headers=_headers("retired-write-late"),
+                    json=late_body,
+                )
+            )
+            await asyncio.sleep(0.05)
+            assert not late_put.done()
+            await retirement_session.commit()
+            late = await asyncio.wait_for(late_put, timeout=5)
+
+        assert late.status_code == 409, late.text
+        assert late.json()["detail"]["code"] == "runtime_environment_retired"
+        async with session_factory() as cleanup_session:
+            await cleanup_retired_runtime_state(
+                cleanup_session,
+                environment_id=agent.id,
+                expected_deployment_binding=deployment_id,
+                retirement_id=retirement_id,
+                cleanup_id=f"cleanup-{agent.id}",
+            )
+            await cleanup_session.commit()
+
+        old_replay = await client.put(
+            f"/v1/platform/agents/{agent.id}/runtime-state",
+            headers=initial_headers,
+            json=body,
+        )
+        assert old_replay.status_code == 200, old_replay.text
+        async with session_factory() as assertion_session:
+            assert await assertion_session.get(HostedRuntimeState, agent.id) is None
+
+        admin_body = {key: value for key, value in body.items() if key != "owner"}
+        admin = await client.put(
+            f"/v1/admin/agents/{agent.id}/runtime-state",
+            headers=_ADMIN_AUTH,
+            json=admin_body,
+        )
+        assert admin.status_code == 409, admin.text
+        assert admin.json()["detail"]["code"] == "runtime_environment_retired"
+    finally:
+        app.dependency_overrides[get_session] = previous_session_override
 
 
 @pytest.mark.asyncio

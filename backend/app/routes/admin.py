@@ -186,6 +186,8 @@ from app.services.runtime_manifest_resources import (
     enabled_runtime_manifest_skill_ids,
     lock_runtime_manifest_skill_reservations,
 )
+from app.services.runtime_observation import RuntimeObservationProtocolError
+from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_provider_runtime_manifest_changed,
@@ -1936,6 +1938,16 @@ async def _admin_upsert_runtime_state(
         target_clerk_id=body.target_clerk_id,
     )
     await lock_ai_provider_owner(db, target_user_id)
+    try:
+        await lock_runtime_state_write_fence(
+            db,
+            environment_id=environment_id,
+            owner_id=target_user_id,
+            deployment_id=body.deployment_id,
+        )
+    except RuntimeObservationProtocolError as exc:
+        await db.rollback()
+        raise HTTPException(exc.status_code, exc.detail()) from exc
     env = (
         await db.execute(
             select(AgentEnvironment)
