@@ -46,11 +46,11 @@ export function resolveSubscriptionSource({
 	reusableSubscriptions,
 	selected,
 }: {
-	includedAvailable: boolean;
+	includedAvailable: boolean | undefined;
 	reusableSubscriptions: readonly ReusableSubscription[] | undefined;
 	selected: SubscriptionSource | null;
 }): SubscriptionSource | null {
-	if (reusableSubscriptions === undefined) return selected;
+	if (includedAvailable === undefined || reusableSubscriptions === undefined) return selected;
 	if (selected?.mode === "included" && !includedAvailable) selected = null;
 	if (selected?.mode === "existing") {
 		const subscriptionId = selected.subscriptionId;

@@ -53,6 +53,13 @@ describe("subscription creation adapter", () => {
 		expect(
 			resolveSubscriptionSource({
 				selected: null,
+				includedAvailable: undefined,
+				reusableSubscriptions: [],
+			}),
+		).toBeNull();
+		expect(
+			resolveSubscriptionSource({
+				selected: null,
 				includedAvailable: false,
 				reusableSubscriptions: undefined,
 			}),

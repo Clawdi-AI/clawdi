@@ -521,7 +521,10 @@ export function DeployWizard() {
 				: "available";
 	const subscriptionSource = resolveSubscriptionSource({
 		selected: selectedSubscriptionSource,
-		includedAvailable: includedBasicAvailability === "available",
+		includedAvailable:
+			includedBasicAvailability === "unknown"
+				? undefined
+				: includedBasicAvailability === "available",
 		reusableSubscriptions:
 			reusableSubscriptions.error == null ? reusableSubscriptions.data : undefined,
 	});
