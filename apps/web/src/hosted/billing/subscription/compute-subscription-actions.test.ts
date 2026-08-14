@@ -75,7 +75,7 @@ describe("resolveComputeSubscriptionActions", () => {
 				{ planSlug: "compute_basic", fundingSource: null, priceCents: 0 },
 				{ management: enabledManagement },
 			),
-		).toEqual(["manage"]);
+		).toEqual([]);
 		expect(kinds({ deploymentId: null, isOrphan: true })).toEqual(["cancel"]);
 	});
 

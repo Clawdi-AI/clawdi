@@ -170,10 +170,10 @@ export function ComputeSubscriptionCard({
 			data-subscription-status={view.status.label.toLowerCase().replaceAll(" ", "-")}
 			className={entityCardChassisClass({
 				variant: "compact",
-				className: cn("flex min-w-0 flex-wrap items-center gap-3", className),
+				className: cn("flex h-full min-w-0 flex-col gap-3", className),
 			})}
 		>
-			<div className="flex min-w-[min(12rem,100%)] flex-1 flex-col gap-1.5">
+			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 				<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
 					<Heading className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
 						{view.plan}
@@ -216,7 +216,7 @@ export function ComputeSubscriptionCard({
 			</div>
 
 			{notice || actions ? (
-				<div className="ml-auto flex min-w-0 flex-col items-start gap-1.5 sm:items-end">
+				<div className="mt-auto flex min-w-0 flex-col items-start gap-1.5 pt-1 sm:items-end">
 					{notice ? (
 						<div data-slot="compute-subscription-notice" className="min-w-0 sm:text-right">
 							{notice}

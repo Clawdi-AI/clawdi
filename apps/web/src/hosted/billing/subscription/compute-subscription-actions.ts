@@ -130,8 +130,7 @@ export function resolveComputeSubscriptionActions({
 	}
 
 	if (!paid) {
-		const manage = !entitlement.isOrphan ? manageAction(management) : null;
-		return recovery ? [recovery] : manage ? [manage] : [];
+		return recovery ? [recovery] : [];
 	}
 
 	const manage = !entitlement.isOrphan ? manageAction(management) : null;

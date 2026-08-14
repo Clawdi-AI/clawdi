@@ -21,7 +21,6 @@ import {
 	computeSubscriptionPlanLabel,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
-	COMPUTE_PLANS_UNAVAILABLE_REASON,
 	type ComputeSubscriptionManagementResult,
 	computeSubscriptionManagement,
 } from "@/hosted/billing/subscription/compute-subscription-management";
@@ -33,7 +32,6 @@ import {
 	isHistoricalAccountSubscription,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
-	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
@@ -62,14 +60,8 @@ function subscriptionManagement(
 	deployment: HostedDeployment | undefined,
 	{
 		canCreateCloudAgents,
-		plansLoading,
-		plansError,
-		performancePlanAvailable,
 	}: {
 		canCreateCloudAgents: boolean;
-		plansLoading: boolean;
-		plansError: boolean;
-		performancePlanAvailable: boolean;
 	},
 ): ComputeSubscriptionManagementResult {
 	return computeSubscriptionManagement({
@@ -88,9 +80,6 @@ function subscriptionManagement(
 		},
 		deployment,
 		canCreateCloudAgents,
-		plansLoading,
-		plansError,
-		performancePlanAvailable,
 	});
 }
 
@@ -169,10 +158,7 @@ function SubscriptionRow({
 		actions.some((candidate) => candidate.kind !== "start_new") || startNewHref !== null;
 	const fundingSource = computeFundingSource(subscription.plan_slug, subscription);
 	const managementReason =
-		actions.find((candidate) => candidate.kind === "manage")?.disabledReason ===
-		COMPUTE_PLANS_UNAVAILABLE_REASON
-			? null
-			: (actions.find((candidate) => candidate.kind === "manage")?.disabledReason ?? null);
+		actions.find((candidate) => candidate.kind === "manage")?.disabledReason ?? null;
 	const view = computeSubscriptionCardView({
 		status: recovery.status,
 		planSlug: subscription.plan_slug,
@@ -336,7 +322,6 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 		: orderedRows.filter((subscription) => !isHistoricalAccountSubscription(subscription));
 	const canLoadMore = subscriptions.hasNextPage && !subscriptions.isFetchNextPageError;
 	const historyControlVisible = endedRows.length > 0 || showHistory;
-	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
 	const deploymentsById = new Map(
 		(deployments.data ?? []).map((deployment) => [
 			deployment.resource.id.toLowerCase(),
@@ -345,9 +330,6 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	);
 	const managementOptions = {
 		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
-		plansLoading: plans.isLoading,
-		plansError: blockingPlansError !== null,
-		performancePlanAvailable: Boolean(resolvePerformancePlan(plans.data)),
 	};
 	const selectedDeployment = selectedSubscription?.deployment_id
 		? deploymentsById.get(selectedSubscription.deployment_id.toLowerCase())
@@ -355,17 +337,6 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const selectedManagement = selectedSubscription
 		? subscriptionManagement(selectedSubscription, selectedDeployment, managementOptions)
 		: null;
-	const plansErrorBlocksVisibleIncluded =
-		blockingPlansError !== null &&
-		visibleRows.some((subscription) => {
-			const deployment = subscription.deployment_id
-				? deploymentsById.get(subscription.deployment_id.toLowerCase())
-				: undefined;
-			return (
-				subscriptionManagement(subscription, deployment, managementOptions).unavailableReason ===
-				COMPUTE_PLANS_UNAVAILABLE_REASON
-			);
-		});
 
 	function manageSubscription(subscription: ComputeSubscriptionListItem) {
 		const deployment = subscription.deployment_id
@@ -404,14 +375,6 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 					/>
 				) : rows.length || subscriptions.hasNextPage ? (
 					<>
-						{plansErrorBlocksVisibleIncluded ? (
-							<ApiErrorPanel
-								normalizer={billingErrorNormalizer}
-								error={blockingPlansError}
-								onRetry={() => void plans.refetch()}
-								title="Couldn't load compute plans"
-							/>
-						) : null}
 						{historyControlVisible ? (
 							<div className="flex justify-end">
 								<Button

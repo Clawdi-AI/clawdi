@@ -3,11 +3,7 @@ import type {
 	HostedComputeSubscription,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
-import { deploymentStatusFromResource, isRunningStatus } from "@/hosted/deployment-status";
-import {
-	activePlanChangeOperationName,
-	performanceUpgradeUnavailableReason,
-} from "./plan-change.logic";
+import { activePlanChangeOperationName } from "./plan-change.logic";
 import {
 	type PlanChangeTarget,
 	planChangeBillingTerm,
@@ -38,12 +34,6 @@ export type ComputeSubscriptionManagementResult =
 	| { action: "disabled"; target: null; unavailableReason: string }
 	| { action: "enabled"; target: PlanChangeTarget; unavailableReason: null };
 
-export const COMPUTE_PLANS_UNAVAILABLE_REASON =
-	"Retry loading compute plans to manage this subscription.";
-
-const PROJECTION_UNAVAILABLE_REASON =
-	"Subscription changes will be available after this agent’s compute details finish syncing.";
-
 function isComputePlanSlug(value: string | null | undefined): value is ComputePlanSlug {
 	return value === COMPUTE_BASIC_SLUG || value === COMPUTE_PERFORMANCE_SLUG;
 }
@@ -73,60 +63,27 @@ function blocksManagement(entitlement: ComputeSubscriptionEntitlement, paid: boo
 	);
 }
 
-function projectedIncludedBasicEntitlement(
-	deployment: HostedDeployment,
-): ComputeSubscriptionEntitlement | null {
-	const subscription = deployment.commercial_display?.compute_subscription;
-	if (
-		deployment.current_plan_slug !== COMPUTE_BASIC_SLUG ||
-		!subscription ||
-		computeFundingSource(deployment.current_plan_slug, subscription) !== "included_basic"
-	) {
-		return null;
-	}
-	return {
-		deploymentId: deployment.resource.id,
-		planSlug: deployment.current_plan_slug,
-		fundingSource: subscription.funding_source,
-		priceCents: subscription.price_cents,
-		billingTermMonths: subscription.billing_term_months,
-		status: subscription.status,
-		paymentState: subscription.payment_state,
-		cancelAtPeriodEnd: subscription.cancel_at_period_end,
-		recoveryAction: subscription.recovery_action,
-		pendingPlanSlug: subscription.pending_plan_slug,
-	};
-}
-
 export function computeSubscriptionManagement({
-	entitlement: initialEntitlement,
+	entitlement,
 	deployment,
 	canCreateCloudAgents,
-	plansLoading,
-	plansError,
-	performancePlanAvailable,
 }: {
 	entitlement: ComputeSubscriptionEntitlement;
 	deployment?: HostedDeployment | null;
 	canCreateCloudAgents: boolean;
-	plansLoading: boolean;
-	plansError: boolean;
-	performancePlanAvailable: boolean;
 }): ComputeSubscriptionManagementResult {
-	if (initialEntitlement.isOrphan) {
+	if (entitlement.isOrphan) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
-	const deploymentId = initialEntitlement.deploymentId?.trim();
-	const planSlug = isComputePlanSlug(initialEntitlement.planSlug)
-		? initialEntitlement.planSlug
-		: null;
+	const deploymentId = entitlement.deploymentId?.trim();
+	const planSlug = isComputePlanSlug(entitlement.planSlug) ? entitlement.planSlug : null;
 	if (!deploymentId || !planSlug) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
 
-	const fundingSource = computeFundingSource(initialEntitlement.planSlug, {
-		funding_source: initialEntitlement.fundingSource,
-		price_cents: initialEntitlement.priceCents,
+	const fundingSource = computeFundingSource(entitlement.planSlug, {
+		funding_source: entitlement.fundingSource,
+		price_cents: entitlement.priceCents,
 	});
 	const includedBasic = fundingSource === "included_basic";
 	const paid = fundingSource === "stripe" || fundingSource === "wallet";
@@ -134,25 +91,9 @@ export function computeSubscriptionManagement({
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
 	const projectedOperationName = deployment ? activePlanChangeOperationName(deployment) : null;
-	if (projectedOperationName === null && blocksManagement(initialEntitlement, paid)) {
+	if (includedBasic && projectedOperationName === null) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
-
-	let entitlement = initialEntitlement;
-	let terminalFallback = false;
-	if (includedBasic) {
-		if (!deployment || deployment.resource.id.toLowerCase() !== deploymentId.toLowerCase()) {
-			return { action: "disabled", target: null, unavailableReason: PROJECTION_UNAVAILABLE_REASON };
-		}
-		terminalFallback =
-			deployment.commercial_display?.latest_funding_fact?.fact_kind === "funding_revoked";
-		const projectedEntitlement = projectedIncludedBasicEntitlement(deployment);
-		if (!projectedEntitlement) {
-			return { action: "disabled", target: null, unavailableReason: PROJECTION_UNAVAILABLE_REASON };
-		}
-		entitlement = projectedEntitlement;
-	}
-
 	if (projectedOperationName === null && blocksManagement(entitlement, paid)) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
@@ -176,45 +117,15 @@ export function computeSubscriptionManagement({
 		allowCombinedChange: includedBasic,
 		projectedOperationName,
 	};
-	if (terminalFallback && projectedOperationName === null) {
-		return { action: "hidden", target, unavailableReason: null };
-	}
-
 	if (projectedOperationName) {
 		return { action: "enabled", target, unavailableReason: null };
-	}
-	if (includedBasic && plansError) {
-		return {
-			action: "disabled",
-			target: null,
-			unavailableReason: COMPUTE_PLANS_UNAVAILABLE_REASON,
-		};
 	}
 
 	const targetUnavailableReason = planChangeTargetUnavailableReason({
 		canCreateCloudAgents,
 		target,
 	});
-	const deploymentStatus = deployment
-		? deploymentStatusFromResource(deployment.resource.status)
-		: null;
-	const unavailableReason = includedBasic
-		? performanceUpgradeUnavailableReason({
-				plansLoading,
-				canCreateCloudAgents,
-				isIncludedBasic: true,
-				performancePlanAvailable,
-				pendingPlanSlug: null,
-				planChangeUnavailable: targetUnavailableReason,
-				deploymentStatusSupportsUpgrade: deploymentStatus
-					? isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped"
-					: false,
-				upgradeAvailable: deployment?.upgrade_available ?? false,
-				upgradeEligibilityReason: deployment?.upgrade_eligibility.reason ?? null,
-			})
-		: targetUnavailableReason;
-
-	return unavailableReason
-		? { action: "disabled", target: null, unavailableReason }
+	return targetUnavailableReason
+		? { action: "disabled", target: null, unavailableReason: targetUnavailableReason }
 		: { action: "enabled", target, unavailableReason: null };
 }
