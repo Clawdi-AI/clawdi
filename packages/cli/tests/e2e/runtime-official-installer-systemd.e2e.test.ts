@@ -27,18 +27,18 @@ import {
 	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest,
 } from "../../src/runtime/manifest";
-import {
-	FILE_BROWSER_AMD64_SHA256,
-	FILE_BROWSER_ARM64_SHA256,
-	FILE_BROWSER_COMMIT,
-	FILE_BROWSER_VERSION,
-	type RuntimeManifest,
-} from "../../src/runtime/manifest-contract";
+import type { RuntimeManifest } from "../../src/runtime/manifest-contract";
 import type { RuntimeManifestLoad } from "../../src/runtime/manifest-source";
 import { getRuntimePaths } from "../../src/runtime/paths";
 import { ensureRuntimeStateDirs } from "../../src/runtime/state";
 
 const REAL_SYSTEMD_GATE = "CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD";
+const FILE_BROWSER_VERSION = "v1.5.0-stable";
+const FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6";
+const FILE_BROWSER_AMD64_SHA256 =
+	"8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e";
+const FILE_BROWSER_ARM64_SHA256 =
+	"3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f";
 
 test("propagates the real official OpenClaw installer failure and rolls back as UID 10001", () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
@@ -187,7 +187,6 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 				applyReceiptId: "real-systemd-test-receipt",
 				bootNonce: "real-systemd-test-boot",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_openclaw_systemd",
@@ -386,7 +385,6 @@ test("projects a large OpenClaw provider model-list reduction through the public
 				applyReceiptId: "real-size-drop-test-receipt",
 				bootNonce: "real-size-drop-test-boot",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_openclaw_size_drop",
@@ -591,7 +589,6 @@ test("persists and serves the managed token through the real official OpenClaw g
 				applyReceiptId: "real-token-test-receipt",
 				bootNonce: "real-token-test-boot",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_openclaw_token",
@@ -905,7 +902,6 @@ http.createServer((request, response) => {
 				applyReceiptId: "real-filebrowser-systemd-test-receipt",
 				bootNonce: "real-filebrowser-systemd-test-boot",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_filebrowser_systemd",

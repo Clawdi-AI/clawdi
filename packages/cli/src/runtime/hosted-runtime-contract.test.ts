@@ -13,7 +13,6 @@ const applyContext: RuntimeApplyContext = {
 		applyReceiptId: "test-apply-receipt",
 		bootNonce: "test-boot-nonce",
 	},
-	cliPackageSpec: "clawdi@1.2.3",
 	manifestSource: {
 		type: "http",
 		url: "https://runtime.test/v1/runtime/manifest",

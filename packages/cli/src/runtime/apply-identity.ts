@@ -80,7 +80,7 @@ export const runtimeManifestSourceSchema = z
 
 export type RuntimeManifestSource = z.infer<typeof runtimeManifestSourceSchema>;
 
-const runtimeContextFileSchema = z
+const runtimeContextV2FileSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeContext.v2"),
 		backend: z.literal("incus"),
@@ -92,13 +92,26 @@ const runtimeContextFileSchema = z
 	})
 	.strict();
 
+const runtimeContextV3FileSchema = z
+	.object({
+		schemaVersion: z.literal("clawdi.runtimeContext.v3"),
+		backend: z.literal("incus"),
+		apply: runtimeApplyIdentitySchema,
+		manifestSource: runtimeManifestSourceSchema,
+	})
+	.strict();
+
+const runtimeContextFileSchema = z.discriminatedUnion("schemaVersion", [
+	runtimeContextV2FileSchema,
+	runtimeContextV3FileSchema,
+]);
+
 type RuntimeContextFile = z.infer<typeof runtimeContextFileSchema>;
 
 export interface RuntimeApplyContext {
 	kind: "context-file";
 	backend: "incus";
 	identity: RuntimeApplyIdentity;
-	cliPackageSpec: string;
 	manifestSource: RuntimeManifestSource;
 }
 
@@ -116,7 +129,6 @@ export function readRuntimeApplyContext(
 		kind: "context-file",
 		backend: parsed.backend,
 		identity: parsed.apply,
-		cliPackageSpec: parsed.cliPackageSpec,
 		manifestSource: parsed.manifestSource,
 	};
 }
@@ -155,6 +167,7 @@ function readRuntimeContextFile(contextPath: string): RuntimeContextFile {
 		);
 	}
 	if (
+		parsed.data.schemaVersion === "clawdi.runtimeContext.v2" &&
 		parsed.data.cliPackageSpec === HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE &&
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1"
 	) {

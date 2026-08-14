@@ -32,7 +32,7 @@ function contextFile(root: string): string {
 	writeFileSync(
 		path,
 		JSON.stringify({
-			schemaVersion: "clawdi.runtimeContext.v2",
+			schemaVersion: "clawdi.runtimeContext.v3",
 			backend: "incus",
 			apply: {
 				generation: 8,
@@ -40,7 +40,6 @@ function contextFile(root: string): string {
 				applyReceiptId: "apply-receipt-0008",
 				bootNonce: "boot-nonce-000008",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
@@ -88,7 +87,6 @@ describe("runtime apply identity", () => {
 				applyReceiptId: "apply-receipt-0008",
 				bootNonce: "boot-nonce-000008",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
@@ -111,18 +109,17 @@ describe("runtime apply identity", () => {
 		expect(() => readRuntimeApplyContext()).toThrow(/canonical absolute path/);
 	});
 
-	test("accepts the fixed paired-image CLI fixture path only behind the test gate", () => {
+	test("reads legacy v2 context without treating its CLI field as authority", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-paired-cli-fixture-"));
 		roots.push(root);
 		const path = contextFile(root);
 		const parsed: Record<string, unknown> = JSON.parse(readFileSync(path, "utf-8"));
+		parsed.schemaVersion = "clawdi.runtimeContext.v2";
 		parsed.cliPackageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-local.tgz";
 		writeFileSync(path, JSON.stringify(parsed));
 		expect(() => readRuntimeApplyContext(path)).toThrow(/CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1/);
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
-		expect(readRuntimeApplyContext(path).cliPackageSpec).toBe(
-			"/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
-		);
+		expect(readRuntimeApplyContext(path).identity.generation).toBe(8);
 
 		parsed.cliPackageSpec = "/tmp/clawdi-local.tgz";
 		writeFileSync(path, JSON.stringify(parsed));
@@ -144,7 +141,7 @@ describe("runtime apply identity", () => {
 		expect(() => readRuntimeApplyContext(legacy)).toThrow(/invalid runtime context file/);
 	});
 
-	test("requires the attested Incus backend in every v2 runtime context", () => {
+	test("requires the attested Incus backend in every runtime context", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-missing-runtime-backend-"));
 		roots.push(root);
 		const path = contextFile(root);

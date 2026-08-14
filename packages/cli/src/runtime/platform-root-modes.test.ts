@@ -127,7 +127,6 @@ exit 0
 				applyReceiptId: "apply-receipt-root-modes-0001",
 				bootNonce: "boot-nonce-root-modes-0000001",
 			},
-			cliPackageSpec: "clawdi@1.2.3-test",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest",

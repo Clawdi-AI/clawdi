@@ -16,7 +16,7 @@ function writeRuntimeContext(
 	writeFileSync(
 		path,
 		`${JSON.stringify({
-			schemaVersion: "clawdi.runtimeContext.v2",
+			schemaVersion: "clawdi.runtimeContext.v3",
 			backend: "incus",
 			apply: {
 				generation: 1,
@@ -24,7 +24,6 @@ function writeRuntimeContext(
 				applyReceiptId: "smoke-apply-receipt-0001",
 				bootNonce: "smoke-boot-nonce-000001",
 			},
-			cliPackageSpec: "clawdi@1.2.3-test",
 			manifestSource: {
 				type: "http",
 				url: options.manifestUrl ?? "https://runtime.test/v1/runtime/manifest",
