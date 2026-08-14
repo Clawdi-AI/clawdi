@@ -21,7 +21,6 @@ import {
 	computeSubscriptionPlanLabel,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
-	COMPUTE_PLANS_UNAVAILABLE_REASON,
 	type ComputeSubscriptionManagementResult,
 	computeSubscriptionManagement,
 } from "@/hosted/billing/subscription/compute-subscription-management";
@@ -63,12 +62,10 @@ function subscriptionManagement(
 	{
 		canCreateCloudAgents,
 		plansLoading,
-		plansError,
 		performancePlanAvailable,
 	}: {
 		canCreateCloudAgents: boolean;
 		plansLoading: boolean;
-		plansError: boolean;
 		performancePlanAvailable: boolean;
 	},
 ): ComputeSubscriptionManagementResult {
@@ -89,7 +86,6 @@ function subscriptionManagement(
 		deployment,
 		canCreateCloudAgents,
 		plansLoading,
-		plansError,
 		performancePlanAvailable,
 	});
 }
@@ -114,12 +110,12 @@ function SubscriptionRow({
 	subscription,
 	agentTile,
 	management,
-	onManage,
+	onPlanChange,
 }: {
 	subscription: ComputeSubscriptionListItem;
 	agentTile?: AgentTile;
 	management: ComputeSubscriptionManagementResult;
-	onManage: (subscription: ComputeSubscriptionListItem) => void;
+	onPlanChange: (subscription: ComputeSubscriptionListItem) => void;
 }) {
 	const lifecycle = computeSubscriptionLifecycle(subscription);
 	const recovery = computeSubscriptionRecoveryPresentation(subscription, {
@@ -169,10 +165,8 @@ function SubscriptionRow({
 		actions.some((candidate) => candidate.kind !== "start_new") || startNewHref !== null;
 	const fundingSource = computeFundingSource(subscription.plan_slug, subscription);
 	const managementReason =
-		actions.find((candidate) => candidate.kind === "manage")?.disabledReason ===
-		COMPUTE_PLANS_UNAVAILABLE_REASON
-			? null
-			: (actions.find((candidate) => candidate.kind === "manage")?.disabledReason ?? null);
+		actions.find((candidate) => candidate.kind === "upgrade" || candidate.kind === "manage")
+			?.disabledReason ?? null;
 	const view = computeSubscriptionCardView({
 		status: recovery.status,
 		planSlug: subscription.plan_slug,
@@ -228,7 +222,7 @@ function SubscriptionRow({
 								subscriptionId: subscription.subscription_id,
 								deploymentId: subscription.deployment_id ?? null,
 							}}
-							onManage={() => onManage(subscription)}
+							onPlanChange={() => onPlanChange(subscription)}
 							onStartNew={
 								startNewHref
 									? { kind: "link", href: startNewHref, label: "Open Agent settings" }
@@ -336,7 +330,6 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 		: orderedRows.filter((subscription) => !isHistoricalAccountSubscription(subscription));
 	const canLoadMore = subscriptions.hasNextPage && !subscriptions.isFetchNextPageError;
 	const historyControlVisible = endedRows.length > 0 || showHistory;
-	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
 	const deploymentsById = new Map(
 		(deployments.data ?? []).map((deployment) => [
 			deployment.resource.id.toLowerCase(),
@@ -346,7 +339,6 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const managementOptions = {
 		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
 		plansLoading: plans.isLoading,
-		plansError: blockingPlansError !== null,
 		performancePlanAvailable: Boolean(resolvePerformancePlan(plans.data)),
 	};
 	const selectedDeployment = selectedSubscription?.deployment_id
@@ -355,19 +347,8 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const selectedManagement = selectedSubscription
 		? subscriptionManagement(selectedSubscription, selectedDeployment, managementOptions)
 		: null;
-	const plansErrorBlocksVisibleIncluded =
-		blockingPlansError !== null &&
-		visibleRows.some((subscription) => {
-			const deployment = subscription.deployment_id
-				? deploymentsById.get(subscription.deployment_id.toLowerCase())
-				: undefined;
-			return (
-				subscriptionManagement(subscription, deployment, managementOptions).unavailableReason ===
-				COMPUTE_PLANS_UNAVAILABLE_REASON
-			);
-		});
 
-	function manageSubscription(subscription: ComputeSubscriptionListItem) {
+	function openPlanChange(subscription: ComputeSubscriptionListItem) {
 		const deployment = subscription.deployment_id
 			? deploymentsById.get(subscription.deployment_id.toLowerCase())
 			: undefined;
@@ -404,14 +385,6 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 					/>
 				) : rows.length || subscriptions.hasNextPage ? (
 					<>
-						{plansErrorBlocksVisibleIncluded ? (
-							<ApiErrorPanel
-								normalizer={billingErrorNormalizer}
-								error={blockingPlansError}
-								onRetry={() => void plans.refetch()}
-								title="Couldn't load compute plans"
-							/>
-						) : null}
 						{historyControlVisible ? (
 							<div className="flex justify-end">
 								<Button
@@ -446,7 +419,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 												: undefined,
 											managementOptions,
 										)}
-										onManage={manageSubscription}
+										onPlanChange={openPlanChange}
 									/>
 								))}
 							</ul>

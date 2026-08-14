@@ -163,7 +163,6 @@ import {
 	computeSubscriptionCardView,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
-	COMPUTE_PLANS_UNAVAILABLE_REASON,
 	type ComputeSubscriptionManagementResult,
 	computeSubscriptionManagement,
 } from "@/hosted/billing/subscription/compute-subscription-management";
@@ -3597,7 +3596,6 @@ function ComputeSettingsSections({
 	const currentBillingTerm = planChangeBillingTerm(currentSubscription?.billing_term_months ?? 1);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
-	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
 	const currentPaidPlan =
 		computePlanSlug === COMPUTE_BASIC_SLUG
 			? basicPlan
@@ -3676,7 +3674,6 @@ function ComputeSettingsSections({
 				deployment,
 				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
 				plansLoading: plans.isLoading,
-				plansError: blockingPlansError !== null,
 				performancePlanAvailable: Boolean(perfPlan),
 			})
 		: { action: "hidden", target: null, unavailableReason: null };
@@ -3684,12 +3681,7 @@ function ComputeSettingsSections({
 		hasPendingPlanChange ||
 		(computeManagement.action === "enabled" &&
 			computeManagement.target.projectedOperationName !== null);
-	const plansErrorBlocksIncluded =
-		blockingPlansError !== null &&
-		computeManagement.unavailableReason === COMPUTE_PLANS_UNAVAILABLE_REASON;
-	const computeManagementReason = plansErrorBlocksIncluded
-		? null
-		: computeManagement.unavailableReason;
+	const computeManagementReason = computeManagement.unavailableReason;
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
 		terminalRecovery?.recoveryPlanSlug ?? pendingPlanSlug ?? computePlanSlug,
 		{
@@ -3782,14 +3774,6 @@ function ComputeSettingsSections({
 			) : null}
 
 			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
-				{plansErrorBlocksIncluded ? (
-					<ApiErrorPanel
-						normalizer={billingErrorNormalizer}
-						error={blockingPlansError}
-						onRetry={() => void plans.refetch()}
-						title="Couldn't load compute plans"
-					/>
-				) : null}
 				<ComputeSubscriptionCard
 					headingLevel={3}
 					view={computeCardView}
@@ -3817,7 +3801,7 @@ function ComputeSettingsSections({
 						<ComputeSubscriptionActionList
 							actions={computeActions}
 							target={{ kind: "deployment", deploymentId: deployment.resource.id }}
-							onManage={() => setPlanChangeOpen(true)}
+							onPlanChange={() => setPlanChangeOpen(true)}
 							onStartNew={{
 								kind: "button",
 								onClick: () => setSubscriptionCreateOpen(true),
