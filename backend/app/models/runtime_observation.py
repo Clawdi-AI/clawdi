@@ -70,6 +70,13 @@ class V2RuntimeEnvironmentFence(Base, TimestampMixin):
             "AND final_session_high_waters IS NOT NULL)",
             name="ck_v2_runtime_environment_fences_retirement",
         ),
+        CheckConstraint(
+            "(runtime_state_cleanup_id IS NULL AND runtime_state_cleanup_receipt IS NULL) "
+            "OR (state = 'retired' AND runtime_state_cleanup_id IS NOT NULL "
+            "AND runtime_state_cleanup_receipt IS NOT NULL "
+            "AND jsonb_typeof(runtime_state_cleanup_receipt) = 'object')",
+            name="ck_v2_runtime_environment_fences_runtime_state_cleanup",
+        ),
     )
 
     environment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
@@ -107,6 +114,10 @@ class V2RuntimeEnvironmentFence(Base, TimestampMixin):
     final_cursor: Mapped[str | None] = mapped_column(String(2000))
     final_stream_position: Mapped[int | None] = mapped_column(BigInteger)
     final_session_high_waters: Mapped[dict[str, int] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    runtime_state_cleanup_id: Mapped[str | None] = mapped_column(String(200))
+    runtime_state_cleanup_receipt: Mapped[JsonValue | None] = mapped_column(
         JSONB(none_as_null=True)
     )
 

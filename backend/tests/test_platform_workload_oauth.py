@@ -22,6 +22,7 @@ from app.main import app
 from app.models.ai_provider import AiProviderAuthPayload
 from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
 from app.models.audit import ControlPlaneAuditEvent
+from app.models.hosted_runtime import HostedRuntimeState
 from app.models.platform_workload_auth import (
     PLATFORM_WORKLOAD_CLIENT_ACTIVE,
     PLATFORM_WORKLOAD_CLIENT_DISABLED,
@@ -45,6 +46,7 @@ from app.services.platform_workload_auth import (
     canonical_platform_workload_token_endpoint,
     get_platform_workload_key_resolver,
 )
+from app.services.runtime_observation import retire_runtime_environment
 from app.services.vault_crypto import encrypt
 
 _ADMIN_KEY = "test-platform-admin-secret"
@@ -1158,6 +1160,167 @@ async def test_platform_agent_archive_preserves_runtime_oauth_claim(
     await db_session.refresh(payload)
     assert payload.consumer_environment_id == agent_id
     assert payload.consumer_runtime == "openclaw"
+
+
+@pytest.mark.asyncio
+async def test_retired_runtime_state_cleanup_works_for_archived_agent(
+    workload_harness,
+    db_session,
+    seed_user,
+):
+    from tests.conftest import create_env_with_project, create_test_hosted_runtime_state
+
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"cleanup-{uuid.uuid4().hex}",
+        machine_name="cleanup-archived-agent",
+        agent_type="openclaw",
+        os="linux",
+    )
+    state = await create_test_hosted_runtime_state(
+        db_session,
+        environment,
+        runtime_name="openclaw",
+    )
+    encrypted, nonce = encrypt('{"kind":"cleanup-test"}')
+    payload = AiProviderAuthPayload(
+        owner_user_id=seed_user.id,
+        provider_id=f"cleanup-{uuid.uuid4().hex}",
+        auth_profile="default",
+        kind="agent_profile",
+        source="test",
+        encrypted_payload=encrypted,
+        nonce=nonce,
+        consumer_environment_id=environment.id,
+        consumer_runtime="openclaw",
+    )
+    db_session.add(payload)
+    retirement_id = f"retirement-{environment.id}"
+    await retire_runtime_environment(
+        db_session,
+        environment_id=environment.id,
+        expected_deployment_id=state.deployment_id,
+        retirement_id=retirement_id,
+        owner_id=seed_user.id,
+    )
+    environment.archived_at = datetime.now(UTC)
+    await db_session.commit()
+
+    token = await _access_token(
+        workload_harness,
+        "platform:runtime-environments:retire",
+    )
+    cleanup_id = f"cleanup-{environment.id}"
+    response = await workload_harness.client.post(
+        f"/v2/runtime/environments/{environment.id}/runtime-state/cleanup",
+        headers=_workload_headers(token, cleanup_id),
+        json={
+            "environmentReference": str(environment.id),
+            "expectedDeploymentBinding": state.deployment_id,
+            "retirementId": retirement_id,
+            "cleanupId": cleanup_id,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "schemaVersion": "clawdi.runtimeStateCleanupReceipt.v1",
+        "environmentReference": str(environment.id),
+        "expectedDeploymentBinding": state.deployment_id,
+        "retirementId": retirement_id,
+        "cleanupId": cleanup_id,
+        "runtimeStateStatus": "absent",
+        "cleanedAt": response.json()["cleanedAt"],
+    }
+    assert await db_session.get(HostedRuntimeState, environment.id) is None
+    await db_session.refresh(payload)
+    assert payload.consumer_environment_id is None
+    assert payload.consumer_runtime is None
+
+
+@pytest.mark.asyncio
+async def test_retired_runtime_state_cleanup_replays_absence_and_rejects_conflicts(
+    workload_harness,
+    db_session,
+    seed_user,
+):
+    from app.services.runtime_observation import provision_runtime_environment_fence
+    from tests.conftest import create_env_with_project
+
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"cleanup-absent-{uuid.uuid4().hex}",
+        machine_name="cleanup-absent-agent",
+        agent_type="openclaw",
+        os="linux",
+    )
+    deployment_id = f"deployment-{environment.id}"
+    retirement_id = f"retirement-{environment.id}"
+    await provision_runtime_environment_fence(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=deployment_id,
+    )
+    await retire_runtime_environment(
+        db_session,
+        environment_id=environment.id,
+        expected_deployment_id=deployment_id,
+        retirement_id=retirement_id,
+        owner_id=seed_user.id,
+    )
+    await db_session.commit()
+
+    token = await _access_token(
+        workload_harness,
+        "platform:runtime-environments:retire",
+    )
+    path = f"/v2/runtime/environments/{environment.id}/runtime-state/cleanup"
+    body = {
+        "environmentReference": str(environment.id),
+        "expectedDeploymentBinding": deployment_id,
+        "retirementId": retirement_id,
+        "cleanupId": f"cleanup-{environment.id}",
+    }
+    first = await workload_harness.client.post(
+        path,
+        headers=_workload_headers(token, str(body["cleanupId"])),
+        json=body,
+    )
+    replay = await workload_harness.client.post(
+        path,
+        headers=_workload_headers(token, str(body["cleanupId"])),
+        json=body,
+    )
+    conflict = await workload_harness.client.post(
+        path,
+        headers=_workload_headers(token, f"different-{body['environmentReference']}"),
+        json={**body, "cleanupId": f"different-{body['environmentReference']}"},
+    )
+    path_conflict = await workload_harness.client.post(
+        path,
+        headers=_workload_headers(token, str(body["cleanupId"])),
+        json={**body, "environmentReference": str(uuid.uuid4())},
+    )
+    header_conflict = await workload_harness.client.post(
+        path,
+        headers=_workload_headers(token, f"different-{body['environmentReference']}"),
+        json=body,
+    )
+
+    assert first.status_code == replay.status_code == 200
+    assert first.content == replay.content
+    assert first.json()["runtimeStateStatus"] == "absent"
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "runtime_state_cleanup_conflict"
+    assert path_conflict.status_code == 409
+    assert path_conflict.json()["detail"]["code"] == "runtime_state_cleanup_environment_conflict"
+    assert header_conflict.status_code == 409
+    assert header_conflict.json()["detail"]["code"] == (
+        "runtime_state_cleanup_idempotency_conflict"
+    )
 
 
 @pytest.mark.asyncio

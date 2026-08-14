@@ -129,6 +129,17 @@ class RuntimeEnvironmentRetireRequest(RuntimeObservationRequestModel):
     retirement_id: str = Field(alias="retirementId", min_length=1, max_length=200)
 
 
+class RuntimeStateCleanupRequest(RuntimeObservationRequestModel):
+    environment_reference: UUID = Field(alias="environmentReference")
+    expected_deployment_binding: str = Field(
+        alias="expectedDeploymentBinding",
+        min_length=1,
+        max_length=200,
+    )
+    retirement_id: str = Field(alias="retirementId", min_length=1, max_length=200)
+    cleanup_id: str = Field(alias="cleanupId", min_length=1, max_length=200)
+
+
 class RuntimeObservationConsumerRequest(RuntimeObservationRequestModel):
     pass
 
@@ -246,6 +257,16 @@ class RuntimeEnvironmentRetirementReceipt(RuntimeObservationResponseModel):
     final_session_high_water_marks: list[RuntimeSessionHighWaterMark] = Field(
         alias="finalSessionHighWaterMarks"
     )
+
+
+class RuntimeStateCleanupReceipt(RuntimeObservationResponseModel):
+    schema_version: Literal["clawdi.runtimeStateCleanupReceipt.v1"] = Field(alias="schemaVersion")
+    environment_reference: UUID = Field(alias="environmentReference")
+    expected_deployment_binding: str = Field(alias="expectedDeploymentBinding")
+    retirement_id: str = Field(alias="retirementId")
+    cleanup_id: str = Field(alias="cleanupId")
+    runtime_state_status: Literal["absent"] = Field(alias="runtimeStateStatus")
+    cleaned_at: datetime = Field(alias="cleanedAt")
 
 
 class RuntimeSessionHighWaterMark(RuntimeObservationResponseModel):

@@ -2962,6 +2962,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/runtime/environments/{environment_id}/runtime-state/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cleanup Retired Runtime State Endpoint */
+        post: operations["cleanup_retired_runtime_state_endpoint_v2_runtime_environments__environment_id__runtime_state_cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/runtime/environments/{environment_id}/observation-consumers/register": {
         parameters: {
             query?: never;
@@ -6850,6 +6867,49 @@ export interface components {
             sourceRevision: string;
             /** Etag */
             etag: string;
+        };
+        /** RuntimeStateCleanupReceipt */
+        RuntimeStateCleanupReceipt: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: "clawdi.runtimeStateCleanupReceipt.v1";
+            /**
+             * Environmentreference
+             * Format: uuid
+             */
+            environmentReference: string;
+            /** Expecteddeploymentbinding */
+            expectedDeploymentBinding: string;
+            /** Retirementid */
+            retirementId: string;
+            /** Cleanupid */
+            cleanupId: string;
+            /**
+             * Runtimestatestatus
+             * @constant
+             */
+            runtimeStateStatus: "absent";
+            /**
+             * Cleanedat
+             * Format: date-time
+             */
+            cleanedAt: string;
+        };
+        /** RuntimeStateCleanupRequest */
+        RuntimeStateCleanupRequest: {
+            /**
+             * Environmentreference
+             * Format: uuid
+             */
+            environmentReference: string;
+            /** Expecteddeploymentbinding */
+            expectedDeploymentBinding: string;
+            /** Retirementid */
+            retirementId: string;
+            /** Cleanupid */
+            cleanupId: string;
         };
         /** SearchHit */
         SearchHit: {
@@ -13624,6 +13684,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeEnvironmentRetirementReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cleanup_retired_runtime_state_endpoint_v2_runtime_environments__environment_id__runtime_state_cleanup_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeStateCleanupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeStateCleanupReceipt"];
                 };
             };
             /** @description Validation Error */
