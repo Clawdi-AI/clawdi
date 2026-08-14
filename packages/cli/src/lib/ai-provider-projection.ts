@@ -293,7 +293,7 @@ function buildOpenClawProjection(
 				openClawProjectedProviderId(provider),
 				compactObject({
 					baseUrl: openClawBaseUrlForProvider(provider),
-					api: openClawApiLabel(provider.api_mode),
+					api: openClawProviderApiLabel(provider.api_mode),
 					apiKey: openClawApiKeyEnvForProvider(provider)
 						? { source: "env", provider: "default", id: openClawApiKeyEnvForProvider(provider) }
 						: undefined,
@@ -344,11 +344,10 @@ function openClawModels(
 ): Array<Record<string, unknown>> {
 	const models = (provider.models ?? [])
 		.map((model) => {
-			const api = openClawApiLabel(model.api_mode ?? provider.api_mode);
 			return compactObject({
 				id: model.id,
 				name: model.alias ?? model.label ?? model.id,
-				api,
+				api: openClawModelApiLabel(model.api_mode, provider.api_mode),
 				input: openClawInputModalities(model),
 				reasoning: model.supports_reasoning,
 				compat: openClawModelCompat(model),
@@ -361,14 +360,12 @@ function openClawModels(
 		.filter(
 			(model, index, entries) => entries.findIndex((entry) => entry.id === model.id) === index,
 		);
-	const api = openClawApiLabel(provider.api_mode);
 	const defaultModelId = primaryModel;
 	if (defaultModelId && !models.some((model) => model.id === defaultModelId)) {
 		models.unshift(
 			compactObject({
 				id: defaultModelId,
 				name: defaultModelId,
-				api,
 			}),
 		);
 	}
@@ -387,9 +384,18 @@ function openClawInputModalities(model: AiProviderModel): AiProviderModel["input
 	return undefined;
 }
 
-function openClawApiLabel(apiMode: AiProviderApiMode): string | undefined {
+function openClawProviderApiLabel(apiMode: AiProviderApiMode): string | undefined {
 	const label = OPENCLAW_API_LABELS[apiMode];
 	return label === "openai-completions" ? undefined : label;
+}
+
+function openClawModelApiLabel(
+	modelApiMode: AiProviderApiMode | undefined,
+	providerApiMode: AiProviderApiMode,
+): string | undefined {
+	return modelApiMode && modelApiMode !== providerApiMode
+		? OPENCLAW_API_LABELS[modelApiMode]
+		: undefined;
 }
 
 function openClawProjectionSkipReason(provider: ProjectionProvider): string | undefined {

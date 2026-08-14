@@ -215,6 +215,14 @@ export const CODEX_OAUTH_MODEL_CATALOG: readonly AiProviderModel[] = [
 export const CLAWDI_MANAGED_PROVIDER_ID = "clawdi";
 export const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
 const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
+export const CLAWDI_MANAGED_V2_API_MODE = "openai_responses";
+const CLAWDI_MANAGED_V1_ACCEPTED_API_MODES = [
+	CLAWDI_MANAGED_V1_API_MODE,
+] as const satisfies readonly AiProviderApiMode[];
+const CLAWDI_MANAGED_V2_ACCEPTED_API_MODES = [
+	CLAWDI_MANAGED_V2_API_MODE,
+	"openai_chat",
+] as const satisfies readonly AiProviderApiMode[];
 export const CLAWDI_MANAGED_V2_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID;
 export const CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX = "clawdi-v2-deployment-";
 const CLAWDI_MANAGED_PROVIDER_MAX_ID_LENGTH = 63;
@@ -222,7 +230,6 @@ export const CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID = "clawdi-v2";
 // TODO(#425): Remove legacy aliases only after the cross-repo rollout is complete and
 // persisted clients no longer send either legacy id.
 export const CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID = "clawdi-managed-v2";
-const CLAWDI_MANAGED_V2_API_MODE = "openai_chat";
 // TODO(#425): Remove legacy members after the compatibility window closes.
 export const CLAWDI_MANAGED_PROVIDER_IDS: ReadonlySet<string> = new Set([
 	CLAWDI_MANAGED_PROVIDER_ID,
@@ -492,8 +499,8 @@ function validateManagedProviderContract(
 		? CLAWDI_MANAGED_PROVIDER_ID
 		: prefix;
 
-	const expectedApiMode = clawdiManagedApiMode(provider.id);
-	if (!expectedApiMode) {
+	const acceptedApiModes = clawdiManagedAcceptedApiModes(provider.id);
+	if (!acceptedApiModes) {
 		errors.push(
 			`Provider ${publicPrefix} managed_by clawdi must use id ${CLAWDI_MANAGED_PROVIDER_ID} or an internal deployment-scoped managed provider id.`,
 		);
@@ -504,8 +511,13 @@ function validateManagedProviderContract(
 	if (provider.type !== "custom_openai_compatible") {
 		errors.push(`Provider ${publicPrefix} managed_by clawdi must use custom_openai_compatible.`);
 	}
-	if (expectedApiMode && provider.api_mode !== expectedApiMode) {
-		errors.push(`Provider ${publicPrefix} managed_by clawdi must use api_mode ${expectedApiMode}.`);
+	if (
+		acceptedApiModes &&
+		(provider.api_mode === undefined || !acceptedApiModes.includes(provider.api_mode))
+	) {
+		errors.push(
+			`Provider ${publicPrefix} managed_by clawdi must use api_mode ${acceptedApiModes.join(" or ")}.`,
+		);
 	}
 	if (provider.runtime_env_name !== MANAGED_AI_PROVIDER_RUNTIME_ENV) {
 		errors.push(
@@ -518,11 +530,13 @@ function validateManagedProviderContract(
 	}
 }
 
-function clawdiManagedApiMode(providerId: string): AiProviderApiMode | null {
-	if (providerId === CLAWDI_MANAGED_V1_PROVIDER_ID) return CLAWDI_MANAGED_V1_API_MODE;
+function clawdiManagedAcceptedApiModes(providerId: string): readonly AiProviderApiMode[] | null {
+	if (providerId === CLAWDI_MANAGED_V1_PROVIDER_ID) {
+		return CLAWDI_MANAGED_V1_ACCEPTED_API_MODES;
+	}
 	// TODO(#425): Remove legacy mode resolution after the compatibility window closes.
 	if (isClawdiManagedV2ProviderId(providerId)) {
-		return CLAWDI_MANAGED_V2_API_MODE;
+		return CLAWDI_MANAGED_V2_ACCEPTED_API_MODES;
 	}
 	return null;
 }

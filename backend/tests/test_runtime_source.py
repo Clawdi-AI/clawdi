@@ -879,11 +879,11 @@ def test_codex_tool_env_cutover_reaches_a_stable_source_revision() -> None:
     assert _render(batch).source_revision == canonical.source_revision
 
 
-def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None:
+def test_legacy_managed_v2_chat_storage_projects_responses() -> None:
     source = _render(_batch())
 
     runtime_provider = source.manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]
-    assert runtime_provider["apiMode"] == "openai_chat"
+    assert runtime_provider["apiMode"] == "openai_responses"
     assert runtime_provider["models"] == [{"id": "gpt-test"}]
     codex_provider = source.manifest["terminalTooling"]["codex"]["provider"]
     assert codex_provider == {

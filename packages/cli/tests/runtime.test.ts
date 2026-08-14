@@ -3729,7 +3729,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
-	it("replaces OpenClaw provider models when the selected model changes", () => {
+	it("canonicalizes legacy managed v2 Chat input to Responses while replacing models", () => {
 		const home = join(root, "model-switch", "home", "clawdi");
 		const state = join(root, "model-switch", "var", "lib", "clawdi");
 		const run = join(root, "model-switch", "run", "clawdi");
@@ -3818,7 +3818,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(appliedConfig.models.providers.clawdi.models).toEqual([
 			expect.objectContaining({ id: "sol" }),
 		]);
-		expect(appliedConfig.models.providers.clawdi.api).toBeUndefined();
+		expect(appliedConfig.models.providers.clawdi.api).toBe("openai-responses");
 		expect(appliedConfig.models.providers.clawdi.apiKey).toEqual({
 			source: "env",
 			provider: "default",
@@ -5048,8 +5048,8 @@ exit 0
 			input: ["text", "image"],
 			reasoning: true,
 			compat: { supportsTools: true },
-			api: "openai-responses",
 		});
+		expect(patch.models.providers.openclaw.models[0].api).toBeUndefined();
 		expect(JSON.stringify(patch)).not.toContain("hermes-provider.example.test");
 		const hermesConfig = readHermesConfigYaml(home);
 		const hermesModel = expectRecord(hermesConfig.model, "Hermes model config");

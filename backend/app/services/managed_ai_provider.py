@@ -19,6 +19,7 @@ from app.services.url_security import UnsafePublicHttpsUrlError, validate_public
 CLAWDI_MANAGED_PROVIDER_ID = "clawdi"
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
 V1_MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
+_V1_MANAGED_AI_PROVIDER_ACCEPTED_API_MODES = (V1_MANAGED_AI_PROVIDER_API_MODE,)
 V2_MANAGED_AI_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID
 V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX = "clawdi-v2-deployment-"
 V2_MANAGED_AI_PROVIDER_MAX_ID_LENGTH = 63
@@ -33,7 +34,11 @@ V2_MANAGED_AI_PROVIDER_IDS = frozenset(
         V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     }
 )
-V2_MANAGED_AI_PROVIDER_API_MODE = "openai_chat"
+V2_MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
+_V2_MANAGED_AI_PROVIDER_ACCEPTED_API_MODES = (
+    V2_MANAGED_AI_PROVIDER_API_MODE,
+    "openai_chat",
+)
 
 # The admin managed-provider path is owned by hosted v2. V1 writes its provider
 # through the user AI Provider endpoint with the v1-specific id/mode above.
@@ -92,9 +97,17 @@ def runtime_managed_provider_id(provider_id: str) -> str:
 def managed_provider_api_mode(provider_id: str) -> str | None:
     if provider_id == V1_MANAGED_AI_PROVIDER_ID:
         return V1_MANAGED_AI_PROVIDER_API_MODE
-    # TODO(#425): Remove legacy v2 mode resolution after the compatibility window closes.
-    if provider_id in V2_MANAGED_AI_PROVIDER_IDS:
+    if is_v2_managed_provider_id(provider_id):
         return V2_MANAGED_AI_PROVIDER_API_MODE
+    return None
+
+
+def managed_provider_accepted_api_modes(provider_id: str) -> tuple[str, ...] | None:
+    if provider_id == V1_MANAGED_AI_PROVIDER_ID:
+        return _V1_MANAGED_AI_PROVIDER_ACCEPTED_API_MODES
+    # TODO(#425): Remove openai_chat after the rollout compatibility window closes.
+    if is_v2_managed_provider_id(provider_id):
+        return _V2_MANAGED_AI_PROVIDER_ACCEPTED_API_MODES
     return None
 
 
