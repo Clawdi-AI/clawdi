@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 import type { ComputeSubscriptionQuoteResponse, DeployRequest } from "@/hosted/billing/contracts";
 import {
+	resolveSubscriptionSource,
 	type SubscriptionCreateRequestView,
 	subscriptionCreateOutcome,
 	subscriptionCreateQuoteRequest,
@@ -48,6 +49,44 @@ function createRequest(
 }
 
 describe("subscription creation adapter", () => {
+	test("selects the sole new-subscription source only after inventory resolves", () => {
+		expect(
+			resolveSubscriptionSource({
+				selected: null,
+				includedAvailable: undefined,
+				reusableSubscriptions: [],
+			}),
+		).toBeNull();
+		expect(
+			resolveSubscriptionSource({
+				selected: null,
+				includedAvailable: false,
+				reusableSubscriptions: undefined,
+			}),
+		).toBeNull();
+		expect(
+			resolveSubscriptionSource({
+				selected: null,
+				includedAvailable: false,
+				reusableSubscriptions: [],
+			}),
+		).toEqual({ mode: "new" });
+		expect(
+			resolveSubscriptionSource({
+				selected: { mode: "included" },
+				includedAvailable: false,
+				reusableSubscriptions: [],
+			}),
+		).toEqual({ mode: "new" });
+		expect(
+			resolveSubscriptionSource({
+				selected: null,
+				includedAvailable: true,
+				reusableSubscriptions: [],
+			}),
+		).toBeNull();
+	});
+
 	test("presents the exact annual wallet quote and post-debit balance", () => {
 		const selection = createRequest().selection;
 		expect(subscriptionCreateQuoteRequest(selection)).toEqual({

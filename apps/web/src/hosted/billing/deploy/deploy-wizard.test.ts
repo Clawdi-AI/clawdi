@@ -348,8 +348,8 @@ describe("billing-read gates", () => {
 		expect(wizardSource).toContain("const deploymentsResolved = deployments.data !== undefined;");
 		expect(wizardSource).toContain("shouldBlockQueryError(deployments.error, deployments.data)");
 		expect(wizardSource).toContain("activeIncludedBasicSlot === null");
-		expect(wizardSource).toContain("Included Basic availability is unknown");
-		expect(wizardSource).toContain('title="Couldn\'t check Included Basic availability"');
+		expect(wizardSource).toContain("Free compute availability is unknown");
+		expect(wizardSource).toContain('title="Couldn\'t check free compute availability"');
 		expect(wizardSource).toContain("onRetry={() => void deployments.refetch()}");
 		expect(wizardSource).toContain("disabled={checkingDeployments}");
 		expect(wizardSource).toContain("onClick={() => void checkDeploymentsAgain()}");

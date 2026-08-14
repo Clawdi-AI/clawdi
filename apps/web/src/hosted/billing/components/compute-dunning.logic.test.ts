@@ -188,7 +188,7 @@ describe("computeDunningState", () => {
 			recoveryPlanSlug: "compute_performance",
 		});
 		expect(running?.fallbackOccurredAt).not.toBe("2026-07-18T12:05:00Z");
-		expect(running?.description).toContain("now using included Basic");
+		expect(running?.description).toContain("now using free compute");
 
 		const stopped = computeDunningState(
 			deployment({
@@ -197,7 +197,7 @@ describe("computeDunningState", () => {
 				status: "stopped",
 			}),
 		);
-		expect(stopped?.description).toContain("No included Basic slot was available");
+		expect(stopped?.description).toContain("No free compute slot was available");
 
 		const unavailable = computeDunningState(
 			deployment({
@@ -207,9 +207,9 @@ describe("computeDunningState", () => {
 			}),
 		);
 		expect(unavailable?.description).toContain(
-			"can’t determine whether this agent stopped or is using included Basic",
+			"can’t determine whether this agent stopped or is using free compute",
 		);
-		expect(unavailable?.description).not.toContain("is now using included Basic");
+		expect(unavailable?.description).not.toContain("is now using free compute");
 	});
 
 	test("does not recover a detached or already recovered subscription", () => {

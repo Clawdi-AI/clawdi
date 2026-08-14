@@ -51,6 +51,7 @@ import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actio
 import { useReusableSubscriptions } from "@/hosted/billing/subscription/reusable-subscriptions-query";
 import {
 	existingSubscriptionCreateSelection,
+	resolveSubscriptionSource,
 	type SubscriptionCreateSelection,
 	type SubscriptionFundingSource,
 	type SubscriptionSource,
@@ -119,11 +120,17 @@ export function SubscriptionCreateDialog({
 	const [planSlug, setPlanSlug] = useState(initialPlanSlug);
 	const [billingTermMonths, setBillingTermMonths] = useState(initialBillingTermMonths);
 	const [fundingSource, setFundingSource] = useState<SubscriptionFundingSource>("stripe");
-	const [source, setSource] = useState<SubscriptionSource | null>(null);
+	const [selectedSource, setSource] = useState<SubscriptionSource | null>(null);
 	const reusableSubscriptions = useReusableSubscriptions(
 		billingClient,
 		open && hostedAccess.canCreateCloudAgents,
 	);
+	const source = resolveSubscriptionSource({
+		selected: selectedSource,
+		includedAvailable: false,
+		reusableSubscriptions:
+			reusableSubscriptions.error == null ? reusableSubscriptions.data : undefined,
+	});
 	const selectedReusableSubscription =
 		source?.mode === "existing"
 			? (reusableSubscriptions.data?.find(
