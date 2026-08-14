@@ -11,8 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import invalidate_api_key_auth_cache
-from app.core.config import settings
-from app.core.database import get_session, runtime_snapshot_session
+from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
@@ -91,14 +90,8 @@ from app.services.runtime_manifest_resources import (
     lock_runtime_manifest_skill_reservations,
 )
 from app.services.runtime_observation import RuntimeObservationProtocolError
-from app.services.runtime_source import (
-    RuntimeSourceError,
-    RuntimeSourceNotFoundError,
-    expected_runtime_bundle_v2_etag,
-    load_runtime_source_batch,
-    render_runtime_source,
-    vault_key_identity,
-)
+from app.services.runtime_source import RuntimeSourceError, RuntimeSourceNotFoundError
+from app.services.runtime_source_authority import load_runtime_source_authority
 from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
@@ -821,38 +814,25 @@ async def platform_get_runtime_source_authority(
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeSourceAuthorityResponse:
     owner_user_id = await _resolve_runtime_source_authority_owner_id(db, owner)
-    async with runtime_snapshot_session() as source_db:
-        batch = await load_runtime_source_batch(
-            source_db,
-            environment_ids=[agent_id],
+    try:
+        authority = await load_runtime_source_authority(
+            environment_id=agent_id,
             owner_user_id=owner_user_id,
         )
-        try:
-            source = render_runtime_source(
-                batch,
-                environment_id=agent_id,
-                public_api_url=settings.public_api_url,
-                vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-                decrypt_secrets=False,
-            )
-        except RuntimeSourceNotFoundError:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found") from None
-        except RuntimeSourceError:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Runtime source is invalid",
-            ) from None
-        row = batch.rows[agent_id]
-        state = row.state
-        if state is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found")
-        return RuntimeSourceAuthorityResponse(
-            environmentId=row.environment.id,
-            deploymentId=state.deployment_id,
-            instanceId=state.instance_id,
-            sourceRevision=source.source_revision,
-            etag=expected_runtime_bundle_v2_etag(source.source_revision),
-        )
+    except RuntimeSourceNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found") from None
+    except RuntimeSourceError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Runtime source is invalid",
+        ) from None
+    return RuntimeSourceAuthorityResponse(
+        environmentId=authority.environment_id,
+        deploymentId=authority.deployment_id,
+        instanceId=authority.instance_id,
+        sourceRevision=authority.source_revision,
+        etag=authority.etag,
+    )
 
 
 @router.put(

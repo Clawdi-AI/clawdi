@@ -275,6 +275,7 @@ strict = [
     "app/services/runtime_observation.py",
     "app/services/runtime_observation_retention_worker.py",
     "app/services/runtime_source.py",
+    "app/services/runtime_source_authority.py",
     "app/services/runtime_state_cleanup.py",
     "app/services/safe_public_http.py",
     "app/services/secret_detection.py",
