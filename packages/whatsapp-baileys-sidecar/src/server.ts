@@ -16,7 +16,7 @@ import {
 	RuntimeNotConnectedError,
 } from "./types.js";
 
-export type ServerConfig = {
+type ServerConfig = {
 	apiToken: string;
 	maxBodyBytes?: number;
 };
@@ -133,8 +133,8 @@ export function createSidecarServer(
 				return;
 			}
 			if (method === "GET" && path === "/v1/provider-events") {
-				const limit = parseEventLimit(request.url);
-				writeJson(response, 200, { events: runtime.providerEvents(limit) });
+				const { limit, waitMs } = parseProviderEventsQuery(request.url);
+				writeJson(response, 200, { events: await runtime.waitForProviderEvents(limit, waitMs) });
 				return;
 			}
 			if (method === "POST" && path === "/v1/provider-events/ack") {
@@ -278,13 +278,18 @@ function parseQueryBody(body: unknown) {
 	};
 }
 
-function parseEventLimit(rawUrl: string | undefined): number {
-	const raw = new URL(rawUrl ?? "/", "http://127.0.0.1").searchParams.get("limit") ?? "100";
+function parseProviderEventsQuery(rawUrl: string | undefined): { limit: number; waitMs: number } {
+	const params = new URL(rawUrl ?? "/", "http://127.0.0.1").searchParams;
+	const raw = params.get("limit") ?? "100";
 	const limit = Number(raw);
 	if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
 		throw new HttpError(400, "limit_must_be_1_to_100");
 	}
-	return limit;
+	const waitMs = Number(params.get("waitMs") ?? "0");
+	if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 8_000) {
+		throw new HttpError(400, "waitMs_must_be_0_to_8000");
+	}
+	return { limit, waitMs };
 }
 
 function parseEventAckBody(body: unknown): number {

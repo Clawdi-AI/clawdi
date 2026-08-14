@@ -74,6 +74,7 @@ from app.schemas.admin import (
     AdminChannelVisibility,
     AdminChannelWebhookSecretResponse,
     AdminDeploymentManagedAiProviderResponse,
+    AdminDeploymentManagedAiProviderRuntimeMetadataReplace,
     AdminDeploymentManagedAiProviderUpsert,
     AdminEnvironmentCreate,
     AdminManagedAiProviderResponse,
@@ -163,6 +164,7 @@ from app.services.managed_ai_provider import (
     find_clawdi_managed_provider,
     is_v2_deployment_managed_provider_id,
     lock_deployment_managed_provider_mutation,
+    replace_deployment_managed_provider_metadata,
     upsert_clawdi_managed_provider,
 )
 from app.services.principal_lifecycle import (
@@ -184,6 +186,8 @@ from app.services.runtime_manifest_resources import (
     enabled_runtime_manifest_skill_ids,
     lock_runtime_manifest_skill_reservations,
 )
+from app.services.runtime_observation import RuntimeObservationProtocolError
+from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_provider_runtime_manifest_changed,
@@ -647,6 +651,37 @@ async def _assert_admin_target_owns_environment(
     return target.id
 
 
+async def _assert_admin_cleanup_target_owns_environment(
+    db: AsyncSession,
+    *,
+    env: AgentEnvironment,
+    target_clerk_id: str | None,
+) -> UUID:
+    """Verify retained ownership without requiring an active principal."""
+
+    if target_clerk_id is None:
+        return env.user_id
+
+    target_user_id = await db.scalar(
+        select(User.id).where(
+            User.principal_kind == PRINCIPAL_KIND_CLERK,
+            User.clerk_id == target_clerk_id,
+        )
+    )
+    if target_user_id is None or env.user_id != target_user_id:
+        logger.warning(
+            "admin_environment_owner_rejected target_clerk_id=%s env_id=%s owner_user_id=%s",
+            target_clerk_id,
+            env.id,
+            env.user_id,
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Agent environment is not owned by target user",
+        )
+    return target_user_id
+
+
 @router.post("/auth/keys", response_model=ApiKeyCreated)
 async def admin_mint_api_key(
     body: AdminApiKeyCreate,
@@ -1032,6 +1067,93 @@ async def admin_upsert_clawdi_managed_ai_provider(
         owner.ref,
         provider.provider_id,
     )
+    return await _admin_deployment_managed_provider_response(
+        db,
+        provider=provider,
+        owner=owner,
+        target=target,
+    )
+
+
+@router.put(
+    "/ai-providers/{provider_id}/runtime-metadata",
+    response_model=AdminDeploymentManagedAiProviderResponse,
+)
+async def admin_replace_deployment_managed_ai_provider_metadata(
+    provider_id: str,
+    body: AdminDeploymentManagedAiProviderRuntimeMetadataReplace,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminDeploymentManagedAiProviderResponse:
+    """Replace deployment-managed runtime metadata without changing auth state."""
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
+    owner = body.owner
+    action = "ai_provider.managed.runtime_metadata.replace"
+    target = await _find_deployment_managed_provider_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action=action,
+    )
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    provider = await find_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    if provider is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+    try:
+        _require_managed_provider_contract(provider)
+        changed = replace_deployment_managed_provider_metadata(
+            provider,
+            base_url=body.base_url,
+            models=(
+                [model.model_dump(exclude_none=True) for model in body.models]
+                if body.models is not None
+                else None
+            ),
+        )
+    except (HTTPException, ValueError) as exc:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider_uuid=provider.id,
+            outcome="failed",
+        )
+        await db.commit()
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    if changed:
+        await db.flush()
+        await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    await db.commit()
+    await db.refresh(provider)
     return await _admin_deployment_managed_provider_response(
         db,
         provider=provider,
@@ -1736,7 +1858,7 @@ async def _admin_delete_environment(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    target_user_id = await _assert_admin_target_owns_environment(
+    target_user_id = await _assert_admin_cleanup_target_owns_environment(
         db,
         env=env,
         target_clerk_id=target_clerk_id,
@@ -1847,6 +1969,16 @@ async def _admin_upsert_runtime_state(
         target_clerk_id=body.target_clerk_id,
     )
     await lock_ai_provider_owner(db, target_user_id)
+    try:
+        await lock_runtime_state_write_fence(
+            db,
+            environment_id=environment_id,
+            owner_id=target_user_id,
+            deployment_id=body.deployment_id,
+        )
+    except RuntimeObservationProtocolError as exc:
+        await db.rollback()
+        raise HTTPException(exc.status_code, exc.detail()) from exc
     env = (
         await db.execute(
             select(AgentEnvironment)
@@ -2061,7 +2193,7 @@ async def _admin_delete_runtime_state(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
-    target_user_id = await _assert_admin_target_owns_environment(
+    target_user_id = await _assert_admin_cleanup_target_owns_environment(
         db,
         env=env,
         target_clerk_id=target_clerk_id,

@@ -39,7 +39,6 @@ from app.services.runtime_source import expected_runtime_bundle_v2_etag
 from tests.conftest import create_env_with_project
 from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS,
-    active_cli_diagnostics,
     canonical_hosted_runtime_state,
     ensure_canonical_codex_tool_provider,
 )
@@ -575,7 +574,6 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         applied_generation=4,
         applied_instance_id="iid-observed-api",
     )
-    observed["cli"] = active_cli_diagnostics(_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC)
     heartbeat = await client.post(
         f"/v1/agents/{env_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": observed},
@@ -593,7 +591,6 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         applied_generation=4,
         applied_instance_id="iid-observed-api",
     )
-    observed["cli"] = active_cli_diagnostics(_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC)
     received_at_lower_bound = datetime.now(UTC)
     heartbeat = await client.post(
         f"/v1/agents/{env_id}/sync-heartbeat",

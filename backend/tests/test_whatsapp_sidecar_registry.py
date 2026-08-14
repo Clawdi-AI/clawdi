@@ -5,7 +5,9 @@ from uuid import UUID
 
 import pytest
 
+import app.services.whatsapp_delivery_transport as delivery_transport_module
 import app.services.whatsapp_sidecar_registry as sidecar_registry_module
+from app.services.whatsapp_delivery_transport import resolve_whatsapp_delivery_transport
 from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarConfig,
     WhatsAppProviderMessageEvent,
@@ -16,13 +18,10 @@ from app.services.whatsapp_provider_bridge import (
 )
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
-    resolve_whatsapp_delivery_transport,
 )
 
 
 class _FakeSidecarClient:
-    transport_mode = "sidecar"
-
     def __init__(self, config: WhatsAppBaileysSidecarConfig) -> None:
         self.config = config
         self.connected = False
@@ -31,8 +30,9 @@ class _FakeSidecarClient:
     async def aclose(self) -> None:
         self.closed = True
 
-    async def provider_events(self, *, limit: int = 100):
+    async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
         assert limit == 100
+        assert wait_ms in {0, 8_000}
         return []
 
     async def acknowledge_provider_events(self, *, through_sequence: int):
@@ -115,12 +115,12 @@ def test_delivery_transport_resolves_custom_session(
             return client
 
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "_configured_delivery_service",
         lambda: service_config,
     )
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "_delivery_sidecar_service",
         FakeDeliveryService(),
     )
@@ -178,8 +178,9 @@ async def test_provider_ingress_ack_waits_until_persistence_returns(monkeypatch)
         def __init__(self) -> None:
             self._first_poll = True
 
-        async def provider_events(self, *, limit: int = 100):
+        async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
             assert limit == 100
+            assert wait_ms == 8_000
             if self._first_poll:
                 self._first_poll = False
                 return [event]
@@ -204,6 +205,36 @@ async def test_provider_ingress_ack_waits_until_persistence_returns(monkeypatch)
             "persistence-returned-after-commit",
             "acknowledged",
         ]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_provider_ingress_reissues_long_poll_without_idle_sleep():
+    account_id = UUID("00000000-0000-4000-8000-000000000905")
+    second_request = asyncio.Event()
+    calls = 0
+
+    class PumpClient:
+        async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
+            nonlocal calls
+            calls += 1
+            assert limit == 100
+            assert wait_ms == 8_000
+            if calls == 2:
+                second_request.set()
+                await asyncio.Future()
+            return []
+
+        async def acknowledge_provider_events(self, *, through_sequence: int):
+            raise AssertionError(through_sequence)
+
+    registry = ConfiguredWhatsAppSidecarRegistry("")
+    task = asyncio.create_task(registry._pump_provider_ingress(account_id, PumpClient()))
+    try:
+        await asyncio.wait_for(second_request.wait(), timeout=1)
+        assert calls == 2
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -251,7 +282,8 @@ async def test_terminal_ingress_releases_local_owner_and_can_reattach(
     class PumpClient:
         connected = True
 
-        async def provider_events(self, *, limit=100):
+        async def provider_events(self, *, limit=100, wait_ms=0):
+            assert wait_ms == 8_000
             assert limit == 100
             return [event]
 

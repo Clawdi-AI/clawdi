@@ -242,8 +242,8 @@ function eventMatchesApplyIdentity(
 	identity: RuntimeApplyIdentity,
 ): boolean {
 	return (
-		event.applied.generation === identity.generation &&
-		event.applied.etag === identity.manifestETag &&
+		event.generation === identity.generation &&
+		event.manifestETag === identity.manifestETag &&
 		event.applyReceiptId === identity.applyReceiptId &&
 		event.bootNonce === identity.bootNonce
 	);

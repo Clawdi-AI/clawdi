@@ -82,6 +82,7 @@ type ProviderState = {
 	): proto.IMessage | undefined;
 	appendProviderEvents(events: readonly ProviderMessageEventInput[]): void;
 	providerEvents(limit: number): ProviderMessageEvent[];
+	waitForProviderEvents(limit: number, waitMs: number): Promise<ProviderMessageEvent[]>;
 	acknowledgeProviderEvents(throughSequence: number): void;
 	resetPhysicalAuth(): void;
 	close(): void;
@@ -400,6 +401,15 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	providerEvents(limit: number): ProviderMessageEvent[] {
 		try {
 			return this.providerState.providerEvents(limit);
+		} catch (error: unknown) {
+			this.markFatal("provider_inbox_persistence_failed", asError(error));
+			throw error;
+		}
+	}
+
+	async waitForProviderEvents(limit: number, waitMs: number): Promise<ProviderMessageEvent[]> {
+		try {
+			return await this.providerState.waitForProviderEvents(limit, waitMs);
 		} catch (error: unknown) {
 			this.markFatal("provider_inbox_persistence_failed", asError(error));
 			throw error;

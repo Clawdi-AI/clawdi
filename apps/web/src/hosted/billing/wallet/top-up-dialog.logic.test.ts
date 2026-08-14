@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { WalletTopupResult, WalletTransaction } from "@/hosted/billing/contracts";
+import { usdInputToCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	handleTopupStartResult,
@@ -29,6 +30,7 @@ function queryClientWithWalletData(): QueryClient {
 		term_price_cents: 1_500,
 	});
 	qc.setQueryData(billingKeys.deployments, []);
+	qc.setQueryData(billingKeys.subscriptions, { pages: [], pageParams: [] });
 	qc.setQueryData(["get", "/v1/agents"], []);
 	return qc;
 }
@@ -74,6 +76,7 @@ describe("handleTopupStartResult", () => {
 				?.isInvalidated,
 		).toBe(true);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
 		expect(setup.resetAttempt).toHaveBeenCalledTimes(1);
 		expect(setup.closeDialog).toHaveBeenCalledTimes(1);
@@ -121,6 +124,7 @@ describe("handleTopupStartResult", () => {
 				?.isInvalidated,
 		).toBe(false);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
+		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(false);
 		expect(setup.closeDialog).not.toHaveBeenCalled();
 		expect(setup.resetAttempt).not.toHaveBeenCalled();
 		expect(setup.toastInfo).not.toHaveBeenCalled();
@@ -183,20 +187,27 @@ describe("walletTopupCreditIsApplied", () => {
 
 describe("topUpAmountCentsForUsdShortfall", () => {
 	test("rounds up to whole dollars and clamps to the allowed top-up range", () => {
-		expect(topUpAmountCentsForUsdShortfall(4)).toBe(1_000);
-		expect(topUpAmountCentsForUsdShortfall(14)).toBe(1_400);
-		expect(topUpAmountCentsForUsdShortfall(25.001)).toBe(2_600);
-		expect(topUpAmountCentsForUsdShortfall(2_500)).toBe(200_000);
+		expect(topUpAmountCentsForUsdShortfall("4")).toBe(1_000);
+		expect(topUpAmountCentsForUsdShortfall("14")).toBe(1_400);
+		expect(topUpAmountCentsForUsdShortfall("25.001")).toBe(2_600);
+		expect(topUpAmountCentsForUsdShortfall("25.000000000000000001")).toBe(2_600);
+		expect(topUpAmountCentsForUsdShortfall("2500")).toBe(200_000);
 	});
 
 	test("ignores missing or invalid USD inputs", () => {
 		expect(topUpAmountCentsForUsdShortfall(null)).toBeNull();
-		expect(topUpAmountCentsForUsdShortfall(Number.NaN)).toBeNull();
+		expect(topUpAmountCentsForUsdShortfall("NaN")).toBeNull();
 	});
 });
 
 describe("validTopUpAmountCents", () => {
 	test("enforces visible bounds and whole-dollar increments", () => {
+		expect(usdInputToCents("25")).toBe(2_500);
+		expect(validTopUpAmountCents(usdInputToCents("25.01") ?? Number.NaN)).toBe(false);
+		for (const invalid of ["0", "-1", "01", ".50", "1.", "1.001", "1e2", " NaN", "Infinity"]) {
+			expect(usdInputToCents(invalid)).toBeNull();
+		}
+		expect(usdInputToCents("90071992547410")).toBeNull();
 		expect(validTopUpAmountCents(1_000)).toBe(true);
 		expect(validTopUpAmountCents(200_000)).toBe(true);
 		expect(validTopUpAmountCents(999)).toBe(false);

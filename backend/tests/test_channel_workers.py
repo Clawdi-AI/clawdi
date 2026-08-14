@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
+from app.core.config import settings
+from app.routes.channel_routers.whatsapp import _wait_whatsapp_websocket_inbox
 from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWorker
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
+from app.services.channel_wakeups import ChannelWakeup
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.channels import ChannelRetentionBatch
 from app.services.discord_command_reconciliation_worker import (
@@ -15,7 +20,12 @@ from app.services.discord_command_reconciliation_worker import (
 from app.services.discord_gateway_worker import DiscordGatewayWorker
 from app.services.principal_lifecycle_cleanup_worker import PrincipalLifecycleCleanupWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
-from app.workers.channels import ChannelWorkerHealth, _handle_health_request, build_channel_workers
+from app.workers.channels import (
+    ChannelWorkerHealth,
+    _handle_health_request,
+    build_channel_workers,
+    run_channel_workers,
+)
 
 pytestmark = pytest.mark.committed_db
 
@@ -33,6 +43,141 @@ def test_channel_worker_stack_runs_revoke_delivery_webhook_gateway_and_retention
         ChannelMessageRetentionWorker,
         RuntimeObservationRetentionWorker,
     )
+
+
+@pytest.mark.asyncio
+async def test_channel_worker_process_owns_postgres_listener(monkeypatch):
+    import app.workers.channels as channel_workers
+
+    calls: list[str] = []
+
+    class Worker:
+        async def run_forever(self, _stop):
+            calls.append("worker")
+
+    async def start_listener():
+        calls.append("start-listener")
+
+    async def stop_listener():
+        calls.append("stop-listener")
+
+    monkeypatch.setattr(channel_workers, "start_postgres_listener", start_listener)
+    monkeypatch.setattr(channel_workers, "stop_postgres_listener", stop_listener)
+    monkeypatch.setattr(channel_workers, "build_channel_workers", lambda: (Worker(),))
+
+    await run_channel_workers(asyncio.Event())
+
+    assert calls == ["start-listener", "worker", "stop-listener"]
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_worker_wakes_on_enqueue_signal(monkeypatch):
+    wakeup = ChannelWakeup()
+    stop = asyncio.Event()
+    idle = asyncio.Event()
+    awakened = asyncio.Event()
+    calls = 0
+    worker = ChannelDeliveryWorker(None, poll_interval_seconds=60, wakeup=wakeup)
+
+    async def fake_run_once():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            idle.set()
+            return None
+        awakened.set()
+        stop.set()
+        return None
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+    task = asyncio.create_task(worker.run_forever(stop))
+    await idle.wait()
+
+    wakeup.signal()
+
+    await asyncio.wait_for(awakened.wait(), timeout=1)
+    await asyncio.wait_for(task, timeout=1)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_worker_polls_when_listener_is_disabled(monkeypatch):
+    stop = asyncio.Event()
+    calls = 0
+    worker = ChannelDeliveryWorker(None, poll_interval_seconds=0, wakeup=ChannelWakeup())
+
+    async def fake_run_once():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            stop.set()
+        return None
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+
+    await asyncio.wait_for(worker.run_forever(stop), timeout=1)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_websocket_inbox_wakes_on_inbound_signal(monkeypatch):
+    import app.routes.channel_routers.whatsapp as whatsapp_routes
+
+    wakeup = ChannelWakeup()
+    first_query_complete = asyncio.Event()
+    query_count = 0
+    message = SimpleNamespace(
+        inbox_sequence=1,
+        external_chat_id="15551110000@s.whatsapp.net",
+        payload={},
+        provider_message_id="message-1",
+        text="hello",
+    )
+
+    class Result:
+        def __init__(self, values):
+            self._values = values
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._values
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def execute(self, _statement):
+            nonlocal query_count
+            query_count += 1
+            if query_count == 1:
+                first_query_complete.set()
+                return Result([])
+            return Result([message])
+
+    monkeypatch.setattr(whatsapp_routes, "async_session_factory", Session)
+    monkeypatch.setattr(whatsapp_routes, "channel_inbound_messages_enqueued", wakeup)
+    monkeypatch.setattr(settings, "channel_long_poll_max_seconds", 60)
+    monkeypatch.setattr(settings, "channel_long_poll_interval_seconds", 60)
+    waiting = asyncio.create_task(
+        _wait_whatsapp_websocket_inbox(
+            account_id=UUID("00000000-0000-4000-8000-000000000906"),
+            bot_agent_link_id=UUID("00000000-0000-4000-8000-000000000907"),
+            after_sequence=0,
+            limit=100,
+        )
+    )
+    await first_query_complete.wait()
+
+    wakeup.signal()
+
+    events = await asyncio.wait_for(waiting, timeout=1)
+    assert [event.provider_message_id for event in events] == ["message-1"]
+    assert query_count == 2
 
 
 @pytest.mark.asyncio

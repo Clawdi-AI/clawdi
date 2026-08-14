@@ -47,12 +47,19 @@ from app.models.channel import (
     ChannelDelivery,
     ChannelMessage,
 )
+from app.routes.channel_routers.discord import (
+    cleanup_discord_guild_commands_after_authority_revoked,
+)
 from app.routes.channel_routers.shared import (
     account_response,
     binding_response,
     channel_visibility,
     discord_binding_guild_id,
     message_response,
+)
+from app.routes.channel_routers.telegram import (
+    reconcile_telegram_binding_unpair_from_ui,
+    reconcile_telegram_link_unlink,
 )
 from app.schemas.channel import (
     ChannelAccountCreate,
@@ -983,10 +990,6 @@ async def delete_channel_agent_link(
     )
     await db.commit()
     if discord_guild_ids:
-        from app.routes.channel_routers.discord import (
-            cleanup_discord_guild_commands_after_authority_revoked,
-        )
-
         background_tasks.add_task(
             cleanup_discord_guild_commands_after_authority_revoked,
             account_id=account.id,
@@ -994,8 +997,6 @@ async def delete_channel_agent_link(
             guild_ids=discord_guild_ids,
         )
     elif account.provider == CHANNEL_PROVIDER_TELEGRAM and bindings:
-        from app.routes.channel_routers.telegram import reconcile_telegram_link_unlink
-
         cleaned = await reconcile_telegram_link_unlink(
             db=db,
             account=account,
@@ -1157,10 +1158,6 @@ async def delete_channel_binding(
     provider_cleanup_status = "not_applicable"
     warning: str | None = None
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
-        from app.routes.channel_routers.telegram import (
-            reconcile_telegram_binding_unpair_from_ui,
-        )
-
         outcome = await reconcile_telegram_binding_unpair_from_ui(
             db=db,
             account=account,
@@ -1194,10 +1191,6 @@ async def delete_channel_binding(
         )
         await db.commit()
     elif account.provider == CHANNEL_PROVIDER_DISCORD and discord_guild_id is not None:
-        from app.routes.channel_routers.discord import (
-            cleanup_discord_guild_commands_after_authority_revoked,
-        )
-
         cleanup_succeeded = await cleanup_discord_guild_commands_after_authority_revoked(
             account_id=account.id,
             bot_agent_link_id=link.id,

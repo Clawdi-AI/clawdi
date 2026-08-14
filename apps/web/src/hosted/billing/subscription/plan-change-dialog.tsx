@@ -59,6 +59,29 @@ const PLAN_ITEMS = [
 	{ value: "compute_performance", label: "Performance" },
 ] as const;
 
+type ManagementMode = "plan-billing" | "payment-source";
+
+export function planChangeManagementModes({
+	allowCombinedChange,
+	paymentSourceOnly,
+	hasUsablePlans,
+}: {
+	allowCombinedChange: boolean;
+	paymentSourceOnly: boolean;
+	hasUsablePlans: boolean;
+}): {
+	hasModePicker: boolean;
+	initialMode: ManagementMode;
+	planBillingAvailable: boolean;
+} {
+	const planBillingAvailable = allowCombinedChange || hasUsablePlans;
+	return {
+		hasModePicker: !allowCombinedChange && !paymentSourceOnly,
+		initialMode: paymentSourceOnly || !planBillingAvailable ? "payment-source" : "plan-billing",
+		planBillingAvailable,
+	};
+}
+
 function planSlug(value: string | null): ComputePlanSlug | null {
 	return value === "compute_basic" || value === "compute_performance" ? value : null;
 }
@@ -203,7 +226,16 @@ export function PlanChangeDialog({
 			),
 		[currentBillingTermMonths, currentFundingSource, currentPlanSlug, initialPlanSlug],
 	);
+	const hasUsablePlans = plans.some(
+		(plan) => explicitPlanOffers(plan).length > 0 || planOffers(plan).length > 0,
+	);
+	const managementModes = planChangeManagementModes({
+		allowCombinedChange,
+		paymentSourceOnly,
+		hasUsablePlans,
+	});
 	const [selection, setSelection] = useState(initialSelection);
+	const [managementMode, setManagementMode] = useState<ManagementMode>(managementModes.initialMode);
 	const exit = useDialogExitLifecycle({ open, value: quote, emptyValue: null });
 	const displayedQuote = exit.renderedValue;
 	const step = planChangeDialogStep({
@@ -260,10 +292,27 @@ export function PlanChangeDialog({
 	const walletReady =
 		!planChangeNeedsWalletBalance(selection, currentPlanSlug, currentBillingTermMonths) ||
 		walletBalanceUsd !== null;
+	const hasManagementModes = managementModes.hasModePicker;
+	const paymentSourceMode = paymentSourceOnly || managementMode === "payment-source";
 
 	useEffect(() => {
-		if (open) setSelection(initialSelection);
-	}, [initialSelection, open]);
+		if (!open) return;
+		setSelection(initialSelection);
+		setManagementMode(managementModes.initialMode);
+	}, [initialSelection, managementModes.initialMode, open]);
+
+	function updateManagementMode(nextMode: ManagementMode) {
+		setManagementMode(nextMode);
+		setSelection(
+			nextMode === "payment-source"
+				? {
+						target_plan_slug: currentPlanSlug,
+						target_billing_term_months: currentBillingTermMonths,
+						funding_source: currentFundingSource,
+					}
+				: initialSelection,
+		);
+	}
 
 	function updatePlan(value: string | null) {
 		const nextPlanSlug = planSlug(value);
@@ -340,7 +389,9 @@ export function PlanChangeDialog({
 									? quoteTitle
 									: paymentSourceOnly
 										? "Change payment source"
-										: "Change compute subscription"}
+										: hasManagementModes
+											? "Manage compute subscription"
+											: "Change compute subscription"}
 					</DialogTitle>
 					<DialogDescription>
 						{step === "pending"
@@ -353,9 +404,11 @@ export function PlanChangeDialog({
 										: displayedQuote.change_kind === "immediate_upgrade"
 											? "The quoted proration is charged now. Compute changes after payment is confirmed."
 											: `The current plan remains active until ${formatShortDate(displayedQuote.effective_at)}.`
-									: paymentSourceOnly
+									: paymentSourceMode
 										? "Choose a new payment source. Your plan and billing term stay the same; eligibility is verified before the change is applied."
-										: "Choose a compute plan, billing term, and payment source, then review the exact price and timing."}
+										: allowCombinedChange
+											? "Choose a compute plan, billing term, and payment source, then review the exact price and timing."
+											: "Choose a compute plan and billing term. Your payment source stays the same."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -515,7 +568,33 @@ export function PlanChangeDialog({
 					</div>
 				) : (
 					<div className="flex flex-col gap-5">
-						{paymentSourceOnly ? (
+						{hasManagementModes ? (
+							<ToggleGroup
+								value={[managementMode]}
+								onValueChange={(value) => {
+									const nextMode = value[0];
+									if (nextMode === "plan-billing" || nextMode === "payment-source") {
+										updateManagementMode(nextMode);
+									}
+								}}
+								variant="outline"
+								size="sm"
+								className="grid w-full grid-cols-2"
+								aria-label="Subscription management mode"
+							>
+								<ToggleGroupItem
+									value="plan-billing"
+									className="min-w-0 px-2"
+									disabled={!managementModes.planBillingAvailable}
+								>
+									Plan &amp; billing
+								</ToggleGroupItem>
+								<ToggleGroupItem value="payment-source" className="min-w-0 px-2">
+									Payment source
+								</ToggleGroupItem>
+							</ToggleGroup>
+						) : null}
+						{paymentSourceMode ? (
 							<div className="grid gap-3 border-y py-3 sm:grid-cols-2">
 								<dl>
 									<dt className="text-xs text-muted-foreground">Current plan</dt>
@@ -569,42 +648,44 @@ export function PlanChangeDialog({
 								</div>
 							</div>
 						)}
-						<div className="flex flex-col gap-1.5">
-							<Label id="plan-change-funding-label">Payment source</Label>
-							<ToggleGroup
-								value={[selection.funding_source]}
-								onValueChange={(value) => {
-									const next = value[0];
-									if (next === "stripe" || next === "wallet") {
-										setSelection((current) =>
-											selectPlanChangeFundingSource(
-												current,
-												next,
-												currentPlanSlug,
-												currentBillingTermMonths,
-												allowCombinedChange,
-											),
-										);
-									}
-								}}
-								variant="outline"
-								className="grid w-full grid-cols-2"
-								aria-labelledby="plan-change-funding-label"
-							>
-								<ToggleGroupItem value="stripe">
-									<CreditCard data-icon="inline-start" /> Card
-								</ToggleGroupItem>
-								<ToggleGroupItem value="wallet">
-									<WalletCards data-icon="inline-start" /> Wallet
-								</ToggleGroupItem>
-							</ToggleGroup>
-						</div>
+						{allowCombinedChange || paymentSourceMode ? (
+							<div className="flex flex-col gap-1.5">
+								<Label id="plan-change-funding-label">Payment source</Label>
+								<ToggleGroup
+									value={[selection.funding_source]}
+									onValueChange={(value) => {
+										const next = value[0];
+										if (next === "stripe" || next === "wallet") {
+											setSelection((current) =>
+												selectPlanChangeFundingSource(
+													current,
+													next,
+													currentPlanSlug,
+													currentBillingTermMonths,
+													allowCombinedChange,
+												),
+											);
+										}
+									}}
+									variant="outline"
+									className="grid w-full grid-cols-2"
+									aria-labelledby="plan-change-funding-label"
+								>
+									<ToggleGroupItem value="stripe">
+										<CreditCard data-icon="inline-start" /> Card
+									</ToggleGroupItem>
+									<ToggleGroupItem value="wallet">
+										<WalletCards data-icon="inline-start" /> Wallet
+									</ToggleGroupItem>
+								</ToggleGroup>
+							</div>
+						) : null}
 						{selection.funding_source === "wallet" && !walletReady ? (
 							<p className="text-sm text-muted-foreground" role="status">
 								Loading Wallet balance…
 							</p>
 						) : null}
-						{selectedOffer ? (
+						{selectedOffer && !paymentSourceMode ? (
 							<p className="text-sm text-muted-foreground">
 								Listed recurring price {formatCents(selectedOffer.price_cents)}
 								{selectedOffer.billing_term_months === 1 ? "/month" : "/year"}

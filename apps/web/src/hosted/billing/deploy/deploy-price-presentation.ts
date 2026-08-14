@@ -3,7 +3,6 @@ import {
 	billingTermLabel,
 	billingTermSuffix,
 	formatCents,
-	formatUsd,
 	formatUsdExact,
 } from "@/hosted/billing/format";
 import type { WalletDebitSummary } from "@/hosted/billing/wallet/wallet-debit-summary";
@@ -100,6 +99,6 @@ export function walletDeployAmountPresentation({
 		detail:
 			shortfallUsd === null
 				? null
-				: `Available ${formatUsdExact(walletDebit.balanceBeforeUsd)} · short ${formatUsd(shortfallUsd)}`,
+				: `Available ${formatUsdExact(walletDebit.balanceBeforeUsd)} · short ${formatUsdExact(shortfallUsd)}`,
 	};
 }

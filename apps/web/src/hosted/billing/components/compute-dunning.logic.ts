@@ -5,6 +5,10 @@ import type {
 	HostedFundingFact,
 } from "@/hosted/billing/contracts";
 import {
+	type ComputeRecoveryTarget,
+	computeSubscriptionRecoveryTarget,
+} from "@/hosted/billing/subscription/compute-subscription-recovery";
+import {
 	computeTierLabel,
 	isIncludedBasicSubscription,
 	pendingComputePlanSlug,
@@ -21,19 +25,10 @@ type FundingRevocationReason = NonNullable<HostedFundingFact["reason"]>;
 export type ComputeDunningState = {
 	paymentState: Exclude<ComputePaymentState, "ok">;
 	fundingSource: "stripe" | "wallet";
-	recoveryAction: "top_up" | "fix_payment" | "start_new" | null;
+	recoveryTarget: ComputeRecoveryTarget;
 	tone: "neutral" | "warning" | "destructive";
 	title: string;
 	description: string;
-	ctaTarget:
-		| "invoice"
-		| "fix_payment"
-		| "top_up"
-		| "start_new"
-		| "transactions"
-		| "support"
-		| "none";
-	invoiceUrl: string | null;
 	secondaryTarget: "transactions" | "support" | null;
 	fallbackOccurredAt: string | null;
 	fallbackPlanLabel: string | null;
@@ -120,18 +115,16 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		...presentation,
 		paymentState: "unpaid",
 		fundingSource: fallback.funding_source,
-		recoveryAction: "start_new",
+		recoveryTarget: { kind: "start_new", action: "start_new" },
 		description: statusUnavailable
 			? "We can’t determine whether this agent stopped or is using included Basic because its current status is unavailable. Start a new subscription to restore paid compute."
 			: stopped
 				? "No included Basic slot was available, so this agent stopped. Start a new subscription to restore paid compute."
 				: "This agent is now using included Basic. Start a new subscription to restore paid compute.",
-		invoiceUrl: null,
 		fallbackOccurredAt: fallback.occurred_at,
 		fallbackPlanLabel,
 		fallbackReason: fallback.reason,
 		recoveryPlanSlug,
-		ctaTarget: "start_new",
 	};
 }
 
@@ -143,6 +136,8 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 	}
 	if (!subscription) return null;
 	if (subscription.payment_state === "ok") return null;
+	const recoveryTarget = computeSubscriptionRecoveryTarget(subscription);
+	if (!recoveryTarget) return null;
 
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment, subscription);
 	const computeName = recoveryPlanSlug
@@ -151,7 +146,6 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 	const fundingSource = subscription.funding_source ?? "stripe";
 	const common = {
 		fundingSource,
-		invoiceUrl: subscription.latest_failed_invoice_hosted_url ?? null,
 		fallbackOccurredAt: null,
 		fallbackPlanLabel: null,
 		fallbackReason: null,
@@ -163,12 +157,11 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		return {
 			...common,
 			paymentState: "unpaid",
-			recoveryAction: "start_new",
+			recoveryTarget,
 			tone: "destructive",
 			title: "Compute subscription ended",
 			description:
 				"This paid subscription ended. Start a new subscription for this agent to restore paid compute.",
-			ctaTarget: "start_new",
 		};
 	}
 
@@ -176,11 +169,10 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		return {
 			...common,
 			paymentState: "requires_action",
-			recoveryAction: "fix_payment",
+			recoveryTarget,
 			tone: "warning",
 			title: "Payment authentication required",
 			description: `Complete the payment authentication to keep ${computeName} active.`,
-			ctaTarget: common.invoiceUrl ? "invoice" : "fix_payment",
 		};
 	}
 
@@ -188,22 +180,20 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		return {
 			...common,
 			paymentState: "past_due",
-			recoveryAction: "top_up",
+			recoveryTarget,
 			tone: "warning",
 			title: "Wallet payment past due",
 			description:
 				"Top up your Wallet. Stripe will keep the invoice open while funds are short, and billing will update automatically after payment completes.",
-			ctaTarget: "top_up",
 		};
 	}
 
 	return {
 		...common,
 		paymentState: "past_due",
-		recoveryAction: "fix_payment",
+		recoveryTarget,
 		tone: "warning",
 		title: "Payment past due",
 		description: "Update the card payment method for the open invoice.",
-		ctaTarget: "fix_payment",
 	};
 }

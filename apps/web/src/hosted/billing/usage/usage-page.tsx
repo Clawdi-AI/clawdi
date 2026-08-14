@@ -21,7 +21,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import type { HostedUsageSummary, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { formatUsdExact } from "@/hosted/billing/format";
+import {
+	addDecimals,
+	compareDecimals,
+	decimalRatioPercent,
+	formatUsdExact,
+} from "@/hosted/billing/format";
 import { useManagedModelCatalog, useUsage } from "@/hosted/billing/hooks";
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
@@ -70,23 +75,8 @@ function compareStableText(left: string, right: string): number {
 	return 0;
 }
 
-function decimalUsdParts(value: string): readonly [string, string] {
-	const match = /^\+?(\d+)(?:\.(\d+))?$/.exec(value.trim());
-	if (!match) return ["0", ""];
-	return [(match[1] ?? "0").replace(/^0+(?=\d)/, ""), (match[2] ?? "").replace(/0+$/, "")];
-}
-
 function compareSpendDescending(left: string, right: string): number {
-	const [leftWhole, leftFraction] = decimalUsdParts(left);
-	const [rightWhole, rightFraction] = decimalUsdParts(right);
-	if (leftWhole.length !== rightWhole.length) return rightWhole.length - leftWhole.length;
-	const wholeOrder = compareStableText(leftWhole, rightWhole);
-	if (wholeOrder !== 0) return -wholeOrder;
-	const fractionLength = Math.max(leftFraction.length, rightFraction.length);
-	return -compareStableText(
-		leftFraction.padEnd(fractionLength, "0"),
-		rightFraction.padEnd(fractionLength, "0"),
-	);
+	return -(compareDecimals(left, right) ?? 0);
 }
 
 function sortModelBreakdown(left: ModelBreakdown, right: ModelBreakdown): number {
@@ -569,26 +559,29 @@ export function UsageSummaryView({
 }
 
 function DailyUsageChart({ days }: { days: readonly DayBreakdown[] }) {
-	const amounts = days.map((day) => Number(day.amount_usd));
-	const maxAmount = Math.max(...amounts, 0);
-	const totalAmount = amounts.reduce((total, amount) => total + amount, 0);
+	const maxAmount = days.reduce(
+		(maximum, day) => (compareDecimals(day.amount_usd, maximum) === 1 ? day.amount_usd : maximum),
+		"0",
+	);
+	const totalAmount = days.reduce((total, day) => addDecimals(total, day.amount_usd) ?? total, "0");
 	const firstDay = days[0];
 	const lastDay = days.at(-1);
 
 	return (
 		<div
 			role="img"
-			aria-label={`Daily spend from ${firstDay ? formatUsageDate(firstDay.date) : "the start of the window"} to ${lastDay ? formatUsageDate(lastDay.date) : "the end of the window"}: ${formatUsdExact(String(totalAmount))} total.`}
+			aria-label={`Daily spend from ${firstDay ? formatUsageDate(firstDay.date) : "the start of the window"} to ${lastDay ? formatUsageDate(lastDay.date) : "the end of the window"}: ${formatUsdExact(totalAmount)} total.`}
 		>
 			<div className="mb-3 flex justify-end text-xs text-muted-foreground">
 				<span className="font-medium tabular-nums text-foreground">
-					Peak {formatUsdExact(String(maxAmount))}
+					Peak {formatUsdExact(maxAmount)}
 				</span>
 			</div>
 			<div className="flex h-36 items-end gap-px border-b sm:h-44 sm:gap-1" aria-hidden="true">
-				{days.map((day, index) => {
-					const amount = amounts[index] ?? 0;
-					const height = maxAmount > 0 ? (amount / maxAmount) * 100 : 0;
+				{days.map((day) => {
+					const amount = day.amount_usd;
+					const positive = compareDecimals(amount, "0") === 1;
+					const height = decimalRatioPercent(amount, maxAmount);
 					const label = `${formatUsageDate(day.date)} · ${formatUsdExact(day.amount_usd)}`;
 					return (
 						<div
@@ -598,11 +591,11 @@ function DailyUsageChart({ days }: { days: readonly DayBreakdown[] }) {
 						>
 							<div
 								className={
-									amount > 0
+									positive
 										? "w-full rounded-t-sm bg-primary/75 group-hover:bg-primary"
 										: "h-0.5 w-full bg-muted"
 								}
-								style={amount > 0 ? { height: `${height}%`, minHeight: "2px" } : undefined}
+								style={positive ? { height: `${height}%`, minHeight: "2px" } : undefined}
 							/>
 						</div>
 					);

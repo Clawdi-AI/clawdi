@@ -36,10 +36,7 @@ from app.services.runtime_source import (
     render_runtime_bundle,
     render_runtime_source,
 )
-from tests.hosted_runtime_fixtures import (
-    CANONICAL_CODEX_TOOL_PROVIDER_ID,
-    active_cli_diagnostics,
-)
+from tests.hosted_runtime_fixtures import CANONICAL_CODEX_TOOL_PROVIDER_ID
 
 USER_ID = UUID("10000000-0000-0000-0000-000000000001")
 ENV_ID = UUID("20000000-0000-0000-0000-000000000002")
@@ -318,7 +315,7 @@ def _set_healthy_cli_observation(
     batch: RuntimeSourceBatch,
     *,
     desired: str,
-    daemon_version: str = "0.13.68",
+    active: str | None = None,
     source_revision: str = "a" * 64,
 ) -> HostedRuntimeConfigObservation:
     row = batch.rows[ENV_ID]
@@ -340,7 +337,7 @@ def _set_healthy_cli_observation(
             "reportedAt": "2026-07-13T00:00:00Z",
             "runtimeMode": "hosted",
             "status": "ok",
-            "activeCliVersion": daemon_version,
+            "activeCliVersion": active or desired.removeprefix("clawdi@"),
             "applied": {
                 "etag": etag,
                 "sourceRevision": source_revision,
@@ -349,7 +346,7 @@ def _set_healthy_cli_observation(
                 "appliedProviderIds": ["managed"],
             },
             "boot": None,
-            "cli": active_cli_diagnostics(desired),
+            "cli": None,
             "convergeError": None,
         },
     )
@@ -790,34 +787,51 @@ def test_codex_tool_projection_rejects_invalid_fixed_fields(field: str, value: s
 
 
 @pytest.mark.parametrize(
-    ("desired", "expected"),
+    ("desired", "active", "expected"),
     [
-        ("0.13.68", "OPENAI_API_KEY"),
-        ("0.13.69-rc.1", "OPENAI_API_KEY"),
-        ("0.13.69", "CLAWDI_AI_API_KEY"),
-        ("0.14.0-rc.1", "CLAWDI_AI_API_KEY"),
+        ("0.13.68", "0.13.68", "OPENAI_API_KEY"),
+        ("0.13.69-rc.1", "0.13.69-rc.1", "OPENAI_API_KEY"),
+        ("0.13.69", "0.13.68", "OPENAI_API_KEY"),
+        ("0.13.69", "0.13.69", "CLAWDI_AI_API_KEY"),
+        ("0.14.0-rc.1", "0.14.0-rc.1", "CLAWDI_AI_API_KEY"),
+        ("0.13.68", "0.14.0", "OPENAI_API_KEY"),
     ],
 )
 def test_codex_tool_env_respects_cli_version_boundary(
     desired: str,
+    active: str,
     expected: str,
 ) -> None:
     batch = _batch()
-    _set_healthy_cli_observation(batch, desired=f"clawdi@{desired}")
+    _set_healthy_cli_observation(
+        batch,
+        desired=f"clawdi@{desired}",
+        active=active,
+    )
 
     assert _codex_runtime_env(batch) == expected
 
 
-def test_codex_tool_env_accepts_current_cli_diagnostics_from_old_daemon() -> None:
+def test_codex_tool_env_rejects_compatible_installed_cli_until_it_is_running() -> None:
     batch = _batch()
     observation = _set_healthy_cli_observation(
         batch,
         desired="clawdi@0.13.69",
-        daemon_version="0.13.68",
+        active="0.13.68",
     )
+    assert isinstance(observation.diagnostics, dict)
+    observation.diagnostics["cli"] = {
+        "status": "installed",
+        "source": "npm",
+        "packageSpec": "clawdi@0.13.69",
+        "registry": "https://registry.npmjs.org",
+        "activePath": "/test/managed/clawdi",
+        "activeTarget": "/test/managed/packages/0.13.69/clawdi",
+        "version": "0.13.69",
+    }
 
     assert observation.diagnostics["activeCliVersion"] == "0.13.68"
-    assert _codex_runtime_env(batch) == "CLAWDI_AI_API_KEY"
+    assert _codex_runtime_env(batch) == "OPENAI_API_KEY"
 
 
 def test_codex_tool_env_stays_legacy_until_new_cli_is_observed() -> None:
@@ -832,45 +846,6 @@ def test_codex_tool_env_stays_legacy_until_new_cli_is_observed() -> None:
         "OPENAI_API_KEY",
         "OPENAI_API_KEY",
     ]
-
-
-@pytest.mark.parametrize(
-    "cli_update",
-    [
-        pytest.param(None, id="missing"),
-        pytest.param({"status": "deferred"}, id="not-installed"),
-        pytest.param(
-            {
-                "packageSpec": "clawdi@0.13.68",
-                "activeTarget": (
-                    "/var/lib/clawdi/maintained/clawdi/npm/packages/0.13.68/bin/clawdi"
-                ),
-                "version": "0.13.68",
-            },
-            id="stale",
-        ),
-        pytest.param({"source": "fixture"}, id="source-mismatch"),
-        pytest.param({"packageSpec": "clawdi@0.13.70"}, id="package-mismatch"),
-        pytest.param({"registry": "https://registry.test"}, id="registry-mismatch"),
-        pytest.param({"activePath": None}, id="active-path-missing"),
-        pytest.param({"activeTarget": None}, id="active-target-missing"),
-        pytest.param({"version": "0.13.70"}, id="version-mismatch"),
-    ],
-)
-def test_codex_tool_env_rejects_inexact_cli_diagnostics(
-    cli_update: dict[str, object] | None,
-) -> None:
-    batch = _batch()
-    observation = _set_healthy_cli_observation(batch, desired="clawdi@0.13.69")
-    assert isinstance(observation.diagnostics, dict)
-    cli = observation.diagnostics["cli"]
-    if cli_update is None:
-        observation.diagnostics["cli"] = None
-    else:
-        assert isinstance(cli, dict)
-        cli.update(cli_update)
-
-    assert _codex_runtime_env(batch) == "OPENAI_API_KEY"
 
 
 @pytest.mark.parametrize(

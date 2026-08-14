@@ -26,8 +26,14 @@ function subscription(
 		currency: "usd",
 		billing_term_months: 1,
 		cancel_at_period_end: status === "canceling",
+		deployment_id: `hdep_${subscriptionId}`,
 		agent_name: subscriptionId,
 		is_orphan: false,
+		payment_state: "ok",
+		latest_failed_invoice_hosted_url: null,
+		next_payment_attempt_at: null,
+		recovery_action: null,
+		pending_plan_slug: null,
 	};
 }
 

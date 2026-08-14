@@ -176,7 +176,6 @@ class ChannelWebhookDeliveryWorker:
             )
 
         delivered = await deliver_telegram_agent_webhook(
-            account,
             link,
             telegram_update_payload(message),
         )

@@ -11,6 +11,7 @@ const HERMES_REMOTE_PROBE_TIMEOUT_MS = 30_000;
 const HERMES_CONTROLLER_READY_TIMEOUT_MS = 5_000;
 const HERMES_CANARY_MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 const HERMES_CANARY_MCP_HEADER = "X-Clawdi-Agent-Plugin-Canary";
+const HERMES_CANARY_PROVIDER = "clawdi-agent-plugin-canary";
 
 const hermesCanaryReadySchema = z.object({ port: z.number().int().min(1).max(65_535) }).strict();
 const hermesCanaryEvidenceSchema = z
@@ -190,19 +191,26 @@ export function runHermesAgentPluginCanary(input: HermesAgentPluginCanaryInput):
 		);
 		const canary = hermesCanaryPackage({ name, nonce, port });
 		const hermesRoot = join(input.home, ".hermes");
+		// Hermes exposes this packaged-install override independently of HERMES_HOME/plugins.
+		const bundledPluginRoot = join(input.home, ".clawdi-hermes-canary-bundled-plugins");
 		mkdirSync(hermesRoot, { recursive: true, mode: 0o700 });
+		mkdirSync(bundledPluginRoot, { recursive: true, mode: 0o700 });
 		makeRuntimeUserOwned(hermesRoot);
+		makeRuntimeUserOwned(bundledPluginRoot);
 		withRuntimeUserFileAccess(() =>
 			writeFileSync(
 				join(hermesRoot, "config.yaml"),
 				[
 					"model:",
 					"  default: clawdi-agent-plugin-canary",
-					"  provider: custom",
-					`  base_url: http://127.0.0.1:${port}/v1`,
-					`  api_key: clawdi-${nonce}`,
-					"  api_mode: chat_completions",
-					"  context_length: 65536",
+					`  provider: ${HERMES_CANARY_PROVIDER}`,
+					"providers:",
+					`  ${HERMES_CANARY_PROVIDER}:`,
+					"    name: Clawdi Agent Plugin Canary",
+					`    base_url: http://127.0.0.1:${port}/v1`,
+					`    api_key: clawdi-${nonce}`,
+					"    transport: openai_chat",
+					"    default_model: clawdi-agent-plugin-canary",
 					"tools:",
 					"  tool_search:",
 					"    enabled: off",
@@ -222,10 +230,11 @@ export function runHermesAgentPluginCanary(input: HermesAgentPluginCanaryInput):
 					"--model",
 					"clawdi-agent-plugin-canary",
 					"--provider",
-					"custom",
+					HERMES_CANARY_PROVIDER,
 				],
 				environmentOverrides: {
 					HERMES_DISABLE_LAZY_INSTALLS: "1",
+					HERMES_BUNDLED_PLUGINS: bundledPluginRoot,
 					HERMES_SKIP_NODE_BOOTSTRAP: "1",
 					HTTP_PROXY: undefined,
 					HTTPS_PROXY: undefined,

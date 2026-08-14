@@ -1,8 +1,8 @@
 import type { BinaryNode } from "baileys";
 
-export const BYTE_SENTINEL = "base64-bytes";
+const BYTE_SENTINEL = "base64-bytes";
 
-export type JsonValue =
+type JsonValue =
 	| null
 	| boolean
 	| number

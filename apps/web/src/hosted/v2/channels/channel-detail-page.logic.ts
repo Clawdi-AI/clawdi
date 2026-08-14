@@ -63,13 +63,11 @@ export function nativeTransportSummary(transport: Record<string, unknown>): Nati
 				? "Unavailable"
 				: "Unknown";
 	const connection =
-		transport.mode === "in_process"
-			? "Direct connection"
-			: transport.mode === "sidecar"
-				? "Managed connection"
-				: transport.mode === "none"
-					? "Not connected"
-					: "Details unavailable";
+		transport.mode === "sidecar"
+			? "Managed connection"
+			: transport.mode === "none"
+				? "Not connected"
+				: "Details unavailable";
 	const delivery =
 		transport.supportsOutboundMessages === true
 			? "Available"

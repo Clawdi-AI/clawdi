@@ -35,6 +35,8 @@ from app.schemas.runtime_observation import (
     RuntimeObservationIngestResponse,
     RuntimeObservationReadRequest,
     RuntimeObservationReadResponse,
+    RuntimeStateCleanupReceipt,
+    RuntimeStateCleanupRequest,
 )
 from app.services.api_key import mint_api_key
 from app.services.audit import record_control_plane_audit
@@ -44,6 +46,10 @@ from app.services.platform_contract import (
     platform_request_hash,
     read_platform_replay,
     store_platform_response,
+)
+from app.services.platform_workload_auth import (
+    PlatformMutationAuth,
+    require_platform_mutation_auth,
 )
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
@@ -64,6 +70,7 @@ from app.services.runtime_observation import (
     reset_runtime_observation_consumer,
     retire_runtime_environment,
 )
+from app.services.runtime_state_cleanup import cleanup_retired_runtime_state
 
 router = APIRouter(prefix="/v2/runtime", tags=["v2-runtime-observations"])
 _JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
@@ -322,6 +329,42 @@ def _record_cursor_expiry_audit(
     )
 
 
+def _record_runtime_state_cleanup_audit(
+    db: AsyncSession,
+    *,
+    auth: PlatformMutationAuth,
+    action: str,
+    environment_id: UUID,
+    body: RuntimeStateCleanupRequest,
+    outcome: str,
+    runtime_state_deleted: bool | None = None,
+) -> None:
+    details: dict[str, Any] = {
+        "auth_method": "workload_token" if auth.kind == "workload" else "x_admin_key",
+        "workload_client_id": auth.client_id,
+        "credential_id": str(auth.credential_id) if auth.credential_id is not None else None,
+        "token_jti": auth.token_jti,
+        "environment_id": str(environment_id),
+        "deployment_id": body.expected_deployment_binding,
+        "retirement_id": body.retirement_id,
+        "cleanup_id": body.cleanup_id,
+        "outcome": outcome,
+    }
+    if runtime_state_deleted is not None:
+        details["runtime_state_deleted"] = runtime_state_deleted
+    record_control_plane_audit(
+        db,
+        actor_type="platform",
+        target_user_id=None,
+        source="api.v2.runtime",
+        action=action,
+        resource_type="hosted_runtime_state",
+        resource_id=str(environment_id),
+        environment_id=None,
+        details=details,
+    )
+
+
 def _raise_protocol_error(exc: RuntimeObservationProtocolError) -> NoReturn:
     raise HTTPException(exc.status_code, exc.detail()) from exc
 
@@ -575,6 +618,72 @@ async def retire_runtime_environment_endpoint(
                 deployment_id=body.expected_deployment_binding,
                 outcome=exc.code,
                 details={"retirement_id": body.retirement_id},
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        _raise_protocol_error(exc)
+    except Exception:
+        await db.rollback()
+        raise
+    return _CanonicalJSONResponse(status_code=status.HTTP_200_OK, content=response_body)
+
+
+@router.post(
+    "/environments/{environment_id}/runtime-state/cleanup",
+    response_model=RuntimeStateCleanupReceipt,
+)
+async def cleanup_retired_runtime_state_endpoint(
+    environment_id: UUID,
+    body: RuntimeStateCleanupRequest,
+    idempotency_key: IdempotencyKey,
+    auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-environments:retire")
+    ),
+    db: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    try:
+        if body.environment_reference != environment_id:
+            raise RuntimeObservationProtocolError(
+                status.HTTP_409_CONFLICT,
+                "runtime_state_cleanup_environment_conflict",
+                "path and body environment references do not match",
+            )
+        if idempotency_key != body.cleanup_id:
+            raise RuntimeObservationProtocolError(
+                status.HTTP_409_CONFLICT,
+                "runtime_state_cleanup_idempotency_conflict",
+                "idempotency key and cleanup identity do not match",
+            )
+        receipt, receipt_created, runtime_state_deleted = await cleanup_retired_runtime_state(
+            db,
+            environment_id=environment_id,
+            expected_deployment_binding=body.expected_deployment_binding,
+            retirement_id=body.retirement_id,
+            cleanup_id=body.cleanup_id,
+        )
+        response_body = _canonical_response_body(receipt)
+        _record_runtime_state_cleanup_audit(
+            db,
+            auth=auth,
+            action=("runtime_state.cleanup" if receipt_created else "runtime_state.cleanup_replay"),
+            environment_id=environment_id,
+            body=body,
+            outcome="cleaned" if receipt_created else "replayed",
+            runtime_state_deleted=runtime_state_deleted,
+        )
+        await db.commit()
+    except RuntimeObservationProtocolError as exc:
+        await db.rollback()
+        try:
+            _record_runtime_state_cleanup_audit(
+                db,
+                auth=auth,
+                action="runtime_state.cleanup",
+                environment_id=environment_id,
+                body=body,
+                outcome=exc.code,
             )
             await db.commit()
         except Exception:

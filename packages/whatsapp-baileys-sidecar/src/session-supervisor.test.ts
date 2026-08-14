@@ -87,6 +87,10 @@ class FakeRuntime implements BaileysRuntime {
 		return [];
 	}
 
+	async waitForProviderEvents(): Promise<[]> {
+		return [];
+	}
+
 	acknowledgeProviderEvents(): void {}
 }
 

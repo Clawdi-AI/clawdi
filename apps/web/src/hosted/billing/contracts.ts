@@ -12,6 +12,8 @@ export type BillingOffer = Schemas["V2BillingOfferResponse"];
 export type CheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
 export type ComputePlanSlug = Schemas["V2HostedDeployRequest"]["compute_plan_slug"];
 export type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActionResponse"];
+export type ComputeCancelScheduledPlanChangeRequest =
+	Schemas["V2ComputeCancelScheduledPlanChangeRequest"];
 export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCancelRequest"];
 export type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
@@ -65,6 +67,10 @@ export type Plan = Schemas["V2PlanResponse"];
 export type PortalRequest = Schemas["V2ComputePortalRequest"];
 export type WalletAutoReloadAction = Schemas["V2WalletAutoReloadActionResponse"];
 export type WalletAutoReloadRequest = Schemas["V2WalletAutoReloadRequest"];
+export type WalletAutoReloadSetupFinalizeRequest =
+	Schemas["V2WalletAutoReloadSetupFinalizeRequest"];
+export type WalletAutoReloadSetupRequest = Schemas["V2WalletAutoReloadSetupRequest"];
+export type WalletAutoReloadSetupResult = Schemas["V2WalletAutoReloadSetupResponse"];
 export type WalletState = Schemas["V2WalletResponse"];
 export type WalletTopupRequest = Schemas["V2WalletTopupRequest"];
 export type WalletTopupResult = Schemas["V2WalletTopupResponse"];

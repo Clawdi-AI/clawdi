@@ -33,7 +33,10 @@ import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	type RuntimeManifest,
 } from "./manifest-contract";
-import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
+import {
+	AGENT_PLUGINS_SCHEMA_1_0_0,
+	hostedAgentPluginInstallationSchema,
+} from "./manifest-resources";
 import { getRuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
 
@@ -144,17 +147,30 @@ function paths() {
 	return runtimePaths;
 }
 
-function pluginFiles(mcp?: Record<string, unknown>, version = "1.2.3"): Record<string, Buffer> {
+function pluginFiles(
+	mcp?: Record<string, unknown>,
+	version = "1.2.3",
+	extensions?: Record<string, unknown>,
+): Record<string, Buffer> {
 	return {
 		"plugin.json": Buffer.from(
 			JSON.stringify({
 				$schema: AGENT_PLUGINS_SCHEMA_1_0_0,
 				name: "acme.tools",
 				version,
+				...(extensions ? { extensions } : {}),
 			}),
 		),
 		"skills/review/SKILL.md": Buffer.from("---\nname: review\ndescription: Review\n---\n"),
 		...(mcp ? { "mcp.json": Buffer.from(JSON.stringify(mcp)) } : {}),
+	};
+}
+
+function clawdiExtension(fields: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		schemaVersion: 1,
+		display: { name: "Acme Tools", category: "tools" },
+		...fields,
 	};
 }
 
@@ -208,10 +224,31 @@ describe("Hosted Agent Plugin package preparation", () => {
 
 	test("accepts the Hermes Skills and stdio MCP subset", async () => {
 		const runtimePaths = paths();
-		const files = pluginFiles({
-			$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-			mcpServers: { review: { type: "stdio", command: "node", args: ["server.js"] } },
-		});
+		const files = pluginFiles(
+			{
+				$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+				mcpServers: {
+					review: {
+						type: "stdio",
+						command: "node",
+						args: ["server.js"],
+						env: {
+							PUBLIC_MODE: "review",
+							PLUGIN_PATH: `\${PLUGIN_ROOT}/server.js`,
+							DATA_PATH: `\${PLUGIN_DATA}/cache`,
+							LITERAL_REFERENCE: `\${OTHER}/settings`,
+							PUBLIC_LABEL: "sk-public-value",
+						},
+					},
+				},
+			},
+			"1.2.3",
+			{
+				"ai.clawdi": clawdiExtension({
+					compatibility: { runtimes: ["hermes"], executables: ["node"] },
+				}),
+			},
+		);
 		const bytes = await archive(files);
 		const prepared = await prepareHostedAgentPluginPackages(
 			manifest("hermes", treeDigest(files)),
@@ -230,8 +267,8 @@ describe("Hosted Agent Plugin package preparation", () => {
 			mcpServers: {
 				remote: {
 					type: "streamable-http",
-					url: "https://mcp.example.test",
-					headers: { Authorization: "literal-value" },
+					url: "https://mcp.example.test?mode=public",
+					headers: { "X-Public-Metadata": "sk-public-value" },
 				},
 			},
 		});
@@ -348,8 +385,9 @@ describe("Hosted Agent Plugin package preparation", () => {
 		).rejects.toThrow("case-fold path collision");
 	});
 
-	test("rejects invalid Skills and stdio MCP entries before native execution", async () => {
+	test("rejects invalid or secret-bearing package components before native execution", async () => {
 		const runtimePaths = paths();
+		const credentialTemplate = `\${TOKEN}`;
 		const cases: Array<{ label: string; files: Record<string, Buffer> }> = [
 			{
 				label: "Skill frontmatter",
@@ -358,16 +396,95 @@ describe("Hosted Agent Plugin package preparation", () => {
 					"skills/review/SKILL.md": Buffer.from("---\nname: other\ndescription: Review\n---\n"),
 				},
 			},
+			{
+				label: "Skill unknown frontmatter field",
+				files: {
+					...pluginFiles(),
+					"skills/review/SKILL.md": Buffer.from(
+						"---\nname: review\ndescription: Review\nunknown: rejected\n---\n",
+					),
+				},
+			},
+			{
+				label: "Clawdi secret slots",
+				files: pluginFiles(undefined, "1.2.3", {
+					"ai.clawdi": clawdiExtension({
+						configuration: { secretSlots: {} },
+					}),
+				}),
+			},
+			{
+				label: "Clawdi unknown extension field",
+				files: pluginFiles(undefined, "1.2.3", {
+					"ai.clawdi": clawdiExtension({
+						unknown: true,
+					}),
+				}),
+			},
+			{
+				label: "Clawdi incompatible runtime",
+				files: pluginFiles(undefined, "1.2.3", {
+					"ai.clawdi": clawdiExtension({
+						compatibility: { runtimes: ["openclaw"] },
+					}),
+				}),
+			},
+			{
+				label: "Clawdi undeclared executable",
+				files: pluginFiles(
+					{
+						$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+						mcpServers: { invalid: { type: "stdio", command: "node" } },
+					},
+					"1.2.3",
+					{
+						"ai.clawdi": clawdiExtension({
+							compatibility: { runtimes: ["hermes"] },
+						}),
+					},
+				),
+			},
 			...[
 				{ command: "node server.js" },
 				{ command: "node", args: ["valid", 42] },
-				{ command: "node", env: { PLUGIN_ROOT: "override" } },
+				{ command: "node", env: { plugin_root: "override" } },
+				{ command: "node", env: { API_TOKEN: "literal-secret" } },
+				{ command: "node", env: { PUBLIC_VALUE: "sk_123456789012" } },
+				{ command: "node", env: { PUBLIC_URL: "https://user:password@example.test" } },
+				{ command: "node", env: { PUBLIC_MODE: "a", public_mode: "b" } },
+				{ command: "node", env: { "INVALID-NAME": "public" } },
 				{ command: "node", cwd: "../outside" },
 			].map((server, index) => ({
 				label: `stdio ${index}`,
 				files: pluginFiles({
 					$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
 					mcpServers: { invalid: { type: "stdio", ...server } },
+				}),
+			})),
+			...[
+				{ type: "streamable-http", url: `https://mcp.example.test/${credentialTemplate}` },
+				{ type: "streamable-http", url: "https://mcp.example.test/path#" },
+				{ type: "streamable-http", url: "https://@mcp.example.test/path" },
+				{
+					type: "streamable-http",
+					url: "https://mcp.example.test",
+					headers: { Authorization: "Bearer literal-secret" },
+				},
+				{
+					type: "streamable-http",
+					url: "https://mcp.example.test",
+					headers: { "X-Public-Metadata": credentialTemplate },
+				},
+				{
+					type: "streamable-http",
+					url: "https://mcp.example.test",
+					headers: { "X-Public-Metadata": "Bearer literal-secret" },
+				},
+			].map((server, index) => ({
+				label: `remote ${index}`,
+				files: pluginFiles({
+					$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+					mcpServers: { invalid: server },
 				}),
 			})),
 		];
@@ -614,6 +731,15 @@ describe("Hosted Agent Plugin package preparation", () => {
 	test("rejects secretRefs without fetching or disclosing the reference", async () => {
 		const runtimePaths = paths();
 		const secretRef = "secret://agent-plugins/acme.tools/private-token";
+		const installation = manifest("openclaw", `sha256-tree-v1:${"a".repeat(64)}`).projection
+			?.agentPlugins?.installations["acme.tools"];
+		if (!installation) throw new Error("missing Agent Plugin installation fixture");
+		expect(
+			hostedAgentPluginInstallationSchema.safeParse({
+				...installation,
+				secretRefs: { "api.token": secretRef },
+			}).success,
+		).toBe(false);
 		let fetches = 0;
 		let error: unknown;
 		try {

@@ -13,7 +13,7 @@ describe("classifyWalletFundingError", () => {
 				classifyWalletFundingError(
 					billingError({ code, shortfall_usd: code === "insufficient_balance" ? 12.5 : "12.50" }),
 				),
-			).toEqual({ kind: "insufficient_balance", shortfallUsd: 12.5 });
+			).toEqual({ kind: "insufficient_balance", shortfallUsd: "12.5" });
 		}
 	});
 
@@ -39,8 +39,11 @@ describe("classifyWalletFundingError", () => {
 
 describe("decimalUsd", () => {
 	test("accepts finite non-negative decimal strings and numbers only", () => {
-		expect(decimalUsd("25.01")).toBe(25.01);
-		expect(decimalUsd(0)).toBe(0);
+		expect(decimalUsd("25.0100")).toBe("25.01");
+		expect(decimalUsd("9007199254740993.000000000000000001")).toBe(
+			"9007199254740993.000000000000000001",
+		);
+		expect(decimalUsd(0)).toBe("0");
 		expect(decimalUsd(-1)).toBeNull();
 		expect(decimalUsd(Number.NaN)).toBeNull();
 		expect(decimalUsd(null)).toBeNull();

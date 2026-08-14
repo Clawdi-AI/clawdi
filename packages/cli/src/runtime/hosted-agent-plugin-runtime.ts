@@ -111,8 +111,7 @@ const defaultCommandRunner: HostedAgentPluginCommandRunner = {
 	},
 };
 
-// `hermes plugins list --json` emits this array at
-// https://github.com/NousResearch/hermes-agent/blob/66a41616208135198dfe96d0e3b8e5510b20d035/hermes_cli/plugins_cmd.py
+// Hermes exposes package lifecycle state here, but not component inventory.
 const hermesPluginListSchema = z.array(
 	z
 		.object({

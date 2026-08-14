@@ -25,7 +25,6 @@ import {
 	TerminalSquare,
 	Trash2,
 	X,
-	Zap,
 } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -138,14 +137,9 @@ import {
 	type CheckoutReturnNavigationTarget,
 	useCheckoutReturnHandler,
 } from "@/hosted/billing/checkout-return";
+import { computeDunningState } from "@/hosted/billing/components/compute-dunning.logic";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
-import type {
-	ComputePlanChangeQuoteRequest,
-	ComputePlanChangeQuoteResponse,
-	ComputePlanChangeResult,
-	DeploymentUpdateRequest,
-	HostedDeployment,
-} from "@/hosted/billing/contracts";
+import type { DeploymentUpdateRequest, HostedDeployment } from "@/hosted/billing/contracts";
 import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import {
 	fallbackTimezones,
@@ -159,48 +153,31 @@ import {
 import {
 	billingErrorNormalizer,
 	billingQueryRetry,
-	isPaymentMethodRequiredError,
 	normalizeBillingError,
-	PlanChangePendingError,
-	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
-import {
-	billingKeys,
-	useCancelSubscription,
-	useChangePlan,
-	useCheckPlanChange,
-	useManagedModelCatalog,
-	usePlans,
-	useQuotePlanChange,
-	useResumeSubscription,
-} from "@/hosted/billing/hooks";
-import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
+import { billingKeys, useManagedModelCatalog, usePlans } from "@/hosted/billing/hooks";
+import { ComputeSubscriptionActionList } from "@/hosted/billing/subscription/compute-subscription-action-list";
+import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
 import {
 	ComputeSubscriptionCard,
 	computeSubscriptionCardView,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
-	activePlanChangeOperationName,
-	isCombinedPaidPlanChange,
-	isFundingSourceOnlySelection,
-	isValidPaidPlanChangeQuote,
-	type PlanChangeSelection,
-	performanceUpgradeUnavailableReason,
-	planChangeUnavailableReason,
-	shouldRecoverWalletToCardSwitch,
-	visiblePlanChangeOperationName,
-} from "@/hosted/billing/subscription/plan-change.logic";
-import { PlanChangeDialog } from "@/hosted/billing/subscription/plan-change-dialog";
+	type ComputeSubscriptionManagementResult,
+	computeSubscriptionManagement,
+} from "@/hosted/billing/subscription/compute-subscription-management";
+import { computeSubscriptionRecoveryPresentation } from "@/hosted/billing/subscription/compute-subscription-recovery";
+import {
+	PlanChangeController,
+	planChangeBillingTerm,
+} from "@/hosted/billing/subscription/plan-change-controller";
 import { SubscriptionCreateDialog } from "@/hosted/billing/subscription/subscription-create-dialog";
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
-	computeFundingMode,
 	computeFundingSource,
-	computeSubscriptionId,
 	computeSubscriptionLifecycle,
 	computeTierLabel,
-	isComputeSubscriptionCancelable,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
@@ -210,12 +187,6 @@ import {
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import {
-	useWalletTopUpDialog,
-	type WalletFundingErrorCopy,
-} from "@/hosted/billing/wallet/wallet-funding";
-import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import {
 	type DeploymentFailurePresentation,
 	deploymentFailurePresentation,
@@ -445,17 +416,6 @@ function StartComputeAction({
 	);
 }
 
-function planChangeBillingTerm(
-	value: number,
-): ComputePlanChangeQuoteRequest["target_billing_term_months"] {
-	return value === 12 ? 12 : 1;
-}
-
-const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY = {
-	insufficientBalance: "Top up the shortfall, then request a fresh plan-change quote.",
-	refundDebt: "Top up before confirming this wallet-funded plan change.",
-} satisfies WalletFundingErrorCopy;
-
 /**
  * Hosted agent detail. A compute (deployment) hosts one selected execution
  * runtime, with one env id, AI provider binding, channel links, sessions, and
@@ -563,7 +523,10 @@ export function HostedAgentDetail({
 			className={cn(
 				isLiveToolTab
 					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] w-full flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
-					: cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6"),
+					: cn(
+							activeTab === "settings" ? "w-full" : CENTERED_PAGE_WIDTH_CLASS.page,
+							"flex flex-col gap-6 px-4 lg:px-6",
+						),
 			)}
 		>
 			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
@@ -592,7 +555,9 @@ export function HostedAgentDetail({
 						}
 					/>
 				)}
-				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
+				{isLiveToolTab || activeTab === "settings" ? null : (
+					<ComputeDunningBanner deployment={deployment} />
+				)}
 				{!deploymentStatus.known && activeTab !== "overview" ? (
 					<DeploymentStatusUnavailableState
 						deployment={deployment}
@@ -709,6 +674,7 @@ export function HostedAgentDetail({
 							environmentId={environmentId}
 							deployment={deployment}
 							agent={agent}
+							routeSearch={routeSearch}
 							onDeleteAccepted={onDeleteAccepted}
 						/>
 					) : null}
@@ -3431,16 +3397,18 @@ function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
 	agent,
+	routeSearch,
 	onDeleteAccepted,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null;
+	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
-			<div className="flex flex-col gap-8">
+			<div className="flex w-full flex-col gap-8">
 				{agent ? (
 					<AgentSettingsPanel environmentId={environmentId} />
 				) : (
@@ -3449,7 +3417,7 @@ function HostedAgentSettingsTab({
 				<LanguageTimezoneSettingsSection deployment={deployment} />
 				<ComputeSettingsSections
 					deployment={deployment}
-					agent={agent}
+					routeSearch={routeSearch}
 					onDeleteAccepted={onDeleteAccepted}
 				/>
 			</div>
@@ -3491,7 +3459,7 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 			title="Language & timezone"
 			description="Language and time zone used by this agent."
 		>
-			<div className="flex max-w-2xl flex-col gap-4">
+			<div className="flex w-full flex-col gap-4">
 				<LiveNote>Changes apply to this agent.</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
 					<div className="flex flex-col gap-1.5">
@@ -3548,11 +3516,11 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 
 function ComputeSettingsSections({
 	deployment,
-	agent,
+	routeSearch,
 	onDeleteAccepted,
 }: {
 	deployment: HostedDeployment;
-	agent: components["schemas"]["AgentResponse"] | null;
+	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 }) {
 	const router = useRouter();
@@ -3597,29 +3565,9 @@ function ComputeSettingsSections({
 	const hostedAccess = useHostedProductAccess();
 	const lifecycle = useDeploymentLifecycle();
 	const plans = usePlans();
-	const quotePlanChange = useQuotePlanChange();
-	const billingPortal = useSensitiveBillingPortal();
-	const projectedPlanChangeName = activePlanChangeOperationName(deployment);
-	const [acceptedPlanChangeName, setAcceptedPlanChangeName] = useState<string | null>(null);
-	const [ignoredPlanChangeNames, setIgnoredPlanChangeNames] = useState<readonly string[]>([]);
-	const visibleProjectedPlanChangeName = visiblePlanChangeOperationName(
-		projectedPlanChangeName,
-		ignoredPlanChangeNames,
-	);
-	const pendingPlanChangeName = acceptedPlanChangeName ?? visibleProjectedPlanChangeName;
-	const changePlan = useChangePlan((operationName) => {
-		setAcceptedPlanChangeName(operationName);
-	});
-	const checkPlanChange = useCheckPlanChange();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
-	const wallet = useWalletSnapshot({
-		enabled:
-			deployment.commercial_display?.compute_subscription?.funding_source === "wallet" ||
-			(hostedAccess.canCreateCloudAgents && planChangeOpen),
-	});
-	const cancelSubscription = useCancelSubscription();
-	const resumeSubscription = useResumeSubscription();
+	const [hasPendingPlanChange, setHasPendingPlanChange] = useState(false);
 	const runAction = useActionLock();
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const canStop = canStopDeployment(deploymentStatus);
@@ -3633,34 +3581,21 @@ function ComputeSettingsSections({
 			? "stop"
 			: "start";
 	const canRunPrimaryLifecycleAction = primaryLifecycleAction === "stop" ? canStop : canStart;
-	const fundingFact = deployment.commercial_display?.latest_funding_fact;
 	const rawComputePlanSlug = deployment.current_plan_slug;
 	const computePlanSlug =
 		rawComputePlanSlug === COMPUTE_BASIC_SLUG || rawComputePlanSlug === COMPUTE_PERFORMANCE_SLUG
 			? rawComputePlanSlug
 			: undefined;
 	const currentSubscription = deployment.commercial_display?.compute_subscription;
-	const fundingMode = computeFundingMode(computePlanSlug, currentSubscription);
 	const fundingSource = computeFundingSource(computePlanSlug, currentSubscription);
-	const isIncludedBasic = fundingMode === "included_basic";
-	const isPaidCompute = fundingMode === "subscription";
-	const isWalletFunded = fundingSource === "wallet";
-	const terminalFundingFact =
-		isIncludedBasic && fundingFact?.fact_kind === "funding_revoked" ? fundingFact : null;
-	const hasWalletFallback = terminalFundingFact?.funding_source === "wallet";
-	const hasTerminalFallback = terminalFundingFact !== null;
-	const subscriptionId = computeSubscriptionId(currentSubscription);
+	const dunningState = computeDunningState(deployment);
+	const terminalRecovery = dunningState?.recoveryTarget.kind === "start_new" ? dunningState : null;
+	const hasWalletFallback = terminalRecovery?.fundingSource === "wallet";
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);
 	const currentBillingTerm = planChangeBillingTerm(currentSubscription?.billing_term_months ?? 1);
-	const [planChangeQuote, setPlanChangeQuote] = useState<ComputePlanChangeQuoteResponse | null>(
-		null,
-	);
-	const [planChangePaymentMethodRequired, setPlanChangePaymentMethodRequired] = useState(false);
-	const walletTopUp = useWalletTopUpDialog(PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
-	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
 	const currentPaidPlan =
 		computePlanSlug === COMPUTE_BASIC_SLUG
 			? basicPlan
@@ -3691,69 +3626,29 @@ function ComputeSettingsSections({
 	const subscriptionLifecycle = currentSubscription
 		? computeSubscriptionLifecycle(currentSubscription)
 		: null;
-	const currentSubscriptionStatus = currentSubscription?.status.toLowerCase();
-	const computePlanStatusTone: StatusTone =
-		currentSubscriptionStatus === "past_due" ||
-		currentSubscriptionStatus === "unpaid" ||
-		currentSubscription?.payment_state === "past_due" ||
-		currentSubscription?.payment_state === "unpaid"
-			? "destructive"
-			: currentSubscriptionStatus === "canceling" ||
-					currentSubscription?.payment_state === "requires_action" ||
-					subscriptionCancelPending ||
-					pendingPlanSlug
-				? "warning"
-				: isIncludedBasic ||
-						currentSubscriptionStatus === "active" ||
-						currentSubscriptionStatus === "trialing"
-					? "success"
-					: "neutral";
-	const computePlanStatusLabel =
-		fundingMode === "unknown"
-			? "Unavailable"
-			: !isPaidCompute || !subscriptionLifecycle
-				? "Current"
-				: currentSubscriptionStatus === "past_due" ||
-						currentSubscription?.payment_state === "past_due"
-					? "Past due"
-					: currentSubscriptionStatus === "unpaid" ||
-							currentSubscription?.payment_state === "unpaid"
-						? "Unpaid"
-						: currentSubscription?.payment_state === "requires_action"
-							? "Payment action required"
-							: currentSubscriptionStatus === "canceling" || subscriptionCancelPending
-								? "Canceling"
-								: subscriptionLifecycle.badgeLabel;
-	const computePlanStatus = {
-		label: computePlanStatusLabel,
-		tone: computePlanStatusTone,
-	};
+	const computeRecovery = computeSubscriptionRecoveryPresentation(
+		currentSubscription,
+		subscriptionLifecycle
+			? { label: subscriptionLifecycle.badgeLabel, tone: subscriptionLifecycle.badgeTone }
+			: { label: "Unavailable", tone: "neutral" },
+	);
+	const actionRecoveryTarget = terminalRecovery?.recoveryTarget ?? computeRecovery.recoveryTarget;
+	const canOfferStartNew = actionRecoveryTarget?.kind === "start_new";
 	const computeCardView = computeSubscriptionCardView({
-		identity: {
-			kind: "agent",
-			name: agent
-				? agentDisplayName(agent)
-				: agentDisplayName({
-						default_name: deployment.resource.name,
-						agent_type: deployment.resource.spec.runtime,
-					}),
-			agentType: deployment.resource.spec.runtime,
-			avatarUrl: agent?.avatar_url,
-		},
-		status: computePlanStatus,
+		status: computeRecovery.status,
 		planSlug: computePlanSlug ?? rawComputePlanSlug,
-		fundingSource: isIncludedBasic
-			? "included"
-			: currentSubscription?.funding_source === "wallet"
-				? "wallet"
-				: currentSubscription
-					? "stripe"
+		fundingSource:
+			fundingSource === "included_basic"
+				? "included"
+				: fundingSource === "stripe" || fundingSource === "wallet"
+					? fundingSource
 					: "unavailable",
 		priceCents: currentPriceCents,
 		currency: currentSubscription?.currency ?? "usd",
 		billingTermMonths: currentBillingTerm,
-		scheduleVerb: subscriptionLifecycle?.dateVerb ?? null,
-		scheduleAt: subscriptionLifecycle?.dateAt,
+		scheduleVerb: computeRecovery.schedule?.verb ?? subscriptionLifecycle?.dateVerb ?? null,
+		scheduleAt: computeRecovery.schedule?.at ?? subscriptionLifecycle?.dateAt,
+		scheduleFallback: computeRecovery.schedule?.fallback ?? undefined,
 	});
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
@@ -3762,287 +3657,95 @@ function ComputeSettingsSections({
 				subscriptionPeriodLabel,
 			)
 		: null;
-	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
-	const paymentSourceOnly = currentSubscription?.status === "past_due";
-	const planChangeUnavailable = currentSubscription
-		? planChangeUnavailableReason({
+	const computeManagement: ComputeSubscriptionManagementResult = currentSubscription
+		? computeSubscriptionManagement({
+				entitlement: {
+					deploymentId: deployment.resource.id,
+					planSlug: computePlanSlug,
+					fundingSource: currentSubscription.funding_source,
+					priceCents: currentSubscription.price_cents,
+					billingTermMonths: currentSubscription.billing_term_months,
+					status: currentSubscription.status,
+					paymentState: currentSubscription.payment_state,
+					cancelAtPeriodEnd: subscriptionCancelPending,
+					recoveryAction: currentSubscription.recovery_action,
+					pendingPlanSlug,
+				},
+				deployment,
 				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
-				cancelAtPeriodEnd: subscriptionCancelPending,
-				status: currentSubscription.status,
-				subscriptionId,
+				plansLoading: plans.isLoading,
+				performancePlanAvailable: Boolean(perfPlan),
 			})
-		: "Choose a subscription to change this agent’s paid compute.";
-	const upgradeUnavailableMessage = performanceUpgradeUnavailableReason({
-		plansLoading: plans.isLoading,
-		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
-		isIncludedBasic,
-		performancePlanAvailable: Boolean(perfPlan),
-		pendingPlanSlug,
-		planChangeUnavailable,
-		deploymentStatusSupportsUpgrade:
-			isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped",
-		upgradeAvailable: deployment.upgrade_available,
-		upgradeEligibilityReason: deployment.upgrade_eligibility.reason,
-	});
-	const canUpgrade = deployment.upgrade_available && upgradeUnavailableMessage === null;
-	const canStartNewSubscription = hostedAccess.canCreateCloudAgents && hasTerminalFallback;
+		: { action: "hidden", target: null, unavailableReason: null };
+	const hasPendingComputeChange =
+		hasPendingPlanChange ||
+		(computeManagement.action === "enabled" &&
+			computeManagement.target.projectedOperationName !== null);
+	const computeManagementReason = computeManagement.unavailableReason;
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
-		terminalFundingFact?.prior_plan_slug,
+		terminalRecovery?.recoveryPlanSlug ?? pendingPlanSlug ?? computePlanSlug,
 		{
 			basicAvailable: !!basicPlan,
 			performanceAvailable: !!perfPlan,
 		},
 	);
-	const createUnavailableMessage = plans.isLoading
-		? "Checking paid compute availability…"
-		: !hostedAccess.canCreateCloudAgents
-			? hasTerminalFallback
+	const createUnavailableMessage = !canOfferStartNew
+		? null
+		: plans.isLoading
+			? "Checking paid compute availability…"
+			: !hostedAccess.canCreateCloudAgents
 				? "New subscriptions are temporarily unavailable."
-				: "Upgrades are temporarily unavailable."
-			: hasTerminalFallback && !(basicPlan || perfPlan)
-				? "Paid compute plans are unavailable right now."
-				: isIncludedBasic && planChangeUnavailable
-					? planChangeUnavailable
-					: upgradeUnavailableMessage;
+				: !(basicPlan || perfPlan)
+					? "Paid compute plans are unavailable right now."
+					: null;
+	const computeActions = resolveComputeSubscriptionActions({
+		entitlement: {
+			deploymentId: deployment.resource.id,
+			planSlug: computePlanSlug,
+			fundingSource: currentSubscription?.funding_source,
+			priceCents: currentSubscription?.price_cents,
+			status: currentSubscription?.status ?? "unavailable",
+			paymentState: currentSubscription?.payment_state ?? "ok",
+			cancelAtPeriodEnd: subscriptionCancelPending,
+			pendingPlanSlug,
+		},
+		management: computeManagement,
+		recoveryTarget: actionRecoveryTarget,
+		hasPendingOperation: hasPendingComputeChange,
+		startNewUnavailableReason: createUnavailableMessage,
+	});
 	useEffect(() => {
 		if (hostedAccess.isLoading || hostedAccess.canCreateCloudAgents) return;
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
-		setAcceptedPlanChangeName(null);
-		walletTopUp.reset();
-	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, walletTopUp.reset]);
-	function ignorePlanChangeOperation(operationName: string | null) {
-		if (operationName === null) return;
-		setIgnoredPlanChangeNames((current) =>
-			current.includes(operationName) ? current : [...current, operationName],
-		);
-	}
-
-	function setPlanChangeDialogOpen(open: boolean) {
-		setPlanChangeOpen(open);
-	}
-
-	async function openPaymentMethods() {
-		ignorePlanChangeOperation(pendingPlanChangeName);
-		setPlanChangeQuote(null);
-		setPlanChangePaymentMethodRequired(false);
-		setAcceptedPlanChangeName(null);
-		try {
-			const result = await billingPortal.execute({});
-			const url = result.url || result.portal_url;
-			if (url) {
-				window.location.href = url;
-				return;
-			}
-			toast.error("Billing portal unavailable", {
-				description: "Refresh this page and try again in a moment.",
-			});
-			setPlanChangePaymentMethodRequired(true);
-		} catch (error) {
-			setPlanChangePaymentMethodRequired(true);
-			toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
+	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading]);
+	useEffect(() => {
+		if (routeSearch.subscription_action !== "start_new") return;
+		if (hostedAccess.isLoading || plans.isLoading) return;
+		if (canOfferStartNew && hostedAccess.canCreateCloudAgents && (basicPlan || perfPlan)) {
+			setSubscriptionCreateOpen(true);
 		}
-	}
-
-	async function requestPlanChangeQuote(selection: PlanChangeSelection) {
-		if (
-			!hostedAccess.canCreateCloudAgents ||
-			!subscriptionId ||
-			!computePlanSlug ||
-			planChangeUnavailable !== null
-		) {
-			return;
-		}
-		if (
-			paymentSourceOnly &&
-			!isFundingSourceOnlySelection(
-				selection,
-				computePlanSlug,
-				currentBillingTerm,
-				isWalletFunded ? "wallet" : "stripe",
-			)
-		) {
-			toast.error("Only the payment source can be changed", {
-				description:
-					"This subscription can’t change plan or billing term while past due. Choose a different payment source to continue.",
-			});
-			return;
-		}
-		if (
-			isPaidCompute &&
-			isCombinedPaidPlanChange(
-				selection,
-				computePlanSlug,
-				currentBillingTerm,
-				isWalletFunded ? "wallet" : "stripe",
-			)
-		) {
-			toast.error("Choose one subscription change", {
-				description:
-					"Change the plan or billing term using the current payment source, or change only the payment source.",
-			});
-			return;
-		}
-		try {
-			if (pendingPlanChangeName === null && !(await hostedAccess.recheckCanCreateCloudAgents())) {
-				setPlanChangeDialogOpen(false);
-				return;
-			}
-			const quote = await quotePlanChange.mutateAsync({
-				subscription_id: subscriptionId,
-				...selection,
-			});
-			const currentFundingSource = isWalletFunded ? "wallet" : "stripe";
-			const validPaidQuote =
-				!isPaidCompute ||
-				isValidPaidPlanChangeQuote(
-					quote,
-					selection,
-					computePlanSlug,
-					currentBillingTerm,
-					currentFundingSource,
-				);
-			if (!validPaidQuote) {
-				setPlanChangeQuote(null);
-				setAcceptedPlanChangeName(null);
-				setPlanChangePaymentMethodRequired(false);
-				toast.error("Couldn’t verify subscription change", {
-					description: "The quote did not match the requested change. Request a fresh quote.",
-				});
-				return;
-			}
-			setAcceptedPlanChangeName(null);
-			setPlanChangePaymentMethodRequired(false);
-			setPlanChangeQuote(quote);
-		} catch (error) {
-			if (
-				isPaidCompute &&
-				shouldRecoverWalletToCardSwitch(
-					error,
-					selection,
-					computePlanSlug,
-					currentBillingTerm,
-					isWalletFunded ? "wallet" : "stripe",
-				)
-			) {
-				setPlanChangeQuote(null);
-				setAcceptedPlanChangeName(null);
-				setPlanChangePaymentMethodRequired(true);
-				return;
-			}
-			toast.error("Couldn’t quote subscription change", {
-				description: normalizeBillingError(error),
-			});
-		}
-	}
-
-	function showPlanChangeResult(result: ComputePlanChangeResult) {
-		if (result.kind === "scheduled") {
-			toast.success("Downgrade scheduled", {
-				description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
-			});
-		} else {
-			if (result.changeKind === "funding_source_switch") {
-				toast.success("Payment method updated", {
-					description:
-						result.fundingSource === "wallet"
-							? "Future renewals will use Wallet."
-							: "Future renewals will use Card.",
-				});
-			} else {
-				toast.success("Plan changed", {
-					description: "Your compute subscription has been updated.",
-				});
-			}
-		}
-		setAcceptedPlanChangeName(null);
-		ignorePlanChangeOperation(result.operationName);
-		setPlanChangeQuote(null);
-		setPlanChangePaymentMethodRequired(false);
-		setPlanChangeDialogOpen(false);
-	}
-
-	function handlePlanChangeError(error: unknown) {
-		if (error instanceof PlanChangePendingError) {
-			setAcceptedPlanChangeName(error.operationName);
-			toast.info("Still waiting for confirmation", {
-				description:
-					"We don’t have a final result yet. Don’t submit another subscription change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another request or charge.",
-			});
-			return;
-		}
-		if (error instanceof PlanChangeTerminalError) {
-			setAcceptedPlanChangeName(null);
-			ignorePlanChangeOperation(error.operationName ?? pendingPlanChangeName);
-			setPlanChangeQuote(null);
-			setPlanChangePaymentMethodRequired(false);
-			if (
-				error.fundingSource === "stripe" &&
-				error.changeKind === "funding_source_switch" &&
-				isPaymentMethodRequiredError(error)
-			) {
-				setPlanChangePaymentMethodRequired(true);
-				return;
-			}
-		}
-		if (walletTopUp.handleFundingError(error)) return;
-		toast.error("Couldn’t update subscription", {
-			description: normalizeBillingError(error),
+		void router.navigate({
+			to: ".",
+			search: (current) => {
+				const next = { ...current };
+				delete next.subscription_action;
+				return next;
+			},
+			hash: true,
+			replace: true,
+			resetScroll: false,
 		});
-	}
-
-	async function confirmPlanChange(operationId: string) {
-		if (!planChangeQuote) return;
-		try {
-			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
-				setPlanChangeDialogOpen(false);
-				return;
-			}
-			showPlanChangeResult(await changePlan.mutateAsync({ operation_id: operationId }));
-		} catch (error) {
-			handlePlanChangeError(error);
-		}
-	}
-
-	async function checkAcceptedPlanChange() {
-		if (!pendingPlanChangeName) return;
-		try {
-			showPlanChangeResult(await checkPlanChange.mutateAsync(pendingPlanChangeName));
-		} catch (error) {
-			handlePlanChangeError(error);
-		}
-	}
-
-	async function cancelComputeSubscription() {
-		if (!subscriptionCancelable || subscriptionCancelPending) {
-			return;
-		}
-		try {
-			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.resource.id });
-			toast.success("Subscription cancellation scheduled", {
-				description: res.current_period_end
-					? `Cancellation takes effect ${formatShortDate(
-							res.current_period_end,
-						)}. The agent then falls back to included Basic funding if available; otherwise, it stops.`
-					: "The agent falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
-			});
-		} catch (error) {
-			toast.error("Couldn’t cancel subscription", { description: normalizeBillingError(error) });
-			throw error;
-		}
-	}
-
-	async function resumeComputeSubscription() {
-		if (!subscriptionCancelable || !subscriptionCancelPending) {
-			return;
-		}
-		try {
-			await resumeSubscription.mutateAsync({ deployment_id: deployment.resource.id });
-			toast.success("Subscription resumed");
-		} catch (error) {
-			toast.error("Couldn’t resume subscription", { description: normalizeBillingError(error) });
-		}
-	}
+	}, [
+		basicPlan,
+		canOfferStartNew,
+		hostedAccess.canCreateCloudAgents,
+		hostedAccess.isLoading,
+		perfPlan,
+		plans.isLoading,
+		routeSearch.subscription_action,
+		router,
+	]);
 
 	async function runLifecycleAction(action: "restart" | "stop" | "start") {
 		await lifecycle.mutateAsync({ id: deployment.resource.id, action });
@@ -4050,10 +3753,7 @@ function ComputeSettingsSections({
 
 	return (
 		<div className="flex flex-col gap-8">
-			{wallet.data ? (
-				<TopUpDialog {...walletTopUp.dialogProps} onComplete={() => setPlanChangeQuote(null)} />
-			) : null}
-			{hasTerminalFallback ? (
+			{canOfferStartNew ? (
 				<SubscriptionCreateDialog
 					open={subscriptionCreateOpen}
 					onOpenChange={setSubscriptionCreateOpen}
@@ -4063,36 +3763,13 @@ function ComputeSettingsSections({
 					initialBillingTermMonths={currentBillingTerm}
 				/>
 			) : null}
-			{currentSubscription &&
-			(computePlanSlug === COMPUTE_BASIC_SLUG || computePlanSlug === COMPUTE_PERFORMANCE_SLUG) ? (
-				<PlanChangeDialog
+			{computeManagement.target ? (
+				<PlanChangeController
 					open={planChangeOpen}
-					onOpenChange={setPlanChangeDialogOpen}
+					onOpenChange={setPlanChangeOpen}
+					onPendingChange={setHasPendingPlanChange}
+					target={computeManagement.target}
 					plans={plans.data ?? []}
-					currentPlanSlug={computePlanSlug}
-					initialPlanSlug={isIncludedBasic ? COMPUTE_PERFORMANCE_SLUG : computePlanSlug}
-					currentBillingTermMonths={currentBillingTerm}
-					currentFundingSource={isWalletFunded ? "wallet" : "stripe"}
-					allowCombinedChange={isIncludedBasic}
-					paymentSourceOnly={paymentSourceOnly}
-					quote={planChangeQuote}
-					walletBalanceUsd={wallet.data?.balance_usd ?? null}
-					isQuoting={quotePlanChange.isPending}
-					isConfirming={changePlan.isPending || checkPlanChange.isPending}
-					hasAcceptedChange={pendingPlanChangeName !== null}
-					onQuote={requestPlanChangeQuote}
-					onConfirm={confirmPlanChange}
-					onCheckStatus={checkAcceptedPlanChange}
-					onTopUp={() => walletTopUp.show()}
-					paymentMethodRequired={planChangePaymentMethodRequired}
-					isManagingPaymentMethods={billingPortal.isPending}
-					onManagePaymentMethods={() => void openPaymentMethods()}
-					onExitComplete={() => {
-						if (pendingPlanChangeName === null) {
-							setPlanChangeQuote(null);
-							setPlanChangePaymentMethodRequired(false);
-						}
-					}}
 				/>
 			) : null}
 
@@ -4100,7 +3777,8 @@ function ComputeSettingsSections({
 				<ComputeSubscriptionCard
 					headingLevel={3}
 					view={computeCardView}
-					className="max-w-2xl"
+					actionsId="compute-plan-controls"
+					className="w-full"
 					badges={
 						hasWalletFallback ? (
 							<Badge variant="outline" className="font-normal text-muted-foreground">
@@ -4109,155 +3787,41 @@ function ComputeSettingsSections({
 						) : null
 					}
 					notice={
-						pendingPlanCopy ? (
-							<p className="text-xs font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
+						pendingPlanCopy || computeManagementReason || createUnavailableMessage ? (
+							<div className="flex flex-col gap-1 text-xs text-muted-foreground">
+								{pendingPlanCopy ? (
+									<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
+								) : null}
+								{computeManagementReason ? <p>{computeManagementReason}</p> : null}
+								{createUnavailableMessage ? <p>{createUnavailableMessage}</p> : null}
+							</div>
 						) : null
 					}
 					actions={
-						hasTerminalFallback || isIncludedBasic || (isPaidCompute && currentSubscription) ? (
-							<div
-								id="compute-plan-controls"
-								className="flex w-full scroll-mt-6 flex-wrap items-center justify-end gap-2"
-							>
-								{isIncludedBasic && blockingPlansError ? (
-									<div className="w-full sm:w-72">
-										<ApiErrorPanel
-											normalizer={billingErrorNormalizer}
-											error={blockingPlansError}
-											onRetry={() => void plans.refetch()}
-											title="Couldn’t check paid compute availability"
-										/>
-									</div>
-								) : hasTerminalFallback || isIncludedBasic ? (
-									<>
-										<Button
-											size="sm"
-											disabled={
-												pendingPlanChangeName === null &&
-												(hasTerminalFallback
-													? !canStartNewSubscription
-													: plans.isLoading || !canUpgrade || !perfPlan)
-											}
-											onClick={() =>
-												pendingPlanChangeName
-													? setPlanChangeDialogOpen(true)
-													: hasTerminalFallback
-														? setSubscriptionCreateOpen(true)
-														: setPlanChangeDialogOpen(true)
-											}
-										>
-											{hasTerminalFallback ? (
-												<Plus data-icon="inline-start" />
-											) : (
-												<Zap data-icon="inline-start" />
-											)}
-											{pendingPlanChangeName
-												? "Check subscription change status"
-												: hasTerminalFallback
-													? "Choose a subscription"
-													: "Upgrade to Performance"}
-										</Button>
-										{hasTerminalFallback ? (
-											canStartNewSubscription ? null : (
-												<p className="basis-full text-right text-xs text-muted-foreground">
-													{createUnavailableMessage}
-												</p>
-											)
-										) : canUpgrade ? null : (
-											<p className="basis-full text-right text-xs text-muted-foreground">
-												{upgradeUnavailableMessage}
-											</p>
-										)}
-									</>
-								) : isPaidCompute && currentSubscription ? (
-									subscriptionCancelPending ? (
-										<>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled
-												title={planChangeUnavailable ?? undefined}
-											>
-												<Settings data-icon="inline-start" />
-												Manage
-											</Button>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled={resumeSubscription.isPending || !subscriptionCancelable}
-												onClick={() =>
-													void runAction(resumeComputeSubscription).catch(() => undefined)
-												}
-											>
-												{resumeSubscription.isPending ? (
-													<Spinner data-icon="inline-start" />
-												) : (
-													<RefreshCw data-icon="inline-start" />
-												)}
-												Resume subscription
-											</Button>
-											<p className="basis-full text-right text-xs text-muted-foreground">
-												{planChangeUnavailable}
-											</p>
-										</>
-									) : (
-										<>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled={
-													pendingPlanChangeName === null &&
-													(planChangeUnavailable !== null || !!pendingPlanSlug)
-												}
-												onClick={() => setPlanChangeDialogOpen(true)}
-											>
-												<Settings data-icon="inline-start" />
-												Manage
-											</Button>
-											<ConfirmAction
-												title={`Cancel ${tierLabel} subscription?`}
-												description={
-													<p>
-														Cancellation takes effect {subscriptionPeriodLabel}. The agent then
-														falls back to included Basic funding if available; otherwise, it stops.
-													</p>
-												}
-												confirmLabel="Cancel at period end"
-												destructive
-												onConfirm={() => runAction(cancelComputeSubscription)}
-											>
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													disabled={cancelSubscription.isPending || !subscriptionCancelable}
-												>
-													{cancelSubscription.isPending ? (
-														<Spinner data-icon="inline-start" />
-													) : (
-														<Link2Off data-icon="inline-start" />
-													)}
-													Cancel subscription
-												</Button>
-											</ConfirmAction>
-											{pendingPlanSlug ? (
-												<p className="basis-full text-right text-xs text-muted-foreground">
-													A plan change is already scheduled. It will apply on the effective date
-													shown above.
-												</p>
-											) : planChangeUnavailable ? (
-												<p className="basis-full text-right text-xs text-muted-foreground">
-													{planChangeUnavailable}
-												</p>
-											) : null}
-										</>
-									)
-								) : null}
-							</div>
-						) : null
+						<ComputeSubscriptionActionList
+							actions={computeActions}
+							target={{ kind: "deployment", deploymentId: deployment.resource.id }}
+							onPlanChange={() => setPlanChangeOpen(true)}
+							onStartNew={{
+								kind: "button",
+								onClick: () => setSubscriptionCreateOpen(true),
+								label: "Choose a subscription",
+							}}
+							cancelCopy={{
+								title: `Cancel ${tierLabel} subscription?`,
+								description: (
+									<p>
+										Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls back
+										to included Basic funding if available; otherwise, it stops.
+									</p>
+								),
+								confirmLabel: "Cancel at period end",
+								successDescription: (result) =>
+									result.current_period_end
+										? `Cancellation takes effect ${formatShortDate(result.current_period_end)}. The agent then falls back to included Basic funding if available; otherwise, it stops.`
+										: "The agent falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
+							}}
+						/>
 					}
 				/>
 			</SettingsSection>

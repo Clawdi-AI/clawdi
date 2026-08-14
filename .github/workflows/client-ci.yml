@@ -19,6 +19,7 @@ on:
       - "scripts/check-deploy-generated-api.sh"
       - "package.json"
       - "bun.lock"
+      - "patches/libsignal@6.0.0.patch"
       - "turbo.json"
       - "tsconfig.base.json"
       - "biome.json"
@@ -43,6 +44,7 @@ on:
       - "scripts/check-deploy-generated-api.sh"
       - "package.json"
       - "bun.lock"
+      - "patches/libsignal@6.0.0.patch"
       - "turbo.json"
       - "tsconfig.base.json"
       - "biome.json"
@@ -86,6 +88,7 @@ jobs:
               - "install.sh"
               - "package.json"
               - "bun.lock"
+              - "patches/libsignal@6.0.0.patch"
               - "turbo.json"
               - "tsconfig.base.json"
               - "biome.json"
@@ -122,6 +125,7 @@ jobs:
               - ".dockerignore"
               - "package.json"
               - "bun.lock"
+              - "patches/libsignal@6.0.0.patch"
               - ".github/workflows/client-ci.yml"
 
   # Lint, typecheck, build, and client package tests in one job.

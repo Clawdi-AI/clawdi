@@ -75,6 +75,7 @@ export type BaileysRuntime = {
 	sendNode(node: BinaryNode): Promise<void>;
 	query(node: BinaryNode, timeoutMs: number): Promise<BinaryNode | null>;
 	providerEvents(limit: number): ProviderMessageEvent[];
+	waitForProviderEvents(limit: number, waitMs: number): Promise<ProviderMessageEvent[]>;
 	acknowledgeProviderEvents(throughSequence: number): void;
 };
 

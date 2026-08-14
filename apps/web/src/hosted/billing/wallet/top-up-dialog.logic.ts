@@ -1,5 +1,6 @@
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { WalletTopupResult, WalletTransaction } from "@/hosted/billing/contracts";
+import { wholeDollarTopUpCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	type PaymentIntentClientSecret,
@@ -41,13 +42,8 @@ export function validTopUpAmountCents(amountCents: number): boolean {
 }
 
 /** Convert a USD shortfall into the smallest whole-dollar top-up that covers it. */
-export function topUpAmountCentsForUsdShortfall(shortfallUsd: number | null): number | null {
-	if (shortfallUsd === null || !Number.isFinite(shortfallUsd) || shortfallUsd <= 0) {
-		return null;
-	}
-	const rawCents = shortfallUsd * 100;
-	const roundedCents = Math.ceil(rawCents / TOPUP_INCREMENT_CENTS) * TOPUP_INCREMENT_CENTS;
-	return Math.min(TOPUP_MAX_CENTS, Math.max(TOPUP_MIN_CENTS, roundedCents));
+export function topUpAmountCentsForUsdShortfall(shortfallUsd: string | null): number | null {
+	return wholeDollarTopUpCents(shortfallUsd, TOPUP_MIN_CENTS, TOPUP_MAX_CENTS);
 }
 
 export function invalidateWalletData(queryClient: QueryClient): void {
@@ -55,6 +51,7 @@ export function invalidateWalletData(queryClient: QueryClient): void {
 	queryClient.invalidateQueries({ queryKey: billingKeys.transactions });
 	queryClient.invalidateQueries({ queryKey: billingKeys.subscriptionCreateQuotes });
 	queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
+	queryClient.invalidateQueries({ queryKey: billingKeys.subscriptions });
 	queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 }
 

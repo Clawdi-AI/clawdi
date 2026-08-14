@@ -98,7 +98,6 @@ _CODEX_TOOL_CANONICAL_ENV_MINIMUM_CLI_VERSION = (0, 13, 69)
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
-_HOSTED_CLI_NPM_REGISTRY = "https://registry.npmjs.org"
 _AI_PROVIDER_MODELS_ADAPTER: TypeAdapter[list[AiProviderModel]] = TypeAdapter(list[AiProviderModel])
 
 
@@ -115,29 +114,6 @@ def expected_runtime_bundle_v2_etag(source_revision: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", source_revision):
         raise ValueError("runtime bundle source revision must be a SHA-256 digest")
     return f'"sha256:{source_revision}"'
-
-
-def _has_exact_active_cli_evidence(
-    diagnostics: HostedRuntimeObservedV2,
-    package_spec: str,
-) -> bool:
-    prefix = "clawdi@"
-    if not package_spec.startswith(prefix):
-        return False
-    version = package_spec.removeprefix(prefix)
-    if parse_exact_semver(version) is None:
-        return False
-    cli = diagnostics.cli
-    return bool(
-        cli is not None
-        and cli.status == "installed"
-        and cli.source == "npm"
-        and cli.package_spec == package_spec
-        and cli.registry == _HOSTED_CLI_NPM_REGISTRY
-        and cli.active_path
-        and cli.active_target
-        and cli.version == version
-    )
 
 
 def _codex_tool_runtime_env(
@@ -169,7 +145,7 @@ def _codex_tool_runtime_env(
     if not (
         observed.status == "ok"
         and observed.converge_error is None
-        and _has_exact_active_cli_evidence(observed, state.cli_package_spec)
+        and observed.active_cli_version == desired_version
         and observed.applied is not None
         and observed.applied.instance_id == state.instance_id
         and observed.applied.generation == expected_generation
@@ -848,7 +824,7 @@ def render_runtime_source(
         "clawdiCli": {
             "source": "npm:clawdi",
             "packageSpec": cli_package_spec,
-            "registry": _HOSTED_CLI_NPM_REGISTRY,
+            "registry": "https://registry.npmjs.org",
         },
         "runtimes": {runtime_name: runtime},
         "providers": providers,

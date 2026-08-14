@@ -76,7 +76,7 @@
     },
     "packages/cli": {
       "name": "clawdi",
-      "version": "0.13.69",
+      "version": "0.13.74",
       "bin": {
         "clawdi": "bin/clawdi.mjs",
       },
@@ -121,6 +121,9 @@
   "trustedDependencies": [
     "sharp",
   ],
+  "patchedDependencies": {
+    "libsignal@6.0.0": "patches/libsignal@6.0.0.patch",
+  },
   "overrides": {
     "dompurify": "3.4.11",
     "fast-uri": "4.1.0",

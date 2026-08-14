@@ -1,10 +1,10 @@
 import type { WAVersion } from "baileys";
 
 export const AUDITED_BAILEYS_RELEASE = "7.0.0-rc14";
-export const AUDITED_BAILEYS_PACKAGE = "@whiskeysockets/baileys";
-export const AUDITED_BAILEYS_SOURCE_COMMIT = "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a";
+const AUDITED_BAILEYS_PACKAGE = "@whiskeysockets/baileys";
+const AUDITED_BAILEYS_SOURCE_COMMIT = "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a";
 export const AUDITED_WHATSAPP_WEB_VERSION_TEXT = "2.3000.1043857760";
-export const AUDITED_WHATSAPP_WEB_VERSION = [2, 3000, 1_043_857_760] as const satisfies WAVersion;
+const AUDITED_WHATSAPP_WEB_VERSION = [2, 3000, 1_043_857_760] as const satisfies WAVersion;
 
 export const AUDITED_PROVIDER_RELEASE = {
 	packageName: AUDITED_BAILEYS_PACKAGE,

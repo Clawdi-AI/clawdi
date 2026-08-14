@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { hasAsciiControlCharacter } from "../lib/github-skill-archive";
 import { secretRefSchema } from "./egress-profiles";
+import { isMcpSensitiveHeaderName } from "./mcp-credential-policy";
 
 const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
 export const agentPluginNameSchema = z
@@ -8,18 +9,11 @@ export const agentPluginNameSchema = z
 	.min(1)
 	.max(64)
 	.regex(/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
+const agentPluginSecretSlotIdSchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/);
 const mcpHeaderNameSchema = z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/);
 
 export const AGENT_PLUGINS_SCHEMA_1_0_0 =
 	"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
-
-function isMcpCredentialHeader(name: string): boolean {
-	const normalized = name.toLowerCase();
-	if (["authorization", "proxy-authorization", "cookie"].includes(normalized)) return true;
-	return /(?:^|[-_])(?:api[-_]?key|apikey|tokens?|secrets?|credentials?)(?:$|[-_])/.test(
-		normalized,
-	);
-}
 
 const mcpSecretHeaderSchema = z
 	.object({
@@ -78,7 +72,7 @@ const hostedRemoteMcpServerDesiredStateSchema = z
 					path: ["headers", header],
 				});
 			}
-			if (typeof server.headers[header] === "string" && isMcpCredentialHeader(header)) {
+			if (typeof server.headers[header] === "string" && isMcpSensitiveHeaderName(header)) {
 				ctx.addIssue({
 					code: "custom",
 					message: `credential-bearing HTTP header ${header} must use secretRef`,
@@ -175,7 +169,7 @@ export const hostedAgentPluginInstallationSchema = z
 		source: hostedGithubSkillSourceSchema,
 		contentDigest: z.string().regex(/^sha256-tree-v1:[0-9a-f]{64}$/),
 		secretRefs: z
-			.record(agentPluginNameSchema, secretRefSchema.max(1_000))
+			.record(agentPluginSecretSlotIdSchema, secretRefSchema.max(1_000))
 			.refine((value) => Object.keys(value).length <= 128, "must contain at most 128 entries"),
 	})
 	.strict();

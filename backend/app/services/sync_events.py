@@ -78,6 +78,12 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.runtime import HostedRuntimeTools, validate_hosted_runtime_desired_state
+from app.services.channel_wakeups import (
+    CHANNEL_DELIVERIES_ENQUEUED,
+    CHANNEL_INBOUND_MESSAGES_ENQUEUED,
+    channel_deliveries_enqueued,
+    channel_inbound_messages_enqueued,
+)
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
     is_v2_deployment_managed_provider_id,
@@ -628,8 +634,11 @@ async def _postgres_listener_loop(
         try:
             active_connection = await connect_postgres_listener(
                 _asyncpg_dsn(),
-                _POSTGRES_CHANNEL,
-                _on_postgres_notification,
+                {
+                    _POSTGRES_CHANNEL: _on_postgres_notification,
+                    CHANNEL_DELIVERIES_ENQUEUED: _on_channel_delivery_enqueued,
+                    CHANNEL_INBOUND_MESSAGES_ENQUEUED: _on_channel_inbound_message_enqueued,
+                },
                 terminated.set,
             )
             connection = active_connection
@@ -692,6 +701,14 @@ def _on_postgres_notification(
         log.warning("ignored invalid PostgreSQL sync event: %s", exc)
         return
     _broadcast(envelope.user_id, envelope.event)
+
+
+def _on_channel_delivery_enqueued(_pid: int, _channel: str, _payload: str) -> None:
+    channel_deliveries_enqueued.signal()
+
+
+def _on_channel_inbound_message_enqueued(_pid: int, _channel: str, _payload: str) -> None:
+    channel_inbound_messages_enqueued.signal()
 
 
 async def get_skills_revision(db: AsyncSession, user_id: UUID) -> int:

@@ -2125,7 +2125,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Platform Get Runtime Source Authority */
+        get: operations["platform_get_runtime_source_authority_v1_platform_agents__agent_id__runtime_state_get"];
         /** Platform Upsert Runtime State */
         put: operations["platform_upsert_runtime_state_v1_platform_agents__agent_id__runtime_state_put"];
         post?: never;
@@ -2955,6 +2956,23 @@ export interface paths {
         put?: never;
         /** Retire Runtime Environment Endpoint */
         post: operations["retire_runtime_environment_endpoint_v2_runtime_environments__environment_id__retire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/runtime/environments/{environment_id}/runtime-state/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cleanup Retired Runtime State Endpoint */
+        post: operations["cleanup_retired_runtime_state_endpoint_v2_runtime_environments__environment_id__runtime_state_cleanup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6593,6 +6611,10 @@ export interface components {
             convergeError?: string | null;
             /** Truncated */
             truncated?: false | null;
+            /** Generation */
+            generation?: number | null;
+            /** Manifestetag */
+            manifestETag?: string | null;
             /** Applyreceiptid */
             applyReceiptId: string;
             /** Bootnonce */
@@ -6861,6 +6883,65 @@ export interface components {
             bootSessionId: string;
             /** Sequence */
             sequence: number;
+        };
+        /** RuntimeSourceAuthorityResponse */
+        RuntimeSourceAuthorityResponse: {
+            /**
+             * Environmentid
+             * Format: uuid
+             */
+            environmentId: string;
+            /** Deploymentid */
+            deploymentId: string;
+            /** Instanceid */
+            instanceId: string;
+            /** Sourcerevision */
+            sourceRevision: string;
+            /** Etag */
+            etag: string;
+        };
+        /** RuntimeStateCleanupReceipt */
+        RuntimeStateCleanupReceipt: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: "clawdi.runtimeStateCleanupReceipt.v1";
+            /**
+             * Environmentreference
+             * Format: uuid
+             */
+            environmentReference: string;
+            /** Expecteddeploymentbinding */
+            expectedDeploymentBinding: string;
+            /** Retirementid */
+            retirementId: string;
+            /** Cleanupid */
+            cleanupId: string;
+            /**
+             * Runtimestatestatus
+             * @constant
+             */
+            runtimeStateStatus: "absent";
+            /**
+             * Cleanedat
+             * Format: date-time
+             */
+            cleanedAt: string;
+        };
+        /** RuntimeStateCleanupRequest */
+        RuntimeStateCleanupRequest: {
+            /**
+             * Environmentreference
+             * Format: uuid
+             */
+            environmentReference: string;
+            /** Expecteddeploymentbinding */
+            expectedDeploymentBinding: string;
+            /** Retirementid */
+            retirementId: string;
+            /** Cleanupid */
+            cleanupId: string;
         };
         /** SearchHit */
         SearchHit: {
@@ -11966,6 +12047,43 @@ export interface operations {
             };
         };
     };
+    platform_get_runtime_source_authority_v1_platform_agents__agent_id__runtime_state_get: {
+        parameters: {
+            query: {
+                kind: "clerk" | "partner_tenant";
+                ref: string;
+            };
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSourceAuthorityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     platform_upsert_runtime_state_v1_platform_agents__agent_id__runtime_state_put: {
         parameters: {
             query?: never;
@@ -13598,6 +13716,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeEnvironmentRetirementReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cleanup_retired_runtime_state_endpoint_v2_runtime_environments__environment_id__runtime_state_cleanup_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeStateCleanupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeStateCleanupReceipt"];
                 };
             };
             /** @description Validation Error */

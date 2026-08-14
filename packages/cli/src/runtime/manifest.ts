@@ -207,7 +207,11 @@ import {
 	runtimeServiceNameSchema,
 	writeRuntimeRunConfig,
 } from "./run-config";
-import { runtimeImpactRevision, runtimeProgramRevision } from "./runtime-impact-revision";
+import {
+	daemonProgramRevision,
+	runtimeImpactRevision,
+	runtimeProgramRevision,
+} from "./runtime-impact-revision";
 import {
 	buildRuntimeSystemdUserProgram,
 	installOfficialRuntimeService,
@@ -320,14 +324,17 @@ interface RuntimeSystemdApplySignal {
 interface RuntimeSystemdApplyHooks {
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
-	quiesce: () => void;
+	transactionState: () => "pristine" | "mutated";
+	installOfficialService: (unit: string, install: () => string | null) => string | null;
+	quiesce: (affectedUserUnits: readonly string[]) => void;
 	rollback: (signal: RuntimeSystemdApplySignal) => void;
 }
 
 export interface RuntimePrivateAppliedAuthority {
-	// These are secret-dependent verifiers and may only be persisted in the
-	// root-owned 0600 applied-state authority.
+	// These private activation verifiers may only be persisted in the root-owned
+	// 0600 applied-state authority.
 	daemonAuthTokenRevision?: string;
+	daemonProgramRevision?: string;
 	egressSidecarSecretRevision?: string;
 }
 
@@ -2445,7 +2452,11 @@ function previewHostedAiProviderProjectionRevision(
 		}
 		return runtimeImpactRevision({
 			openClawProviderProjection: "json-patch",
-			patch: providerPatch.content,
+			patch: providerProjectionProgramImpact(
+				"openclaw",
+				JSON.parse(providerPatch.content) as unknown,
+				projectionInput,
+			),
 		});
 	}
 	return applyHostedHermesAiProviderProjection(
@@ -2455,6 +2466,37 @@ function previewHostedAiProviderProjectionRevision(
 		home,
 		false,
 	).revision;
+}
+
+function providerProjectionProgramImpact(
+	runtime: "openclaw" | "hermes",
+	patch: unknown,
+	projectionInput: HostedAiProviderProjectionInput,
+): unknown {
+	const root = recordValue(patch);
+	const managedProviderIds = new Set(
+		projectionInput.catalog.providers
+			.filter((provider) => provider.managed_by === "clawdi")
+			.map((provider) => provider.id),
+	);
+	if (!root || managedProviderIds.size === 0) return patch;
+
+	const providerContainer = runtime === "openclaw" ? recordValue(root.models) : root;
+	if (!providerContainer) return patch;
+	const providers = recordValue(providerContainer.providers);
+	if (!providers) return patch;
+	const programProviders = Object.fromEntries(
+		Object.entries(providers).map(([providerId, provider]) => {
+			const providerConfig = recordValue(provider);
+			if (!managedProviderIds.has(providerId) || !providerConfig) return [providerId, provider];
+			const { models: _models, ...programConfig } = providerConfig;
+			return [providerId, programConfig];
+		}),
+	);
+	if (runtime === "openclaw") {
+		return { ...root, models: { ...providerContainer, providers: programProviders } };
+	}
+	return { ...root, providers: programProviders };
 }
 
 function applyHostedCodexManagedProviderProjection(
@@ -2703,7 +2745,7 @@ function applyHostedHermesAiProviderProjection(
 		providerIds: activeProviderIds,
 		revision: runtimeImpactRevision({
 			hermesProviderProjection: "yaml-merge",
-			patch: patchContent,
+			patch: providerProjectionProgramImpact("hermes", parseYaml(patchContent), projectionInput),
 		}),
 	};
 }
@@ -5643,7 +5685,9 @@ export function convergeRuntimeManifest(
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
 	let agentPluginSnapshot: RuntimeLiveSnapshot | null = null;
-	let agentPluginMutated = false;
+	let agentPluginQuiesceAttempted = false;
+	let agentPluginUnitsQuiesced = false;
+	let agentPluginMutationAttempted = false;
 	let agentPluginRestartUserUnits: string[] = [];
 	const enabledRuntimes = Object.entries(manifest.runtimes)
 		.filter(([, runtime]) => runtime.enabled)
@@ -5865,9 +5909,9 @@ export function convergeRuntimeManifest(
 		throw error;
 	}
 	let systemdActivationApplied = false;
-	let systemdActivationAttempted = false;
 	let restartDaemon = false;
 	let desiredDaemonAuthTokenRevision: string | undefined;
+	let desiredDaemonProgramRevision: string | undefined;
 	let restartEgressSidecar = false;
 	let desiredEgressSidecarSecretRevision: string | undefined;
 	let rollbackEgressSecretOverride: RuntimeEgressSecretMaterial | undefined;
@@ -5943,18 +5987,6 @@ export function convergeRuntimeManifest(
 					? { runner: opts.hostedAgentPluginCommandRunner }
 					: {}),
 			});
-			if (agentPluginTransaction.snapshotTargets.length > 0) {
-				agentPluginSnapshot = captureRuntimeLiveSnapshot({
-					rootTargets: [],
-					trustedRootDirectories: [],
-					runtimeUserTargets: [...agentPluginTransaction.snapshotTargets],
-					runtimeUserTrustedRoots: [projectionHome],
-					runtimeUserSymlinkTargets: [],
-					metadataTargets: mutationAncestorMetadataTargets(agentPluginTransaction.snapshotTargets, [
-						projectionHome,
-					]),
-				});
-			}
 			if (agentPluginTransaction.hasMutations && !opts.systemdApply) {
 				throw new Error("Agent Plugin mutations require systemd activation and readiness");
 			}
@@ -6131,7 +6163,10 @@ export function convergeRuntimeManifest(
 		const runtimeAuthToken = daemonAuthTokenFile ? readRuntimeAuthToken(paths) : null;
 		if (runtimeAuthToken) {
 			desiredDaemonAuthTokenRevision = daemonAuthTokenRevision(runtimeAuthToken);
-			restartDaemon = desiredDaemonAuthTokenRevision !== appliedState?.daemonAuthTokenRevision;
+			desiredDaemonProgramRevision = daemonProgramRevision(manifest);
+			restartDaemon =
+				desiredDaemonAuthTokenRevision !== appliedState?.daemonAuthTokenRevision ||
+				desiredDaemonProgramRevision !== appliedState?.daemonProgramRevision;
 		}
 		try {
 			withRuntimeUserFileAccess(() =>
@@ -6511,9 +6546,8 @@ export function convergeRuntimeManifest(
 		}
 		// Agent Plugin mutations must precede every native service installer.
 		// The final activation below restarts the affected runtime units.
-		agentPluginMutated = agentPluginTransaction?.apply() ?? false;
 		const appliedAgentPluginTransaction = agentPluginTransaction;
-		if (agentPluginMutated && appliedAgentPluginTransaction) {
+		if (appliedAgentPluginTransaction?.hasMutations) {
 			agentPluginRestartUserUnits = [
 				...new Set(
 					runtimeSystemdUserPrograms
@@ -6526,7 +6560,25 @@ export function convergeRuntimeManifest(
 						.map(runtimeSystemdUserUnitName),
 				),
 			].sort();
+			agentPluginQuiesceAttempted = true;
+			opts.systemdApply?.quiesce(agentPluginRestartUserUnits);
+			agentPluginUnitsQuiesced = true;
+			if (appliedAgentPluginTransaction.snapshotTargets.length > 0) {
+				agentPluginSnapshot = captureRuntimeLiveSnapshot({
+					rootTargets: [],
+					trustedRootDirectories: [],
+					runtimeUserTargets: [...appliedAgentPluginTransaction.snapshotTargets],
+					runtimeUserTrustedRoots: [projectionHome],
+					runtimeUserSymlinkTargets: [],
+					metadataTargets: mutationAncestorMetadataTargets(
+						appliedAgentPluginTransaction.snapshotTargets,
+						[projectionHome],
+					),
+				});
+			}
+			agentPluginMutationAttempted = true;
 		}
+		appliedAgentPluginTransaction?.apply();
 		if (
 			(officialServicePlan.pending.length > 0 ||
 				(hermesDashboardArtifactPlan.program !== null &&
@@ -6534,7 +6586,7 @@ export function convergeRuntimeManifest(
 			systemdUnits.egressSidecarActive &&
 			opts.systemdApply
 		) {
-			systemdActivationAttempted = true;
+			agentPluginUnitsQuiesced = false;
 			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 				restartDaemon,
 				restartEgressSidecar,
@@ -6549,9 +6601,13 @@ export function convergeRuntimeManifest(
 			}
 		}
 
+		if (officialServicePlan.pending.length > 0) agentPluginUnitsQuiesced = false;
 		for (const item of officialServicePlan.pending) {
 			hostedRuntimeContract.assertPlatformRoots();
-			const error = installOfficialRuntimeService(item, paths);
+			const install = () => installOfficialRuntimeService(item, paths);
+			const error = opts.systemdApply
+				? opts.systemdApply.installOfficialService(item.unitName, install)
+				: install();
 			if (error) throw new Error(error);
 		}
 		const artifactError = prepareHermesDashboardArtifact(
@@ -6565,7 +6621,7 @@ export function convergeRuntimeManifest(
 		const bootFinished = join(instanceRoot, "boot-finished");
 		writeRuntimePrivateFileAtomic(paths, bootFinished, `${generatedAt}\n`);
 		if (opts.systemdApply) {
-			systemdActivationAttempted = true;
+			agentPluginUnitsQuiesced = false;
 			const activation = opts.systemdApply.activate({
 				restartDaemon,
 				restartEgressSidecar,
@@ -6629,9 +6685,12 @@ export function convergeRuntimeManifest(
 		};
 		if (installErrors.length === 0) {
 			hostedRuntimeContract.assertPlatformRoots();
-			const daemonRevisionPreviouslyCommitted =
+			const daemonAuthTokenRevisionPreviouslyCommitted =
 				desiredDaemonAuthTokenRevision !== undefined &&
 				desiredDaemonAuthTokenRevision === appliedState?.daemonAuthTokenRevision;
+			const daemonProgramRevisionPreviouslyCommitted =
+				desiredDaemonProgramRevision !== undefined &&
+				desiredDaemonProgramRevision === appliedState?.daemonProgramRevision;
 			const egressRevisionPreviouslyCommitted =
 				desiredEgressSidecarSecretRevision !== undefined &&
 				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
@@ -6641,8 +6700,12 @@ export function convergeRuntimeManifest(
 			}
 			opts.commitAuthority?.(convergence, {
 				...(desiredDaemonAuthTokenRevision !== undefined &&
-				(systemdActivationApplied || daemonRevisionPreviouslyCommitted)
+				(systemdActivationApplied || daemonAuthTokenRevisionPreviouslyCommitted)
 					? { daemonAuthTokenRevision: desiredDaemonAuthTokenRevision }
+					: {}),
+				...(desiredDaemonProgramRevision !== undefined &&
+				(systemdActivationApplied || daemonProgramRevisionPreviouslyCommitted)
+					? { daemonProgramRevision: desiredDaemonProgramRevision }
 					: {}),
 				...(desiredEgressSidecarSecretRevision !== undefined &&
 				(systemdActivationApplied || egressRevisionPreviouslyCommitted)
@@ -6681,10 +6744,13 @@ export function convergeRuntimeManifest(
 		return convergence;
 	} catch (error) {
 		const applyError = error instanceof Error ? error.message : String(error);
-		let candidateQuiesced = !systemdActivationAttempted;
-		if (systemdActivationAttempted) {
+		const systemdMutated = opts.systemdApply?.transactionState() === "mutated";
+		const rollbackRequiresQuiesce =
+			systemdMutated || agentPluginQuiesceAttempted || agentPluginMutationAttempted;
+		let candidateQuiesced = agentPluginUnitsQuiesced || !rollbackRequiresQuiesce;
+		if (rollbackRequiresQuiesce && !candidateQuiesced) {
 			try {
-				opts.systemdApply?.quiesce();
+				opts.systemdApply?.quiesce(agentPluginRestartUserUnits);
 				candidateQuiesced = true;
 			} catch (quiesceError) {
 				installErrors.push(
@@ -6759,7 +6825,7 @@ export function convergeRuntimeManifest(
 				);
 			}
 		}
-		if (opts.systemdApply && filesystemRollbackSucceeded) {
+		if (opts.systemdApply && filesystemRollbackSucceeded && rollbackRequiresQuiesce) {
 			try {
 				opts.systemdApply.rollback({
 					restartDaemon,
@@ -6777,11 +6843,11 @@ export function convergeRuntimeManifest(
 					}`,
 				);
 			}
-		} else if (opts.systemdApply && candidateQuiesced) {
+		} else if (opts.systemdApply && rollbackRequiresQuiesce && candidateQuiesced) {
 			installErrors.push(
 				"runtime systemd rollback skipped because filesystem authority restoration failed",
 			);
-		} else if (opts.systemdApply) {
+		} else if (opts.systemdApply && rollbackRequiresQuiesce) {
 			installErrors.push(
 				"runtime systemd reconciliation skipped because candidate services did not quiesce",
 			);

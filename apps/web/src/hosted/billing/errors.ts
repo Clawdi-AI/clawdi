@@ -353,6 +353,7 @@ export function billingQueryRetry(failureCount: number, error: unknown): boolean
  * message text from an upstream gateway.
  */
 export const INSUFFICIENT_WALLET_BALANCE_CODE = "insufficient_wallet_balance";
+export const FUNDING_AUTHORITY_INCONSISTENT_CODE = "funding_authority_inconsistent";
 
 export function isInsufficientBalanceError(error: unknown): boolean {
 	if (!(error instanceof BillingApiError)) return false;
@@ -390,6 +391,9 @@ export function normalizeBillingError(error: unknown): string {
 	}
 	if (error instanceof BillingApiError) {
 		const code = billingErrorDetail(error)?.code;
+		if (code === FUNDING_AUTHORITY_INCONSISTENT_CODE) {
+			return "Subscription billing details need reconciliation. Contact support before changing this subscription.";
+		}
 		if (code === "open_refund_debt") {
 			return "Top up your Wallet to continue. New funds repay refund debt before compute charges.";
 		}

@@ -1,4 +1,4 @@
-import { formatCents } from "@/hosted/billing/format";
+import { compareDecimals, formatCents } from "@/hosted/billing/format";
 
 /**
  * Wallet UI bounds. These mirror the hosted API validation so the form catches
@@ -16,6 +16,7 @@ export const TOPUP_PRESETS_CENTS = [1000, 2500, 5000, 10_000, 25_000];
 // Auto-reload amount bounds; threshold ≥ $1, and 0 means no monthly limit.
 export const AUTORELOAD_AMOUNT_MIN_CENTS = 500;
 export const AUTORELOAD_AMOUNT_MAX_CENTS = 50_000;
+export const AUTORELOAD_MONTHLY_CAP_MAX_CENTS = 2_147_483_647;
 export const AUTORELOAD_THRESHOLD_MIN_USD = 1;
 
 function amountRangeLabel(minCents: number, maxCents: number): string {
@@ -32,6 +33,5 @@ export const AUTORELOAD_AMOUNT_RANGE_LABEL = amountRangeLabel(
 export const LOW_BALANCE_USD = 2;
 
 export function isLowBalance(balanceUsd: string): boolean {
-	const balance = Number(balanceUsd);
-	return Number.isFinite(balance) && balance < LOW_BALANCE_USD;
+	return compareDecimals(balanceUsd, String(LOW_BALANCE_USD)) === -1;
 }

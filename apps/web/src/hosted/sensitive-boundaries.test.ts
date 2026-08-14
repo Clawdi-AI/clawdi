@@ -59,6 +59,13 @@ describe("structural secret boundaries without the denylist", () => {
 			balance_usd: "25.00",
 			x402_enabled: true,
 			auto_reload_enabled: true,
+			auto_reload_has_payment_method: true,
+			auto_reload_card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },
+			auto_reload_currency: "usd",
+			auto_reload_required_consent_version: "wallet_auto_reload_off_session_v2",
+			auto_reload_amount_policy: "wallet_reload_configured_plus_negative_balance_v1",
+			auto_reload_consent_version: "wallet_auto_reload_off_session_v2",
+			auto_reload_consented_at: "2026-08-01T00:00:00Z",
 			auto_reload_threshold_usd: "5",
 			auto_reload_amount_cents: 2_500,
 			auto_reload_monthly_cap_cents: 10_000,
@@ -207,7 +214,9 @@ describe("structural secret boundaries without the denylist", () => {
 		).toHaveLength(5);
 		expect(
 			source("hosted/billing/sensitive-actions.ts").split("return useSensitiveAction"),
-		).toHaveLength(7);
+		).toHaveLength(9);
+		const stripeProvider = source("hosted/billing/stripe-elements-provider.tsx");
+		expect(stripeProvider).toContain("<Elements key={clientSecret}");
 
 		const walletConsumers = [
 			"hosted/global-wallet-balance.tsx",
@@ -215,8 +224,8 @@ describe("structural secret boundaries without the denylist", () => {
 			"hosted/billing/wallet/wallet-page.tsx",
 			"hosted/billing/subscription/welcome-wallet-card.tsx",
 			"hosted/billing/subscription/subscription-create-dialog.tsx",
-			"hosted/billing/components/compute-dunning-banner.tsx",
-			"hosted/agents/hosted-agent-detail.tsx",
+			"hosted/billing/subscription/compute-subscription-recovery-action.tsx",
+			"hosted/billing/subscription/plan-change-controller.tsx",
 		];
 		for (const path of walletConsumers) {
 			expect(source(path)).toContain("useWalletSnapshot");

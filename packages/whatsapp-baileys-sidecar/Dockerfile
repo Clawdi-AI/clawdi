@@ -4,6 +4,7 @@ FROM oven/bun:1.3.14-alpine AS dependencies
 
 WORKDIR /app
 COPY package.json bun.lock ./
+COPY patches/libsignal@6.0.0.patch patches/libsignal@6.0.0.patch
 COPY apps/web/package.json apps/web/package.json
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/shared/package.json packages/shared/package.json
@@ -14,6 +15,7 @@ FROM oven/bun:1.3.14-alpine AS build
 
 WORKDIR /app
 COPY package.json bun.lock tsconfig.base.json ./
+COPY patches/libsignal@6.0.0.patch patches/libsignal@6.0.0.patch
 COPY apps/web/package.json apps/web/package.json
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/shared/package.json packages/shared/package.json

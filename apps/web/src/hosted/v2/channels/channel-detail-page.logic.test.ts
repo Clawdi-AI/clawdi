@@ -94,7 +94,6 @@ describe("nativeTransportSummary", () => {
 				mode: "none",
 				reason: "shared-bot-transport-unavailable",
 				supportsOutboundMessages: false,
-				supportsRawRelay: false,
 			}),
 		).toEqual({
 			status: "Unavailable",

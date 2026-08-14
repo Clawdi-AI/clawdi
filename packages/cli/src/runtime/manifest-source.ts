@@ -359,7 +359,7 @@ async function loadRemoteRuntimeManifestPipeline(
 	};
 	try {
 		normalized = normalizeRemoteManifestPayload(fetched.raw);
-		assertRemoteBundleAuthority(normalized.sourceRevision, fetched.etag);
+		assertRuntimeBundleAuthority(normalized.sourceRevision, fetched.etag);
 		assertRuntimeApplyIdentityMatchesManifest(normalized.manifest, applyContext);
 	} catch (error) {
 		return {
@@ -420,7 +420,7 @@ function assertRuntimeApplyIdentityMatchesManifest(
 	}
 }
 
-function assertRemoteBundleAuthority(
+export function assertRuntimeBundleAuthority(
 	sourceRevision: string | undefined,
 	etag: string | undefined,
 ): void {

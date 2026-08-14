@@ -81,6 +81,15 @@ def test_agent_plugins_rejects_mutable_unsafe_or_plaintext_values(
                 }
             },
         },
+        {
+            **_agent_plugins(),
+            "installations": {
+                "acme.tools": {
+                    **_installation(),
+                    "secretRefs": {"api.token": "secret://agent-plugins/acme/api-token"},
+                }
+            },
+        },
     ],
 )
 def test_agent_plugins_rejects_unknown_or_noncanonical_shapes(

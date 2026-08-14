@@ -54,6 +54,13 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     error: str | None = Field(default=None, max_length=4000)
     converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
     truncated: Literal[False] | None = None
+    generation: int | None = Field(default=None, ge=1, le=9_007_199_254_740_991)
+    manifest_etag: str | None = Field(
+        alias="manifestETag",
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
     apply_receipt_id: str = Field(alias="applyReceiptId", min_length=16, max_length=128)
     boot_nonce: str = Field(alias="bootNonce", min_length=16, max_length=128)
     boot_session_id: str = Field(alias="bootSessionId", min_length=1, max_length=128)
@@ -93,6 +100,10 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     def validate_companion_identity(self) -> RuntimeObservationEventV2:
         if self.applied.generation < 1:
             raise ValueError("runtime observation generation must be at least 1")
+        if (self.generation is None) != (self.manifest_etag is None):
+            raise ValueError("generation and manifestETag must be present together")
+        if self.generation is not None and self.generation != self.applied.generation:
+            raise ValueError("generation must match applied.generation")
         if self.reported_at != self.captured_at:
             raise ValueError("reportedAt must equal capturedAt")
         if self.predecessor_boot_session_id == self.boot_session_id:
@@ -116,6 +127,17 @@ class RuntimeEnvironmentRetireRequest(RuntimeObservationRequestModel):
         max_length=200,
     )
     retirement_id: str = Field(alias="retirementId", min_length=1, max_length=200)
+
+
+class RuntimeStateCleanupRequest(RuntimeObservationRequestModel):
+    environment_reference: UUID = Field(alias="environmentReference")
+    expected_deployment_binding: str = Field(
+        alias="expectedDeploymentBinding",
+        min_length=1,
+        max_length=200,
+    )
+    retirement_id: str = Field(alias="retirementId", min_length=1, max_length=200)
+    cleanup_id: str = Field(alias="cleanupId", min_length=1, max_length=200)
 
 
 class RuntimeObservationConsumerRequest(RuntimeObservationRequestModel):
@@ -235,6 +257,16 @@ class RuntimeEnvironmentRetirementReceipt(RuntimeObservationResponseModel):
     final_session_high_water_marks: list[RuntimeSessionHighWaterMark] = Field(
         alias="finalSessionHighWaterMarks"
     )
+
+
+class RuntimeStateCleanupReceipt(RuntimeObservationResponseModel):
+    schema_version: Literal["clawdi.runtimeStateCleanupReceipt.v1"] = Field(alias="schemaVersion")
+    environment_reference: UUID = Field(alias="environmentReference")
+    expected_deployment_binding: str = Field(alias="expectedDeploymentBinding")
+    retirement_id: str = Field(alias="retirementId")
+    cleanup_id: str = Field(alias="cleanupId")
+    runtime_state_status: Literal["absent"] = Field(alias="runtimeStateStatus")
+    cleaned_at: datetime = Field(alias="cleanedAt")
 
 
 class RuntimeSessionHighWaterMark(RuntimeObservationResponseModel):

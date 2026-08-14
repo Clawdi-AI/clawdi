@@ -20,6 +20,7 @@ import {
 	billingNextPageParam,
 	billingRecoveryRefetchIntervalFor,
 	HOSTED_DEPLOYMENTS_REFRESH_POLICY,
+	invalidateComputeSubscriptionInventory,
 	invalidateSettledPlanChangeQueries,
 	reconcileDeploymentSnapshots,
 	refreshCheckoutReturnQueries,
@@ -160,15 +161,50 @@ describe("applyDeploymentSubscriptionResult", () => {
 });
 
 describe("applySubscriptionActionSuccess", () => {
-	test("invalidates deployments and subscriptions when targeting a subscription id", () => {
+	test("invalidates every compute subscription inventory after an action", async () => {
 		const qc = new QueryClient();
 		qc.setQueryData(billingKeys.deployments, { current: true });
 		qc.setQueryData(billingKeys.subscriptions, { current: true });
+		qc.setQueryData(billingKeys.reusableSubscriptions, { current: true });
 
-		applySubscriptionActionSuccess(qc, { subscription_id: "csub_test" }, subscriptionAction(true));
+		await applySubscriptionActionSuccess(
+			qc,
+			{ subscription_id: "csub_test" },
+			subscriptionAction(true),
+		);
 
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(true);
+	});
+
+	test("refetches every inventory after scheduled cancellation settles", async () => {
+		const fetches = new Map<string, number>();
+		const qc = new QueryClient();
+		for (const queryKey of [
+			billingKeys.deployments,
+			billingKeys.subscriptions,
+			billingKeys.reusableSubscriptions,
+		]) {
+			const key = JSON.stringify(queryKey);
+			await qc.fetchQuery({
+				queryKey,
+				queryFn: () => {
+					fetches.set(key, (fetches.get(key) ?? 0) + 1);
+					return { current: true };
+				},
+			});
+		}
+
+		await invalidateComputeSubscriptionInventory(qc, "all");
+
+		for (const queryKey of [
+			billingKeys.deployments,
+			billingKeys.subscriptions,
+			billingKeys.reusableSubscriptions,
+		]) {
+			expect(fetches.get(JSON.stringify(queryKey))).toBe(2);
+		}
 	});
 });
 

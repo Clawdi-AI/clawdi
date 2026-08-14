@@ -53,6 +53,7 @@ _DEPLOYMENT_ID = "deployment-observation-companion"
 _APPLY_RECEIPT_ID = "apply-receipt-00000001"
 _BOOT_NONCE = "boot-nonce-0000000001"
 _MANIFEST_ETAG = '"manifest-etag-0001"'
+_BUNDLE_ETAG = f'"sha256:{"a" * 64}"'
 
 
 async def ingest_runtime_observation(
@@ -101,7 +102,7 @@ def _payload(
             "status": status,
             "activeCliVersion": "1.2.3-test",
             "applied": {
-                "etag": manifest_etag,
+                "etag": _BUNDLE_ETAG,
                 "sourceRevision": "a" * 64,
                 "generation": generation,
                 "instanceId": "runtime-instance-0001",
@@ -110,6 +111,8 @@ def _payload(
             "boot": None,
             "cli": None,
             "error": error,
+            "generation": generation,
+            "manifestETag": manifest_etag,
             "applyReceiptId": apply_receipt_id,
             "bootNonce": boot_nonce,
             "bootSessionId": boot_session_id,
@@ -146,6 +149,33 @@ def _rotated_identity() -> RuntimeApplyIdentity:
         apply_receipt_id="apply-receipt-00000002",
         boot_nonce="boot-nonce-0000000002",
     )
+
+
+def test_runtime_observation_identity_envelope_is_additive_and_consistent() -> None:
+    payload = _payload().model_dump(mode="json", by_alias=True)
+    assert payload["generation"] == payload["applied"]["generation"]
+    assert payload["manifestETag"] == _MANIFEST_ETAG
+    assert payload["applied"]["etag"] == _BUNDLE_ETAG
+
+    legacy_payload = {
+        key: value
+        for key, value in payload.items()
+        if key
+        not in {
+            "generation",
+            "manifestETag",
+        }
+    }
+    legacy = RuntimeObservationEventV2.model_validate(legacy_payload)
+    assert runtime_observation_service._companion_identity(legacy) == RuntimeApplyIdentity(
+        generation=1,
+        manifest_etag=_BUNDLE_ETAG,
+        apply_receipt_id=_APPLY_RECEIPT_ID,
+        boot_nonce=_BOOT_NONCE,
+    )
+
+    with pytest.raises(ValueError, match="generation must match applied.generation"):
+        RuntimeObservationEventV2.model_validate({**payload, "generation": 2})
 
 
 async def retire_runtime_environment(*args, **kwargs):
@@ -190,6 +220,11 @@ async def test_unique_regressions_enter_inbox_without_regressing_head(
         value=first_payload,
         received_at=base,
     )
+    stored_first = await db_session.get(V2RuntimeObservationInbox, first.stream_position)
+    assert stored_first is not None
+    assert stored_first.manifest_etag == _MANIFEST_ETAG
+    assert stored_first.diagnostics["manifestETag"] == _MANIFEST_ETAG
+    assert stored_first.diagnostics["applied"]["etag"] == _BUNDLE_ETAG
     duplicate = await ingest_runtime_observation(
         db_session,
         environment_id=environment.id,
@@ -385,6 +420,25 @@ async def test_authorized_successor_atomically_tombstones_predecessor(
             received_at=base + timedelta(seconds=2),
         )
     assert late_predecessor.value.code == "runtime_environment_retired"
+
+    predecessor_tombstone = heads["boot-session-predecessor"].tombstoned_at
+    receipt = await retire_runtime_environment(
+        db_session,
+        environment_id=environment.id,
+        expected_deployment_id=_DEPLOYMENT_ID,
+        retirement_id="handoff-environment-retirement",
+        owner_id=owner_id,
+    )
+    await db_session.commit()
+
+    await db_session.refresh(heads["boot-session-predecessor"])
+    await db_session.refresh(heads["boot-session-successor"])
+    assert heads["boot-session-predecessor"].tombstoned_at == predecessor_tombstone
+    assert heads["boot-session-successor"].state == "retired"
+    assert receipt["finalSessionHighWaterMarks"] == [
+        {"bootSessionId": "boot-session-predecessor", "sequence": 1},
+        {"bootSessionId": "boot-session-successor", "sequence": 1},
+    ]
 
 
 @pytest.mark.asyncio
@@ -2429,6 +2483,8 @@ async def test_short_tuple_filtered_page_does_not_skip_next_tuple_first_event(
 def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:
     payload = value.model_dump(mode="json", by_alias=True)
     for field in (
+        "generation",
+        "manifestETag",
         "applyReceiptId",
         "bootNonce",
         "bootSessionId",

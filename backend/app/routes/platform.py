@@ -4,14 +4,15 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import invalidate_api_key_auth_cache
-from app.core.database import get_session
+from app.core.config import settings
+from app.core.database import get_session, runtime_snapshot_session
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
@@ -28,6 +29,7 @@ from app.schemas.platform import (
     PlatformOwner,
     PlatformRuntimeStateResponse,
     PlatformRuntimeStateUpsert,
+    RuntimeSourceAuthorityResponse,
 )
 from app.schemas.platform_oauth import PlatformOAuthErrorResponse, PlatformOAuthTokenResponse
 from app.schemas.session import EnvironmentCreatedResponse
@@ -88,6 +90,16 @@ from app.services.runtime_manifest_resources import (
     enabled_runtime_manifest_skill_ids,
     lock_runtime_manifest_skill_reservations,
 )
+from app.services.runtime_observation import RuntimeObservationProtocolError
+from app.services.runtime_source import (
+    RuntimeSourceError,
+    RuntimeSourceNotFoundError,
+    expected_runtime_bundle_v2_etag,
+    load_runtime_source_batch,
+    render_runtime_source,
+    vault_key_identity,
+)
+from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_runtime_manifest_changed,
@@ -576,6 +588,42 @@ async def _load_owned_key(
     raise AssertionError("unreachable")
 
 
+async def _resolve_runtime_source_authority_owner_id(
+    db: AsyncSession,
+    owner: PlatformOwner,
+) -> UUID:
+    try:
+        if owner.kind == PRINCIPAL_KIND_CLERK:
+            issuer = await resolve_clerk_owner_issuer(db, subject=owner.ref)
+            resolved = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=owner.ref,
+                bind_legacy=False,
+            )
+        else:
+            resolved = (
+                await db.execute(
+                    select(User).where(
+                        User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                        User.partner_tenant_ref == owner.ref,
+                        User.clerk_id.is_(None),
+                    )
+                )
+            ).scalar_one_or_none()
+        if resolved is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found")
+        await assert_user_authority_active(db, resolved.id)
+    except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found") from None
+    except PrincipalLifecycleConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Owner authority is unavailable",
+        ) from None
+    return resolved.id
+
+
 async def _next_agent_sort_order(db: AsyncSession, user_id: UUID) -> int:
     value = await db.scalar(
         select(func.coalesce(func.max(AgentEnvironment.sort_order), -1) + 1).where(
@@ -760,6 +808,53 @@ async def platform_delete_agent(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get(
+    "/agents/{agent_id}/runtime-state",
+    response_model=RuntimeSourceAuthorityResponse,
+)
+async def platform_get_runtime_source_authority(
+    agent_id: UUID,
+    owner: Annotated[PlatformOwner, Query()],
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-state:write")
+    ),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeSourceAuthorityResponse:
+    owner_user_id = await _resolve_runtime_source_authority_owner_id(db, owner)
+    async with runtime_snapshot_session() as source_db:
+        batch = await load_runtime_source_batch(
+            source_db,
+            environment_ids=[agent_id],
+            owner_user_id=owner_user_id,
+        )
+        try:
+            source = render_runtime_source(
+                batch,
+                environment_id=agent_id,
+                public_api_url=settings.public_api_url,
+                vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+                decrypt_secrets=False,
+            )
+        except RuntimeSourceNotFoundError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found") from None
+        except RuntimeSourceError:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Runtime source is invalid",
+            ) from None
+        row = batch.rows[agent_id]
+        state = row.state
+        if state is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found")
+        return RuntimeSourceAuthorityResponse(
+            environmentId=row.environment.id,
+            deploymentId=state.deployment_id,
+            instanceId=state.instance_id,
+            sourceRevision=source.source_revision,
+            etag=expected_runtime_bundle_v2_etag(source.source_revision),
+        )
+
+
 @router.put(
     "/agents/{agent_id}/runtime-state",
     response_model=PlatformRuntimeStateResponse,
@@ -802,6 +897,29 @@ async def platform_upsert_runtime_state(
     )
     if replay is not None:
         return _replay_response(replay)
+    try:
+        await lock_runtime_state_write_fence(
+            db,
+            environment_id=agent_id,
+            owner_id=owner.id,
+            deployment_id=body.deployment_id,
+        )
+    except RuntimeObservationProtocolError as exc:
+        await _reject(
+            db,
+            status_code=exc.status_code,
+            detail=exc.detail(),
+            result=exc.code,
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="hosted_runtime_state",
+            resource_id=str(agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=agent_id,
+        )
+        raise AssertionError("unreachable")
     agent = await _load_owned_agent(
         db,
         agent_id=agent_id,

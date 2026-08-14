@@ -18,11 +18,21 @@ import {
 	selectPlanChangeFundingSource,
 	selectPlanChangeOffer,
 	shouldRecoverWalletToCardSwitch,
+	shouldResetUnacceptedPlanChangeQuote,
 	visiblePlanChangeOperationName,
 	walletBalanceAfterDebit,
 } from "./plan-change.logic";
 
 describe("plan change recovery", () => {
+	test("resets only direct quote conflicts before an operation is accepted", () => {
+		expect(shouldResetUnacceptedPlanChangeQuote(new BillingApiError(409, "quote expired"))).toBe(
+			true,
+		);
+		expect(shouldResetUnacceptedPlanChangeQuote(new BillingApiError(422, "invalid"))).toBe(false);
+		expect(
+			shouldResetUnacceptedPlanChangeQuote(new BillingApiError(409, "operation conflict")),
+		).toBe(false);
+	});
 	type AcceptedOperation = NonNullable<HostedDeployment["accepted_operation"]>;
 	const acceptedPlanChange: AcceptedOperation = {
 		name: "operations/plan-change-pending",
@@ -379,7 +389,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: false,
 				cancelAtPeriodEnd: false,
 				status: "active",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toBe("Subscription changes are temporarily unavailable.");
 	});
@@ -390,7 +400,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: true,
 				status: "active",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toBe("Resume this subscription before changing its plan, billing term, or payment source.");
 	});
@@ -401,7 +411,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: false,
 				status: "active",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toBeNull();
 		expect(
@@ -409,7 +419,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: false,
 				status: "past_due",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toBeNull();
 		expect(
@@ -417,7 +427,7 @@ describe("planChangeUnavailableReason", () => {
 				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: false,
 				status: "trialing",
-				subscriptionId: 42,
+				hasSubscriptionTarget: true,
 			}),
 		).toContain("Resolve the subscription status");
 	});

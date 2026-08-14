@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-import app.services.whatsapp_sidecar_registry as sidecar_registry_module
+import app.services.whatsapp_delivery_transport as delivery_transport_module
 from app.core.config import settings
 from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
@@ -101,7 +101,7 @@ def _use_delivery_transport(
     transport: _FakeProviderTransport,
 ) -> None:
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "resolve_whatsapp_delivery_transport",
         lambda _account: transport,
     )
@@ -195,7 +195,7 @@ def test_whatsapp_provider_transport_registration_is_exclusive_per_account():
             register_whatsapp_provider_transport(account_id, second)
         status = whatsapp_provider_transport_status(account_id)
         assert status.available is True
-        assert status.mode == "in_process"
+        assert status.mode == "sidecar"
     finally:
         unregister_whatsapp_provider_transport(account_id)
 
@@ -294,7 +294,7 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
     original_url = settings.channel_whatsapp_baileys_sidecar_url
     settings.channel_whatsapp_baileys_sidecar_token = SecretStr("sidecar-secret")
     settings.channel_whatsapp_baileys_sidecar_url = sidecar_url
-    monkeypatch.setattr(sidecar_registry_module, "_delivery_sidecar_service", sidecar_service)
+    monkeypatch.setattr(delivery_transport_module, "_delivery_sidecar_service", sidecar_service)
 
     try:
         assert get_whatsapp_provider_transport(account.id) is None
@@ -431,12 +431,12 @@ async def test_whatsapp_delivery_revision_mismatch_fails_without_sidecar_call(
             raise AssertionError("revision mismatch must not construct a session client")
 
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "_configured_delivery_service",
         lambda: service_config,
     )
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "_delivery_sidecar_service",
         FakeDeliveryService(),
     )

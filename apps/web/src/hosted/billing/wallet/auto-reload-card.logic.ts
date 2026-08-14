@@ -1,14 +1,20 @@
-import type { WalletAutoReloadRequest } from "@/hosted/billing/contracts";
+import type {
+	WalletAutoReloadRequest,
+	WalletAutoReloadSetupRequest,
+	WalletState,
+} from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
 	billingErrorDetail,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
+import { persistedUsdToCents, usdInputToCents } from "@/hosted/billing/format";
 import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import {
 	AUTORELOAD_AMOUNT_MAX_CENTS,
 	AUTORELOAD_AMOUNT_MIN_CENTS,
 	AUTORELOAD_AMOUNT_RANGE_LABEL,
+	AUTORELOAD_MONTHLY_CAP_MAX_CENTS,
 	AUTORELOAD_THRESHOLD_MIN_USD,
 } from "@/hosted/billing/wallet/wallet-constants";
 
@@ -29,7 +35,7 @@ export interface AutoReloadFormInput {
 
 export interface AutoReloadFormState {
 	amountCents: number;
-	thresholdUsd: number;
+	thresholdCents: number;
 	capCents: number;
 	amountValid: boolean;
 	thresholdValid: boolean;
@@ -50,15 +56,17 @@ export interface AutoReloadStatusSummary {
 	description: string;
 }
 
-function dollars(value: number): string {
-	return String(Math.round(value * 100) / 100);
+function dollars(cents: number): string {
+	if (!Number.isSafeInteger(cents) || cents < 0) return "";
+	const whole = Math.floor(cents / 100);
+	const fraction = cents % 100;
+	return fraction === 0
+		? String(whole)
+		: `${whole}.${String(fraction).padStart(2, "0").replace(/0$/, "")}`;
 }
 
-function dollarsFromInput(value: string): number | null {
-	const normalized = value.trim();
-	if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(normalized)) return null;
-	const parsed = Number(normalized);
-	return Number.isFinite(parsed) ? parsed : null;
+export function usdCentsToDecimal(cents: number): string | null {
+	return Number.isSafeInteger(cents) && cents > 0 ? dollars(cents) : null;
 }
 
 function periodEndLabel(value: string): string {
@@ -112,31 +120,26 @@ export function autoReloadFormState({
 	cap,
 	monthlyLimitEnabled = true,
 }: AutoReloadFormInput): AutoReloadFormState {
-	const amountDollars = dollarsFromInput(amount);
-	const thresholdDollars = dollarsFromInput(threshold);
-	const capDollars = dollarsFromInput(cap);
-	const amountCents = amountDollars === null ? Number.NaN : Math.round(amountDollars * 100);
-	const thresholdUsd = thresholdDollars === null ? Number.NaN : thresholdDollars;
-	const capCents = monthlyLimitEnabled
-		? capDollars === null
-			? Number.NaN
-			: Math.round(capDollars * 100)
-		: 0;
+	const amountCents = usdInputToCents(amount) ?? Number.NaN;
+	const thresholdCents = usdInputToCents(threshold) ?? Number.NaN;
+	const capCents = monthlyLimitEnabled ? (usdInputToCents(cap) ?? Number.NaN) : 0;
 
 	const amountValid =
 		Number.isFinite(amountCents) &&
 		amountCents >= AUTORELOAD_AMOUNT_MIN_CENTS &&
 		amountCents <= AUTORELOAD_AMOUNT_MAX_CENTS;
 	const thresholdValid =
-		Number.isFinite(thresholdUsd) && thresholdUsd >= AUTORELOAD_THRESHOLD_MIN_USD;
+		Number.isFinite(thresholdCents) && thresholdCents >= AUTORELOAD_THRESHOLD_MIN_USD * 100;
 	const capValid =
 		!monthlyLimitEnabled ||
-		(Number.isFinite(capCents) && (!amountValid || capCents >= amountCents));
+		(Number.isFinite(capCents) &&
+			capCents <= AUTORELOAD_MONTHLY_CAP_MAX_CENTS &&
+			(!amountValid || capCents >= amountCents));
 	const formValid = amountValid && thresholdValid && capValid;
 
 	return {
 		amountCents,
-		thresholdUsd,
+		thresholdCents,
 		capCents,
 		amountValid,
 		thresholdValid,
@@ -147,14 +150,13 @@ export function autoReloadFormState({
 
 export function autoReloadDraftFromWallet(wallet: WalletCacheSnapshot): AutoReloadDraft {
 	const monthlyLimitEnabled = wallet.auto_reload_monthly_cap_cents !== 0;
+	const thresholdCents = persistedUsdToCents(wallet.auto_reload_threshold_usd);
 	return {
 		enabled: wallet.auto_reload_enabled,
-		threshold: dollars(Number(wallet.auto_reload_threshold_usd)),
-		amount: dollars(wallet.auto_reload_amount_cents / 100),
+		threshold: thresholdCents === null ? "" : dollars(thresholdCents),
+		amount: dollars(wallet.auto_reload_amount_cents),
 		cap: dollars(
-			(monthlyLimitEnabled
-				? wallet.auto_reload_monthly_cap_cents
-				: wallet.auto_reload_amount_cents) / 100,
+			monthlyLimitEnabled ? wallet.auto_reload_monthly_cap_cents : wallet.auto_reload_amount_cents,
 		),
 		monthlyLimitEnabled,
 	};
@@ -171,10 +173,43 @@ export function autoReloadRequest(draft: AutoReloadDraft): WalletAutoReloadReque
 
 	return {
 		auto_reload_enabled: draft.enabled,
-		auto_reload_threshold_usd: state.thresholdUsd,
+		auto_reload_threshold_usd: usdCentsToDecimal(state.thresholdCents),
 		auto_reload_amount_cents: state.amountCents,
 		auto_reload_monthly_cap_cents: state.capCents,
 	};
+}
+
+export function autoReloadSetupRequest(
+	draft: AutoReloadDraft,
+	consentVersion: WalletState["auto_reload_required_consent_version"],
+): WalletAutoReloadSetupRequest | null {
+	const state = autoReloadFormState(draft);
+	const threshold = usdCentsToDecimal(state.thresholdCents);
+	if (!draft.enabled || !state.formValid || threshold === null) return null;
+	return {
+		consent_version: consentVersion,
+		auto_reload_threshold_usd: threshold,
+		auto_reload_amount_cents: state.amountCents,
+		auto_reload_monthly_cap_cents: state.capCents,
+	};
+}
+
+export function autoReloadNeedsSetup(
+	draft: AutoReloadDraft,
+	baseline: AutoReloadDraft,
+	hasPaymentMethod: boolean,
+): boolean {
+	if (!draft.enabled) return false;
+	const request = autoReloadRequest(draft);
+	const previous = autoReloadRequest(baseline);
+	return (
+		request !== null &&
+		(!hasPaymentMethod ||
+			previous === null ||
+			request.auto_reload_threshold_usd !== previous.auto_reload_threshold_usd ||
+			request.auto_reload_amount_cents !== previous.auto_reload_amount_cents ||
+			request.auto_reload_monthly_cap_cents !== previous.auto_reload_monthly_cap_cents)
+	);
 }
 
 export function autoReloadDraftIsDirty(draft: AutoReloadDraft, baseline: AutoReloadDraft): boolean {
@@ -198,7 +233,7 @@ export function autoReloadSaveError(error: unknown): AutoReloadSaveError {
 	if (signal.includes("payment method") || signal.includes("payment_method")) {
 		return {
 			title: "Add a card before enabling auto-reload",
-			description: "Complete a manual top-up to save a card, then save these changes again.",
+			description: "Authorize a card for automatic Wallet reloads, then save these changes again.",
 			field: null,
 			requiresPaymentMethod: true,
 		};

@@ -48,6 +48,7 @@ _EGRESS_PROFILE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_.]*$")
 _RUNTIME_SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _MANAGED_ENTRY_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _AGENT_PLUGIN_NAME_PATTERN = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
+_AGENT_PLUGIN_SECRET_SLOT_ID_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 _SECRET_REF_PATTERN = re.compile(r"^secret://\S+$")
 _SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
 _GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -904,7 +905,7 @@ class HostedAgentPluginInstallation(_StrictHostedWireModel):
     @classmethod
     def _validate_secret_refs(cls, value: dict[str, str]) -> dict[str, str]:
         for slot_id, secret_ref in value.items():
-            if len(slot_id) > 64 or _AGENT_PLUGIN_NAME_PATTERN.fullmatch(slot_id) is None:
+            if _AGENT_PLUGIN_SECRET_SLOT_ID_PATTERN.fullmatch(slot_id) is None:
                 raise ValueError("Agent Plugin secret slot ids must be canonical")
             if len(secret_ref) > 1000 or not is_canonical_secret_ref(secret_ref):
                 raise ValueError(

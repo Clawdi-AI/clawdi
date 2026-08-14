@@ -3,9 +3,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { isAbsolute } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const CONTROLLER_LIFETIME_MS = 45_000;
+const requestObjectSchema = z.record(z.string(), z.unknown());
 
 export interface HermesAgentPluginCanaryControllerOptions {
 	readyFile: string;
@@ -38,10 +40,11 @@ function writeJsonAtomic(path: string, value: unknown, nonce: string): void {
 
 function parseJsonObject(bytes: Buffer): Record<string, unknown> {
 	const parsed: unknown = JSON.parse(bytes.toString("utf8"));
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+	const object = requestObjectSchema.safeParse(parsed);
+	if (!object.success) {
 		throw new Error("request body must be a JSON object");
 	}
-	return parsed as Record<string, unknown>;
+	return object.data;
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<Buffer> {

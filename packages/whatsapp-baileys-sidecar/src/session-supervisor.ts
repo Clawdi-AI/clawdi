@@ -10,7 +10,7 @@ import { type BaileysRuntime, SIDECAR_CAPABILITIES, type SidecarCapabilities } f
 const SESSION_ID_PATTERN =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export type SessionRuntimeFactory = (
+type SessionRuntimeFactory = (
 	config: SidecarSessionConfig,
 	dependencies?: BaileysRuntimeDependencies,
 ) => BaileysRuntime;
@@ -88,7 +88,7 @@ export class BaileysSessionSupervisor {
 	}
 }
 
-export function assertSessionId(value: string): void {
+function assertSessionId(value: string): void {
 	if (!SESSION_ID_PATTERN.test(value)) {
 		throw new InvalidSessionIdError();
 	}

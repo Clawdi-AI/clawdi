@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { formatCents, formatUsd, formatUsdExact } from "@/hosted/billing/format";
+import {
+	addDecimals,
+	canonicalDecimal,
+	compareDecimals,
+	decimalRatioPercent,
+	formatCents,
+	formatUsd,
+	formatUsdExact,
+	negativeDecimalMagnitude,
+	persistedUsdToCents,
+	subtractDecimals,
+	wholeDollarTopUpCents,
+} from "@/hosted/billing/format";
 
 describe("USD formatting", () => {
 	test("formats normal numeric USD with exactly two decimal places", () => {
@@ -34,5 +46,21 @@ describe("USD formatting", () => {
 
 	test("keeps Stripe cents at two decimal places", () => {
 		expect(formatCents(1900)).toBe("$19.00");
+		expect(persistedUsdToCents("5.000000000000000000")).toBe(500);
+		expect(persistedUsdToCents("5.001000000000000000")).toBeNull();
+		expect(persistedUsdToCents("90071992547409.91")).toBe(9_007_199_254_740_991);
+		expect(persistedUsdToCents("90071992547409.92")).toBeNull();
+	});
+
+	test("does exact fixed-point money arithmetic without Number coercion", () => {
+		expect(canonicalDecimal("0009007199254740993.99500")).toBe("9007199254740993.995");
+		expect(canonicalDecimal(Number.POSITIVE_INFINITY)).toBeNull();
+		expect(compareDecimals("9007199254740993.01", "9007199254740993")).toBe(1);
+		expect(subtractDecimals("25", "19.000125")).toBe("5.999875");
+		expect(addDecimals("9007199254740993.01", "0.99")).toBe("9007199254740994");
+		expect(negativeDecimalMagnitude("-1.250500")).toBe("1.2505");
+		expect(decimalRatioPercent("1", "3")).toBe(33.33);
+		expect(decimalRatioPercent("Infinity", "3")).toBe(0);
+		expect(wholeDollarTopUpCents("25.000000000000000001", 1_000, 200_000)).toBe(2_600);
 	});
 });

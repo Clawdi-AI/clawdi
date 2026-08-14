@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
-import { UserRoundX } from "lucide-react";
+import { ArrowUp, Settings, UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
-import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentLabel } from "@/components/dashboard/agent-label";
+import { entityCardChassisClass } from "@/components/entity-card";
+import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
-import { billingTermLabel, billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
+import { billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -20,14 +21,9 @@ export type ComputeSubscriptionIdentity =
 	| { kind: "unavailable"; label: string };
 
 export type ComputeSubscriptionCardView = {
-	identity: ComputeSubscriptionIdentity;
 	status: { label: string; tone: StatusTone };
-	facts: readonly [
-		{ label: "Plan"; value: string },
-		{ label: "Payment"; value: string },
-		{ label: "Price"; value: string; meta: string },
-		{ label: "Schedule"; value: string },
-	];
+	plan: string;
+	commercialFacts: readonly { label: string; value: string; emphasis?: boolean }[];
 };
 
 export type ComputeSubscriptionPaymentSource = "included" | "stripe" | "wallet" | "unavailable";
@@ -40,7 +36,6 @@ export function computeSubscriptionPlanLabel(planSlug: string): string {
 }
 
 export function computeSubscriptionCardView({
-	identity,
 	status,
 	planSlug,
 	fundingSource,
@@ -49,8 +44,9 @@ export function computeSubscriptionCardView({
 	billingTermMonths,
 	scheduleVerb,
 	scheduleAt,
+	scheduleFallback,
+	includeSchedule = true,
 }: {
-	identity: ComputeSubscriptionIdentity;
 	status: ComputeSubscriptionCardView["status"];
 	planSlug: string;
 	fundingSource: ComputeSubscriptionPaymentSource;
@@ -59,44 +55,38 @@ export function computeSubscriptionCardView({
 	billingTermMonths: number;
 	scheduleVerb: string | null;
 	scheduleAt: string | null | undefined;
+	scheduleFallback?: string;
+	includeSchedule?: boolean;
 }): ComputeSubscriptionCardView {
 	const included = fundingSource === "included";
+	const schedule =
+		scheduleVerb && scheduleAt
+			? `${scheduleVerb} ${formatShortDate(scheduleAt)}`
+			: scheduleFallback || "Unavailable";
 	return {
-		identity,
 		status,
-		facts: [
-			{ label: "Plan", value: computeSubscriptionPlanLabel(planSlug) },
-			{
-				label: "Payment",
-				value:
-					fundingSource === "included"
-						? "Included"
-						: fundingSource === "wallet"
-							? "Wallet"
-							: fundingSource === "stripe"
-								? "Card"
-								: "Unavailable",
-			},
-			{
-				label: "Price",
-				value:
-					included || priceCents === 0
-						? "No charge"
-						: priceCents == null
-							? "Unavailable"
-							: `${formatCurrencyCents(priceCents, currency)}${billingTermSuffix(billingTermMonths)}`,
-				meta: included ? "Included plan" : billingTermLabel(billingTermMonths),
-			},
-			{
-				label: "Schedule",
-				value:
-					scheduleVerb && scheduleAt
-						? `${scheduleVerb} ${formatShortDate(scheduleAt)}`
-						: included
-							? "Current"
-							: "Unavailable",
-			},
-		],
+		plan: computeSubscriptionPlanLabel(planSlug),
+		commercialFacts: included
+			? [{ label: "Price", value: "Free", emphasis: true }]
+			: [
+					{
+						label: "Price",
+						value:
+							priceCents == null
+								? "Unavailable"
+								: `${formatCurrencyCents(priceCents, currency)}${billingTermSuffix(billingTermMonths)}`,
+					},
+					{
+						label: "Payment",
+						value:
+							fundingSource === "wallet"
+								? "Wallet"
+								: fundingSource === "stripe"
+									? "Card"
+									: "Unavailable",
+					},
+					...(includeSchedule ? [{ label: "Schedule", value: schedule }] : []),
+				],
 	};
 }
 
@@ -114,7 +104,7 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 		);
 	}
 
-	const label = identity.agentType ? (
+	const label = (
 		<AgentLabel
 			name={identity.name}
 			machineName={null}
@@ -123,13 +113,6 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 			size="md"
 			className={cn("min-w-0", identity.href && "transition-opacity hover:opacity-80")}
 		/>
-	) : (
-		<div className="flex min-w-0 items-center gap-3">
-			<AgentIcon agent={null} size="md" avatarUrl={identity.avatarUrl} />
-			<span className="truncate text-sm font-medium" title={identity.name}>
-				{identity.name}
-			</span>
-		</div>
 	);
 
 	return identity.href ? (
@@ -144,78 +127,116 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 	);
 }
 
+export function ComputeSubscriptionPlanAction({
+	action,
+	onClick,
+	disabled = false,
+}: {
+	action: "upgrade" | "manage";
+	onClick: () => void;
+	disabled?: boolean;
+}) {
+	return (
+		<Button type="button" variant="outline" size="sm" disabled={disabled} onClick={onClick}>
+			{action === "upgrade" ? (
+				<ArrowUp data-icon="inline-start" />
+			) : (
+				<Settings data-icon="inline-start" />
+			)}
+			{action === "upgrade" ? "Upgrade" : "Manage"}
+		</Button>
+	);
+}
+
 export function ComputeSubscriptionCard({
 	view,
+	identity,
 	badges,
 	notice,
 	actions,
+	actionsId,
 	headingLevel = 3,
 	className,
 }: {
 	view: ComputeSubscriptionCardView;
+	identity?: ComputeSubscriptionIdentity;
 	badges?: ReactNode;
 	notice?: ReactNode;
 	actions?: ReactNode;
+	actionsId?: string;
 	headingLevel?: 3 | 4;
 	className?: string;
 }) {
 	const Heading = headingLevel === 4 ? "h4" : "h3";
-	const plan = view.facts[0];
-	const identityLabel = view.identity.kind === "agent" ? view.identity.name : view.identity.label;
 
 	return (
 		<article
 			data-hosted="true"
 			data-slot="compute-subscription-card"
 			data-subscription-status={view.status.label.toLowerCase().replaceAll(" ", "-")}
-			className={cn(
-				"flex h-full min-w-0 flex-col overflow-hidden rounded-lg border bg-card",
-				className,
-			)}
+			className={entityCardChassisClass({
+				variant: "compact",
+				className: cn("flex h-full min-w-0 flex-col gap-3", className),
+			})}
 		>
-			<Heading className="sr-only">{`${identityLabel}: ${plan.value}`}</Heading>
-			<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-4 py-3.5">
-				<SubscriptionIdentity identity={view.identity} />
-				<div className="flex min-w-0 flex-wrap justify-end gap-1.5">
-					<StatusBadge status={view.status.tone} withDot>
-						{view.status.label}
-					</StatusBadge>
-					{badges}
-				</div>
-			</header>
-
-			<dl className="grid min-w-0 grid-cols-2 border-t">
-				{view.facts.map((fact, index) => (
-					<div
-						key={fact.label}
-						className={cn(
-							"min-w-0 px-4 py-3",
-							index % 2 === 1 && "border-l",
-							index >= 2 && "border-t",
-						)}
-					>
-						<dt className="text-xs text-muted-foreground">{fact.label}</dt>
-						<dd className="mt-0.5 min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
-							{fact.value}
-						</dd>
-						{"meta" in fact ? (
-							<span className="mt-0.5 block text-xs text-muted-foreground">{fact.meta}</span>
-						) : null}
+			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
+				<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+					<Heading className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
+						{view.plan}
+					</Heading>
+					<div className="flex min-w-0 flex-wrap justify-end gap-1.5">
+						<StatusBadge status={view.status.tone} withDot>
+							{view.status.label}
+						</StatusBadge>
+						{badges}
 					</div>
-				))}
-			</dl>
+				</header>
 
-			{notice ? (
-				<div data-slot="compute-subscription-notice" className="min-w-0 border-t px-4 py-2.5">
-					{notice}
-				</div>
-			) : null}
-			{actions ? (
-				<div
-					data-slot="compute-subscription-actions"
-					className="mt-auto flex min-w-0 flex-wrap items-center justify-end gap-2 border-t bg-muted/15 px-3 py-2"
-				>
-					{actions}
+				<dl className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5">
+					{view.commercialFacts.map((fact) => (
+						<div key={fact.label} className="min-w-0 text-xs text-muted-foreground">
+							<dt className="sr-only">{fact.label}</dt>
+							<dd
+								className={cn(
+									"[overflow-wrap:anywhere]",
+									fact.emphasis && "text-sm font-semibold text-foreground",
+								)}
+							>
+								{fact.value}
+							</dd>
+						</div>
+					))}
+				</dl>
+
+				{identity ? (
+					<div
+						data-slot="compute-subscription-identity"
+						className="flex min-w-0 items-center gap-3"
+					>
+						<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
+						<div className="min-w-0 flex-1">
+							<SubscriptionIdentity identity={identity} />
+						</div>
+					</div>
+				) : null}
+			</div>
+
+			{notice || actions ? (
+				<div className="mt-auto flex min-w-0 flex-col items-start gap-1.5 pt-1 sm:items-end">
+					{notice ? (
+						<div data-slot="compute-subscription-notice" className="min-w-0 sm:text-right">
+							{notice}
+						</div>
+					) : null}
+					{actions ? (
+						<div
+							id={actionsId}
+							data-slot="compute-subscription-actions"
+							className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end"
+						>
+							{actions}
+						</div>
+					) : null}
 				</div>
 			) : null}
 		</article>

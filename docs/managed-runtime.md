@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-08-12 |
+| Last updated | 2026-08-14 |
 | Owner | CLI runtime and cloud-api layers |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
@@ -69,8 +69,8 @@ Cloud-api reuses these existing runtime primitives:
   `runtime_deployment_id` identity binding;
 - the first-party `X-Admin-Key` gate, mutation idempotency, and control-plane
   audit events for Hosted-facing provisioning and retirement calls;
-- PostgreSQL transactions and `FOR UPDATE` locks for ingestion and retirement
-  serialization.
+- PostgreSQL transactions and `FOR UPDATE` locks for ingestion, retirement,
+  desired-state cleanup, and late-write serialization.
 
 `POST /v1/agents/{agent_id}/sync-heartbeat` remains the frozen v1 liveness and
 latest-observation transport. It neither accepts strict-v2 identity fields nor
@@ -82,7 +82,7 @@ Four PostgreSQL tables form the additive companion boundary:
 
 | Table | Contract |
 | --- | --- |
-| `v2_runtime_environment_fences` | Permanent environment/owner/deployment binding, active or retired state, replay floor, and immutable final retirement receipt/high-waters. |
+| `v2_runtime_environment_fences` | Permanent environment/owner/deployment binding, active or retired state, replay floor, immutable final retirement receipt/high-waters, and the durable runtime-state cleanup receipt. |
 | `v2_runtime_observation_inbox` | Immutable accepted identities with the five-field boot identity, boot-scoped sequence, global event id, timestamps, payload hash, and health. Private diagnostic payloads may be compacted in place after retention eligibility, while identity and hash columns remain permanently unique. |
 | `v2_runtime_observation_heads` | One immutable boot-session binding with non-regressing accepted sequence, stream position, capture time, and freshness; retirement compacts it to a tombstone. |
 | `v2_runtime_observation_consumer_cursors` | Environment-and-consumer ACK state, replay horizon, and explicit fail-closed expiry/reset boundary used by safe prefix retention. |
@@ -100,7 +100,9 @@ separately requires its scope. The database constrains only the identity
 binding, while the issuer and migration own the canonical authorization bundle.
 
 Hosted-facing `/v2` registration, read, acknowledgement, reset, retirement, and
-provisioning calls all require the first-party `X-Admin-Key`. The server binds
+provisioning calls require the first-party `X-Admin-Key`. Retired runtime-state
+cleanup also accepts a platform workload token with the existing
+`platform:runtime-environments:retire` scope. The server binds
 observation cursors to its fixed Hosted controller identity, and immutable
 owner/deployment authority is resolved from the environment fence rather than
 caller-selected request data, so opaque cursors cannot cross consumers or
@@ -116,8 +118,15 @@ heads atomically. Replaying the same retirement ID returns the persisted
 receipt; a different ID or deployment binding conflicts. V1 agent deletion and
 key revocation retain their pre-companion behavior and do not consult the v2
 fence. Trusted Hosted controller ordering obtains the retirement receipt before
-using those existing teardown surfaces; the permanent fence itself is never
-deleted.
+requesting `POST /v2/runtime/environments/{environment_id}/runtime-state/cleanup`
+with the exact environment, deployment, retirement, and stable cleanup
+identities. Cleanup derives owner authority from the permanent fence, removes
+only matching desired state, releases its OAuth claims, and stores an immutable
+versioned absence receipt. Exact retries return that receipt; identity reuse or
+mismatch conflicts. Runtime-state writers lock `User`, then the fence, then
+subordinate state and OAuth rows. A retired fence rejects new writes, including
+legacy admin v2 writers, while old successful platform idempotency replays do
+not execute a write. The permanent fence itself is never deleted.
 
 Retention advances the replay floor only across a contiguous per-environment
 stream prefix. Every row in a normal replay-horizon prefix must be old enough
@@ -659,12 +668,11 @@ This change is Phase A: publish `clawdi@0.13.69`, which reads both legacy and
 canonical terminal-Codex env names while writing only the canonical local env.
 Phase B keeps backend emission deployment-scoped: terminal Codex receives
 `CLAWDI_AI_API_KEY` only when the desired CLI is `clawdi@0.13.69` or later and
-strict v2 `diagnostics.cli` proves the exact desired package is installed and
-active, along with the current apply generation and instance. An in-place update
-preserves the daemon process, so its `activeCliVersion` may remain the older
-running version. Observation generation, ETag, and source revision must agree
-with that applied record. Every missing, invalid, stale, or mismatched state
-retains `OPENAI_API_KEY`, including upgrades and rollbacks.
+strict v2 `activeCliVersion` proves the current running CLI is the exact desired
+version, along with the current apply generation and instance. Installed CLI
+diagnostics do not satisfy this gate. Observation generation, ETag, and source
+revision must agree with that applied record. Every missing, invalid, stale, or
+mismatched state retains `OPENAI_API_KEY`, including upgrades and rollbacks.
 Phase B may therefore deploy before the fleet upgrades: each deployment remains
 on the legacy env name until its own CLI and observation have converged.
 The gate does not compare that last applied revision with the revision currently
@@ -774,51 +782,71 @@ runner identity, package ownership identity, and observed native id; one failed
 package prevents every live package mutation. Missing, old, or incompatible
 runtimes fail with the stable unsupported-capability error.
 
-Upstream capability evidence was refreshed on 2026-08-12. OpenClaw main was
-[`f9316c4697242ba63aaadaca8d02fc976a2aa766`](https://github.com/openclaw/openclaw/commit/f9316c4697242ba63aaadaca8d02fc976a2aa766).
+The canonical schemas audited from
+[`agentplugins/agent-plugins-spec`](https://github.com/agentplugins/agent-plugins-spec/tree/bd383552095128f6effe895b9257cfd580a6d179)
+remain Agent Plugins 1.0.0. Their SHA-256 digests are
+`0a4aad95ce337878ad38802ebf0daa3fde76abe3f65400c86bcbb1ec0b3ab883`
+for `plugin.schema.json` and
+`6539175bfcdf43085855183e86da40ea94b166547a72b47ae9a0a390516d3acb`
+for `mcp.schema.json`.
+
+Upstream capability evidence was refreshed on 2026-08-14. OpenClaw main was
+audited at
+[`1ea149910703a8e0f0784e049755b3e6afdcdc87`](https://github.com/openclaw/openclaw/commit/1ea149910703a8e0f0784e049755b3e6afdcdc87).
 Agent Plugins support landed in
 [`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
 that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
 `PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
-[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/f9316c4697242ba63aaadaca8d02fc976a2aa766/src/plugins/status.ts)
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/1ea149910703a8e0f0784e049755b3e6afdcdc87/src/plugins/status.ts)
 exposes every MCP server name, unsupported state, and plugin diagnostics.
 Clawdi requires the reported names to equal the already-validated `mcp.json`
 names and requires no unsupported entry or diagnostic during every isolated and
 live observation. This is native component proof rather than a version guess.
+The 44 source commits from the prior `9d0e689` audit through `dc61fe5`,
+`2b61dc5`, and `1ea1499` do not modify the Agent Plugins bundle loader,
+native plugin lifecycle, component inventory, inspect contract, or MCP
+translation.
 
-The latest OpenClaw GitHub release is
+The GitHub Releases API latest release remains
 [`v2026.7.1-2`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2),
-at commit
+whose annotated tag object `be8b8a9e8838f832e4fa47cde8bea0a33aec71ba`
+points to
 [`0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c),
 which predates Agent Plugins support. Clawdi passes no `--version` to the
 official installer; the reviewed installer defaults to npm `latest`. A runtime
 at the current release therefore fails the native package probe instead of
 silently accepting components it cannot load. A future compatible release can
-pass without a Clawdi version-table change. npm beta is
-`2026.8.1-beta.1`, but inspection of that published package still finds the old
-Codex, Claude, and Cursor bundle implementation rather than Agent Plugins.
-Neither the stable nor beta package should therefore be inferred to have the
-source capability currently present on main.
+pass without a Clawdi version-table change. The latest listed GitHub prerelease
+is [`v2026.7.2-beta.7`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.2-beta.7),
+whose annotated tag object `3ddd783e3f2465f5221ab27e8849eb165c61b498`
+points to `dabe1915362e20c25704af91612a32a8f4c96e83`. The separate annotated Git
+tag and npm package tag `v2026.8.1-beta.1` is not a GitHub Release; its tag
+object `9ab21e0b1ab3cf3845ec47f7b7b8803255a8af80` points to
+`ff8a3fe9d03eff4a70f5464714c3a389b06bfec8`. Inspection of the bundle source
+at all three tag commits, and of the stable and beta npm packages, finds only
+the older Codex, Claude, and Cursor bundle path rather than the current Agent
+Plugins implementation. Release numbering is therefore not capability proof.
 
-Hermes main was
-[`66a41616208135198dfe96d0e3b8e5510b20d035`](https://github.com/NousResearch/hermes-agent/commit/66a41616208135198dfe96d0e3b8e5510b20d035).
-Portable Skills, stdio MCP, and component diagnostics landed by
-[`8cb066404e3edc3501a07a408c59834dc745cc74`](https://github.com/NousResearch/hermes-agent/commit/8cb066404e3edc3501a07a408c59834dc745cc74).
-Main added streamable-http execution and cross-origin header stripping in
-[`471baea520e89220c7a5306d6410b5c8ce7e34d5`](https://github.com/NousResearch/hermes-agent/commit/471baea520e89220c7a5306d6410b5c8ce7e34d5),
-while still reporting and skipping SSE. The latest release,
-[`v2026.8.3`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.3)
-at
-[`3c27eb6234bf91b8ceee9e9071591b31e9b148cb`](https://github.com/NousResearch/hermes-agent/commit/3c27eb6234bf91b8ceee9e9071591b31e9b148cb),
-is package version `0.20.0` and predates both portable commits. Clawdi passes
-neither `--branch` nor `--commit`; the reviewed official Hermes installer
-defaults to `main`, so installer behavior and the latest tagged release have
-different capability surfaces.
+Hermes main was audited at
+[`9504edbaea29ce249864a1be05819d972f8fae8d`](https://github.com/NousResearch/hermes-agent/commit/9504edbaea29ce249864a1be05819d972f8fae8d).
+The 20 commits since the prior `f52feed` audit affect resource pressure,
+interrupted-command cwd ownership, usage accounting, model selection, desktop
+UI, and bundled Skill inventory; they do not change Agent Plugins lifecycle,
+portable MCP translation, native config, or one-shot discovery.
+The latest release is
+[`v2026.8.13`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.13),
+published 2026-08-13 as package `0.20.1`; annotated tag object
+`4e693dc685b5716e7da22656eccc6ece37c5db72` points to
+[`f80f453ae0679347e38abc917c7f94f717bf96c5`](https://github.com/NousResearch/hermes-agent/commit/f80f453ae0679347e38abc917c7f94f717bf96c5).
+That release contains portable Skills, stdio and streamable-http MCP, literal
+headers, and one-shot discovery; portable SSE remains diagnostics plus skip.
+The reviewed official installer still defaults `BRANCH=main`, and Clawdi
+passes neither `--branch` nor `--commit`.
 
-Hermes `plugins list --json` reports package identity and lifecycle state but
-does not inventory portable components. `hermes mcp test` and `hermes tools
-list` read explicit top-level `mcp_servers`, so neither proves Agent Plugin
-translation. Before live mutation of any remote package, Clawdi instead runs
+Hermes `plugins list --json` still reports only name, status, version,
+description, and source. `plugins show` and `plugins doctor` likewise expose no
+stable component-execution JSON proof. Before live mutation of any remote
+package, Clawdi instead runs
 the public `hermes -z` consumer in an isolated HOME against task-local
 OpenAI-compatible inference and Streamable HTTP MCP fixtures. Hermes startup
 must discover the enabled portable canary, advertise its exact MCP tool to the
@@ -831,15 +859,39 @@ older binaries that install the package while silently skipping remote entries;
 it does not import Hermes Python modules or rewrite Hermes configuration
 formats. The canary package points only to loopback and never connects to a
 desired package URL. Desired streamable-http URLs and literal headers are
-validated against the Agent Plugins schema without contacting the endpoint
-during reconciliation. Package validation also checks Skill frontmatter and
-the complete supported stdio command, args, env, and cwd shapes. Portable SSE
-continues to fail closed because Hermes main explicitly diagnoses and skips it.
+validated without contacting the endpoint during reconciliation. Public
+literal headers and public stdio environment values are supported. Native
+runtimes perform the standard single expansion of `PLUGIN_ROOT` and
+`PLUGIN_DATA`; other env text, including `${OTHER}`, remains literal.
+Package-declared Clawdi `configuration.secretSlots`, non-empty Hosted
+`secretRefs`, sensitive header or env names, credential-looking literals, and
+placeholder-bearing remote headers fail closed because no native secret-binding
+contract is available. Hosted `secretRefs` are rejected before download; the
+package credential policy is enforced before any native probe or live mutation.
+Portable SSE remains fail closed for Hermes.
 
-Neither runtime exposes a native Agent Plugins `secretRefs` binding contract.
-Agent Plugins URL and header strings remain literal package data, and non-empty
-Hosted `secretRefs` are rejected before download or probing; the CLI does not
-resolve, log, persist, or inject secret values.
+The binary proof uses the same curated MCP dependency path as the official
+installer's
+[`uv sync --extra all --locked`](https://github.com/NousResearch/hermes-agent/blob/f80f453ae0679347e38abc917c7f94f717bf96c5/scripts/install.sh#L1561-L1599).
+During this isolated proof only, `HERMES_BUNDLED_PLUGINS` points at an empty
+task-local directory. Hermes documents that variable as the packaged-install
+bundled-root override at both the
+[`v2026.8.13` source](https://github.com/NousResearch/hermes-agent/blob/f80f453ae0679347e38abc917c7f94f717bf96c5/hermes_cli/plugins.py#L75-L86)
+and the
+[`9504edb` main audit](https://github.com/NousResearch/hermes-agent/blob/9504edbaea29ce249864a1be05819d972f8fae8d/hermes_cli/plugins.py#L75-L86).
+Its scanner still reads user portable packages independently from
+`HERMES_HOME/plugins`; native install/enable, portable translation, MCP
+handshake, literal-header forwarding, tool execution, and result delivery all
+remain on the ordinary runtime path. The override only removes unrelated
+bundled backends from this bounded probe, so it cannot make an unavailable user
+package capability pass.
+
+| Agent Plugin surface | Hosted support |
+| --- | --- |
+| Remote query and public literal headers | Supported |
+| Public stdio env, including native `PLUGIN_ROOT`/`PLUGIN_DATA` expansion and literal `${OTHER}` | Supported |
+| `configuration.secretSlots` or non-empty Hosted `secretRefs` | Rejected |
+| Portable SSE | OpenClaw requires native inspect proof; Hermes rejects |
 
 A private last-applied receipt binds each managed name to `installationId`,
 version, schema, immutable source tuple, content digest, and native id. Native
@@ -853,13 +905,17 @@ top-level generated `.git` metadata. Removal disables and uninstalls only a
 receipt-owned plugin.
 
 Live package mutation precedes the runtime's official gateway installer and
-final systemd activation. Any package change forces the affected runtime user
-unit through restart and readiness even when its unit/config revision did not
-change. The exact native package directories, runtime plugin configuration,
-receipt, and other native command state are part of the runtime-user preimage.
-Native rollback errors remain visible, and filesystem plus systemd restoration
-still runs before the failed generation is returned; authority commits only
-after the native state and receipt converge.
+final systemd activation. Once native mutation intent is known, only the
+affected runtime user units are quiesced; the adapter then captures the exact
+native package directories, runtime plugin configuration, receipt, and
+OpenClaw SQLite/WAL/SHM preimage before applying any native mutation. Any
+package change forces those units through final restart and readiness even when
+their unit/config revision did not change. If native mutation or a later
+installer fails before final activation, compensation runs native rollback,
+filesystem and database snapshot restoration, then systemd rollback and unit
+restart while the affected units remain stopped. Unrelated units are not
+globally quiesced when systemd remains pristine. Native rollback errors remain
+visible, and authority commits only after native state and receipt converge.
 
 Online preparation stores verified archives in private ownership-keyed cache
 entries. Failed convergence removes entries first created by that attempt while

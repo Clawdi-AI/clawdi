@@ -31,6 +31,13 @@ import {
 	type HostedAgentPluginInstallation,
 	hostedAgentPluginInstallationSchema,
 } from "./manifest-resources";
+import {
+	containsMcpPlaceholder,
+	isMcpSensitiveEnvironmentName,
+	isMcpSensitiveHeaderName,
+	isValidMcpEnvironmentName,
+	looksLikeMcpSecretLiteral,
+} from "./mcp-credential-policy";
 import type { RuntimePaths } from "./paths";
 import { makeRuntimeUserOwned, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -144,19 +151,75 @@ const pluginManifestSchema = z
 		extensions: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 	})
 	.strict();
+const boundedUniqueStrings = (maximumItems: number, maximumLength: number) =>
+	z
+		.array(z.string().min(1).max(maximumLength))
+		.max(maximumItems)
+		.refine(
+			(values) => new Set(values.map((value) => value.toLowerCase())).size === values.length,
+			"must not contain case-folded duplicates",
+		);
+const clawdiDisplaySchema = z
+	.object({
+		name: z.string().min(1).max(80),
+		icon: z.string().min(1).max(512).optional(),
+		category: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
+		tags: boundedUniqueStrings(20, 32).optional(),
+		languages: boundedUniqueStrings(20, 64)
+			.refine(
+				(values) => values.every((value) => /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(value)),
+				"must contain language tags",
+			)
+			.optional(),
+	})
+	.strict();
+const clawdiCompatibilitySchema = z
+	.object({
+		runtimes: boundedUniqueStrings(2, 16)
+			.min(1)
+			.refine(
+				(values) => values.every((value) => value === "openclaw" || value === "hermes"),
+				"contains an unsupported runtime",
+			)
+			.optional(),
+		executables: boundedUniqueStrings(32, 128)
+			.min(1)
+			.refine(
+				(values) => values.every((value) => /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(value)),
+				"contains an invalid executable",
+			)
+			.optional(),
+	})
+	.strict();
+const clawdiExtensionSchema = z
+	.object({
+		schemaVersion: z.literal(1),
+		display: clawdiDisplaySchema,
+		configuration: z
+			.object({
+				secretSlots: z.record(
+					z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
+					z.unknown(),
+				),
+			})
+			.strict()
+			.optional(),
+		compatibility: clawdiCompatibilitySchema.optional(),
+	})
+	.strict();
 const stdioServerSchema = z
 	.object({
 		type: z.literal("stdio"),
-		command: z.string().min(1),
-		args: z.array(z.string()).optional(),
+		command: z.string().min(1).max(512),
+		args: z.array(z.string()).max(256).optional(),
 		env: z.record(z.string(), z.string()).optional(),
-		cwd: z.string().optional(),
+		cwd: z.string().min(1).max(512).optional(),
 	})
 	.strict();
 const remoteServerSchema = z
 	.object({
 		type: z.enum(["streamable-http", "sse"]),
-		url: z.string().min(1),
+		url: z.string().min(1).max(2_048),
 		headers: z.record(z.string(), z.string()).optional(),
 	})
 	.strict();
@@ -686,13 +749,17 @@ function assertSkillComponents(tree: readonly PreparedAgentPluginTreeFile[]): vo
 		const frontmatter = z
 			.object({
 				name: z.string().min(1).max(64),
-				description: z.string().min(1).max(1_024),
+				description: z
+					.string()
+					.min(1)
+					.max(1_024)
+					.refine((value) => value.trim().length > 0),
 				license: z.string().optional(),
 				compatibility: z.string().min(1).max(500).optional(),
 				metadata: z.record(z.string(), z.string()).optional(),
 				"allowed-tools": z.string().optional(),
 			})
-			.passthrough()
+			.strict()
 			.safeParse(document.toJS());
 		if (!frontmatter.success || frontmatter.data.name !== skillName) {
 			throw new Error("Agent Plugin SKILL.md frontmatter does not match its Skill directory");
@@ -712,13 +779,18 @@ function assertScopedPortablePath(value: string): void {
 	}
 }
 
-function explicitUrlHostname(value: string): string | null {
+function rawUrlAuthority(value: string): string | null {
 	const schemeEnd = value.indexOf("://");
 	if (schemeEnd < 0) return null;
 	const remainder = value.slice(schemeEnd + 3);
 	const authorityEnd = remainder.search(/[/?#]/);
 	const authority = authorityEnd < 0 ? remainder : remainder.slice(0, authorityEnd);
-	if (!authority) return null;
+	return authority || null;
+}
+
+function explicitUrlHostname(value: string): string | null {
+	const authority = rawUrlAuthority(value);
+	if (!authority || authority.includes("@")) return null;
 	if (authority.startsWith("[")) {
 		const close = authority.indexOf("]");
 		if (close < 0 || !/^(?::[0-9]+)?$/.test(authority.slice(close + 1))) return null;
@@ -744,14 +816,28 @@ function isExplicitLoopbackHostname(value: string): boolean {
 }
 
 function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
+	if (containsMcpPlaceholder(server.url)) {
+		throw new Error("Agent Plugin remote MCP URL cannot contain credential templates");
+	}
+	if (
+		server.url.includes("\\") ||
+		/\s/u.test(server.url) ||
+		[...server.url].some((character) => character.charCodeAt(0) < 0x20)
+	) {
+		throw new Error("Agent Plugin remote MCP URL is invalid");
+	}
 	let url: URL;
 	try {
 		url = new URL(server.url);
 	} catch {
 		throw new Error("Agent Plugin remote MCP URL is invalid");
 	}
+	const authority = rawUrlAuthority(server.url);
 	if (
 		(url.protocol !== "https:" && url.protocol !== "http:") ||
+		!authority ||
+		authority.includes("@") ||
+		server.url.includes("#") ||
 		url.username !== "" ||
 		url.password !== "" ||
 		url.hash !== "" ||
@@ -765,8 +851,21 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 		}
 	}
 	const headerNames = new Set<string>();
+	if (Object.keys(server.headers ?? {}).length > 128) {
+		throw new Error("Agent Plugin remote MCP headers are invalid");
+	}
 	for (const [name, value] of Object.entries(server.headers ?? {})) {
 		const foldedName = name.toLowerCase();
+		if (
+			isMcpSensitiveHeaderName(name) ||
+			containsMcpPlaceholder(value) ||
+			(value.length > 0 && looksLikeMcpSecretLiteral(value))
+		) {
+			throw new Error("Agent Plugin remote MCP headers cannot carry credentials");
+		}
+		if (value.length > 8_192) {
+			throw new Error("Agent Plugin remote MCP headers are invalid");
+		}
 		try {
 			validateHeaderName(name);
 			validateHeaderValue(name, value);
@@ -783,12 +882,13 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 function assertMcpComponents(
 	tree: readonly PreparedAgentPluginTreeFile[],
 	runtime: HostedAgentPluginRuntime,
-): { serverNames: string[]; hasStreamableHttp: boolean } {
+): { serverNames: string[]; hasStreamableHttp: boolean; bareCommands: string[] } {
 	const file = tree.find((entry) => entry.path === "mcp.json");
-	if (!file) return { serverNames: [], hasStreamableHttp: false };
+	if (!file) return { serverNames: [], hasStreamableHttp: false, bareCommands: [] };
 	const parsed = mcpManifestSchema.safeParse(parseJsonObject(file, "Agent Plugin mcp.json"));
 	if (!parsed.success) throw new Error("Agent Plugin mcp.json does not match the 1.0.0 schema");
 	let hasStreamableHttp = false;
+	const bareCommands = new Set<string>();
 	for (const server of Object.values(parsed.data.mcpServers)) {
 		if (server.type !== "stdio") {
 			assertRemoteServer(server);
@@ -798,39 +898,57 @@ function assertMcpComponents(
 			hasStreamableHttp ||= server.type === "streamable-http";
 			continue;
 		}
-		if (
-			server.command.includes("\0") ||
-			(!server.command.startsWith("./") &&
-				(/[\s/\\]/u.test(server.command) || server.command === "." || server.command === ".."))
-		) {
+		if (server.command.includes("\0")) {
 			throw new Error("Agent Plugin stdio MCP command is invalid");
 		}
-		if (server.command.startsWith("./")) assertScopedPortablePath(server.command);
+		if (server.command.startsWith("./")) {
+			assertScopedPortablePath(server.command);
+			const executable = tree.find((entry) => entry.path === server.command.slice(2));
+			if (executable?.mode !== 0o100755) {
+				throw new Error("Agent Plugin stdio MCP command is not an executable package file");
+			}
+		} else if (!/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(server.command)) {
+			throw new Error("Agent Plugin stdio MCP command is invalid");
+		} else {
+			bareCommands.add(server.command);
+		}
 		if ((server.args ?? []).some((value) => value.includes("\0"))) {
 			throw new Error("Agent Plugin stdio MCP args are invalid");
 		}
+		const environmentNames = new Set<string>();
 		for (const [name, value] of Object.entries(server.env ?? {})) {
+			const foldedName = name.toLowerCase();
 			if (
-				name === "PLUGIN_ROOT" ||
-				name === "PLUGIN_DATA" ||
+				!isValidMcpEnvironmentName(name) ||
+				name.toUpperCase() === "PLUGIN_ROOT" ||
+				name.toUpperCase() === "PLUGIN_DATA" ||
+				environmentNames.has(foldedName) ||
 				name.includes("\0") ||
 				value.includes("\0")
 			) {
 				throw new Error("Agent Plugin stdio MCP environment is invalid");
 			}
+			if (
+				isMcpSensitiveEnvironmentName(name) ||
+				(value.length > 0 && looksLikeMcpSecretLiteral(value))
+			) {
+				throw new Error("Agent Plugin stdio MCP environment cannot carry credentials");
+			}
+			environmentNames.add(foldedName);
 		}
 		if (server.cwd !== undefined) assertScopedPortablePath(server.cwd);
 	}
 	return {
 		serverNames: Object.keys(parsed.data.mcpServers).sort(),
 		hasStreamableHttp,
+		bareCommands: [...bareCommands].sort(),
 	};
 }
 
 function assertPackageIdentity(
 	descriptor: PackageDescriptor,
 	tree: readonly PreparedAgentPluginTreeFile[],
-): void {
+): z.infer<typeof clawdiExtensionSchema> | null {
 	const manifest = pluginManifestSchema.safeParse(
 		parseJsonObject(
 			tree.find((file) => file.path === "plugin.json"),
@@ -844,6 +962,38 @@ function assertPackageIdentity(
 		manifest.data.version !== descriptor.installation.version
 	) {
 		throw new Error("Agent Plugin package identity does not match the desired installation");
+	}
+	const extension = manifest.data.extensions?.["ai.clawdi"];
+	if (extension === undefined) return null;
+	const clawdi = clawdiExtensionSchema.safeParse(extension);
+	if (!clawdi.success) {
+		throw new Error("Agent Plugin ai.clawdi extension does not match the Store contract");
+	}
+	if (clawdi.data.configuration) {
+		throw new Error(AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR);
+	}
+	if (clawdi.data.display.icon) {
+		const icon = clawdi.data.display.icon;
+		if (!safeRelativePath(icon) || !tree.some((entry) => entry.path === icon)) {
+			throw new Error("Agent Plugin ai.clawdi display icon is not a package file");
+		}
+	}
+	return clawdi.data;
+}
+
+function assertClawdiCompatibility(
+	extension: z.infer<typeof clawdiExtensionSchema> | null,
+	runtime: HostedAgentPluginRuntime,
+	bareCommands: readonly string[],
+): void {
+	if (!extension) return;
+	const compatibility = extension.compatibility;
+	if (compatibility?.runtimes && !compatibility.runtimes.includes(runtime)) {
+		throw new Error(`Agent Plugin ai.clawdi compatibility excludes ${runtime}`);
+	}
+	const executables = new Set(compatibility?.executables ?? []);
+	if (bareCommands.some((command) => !executables.has(command))) {
+		throw new Error("Agent Plugin bare MCP commands are not declared by ai.clawdi compatibility");
 	}
 }
 
@@ -873,9 +1023,10 @@ async function validateArchive(
 				"Agent Plugin package content digest does not match the desired installation",
 			);
 		}
-		assertPackageIdentity(descriptor, collected.tree);
+		const clawdiExtension = assertPackageIdentity(descriptor, collected.tree);
 		assertSkillComponents(collected.tree);
 		const mcp = assertMcpComponents(collected.tree, descriptor.runtime);
+		assertClawdiCompatibility(clawdiExtension, descriptor.runtime, mcp.bareCommands);
 		if (descriptor.runtime === "hermes") assertHermesSupportedPackage(collected.tree);
 		return {
 			name: descriptor.name,

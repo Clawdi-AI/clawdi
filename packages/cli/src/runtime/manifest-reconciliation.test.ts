@@ -20,6 +20,10 @@ import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
+	type TestConvergeOptions,
+	withTestSystemdTransaction,
+} from "../test-support/systemd-apply";
+import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
@@ -44,6 +48,7 @@ import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
 	type RuntimeManifest,
+	type RuntimePrivateAppliedAuthority,
 	runtimeInstallerMutationTargets,
 	runtimeRecoverableSecretValues,
 	runtimeUserMutationTargets,
@@ -238,11 +243,12 @@ function tempRuntimePaths(): RuntimePaths {
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts: Parameters<typeof convergeRuntimeManifestWithContract>[2] = {},
+	opts: TestConvergeOptions = {},
 ) {
 	ensureRuntimeStateDirs(paths);
 	return convergeRuntimeManifestWithContract(load, paths, {
 		...opts,
+		systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
 		hostedRuntimeContract: opts.hostedRuntimeContract ?? {
 			expectedIdentity: {
 				home: paths.userHome,
@@ -456,7 +462,7 @@ function commitTestRuntimeAuthority(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
 	convergence: ReturnType<typeof convergeRuntimeManifest>,
-	authority: { egressSidecarSecretRevision?: string },
+	authority: RuntimePrivateAppliedAuthority,
 ): void {
 	commitRuntimeAppliedState({
 		load,
@@ -465,6 +471,8 @@ function commitTestRuntimeAuthority(
 		sourceRevision: runtimeContentSha256({ generation: load.manifest.generation }),
 		convergence,
 		applyIdentity: null,
+		daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+		daemonProgramRevision: authority.daemonProgramRevision,
 		egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 	});
 }
@@ -1064,12 +1072,15 @@ case "\${1:-}" in
         version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
 	        printf '{"plugin":{"id":"acme-tools","name":"acme.tools","source":"test","origin":"config","status":"%s","version":"%s","enabled":%s,"format":"bundle","bundleFormat":"agent"},"mcpServers":[],"diagnostics":[],"install":{"source":"path","installPath":"%s","resolvedVersion":"%s"}}\\n' "$plugin_status" "$version" "$plugin_enabled" "$plugin_root" "$version"
         ;;
-      install)
-        [[ "\${4:-}" == --force && -f "\${3:-}/plugin.json" ]] || exit 2
-        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$3/plugin.json")
-        if [[ "$HOME" == '${paths.userHome}' ]]; then
-          if [[ -f "$HOME/.openclaw/fail-rollback" && "$version" == 1.0.0 ]]; then exit 9; fi
-          printf 'plugin-apply:%s\\n' "$version" >> '${eventLog}'
+	      install)
+	        [[ "\${4:-}" == --force && -f "\${3:-}/plugin.json" ]] || exit 2
+	        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$3/plugin.json")
+	        if [[ "$HOME" == '${paths.userHome}' ]]; then
+	          if [[ -f "$HOME/.openclaw/fail-rollback" && "$version" == 1.0.0 ]]; then
+	            printf '%s\\n' native-rollback >> '${eventLog}'
+	            exit 9
+	          fi
+	          printf 'plugin-apply:%s\\n' "$version" >> '${eventLog}'
         else
           printf 'probe-install:%s\\n' "$version" >> '${eventLog}'
         fi
@@ -1083,12 +1094,20 @@ case "\${1:-}" in
         printf 'wal:%s\\n' "$version" > "$plugin_database-wal"
         printf 'shm:%s\\n' "$version" > "$plugin_database-shm"
         ;;
-      enable|disable)
-        [[ "\${3:-}" == acme-tools && -f "$plugin_root/plugin.json" ]] || exit 2
-        enabled=false
-        if [[ "$2" == enable ]]; then enabled=true; fi
-        printf '{"plugins":{"entries":{"acme-tools":{"enabled":%s}}}}\\n' "$enabled" > "$plugin_config"
-        ;;
+	      enable|disable)
+	        [[ "\${3:-}" == acme-tools && -f "$plugin_root/plugin.json" ]] || exit 2
+	        enabled=false
+	        if [[ "$2" == enable ]]; then enabled=true; fi
+	        printf '{"plugins":{"entries":{"acme-tools":{"enabled":%s}}}}\\n' "$enabled" > "$plugin_config"
+	        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
+	        if [[ "$HOME" == '${paths.userHome}' && "$2" == enable && "$version" == 2.0.0 ]]; then
+	          printf '%s\\n' enable-failed > "$plugin_database"
+	          printf '%s\\n' enable-failed > "$plugin_database-wal"
+	          printf '%s\\n' enable-failed > "$plugin_database-shm"
+	          printf '%s\\n' native-enable-failure >> '${eventLog}'
+	          exit 8
+	        fi
+	        ;;
       uninstall)
         [[ "\${3:-}" == acme-tools && "\${4:-}" == --force ]] || exit 2
         rm -rf "$plugin_root"
@@ -1136,6 +1155,7 @@ chmod 0755 '${commandPath}'
 			},
 		);
 		let firstRestartUnits: string[] = [];
+		let firstQuiescedUnits: readonly string[] = [];
 		const first = convergeRuntimeManifest(manifestLoad(manifest, "agent-plugin-cold-boot"), paths, {
 			cacheLastGood: false,
 			preparedHostedAgentPlugins: preparedTestAgentPluginState(previous),
@@ -1147,8 +1167,9 @@ chmod 0755 '${commandPath}'
 					writeFileSync(eventLog, "activation\n", { flag: "a" });
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 				},
-				quiesce: () => {
-					throw new Error("successful cold boot must not quiesce");
+				quiesce: (affectedUserUnits) => {
+					firstQuiescedUnits = affectedUserUnits;
+					writeFileSync(eventLog, "quiesce\n", { flag: "a" });
 				},
 				rollback: () => {
 					throw new Error("successful cold boot must not roll back");
@@ -1159,10 +1180,12 @@ chmod 0755 '${commandPath}'
 		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
 			"binary-install",
 			"probe-install:1.0.0",
+			"quiesce",
 			"plugin-apply:1.0.0",
 			"gateway-install",
 			"activation",
 		]);
+		expect(firstQuiescedUnits).toEqual(["openclaw-gateway.service"]);
 		expect(firstRestartUnits).toEqual(["openclaw-gateway.service"]);
 
 		const pluginRoot = join(paths.userHome, ".openclaw", "extensions", "acme-tools");
@@ -1200,29 +1223,45 @@ chmod 0755 '${commandPath}'
 				cacheLastGood: false,
 				preparedHostedAgentPlugins: preparedTestAgentPluginState(desired, previous),
 				commitAuthority: () => {
-					throw new Error("injected Agent Plugin authority failure");
+					throw new Error("failed Agent Plugin apply must not commit authority");
 				},
 				systemdApply: {
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
-					activate: (signal) => {
-						expect(signal.restartUserUnits).toEqual(["openclaw-gateway.service"]);
-						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					activate: () => {
+						throw new Error("failed Agent Plugin apply must not reach activation");
 					},
-					quiesce: () => {
+					quiesce: (affectedUserUnits) => {
+						expect(affectedUserUnits).toEqual(["openclaw-gateway.service"]);
 						rollbackLifecycle.push("quiesce");
+						writeFileSync(eventLog, "quiesce\n", { flag: "a" });
+						writeFileSync(pluginDatabasePath, "quiesced-preimage\n");
+						preimage.set(pluginDatabasePath, readFileSync(pluginDatabasePath));
 					},
 					rollback: () => {
+						for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
+						writeFileSync(eventLog, "snapshot-restored\n", { flag: "a" });
 						rollbackLifecycle.push("systemd rollback");
 					},
 				},
 			},
 		);
 
-		expect(failed.installErrors.join("\n")).toContain("injected Agent Plugin authority failure");
+		expect(failed.installErrors.join("\n")).toContain(
+			"OpenClaw native Agent Plugin state change failed",
+		);
 		expect(failed.installErrors.join("\n")).toContain(
 			"runtime openclaw Agent Plugin acme.tools rollback failed",
 		);
 		expect(rollbackLifecycle).toEqual(["quiesce", "systemd rollback"]);
+		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
+			"probe-install:1.0.0",
+			"probe-install:2.0.0",
+			"quiesce",
+			"plugin-apply:2.0.0",
+			"native-enable-failure",
+			"native-rollback",
+			"snapshot-restored",
+		]);
 		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
 		expect(readFileSync(join(pluginRoot, "plugin.json"), "utf8")).toContain('"version":"1.0.0"');
 	});

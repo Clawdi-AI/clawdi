@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -25,7 +26,12 @@ from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES, PlatformRuntimeStateUpsert
 from app.services.hosted_runtime_secrets import runtime_secret_values_idempotency_identity
 from app.services.platform_contract import platform_request_hash, store_platform_response
-from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
+from app.services.runtime_source import (
+    expected_runtime_bundle_v2_etag,
+    load_runtime_source_batch,
+    render_runtime_source,
+    vault_key_identity,
+)
 from app.services.user_provisioning import lazy_create_partner_user_with_personal_project
 from app.services.vault_crypto import decrypt
 from tests.conftest import create_env_with_project
@@ -478,6 +484,118 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         assert all(secret not in str(event.details) for secret in _TEST_SECRET_VALUES.values())
 
 
+@pytest.mark.committed_db
+@pytest.mark.asyncio
+async def test_retirement_fences_late_runtime_state_writes_and_old_replay(
+    platform_client,
+    engine,
+    db_session,
+    seed_user,
+):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.services.runtime_observation import (
+        provision_runtime_environment_fence,
+        retire_runtime_environment,
+    )
+    from app.services.runtime_state_cleanup import cleanup_retired_runtime_state
+
+    owner = _clerk_owner(seed_user)
+    agent = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"retired-write-{uuid.uuid4().hex}",
+        machine_name="retired-write-agent",
+        agent_type="openclaw",
+        os="linux",
+    )
+    provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    await db_session.commit()
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _fresh_session():
+        async with session_factory() as session:
+            yield session
+
+    previous_session_override = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = _fresh_session
+    try:
+        client = platform_client
+        body = _runtime_body(owner, agent.id, provider_id=provider_id)
+        initial_headers = _headers("retired-write-initial")
+        initial = await client.put(
+            f"/v1/platform/agents/{agent.id}/runtime-state",
+            headers=initial_headers,
+            json=body,
+        )
+        assert initial.status_code == 200, initial.text
+
+        deployment_id = str(body["deployment_id"])
+        async with session_factory() as setup_session:
+            await provision_runtime_environment_fence(
+                setup_session,
+                environment_id=agent.id,
+                owner_id=seed_user.id,
+                deployment_id=deployment_id,
+            )
+            await setup_session.commit()
+
+        retirement_id = f"retirement-{agent.id}"
+        async with session_factory() as retirement_session:
+            await retire_runtime_environment(
+                retirement_session,
+                environment_id=agent.id,
+                expected_deployment_id=deployment_id,
+                retirement_id=retirement_id,
+                owner_id=seed_user.id,
+            )
+            late_body = {**body, "generation": 2}
+            late_put = asyncio.create_task(
+                client.put(
+                    f"/v1/platform/agents/{agent.id}/runtime-state",
+                    headers=_headers("retired-write-late"),
+                    json=late_body,
+                )
+            )
+            await asyncio.sleep(0.05)
+            assert not late_put.done()
+            await retirement_session.commit()
+            late = await asyncio.wait_for(late_put, timeout=5)
+
+        assert late.status_code == 409, late.text
+        assert late.json()["detail"]["code"] == "runtime_environment_retired"
+        async with session_factory() as cleanup_session:
+            await cleanup_retired_runtime_state(
+                cleanup_session,
+                environment_id=agent.id,
+                expected_deployment_binding=deployment_id,
+                retirement_id=retirement_id,
+                cleanup_id=f"cleanup-{agent.id}",
+            )
+            await cleanup_session.commit()
+
+        old_replay = await client.put(
+            f"/v1/platform/agents/{agent.id}/runtime-state",
+            headers=initial_headers,
+            json=body,
+        )
+        assert old_replay.status_code == 200, old_replay.text
+        async with session_factory() as assertion_session:
+            assert await assertion_session.get(HostedRuntimeState, agent.id) is None
+
+        admin_body = {key: value for key, value in body.items() if key != "owner"}
+        admin = await client.put(
+            f"/v1/admin/agents/{agent.id}/runtime-state",
+            headers=_ADMIN_AUTH,
+            json=admin_body,
+        )
+        assert admin.status_code == 409, admin.text
+        assert admin.json()["detail"]["code"] == "runtime_environment_retired"
+    finally:
+        app.dependency_overrides[get_session] = previous_session_override
+
+
 @pytest.mark.asyncio
 async def test_platform_agent_reregistration_updates_its_name(
     platform_client,
@@ -676,6 +794,7 @@ async def test_platform_runtime_state_persists_detects_and_projects_agent_plugin
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
 async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_revision(
     platform_client,
     db_session,
@@ -715,10 +834,30 @@ async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_re
     first_source = render_runtime_source(
         batch,
         environment_id=agent_id,
-        public_api_url="https://cloud.test",
-        vault_key_identity="test-key-version",
+        public_api_url=settings.public_api_url,
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
         decrypt_secrets=False,
     )
+    source_authority = await platform_client.get(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_ADMIN_AUTH,
+        params=owner,
+    )
+    assert source_authority.status_code == 200, source_authority.text
+    assert set(source_authority.json()) == {
+        "environmentId",
+        "deploymentId",
+        "instanceId",
+        "sourceRevision",
+        "etag",
+    }
+    assert source_authority.json() == {
+        "environmentId": str(agent_id),
+        "deploymentId": "deployment-1",
+        "instanceId": "instance-1",
+        "sourceRevision": first_source.source_revision,
+        "etag": expected_runtime_bundle_v2_etag(first_source.source_revision),
+    }
 
     second = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
@@ -744,8 +883,8 @@ async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_re
     repeated_source = render_runtime_source(
         repeated_batch,
         environment_id=agent_id,
-        public_api_url="https://cloud.test",
-        vault_key_identity="test-key-version",
+        public_api_url=settings.public_api_url,
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
         decrypt_secrets=False,
     )
     assert repeated_source.secret_values == {}
@@ -1186,6 +1325,14 @@ async def test_platform_existing_resources_reject_owner_mismatch(
     await db_session.refresh(other_key)
     owner = _clerk_owner(seed_user)
     try:
+        cross_owner_read = await platform_client.get(
+            f"/v1/platform/agents/{other_agent.id}/runtime-state",
+            headers=_ADMIN_AUTH,
+            params=owner,
+        )
+        assert cross_owner_read.status_code == 404, cross_owner_read.text
+        assert cross_owner_read.json() == {"detail": "Runtime source not found"}
+
         calls = [
             (
                 "POST",
@@ -1534,7 +1681,11 @@ async def test_platform_routes_are_canonical_and_exposed_in_openapi(platform_cli
         "/v1/platform/oauth/token",
     }
     assert all(not path.startswith("/api/platform") for path in paths)
-    assert set(paths["/v1/platform/agents/{agent_id}/runtime-state"]) == {"put", "delete"}
+    assert set(paths["/v1/platform/agents/{agent_id}/runtime-state"]) == {
+        "get",
+        "put",
+        "delete",
+    }
     companions_schema = response.json()["components"]["schemas"]["PlatformRuntimeStateUpsert"][
         "properties"
     ]["companions"]

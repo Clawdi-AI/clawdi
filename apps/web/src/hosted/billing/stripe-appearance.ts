@@ -47,6 +47,7 @@ export function stripeAppearanceForTheme(
 			colorTextPlaceholder: token("--muted-foreground", fallback.mutedForeground),
 			colorTextSecondary: token("--muted-foreground", fallback.mutedForeground),
 			fontFamily: token("--font-sans", '"Geist Sans", sans-serif'),
+			fontSizeBase: "16px",
 			spacingUnit: "4px",
 		},
 		rules: {
@@ -58,6 +59,7 @@ export function stripeAppearanceForTheme(
 				backgroundColor: token("--background", fallback.background),
 				borderColor: token("--input", fallback.input),
 				boxShadow: "none",
+				fontSize: "16px",
 			},
 			".Input:focus": {
 				borderColor: token("--primary", fallback.primary),

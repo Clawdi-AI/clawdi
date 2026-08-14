@@ -13,6 +13,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+import app.services.whatsapp_delivery_transport as delivery_transport_module
 import app.services.whatsapp_sidecar_registry as sidecar_registry_module
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
@@ -47,8 +48,6 @@ from app.services.whatsapp_sidecar_registry import (
 
 
 class FakeCustomSidecar:
-    transport_mode = "sidecar"
-
     def __init__(self) -> None:
         self.current = WhatsAppSidecarPairingStatus(
             status="stopped",
@@ -174,7 +173,7 @@ class FakeCustomSidecar:
     async def query(self, _node, _timeout_ms):
         return None
 
-    async def provider_events(self, *, limit: int = 100):
+    async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
         return self.provider_event_queue[:limit]
 
     async def acknowledge_provider_events(self, *, through_sequence: int) -> None:
@@ -202,7 +201,7 @@ async def custom_sidecar(
         client_factory=lambda _config: fake,
     )
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "resolve_whatsapp_delivery_transport",
         lambda _account: WhatsAppProviderTransportAdapter(fake),
     )
@@ -597,7 +596,7 @@ async def test_concurrent_cross_tenant_start_allocates_isolated_sessions(
 
 @pytest.mark.asyncio
 @pytest.mark.committed_db
-async def test_custom_bind_waits_for_in_process_ownership_reconciliation(
+async def test_custom_bind_waits_for_ownership_reconciliation(
     db_session: AsyncSession,
     seed_user: User,
     custom_sidecar: tuple[UUID, FakeCustomSidecar],
@@ -664,7 +663,7 @@ async def test_backend_restart_rehydrates_durable_account_transport_and_pump(
     revision = registry.custom_session_revision(provider_session_id)
     assert revision is not None
     monkeypatch.setattr(
-        sidecar_registry_module,
+        delivery_transport_module,
         "resolve_whatsapp_delivery_transport",
         lambda _account: WhatsAppProviderTransportAdapter(fake),
     )

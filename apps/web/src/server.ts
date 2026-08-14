@@ -2,7 +2,7 @@ import "../instrument.server.mjs";
 
 import { wrapFetchWithSentry } from "@sentry/tanstackstart-react";
 import handler, { createServerEntry } from "@tanstack/react-start/server-entry";
-import { cleanMarkedWalletTopupReturnRequest } from "@/lib/wallet-topup-return";
+import { fetchWithWalletStripeReturnPolicy } from "@/lib/wallet-stripe-return";
 
 const routerEntry = {
 	fetch(request: Request) {
@@ -15,6 +15,8 @@ const instrumentedEntry = process.env.VITE_SENTRY_DSN
 
 export default createServerEntry({
 	fetch(request: Request) {
-		return instrumentedEntry.fetch(cleanMarkedWalletTopupReturnRequest(request));
+		return fetchWithWalletStripeReturnPolicy(request, (cleanRequest) =>
+			instrumentedEntry.fetch(cleanRequest),
+		);
 	},
 });
