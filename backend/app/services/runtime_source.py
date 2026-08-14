@@ -93,6 +93,20 @@ RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
 _CLAWDI_AGENT_PLUGIN_PACKAGE = "clawdi-cloud"
 _CLAWDI_AGENT_PLUGIN_COMPONENT = "clawdi"
+_CLAWDI_AGENT_PLUGIN_INSTALLATION_ID = "first-party:clawdi-cloud"
+_CLAWDI_AGENT_PLUGIN_VERSION = "1.0.0"
+_CLAWDI_AGENT_PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+_CLAWDI_AGENT_PLUGIN_STORE_URL = "https://github.com/Clawdi-AI/store"
+_CLAWDI_AGENT_PLUGIN_STORE_PATH = "v2/plugins/clawdi-cloud"
+_CLAWDI_AGENT_PLUGIN_CONTENT_DIGEST = (
+    "sha256-tree-v1:f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c"
+)
+_CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID = "first-party-clawdi-cloud-mcp"
+_CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER = "first-party:clawdi-cloud"
+_CLAWDI_AGENT_PLUGIN_MCP_AUTHORITY = "cloud-api.clawdi.ai:443"
+_CLAWDI_AGENT_PLUGIN_MCP_PATH = "/v1/mcp/clawdi"
+_CLAWDI_AGENT_PLUGIN_MARKER_HEADER = "X-Clawdi-Agent-Plugin"
+_CLAWDI_AUTH_TOKEN_SECRET_REF = "secret://clawdi/auth-token"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
 _CODEX_TOOL_LEGACY_RUNTIME_ENV = "OPENAI_API_KEY"
@@ -554,6 +568,77 @@ def _without_legacy_clawdi_components(
     return projected_mcp, projected_skills
 
 
+def _is_first_party_clawdi_agent_plugin(
+    agent_plugins: HostedAgentPlugins | None,
+) -> bool:
+    if agent_plugins is None:
+        return False
+    installation = agent_plugins.installations.get(_CLAWDI_AGENT_PLUGIN_PACKAGE)
+    if installation is None:
+        return False
+    source = installation.source
+    return (
+        installation.installationId == _CLAWDI_AGENT_PLUGIN_INSTALLATION_ID
+        and installation.version == _CLAWDI_AGENT_PLUGIN_VERSION
+        and installation.agentPluginsSchema == _CLAWDI_AGENT_PLUGIN_SCHEMA
+        and source.type == "github"
+        and source.url == _CLAWDI_AGENT_PLUGIN_STORE_URL
+        and source.path == _CLAWDI_AGENT_PLUGIN_STORE_PATH
+        and installation.contentDigest == _CLAWDI_AGENT_PLUGIN_CONTENT_DIGEST
+    )
+
+
+def _has_first_party_clawdi_agent_plugin_egress_profile(
+    egress_profiles: HostedEgressProfiles | None,
+) -> bool:
+    if egress_profiles is None:
+        return False
+    matching_profiles = [
+        profile
+        for profile in (egress_profiles.profiles or [])
+        if profile.id == _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID
+    ]
+    if len(matching_profiles) != 1:
+        return False
+    profile = matching_profiles[0]
+    if profile.rewrite is None or profile.rewrite.upstreamBaseUrl is None:
+        return False
+    return profile.model_dump(exclude_none=True, mode="json") == {
+        "id": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID,
+        "enabled": True,
+        "kind": "http",
+        "match": {
+            "scheme": "https",
+            "host": _CLAWDI_AGENT_PLUGIN_MCP_AUTHORITY,
+            "path": {"type": "equals", "value": _CLAWDI_AGENT_PLUGIN_MCP_PATH},
+            "headers": {
+                _CLAWDI_AGENT_PLUGIN_MARKER_HEADER: {
+                    "type": "equals",
+                    "value": _CLAWDI_AGENT_PLUGIN_PACKAGE,
+                }
+            },
+            "query": {},
+        },
+        "rewrite": {
+            "upstreamBaseUrl": profile.rewrite.upstreamBaseUrl,
+            "preservePath": True,
+            "setHeaders": {
+                "Authorization": {
+                    "type": "secretRef",
+                    "secretRef": _CLAWDI_AUTH_TOKEN_SECRET_REF,
+                    "prefix": "Bearer ",
+                }
+            },
+        },
+        "logging": {
+            "redactHeaders": ["Authorization"],
+            "redactUrlPatterns": [],
+        },
+        "priority": 60,
+        "owner": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER,
+    }
+
+
 def render_runtime_source(
     batch: RuntimeSourceBatch,
     *,
@@ -620,7 +705,7 @@ def render_runtime_source(
         raise RuntimeSourceError("Hosted runtime MCP or skills state is invalid") from exc
     try:
         agent_plugins = (
-            HostedAgentPlugins.model_validate(state.agent_plugins).model_dump(mode="json")
+            HostedAgentPlugins.model_validate(state.agent_plugins)
             if state.agent_plugins is not None
             else None
         )
@@ -635,8 +720,8 @@ def render_runtime_source(
     )
     project_clawdi_agent_plugin = (
         project_agent_plugins
-        and agent_plugins is not None
-        and _CLAWDI_AGENT_PLUGIN_PACKAGE in agent_plugins["installations"]
+        and _is_first_party_clawdi_agent_plugin(agent_plugins)
+        and _has_first_party_clawdi_agent_plugin_egress_profile(egress_profiles)
     )
     if project_clawdi_agent_plugin:
         mcp, skills = _without_legacy_clawdi_components(mcp, skills)
@@ -879,7 +964,7 @@ def render_runtime_source(
     if skills is not None:
         manifest["skills"] = skills
     if project_agent_plugins and agent_plugins is not None:
-        manifest["agentPlugins"] = agent_plugins
+        manifest["agentPlugins"] = agent_plugins.model_dump(mode="json")
     if tool_projection:
         manifest["tools"] = tool_projection
     manifest["terminalTooling"] = terminal_tooling

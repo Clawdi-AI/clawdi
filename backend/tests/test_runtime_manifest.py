@@ -4091,10 +4091,50 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
                     "path": "v2/plugins/clawdi-cloud",
                     "commit": "a" * 40,
                 },
-                "contentDigest": f"sha256-tree-v1:{'b' * 64}",
-                "secretRefs": {"clawdi-auth-token": "secret://clawdi/auth-token"},
+                "contentDigest": (
+                    "sha256-tree-v1:"
+                    "f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c"
+                ),
             }
         },
+    }
+    state.egress_profiles = {
+        "profiles": [
+            {
+                "id": "first-party-clawdi-cloud-mcp",
+                "enabled": True,
+                "kind": "http",
+                "match": {
+                    "scheme": "https",
+                    "host": "cloud-api.clawdi.ai:443",
+                    "path": {"type": "equals", "value": "/v1/mcp/clawdi"},
+                    "headers": {
+                        "X-Clawdi-Agent-Plugin": {
+                            "type": "equals",
+                            "value": "clawdi-cloud",
+                        }
+                    },
+                    "query": {},
+                },
+                "rewrite": {
+                    "upstreamBaseUrl": "https://staging.cloud-api.clawdi.ai",
+                    "preservePath": True,
+                    "setHeaders": {
+                        "Authorization": {
+                            "type": "secretRef",
+                            "secretRef": "secret://clawdi/auth-token",
+                            "prefix": "Bearer ",
+                        }
+                    },
+                },
+                "logging": {
+                    "redactHeaders": ["Authorization"],
+                    "redactUrlPatterns": [],
+                },
+                "priority": 60,
+                "owner": "first-party:clawdi-cloud",
+            }
+        ]
     }
     await db_session.commit()
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle-capability")

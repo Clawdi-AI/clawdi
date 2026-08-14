@@ -90,7 +90,6 @@ import {
 	probeFileBrowserReadiness,
 } from "./file-browser-companion";
 import {
-	mergeHostedAgentPluginEgressProfiles,
 	type PreparedHostedAgentPlugins,
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
@@ -1568,9 +1567,6 @@ function egressSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
 			collectSecretRefs(profile, refs);
 		}
 		if (profileRecord?.owner === "mcp-projection") {
-			collectSecretRefs(profile, refs);
-		}
-		if (profileRecord?.owner === "agent-plugin-projection") {
 			collectSecretRefs(profile, refs);
 		}
 		if (profileRecord?.owner === "clawdi-native-channels") {
@@ -5660,14 +5656,7 @@ export function convergeRuntimeManifest(
 		hostedRuntimeContract?: HostedRuntimeContractOptions;
 	} = {},
 ): RuntimeConvergenceResult {
-	const mergedAgentPluginEgressProfiles = mergeHostedAgentPluginEgressProfiles(
-		load.manifest.egressProfiles,
-		opts.preparedHostedAgentPlugins,
-	);
-	const manifest =
-		mergedAgentPluginEgressProfiles === load.manifest.egressProfiles
-			? load.manifest
-			: { ...load.manifest, egressProfiles: mergedAgentPluginEgressProfiles };
+	const { manifest } = load;
 	if (
 		(hasUnsupportedAgentPluginInstallations(manifest) || opts.preparedHostedAgentPlugins) &&
 		manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2"

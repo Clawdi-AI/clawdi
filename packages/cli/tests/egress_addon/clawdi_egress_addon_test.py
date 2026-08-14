@@ -223,12 +223,12 @@ class AddonProfileInterpreterTest(unittest.TestCase):
 
         self.assertNotIn(marker_header, cases[2][0].request.headers)
 
-    def test_agent_plugin_streamable_http_marker_is_exact_and_removed(self):
+    def test_agent_plugin_streamable_http_profile_rewrites_only_the_exact_route(self):
         marker_header = "X-Clawdi-Agent-Plugin"
         profile = {
-            "id": "agent-plugin-clawdi-cloud",
+            "id": "first-party-clawdi-cloud-mcp",
             "enabled": True,
-            "kind": "provider",
+            "kind": "http",
             "match": {
                 "scheme": "https",
                 "host": "cloud-api.clawdi.ai:443",
@@ -239,8 +239,8 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 "query": {},
             },
             "rewrite": {
+                "upstreamBaseUrl": "http://localhost:8000",
                 "preservePath": True,
-                "removeHeaders": [marker_header],
                 "setHeaders": {
                     "Authorization": {
                         "type": "secretRef",
@@ -254,7 +254,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 "redactUrlPatterns": [],
             },
             "priority": 60,
-            "owner": "agent-plugin-projection",
+            "owner": "first-party:clawdi-cloud",
         }
         egress = self.load(
             [profile],
@@ -273,8 +273,12 @@ class AddonProfileInterpreterTest(unittest.TestCase):
 
         decision = egress.apply_to_flow(matched)
 
-        self.assertEqual(decision.profile_id, "agent-plugin-clawdi-cloud")
-        self.assertNotIn(marker_header, matched.request.headers)
+        self.assertEqual(decision.profile_id, "first-party-clawdi-cloud-mcp")
+        self.assertEqual(matched.request.scheme, "http")
+        self.assertEqual(matched.request.host, "localhost")
+        self.assertEqual(matched.request.port, 8000)
+        self.assertEqual(matched.request.path, "/v1/mcp/clawdi")
+        self.assertEqual(matched.request.headers[marker_header], "clawdi-cloud")
         self.assertEqual(
             matched.request.headers["Authorization"],
             "Bearer test-only-clawdi-auth-token",
@@ -284,6 +288,12 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             "[redacted]",
         )
 
+        wrong_port = Flow(
+            host="cloud-api.clawdi.ai",
+            path="/v1/mcp/clawdi",
+            headers=request_headers,
+        )
+        wrong_port.request.port = 8443
         for flow in (
             Flow(
                 host="cloud-api.clawdi.ai",
@@ -300,6 +310,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 path="/v1/mcp/clawdi",
                 headers=request_headers,
             ),
+            wrong_port,
         ):
             with self.subTest(path=flow.request.path, host=flow.request.host):
                 self.assertIsNone(egress.apply_to_flow(flow).profile_id)

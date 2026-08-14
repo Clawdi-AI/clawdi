@@ -130,7 +130,6 @@ const TEST_AGENT_PLUGIN_INSTALLATION: HostedAgentPluginsDesiredState["installati
 		commit: "a".repeat(40),
 	},
 	contentDigest: `sha256-tree-v1:${"b".repeat(64)}`,
-	secretRefs: { "api-token": "secret://agent-plugins/acme.tools/api-token" },
 };
 const TEST_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
 	schemaVersion: 1,
@@ -165,7 +164,6 @@ function preparedTestAgentPlugin(
 		receiptNativeId: null,
 		mcpServerNames: [],
 		hasStreamableHttpMcp: false,
-		egressProfiles: [],
 		tree: [{ path: "plugin.json", mode: 0o100644, bytes }],
 	};
 }
@@ -176,7 +174,7 @@ function testAgentPluginDesiredState(
 	const { ownershipIdentity: _ownershipIdentity, ...installation } = prepared.installation;
 	return {
 		schemaVersion: 1,
-		installations: { [prepared.name]: { ...installation, secretRefs: {} } },
+		installations: { [prepared.name]: installation },
 	};
 }
 
@@ -957,17 +955,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		[
 			"noncanonical digest",
 			{ ...TEST_AGENT_PLUGIN_INSTALLATION, contentDigest: `sha256-tree-v1:${"B".repeat(64)}` },
-		],
-		[
-			"plaintext secret",
-			{ ...TEST_AGENT_PLUGIN_INSTALLATION, secretRefs: { "api-token": "plaintext" } },
-		],
-		[
-			"noncanonical secret slot",
-			{
-				...TEST_AGENT_PLUGIN_INSTALLATION,
-				secretRefs: { API_TOKEN: "secret://agent-plugins/acme.tools/api-token" },
-			},
 		],
 		[
 			"unknown secret shape",
@@ -3207,7 +3194,7 @@ chmod 0755 '${commandPath}'
 		mkdirSync(dirname(engineBinary), { recursive: true });
 		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(engineBinary, 0o700);
-		const secretRef = "secret://providers/default/api-key";
+		const secretRef = "secret://clawdi/auth-token";
 		const activeManifest = baseManifest(
 			paths,
 			{
@@ -3222,16 +3209,23 @@ chmod 0755 '${commandPath}'
 				egressProfiles: {
 					profiles: [
 						{
-							id: "managed-provider",
+							id: "first-party-clawdi-cloud-mcp",
 							enabled: true,
-							kind: "provider",
+							kind: "http",
 							match: {
 								scheme: "https",
-								host: "provider.example.test",
-								headers: {},
+								host: "cloud-api.clawdi.ai:443",
+								path: { type: "equals", value: "/v1/mcp/clawdi" },
+								headers: {
+									"X-Clawdi-Agent-Plugin": {
+										type: "equals",
+										value: "clawdi-cloud",
+									},
+								},
 								query: {},
 							},
 							rewrite: {
+								upstreamBaseUrl: "http://localhost:8000",
 								preservePath: true,
 								setHeaders: {
 									authorization: {
@@ -3242,7 +3236,8 @@ chmod 0755 '${commandPath}'
 								},
 							},
 							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-							priority: 80,
+							priority: 60,
+							owner: "first-party:clawdi-cloud",
 						},
 					],
 				},
@@ -3310,6 +3305,7 @@ chmod 0755 '${commandPath}'
 		expect(readFileSync(secretFile, "utf-8")).toContain("000000");
 		const activeGatewayUnit = readFileSync(gatewayUnit, "utf-8");
 		expect(readFileSync(gatewayEnv, "utf-8")).toContain("NODE_EXTRA_CA_CERTS");
+		expect(readFileSync(gatewayEnv, "utf-8")).not.toContain("000000");
 
 		expect(converge(activeManifest, "000000").installErrors).toEqual([]);
 		expect(signals.at(-1)).toBe(false);

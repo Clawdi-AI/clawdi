@@ -11999,7 +11999,6 @@ chmod +x "$HOME/.local/bin/openclaw"
 												commit: "d".repeat(40),
 											},
 											contentDigest: `sha256-tree-v1:${"e".repeat(64)}`,
-											secretRefs: {},
 										},
 									},
 								},

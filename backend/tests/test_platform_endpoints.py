@@ -90,7 +90,6 @@ _TEST_AGENT_PLUGINS = {
                 "commit": "a" * 40,
             },
             "contentDigest": f"sha256-tree-v1:{'b' * 64}",
-            "secretRefs": {"api-token": "secret://agent-plugins/acme.tools/api-token"},
         }
     },
 }

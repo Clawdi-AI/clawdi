@@ -587,7 +587,7 @@ Normalization maps hosted fields into the internal shape:
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with the selected model plus minimal Clawdi-managed endpoint/secret metadata; it has no provider model catalog and is independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
 | `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
-| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional runtime-native Agent Plugins desired state, projected only when the client declares `agent-plugins-manifest-v1`; schema version `1` entries pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, a `sha256-tree-v1` content digest, and canonical secret references |
+| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional runtime-native Agent Plugins desired state, projected only when the client declares `agent-plugins-manifest-v1`; schema version `1` entries are secret-free immutable package intent that pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, and a `sha256-tree-v1` content digest |
 | `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
@@ -754,11 +754,11 @@ is strict. The CLI sends
 `X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1`; Cloud omits
 `agentPlugins` for clients that do not send that token while retaining the
 `clawdiCli` desired update and legacy Clawdi Skill/MCP. After that update
-re-execs, the capable CLI fetches the plugin-bearing variant. When the
-`clawdi-cloud` installation is present, that variant removes only the legacy
-`clawdi` Skill and MCP entries; unrelated Workspace and Project components are
-unchanged. Removing the installation reverses the switch. Each projection has
-its own canonical
+re-execs, the capable CLI fetches the plugin-bearing variant. When the complete
+first-party `clawdi-cloud` package identity and its explicit first-party egress
+profile are both present, that variant removes only the legacy `clawdi` Skill
+and MCP entries; unrelated Workspace and Project components are unchanged.
+Removing either half reverses the switch. Each projection has its own canonical
 `sourceRevision` and strong ETag, and successful responses vary on both
 `Accept` and `X-Clawdi-Runtime-Capabilities`, so a validator from one variant
 cannot produce a false `304` for the other.
@@ -796,23 +796,21 @@ for `mcp.schema.json`.
 
 Upstream capability evidence was refreshed on 2026-08-14. OpenClaw main was
 audited at
-[`848a7e30b39f2dc1dc55183c6cd4176a9017471a`](https://github.com/openclaw/openclaw/commit/848a7e30b39f2dc1dc55183c6cd4176a9017471a).
+[`8865c2539b19907e7fb7b38b912b836755c1882d`](https://github.com/openclaw/openclaw/commit/8865c2539b19907e7fb7b38b912b836755c1882d).
 Agent Plugins support landed in
 [`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
 that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
 `PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
-[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/848a7e30b39f2dc1dc55183c6cd4176a9017471a/src/plugins/status.ts)
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/8865c2539b19907e7fb7b38b912b836755c1882d/src/plugins/status.ts)
 exposes every MCP server name, unsupported state, and plugin diagnostics.
 Clawdi requires the reported names to equal the already-validated `mcp.json`
 names and requires no unsupported entry or diagnostic during every isolated and
 live observation. This is native component proof rather than a version guess.
-The 25 commits from the prior `1ea1499` audit through `848a7e3` do not touch
-the Agent Plugins bundle loader, package lifecycle commands, component
-inventory, inspect contract, or MCP translation according to the official
-compare file list. Generic setup-registry atomicity and Plugin SDK additions
-remain outside portable bundle loading.
+The 27 commits from the prior `848a7e3` audit through `8865c25` do not touch
+the Agent Plugins loader, lifecycle, or inspect files according to the official
+compare file list.
 
-The GitHub Releases API latest release remains
+The GitHub Releases API latest release and npm `latest` remain
 [`v2026.7.1-2`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2),
 whose annotated tag object `be8b8a9e8838f832e4fa47cde8bea0a33aec71ba`
 points to
@@ -833,11 +831,9 @@ the older Codex, Claude, and Cursor bundle path rather than the current Agent
 Plugins implementation. Release numbering is therefore not capability proof.
 
 Hermes main was audited at
-[`7a9634568cdeb8f5363bc99042a24ebff9df0e1c`](https://github.com/NousResearch/hermes-agent/commit/7a9634568cdeb8f5363bc99042a24ebff9df0e1c).
-The three commits since the prior `9504edb` audit change only
-`agent/conversation_loop.py`, its compression-budget-refund test, and desktop
-message rendering. They do not affect Agent Plugins lifecycle, portable MCP
-translation, native config, or one-shot discovery.
+[`56a41715dc3b8bf6f50a740ff9416c4036ef4259`](https://github.com/NousResearch/hermes-agent/commit/56a41715dc3b8bf6f50a740ff9416c4036ef4259).
+The 47 commits from the prior `7a96345` audit do not touch the portable Plugin
+loader or MCP translation files according to the official compare file list.
 The latest release is
 [`v2026.8.13`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.13),
 published 2026-08-13 as package `0.20.1`; annotated tag object
@@ -868,23 +864,22 @@ validated without contacting the endpoint during reconciliation. Public
 literal headers and public stdio environment values are supported. Native
 runtimes perform the standard single expansion of `PLUGIN_ROOT` and
 `PLUGIN_DATA`; other env text, including `${OTHER}`, remains literal.
-Package-declared Clawdi `configuration.secretSlots` use the Store's closed
-structural contract. Hosted validates exact required/optional slot coverage,
-undeclared refs, server/transport compatibility, literal target overlap, and
-case-insensitive binding collisions. A referenced stdio env binding remains
-unsupported. An active remote header binding is accepted only for an exact
-HTTP(S) origin and path carrying the package's public
-`X-Clawdi-Agent-Plugin` routing marker. The transparent egress sidecar matches
-that marker exactly, removes it before upstream, and sets the bound header from
-root-side `secretRef` material with the declared public prefix. Real values do
-not enter package bytes, native plugin config, runtime process env, receipts,
-profile bundles, logs, or public projections. The package credential policy is
-enforced before any native probe or live mutation, and missing referenced
-values reject before download.
+Agent Plugin installation intent has no secret field. Package-declared Clawdi
+`configuration` remains fail closed because this runtime does not consume the
+Store configuration extension. The first-party package instead carries a
+public `X-Clawdi-Agent-Plugin: clawdi-cloud` routing marker. Hosted emits an
+explicit egress profile that matches the fixed public package URL's exact
+scheme, authority, path, and marker, rewrites it to the current environment's
+validated Cloud API origin, and sets `Authorization` from
+`secret://clawdi/auth-token` with the public `Bearer ` prefix. The public marker
+may continue upstream. Real values enter only the existing root-side egress
+secret material; they do not enter package bytes, installation intent, native
+plugin config, runtime process env, receipts, profile bundles, logs, or public
+projections.
 
 The first-party migration identity is `clawdi-cloud@1.0.0`, with portable Skill
-and MCP names `clawdi`, required slot `clawdi-auth-token`, and package digest
-`sha256-tree-v1:4b4b5a3fbb772f71a9786ac3383dfae823fdc8c74e3232be33950501031c7cd7`.
+and MCP names `clawdi` and package digest
+`sha256-tree-v1:f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c`.
 Its deployable source must be an exact commit in the public
 `https://github.com/Clawdi-AI/store` repository at
 `v2/plugins/clawdi-cloud`. A private review repository, mutable ref, or
@@ -904,7 +899,7 @@ task-local directory. Hermes documents that variable as the packaged-install
 bundled-root override at both the
 [`v2026.8.13` source](https://github.com/NousResearch/hermes-agent/blob/f80f453ae0679347e38abc917c7f94f717bf96c5/hermes_cli/plugins.py#L75-L86)
 and the
-[`7a96345` main audit](https://github.com/NousResearch/hermes-agent/blob/7a9634568cdeb8f5363bc99042a24ebff9df0e1c/hermes_cli/plugins.py#L75-L86).
+[`56a4171` main audit](https://github.com/NousResearch/hermes-agent/blob/56a41715dc3b8bf6f50a740ff9416c4036ef4259/hermes_cli/plugins.py#L75-L86).
 Its scanner still reads user portable packages independently from
 `HERMES_HOME/plugins`; native install/enable, portable translation, MCP
 handshake, literal-header forwarding, tool execution, and result delivery all
@@ -916,8 +911,8 @@ package capability pass.
 | --- | --- |
 | Remote query and public literal headers | Supported |
 | Public stdio env, including native `PLUGIN_ROOT`/`PLUGIN_DATA` expansion and literal `${OTHER}` | Supported |
-| Remote header `secretSlots` through exact marker-bound transparent egress | Supported |
-| Stdio env secret binding | Rejected |
+| First-party remote auth through explicit marker-bound Hosted egress | Supported |
+| Package `ai.clawdi.configuration` | Rejected |
 | Portable SSE | OpenClaw requires native inspect proof; Hermes rejects |
 
 A private last-applied receipt binds each managed name to `installationId`,

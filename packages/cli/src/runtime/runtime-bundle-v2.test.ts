@@ -1284,7 +1284,6 @@ describe("hosted runtime bundle v2", () => {
 								commit: "a".repeat(40),
 							},
 							contentDigest: `sha256-tree-v1:${"b".repeat(64)}`,
-							secretRefs: {},
 						},
 					},
 				},

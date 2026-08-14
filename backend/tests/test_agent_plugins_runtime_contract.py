@@ -21,7 +21,6 @@ def _installation() -> dict[str, object]:
             "commit": "a" * 40,
         },
         "contentDigest": f"sha256-tree-v1:{'b' * 64}",
-        "secretRefs": {"api-token": "secret://agent-plugins/acme.tools/api-token"},
     }
 
 
@@ -29,7 +28,7 @@ def _agent_plugins() -> dict[str, object]:
     return {"schemaVersion": 1, "installations": {"acme.tools": _installation()}}
 
 
-def test_agent_plugins_accepts_exact_immutable_secret_ref_contract() -> None:
+def test_agent_plugins_accepts_exact_immutable_package_contract() -> None:
     desired = _agent_plugins()
 
     assert HostedAgentPlugins.model_validate(desired).model_dump(mode="json") == desired
@@ -58,10 +57,9 @@ def test_agent_plugins_accepts_exact_immutable_secret_ref_contract() -> None:
         (("installations", "acme.tools", "source", "commit"), "main"),
         (("installations", "acme.tools", "source", "path"), "plugins/../escape"),
         (("installations", "acme.tools", "contentDigest"), f"sha256-tree-v1:{'B' * 64}"),
-        (("installations", "acme.tools", "secretRefs", "api-token"), "plaintext"),
     ],
 )
-def test_agent_plugins_rejects_mutable_unsafe_or_plaintext_values(
+def test_agent_plugins_rejects_mutable_or_unsafe_values(
     path: tuple[str, ...],
     value: str,
 ) -> None:
@@ -82,24 +80,6 @@ def test_agent_plugins_rejects_mutable_unsafe_or_plaintext_values(
         {
             **_agent_plugins(),
             "installations": {"Acme": _installation()},
-        },
-        {
-            **_agent_plugins(),
-            "installations": {
-                "acme.tools": {
-                    **_installation(),
-                    "secretRefs": {"API_TOKEN": "secret://agent-plugins/acme/api-token"},
-                }
-            },
-        },
-        {
-            **_agent_plugins(),
-            "installations": {
-                "acme.tools": {
-                    **_installation(),
-                    "secretRefs": {"api.token": "secret://agent-plugins/acme/api-token"},
-                }
-            },
         },
     ],
 )

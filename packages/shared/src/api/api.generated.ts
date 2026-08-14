@@ -5117,10 +5117,6 @@ export interface components {
             source: components["schemas"]["HostedRuntimeSkillSource"];
             /** Contentdigest */
             contentDigest: string;
-            /** Secretrefs */
-            secretRefs: {
-                [key: string]: string;
-            };
         };
         /** HostedAgentPlugins */
         HostedAgentPlugins: {

@@ -352,7 +352,6 @@ function plugin(
 		receiptNativeId: null,
 		mcpServerNames: [...mcpServerNames].sort(),
 		hasStreamableHttpMcp: remote,
-		egressProfiles: [],
 		tree,
 	};
 }

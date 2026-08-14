@@ -1,11 +1,7 @@
 import { z } from "zod";
 import { hasAsciiControlCharacter } from "../lib/github-skill-archive";
 import { secretRefSchema } from "./egress-profiles";
-import {
-	containsMcpSecretMaterial,
-	isMcpSensitiveHeaderName,
-	isValidMcpEnvironmentName,
-} from "./mcp-credential-policy";
+import { isMcpSensitiveHeaderName } from "./mcp-credential-policy";
 
 const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
 export const agentPluginNameSchema = z
@@ -13,62 +9,7 @@ export const agentPluginNameSchema = z
 	.min(1)
 	.max(64)
 	.regex(/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
-const agentPluginSecretSlotIdSchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/);
 const mcpHeaderNameSchema = z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/);
-
-function isValidMcpHeaderPrefix(value: string): boolean {
-	return (
-		[...value].every((character) => {
-			const code = character.charCodeAt(0);
-			return character === "\t" || (code >= 0x20 && code <= 0x7e) || (code >= 0x80 && code <= 0xff);
-		}) && !containsMcpSecretMaterial(value)
-	);
-}
-
-const agentPluginSecretHeaderBindingSchema = z
-	.object({
-		server: z.string(),
-		target: z.literal("header"),
-		name: mcpHeaderNameSchema,
-		prefix: z.string().max(64).refine(isValidMcpHeaderPrefix).optional(),
-	})
-	.strict();
-
-const agentPluginSecretEnvironmentBindingSchema = z
-	.object({
-		server: z.string(),
-		target: z.literal("env"),
-		name: z
-			.string()
-			.refine(isValidMcpEnvironmentName)
-			.refine((value) => !["PLUGIN_ROOT", "PLUGIN_DATA"].includes(value.toUpperCase())),
-	})
-	.strict();
-
-export const agentPluginSecretBindingSchema = z.discriminatedUnion("target", [
-	agentPluginSecretHeaderBindingSchema,
-	agentPluginSecretEnvironmentBindingSchema,
-]);
-
-export const agentPluginSecretSlotSchema = z
-	.object({
-		label: z
-			.string()
-			.max(80)
-			.refine((value) => value.trim().length > 0),
-		description: z
-			.string()
-			.max(512)
-			.refine((value) => value.trim().length > 0),
-		required: z.boolean(),
-		bindings: z.array(agentPluginSecretBindingSchema).min(1).max(32),
-	})
-	.strict();
-
-export const agentPluginSecretSlotsSchema = z
-	.record(agentPluginSecretSlotIdSchema, agentPluginSecretSlotSchema)
-	.refine((slots) => Object.keys(slots).length <= 64, "must contain at most 64 entries");
-export type AgentPluginSecretSlots = z.infer<typeof agentPluginSecretSlotsSchema>;
 
 export const AGENT_PLUGINS_SCHEMA_1_0_0 =
 	"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -226,9 +167,6 @@ export const hostedAgentPluginInstallationSchema = z
 		agentPluginsSchema: z.literal(AGENT_PLUGINS_SCHEMA_1_0_0),
 		source: hostedGithubSkillSourceSchema,
 		contentDigest: z.string().regex(/^sha256-tree-v1:[0-9a-f]{64}$/),
-		secretRefs: z
-			.record(agentPluginSecretSlotIdSchema, secretRefSchema.max(1_000))
-			.refine((value) => Object.keys(value).length <= 128, "must contain at most 128 entries"),
 	})
 	.strict();
 
