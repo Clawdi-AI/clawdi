@@ -57,7 +57,7 @@ const PROVIDER_BRAND_ICON_DEFINITIONS = {
 	gemini: { icon: Gemini, label: "Gemini" },
 	grok: { icon: Grok, label: "Grok" },
 	groq: { icon: Groq, label: "Groq" },
-	kimi: { icon: Kimi, label: "Kimi" },
+	kimi: { icon: Kimi, label: "Kimi", tileClassName: "bg-black" },
 	minimax: { icon: Minimax, label: "MiniMax" },
 	mistral: { icon: Mistral, label: "Mistral AI" },
 	openai: { icon: OpenAI, label: "OpenAI" },
