@@ -53,6 +53,16 @@ MANAGED_AI_PROVIDER_PROFILE = "default"
 MANAGED_AI_PROVIDER_SCOPE = "account_global"
 MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY = "clawdi_provisioning_discovery_key"
 
+_LEGACY_MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
+# Keep the exact pairings emitted by released admin upserts, not two independent allowlists.
+_SUPPORTED_DEPLOYMENT_MANAGED_PROVIDER_CONTRACTS = frozenset(
+    {
+        ("openai_chat", _LEGACY_MANAGED_AI_PROVIDER_RUNTIME_ENV),
+        ("openai_chat", MANAGED_AI_PROVIDER_RUNTIME_ENV),
+        (MANAGED_AI_PROVIDER_API_MODE, MANAGED_AI_PROVIDER_RUNTIME_ENV),
+    }
+)
+
 _V2_DEPLOYMENT_ID_RE = re.compile(r"^[1-9][0-9]*$")
 
 
@@ -116,6 +126,21 @@ def validate_managed_provider_base_url(base_url: str) -> None:
         validate_public_https_url(base_url, label="base_url")
     except UnsafePublicHttpsUrlError as exc:
         raise ValueError(str(exc)) from exc
+
+
+def is_supported_deployment_managed_provider_contract(provider: AiProvider) -> bool:
+    """Return whether a stored deployment provider matches a released contract."""
+
+    return (
+        is_v2_deployment_managed_provider_id(provider.provider_id)
+        and provider.type == MANAGED_AI_PROVIDER_TYPE
+        and (provider.api_mode, provider.runtime_env_name)
+        in _SUPPORTED_DEPLOYMENT_MANAGED_PROVIDER_CONTRACTS
+        and provider.auth_type == "api_key"
+        and provider.auth_ref is None
+        and (provider.auth_metadata or {}).get("source") == "managed"
+        and provider.managed_by == "clawdi"
+    )
 
 
 async def lock_deployment_managed_provider_mutation(
@@ -222,8 +247,19 @@ def replace_deployment_managed_provider_metadata(
         raise ValueError("unsupported deployment managed provider id")
     validate_managed_provider_base_url(base_url)
     normalized_base_url = base_url.strip()
-    if provider.base_url == normalized_base_url and provider.models == models:
+    if (
+        provider.type == MANAGED_AI_PROVIDER_TYPE
+        and provider.api_mode == MANAGED_AI_PROVIDER_API_MODE
+        and provider.managed_by == "clawdi"
+        and provider.runtime_env_name == MANAGED_AI_PROVIDER_RUNTIME_ENV
+        and provider.base_url == normalized_base_url
+        and provider.models == models
+    ):
         return False
+    provider.type = MANAGED_AI_PROVIDER_TYPE
+    provider.api_mode = MANAGED_AI_PROVIDER_API_MODE
+    provider.managed_by = "clawdi"
+    provider.runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
     provider.base_url = normalized_base_url
     provider.models = models
     return True
