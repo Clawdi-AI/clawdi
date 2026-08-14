@@ -730,7 +730,7 @@ def render_runtime_source(
             selected_model=selected_models.get(agent_provider_id),
         )
         if is_codex_provider and (
-            provider_entry.get("apiMode") not in _CODEX_PROVIDER_SOURCE_API_MODES
+            provider.api_mode not in _CODEX_PROVIDER_SOURCE_API_MODES
             or provider_entry.get("runtimeEnvName") != _MANAGED_PROVIDER_RUNTIME_ENV
         ):
             raise RuntimeSourceError(

@@ -22,6 +22,7 @@ import type { AiProviderCatalog } from "@clawdi/shared";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_API_MODE,
 	isClawdiManagedV2ProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
 } from "@clawdi/shared";
@@ -1667,7 +1668,7 @@ function agentTargetProjectionInput(
 		return {
 			...provider,
 			id,
-			api_mode: isClawdiManagedV2ProviderId(id) ? "openai_chat" : "openai_responses",
+			api_mode: isClawdiManagedV2ProviderId(id) ? CLAWDI_MANAGED_V2_API_MODE : provider.api_mode,
 		} satisfies AiProviderCatalog["providers"][number];
 	});
 	const primaryProviderId = providerIdMap.get(input.primaryModel.provider_id);

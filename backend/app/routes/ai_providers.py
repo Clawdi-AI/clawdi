@@ -117,6 +117,7 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_IDS,
     is_v2_deployment_managed_provider_id,
+    managed_provider_accepted_api_modes,
     managed_provider_api_mode,
     runtime_managed_provider_id,
 )
@@ -1560,7 +1561,7 @@ def _apply_provider_body(
     provider.type = body.type
     provider.label = body.label
     provider.base_url = body.base_url
-    provider.api_mode = body.api_mode
+    provider.api_mode = managed_provider_api_mode(body.provider_id) or body.api_mode
     provider.capabilities = body.capabilities
     provider.models = _provider_models_payload(body.models)
     provider.managed_by = body.managed_by
@@ -1682,8 +1683,9 @@ def _build_response(
     credential_material: CredentialMaterialState,
     consumer: AiProviderConsumer | None = None,
 ) -> AiProviderResponse:
+    api_mode = managed_provider_api_mode(provider.provider_id) or provider.api_mode
     readiness = provider_readiness(
-        _provider_capability_input(provider),
+        _provider_capability_input(provider, effective_api_mode=api_mode),
         credential_material=credential_material,
     )
     return AiProviderResponse.model_validate(
@@ -1694,7 +1696,7 @@ def _build_response(
             "type": provider.type,
             "label": provider.label,
             "base_url": provider.base_url,
-            "api_mode": provider.api_mode,
+            "api_mode": api_mode,
             "auth": _to_auth(provider),
             "usable": credential_material != "missing",
             "readiness": readiness,
@@ -1865,15 +1867,17 @@ def _validate_managed_provider_contract(body: AiProviderUpsert | AiProviderRespo
         return []
 
     errors: list[str] = []
-    expected_api_mode = managed_provider_api_mode(body.provider_id)
-    if expected_api_mode is None:
+    accepted_api_modes = managed_provider_accepted_api_modes(body.provider_id)
+    if accepted_api_modes is None:
         errors.append(f"managed Clawdi provider must use provider_id {V2_MANAGED_AI_PROVIDER_ID}")
     if body.managed_by != "clawdi":
         errors.append("managed Clawdi provider must be managed_by clawdi")
     if body.type != "custom_openai_compatible":
         errors.append("managed Clawdi provider must use custom_openai_compatible")
-    if expected_api_mode is not None and body.api_mode != expected_api_mode:
-        errors.append(f"managed Clawdi provider must use api_mode {expected_api_mode}")
+    if accepted_api_modes is not None and body.api_mode not in accepted_api_modes:
+        errors.append(
+            "managed Clawdi provider must use api_mode " + " or ".join(accepted_api_modes)
+        )
     if body.auth.type != "api_key" or body.auth.source != "managed":
         errors.append("managed Clawdi provider must use managed api_key auth")
     if body.runtime_env_name != MANAGED_AI_PROVIDER_RUNTIME_ENV:

@@ -353,26 +353,28 @@ describe("validateAiProviderCatalog", () => {
 		CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 		`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
-	])("accepts v2 Clawdi-managed provider %s in OpenAI chat mode", (providerId) => {
-		const result = validateAiProviderCatalog({
-			schema_version: 1,
-			providers: [
-				{
-					id: providerId,
-					type: "custom_openai_compatible",
-					base_url: "https://managed.example/v1",
-					models: [{ id: "gpt-5.5" }],
-					api_mode: "openai_chat",
-					auth: { type: "api_key", source: "managed" },
-					managed_by: "clawdi",
-					runtime_env_name: "CLAWDI_AI_API_KEY",
-				},
-			],
-			defaults: { chat_provider_id: providerId },
-		});
+	])("accepts both rollout modes for v2 Clawdi-managed provider %s", (providerId) => {
+		for (const apiMode of ["openai_responses", "openai_chat"] as const) {
+			const result = validateAiProviderCatalog({
+				schema_version: 1,
+				providers: [
+					{
+						id: providerId,
+						type: "custom_openai_compatible",
+						base_url: "https://managed.example/v1",
+						models: [{ id: "gpt-5.5" }],
+						api_mode: apiMode,
+						auth: { type: "api_key", source: "managed" },
+						managed_by: "clawdi",
+						runtime_env_name: "CLAWDI_AI_API_KEY",
+					},
+				],
+				defaults: { chat_provider_id: providerId },
+			});
 
-		expect(result.valid).toBe(true);
-		expect(result.errors).toEqual([]);
+			expect(result.valid).toBe(true);
+			expect(result.errors).toEqual([]);
+		}
 	});
 
 	test("uses clawdi as the exact public id while accepting the legacy public id", () => {
@@ -412,28 +414,37 @@ describe("validateAiProviderCatalog", () => {
 		expect(result.errors).toEqual([]);
 	});
 
-	test("requires v2 Clawdi-managed providers to use OpenAI chat mode", () => {
+	test.each([
+		[
+			"clawdi-managed",
+			"openai_chat",
+			"Provider clawdi-managed managed_by clawdi must use api_mode openai_responses.",
+		],
+		[
+			"clawdi-managed-v2",
+			"anthropic_messages",
+			"Provider clawdi managed_by clawdi must use api_mode openai_responses or openai_chat.",
+		],
+	] as const)("rejects unsupported managed provider mode for %s", (providerId, apiMode, error) => {
 		const result = validateAiProviderCatalog({
 			schema_version: 1,
 			providers: [
 				{
-					id: "clawdi-managed-v2",
+					id: providerId,
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
 					models: [{ id: "gpt-5.5" }],
-					api_mode: "openai_responses",
+					api_mode: apiMode,
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_AI_API_KEY",
 				},
 			],
-			defaults: { chat_provider_id: "clawdi-managed-v2" },
+			defaults: { chat_provider_id: providerId },
 		});
 
 		expect(result.valid).toBe(false);
-		expect(result.errors).toContain(
-			"Provider clawdi managed_by clawdi must use api_mode openai_chat.",
-		);
+		expect(result.errors).toContain(error);
 	});
 });
 

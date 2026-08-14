@@ -47,7 +47,7 @@ const goldenPath = resolve(
 	"../../../../test-fixtures/runtime-bundle-v2.golden.json",
 );
 const EXPECTED_GOLDEN_SOURCE_REVISION =
-	"2d0331a0dc7ef429482850b872ff43b0f5a5b8a3c3ddcb2648d1ef77d95a3918";
+	"460de6a65cefc052d34bf10be72943e602cb7a19a5daef0b2467f2f7faafdb5b";
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];

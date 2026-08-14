@@ -55,7 +55,7 @@ describe("AI provider projection", () => {
 					id: CLAWDI_MANAGED_PROVIDER_ID,
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example.test/v1",
-					api_mode: "openai_chat",
+					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_AI_API_KEY",
@@ -96,7 +96,7 @@ describe("AI provider projection", () => {
 				model: "managed-model",
 				envName: "CLAWDI_AI_API_KEY",
 				baseUrl: "https://managed.example.test/v1",
-				apiMode: "chat_completions",
+				apiMode: "codex_responses",
 			},
 			{
 				providerId: "kimi-coding",
@@ -171,7 +171,7 @@ describe("AI provider projection", () => {
 		}
 	});
 
-	test("projects the bare managed provider alias with the managed endpoint and key env", () => {
+	test("projects managed model API overrides to OpenClaw but keeps Hermes on Responses", () => {
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,
 			providers: [
@@ -180,18 +180,18 @@ describe("AI provider projection", () => {
 					type: "custom_openai_compatible",
 					label: "Managed by Clawdi",
 					base_url: "https://managed.example.test/v1",
-					api_mode: "openai_chat",
+					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_AI_API_KEY",
-					models: [{ id: "managed-model" }],
+					models: [{ id: "k3", api_mode: "openai_chat" }, { id: "grok-4.6" }],
 				},
 			],
 			defaults: { chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID },
 		};
 		const primaryModel = {
 			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
-			model: "managed-model",
+			model: "grok-4.6",
 		};
 
 		const openclaw = buildAgentTargetProjection("openclaw", catalog, primaryModel);
@@ -203,7 +203,7 @@ describe("AI provider projection", () => {
 				providers?: Record<string, { api?: string; apiKey?: { id?: string }; baseUrl?: string }>;
 			};
 		};
-		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/managed-model");
+		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/grok-4.6");
 		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toMatchObject({
 			baseUrl: "https://managed.example.test/v1",
 			apiKey: { id: "CLAWDI_AI_API_KEY" },
@@ -214,8 +214,14 @@ describe("AI provider projection", () => {
 		expect(openclawPatch).not.toHaveProperty("plugins");
 		expect(JSON.stringify(openclawPatch)).not.toContain("secret://");
 		expect(JSON.stringify(openclawPatch).toLowerCase()).not.toContain("vault");
-		// openai_chat is OpenClaw's default custom-provider mode and is intentionally omitted.
-		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]?.api).toBeUndefined();
+		const projectedProvider = openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID] as
+			| { api?: string; models?: Array<{ api?: string; id?: string; name?: string }> }
+			| undefined;
+		expect(projectedProvider?.api).toBe("openai-responses");
+		expect(projectedProvider?.models).toEqual([
+			{ id: "k3", name: "k3", api: "openai-completions" },
+			{ id: "grok-4.6", name: "grok-4.6" },
+		]);
 		expect(JSON.stringify(openclawPatch)).not.toContain("clawdi-v2");
 
 		const hermes = buildAgentTargetProjection("hermes", catalog, primaryModel);
@@ -223,9 +229,10 @@ describe("AI provider projection", () => {
 		expect(hermes.files[0]?.content).toContain('provider: "custom:clawdi"');
 		expect(hermes.files[0]?.content).toContain('"clawdi":');
 		expect(hermes.files[0]?.content).toContain('api: "https://managed.example.test/v1"');
-		expect(hermes.files[0]?.content).toContain('transport: "chat_completions"');
+		expect(hermes.files[0]?.content).toContain('transport: "codex_responses"');
 		expect(hermes.files[0]?.content).toContain('key_env: "CLAWDI_AI_API_KEY"');
-		expect(hermes.files[0]?.content).toContain('"managed-model": {}');
+		expect(hermes.files[0]?.content).toContain('"k3": {}');
+		expect(hermes.files[0]?.content).toContain('"grok-4.6": {}');
 		expect(hermes.files[0]?.content).not.toContain("clawdi-v2");
 	});
 
@@ -425,15 +432,26 @@ describe("AI provider projection", () => {
 					id: CLAWDI_MANAGED_PROVIDER_ID,
 					type: "custom_openai_compatible",
 					base_url: "https://api.example.test/v1",
-					api_mode: "openai_chat",
+					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_AI_API_KEY",
 					models: [
-						{ id: "k3", context_window: 1_048_576, max_input_tokens: 1_048_576 },
-						{ id: "kimi-for-coding", context_window: 262_144, max_input_tokens: 262_144 },
+						{
+							id: "k3",
+							api_mode: "openai_chat",
+							context_window: 1_048_576,
+							max_input_tokens: 1_048_576,
+						},
+						{
+							id: "kimi-for-coding",
+							api_mode: "openai_chat",
+							context_window: 262_144,
+							max_input_tokens: 262_144,
+						},
 						{
 							id: "kimi-for-coding-highspeed",
+							api_mode: "openai_chat",
 							context_window: 262_144,
 							max_input_tokens: 262_144,
 						},
@@ -493,7 +511,7 @@ describe("AI provider projection", () => {
 					id: CLAWDI_MANAGED_PROVIDER_ID,
 					type: "custom_openai_compatible",
 					base_url: "https://api.example.test/v1",
-					api_mode: "openai_chat",
+					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_AI_API_KEY",

@@ -1227,7 +1227,7 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
         "scope": "account_global",
         "type": "custom_openai_compatible",
         "label": "Clawdi managed",
-        "api_mode": "openai_chat",
+        "api_mode": "openai_responses",
         "auth": {"type": "api_key", "source": "managed", "profile": "default"},
         "managed_by": "clawdi",
         "runtime_env_name": "CLAWDI_AI_API_KEY",
