@@ -17,7 +17,7 @@ import {
 	useResumeSubscription,
 } from "@/hosted/billing/hooks";
 import type { ComputeSubscriptionAction } from "@/hosted/billing/subscription/compute-subscription-actions";
-import { ComputeSubscriptionManageAction } from "@/hosted/billing/subscription/compute-subscription-card";
+import { ComputeSubscriptionPlanAction } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	ComputeSubscriptionRecoveryAction,
 	type ComputeSubscriptionStartNewAction,
@@ -81,7 +81,7 @@ export function scheduledPlanCancellationNotice(result: ComputeSubscriptionActio
 export function ComputeSubscriptionActionList({
 	actions,
 	target,
-	onManage,
+	onPlanChange,
 	onStartNew,
 	cancelCopy,
 	checkChangeHref,
@@ -90,7 +90,7 @@ export function ComputeSubscriptionActionList({
 }: {
 	actions: readonly ComputeSubscriptionAction[];
 	target: ComputeSubscriptionActionTarget;
-	onManage?: () => void;
+	onPlanChange?: () => void;
 	onStartNew: ComputeSubscriptionStartNewAction | null;
 	cancelCopy?: ComputeSubscriptionCancelCopy;
 	checkChangeHref?: string;
@@ -146,12 +146,14 @@ export function ComputeSubscriptionActionList({
 
 	return actions.map((candidate) => {
 		switch (candidate.kind) {
+			case "upgrade":
 			case "manage":
 				return (
-					<ComputeSubscriptionManageAction
+					<ComputeSubscriptionPlanAction
 						key={candidate.kind}
-						onClick={() => onManage?.()}
-						disabled={!onManage || candidate.disabledReason !== null}
+						action={candidate.kind}
+						onClick={() => onPlanChange?.()}
+						disabled={!onPlanChange || candidate.disabledReason !== null}
 					/>
 				);
 			case "check_change":
@@ -178,8 +180,8 @@ export function ComputeSubscriptionActionList({
 						type="button"
 						variant="outline"
 						size="sm"
-						disabled={!onManage || candidate.disabledReason !== null}
-						onClick={onManage}
+						disabled={!onPlanChange || candidate.disabledReason !== null}
+						onClick={onPlanChange}
 					>
 						<RefreshCw data-icon="inline-start" />
 						Check subscription change status

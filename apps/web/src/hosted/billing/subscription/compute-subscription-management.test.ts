@@ -23,16 +23,21 @@ function entitlement(
 	};
 }
 
-const available = { canCreateCloudAgents: true };
+const available = {
+	canCreateCloudAgents: true,
+	plansLoading: false,
+	performancePlanAvailable: true,
+};
 
 describe("computeSubscriptionManagement", () => {
-	test("keeps stable Included Basic read-only", () => {
+	test("exposes stable Included Basic as an explicit upgrade target", () => {
 		const included = entitlement({ fundingSource: null, priceCents: 0 });
 
 		expect(computeSubscriptionManagement({ entitlement: included, ...available })).toEqual({
-			action: "hidden",
+			action: "disabled",
 			target: null,
-			unavailableReason: null,
+			unavailableReason:
+				"Upgrade availability will appear after this agent’s compute details finish syncing.",
 		});
 		expect(
 			computeSubscriptionManagement({
@@ -44,7 +49,15 @@ describe("computeSubscriptionManagement", () => {
 				}),
 				...available,
 			}),
-		).toEqual({ action: "hidden", target: null, unavailableReason: null });
+		).toMatchObject({
+			action: "enabled",
+			target: {
+				currentPlanSlug: "compute_basic",
+				initialPlanSlug: "compute_performance",
+				isPaidCompute: false,
+				allowCombinedChange: true,
+			},
+		});
 	});
 
 	test("keeps an already-started Included Basic change observable", () => {

@@ -32,6 +32,7 @@ import {
 	isHistoricalAccountSubscription,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
+	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
@@ -60,8 +61,12 @@ function subscriptionManagement(
 	deployment: HostedDeployment | undefined,
 	{
 		canCreateCloudAgents,
+		plansLoading,
+		performancePlanAvailable,
 	}: {
 		canCreateCloudAgents: boolean;
+		plansLoading: boolean;
+		performancePlanAvailable: boolean;
 	},
 ): ComputeSubscriptionManagementResult {
 	return computeSubscriptionManagement({
@@ -80,6 +85,8 @@ function subscriptionManagement(
 		},
 		deployment,
 		canCreateCloudAgents,
+		plansLoading,
+		performancePlanAvailable,
 	});
 }
 
@@ -103,12 +110,12 @@ function SubscriptionRow({
 	subscription,
 	agentTile,
 	management,
-	onManage,
+	onPlanChange,
 }: {
 	subscription: ComputeSubscriptionListItem;
 	agentTile?: AgentTile;
 	management: ComputeSubscriptionManagementResult;
-	onManage: (subscription: ComputeSubscriptionListItem) => void;
+	onPlanChange: (subscription: ComputeSubscriptionListItem) => void;
 }) {
 	const lifecycle = computeSubscriptionLifecycle(subscription);
 	const recovery = computeSubscriptionRecoveryPresentation(subscription, {
@@ -158,7 +165,8 @@ function SubscriptionRow({
 		actions.some((candidate) => candidate.kind !== "start_new") || startNewHref !== null;
 	const fundingSource = computeFundingSource(subscription.plan_slug, subscription);
 	const managementReason =
-		actions.find((candidate) => candidate.kind === "manage")?.disabledReason ?? null;
+		actions.find((candidate) => candidate.kind === "upgrade" || candidate.kind === "manage")
+			?.disabledReason ?? null;
 	const view = computeSubscriptionCardView({
 		status: recovery.status,
 		planSlug: subscription.plan_slug,
@@ -214,7 +222,7 @@ function SubscriptionRow({
 								subscriptionId: subscription.subscription_id,
 								deploymentId: subscription.deployment_id ?? null,
 							}}
-							onManage={() => onManage(subscription)}
+							onPlanChange={() => onPlanChange(subscription)}
 							onStartNew={
 								startNewHref
 									? { kind: "link", href: startNewHref, label: "Open Agent settings" }
@@ -330,6 +338,8 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	);
 	const managementOptions = {
 		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
+		plansLoading: plans.isLoading,
+		performancePlanAvailable: Boolean(resolvePerformancePlan(plans.data)),
 	};
 	const selectedDeployment = selectedSubscription?.deployment_id
 		? deploymentsById.get(selectedSubscription.deployment_id.toLowerCase())
@@ -338,7 +348,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 		? subscriptionManagement(selectedSubscription, selectedDeployment, managementOptions)
 		: null;
 
-	function manageSubscription(subscription: ComputeSubscriptionListItem) {
+	function openPlanChange(subscription: ComputeSubscriptionListItem) {
 		const deployment = subscription.deployment_id
 			? deploymentsById.get(subscription.deployment_id.toLowerCase())
 			: undefined;
@@ -409,7 +419,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 												: undefined,
 											managementOptions,
 										)}
-										onManage={manageSubscription}
+										onPlanChange={openPlanChange}
 									/>
 								))}
 							</ul>

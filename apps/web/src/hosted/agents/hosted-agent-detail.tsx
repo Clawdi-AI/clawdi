@@ -3673,6 +3673,8 @@ function ComputeSettingsSections({
 				},
 				deployment,
 				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
+				plansLoading: plans.isLoading,
+				performancePlanAvailable: Boolean(perfPlan),
 			})
 		: { action: "hidden", target: null, unavailableReason: null };
 	const hasPendingComputeChange =
@@ -3799,7 +3801,7 @@ function ComputeSettingsSections({
 						<ComputeSubscriptionActionList
 							actions={computeActions}
 							target={{ kind: "deployment", deploymentId: deployment.resource.id }}
-							onManage={() => setPlanChangeOpen(true)}
+							onPlanChange={() => setPlanChangeOpen(true)}
 							onStartNew={{
 								kind: "button",
 								onClick: () => setSubscriptionCreateOpen(true),

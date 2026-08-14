@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Settings, UserRoundX } from "lucide-react";
+import { ArrowUp, Settings, UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { entityCardChassisClass } from "@/components/entity-card";
@@ -127,17 +127,23 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 	);
 }
 
-export function ComputeSubscriptionManageAction({
+export function ComputeSubscriptionPlanAction({
+	action,
 	onClick,
 	disabled = false,
 }: {
+	action: "upgrade" | "manage";
 	onClick: () => void;
 	disabled?: boolean;
 }) {
 	return (
 		<Button type="button" variant="outline" size="sm" disabled={disabled} onClick={onClick}>
-			<Settings data-icon="inline-start" />
-			Manage
+			{action === "upgrade" ? (
+				<ArrowUp data-icon="inline-start" />
+			) : (
+				<Settings data-icon="inline-start" />
+			)}
+			{action === "upgrade" ? "Upgrade" : "Manage"}
 		</Button>
 	);
 }

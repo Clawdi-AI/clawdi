@@ -3,7 +3,11 @@ import type {
 	HostedComputeSubscription,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
-import { activePlanChangeOperationName } from "./plan-change.logic";
+import { deploymentStatusFromResource, isRunningStatus } from "@/hosted/deployment-status";
+import {
+	activePlanChangeOperationName,
+	performanceUpgradeUnavailableReason,
+} from "./plan-change.logic";
 import {
 	type PlanChangeTarget,
 	planChangeBillingTerm,
@@ -33,6 +37,9 @@ export type ComputeSubscriptionManagementResult =
 	| { action: "hidden"; target: PlanChangeTarget | null; unavailableReason: null }
 	| { action: "disabled"; target: null; unavailableReason: string }
 	| { action: "enabled"; target: PlanChangeTarget; unavailableReason: null };
+
+const UPGRADE_DETAILS_UNAVAILABLE_REASON =
+	"Upgrade availability will appear after this agent’s compute details finish syncing.";
 
 function isComputePlanSlug(value: string | null | undefined): value is ComputePlanSlug {
 	return value === COMPUTE_BASIC_SLUG || value === COMPUTE_PERFORMANCE_SLUG;
@@ -67,10 +74,14 @@ export function computeSubscriptionManagement({
 	entitlement,
 	deployment,
 	canCreateCloudAgents,
+	plansLoading,
+	performancePlanAvailable,
 }: {
 	entitlement: ComputeSubscriptionEntitlement;
 	deployment?: HostedDeployment | null;
 	canCreateCloudAgents: boolean;
+	plansLoading: boolean;
+	performancePlanAvailable: boolean;
 }): ComputeSubscriptionManagementResult {
 	if (entitlement.isOrphan) {
 		return { action: "hidden", target: null, unavailableReason: null };
@@ -91,9 +102,6 @@ export function computeSubscriptionManagement({
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
 	const projectedOperationName = deployment ? activePlanChangeOperationName(deployment) : null;
-	if (includedBasic && projectedOperationName === null) {
-		return { action: "hidden", target: null, unavailableReason: null };
-	}
 	if (projectedOperationName === null && blocksManagement(entitlement, paid)) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}
@@ -125,6 +133,33 @@ export function computeSubscriptionManagement({
 		canCreateCloudAgents,
 		target,
 	});
+	if (includedBasic) {
+		if (!deployment || deployment.resource.id.toLowerCase() !== deploymentId.toLowerCase()) {
+			return {
+				action: "disabled",
+				target: null,
+				unavailableReason: UPGRADE_DETAILS_UNAVAILABLE_REASON,
+			};
+		}
+		const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
+		const unavailableReason = performanceUpgradeUnavailableReason({
+			plansLoading,
+			canCreateCloudAgents,
+			isIncludedBasic: true,
+			performancePlanAvailable,
+			pendingPlanSlug: isComputePlanSlug(entitlement.pendingPlanSlug)
+				? entitlement.pendingPlanSlug
+				: null,
+			planChangeUnavailable: targetUnavailableReason,
+			deploymentStatusSupportsUpgrade:
+				isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped",
+			upgradeAvailable: deployment.upgrade_available,
+			upgradeEligibilityReason: deployment.upgrade_eligibility.reason,
+		});
+		return unavailableReason
+			? { action: "disabled", target: null, unavailableReason }
+			: { action: "enabled", target, unavailableReason: null };
+	}
 	return targetUnavailableReason
 		? { action: "disabled", target: null, unavailableReason: targetUnavailableReason }
 		: { action: "enabled", target, unavailableReason: null };

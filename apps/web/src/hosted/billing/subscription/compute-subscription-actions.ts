@@ -3,6 +3,7 @@ import type { ComputeRecoveryTarget } from "./compute-subscription-recovery";
 import { computeFundingSource } from "./subscription-utils";
 
 export type ComputeSubscriptionActionKind =
+	| "upgrade"
 	| "manage"
 	| "cancel"
 	| "resume"
@@ -55,11 +56,12 @@ function action(
 	return { kind, disabledReason };
 }
 
-function manageAction(
+function planAction(
 	management: ComputeSubscriptionManagementResult,
+	kind: Extract<ComputeSubscriptionActionKind, "manage" | "upgrade"> = "manage",
 ): ComputeSubscriptionAction | null {
 	if (management.action === "hidden") return null;
-	return action("manage", management.action === "disabled" ? management.unavailableReason : null);
+	return action(kind, management.action === "disabled" ? management.unavailableReason : null);
 }
 
 function recoveryAction(target: ComputeRecoveryTarget): ComputeSubscriptionRecoveryAction {
@@ -130,10 +132,11 @@ export function resolveComputeSubscriptionActions({
 	}
 
 	if (!paid) {
-		return recovery ? [recovery] : [];
+		const upgrade = !entitlement.isOrphan ? planAction(management, "upgrade") : null;
+		return recovery ? [recovery] : upgrade ? [upgrade] : [];
 	}
 
-	const manage = !entitlement.isOrphan ? manageAction(management) : null;
+	const manage = !entitlement.isOrphan ? planAction(management) : null;
 	if (recovery) {
 		return [recovery, ...(manage ? [manage] : []), ...(cancel ? [cancel] : [])];
 	}
