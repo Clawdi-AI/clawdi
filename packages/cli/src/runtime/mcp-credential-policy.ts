@@ -22,12 +22,19 @@ export function containsMcpPlaceholder(value: string): boolean {
 	return /\$\{[^}]*\}/.test(value);
 }
 
+export function containsMcpSecretMaterial(value: string): boolean {
+	const lowered = value.toLowerCase();
+	return (
+		lowered.includes("-----begin private key-----") ||
+		/(?:sk|pk|ghp|github_pat|xox[baprs])_[A-Za-z0-9_-]{12,}/.test(value)
+	);
+}
+
 export function looksLikeMcpSecretLiteral(value: string): boolean {
 	const lowered = value.trim().toLowerCase();
 	return (
 		["bearer ", "basic ", "apikey ", "api-key "].some((prefix) => lowered.startsWith(prefix)) ||
-		lowered.includes("-----begin private key-----") ||
 		/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/.test(value) ||
-		/(?:sk|pk|ghp|github_pat|xox[baprs])_[A-Za-z0-9_-]{12,}/.test(value)
+		containsMcpSecretMaterial(value)
 	);
 }

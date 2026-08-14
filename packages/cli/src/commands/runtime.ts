@@ -2360,6 +2360,7 @@ async function applyRuntimeDesiredState(
 		if (preparedHostedAgentPlugins === undefined) {
 			preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(load.manifest, paths, {
 				offline: load.offline,
+				secretValues: load.secretValues,
 			});
 		}
 		const preparedHostedSourcedSkills =

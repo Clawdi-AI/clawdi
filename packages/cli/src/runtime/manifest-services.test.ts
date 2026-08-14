@@ -969,6 +969,26 @@ describe("runtime manifest services", () => {
 					unselected: { apiKeySecretRef: "secret://providers/unselected/api-key" },
 				},
 				tools: { opaqueSecretRef: "secret://tools/opaque" },
+				agentPlugins: {
+					schemaVersion: 1,
+					installations: {
+						"clawdi-cloud": {
+							installationId: "first-party:clawdi-cloud",
+							version: "1.0.0",
+							agentPluginsSchema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+							source: {
+								type: "github",
+								url: "https://github.com/Clawdi-AI/store",
+								path: "v2/plugins/clawdi-cloud",
+								commit: "a".repeat(40),
+							},
+							contentDigest: `sha256-tree-v1:${"b".repeat(64)}`,
+							secretRefs: {
+								"clawdi-auth-token": "secret://clawdi/auth-token",
+							},
+						},
+					},
+				},
 			},
 			egressProfiles: {
 				profiles: [
@@ -1017,6 +1037,7 @@ describe("runtime manifest services", () => {
 
 		expect(manifestSecretRefs(manifest)).toEqual([
 			"secret://active/profile",
+			"secret://clawdi/auth-token",
 			"secret://providers/selected/api-key",
 			"secret://runtime/active",
 			"secret://runtime/active-service",

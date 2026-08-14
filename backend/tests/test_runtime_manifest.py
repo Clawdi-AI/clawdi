@@ -4064,23 +4064,35 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
     env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
+    state.mcp = {
+        "servers": {
+            "clawdi": {"command": "clawdi", "args": ["mcp"]},
+            "workspace-tools": {"command": "node", "args": ["workspace-tools.js"]},
+        }
+    }
+    state.skills = {
+        "entries": {
+            "clawdi": {"enabled": True, "version": 1},
+            "workspace-helper": {"enabled": True, "version": 1},
+        }
+    }
     state.agent_plugins = {
         "schemaVersion": 1,
         "installations": {
-            "acme.tools": {
-                "installationId": "install_acme_tools",
-                "version": "1.2.3",
+            "clawdi-cloud": {
+                "installationId": "first-party:clawdi-cloud",
+                "version": "1.0.0",
                 "agentPluginsSchema": (
                     "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
                 ),
                 "source": {
                     "type": "github",
-                    "url": "https://github.com/acme/agent-plugins",
-                    "path": "plugins/acme.tools",
+                    "url": "https://github.com/Clawdi-AI/store",
+                    "path": "v2/plugins/clawdi-cloud",
                     "commit": "a" * 40,
                 },
                 "contentDigest": f"sha256-tree-v1:{'b' * 64}",
-                "secretRefs": {},
+                "secretRefs": {"clawdi-auth-token": "secret://clawdi/auth-token"},
             }
         },
     }
@@ -4111,9 +4123,19 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
 
     assert old_client.status_code == 200, old_client.text
     assert "agentPlugins" not in old_client.json()["manifest"]
+    assert set(old_client.json()["manifest"]["mcp"]["servers"]) == {
+        "clawdi",
+        "workspace-tools",
+    }
+    assert set(old_client.json()["manifest"]["skills"]["entries"]) == {
+        "clawdi",
+        "workspace-helper",
+    }
     assert old_client.json()["manifest"]["clawdiCli"]["packageSpec"] == state.cli_package_spec
     assert capable_client.status_code == 200, capable_client.text
     assert capable_client.json()["manifest"]["agentPlugins"] == state.agent_plugins
+    assert set(capable_client.json()["manifest"]["mcp"]["servers"]) == {"workspace-tools"}
+    assert set(capable_client.json()["manifest"]["skills"]["entries"]) == {"workspace-helper"}
     assert capable_client.headers["etag"] != old_client.headers["etag"]
     assert capable_client.json()["sourceRevision"] != old_client.json()["sourceRevision"]
     assert wrong_variant_validator.status_code == 200

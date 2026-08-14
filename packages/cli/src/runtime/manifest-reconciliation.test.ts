@@ -165,6 +165,7 @@ function preparedTestAgentPlugin(
 		receiptNativeId: null,
 		mcpServerNames: [],
 		hasStreamableHttpMcp: false,
+		egressProfiles: [],
 		tree: [{ path: "plugin.json", mode: 0o100644, bytes }],
 	};
 }

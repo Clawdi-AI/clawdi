@@ -24,10 +24,13 @@ import {
 	parseCanonicalGithubRepositoryUrl,
 	readBoundedResponseBytes,
 } from "../lib/github-skill-archive";
+import { type EgressProfileInputBundle, egressProfileInputBundleSchema } from "./egress-profiles";
 import { AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR, type RuntimeManifest } from "./manifest-contract";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
+	type AgentPluginSecretSlots,
 	agentPluginNameSchema,
+	agentPluginSecretSlotsSchema,
 	type HostedAgentPluginInstallation,
 	hostedAgentPluginInstallationSchema,
 } from "./manifest-resources";
@@ -40,10 +43,11 @@ import {
 } from "./mcp-credential-policy";
 import type { RuntimePaths } from "./paths";
 import { makeRuntimeUserOwned, withRuntimeUserFileAccess } from "./runtime-user-command";
+import { runtimeSecretValue } from "./secret-values";
 import { writeRuntimePlatformFileAtomic } from "./state";
 
 export const AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR =
-	"Agent Plugin secret bindings are not supported by native runtimes";
+	"Agent Plugin stdio env secret bindings are not supported by transparent egress";
 export const HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR =
 	"Hermes Agent Plugins only support the portable streamable-http remote transport";
 export const HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR =
@@ -65,6 +69,7 @@ const MAX_CACHE_RECEIPT_BYTES = 4 * 1024;
 const PLACEHOLDER_PREFIX = "$";
 const PLUGIN_ROOT = `${PLACEHOLDER_PREFIX}{PLUGIN_ROOT}`;
 const PLUGIN_DATA = `${PLACEHOLDER_PREFIX}{PLUGIN_DATA}`;
+export const AGENT_PLUGIN_ROUTING_MARKER_HEADER = "X-Clawdi-Agent-Plugin";
 
 export type HostedAgentPluginRuntime = "openclaw" | "hermes";
 
@@ -105,6 +110,7 @@ export interface PreparedHostedAgentPlugin {
 	receiptNativeId: string | null;
 	mcpServerNames: readonly string[];
 	hasStreamableHttpMcp: boolean;
+	egressProfiles: EgressProfileInputBundle["profiles"];
 	tree: readonly PreparedAgentPluginTreeFile[];
 }
 
@@ -116,10 +122,33 @@ export interface PreparedHostedAgentPlugins {
 	transientCacheOwnerships: ReadonlySet<string>;
 }
 
+export function mergeHostedAgentPluginEgressProfiles(
+	existing: EgressProfileInputBundle | undefined,
+	prepared: PreparedHostedAgentPlugins | undefined,
+): EgressProfileInputBundle | undefined {
+	if (!prepared) return existing;
+	const generated = [...prepared.desired.values()]
+		.flatMap((plugin) => plugin.egressProfiles)
+		.sort((left, right) => left.id.localeCompare(right.id));
+	const profiles = [...(existing?.profiles ?? [])];
+	if (profiles.some((profile) => profile.owner === "agent-plugin-projection")) {
+		throw new Error("Agent Plugin egress profile ownership is reserved");
+	}
+	if (generated.length === 0) return existing;
+	const ids = new Set(profiles.map((profile) => profile.id));
+	for (const profile of generated) {
+		if (ids.has(profile.id)) throw new Error("Agent Plugin egress profile id collides");
+		ids.add(profile.id);
+		profiles.push(profile);
+	}
+	return egressProfileInputBundleSchema.parse({ profiles });
+}
+
 interface PackageDescriptor {
 	name: string;
 	runtime: HostedAgentPluginRuntime;
 	installation: PreparedHostedAgentPluginInstallation;
+	secretRefs: Readonly<Record<string, string>> | null;
 }
 
 const cacheReceiptSchema = z
@@ -195,10 +224,7 @@ const clawdiExtensionSchema = z
 		display: clawdiDisplaySchema,
 		configuration: z
 			.object({
-				secretSlots: z.record(
-					z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
-					z.unknown(),
-				),
+				secretSlots: agentPluginSecretSlotsSchema,
 			})
 			.strict()
 			.optional(),
@@ -907,9 +933,16 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 function assertMcpComponents(
 	tree: readonly PreparedAgentPluginTreeFile[],
 	runtime: HostedAgentPluginRuntime,
-): { serverNames: string[]; hasStreamableHttp: boolean; bareCommands: string[] } {
+): {
+	servers: z.infer<typeof mcpManifestSchema>["mcpServers"];
+	serverNames: string[];
+	hasStreamableHttp: boolean;
+	bareCommands: string[];
+} {
 	const file = tree.find((entry) => entry.path === "mcp.json");
-	if (!file) return { serverNames: [], hasStreamableHttp: false, bareCommands: [] };
+	if (!file) {
+		return { servers: {}, serverNames: [], hasStreamableHttp: false, bareCommands: [] };
+	}
 	const parsed = mcpManifestSchema.safeParse(parseJsonObject(file, "Agent Plugin mcp.json"));
 	if (!parsed.success) throw new Error("Agent Plugin mcp.json does not match the 1.0.0 schema");
 	let hasStreamableHttp = false;
@@ -964,10 +997,170 @@ function assertMcpComponents(
 		if (server.cwd !== undefined) assertRootedMcpCwd(server.cwd, tree);
 	}
 	return {
+		servers: parsed.data.mcpServers,
 		serverNames: Object.keys(parsed.data.mcpServers).sort(),
 		hasStreamableHttp,
 		bareCommands: [...bareCommands].sort(),
 	};
+}
+
+type AgentPluginMcpServers = z.infer<typeof mcpManifestSchema>["mcpServers"];
+type AgentPluginEgressProfile = EgressProfileInputBundle["profiles"][number];
+
+function assertSecretRefCoverage(
+	secretSlots: AgentPluginSecretSlots,
+	secretRefs: Readonly<Record<string, string>>,
+): void {
+	for (const slotId of Object.keys(secretRefs)) {
+		if (secretSlots[slotId] === undefined) {
+			throw new Error("Agent Plugin installation declares an unknown secret slot");
+		}
+	}
+	for (const [slotId, slot] of Object.entries(secretSlots)) {
+		if (slot.required && secretRefs[slotId] === undefined) {
+			throw new Error("Agent Plugin installation is missing a required secret slot");
+		}
+	}
+}
+
+function packageHeader(
+	headers: Readonly<Record<string, string>> | undefined,
+	target: string,
+): readonly [string, string] | null {
+	const foldedTarget = target.toLowerCase();
+	for (const entry of Object.entries(headers ?? {})) {
+		if (entry[0].toLowerCase() === foldedTarget) return entry;
+	}
+	return null;
+}
+
+function agentPluginEgressProfileId(
+	installation: PreparedHostedAgentPluginInstallation,
+	serverName: string,
+): string {
+	return `agent-plugin-${sha256(`${installation.ownershipIdentity}\0${serverName}`).slice(0, 24)}`;
+}
+
+function compileAgentPluginEgressProfiles(
+	descriptor: PackageDescriptor,
+	secretSlots: AgentPluginSecretSlots,
+	servers: AgentPluginMcpServers,
+): AgentPluginEgressProfile[] {
+	const secretRefs = descriptor.secretRefs;
+	if (secretRefs) assertSecretRefCoverage(secretSlots, secretRefs);
+	const targets = new Set<string>();
+	const activeHeaders = new Map<
+		string,
+		Array<{ name: string; prefix: string; secretRef: string }>
+	>();
+	for (const [slotId, slot] of Object.entries(secretSlots)) {
+		const secretRef = secretRefs?.[slotId];
+		for (const binding of slot.bindings) {
+			const server = servers[binding.server];
+			if (!server) throw new Error("Agent Plugin secret slot references an unknown MCP server");
+			const targetKey = `${binding.server}\0${binding.target}\0${binding.name.toLowerCase()}`;
+			if (targets.has(targetKey)) {
+				throw new Error("Agent Plugin secret slots contain a case-insensitive target collision");
+			}
+			targets.add(targetKey);
+			if (binding.target === "env") {
+				if (server.type !== "stdio") {
+					throw new Error("Agent Plugin secret slot target is incompatible with its MCP server");
+				}
+				if (server.env) {
+					const foldedName = binding.name.toLowerCase();
+					if (Object.keys(server.env).some((name) => name.toLowerCase() === foldedName)) {
+						throw new Error("Agent Plugin secret slot target has a literal package value");
+					}
+				}
+				if (secretRef) throw new Error(AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR);
+				continue;
+			}
+			if (server.type === "stdio") {
+				throw new Error("Agent Plugin secret slot target is incompatible with its MCP server");
+			}
+			if (packageHeader(server.headers, binding.name)) {
+				throw new Error("Agent Plugin secret slot target has a literal package value");
+			}
+			if (!secretRef) continue;
+			const marker = packageHeader(server.headers, AGENT_PLUGIN_ROUTING_MARKER_HEADER);
+			if (!marker || marker[1] !== descriptor.name) {
+				throw new Error("Agent Plugin secret-bound remote MCP is missing its exact routing marker");
+			}
+			const url = new URL(server.url);
+			if (url.protocol !== "https:") {
+				throw new Error("Agent Plugin secret-bound remote MCP URL must use HTTPS");
+			}
+			if (url.search) {
+				throw new Error("Agent Plugin secret-bound remote MCP URL cannot contain a query");
+			}
+			const existing = activeHeaders.get(binding.server) ?? [];
+			existing.push({ name: binding.name, prefix: binding.prefix ?? "", secretRef });
+			activeHeaders.set(binding.server, existing);
+		}
+	}
+
+	const profiles: AgentPluginEgressProfile[] = [];
+	const routes = new Set<string>();
+	for (const [serverName, headers] of [...activeHeaders].sort(([left], [right]) =>
+		left.localeCompare(right),
+	)) {
+		const server = servers[serverName];
+		if (!server || server.type === "stdio") {
+			throw new Error("Agent Plugin secret slot target is incompatible with its MCP server");
+		}
+		const url = new URL(server.url);
+		const scheme = url.protocol.slice(0, -1) as "http" | "https";
+		const host = `${url.hostname.toLowerCase()}:${url.port || (scheme === "https" ? "443" : "80")}`;
+		const path = url.pathname || "/";
+		const route = `${scheme}\0${host}\0${path}\0${descriptor.name}`;
+		if (routes.has(route)) {
+			throw new Error("Agent Plugin secret-bound remote MCP routes collide");
+		}
+		routes.add(route);
+		const sortedHeaders = [...headers].sort((left, right) =>
+			left.name.toLowerCase().localeCompare(right.name.toLowerCase()),
+		);
+		profiles.push({
+			id: agentPluginEgressProfileId(descriptor.installation, serverName),
+			enabled: true,
+			kind: "provider",
+			match: {
+				scheme,
+				host,
+				path: { type: "equals", value: path },
+				headers: {
+					[AGENT_PLUGIN_ROUTING_MARKER_HEADER]: {
+						type: "equals",
+						value: descriptor.name,
+					},
+				},
+				query: {},
+			},
+			rewrite: {
+				preservePath: true,
+				removeHeaders: [AGENT_PLUGIN_ROUTING_MARKER_HEADER],
+				setHeaders: Object.fromEntries(
+					sortedHeaders.map((header) => [
+						header.name,
+						{
+							type: "secretRef" as const,
+							secretRef: header.secretRef,
+							prefix: header.prefix,
+						},
+					]),
+				),
+			},
+			logging: {
+				redactHeaders: sortedHeaders.map((header) => header.name),
+				redactUrlPatterns: [],
+			},
+			priority: 60,
+			owner: "agent-plugin-projection",
+			description: `Agent Plugin remote MCP credentials for ${descriptor.name}/${serverName}.`,
+		});
+	}
+	return egressProfileInputBundleSchema.parse({ profiles }).profiles;
 }
 
 function assertPackageIdentity(
@@ -995,9 +1188,6 @@ function assertPackageIdentity(
 	const clawdi = clawdiExtensionSchema.safeParse(extension);
 	if (!clawdi.success) {
 		throw new Error("Agent Plugin ai.clawdi extension does not match the Store contract");
-	}
-	if (clawdi.data.configuration) {
-		throw new Error(AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR);
 	}
 	if (clawdi.data.display.icon) {
 		const icon = clawdi.data.display.icon;
@@ -1053,6 +1243,11 @@ async function validateArchive(
 		const clawdiExtension = assertPackageIdentity(descriptor, collected.tree);
 		const skillCount = assertSkillComponents(collected.tree);
 		const mcp = assertMcpComponents(collected.tree, descriptor.runtime);
+		const egressProfiles = compileAgentPluginEgressProfiles(
+			descriptor,
+			clawdiExtension.configuration?.secretSlots ?? {},
+			mcp.servers,
+		);
 		if (skillCount === 0 && mcp.serverNames.length === 0) {
 			throw new Error("Agent Plugin package must declare at least one Skill or MCP server");
 		}
@@ -1064,6 +1259,7 @@ async function validateArchive(
 			receiptNativeId: null,
 			mcpServerNames: mcp.serverNames,
 			hasStreamableHttpMcp: mcp.hasStreamableHttp,
+			egressProfiles,
 			tree: collected.tree,
 		};
 	} finally {
@@ -1133,7 +1329,11 @@ function selectedAgentPluginRuntime(manifest: RuntimeManifest): HostedAgentPlugi
 export async function prepareHostedAgentPluginPackages(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
-	options: { fetcher?: GithubArchiveFetcher; offline?: boolean } = {},
+	options: {
+		fetcher?: GithubArchiveFetcher;
+		offline?: boolean;
+		secretValues?: Record<string, string>;
+	} = {},
 ): Promise<PreparedHostedAgentPlugins | null> {
 	const desiredInstallations = manifest.projection?.agentPlugins?.installations ?? {};
 	const isHostedV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
@@ -1144,8 +1344,10 @@ export async function prepareHostedAgentPluginPackages(
 		return null;
 	}
 	for (const installation of Object.values(desiredInstallations)) {
-		if (Object.keys(installation.secretRefs).length > 0) {
-			throw new Error(AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR);
+		for (const secretRef of Object.values(installation.secretRefs)) {
+			if (runtimeSecretValue(options.secretValues ?? {}, secretRef) === null) {
+				throw new Error("Agent Plugin installation secret value is unavailable");
+			}
 		}
 	}
 	const previousReceipt = readHostedAgentPluginReceipt(paths);
@@ -1189,7 +1391,15 @@ export async function prepareHostedAgentPluginPackages(
 			([left], [right]) => left.localeCompare(right),
 		)) {
 			const descriptor = preparedInstallation(name, installation);
-			desired.set(name, await load({ name, runtime, installation: descriptor }));
+			desired.set(
+				name,
+				await load({
+					name,
+					runtime,
+					installation: descriptor,
+					secretRefs: installation.secretRefs,
+				}),
+			);
 		}
 		const rollback = new Map<string, PreparedHostedAgentPlugin>();
 		if (previousReceipt) {
@@ -1207,6 +1417,7 @@ export async function prepareHostedAgentPluginPackages(
 						...descriptor,
 						ownershipIdentity: persistedOwnership,
 					}),
+					secretRefs: null,
 				});
 				rollback.set(name, { ...plugin, receiptNativeId: nativeId });
 			}

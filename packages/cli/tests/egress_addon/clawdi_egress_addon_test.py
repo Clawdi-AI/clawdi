@@ -223,6 +223,88 @@ class AddonProfileInterpreterTest(unittest.TestCase):
 
         self.assertNotIn(marker_header, cases[2][0].request.headers)
 
+    def test_agent_plugin_streamable_http_marker_is_exact_and_removed(self):
+        marker_header = "X-Clawdi-Agent-Plugin"
+        profile = {
+            "id": "agent-plugin-clawdi-cloud",
+            "enabled": True,
+            "kind": "provider",
+            "match": {
+                "scheme": "https",
+                "host": "cloud-api.clawdi.ai:443",
+                "path": {"type": "equals", "value": "/v1/mcp/clawdi"},
+                "headers": {
+                    marker_header: {"type": "equals", "value": "clawdi-cloud"}
+                },
+                "query": {},
+            },
+            "rewrite": {
+                "preservePath": True,
+                "removeHeaders": [marker_header],
+                "setHeaders": {
+                    "Authorization": {
+                        "type": "secretRef",
+                        "secretRef": "secret://clawdi/auth-token",
+                        "prefix": "Bearer ",
+                    }
+                },
+            },
+            "logging": {
+                "redactHeaders": ["Authorization"],
+                "redactUrlPatterns": [],
+            },
+            "priority": 60,
+            "owner": "agent-plugin-projection",
+        }
+        egress = self.load(
+            [profile],
+            {"secret://clawdi/auth-token": "test-only-clawdi-auth-token"},
+        )
+        request_headers = {
+            marker_header: "clawdi-cloud",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+        }
+        matched = Flow(
+            host="cloud-api.clawdi.ai",
+            path="/v1/mcp/clawdi",
+            headers=request_headers,
+        )
+
+        decision = egress.apply_to_flow(matched)
+
+        self.assertEqual(decision.profile_id, "agent-plugin-clawdi-cloud")
+        self.assertNotIn(marker_header, matched.request.headers)
+        self.assertEqual(
+            matched.request.headers["Authorization"],
+            "Bearer test-only-clawdi-auth-token",
+        )
+        self.assertEqual(
+            addon.redacted_headers(matched.request.headers, profile)["Authorization"],
+            "[redacted]",
+        )
+
+        for flow in (
+            Flow(
+                host="cloud-api.clawdi.ai",
+                path="/v1/mcp/clawdi",
+                headers={**request_headers, marker_header: "other-plugin"},
+            ),
+            Flow(
+                host="cloud-api.clawdi.ai",
+                path="/v1/mcp/clawdi/other",
+                headers=request_headers,
+            ),
+            Flow(
+                host="other.clawdi.ai",
+                path="/v1/mcp/clawdi",
+                headers=request_headers,
+            ),
+        ):
+            with self.subTest(path=flow.request.path, host=flow.request.host):
+                self.assertIsNone(egress.apply_to_flow(flow).profile_id)
+                self.assertNotIn("Authorization", flow.request.headers)
+
     def test_addon_loads_when_executed_as_a_script_path(self):
         loaded = runpy.run_path(str(ADDON_PATH))
 

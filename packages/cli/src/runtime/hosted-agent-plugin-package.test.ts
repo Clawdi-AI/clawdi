@@ -18,6 +18,8 @@ import {
 	cleanupHostedAgentPluginTransientArchives,
 	gcHostedAgentPluginArchives,
 	HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR,
+	hostedAgentPluginReceiptsPath,
+	mergeHostedAgentPluginEgressProfiles,
 	type PreparedHostedAgentPluginInstallation,
 	type PreparedHostedAgentPlugins,
 	prepareHostedAgentPluginPackages,
@@ -33,10 +35,7 @@ import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	type RuntimeManifest,
 } from "./manifest-contract";
-import {
-	AGENT_PLUGINS_SCHEMA_1_0_0,
-	hostedAgentPluginInstallationSchema,
-} from "./manifest-resources";
+import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
 import { getRuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
 
@@ -172,6 +171,54 @@ function clawdiExtension(fields: Record<string, unknown> = {}): Record<string, u
 		schemaVersion: 1,
 		display: { name: "Acme Tools", category: "tools", tags: [], languages: [] },
 		...fields,
+	};
+}
+
+function remoteSecretExtension(
+	bindings: Array<Record<string, unknown>> = [
+		{
+			server: "remote",
+			target: "header",
+			name: "Authorization",
+			prefix: "Bearer ",
+		},
+	],
+): Record<string, unknown> {
+	return {
+		"ai.clawdi": clawdiExtension({
+			configuration: {
+				secretSlots: {
+					"api-token": {
+						label: "API token",
+						description: "Authenticates the remote MCP server.",
+						required: true,
+						bindings,
+					},
+					"optional-token": {
+						label: "Optional token",
+						description: "Optional secondary authentication.",
+						required: false,
+						bindings: [{ server: "remote", target: "header", name: "X-Optional-Token" }],
+					},
+				},
+			},
+		}),
+	};
+}
+
+function remoteMcp(
+	headers: Record<string, string> = { "X-Clawdi-Agent-Plugin": "acme.tools" },
+	url = "https://mcp.example.test/v1/mcp",
+) {
+	return {
+		$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+		mcpServers: {
+			remote: {
+				type: "streamable-http",
+				url,
+				headers,
+			},
+		},
 	};
 }
 
@@ -451,14 +498,6 @@ describe("Hosted Agent Plugin package preparation", () => {
 						"---\nname: review\ndescription: Review\nunknown: rejected\n---\n",
 					),
 				},
-			},
-			{
-				label: "Clawdi secret slots",
-				files: pluginFiles(undefined, "1.2.3", {
-					"ai.clawdi": clawdiExtension({
-						configuration: { secretSlots: {} },
-					}),
-				}),
 			},
 			{
 				label: "Clawdi unknown extension field",
@@ -817,18 +856,98 @@ describe("Hosted Agent Plugin package preparation", () => {
 		expect(existsSync(join(container, previousInstallation.ownershipIdentity))).toBe(true);
 	});
 
-	test("rejects secretRefs without fetching or disclosing the reference", async () => {
+	test("compiles exact secret-backed remote profiles for OpenClaw and Hermes without persisting values", async () => {
+		const secretRef = "secret://agent-plugins/acme.tools/private-token";
+		const secretValue = "test-only-runtime-secret-value";
+		for (const runtime of ["openclaw", "hermes"] as const) {
+			const runtimePaths = paths();
+			const files = pluginFiles(remoteMcp(), "1.2.3", remoteSecretExtension());
+			const bytes = await archive(files);
+			const prepared = await prepareHostedAgentPluginPackages(
+				manifest(runtime, treeDigest(files), { "api-token": secretRef }),
+				runtimePaths,
+				{
+					fetcher: async () => archiveResponse(bytes),
+					secretValues: { [secretRef]: secretValue },
+				},
+			);
+			const plugin = prepared?.desired.get("acme.tools");
+			expect(plugin?.egressProfiles).toEqual([
+				expect.objectContaining({
+					enabled: true,
+					kind: "provider",
+					match: {
+						scheme: "https",
+						host: "mcp.example.test:443",
+						path: { type: "equals", value: "/v1/mcp" },
+						headers: {
+							"X-Clawdi-Agent-Plugin": { type: "equals", value: "acme.tools" },
+						},
+						query: {},
+					},
+					rewrite: {
+						preservePath: true,
+						removeHeaders: ["X-Clawdi-Agent-Plugin"],
+						setHeaders: {
+							Authorization: { type: "secretRef", secretRef, prefix: "Bearer " },
+						},
+					},
+					logging: { redactHeaders: ["Authorization"], redactUrlPatterns: [] },
+					owner: "agent-plugin-projection",
+				}),
+			]);
+			expect(JSON.stringify(plugin)).not.toContain(secretValue);
+			expect(JSON.stringify(plugin?.installation)).not.toContain(secretRef);
+			if (!prepared || !plugin) throw new Error("missing prepared Agent Plugin fixture");
+			const merged = mergeHostedAgentPluginEgressProfiles({ profiles: [] }, prepared);
+			expect(merged?.profiles).toEqual(plugin.egressProfiles);
+			const profile = plugin.egressProfiles[0];
+			if (!profile) throw new Error("missing compiled Agent Plugin egress profile");
+			expect(() =>
+				mergeHostedAgentPluginEgressProfiles(
+					{ profiles: [{ ...profile, id: "reserved-owner", owner: "agent-plugin-projection" }] },
+					prepared,
+				),
+			).toThrow("ownership is reserved");
+			expect(() =>
+				mergeHostedAgentPluginEgressProfiles(
+					{ profiles: [{ ...profile, owner: "explicit-profile" }] },
+					prepared,
+				),
+			).toThrow("profile id collides");
+			writeHostedAgentPluginReceipt(
+				{
+					schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
+					runtime,
+					installations: {
+						"acme.tools": { ...plugin.installation, nativeId: "acme-tools" },
+					},
+				},
+				runtimePaths,
+			);
+			const receipt = readFileSync(hostedAgentPluginReceiptsPath(runtimePaths), "utf8");
+			expect(receipt).not.toContain(secretRef);
+			expect(receipt).not.toContain(secretValue);
+			const recovered = await prepareHostedAgentPluginPackages(
+				manifest(runtime, treeDigest(files), { "api-token": secretRef }),
+				runtimePaths,
+				{
+					offline: true,
+					fetcher: async () => {
+						throw new Error("offline recovery must not fetch");
+					},
+					secretValues: { [secretRef]: secretValue },
+				},
+			);
+			expect(recovered?.desired.get("acme.tools")?.egressProfiles).toEqual(plugin.egressProfiles);
+			rmSync(root, { recursive: true, force: true });
+			root = "";
+		}
+	});
+
+	test("rejects a missing Agent Plugin secret before fetching without disclosing its reference", async () => {
 		const runtimePaths = paths();
 		const secretRef = "secret://agent-plugins/acme.tools/private-token";
-		const installation = manifest("openclaw", `sha256-tree-v1:${"a".repeat(64)}`).projection
-			?.agentPlugins?.installations["acme.tools"];
-		if (!installation) throw new Error("missing Agent Plugin installation fixture");
-		expect(
-			hostedAgentPluginInstallationSchema.safeParse({
-				...installation,
-				secretRefs: { "api.token": secretRef },
-			}).success,
-		).toBe(false);
 		let fetches = 0;
 		let error: unknown;
 		try {
@@ -848,8 +967,104 @@ describe("Hosted Agent Plugin package preparation", () => {
 			error = caught;
 		}
 		if (!(error instanceof Error)) throw new Error("expected package preparation to fail");
-		expect(error.message).toBe(AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR);
+		expect(error.message).toBe("Agent Plugin installation secret value is unavailable");
 		expect(error.message).not.toContain(secretRef);
 		expect(fetches).toBe(0);
+	});
+
+	test("rejects unsafe or ambiguous secret-slot bindings", async () => {
+		const runtimePaths = paths();
+		const secretRef = "secret://agent-plugins/acme.tools/private-token";
+		const cases: Array<{
+			label: string;
+			files: Record<string, Buffer>;
+			secretRefs: Record<string, string>;
+			error: string;
+		}> = [
+			{
+				label: "undeclared ref",
+				files: pluginFiles(remoteMcp()),
+				secretRefs: { "api-token": secretRef },
+				error: "unknown secret slot",
+			},
+			{
+				label: "missing required ref",
+				files: pluginFiles(remoteMcp(), "1.2.3", remoteSecretExtension()),
+				secretRefs: {},
+				error: "missing a required secret slot",
+			},
+			{
+				label: "stdio env injection",
+				files: pluginFiles(
+					{
+						$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+						mcpServers: { remote: { type: "stdio", command: "node" } },
+					},
+					"1.2.3",
+					remoteSecretExtension([{ server: "remote", target: "env", name: "API_TOKEN" }]),
+				),
+				secretRefs: { "api-token": secretRef },
+				error: AGENT_PLUGIN_SECRET_BINDINGS_UNSUPPORTED_ERROR,
+			},
+			{
+				label: "case-insensitive target collision",
+				files: pluginFiles(
+					remoteMcp(),
+					"1.2.3",
+					remoteSecretExtension([
+						{ server: "remote", target: "header", name: "Authorization" },
+						{ server: "remote", target: "header", name: "authorization" },
+					]),
+				),
+				secretRefs: { "api-token": secretRef },
+				error: "case-insensitive target collision",
+			},
+			{
+				label: "literal target",
+				files: pluginFiles(
+					remoteMcp({
+						"X-Clawdi-Agent-Plugin": "acme.tools",
+						"X-Account-Id": "public-metadata",
+					}),
+					"1.2.3",
+					remoteSecretExtension([{ server: "remote", target: "header", name: "x-account-id" }]),
+				),
+				secretRefs: { "api-token": secretRef },
+				error: "literal package value",
+			},
+			{
+				label: "wrong marker",
+				files: pluginFiles(
+					remoteMcp({ "X-Clawdi-Agent-Plugin": "other-plugin" }),
+					"1.2.3",
+					remoteSecretExtension(),
+				),
+				secretRefs: { "api-token": secretRef },
+				error: "missing its exact routing marker",
+			},
+			{
+				label: "plaintext transport",
+				files: pluginFiles(
+					remoteMcp({ "X-Clawdi-Agent-Plugin": "acme.tools" }, "http://127.0.0.1/mcp"),
+					"1.2.3",
+					remoteSecretExtension(),
+				),
+				secretRefs: { "api-token": secretRef },
+				error: "must use HTTPS",
+			},
+		];
+		for (const fixture of cases) {
+			const bytes = await archive(fixture.files);
+			await expect(
+				prepareHostedAgentPluginPackages(
+					manifest("openclaw", treeDigest(fixture.files), fixture.secretRefs),
+					runtimePaths,
+					{
+						fetcher: async () => archiveResponse(bytes),
+						secretValues: { [secretRef]: "test-only-runtime-secret-value" },
+					},
+				),
+			).rejects.toThrow(fixture.error);
+		}
 	});
 });

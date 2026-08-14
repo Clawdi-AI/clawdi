@@ -67,4 +67,46 @@ describe("runtime impact revisions", () => {
 			runtimeSidecarProgramRevision(sidecarManifest),
 		);
 	});
+
+	test("restarts the sidecar when an Agent Plugin egress profile changes", () => {
+		const withAgentPluginProfile = {
+			...sidecarManifest,
+			egressProfiles: {
+				profiles: [
+					{
+						id: "agent-plugin-clawdi-cloud",
+						enabled: true,
+						kind: "provider" as const,
+						match: {
+							scheme: "https" as const,
+							host: "cloud-api.clawdi.ai:443",
+							path: { type: "equals" as const, value: "/v1/mcp/clawdi" },
+							headers: {
+								"X-Clawdi-Agent-Plugin": { type: "equals" as const, value: "clawdi-cloud" },
+							},
+							query: {},
+						},
+						rewrite: {
+							preservePath: true,
+							removeHeaders: ["X-Clawdi-Agent-Plugin"],
+							setHeaders: {
+								Authorization: {
+									type: "secretRef" as const,
+									secretRef: "secret://clawdi/auth-token",
+									prefix: "Bearer ",
+								},
+							},
+						},
+						logging: { redactHeaders: ["Authorization"], redactUrlPatterns: [] },
+						priority: 60,
+						owner: "agent-plugin-projection",
+					},
+				],
+			},
+		};
+
+		expect(runtimeSidecarProgramRevision(withAgentPluginProfile)).not.toBe(
+			runtimeSidecarProgramRevision(sidecarManifest),
+		);
+	});
 });

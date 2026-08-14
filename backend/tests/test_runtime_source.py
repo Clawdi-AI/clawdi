@@ -411,6 +411,65 @@ def test_runtime_source_revalidates_persisted_agent_plugins_before_rendering() -
         _render(batch)
 
 
+def test_runtime_source_switches_only_clawdi_components_for_capable_clients() -> None:
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    state.mcp = {
+        "servers": {
+            "clawdi": {"command": "clawdi", "args": ["mcp"]},
+            "workspace-tools": {"command": "node", "args": ["workspace-tools.js"]},
+        }
+    }
+    state.skills = {
+        "entries": {
+            "clawdi": {"enabled": True, "version": 1},
+            "workspace-helper": {"enabled": True, "version": 1},
+        }
+    }
+    state.agent_plugins = {
+        "schemaVersion": 1,
+        "installations": {
+            "clawdi-cloud": {
+                "installationId": "first-party:clawdi-cloud",
+                "version": "1.0.0",
+                "agentPluginsSchema": (
+                    "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+                ),
+                "source": {
+                    "type": "github",
+                    "url": "https://github.com/Clawdi-AI/store",
+                    "path": "v2/plugins/clawdi-cloud",
+                    "commit": "a" * 40,
+                },
+                "contentDigest": f"sha256-tree-v1:{'b' * 64}",
+                "secretRefs": {"clawdi-auth-token": "secret://clawdi/auth-token"},
+            }
+        },
+    }
+
+    old_client = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        project_agent_plugins=False,
+    )
+    capable_client = _render(batch)
+
+    assert "agentPlugins" not in old_client.manifest
+    assert set(old_client.manifest["mcp"]["servers"]) == {"clawdi", "workspace-tools"}
+    assert set(old_client.manifest["skills"]["entries"]) == {
+        "clawdi",
+        "workspace-helper",
+    }
+    assert capable_client.manifest["agentPlugins"] == state.agent_plugins
+    assert set(capable_client.manifest["mcp"]["servers"]) == {"workspace-tools"}
+    assert set(capable_client.manifest["skills"]["entries"]) == {"workspace-helper"}
+    assert capable_client.source_revision != old_client.source_revision
+
+
 def test_runtime_source_binds_whatsapp_capability_and_revision_to_link_credential_and_cert(
     monkeypatch,
 ) -> None:

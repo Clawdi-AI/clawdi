@@ -753,8 +753,12 @@ Agent Plugins use an explicit rollout capability because the v2 inner manifest
 is strict. The CLI sends
 `X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1`; Cloud omits
 `agentPlugins` for clients that do not send that token while retaining the
-`clawdiCli` desired update. After that update re-execs, the capable CLI fetches
-the plugin-bearing variant. Each projection has its own canonical
+`clawdiCli` desired update and legacy Clawdi Skill/MCP. After that update
+re-execs, the capable CLI fetches the plugin-bearing variant. When the
+`clawdi-cloud` installation is present, that variant removes only the legacy
+`clawdi` Skill and MCP entries; unrelated Workspace and Project components are
+unchanged. Removing the installation reverses the switch. Each projection has
+its own canonical
 `sourceRevision` and strong ETag, and successful responses vary on both
 `Accept` and `X-Clawdi-Runtime-Capabilities`, so a validator from one variant
 cannot produce a false `304` for the other.
@@ -864,11 +868,27 @@ validated without contacting the endpoint during reconciliation. Public
 literal headers and public stdio environment values are supported. Native
 runtimes perform the standard single expansion of `PLUGIN_ROOT` and
 `PLUGIN_DATA`; other env text, including `${OTHER}`, remains literal.
-Package-declared Clawdi `configuration.secretSlots`, non-empty Hosted
-`secretRefs`, sensitive header or env names, credential-looking literals, and
-placeholder-bearing remote headers fail closed because no native secret-binding
-contract is available. Hosted `secretRefs` are rejected before download; the
-package credential policy is enforced before any native probe or live mutation.
+Package-declared Clawdi `configuration.secretSlots` use the Store's closed
+structural contract. Hosted validates exact required/optional slot coverage,
+undeclared refs, server/transport compatibility, literal target overlap, and
+case-insensitive binding collisions. A referenced stdio env binding remains
+unsupported. An active remote header binding is accepted only for an exact
+HTTP(S) origin and path carrying the package's public
+`X-Clawdi-Agent-Plugin` routing marker. The transparent egress sidecar matches
+that marker exactly, removes it before upstream, and sets the bound header from
+root-side `secretRef` material with the declared public prefix. Real values do
+not enter package bytes, native plugin config, runtime process env, receipts,
+profile bundles, logs, or public projections. The package credential policy is
+enforced before any native probe or live mutation, and missing referenced
+values reject before download.
+
+The first-party migration identity is `clawdi-cloud@1.0.0`, with portable Skill
+and MCP names `clawdi`, required slot `clawdi-auth-token`, and package digest
+`sha256-tree-v1:4b4b5a3fbb772f71a9786ac3383dfae823fdc8c74e3232be33950501031c7cd7`.
+Its deployable source must be an exact commit in the public
+`https://github.com/Clawdi-AI/store` repository at
+`v2/plugins/clawdi-cloud`. A private review repository, mutable ref, or
+unpublished future commit is not a valid production identity.
 Every package must also carry the complete Store `ai.clawdi` extension and at
 least one Skill or MCP server; bare MCP commands require declared compatible
 executables. Exact duplicate JSON keys remain a Store ingestion rejection
@@ -896,7 +916,8 @@ package capability pass.
 | --- | --- |
 | Remote query and public literal headers | Supported |
 | Public stdio env, including native `PLUGIN_ROOT`/`PLUGIN_DATA` expansion and literal `${OTHER}` | Supported |
-| `configuration.secretSlots` or non-empty Hosted `secretRefs` | Rejected |
+| Remote header `secretSlots` through exact marker-bound transparent egress | Supported |
+| Stdio env secret binding | Rejected |
 | Portable SSE | OpenClaw requires native inspect proof; Hermes rejects |
 
 A private last-applied receipt binds each managed name to `installationId`,

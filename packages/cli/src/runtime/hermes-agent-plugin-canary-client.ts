@@ -140,6 +140,7 @@ function hermesCanaryPackage(input: {
 		receiptNativeId: null,
 		mcpServerNames: [publicServerName],
 		hasStreamableHttpMcp: true,
+		egressProfiles: [],
 		tree,
 	};
 }

@@ -973,6 +973,11 @@ export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 	}
 	if (hasEnabledRuntime) {
 		for (const ref of egressProfileSecretRefs(manifest.egressProfiles)) refs.add(ref);
+		for (const installation of Object.values(
+			manifest.projection?.agentPlugins?.installations ?? {},
+		)) {
+			for (const ref of Object.values(installation.secretRefs)) refs.add(ref);
+		}
 		for (const credential of managedWhatsAppAuthCredentials(
 			manifest.projection?.channelCredentials,
 		)) {

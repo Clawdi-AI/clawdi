@@ -91,6 +91,8 @@ RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
+_CLAWDI_AGENT_PLUGIN_PACKAGE = "clawdi-cloud"
+_CLAWDI_AGENT_PLUGIN_COMPONENT = "clawdi"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
 _CODEX_TOOL_LEGACY_RUNTIME_ENV = "OPENAI_API_KEY"
@@ -534,6 +536,24 @@ def _project_runtime_skills(
     return {"entries": entries} if entries else None
 
 
+def _without_legacy_clawdi_components(
+    mcp: dict[str, Any] | None,
+    skills: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    projected_mcp = mcp
+    if mcp is not None:
+        servers = dict(mcp.get("servers", {}))
+        servers.pop(_CLAWDI_AGENT_PLUGIN_COMPONENT, None)
+        projected_mcp = {**mcp, "servers": servers} if servers else None
+
+    projected_skills = skills
+    if skills is not None:
+        entries = dict(skills.get("entries", {}))
+        entries.pop(_CLAWDI_AGENT_PLUGIN_COMPONENT, None)
+        projected_skills = {**skills, "entries": entries} if entries else None
+    return projected_mcp, projected_skills
+
+
 def render_runtime_source(
     batch: RuntimeSourceBatch,
     *,
@@ -613,6 +633,13 @@ def render_runtime_source(
         public_api_url=public_api_url,
         signing_key=vault_key_identity,
     )
+    project_clawdi_agent_plugin = (
+        project_agent_plugins
+        and agent_plugins is not None
+        and _CLAWDI_AGENT_PLUGIN_PACKAGE in agent_plugins["installations"]
+    )
+    if project_clawdi_agent_plugin:
+        mcp, skills = _without_legacy_clawdi_components(mcp, skills)
     try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:
