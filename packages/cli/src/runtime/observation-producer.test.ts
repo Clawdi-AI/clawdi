@@ -62,7 +62,7 @@ function writeApplyIdentityFile(paths: RuntimePaths, generation: number): void {
 	writeFileSync(
 		path,
 		JSON.stringify({
-			schemaVersion: "clawdi.runtimeContext.v2",
+			schemaVersion: "clawdi.runtimeContext.v3",
 			backend: "incus",
 			apply: {
 				generation,
@@ -70,7 +70,6 @@ function writeApplyIdentityFile(paths: RuntimePaths, generation: number): void {
 				applyReceiptId: `apply-receipt-000${generation}`,
 				bootNonce: "boot-nonce-000001",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_producer",

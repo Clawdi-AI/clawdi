@@ -339,7 +339,7 @@ function cliEnv(fixture: Fixture, runtimeMode: "local" | "hosted"): Record<strin
 	writeFileSync(
 		fixture.contextPath,
 		`${JSON.stringify({
-			schemaVersion: "clawdi.runtimeContext.v2",
+			schemaVersion: "clawdi.runtimeContext.v3",
 			backend: "incus",
 			apply: {
 				generation: 1,
@@ -347,7 +347,6 @@ function cliEnv(fixture: Fixture, runtimeMode: "local" | "hosted"): Record<strin
 				applyReceiptId: "apply-receipt-daemon-rpc",
 				bootNonce: "boot-nonce-daemon-rpc-01",
 			},
-			cliPackageSpec: "clawdi@1.2.3-test",
 			manifestSource: {
 				type: "http",
 				url: `${server.url.origin}/v1/runtime/manifest`,

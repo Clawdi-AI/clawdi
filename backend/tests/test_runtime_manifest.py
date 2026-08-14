@@ -149,7 +149,7 @@ TEST_HERMES_DASHBOARD_AUTH = {
 }
 
 
-def test_hosted_filebrowser_companion_enforces_pins_and_auth_binding() -> None:
+def test_hosted_filebrowser_companion_enforces_source_and_auth_binding() -> None:
     files_deployment_id = "hdep_files_contract"
     companion = _filebrowser_companion(files_deployment_id)
     body = _runtime_state_body(
@@ -183,10 +183,25 @@ def test_hosted_filebrowser_companion_enforces_pins_and_auth_binding() -> None:
         with pytest.raises(ValidationError, match="Files authentication fields must reference"):
             AdminRuntimeStateUpsert.model_validate(invalid)
 
-    unpinned = json.loads(json.dumps(body))
-    unpinned["companions"]["filebrowser"]["assets"]["amd64"]["sha256"] = "d" * 64
-    with pytest.raises(ValidationError, match="pinned release"):
-        AdminRuntimeStateUpsert.model_validate(unpinned)
+    next_release = json.loads(json.dumps(body))
+    next_release["companions"]["filebrowser"]["version"] = "v1.6.0-stable"
+    next_release["companions"]["filebrowser"]["commit"] = "c" * 40
+    for architecture in ("amd64", "arm64"):
+        asset = next_release["companions"]["filebrowser"]["assets"][architecture]
+        asset["url"] = (
+            "https://github.com/gtsteffaniak/filebrowser/releases/download/"
+            f"v1.6.0-stable/linux-{architecture}-filebrowser"
+        )
+        asset["sha256"] = "d" * 64
+    AdminRuntimeStateUpsert.model_validate(next_release)
+
+    mismatched = json.loads(json.dumps(next_release))
+    mismatched["companions"]["filebrowser"]["assets"]["amd64"]["url"] = (
+        "https://github.com/gtsteffaniak/filebrowser/releases/download/"
+        "v1.5.0-stable/linux-amd64-filebrowser"
+    )
+    with pytest.raises(ValidationError, match="must match its release"):
+        AdminRuntimeStateUpsert.model_validate(mismatched)
 
 
 def test_hosted_runtime_skills_retain_exact_repository_root_source() -> None:
@@ -331,6 +346,23 @@ def test_hosted_mcp_accepts_public_literals_and_secret_ref_credentials() -> None
             }
         }
     )
+
+
+def test_hosted_platform_mcp_keeps_secret_ref_header_boundary() -> None:
+    server = {
+        "platform": "clawdi",
+        "transport": "streamable-http",
+        "headers": {
+            "Authorization": {
+                "secretRef": "secret://clawdi/auth-token",
+                "prefix": "Bearer ",
+            }
+        },
+    }
+    HostedRuntimeMcp.model_validate({"servers": {"clawdi": server}})
+    server["headers"] = {"Authorization": "literal-token"}
+    with pytest.raises(ValidationError, match="must use secretRef"):
+        HostedRuntimeMcp.model_validate({"servers": {"clawdi": server}})
 
 
 async def _create_bundle_runtime(admin_client, db_session, seed_user):

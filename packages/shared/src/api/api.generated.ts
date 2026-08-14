@@ -5338,16 +5338,10 @@ export interface components {
         };
         /** HostedFileBrowserCompanion */
         HostedFileBrowserCompanion: {
-            /**
-             * Version
-             * @constant
-             */
-            version: "v1.5.0-stable";
-            /**
-             * Commit
-             * @constant
-             */
-            commit: "79552f8adb27c3e29934c4001660eb98f4aab5d6";
+            /** Version */
+            version: string;
+            /** Commit */
+            commit: string;
             /**
              * Listen
              * @constant
@@ -5526,7 +5520,7 @@ export interface components {
         HostedRuntimeMcp: {
             /** Servers */
             servers: {
-                [key: string]: components["schemas"]["HostedRuntimeStdioMcpServer"] | components["schemas"]["HostedRuntimeRemoteMcpServer"];
+                [key: string]: components["schemas"]["HostedRuntimeStdioMcpServer"] | components["schemas"]["HostedRuntimeRemoteMcpServer"] | components["schemas"]["HostedRuntimePlatformMcpServer"];
             };
         };
         /** HostedRuntimeMcpSecretHeader */
@@ -5691,6 +5685,23 @@ export interface components {
             convergeError?: string | null;
             /** Truncated */
             truncated?: boolean | null;
+        };
+        /** HostedRuntimePlatformMcpServer */
+        HostedRuntimePlatformMcpServer: {
+            /**
+             * Platform
+             * @constant
+             */
+            platform: "clawdi";
+            /**
+             * Transport
+             * @constant
+             */
+            transport: "streamable-http";
+            /** Headers */
+            headers?: {
+                [key: string]: string | components["schemas"]["HostedRuntimeMcpSecretHeader"];
+            };
         };
         /** HostedRuntimePrimaryModel */
         HostedRuntimePrimaryModel: {

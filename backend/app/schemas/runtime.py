@@ -28,11 +28,6 @@ HostedRuntimeLanguage = Literal[
 ]
 HostedRuntimeName = Literal["openclaw", "hermes"]
 
-FILE_BROWSER_VERSION = "v1.5.0-stable"
-FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6"
-FILE_BROWSER_AMD64_SHA256 = "8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e"
-FILE_BROWSER_ARM64_SHA256 = "3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f"
-
 
 class ProjectSkillCapabilityReport(BaseModel):
     """Current Connected Agent observation, separate from deployment generations."""
@@ -92,21 +87,6 @@ class HostedFileBrowserAssets(BaseModel):
     amd64: HostedFileBrowserAsset
     arm64: HostedFileBrowserAsset
 
-    @model_validator(mode="after")
-    def validate_pins(self) -> "HostedFileBrowserAssets":
-        release = (
-            f"https://github.com/gtsteffaniak/filebrowser/releases/download/{FILE_BROWSER_VERSION}"
-        )
-        expected = {
-            "amd64": (f"{release}/linux-amd64-filebrowser", FILE_BROWSER_AMD64_SHA256),
-            "arm64": (f"{release}/linux-arm64-filebrowser", FILE_BROWSER_ARM64_SHA256),
-        }
-        for arch, asset in (("amd64", self.amd64), ("arm64", self.arm64)):
-            url, digest = expected[arch]
-            if asset.url != url or asset.sha256 != digest:
-                raise ValueError(f"Files {arch} artifact must match the pinned release")
-        return self
-
 
 class HostedFileBrowserAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -139,8 +119,8 @@ class HostedFileBrowserAuth(BaseModel):
 class HostedFileBrowserCompanion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal["v1.5.0-stable"]
-    commit: Literal["79552f8adb27c3e29934c4001660eb98f4aab5d6"]
+    version: str = Field(pattern=r"^v[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")
+    commit: str = Field(pattern=_GIT_COMMIT_PATTERN.pattern)
     listen: Literal["0.0.0.0"]
     port: Literal[9120]
     baseURL: Literal["/"]
@@ -148,6 +128,34 @@ class HostedFileBrowserCompanion(BaseModel):
     sourceRoot: Literal["/home/clawdi"]
     assets: HostedFileBrowserAssets
     auth: HostedFileBrowserAuth
+
+    @model_validator(mode="after")
+    def validate_assets(self) -> "HostedFileBrowserCompanion":
+        for architecture, asset in (
+            ("amd64", self.assets.amd64),
+            ("arm64", self.assets.arm64),
+        ):
+            path = (
+                f"/gtsteffaniak/filebrowser/releases/download/{self.version}"
+                f"/linux-{architecture}-filebrowser"
+            )
+            try:
+                parsed = urlsplit(asset.url)
+                parsed.port
+            except ValueError as exc:
+                raise ValueError("Files artifact URL must be canonical") from exc
+            if (
+                parsed.scheme != "https"
+                or parsed.hostname != "github.com"
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or parsed.path != path
+                or asset.url != f"https://github.com{path}"
+            ):
+                raise ValueError("Files artifact URL must match its release and architecture")
+        return self
 
 
 class HostedRuntimeCompanions(BaseModel):
@@ -720,6 +728,22 @@ def _is_mcp_credential_header(name: str) -> bool:
     )
 
 
+def _validate_mcp_headers(
+    value: dict[str, str | HostedRuntimeMcpSecretHeader],
+) -> dict[str, str | HostedRuntimeMcpSecretHeader]:
+    if any(_EGRESS_HEADER_NAME_PATTERN.fullmatch(name) is None for name in value):
+        raise ValueError("MCP header names must be canonical")
+    normalized = [name.lower() for name in value]
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("MCP header names must be unique case-insensitively")
+    if any(
+        isinstance(header_value, str) and _is_mcp_credential_header(name)
+        for name, header_value in value.items()
+    ):
+        raise ValueError("credential-bearing MCP headers must use secretRef")
+    return value
+
+
 class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
     url: str = Field(min_length=1, max_length=2000)
     transport: Literal["streamable-http", "sse"]
@@ -747,20 +771,25 @@ class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
     def _validate_headers(
         cls, value: dict[str, str | HostedRuntimeMcpSecretHeader]
     ) -> dict[str, str | HostedRuntimeMcpSecretHeader]:
-        if any(_EGRESS_HEADER_NAME_PATTERN.fullmatch(name) is None for name in value):
-            raise ValueError("MCP header names must be canonical")
-        normalized = [name.lower() for name in value]
-        if len(normalized) != len(set(normalized)):
-            raise ValueError("MCP header names must be unique case-insensitively")
-        if any(
-            isinstance(header_value, str) and _is_mcp_credential_header(name)
-            for name, header_value in value.items()
-        ):
-            raise ValueError("credential-bearing MCP headers must use secretRef")
-        return value
+        return _validate_mcp_headers(value)
 
 
-HostedRuntimeMcpServer = HostedRuntimeStdioMcpServer | HostedRuntimeRemoteMcpServer
+class HostedRuntimePlatformMcpServer(_StrictHostedWireModel):
+    platform: Literal["clawdi"]
+    transport: Literal["streamable-http"]
+    headers: dict[str, str | HostedRuntimeMcpSecretHeader] = Field(default_factory=dict)
+
+    @field_validator("headers")
+    @classmethod
+    def _validate_headers(
+        cls, value: dict[str, str | HostedRuntimeMcpSecretHeader]
+    ) -> dict[str, str | HostedRuntimeMcpSecretHeader]:
+        return _validate_mcp_headers(value)
+
+
+HostedRuntimeMcpServer = (
+    HostedRuntimeStdioMcpServer | HostedRuntimeRemoteMcpServer | HostedRuntimePlatformMcpServer
+)
 
 
 class HostedRuntimeMcp(_StrictHostedWireModel):

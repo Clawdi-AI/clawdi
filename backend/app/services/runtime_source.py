@@ -44,8 +44,11 @@ from app.schemas.runtime import (
     HostedRuntimeCompanions,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
+    HostedRuntimeMcp,
     HostedRuntimeName,
+    HostedRuntimePlatformMcpServer,
     HostedRuntimeRecovery,
+    HostedRuntimeRemoteMcpServer,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     PersistedHostedRuntimeSkills,
@@ -53,7 +56,6 @@ from app.schemas.runtime import (
     parse_exact_semver,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
-    validate_hosted_runtime_mcp_desired_state,
 )
 from app.schemas.runtime_observed import HostedRuntimeObservedV2
 from app.services.channels import (
@@ -582,7 +584,7 @@ def render_runtime_source(
     except ValidationError as exc:
         raise RuntimeSourceError("Hosted runtime tools state is invalid") from exc
     try:
-        mcp = validate_hosted_runtime_mcp_desired_state(state.mcp)
+        mcp_document = HostedRuntimeMcp.model_validate(state.mcp) if state.mcp is not None else None
         workspace_skills = (
             PersistedHostedRuntimeSkills.model_validate(state.skills).model_dump(
                 exclude_none=True,
@@ -594,6 +596,20 @@ def render_runtime_source(
         )
     except (ValidationError, ValueError) as exc:
         raise RuntimeSourceError("Hosted runtime MCP or skills state is invalid") from exc
+    if mcp_document is None:
+        mcp = None
+    else:
+        clawdi_mcp = mcp_document.servers.get("clawdi")
+        public_clawdi_mcp_url = f"{public_api_url.rstrip('/')}/v1/mcp/clawdi"
+        if isinstance(clawdi_mcp, HostedRuntimePlatformMcpServer):
+            mcp_document.servers["clawdi"] = HostedRuntimeRemoteMcpServer(
+                url=public_clawdi_mcp_url,
+                transport=clawdi_mcp.transport,
+                headers=clawdi_mcp.headers,
+            )
+        elif isinstance(clawdi_mcp, HostedRuntimeRemoteMcpServer):
+            clawdi_mcp.url = public_clawdi_mcp_url
+        mcp = mcp_document.model_dump(mode="json")
     skills = _project_runtime_skills(
         workspace_skills,
         batch.project_skills.get(environment_id, ()),

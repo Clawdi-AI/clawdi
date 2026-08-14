@@ -134,7 +134,6 @@ function explicitTestApplyContext(
 			applyReceiptId: "test-apply-receipt",
 			bootNonce: "test-boot-nonce-0001",
 		},
-		cliPackageSpec: "clawdi@1.2.3-test",
 		manifestSource: {
 			type: "http" as const,
 			url: "https://runtime.test/v1/runtime/manifest",
@@ -175,9 +174,6 @@ function liveTestApplyContext(): RuntimeApplyContext {
 		},
 		get identity() {
 			return currentTestApplyContext.identity;
-		},
-		get cliPackageSpec() {
-			return currentTestApplyContext.cliPackageSpec;
 		},
 		get manifestSource() {
 			return currentTestApplyContext.manifestSource;
@@ -614,7 +610,6 @@ function setRuntimeApplyContextFixture(
 	contextOverrides: Partial<TestRuntimeContextFixture> = {},
 ): void {
 	const contextValues: TestRuntimeContextFixture = {
-		cliPackageSpec: "clawdi@1.2.3-test",
 		manifestSourceUrl: "https://runtime.test/v1/runtime/manifest",
 		bootstrapBearer: "file-runtime-token",
 		...contextOverrides,
@@ -623,7 +618,6 @@ function setRuntimeApplyContextFixture(
 		kind: "context-file",
 		backend: "incus",
 		identity,
-		cliPackageSpec: contextValues.cliPackageSpec,
 		manifestSource: {
 			type: "http",
 			url: contextValues.manifestSourceUrl,
@@ -2318,13 +2312,11 @@ const OFFLINE_RUNTIME_APPLY_IDENTITY = {
 };
 
 interface TestRuntimeContextFixture {
-	cliPackageSpec: string;
 	manifestSourceUrl: string;
 	bootstrapBearer: string;
 }
 
 const CANONICAL_TEST_CONTEXT: TestRuntimeContextFixture = {
-	cliPackageSpec: "clawdi@1.2.3-test",
 	manifestSourceUrl: "https://runtime.test/v1/runtime/manifest",
 	bootstrapBearer: "file-runtime-token",
 };
@@ -2336,7 +2328,6 @@ function writeCanonicalApplyContext(
 		kind: "context-file",
 		backend: "incus",
 		identity,
-		cliPackageSpec: context.cliPackageSpec,
 		manifestSource: {
 			type: "http",
 			url: context.manifestSourceUrl,
@@ -9737,11 +9728,7 @@ fi
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
-		const cliContext = {
-			...CANONICAL_TEST_CONTEXT,
-			cliPackageSpec: "clawdi@1.2.3-test",
-		};
-		setRuntimeApplyGeneration(13, cliContext);
+		setRuntimeApplyGeneration(13);
 		const runtimeContextBefore = JSON.stringify(currentTestApplyContext);
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
@@ -10619,11 +10606,7 @@ fi
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
-		const cliContext = {
-			...CANONICAL_TEST_CONTEXT,
-			cliPackageSpec: `clawdi@${currentVersion}`,
-		};
-		setRuntimeApplyGeneration(1, cliContext);
+		setRuntimeApplyGeneration(1);
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
@@ -10807,7 +10790,7 @@ chmod +x "$prefix/bin/clawdi"
 		]);
 
 		try {
-			setRuntimeApplyGeneration(2, cliContext);
+			setRuntimeApplyGeneration(2);
 			await runtimeWatch({ once: true, json: true });
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
@@ -11862,10 +11845,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch never enters a failing projection after CLI activation", async () => {
-		setRuntimeApplyGeneration(16, {
-			...CANONICAL_TEST_CONTEXT,
-			cliPackageSpec: "clawdi@1.3.0-test.1",
-		});
+		setRuntimeApplyGeneration(16);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12022,10 +12002,7 @@ chmod +x "$HOME/.local/bin/openclaw"
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
-		setRuntimeApplyGeneration(18, {
-			...CANONICAL_TEST_CONTEXT,
-			cliPackageSpec: `clawdi@${currentVersion}`,
-		});
+		setRuntimeApplyGeneration(18);
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
@@ -12213,10 +12190,7 @@ chmod +x "$prefix/bin/clawdi"
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
-		setRuntimeApplyGeneration(17, {
-			...CANONICAL_TEST_CONTEXT,
-			cliPackageSpec: `clawdi@${currentVersion}`,
-		});
+		setRuntimeApplyGeneration(17);
 		const firstAttempt = join(root, "npm-etarget-first-attempt");
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
@@ -12913,11 +12887,7 @@ chmod +x "$prefix/bin/clawdi"
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
-		const cliContext = {
-			...CANONICAL_TEST_CONTEXT,
-			cliPackageSpec: `clawdi@${currentVersion}`,
-		};
-		setRuntimeApplyGeneration(1, cliContext);
+		setRuntimeApplyGeneration(1);
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(dirname(policyPath), { recursive: true });
@@ -13008,7 +12978,7 @@ chmod +x "$prefix/bin/clawdi"
 
 			logs.length = 0;
 			process.exitCode = undefined;
-			setRuntimeApplyGeneration(1, cliContext);
+			setRuntimeApplyGeneration(1);
 			await runtimeInit({ nonInteractive: true, json: true });
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
@@ -13320,10 +13290,7 @@ exit 64
 			channelBindings: bundle.channelBindings,
 			secretValues: bundle.secretValues,
 		});
-		setRuntimeApplyGeneration(bundle.applyGeneration, {
-			...CANONICAL_TEST_CONTEXT,
-			cliPackageSpec: bundle.manifest.clawdiCli.packageSpec,
-		});
+		setRuntimeApplyGeneration(bundle.applyGeneration);
 
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(dirname(policyPath), { recursive: true });

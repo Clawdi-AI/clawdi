@@ -205,13 +205,12 @@ export const hostedFixtureCliPayloadPolicySchema = hostedCliPayloadPolicySchema.
 
 const sha256Schema = z.string().regex(/^[a-fA-F0-9]{64}$/);
 
-export const FILE_BROWSER_VERSION = "v1.5.0-stable";
-export const FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6";
 export const FILE_BROWSER_PORT = 9120;
-export const FILE_BROWSER_AMD64_SHA256 =
-	"8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e";
-export const FILE_BROWSER_ARM64_SHA256 =
-	"3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f";
+
+const fileBrowserVersionSchema = z
+	.string()
+	.regex(/^v[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/, "must be a canonical release tag");
+const fileBrowserCommitSchema = z.string().regex(/^[a-f0-9]{40}$/);
 
 const fileBrowserAssetSchema = z
 	.object({
@@ -221,6 +220,29 @@ const fileBrowserAssetSchema = z
 	.strict();
 
 const FILE_BROWSER_AUDIENCE_PREFIX = "clawdi-files:";
+
+function isCanonicalFileBrowserAssetUrl(
+	url: string,
+	version: string,
+	architecture: string,
+): boolean {
+	try {
+		const parsed = new URL(url);
+		return (
+			parsed.protocol === "https:" &&
+			parsed.hostname === "github.com" &&
+			parsed.port === "" &&
+			parsed.username === "" &&
+			parsed.password === "" &&
+			parsed.search === "" &&
+			parsed.hash === "" &&
+			parsed.pathname ===
+				`/gtsteffaniak/filebrowser/releases/download/${version}/linux-${architecture}-filebrowser`
+		);
+	} catch {
+		return false;
+	}
+}
 
 const fileBrowserAuthSchema = z
 	.object({
@@ -258,8 +280,8 @@ const fileBrowserAuthSchema = z
 
 export const fileBrowserCompanionSchema = z
 	.object({
-		version: z.literal(FILE_BROWSER_VERSION),
-		commit: z.literal(FILE_BROWSER_COMMIT),
+		version: fileBrowserVersionSchema,
+		commit: fileBrowserCommitSchema,
 		listen: z.literal("0.0.0.0"),
 		port: z.literal(FILE_BROWSER_PORT),
 		baseURL: z.literal("/"),
@@ -267,23 +289,30 @@ export const fileBrowserCompanionSchema = z
 		sourceRoot: z.literal("/home/clawdi"),
 		assets: z
 			.object({
-				amd64: fileBrowserAssetSchema.extend({
-					url: z.literal(
-						`https://github.com/gtsteffaniak/filebrowser/releases/download/${FILE_BROWSER_VERSION}/linux-amd64-filebrowser`,
-					),
-					sha256: z.literal(FILE_BROWSER_AMD64_SHA256),
-				}),
-				arm64: fileBrowserAssetSchema.extend({
-					url: z.literal(
-						`https://github.com/gtsteffaniak/filebrowser/releases/download/${FILE_BROWSER_VERSION}/linux-arm64-filebrowser`,
-					),
-					sha256: z.literal(FILE_BROWSER_ARM64_SHA256),
-				}),
+				amd64: fileBrowserAssetSchema,
+				arm64: fileBrowserAssetSchema,
 			})
 			.strict(),
 		auth: fileBrowserAuthSchema,
 	})
-	.strict();
+	.strict()
+	.superRefine((companion, ctx) => {
+		for (const architecture of ["amd64", "arm64"] as const) {
+			if (
+				!isCanonicalFileBrowserAssetUrl(
+					companion.assets[architecture].url,
+					companion.version,
+					architecture,
+				)
+			) {
+				ctx.addIssue({
+					code: "custom",
+					message: "Files asset URL must match its declared release and architecture",
+					path: ["assets", architecture, "url"],
+				});
+			}
+		}
+	});
 
 const runtimeCompanionsSchema = z
 	.object({
