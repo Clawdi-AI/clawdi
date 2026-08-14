@@ -2553,14 +2553,21 @@ async def test_admin_register_env_rejects_default_name_request_field(admin_clien
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
 async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     admin_client, db_session, seed_user
 ):
     from sqlalchemy import select
 
+    from app.core.config import settings
     from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
     from app.models.session import AgentEnvironment
-    from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
+    from app.services.runtime_source import (
+        expected_runtime_bundle_v2_etag,
+        load_runtime_source_batch,
+        render_runtime_source,
+        vault_key_identity,
+    )
     from app.services.vault_crypto import decrypt
     from tests.hosted_runtime_fixtures import (
         CANONICAL_CODEX_TOOL_PROVIDER_ID,
@@ -2681,6 +2688,33 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     )
     assert first_source.manifest["runtimes"]["openclaw"]["provider_ids"] == ["clawdi"]
     assert first_source.manifest["terminalTooling"]["codex"]["provider_id"] == "clawdi"
+
+    authority_source = render_runtime_source(
+        first_batch,
+        environment_id=agent_id,
+        public_api_url=settings.public_api_url,
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+        decrypt_secrets=False,
+    )
+    authority = await admin_client.get(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+        params={"kind": "clerk", "ref": seed_user.clerk_id},
+    )
+    assert authority.status_code == 200, authority.text
+    assert authority.json() == {
+        "environmentId": str(agent_id),
+        "deploymentId": "dep-admin-agent-alias",
+        "instanceId": "iid-admin-agent-alias",
+        "sourceRevision": authority_source.source_revision,
+        "etag": expected_runtime_bundle_v2_etag(authority_source.source_revision),
+    }
+    cross_owner = await admin_client.get(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+        params={"kind": "clerk", "ref": "user_another_owner"},
+    )
+    assert cross_owner.status_code == 404, cross_owner.text
 
     repeated = await admin_client.put(
         f"/v1/admin/agents/{agent_id}/runtime-state",

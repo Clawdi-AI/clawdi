@@ -90,7 +90,7 @@ from app.schemas.channel import (
     ChannelCommandSyncResponse,
     ChannelWhatsAppOnboardingSessionResponse,
 )
-from app.schemas.platform import PlatformOwner
+from app.schemas.platform import PlatformOwner, RuntimeSourceAuthorityResponse
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
@@ -187,6 +187,8 @@ from app.services.runtime_manifest_resources import (
     lock_runtime_manifest_skill_reservations,
 )
 from app.services.runtime_observation import RuntimeObservationProtocolError
+from app.services.runtime_source import RuntimeSourceError, RuntimeSourceNotFoundError
+from app.services.runtime_source_authority import load_runtime_source_authority
 from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
@@ -2153,6 +2155,39 @@ async def _admin_upsert_runtime_state(
         instance_id=body.instance_id,
         generation=body.generation,
         apply_generation=apply_generation,
+    )
+
+
+@router.get(
+    "/agents/{agent_id}/runtime-state",
+    response_model=RuntimeSourceAuthorityResponse,
+    include_in_schema=False,
+)
+async def admin_get_runtime_source_authority(
+    agent_id: UUID,
+    owner: Annotated[PlatformOwner, Query()],
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeSourceAuthorityResponse:
+    target = await _find_admin_owner(db, owner)
+    try:
+        authority = await load_runtime_source_authority(
+            environment_id=agent_id,
+            owner_user_id=target.id,
+        )
+    except RuntimeSourceNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found") from None
+    except RuntimeSourceError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Runtime source is invalid",
+        ) from None
+    return RuntimeSourceAuthorityResponse(
+        environmentId=authority.environment_id,
+        deploymentId=authority.deployment_id,
+        instanceId=authority.instance_id,
+        sourceRevision=authority.source_revision,
+        etag=authority.etag,
     )
 
 
