@@ -494,6 +494,19 @@ describe("Hosted Agent Plugin package preparation", () => {
 				},
 			},
 			{
+				label: "Clawdi case-fold duplicate display tags",
+				files: pluginFiles(undefined, "1.2.3", {
+					"ai.clawdi": clawdiExtension({
+						display: {
+							name: "Acme Tools",
+							category: "tools",
+							tags: ["straße", "strasse"],
+							languages: [],
+						},
+					}),
+				}),
+			},
+			{
 				label: "Clawdi incompatible runtime",
 				files: pluginFiles(undefined, "1.2.3", {
 					"ai.clawdi": clawdiExtension({
@@ -538,6 +551,7 @@ describe("Hosted Agent Plugin package preparation", () => {
 			})),
 			...[
 				{ type: "streamable-http", url: `https://mcp.example.test/${credentialTemplate}` },
+				{ type: "streamable-http", url: "https://mcp.example.test/\u0085path" },
 				{ type: "streamable-http", url: "https://mcp.example.test/path#" },
 				{ type: "streamable-http", url: "https://@mcp.example.test/path" },
 				{

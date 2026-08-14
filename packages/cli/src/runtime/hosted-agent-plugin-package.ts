@@ -156,7 +156,7 @@ const boundedUniqueStrings = (maximumItems: number, maximumLength: number) =>
 		.array(z.string().min(1).max(maximumLength))
 		.max(maximumItems)
 		.refine(
-			(values) => new Set(values.map((value) => value.toLowerCase())).size === values.length,
+			(values) => new Set(values.map(unicodeCaseFold)).size === values.length,
 			"must not contain case-folded duplicates",
 		);
 const clawdiDisplaySchema = z
@@ -846,7 +846,7 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 	}
 	if (
 		server.url.includes("\\") ||
-		/\s/u.test(server.url) ||
+		/[\s\u0085]/u.test(server.url) ||
 		[...server.url].some((character) => character.charCodeAt(0) < 0x20)
 	) {
 		throw new Error("Agent Plugin remote MCP URL is invalid");
