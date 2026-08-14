@@ -69,7 +69,11 @@ import {
 	writeOAuthCredentialLedger,
 } from "../lib/oauth-credential-ledger";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
+import {
+	type RuntimeUserProcessRevisionAliases,
+	readRuntimeAppliedState,
+	runtimeContentSha256,
+} from "./applied-state";
 import type { RuntimeApplyContext } from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
@@ -336,6 +340,7 @@ export interface RuntimePrivateAppliedAuthority {
 	daemonAuthTokenRevision?: string;
 	daemonProgramRevision?: string;
 	egressSidecarSecretRevision?: string;
+	userProcessRevisionAliases?: RuntimeUserProcessRevisionAliases;
 }
 
 interface RuntimeInstallObservation {

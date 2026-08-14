@@ -104,6 +104,29 @@ describe("runtime applied state", () => {
 				daemonProgramRevision: "not-a-private-revision",
 			}).success,
 		).toBe(false);
+		const revisionAlias = {
+			"openclaw-gateway.service": {
+				desiredRevision: "d".repeat(32),
+				processRevision: "a".repeat(32),
+			},
+		};
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				userProcessRevisionAliases: revisionAlias,
+			}).success,
+		).toBe(true);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				userProcessRevisionAliases: {
+					"openclaw-gateway.service": {
+						desiredRevision: "d".repeat(32),
+						processRevision: "d".repeat(32),
+					},
+				},
+			}).success,
+		).toBe(false);
 	});
 
 	test("reads old state through the named fallback and preserves explicit apply generation", () => {
