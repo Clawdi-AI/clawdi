@@ -651,6 +651,37 @@ async def _assert_admin_target_owns_environment(
     return target.id
 
 
+async def _assert_admin_cleanup_target_owns_environment(
+    db: AsyncSession,
+    *,
+    env: AgentEnvironment,
+    target_clerk_id: str | None,
+) -> UUID:
+    """Verify retained ownership without requiring an active principal."""
+
+    if target_clerk_id is None:
+        return env.user_id
+
+    target_user_id = await db.scalar(
+        select(User.id).where(
+            User.principal_kind == PRINCIPAL_KIND_CLERK,
+            User.clerk_id == target_clerk_id,
+        )
+    )
+    if target_user_id is None or env.user_id != target_user_id:
+        logger.warning(
+            "admin_environment_owner_rejected target_clerk_id=%s env_id=%s owner_user_id=%s",
+            target_clerk_id,
+            env.id,
+            env.user_id,
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Agent environment is not owned by target user",
+        )
+    return target_user_id
+
+
 @router.post("/auth/keys", response_model=ApiKeyCreated)
 async def admin_mint_api_key(
     body: AdminApiKeyCreate,
@@ -1827,7 +1858,7 @@ async def _admin_delete_environment(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    target_user_id = await _assert_admin_target_owns_environment(
+    target_user_id = await _assert_admin_cleanup_target_owns_environment(
         db,
         env=env,
         target_clerk_id=target_clerk_id,
@@ -2162,7 +2193,7 @@ async def _admin_delete_runtime_state(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
-    target_user_id = await _assert_admin_target_owns_environment(
+    target_user_id = await _assert_admin_cleanup_target_owns_environment(
         db,
         env=env,
         target_clerk_id=target_clerk_id,
