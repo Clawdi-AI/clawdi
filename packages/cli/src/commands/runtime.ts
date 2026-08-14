@@ -18,6 +18,7 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
+	type RuntimeUserProcessRevisionAliases,
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
@@ -298,6 +299,7 @@ export function commitRuntimeAppliedState(input: {
 	daemonAuthTokenRevision?: string;
 	daemonProgramRevision?: string;
 	egressSidecarSecretRevision?: string;
+	userProcessRevisionAliases?: RuntimeUserProcessRevisionAliases;
 }): void {
 	if (
 		input.applyIdentity &&
@@ -338,6 +340,10 @@ export function commitRuntimeAppliedState(input: {
 				: {}),
 			...(input.egressSidecarSecretRevision
 				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
+				: {}),
+			...(input.userProcessRevisionAliases &&
+			Object.keys(input.userProcessRevisionAliases).length > 0
+				? { userProcessRevisionAliases: input.userProcessRevisionAliases }
 				: {}),
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
@@ -628,6 +634,41 @@ export function readSystemdUnitSnapshot(
 	};
 }
 
+function systemdDesiredProgramRevision(
+	paths: ReturnType<typeof getRuntimePaths>,
+	unit: string,
+): string {
+	if (!unit.endsWith(".service")) {
+		throw new Error(`managed systemd unit has invalid name: ${unit}`);
+	}
+	const programName = unit.slice(0, -".service".length);
+	const content = readFileSync(systemdEnvironmentFilePath(paths, programName), "utf8");
+	const parsed = parseDotenv(content).filter(([key]) => key === "CLAWDI_RUNTIME_REV");
+	const declarations = content
+		.split(/\r?\n/)
+		.filter((line) => line.startsWith("CLAWDI_RUNTIME_REV="));
+	const match = /^CLAWDI_RUNTIME_REV="([a-f0-9]{32})"$/.exec(declarations[0] ?? "");
+	if (parsed.length !== 1 || declarations.length !== 1 || !match) {
+		throw new Error("invalid revision declaration");
+	}
+	return match[1];
+}
+
+function readSystemdUserDesiredRevisions(
+	paths: ReturnType<typeof getRuntimePaths>,
+	units: Iterable<string>,
+): ReadonlyMap<string, string> {
+	const revisions = new Map<string, string>();
+	for (const unit of units) {
+		try {
+			revisions.set(unit, systemdDesiredProgramRevision(paths, unit));
+		} catch {
+			// Missing or malformed predecessor authority is not eligible for adoption.
+		}
+	}
+	return revisions;
+}
+
 function readManagedSystemdUnits(root: string): Map<string, string> {
 	const units = new Map<string, string>();
 	if (!existsSync(root)) return units;
@@ -706,6 +747,8 @@ export function applySystemdRuntimeUpdate(
 			userUnits: readonly string[];
 		};
 		preserveActiveUnits?: boolean;
+		previousUserDesiredRevisions?: ReadonlyMap<string, string>;
+		onUserProcessRevisionAliases?: (aliases: RuntimeUserProcessRevisionAliases) => void;
 		skipActivatedSystemUnits?: readonly string[];
 	},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
@@ -773,13 +816,31 @@ export function applySystemdRuntimeUpdate(
 	);
 	const changedSystemUnits = new Set(system.changed);
 	const changedUserUnits = new Set(user.changed);
-	const userProcessRevisionDrift = new Set(
-		user.present.filter((unit) => {
-			const state = requiredSystemdUnitState(userStates, "user", unit);
-			if (state.activeState !== "active") return false;
-			return !systemdProcessRevisionMatches(paths, unit, state);
-		}),
-	);
+	const committedAliases = readRuntimeAppliedState(paths)?.userProcessRevisionAliases ?? {};
+	const userProcessRevisionAliases: RuntimeUserProcessRevisionAliases = {};
+	const userProcessRevisionDrift = new Set<string>();
+	for (const unit of user.present) {
+		const state = requiredSystemdUnitState(userStates, "user", unit);
+		if (state.activeState !== "active") continue;
+		const revisions = systemdProcessRevisions(paths, unit, state);
+		if (revisions.processRevision === revisions.desiredRevision) continue;
+		const committedAlias = committedAliases[unit];
+		if (
+			committedAlias?.desiredRevision === revisions.desiredRevision &&
+			committedAlias.processRevision === revisions.processRevision
+		) {
+			userProcessRevisionAliases[unit] = committedAlias;
+			continue;
+		}
+		if (
+			opts.preserveActiveUnits &&
+			opts.previousUserDesiredRevisions?.get(unit) === revisions.processRevision
+		) {
+			userProcessRevisionAliases[unit] = revisions;
+			continue;
+		}
+		userProcessRevisionDrift.add(unit);
+	}
 
 	for (const unit of system.removed) {
 		const state = requiredSystemdUnitState(systemStates, "system", unit);
@@ -924,6 +985,7 @@ export function applySystemdRuntimeUpdate(
 			userUnitsChanged.add(unit);
 		}
 	}
+	for (const unit of restartUserUnits) delete userProcessRevisionAliases[unit];
 	if (resetFailedUserUnits.length > 0) {
 		runJournaledSystemdMutation(
 			transaction,
@@ -977,7 +1039,13 @@ export function applySystemdRuntimeUpdate(
 		) {
 			return false;
 		}
-		return systemdProcessRevisionMatches(paths, unit, state);
+		const revisions = systemdProcessRevisions(paths, unit, state);
+		const alias = userProcessRevisionAliases[unit];
+		return (
+			revisions.processRevision === revisions.desiredRevision ||
+			(alias?.desiredRevision === revisions.desiredRevision &&
+				alias.processRevision === revisions.processRevision)
+		);
 	});
 	const removedSystemConverged = system.removed.every(
 		(unit) =>
@@ -988,8 +1056,11 @@ export function applySystemdRuntimeUpdate(
 		const state = systemdUnitManagerState(paths, "user", unit);
 		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
 	});
+	const applied =
+		systemConverged && userConverged && removedSystemConverged && removedUserConverged;
+	if (applied) opts.onUserProcessRevisionAliases?.(userProcessRevisionAliases);
 	return {
-		applied: systemConverged && userConverged && removedSystemConverged && removedUserConverged,
+		applied,
 		systemUnitsChanged: [...systemUnitsChanged].sort(),
 		userUnitsChanged: [...userUnitsChanged].sort(),
 	};
@@ -1279,26 +1350,21 @@ function systemdProcessRevisionMatches(
 	unit: string,
 	state: SystemdUnitManagerState,
 ): boolean {
+	const revisions = systemdProcessRevisions(paths, unit, state);
+	return revisions.processRevision === revisions.desiredRevision;
+}
+
+function systemdProcessRevisions(
+	paths: ReturnType<typeof getRuntimePaths>,
+	unit: string,
+	state: SystemdUnitManagerState,
+): { desiredRevision: string; processRevision: string } {
 	if (state.mainPid === 0) {
 		throw new Error(`active managed systemd unit ${unit} has no MainPID`);
 	}
-	if (!unit.endsWith(".service")) {
-		throw new Error(`managed systemd unit has invalid name: ${unit}`);
-	}
-	const programName = unit.slice(0, -".service".length);
-	const envPath = systemdEnvironmentFilePath(paths, programName);
 	let desiredRevision: string;
 	try {
-		const content = readFileSync(envPath, "utf8");
-		const parsed = parseDotenv(content).filter(([key]) => key === "CLAWDI_RUNTIME_REV");
-		const declarations = content
-			.split(/\r?\n/)
-			.filter((line) => line.startsWith("CLAWDI_RUNTIME_REV="));
-		const match = /^CLAWDI_RUNTIME_REV="([a-f0-9]{32})"$/.exec(declarations[0] ?? "");
-		if (parsed.length !== 1 || declarations.length !== 1 || !match) {
-			throw new Error("invalid revision declaration");
-		}
-		desiredRevision = match[1];
+		desiredRevision = systemdDesiredProgramRevision(paths, unit);
 	} catch (error) {
 		throw new Error(`could not prove desired runtime revision for managed systemd unit ${unit}`, {
 			cause: error,
@@ -1327,7 +1393,7 @@ function systemdProcessRevisionMatches(
 			cause: error,
 		});
 	}
-	return processRevision === desiredRevision;
+	return { desiredRevision, processRevision };
 }
 
 function runtimeRevisionFromProcessEnvironment(environment: Buffer): string {
@@ -1797,6 +1863,7 @@ async function runtimeInitLocked(
 						daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
 						daemonProgramRevision: authority.daemonProgramRevision,
 						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+						userProcessRevisionAliases: authority.userProcessRevisionAliases,
 					}),
 				manifestIdentity: {
 					generation: convergenceLoad.manifest.generation,
@@ -2094,6 +2161,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 					daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
 					daemonProgramRevision: authority.daemonProgramRevision,
 					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+					userProcessRevisionAliases: authority.userProcessRevisionAliases,
 				}),
 			continueOnCliUpdateError: true,
 			deferCliInstall: opts.deferCliInstall,
@@ -2266,7 +2334,11 @@ async function applyRuntimeDesiredState(
 			authToken: load.applyContext?.manifestSource.auth.token,
 		}));
 	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
+	const previousUserDesiredRevisions = preserveActiveUnits
+		? readSystemdUserDesiredRevisions(paths, previousSystemdUnits.user.keys())
+		: new Map<string, string>();
 	const systemdTransaction = new SystemdRuntimeTransaction();
+	let userProcessRevisionAliases: RuntimeUserProcessRevisionAliases = {};
 	let systemdApply = {
 		applied: false,
 		systemUnitsChanged: [] as string[],
@@ -2282,7 +2354,12 @@ async function applyRuntimeDesiredState(
 			if (opts.requireSystemdApplied && !systemdApply.applied) {
 				throw new Error("systemd apply did not activate the rendered runtime manifest");
 			}
-			opts.authorityCommit?.(committedConvergence, authority);
+			opts.authorityCommit?.(committedConvergence, {
+				...authority,
+				...(Object.keys(userProcessRevisionAliases).length > 0
+					? { userProcessRevisionAliases }
+					: {}),
+			});
 		},
 		systemdApply: {
 			transactionState: () => systemdTransaction.state,
@@ -2343,6 +2420,10 @@ async function applyRuntimeDesiredState(
 								...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
 							],
 							preserveActiveUnits,
+							previousUserDesiredRevisions,
+							onUserProcessRevisionAliases: (aliases) => {
+								userProcessRevisionAliases = aliases;
+							},
 							recoverFailedUnits: opts.recoverFailedSystemdUnits,
 							skipActivatedSystemUnits: egressPrerequisiteActivated
 								? [RUNTIME_SIDECAR_SYSTEM_UNIT]

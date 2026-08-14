@@ -35,6 +35,7 @@ import {
 } from "../src/lib/codex-oauth-native-store";
 import { getCliVersion } from "../src/lib/version";
 import {
+	type RuntimeUserProcessRevisionAliases,
 	readRuntimeAppliedState,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
@@ -9457,6 +9458,123 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		expect(driftRepairCalls).not.toContain("daemon-reload");
 		expect(driftRepairCalls).toContain("--user restart hermes-gateway.service");
 		expect(driftRepairCalls).not.toContain("restart clawdi-runtime-watch.service");
+	});
+
+	it("adopts a cross-version user revision only until its desired program changes", () => {
+		const home = join(root, "revision-alias", "home", "clawdi");
+		const state = join(root, "revision-alias", "var", "lib", "clawdi");
+		const run = join(root, "revision-alias", "run", "clawdi");
+		const systemctlPath = join(root, "revision-alias", "bin", "systemctl");
+		const systemctlLog = join(root, "revision-alias", "systemctl.log");
+		const systemctlStateRoot = join(root, "revision-alias", "systemctl-state");
+		writeFakeSystemdManager({
+			path: systemctlPath,
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+			environmentRoot: join(run, "systemd", "env"),
+		});
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		const paths = getRuntimePaths();
+		const unit = "hermes-gateway.service";
+		const oldRevision = "a".repeat(32);
+		const migratedRevision = "b".repeat(32);
+		const changedRevision = "c".repeat(32);
+		const before = { system: new Map<string, string>(), user: new Map([[unit, "old"]]) };
+		const migrated = {
+			system: new Map<string, string>(),
+			user: new Map([[unit, "migrated"]]),
+		};
+		mkdirSync(paths.systemdEnvRoot, { recursive: true });
+		writeFileSync(
+			join(paths.systemdEnvRoot, `${unit}.env`),
+			`CLAWDI_RUNTIME_REV="${migratedRevision}"\n`,
+		);
+		seedFakeSystemdProcess(systemctlStateRoot, "user", unit, oldRevision);
+		writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
+		let aliases: RuntimeUserProcessRevisionAliases = {};
+
+		const adopted = applySystemdRuntimeUpdate(paths, before, migrated, {
+			transaction: new SystemdRuntimeTransaction(),
+			stage: "final-activation",
+			preserveActiveUnits: true,
+			previousUserDesiredRevisions: new Map([[unit, oldRevision]]),
+			onUserProcessRevisionAliases: (value) => {
+				aliases = value;
+			},
+		});
+
+		expect(adopted).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
+		expect(aliases).toEqual({
+			[unit]: { desiredRevision: migratedRevision, processRevision: oldRevision },
+		});
+		expect(readFileSync(systemctlLog, "utf-8")).not.toContain(`--user restart ${unit}`);
+		mkdirSync(dirname(paths.appliedState), { recursive: true });
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
+				appliedAt: "2026-08-14T04:02:30.000Z",
+				instanceId: "iid_revision_alias",
+				etag: `"sha256:${"d".repeat(64)}"`,
+				sourceRevision: "d".repeat(64),
+				generation: 1,
+				contentIdentity: { sourcePath: "test://revision-alias", sha256: "e".repeat(64) },
+				userProcessRevisionAliases: aliases,
+				providerIds: [],
+				projectedProviderIds: {},
+			},
+			paths,
+		);
+
+		aliases = {};
+		writeFileSync(systemctlLog, "");
+		expect(
+			applySystemdRuntimeUpdate(paths, migrated, migrated, {
+				transaction: new SystemdRuntimeTransaction(),
+				stage: "final-activation",
+				onUserProcessRevisionAliases: (value) => {
+					aliases = value;
+				},
+			}),
+		).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
+		expect(aliases[unit]).toEqual({
+			desiredRevision: migratedRevision,
+			processRevision: oldRevision,
+		});
+		expect(readFileSync(systemctlLog, "utf-8")).not.toMatch(
+			/(?:^|\s)(?:daemon-reload|start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
+		);
+
+		const changed = {
+			system: new Map<string, string>(),
+			user: new Map([[unit, "changed"]]),
+		};
+		writeFileSync(
+			join(paths.systemdEnvRoot, `${unit}.env`),
+			`CLAWDI_RUNTIME_REV="${changedRevision}"\n`,
+		);
+		aliases = {};
+		writeFileSync(systemctlLog, "");
+		expect(
+			applySystemdRuntimeUpdate(paths, migrated, changed, {
+				transaction: new SystemdRuntimeTransaction(),
+				stage: "final-activation",
+				onUserProcessRevisionAliases: (value) => {
+					aliases = value;
+				},
+			}),
+		).toEqual({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: [unit],
+		});
+		expect(aliases).toEqual({});
+		expect(readFileSync(systemctlLog, "utf-8")).toContain(`--user restart ${unit}`);
 	});
 
 	it("rolls back a manager reload without attributing or stopping business units", () => {

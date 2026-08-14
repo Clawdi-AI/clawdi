@@ -29,6 +29,21 @@ const providerIdsSchema = z
 		message: "provider IDs must be unique",
 	});
 
+const runtimeRevisionSchema = z.string().regex(/^[a-f0-9]{32}$/);
+
+const userProcessRevisionAliasesSchema = z.record(
+	z.string().regex(/^[A-Za-z0-9_.@-]+\.service$/),
+	z
+		.object({
+			desiredRevision: runtimeRevisionSchema,
+			processRevision: runtimeRevisionSchema,
+		})
+		.strict()
+		.refine((alias) => alias.desiredRevision !== alias.processRevision, {
+			message: "revision alias must describe distinct desired and process revisions",
+		}),
+);
+
 export const runtimeAppliedStateSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeAppliedState.v2"),
@@ -54,6 +69,7 @@ export const runtimeAppliedStateSchema = z
 			.string()
 			.regex(/^[a-f0-9]{32}$/)
 			.optional(),
+		userProcessRevisionAliases: userProcessRevisionAliasesSchema.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
 	})
@@ -79,6 +95,7 @@ export const runtimeAppliedStateSchema = z
 
 export type RuntimeAppliedState = z.infer<typeof runtimeAppliedStateSchema>;
 export type RuntimeAppliedStateV2 = RuntimeAppliedState;
+export type RuntimeUserProcessRevisionAliases = z.infer<typeof userProcessRevisionAliasesSchema>;
 export type RuntimeAppliedContentSource = z.infer<typeof appliedContentSourceSchema>;
 export type RuntimeAppliedContentIdentity = RuntimeAppliedContentSource;
 
