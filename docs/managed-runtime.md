@@ -828,11 +828,11 @@ the older Codex, Claude, and Cursor bundle path rather than the current Agent
 Plugins implementation. Release numbering is therefore not capability proof.
 
 Hermes main was audited at
-[`9504edbaea29ce249864a1be05819d972f8fae8d`](https://github.com/NousResearch/hermes-agent/commit/9504edbaea29ce249864a1be05819d972f8fae8d).
-The 20 commits since the prior `f52feed` audit affect resource pressure,
-interrupted-command cwd ownership, usage accounting, model selection, desktop
-UI, and bundled Skill inventory; they do not change Agent Plugins lifecycle,
-portable MCP translation, native config, or one-shot discovery.
+[`380e4da3d1d61c5cf0e88f48a6fb41c7c51f376d`](https://github.com/NousResearch/hermes-agent/commit/380e4da3d1d61c5cf0e88f48a6fb41c7c51f376d).
+The two commits since the prior `9504edb` audit change only
+`agent/conversation_loop.py` and its compression-budget-refund test. They do
+not affect Agent Plugins lifecycle, portable MCP translation, native config,
+or one-shot discovery.
 The latest release is
 [`v2026.8.13`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.13),
 published 2026-08-13 as package `0.20.1`; annotated tag object
@@ -883,7 +883,7 @@ task-local directory. Hermes documents that variable as the packaged-install
 bundled-root override at both the
 [`v2026.8.13` source](https://github.com/NousResearch/hermes-agent/blob/f80f453ae0679347e38abc917c7f94f717bf96c5/hermes_cli/plugins.py#L75-L86)
 and the
-[`9504edb` main audit](https://github.com/NousResearch/hermes-agent/blob/9504edbaea29ce249864a1be05819d972f8fae8d/hermes_cli/plugins.py#L75-L86).
+[`380e4da` main audit](https://github.com/NousResearch/hermes-agent/blob/380e4da3d1d61c5cf0e88f48a6fb41c7c51f376d/hermes_cli/plugins.py#L75-L86).
 Its scanner still reads user portable packages independently from
 `HERMES_HOME/plugins`; native install/enable, portable translation, MCP
 handshake, literal-header forwarding, tool execution, and result delivery all
