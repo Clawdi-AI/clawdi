@@ -162,6 +162,7 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_IDS,
     archive_clawdi_managed_provider,
     find_clawdi_managed_provider,
+    is_supported_deployment_managed_provider_contract,
     is_v2_deployment_managed_provider_id,
     lock_deployment_managed_provider_mutation,
     replace_deployment_managed_provider_metadata,
@@ -463,15 +464,7 @@ async def _resolve_or_create_admin_owner(
 
 
 def _require_managed_provider_contract(provider: AiProvider) -> None:
-    if (
-        provider.type != MANAGED_AI_PROVIDER_TYPE
-        or provider.api_mode != MANAGED_AI_PROVIDER_API_MODE
-        or provider.auth_type != "api_key"
-        or provider.auth_ref is not None
-        or (provider.auth_metadata or {}).get("source") != "managed"
-        or provider.managed_by != "clawdi"
-        or provider.runtime_env_name != MANAGED_AI_PROVIDER_RUNTIME_ENV
-    ):
+    if not is_supported_deployment_managed_provider_contract(provider):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Stored managed AI provider contract is invalid",
@@ -519,10 +512,10 @@ async def _admin_deployment_managed_provider_response(
         scope=MANAGED_AI_PROVIDER_SCOPE,
         type=MANAGED_AI_PROVIDER_TYPE,
         label=provider.label or MANAGED_AI_PROVIDER_LABEL,
-        api_mode=provider.api_mode or "",
+        api_mode=MANAGED_AI_PROVIDER_API_MODE,
         auth=auth,
         managed_by="clawdi",
-        runtime_env_name=provider.runtime_env_name or "",
+        runtime_env_name=MANAGED_AI_PROVIDER_RUNTIME_ENV,
         base_url=provider.base_url,
         capabilities=provider.capabilities,
         models=provider.models,
