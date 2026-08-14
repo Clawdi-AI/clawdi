@@ -792,20 +792,21 @@ for `mcp.schema.json`.
 
 Upstream capability evidence was refreshed on 2026-08-14. OpenClaw main was
 audited at
-[`6bd21a11222af41e7c758739c0e0cd2994dee445`](https://github.com/openclaw/openclaw/commit/6bd21a11222af41e7c758739c0e0cd2994dee445).
+[`848a7e30b39f2dc1dc55183c6cd4176a9017471a`](https://github.com/openclaw/openclaw/commit/848a7e30b39f2dc1dc55183c6cd4176a9017471a).
 Agent Plugins support landed in
 [`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
 that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
 `PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
-[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/6bd21a11222af41e7c758739c0e0cd2994dee445/src/plugins/status.ts)
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/848a7e30b39f2dc1dc55183c6cd4176a9017471a/src/plugins/status.ts)
 exposes every MCP server name, unsupported state, and plugin diagnostics.
 Clawdi requires the reported names to equal the already-validated `mcp.json`
 names and requires no unsupported entry or diagnostic during every isolated and
 live observation. This is native component proof rather than a version guess.
-The nine commits from the prior `1ea1499` audit through `6bd21a1` do not touch
-the Agent Plugins bundle loader, native plugin lifecycle, component inventory,
-inspect contract, or MCP translation according to the official compare file
-list.
+The 25 commits from the prior `1ea1499` audit through `848a7e3` do not touch
+the Agent Plugins bundle loader, package lifecycle commands, component
+inventory, inspect contract, or MCP translation according to the official
+compare file list. Generic setup-registry atomicity and Plugin SDK additions
+remain outside portable bundle loading.
 
 The GitHub Releases API latest release remains
 [`v2026.7.1-2`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2),
