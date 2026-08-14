@@ -80,6 +80,7 @@ import {
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
+import { planRuntimeMutationSystemdUserUnits } from "./runtime-systemd-reconciliation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 import { ensureRuntimeStateDirs } from "./state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
@@ -1187,6 +1188,27 @@ chmod 0755 '${commandPath}'
 		]);
 		expect(firstQuiescedUnits).toEqual(["openclaw-gateway.service"]);
 		expect(firstRestartUnits).toEqual(["openclaw-gateway.service"]);
+		expect(
+			planRuntimeMutationSystemdUserUnits({
+				runtimePrograms: [
+					{
+						programKind: "runtime",
+						runtime: "hermes",
+						service: null,
+						command: join(paths.userHome, ".local", "bin", "hermes"),
+						args: ["gateway"],
+						cwd: paths.userHome,
+						env: {},
+						resolvedSecretEnv: {},
+					},
+				],
+				staleUserUnits: ["openclaw-gateway.service", "clawdi-files.service"],
+				mutationRuntimes: new Set(["openclaw", "hermes"]),
+			}),
+		).toEqual({
+			quiesceUserUnits: ["hermes-gateway.service", "openclaw-gateway.service"],
+			restartUserUnits: ["hermes-gateway.service"],
+		});
 
 		const pluginRoot = join(paths.userHome, ".openclaw", "extensions", "acme-tools");
 		const configPath = join(paths.userHome, ".openclaw", "openclaw.json");

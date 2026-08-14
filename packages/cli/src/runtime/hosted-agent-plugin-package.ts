@@ -164,13 +164,11 @@ const clawdiDisplaySchema = z
 		name: z.string().min(1).max(80),
 		icon: z.string().min(1).max(512).optional(),
 		category: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
-		tags: boundedUniqueStrings(20, 32).optional(),
-		languages: boundedUniqueStrings(20, 64)
-			.refine(
-				(values) => values.every((value) => /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(value)),
-				"must contain language tags",
-			)
-			.optional(),
+		tags: boundedUniqueStrings(20, 32),
+		languages: boundedUniqueStrings(20, 64).refine(
+			(values) => values.every((value) => /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(value)),
+			"must contain language tags",
+		),
 	})
 	.strict();
 const clawdiCompatibilitySchema = z
@@ -725,7 +723,7 @@ function decodeUtf8(file: PreparedAgentPluginTreeFile, label: string): string {
 	}
 }
 
-function assertSkillComponents(tree: readonly PreparedAgentPluginTreeFile[]): void {
+function assertSkillComponents(tree: readonly PreparedAgentPluginTreeFile[]): number {
 	const skillFiles = tree.filter((file) => file.path.startsWith("skills/"));
 	const skillNames = new Set<string>();
 	for (const file of skillFiles) {
@@ -765,6 +763,7 @@ function assertSkillComponents(tree: readonly PreparedAgentPluginTreeFile[]): vo
 			throw new Error("Agent Plugin SKILL.md frontmatter does not match its Skill directory");
 		}
 	}
+	return skillNames.size;
 }
 
 function assertScopedPortablePath(value: string): void {
@@ -776,6 +775,32 @@ function assertScopedPortablePath(value: string): void {
 	else throw new Error("Agent Plugin MCP path is outside the portable package boundary");
 	if (!safeRelativePath(relativePath)) {
 		throw new Error("Agent Plugin MCP path is outside the portable package boundary");
+	}
+}
+
+function assertRootedMcpCwd(value: string, tree: readonly PreparedAgentPluginTreeFile[]): void {
+	if (value === "./" || value === PLUGIN_ROOT || value === PLUGIN_DATA) return;
+	let relativePath: string;
+	let requiresPackageDirectory = false;
+	if (value.startsWith("./")) {
+		relativePath = value.slice(2);
+		requiresPackageDirectory = true;
+	} else if (value.startsWith(`${PLUGIN_ROOT}/`)) {
+		relativePath = value.slice(PLUGIN_ROOT.length + 1);
+		requiresPackageDirectory = true;
+	} else if (value.startsWith(`${PLUGIN_DATA}/`)) {
+		relativePath = value.slice(PLUGIN_DATA.length + 1);
+	} else {
+		throw new Error("Agent Plugin MCP cwd is outside the portable package boundary");
+	}
+	if (!safeRelativePath(relativePath) || containsMcpPlaceholder(relativePath)) {
+		throw new Error("Agent Plugin MCP cwd is outside the portable package boundary");
+	}
+	if (
+		requiresPackageDirectory &&
+		!tree.some((entry) => entry.path.startsWith(`${relativePath}/`))
+	) {
+		throw new Error("Agent Plugin MCP cwd is not a package directory");
 	}
 }
 
@@ -936,7 +961,7 @@ function assertMcpComponents(
 			}
 			environmentNames.add(foldedName);
 		}
-		if (server.cwd !== undefined) assertScopedPortablePath(server.cwd);
+		if (server.cwd !== undefined) assertRootedMcpCwd(server.cwd, tree);
 	}
 	return {
 		serverNames: Object.keys(parsed.data.mcpServers).sort(),
@@ -948,7 +973,7 @@ function assertMcpComponents(
 function assertPackageIdentity(
 	descriptor: PackageDescriptor,
 	tree: readonly PreparedAgentPluginTreeFile[],
-): z.infer<typeof clawdiExtensionSchema> | null {
+): z.infer<typeof clawdiExtensionSchema> {
 	const manifest = pluginManifestSchema.safeParse(
 		parseJsonObject(
 			tree.find((file) => file.path === "plugin.json"),
@@ -964,7 +989,9 @@ function assertPackageIdentity(
 		throw new Error("Agent Plugin package identity does not match the desired installation");
 	}
 	const extension = manifest.data.extensions?.["ai.clawdi"];
-	if (extension === undefined) return null;
+	if (extension === undefined) {
+		throw new Error("Agent Plugin ai.clawdi extension does not match the Store contract");
+	}
 	const clawdi = clawdiExtensionSchema.safeParse(extension);
 	if (!clawdi.success) {
 		throw new Error("Agent Plugin ai.clawdi extension does not match the Store contract");
@@ -974,7 +1001,8 @@ function assertPackageIdentity(
 	}
 	if (clawdi.data.display.icon) {
 		const icon = clawdi.data.display.icon;
-		if (!safeRelativePath(icon) || !tree.some((entry) => entry.path === icon)) {
+		const iconPath = icon.startsWith("./") ? icon.slice(2) : "";
+		if (!safeRelativePath(iconPath) || !tree.some((entry) => entry.path === iconPath)) {
 			throw new Error("Agent Plugin ai.clawdi display icon is not a package file");
 		}
 	}
@@ -982,11 +1010,10 @@ function assertPackageIdentity(
 }
 
 function assertClawdiCompatibility(
-	extension: z.infer<typeof clawdiExtensionSchema> | null,
+	extension: z.infer<typeof clawdiExtensionSchema>,
 	runtime: HostedAgentPluginRuntime,
 	bareCommands: readonly string[],
 ): void {
-	if (!extension) return;
 	const compatibility = extension.compatibility;
 	if (compatibility?.runtimes && !compatibility.runtimes.includes(runtime)) {
 		throw new Error(`Agent Plugin ai.clawdi compatibility excludes ${runtime}`);
@@ -1024,8 +1051,11 @@ async function validateArchive(
 			);
 		}
 		const clawdiExtension = assertPackageIdentity(descriptor, collected.tree);
-		assertSkillComponents(collected.tree);
+		const skillCount = assertSkillComponents(collected.tree);
 		const mcp = assertMcpComponents(collected.tree, descriptor.runtime);
+		if (skillCount === 0 && mcp.serverNames.length === 0) {
+			throw new Error("Agent Plugin package must declare at least one Skill or MCP server");
+		}
 		assertClawdiCompatibility(clawdiExtension, descriptor.runtime, mcp.bareCommands);
 		if (descriptor.runtime === "hermes") assertHermesSupportedPackage(collected.tree);
 		return {

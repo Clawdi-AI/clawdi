@@ -221,6 +221,7 @@ import {
 	installOfficialRuntimeService,
 	planHermesDashboardArtifact,
 	planOfficialRuntimeServices,
+	planRuntimeMutationSystemdUserUnits,
 	planRuntimeSystemdUserMutations,
 	prepareHermesDashboardArtifact,
 	type RuntimeEgressSystemdProgram,
@@ -229,7 +230,6 @@ import {
 	removeStaleRuntimeSystemdFiles,
 	resolveRuntimeSystemdIdentity,
 	runtimeSystemdCommonEnvironment,
-	runtimeSystemdUserUnitName,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
 	writeRuntimeSystemdState,
@@ -5693,6 +5693,7 @@ export function convergeRuntimeManifest(
 	let agentPluginQuiesceAttempted = false;
 	let agentPluginUnitsQuiesced = false;
 	let agentPluginMutationAttempted = false;
+	let agentPluginQuiesceUserUnits: string[] = [];
 	let agentPluginRestartUserUnits: string[] = [];
 	const enabledRuntimes = Object.entries(manifest.runtimes)
 		.filter(([, runtime]) => runtime.enabled)
@@ -6553,20 +6554,15 @@ export function convergeRuntimeManifest(
 		// The final activation below restarts the affected runtime units.
 		const appliedAgentPluginTransaction = agentPluginTransaction;
 		if (appliedAgentPluginTransaction?.hasMutations) {
-			agentPluginRestartUserUnits = [
-				...new Set(
-					runtimeSystemdUserPrograms
-						.filter(
-							(program) =>
-								program.programKind === "runtime" &&
-								(program.runtime === "openclaw" || program.runtime === "hermes") &&
-								appliedAgentPluginTransaction.mutationRuntimes.has(program.runtime),
-						)
-						.map(runtimeSystemdUserUnitName),
-				),
-			].sort();
+			const affectedUserUnits = planRuntimeMutationSystemdUserUnits({
+				runtimePrograms: runtimeSystemdUserPrograms,
+				staleUserUnits: staleSystemdFiles.userUnits,
+				mutationRuntimes: appliedAgentPluginTransaction.mutationRuntimes,
+			});
+			agentPluginQuiesceUserUnits = affectedUserUnits.quiesceUserUnits;
+			agentPluginRestartUserUnits = affectedUserUnits.restartUserUnits;
 			agentPluginQuiesceAttempted = true;
-			opts.systemdApply?.quiesce(agentPluginRestartUserUnits);
+			opts.systemdApply?.quiesce(agentPluginQuiesceUserUnits);
 			agentPluginUnitsQuiesced = true;
 			if (appliedAgentPluginTransaction.snapshotTargets.length > 0) {
 				agentPluginSnapshot = captureRuntimeLiveSnapshot({
@@ -6755,7 +6751,7 @@ export function convergeRuntimeManifest(
 		let candidateQuiesced = agentPluginUnitsQuiesced || !rollbackRequiresQuiesce;
 		if (rollbackRequiresQuiesce && !candidateQuiesced) {
 			try {
-				opts.systemdApply?.quiesce(agentPluginRestartUserUnits);
+				opts.systemdApply?.quiesce(agentPluginQuiesceUserUnits);
 				candidateQuiesced = true;
 			} catch (quiesceError) {
 				installErrors.push(

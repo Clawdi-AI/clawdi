@@ -300,6 +300,48 @@ export function runtimeSystemdUserUnitName(program: RuntimeSystemdUserProgram): 
 	return systemdUnitFileName(runtimeSystemdProgramName(program));
 }
 
+function runtimeForSystemdUserUnitName(unitName: string): "openclaw" | "hermes" | null {
+	const officialRuntime = officialRuntimeServiceDescriptorForUnit(unitName)?.runtime;
+	if (officialRuntime === "openclaw" || officialRuntime === "hermes") return officialRuntime;
+	for (const runtime of ["openclaw", "hermes"] as const) {
+		const managedPrefix = `clawdi-${systemdUnitNameSegment(runtime)}`;
+		if (
+			unitName === systemdUnitFileName(managedPrefix) ||
+			(unitName.startsWith(`${managedPrefix}-`) && unitName.endsWith(".service"))
+		) {
+			return runtime;
+		}
+	}
+	return null;
+}
+
+export function planRuntimeMutationSystemdUserUnits(input: {
+	runtimePrograms: readonly RuntimeSystemdUserProgram[];
+	staleUserUnits: readonly string[];
+	mutationRuntimes: ReadonlySet<string>;
+}): { quiesceUserUnits: string[]; restartUserUnits: string[] } {
+	const restartUserUnits = [
+		...new Set(
+			input.runtimePrograms
+				.filter(
+					(program) =>
+						program.programKind === "runtime" && input.mutationRuntimes.has(program.runtime),
+				)
+				.map(runtimeSystemdUserUnitName),
+		),
+	].sort();
+	const quiesceUserUnits = [
+		...new Set([
+			...restartUserUnits,
+			...input.staleUserUnits.filter((unitName) => {
+				const runtime = runtimeForSystemdUserUnitName(unitName);
+				return runtime !== null && input.mutationRuntimes.has(runtime);
+			}),
+		]),
+	].sort();
+	return { quiesceUserUnits, restartUserUnits };
+}
+
 const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(

@@ -792,20 +792,20 @@ for `mcp.schema.json`.
 
 Upstream capability evidence was refreshed on 2026-08-14. OpenClaw main was
 audited at
-[`1ea149910703a8e0f0784e049755b3e6afdcdc87`](https://github.com/openclaw/openclaw/commit/1ea149910703a8e0f0784e049755b3e6afdcdc87).
+[`6bd21a11222af41e7c758739c0e0cd2994dee445`](https://github.com/openclaw/openclaw/commit/6bd21a11222af41e7c758739c0e0cd2994dee445).
 Agent Plugins support landed in
 [`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
 that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
 `PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
-[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/1ea149910703a8e0f0784e049755b3e6afdcdc87/src/plugins/status.ts)
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/6bd21a11222af41e7c758739c0e0cd2994dee445/src/plugins/status.ts)
 exposes every MCP server name, unsupported state, and plugin diagnostics.
 Clawdi requires the reported names to equal the already-validated `mcp.json`
 names and requires no unsupported entry or diagnostic during every isolated and
 live observation. This is native component proof rather than a version guess.
-The 44 source commits from the prior `9d0e689` audit through `dc61fe5`,
-`2b61dc5`, and `1ea1499` do not modify the Agent Plugins bundle loader,
-native plugin lifecycle, component inventory, inspect contract, or MCP
-translation.
+The nine commits from the prior `1ea1499` audit through `6bd21a1` do not touch
+the Agent Plugins bundle loader, native plugin lifecycle, component inventory,
+inspect contract, or MCP translation according to the official compare file
+list.
 
 The GitHub Releases API latest release remains
 [`v2026.7.1-2`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2),
@@ -868,7 +868,12 @@ Package-declared Clawdi `configuration.secretSlots`, non-empty Hosted
 placeholder-bearing remote headers fail closed because no native secret-binding
 contract is available. Hosted `secretRefs` are rejected before download; the
 package credential policy is enforced before any native probe or live mutation.
-Portable SSE remains fail closed for Hermes.
+Every package must also carry the complete Store `ai.clawdi` extension and at
+least one Skill or MCP server; bare MCP commands require declared compatible
+executables. Exact duplicate JSON keys remain a Store ingestion rejection
+before the immutable content digest is issued. The runtime binds that digest
+and performs structured secondary validation instead of duplicating a JSON
+tokenizer. Portable SSE remains fail closed for Hermes.
 
 The binary proof uses the same curated MCP dependency path as the official
 installer's

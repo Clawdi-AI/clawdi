@@ -152,13 +152,14 @@ function pluginFiles(
 	version = "1.2.3",
 	extensions?: Record<string, unknown>,
 ): Record<string, Buffer> {
+	const packageExtensions = extensions ?? { "ai.clawdi": clawdiExtension() };
 	return {
 		"plugin.json": Buffer.from(
 			JSON.stringify({
 				$schema: AGENT_PLUGINS_SCHEMA_1_0_0,
 				name: "acme.tools",
 				version,
-				...(extensions ? { extensions } : {}),
+				extensions: packageExtensions,
 			}),
 		),
 		"skills/review/SKILL.md": Buffer.from("---\nname: review\ndescription: Review\n---\n"),
@@ -169,7 +170,7 @@ function pluginFiles(
 function clawdiExtension(fields: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		schemaVersion: 1,
-		display: { name: "Acme Tools", category: "tools" },
+		display: { name: "Acme Tools", category: "tools", tags: [], languages: [] },
 		...fields,
 	};
 }
@@ -232,6 +233,7 @@ describe("Hosted Agent Plugin package preparation", () => {
 						type: "stdio",
 						command: "node",
 						args: ["server.js"],
+						cwd: "./",
 						env: {
 							PUBLIC_MODE: "review",
 							PLUGIN_PATH: `\${PLUGIN_ROOT}/server.js`,
@@ -240,15 +242,38 @@ describe("Hosted Agent Plugin package preparation", () => {
 							PUBLIC_LABEL: "sk-public-value",
 						},
 					},
+					packageDirectory: {
+						type: "stdio",
+						command: "node",
+						cwd: "./skills/review",
+					},
+					pluginRootDirectory: {
+						type: "stdio",
+						command: "node",
+						cwd: `\${PLUGIN_ROOT}/skills/review`,
+					},
+					dataDirectory: {
+						type: "stdio",
+						command: "node",
+						cwd: `\${PLUGIN_DATA}/future`,
+					},
 				},
 			},
 			"1.2.3",
 			{
 				"ai.clawdi": clawdiExtension({
+					display: {
+						name: "Acme Tools",
+						icon: "./assets/icon.png",
+						category: "tools",
+						tags: ["review"],
+						languages: ["en"],
+					},
 					compatibility: { runtimes: ["hermes"], executables: ["node"] },
 				}),
 			},
 		);
+		files["assets/icon.png"] = Buffer.from("public icon");
 		const bytes = await archive(files);
 		const prepared = await prepareHostedAgentPluginPackages(
 			manifest("hermes", treeDigest(files)),
@@ -257,7 +282,12 @@ describe("Hosted Agent Plugin package preparation", () => {
 		);
 		if (!prepared) throw new Error("missing prepared Agent Plugin fixture");
 		expect(prepared.desired.get("acme.tools")?.installation.contentDigest).toBe(treeDigest(files));
-		expect(prepared.desired.get("acme.tools")?.mcpServerNames).toEqual(["review"]);
+		expect(prepared.desired.get("acme.tools")?.mcpServerNames).toEqual([
+			"dataDirectory",
+			"packageDirectory",
+			"pluginRootDirectory",
+			"review",
+		]);
 	});
 
 	test("accepts Hermes streamable-http and still rejects portable SSE", async () => {
@@ -390,6 +420,23 @@ describe("Hosted Agent Plugin package preparation", () => {
 		const credentialTemplate = `\${TOKEN}`;
 		const cases: Array<{ label: string; files: Record<string, Buffer> }> = [
 			{
+				label: "missing Clawdi extension cannot bypass executable declarations",
+				files: pluginFiles(
+					{
+						$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+						mcpServers: { invalid: { type: "stdio", command: "node" } },
+					},
+					"1.2.3",
+					{},
+				),
+			},
+			{
+				label: "metadata-only package",
+				files: {
+					"plugin.json": pluginFiles()["plugin.json"] ?? Buffer.alloc(0),
+				},
+			},
+			{
 				label: "Skill frontmatter",
 				files: {
 					...pluginFiles(),
@@ -420,6 +467,31 @@ describe("Hosted Agent Plugin package preparation", () => {
 						unknown: true,
 					}),
 				}),
+			},
+			{
+				label: "Clawdi missing required display arrays",
+				files: pluginFiles(undefined, "1.2.3", {
+					"ai.clawdi": clawdiExtension({
+						display: { name: "Acme Tools", category: "tools" },
+					}),
+				}),
+			},
+			{
+				label: "Clawdi unrooted display icon",
+				files: {
+					...pluginFiles(undefined, "1.2.3", {
+						"ai.clawdi": clawdiExtension({
+							display: {
+								name: "Acme Tools",
+								icon: "assets/icon.png",
+								category: "tools",
+								tags: [],
+								languages: [],
+							},
+						}),
+					}),
+					"assets/icon.png": Buffer.from("public icon"),
+				},
 			},
 			{
 				label: "Clawdi incompatible runtime",
@@ -454,6 +526,9 @@ describe("Hosted Agent Plugin package preparation", () => {
 				{ command: "node", env: { PUBLIC_MODE: "a", public_mode: "b" } },
 				{ command: "node", env: { "INVALID-NAME": "public" } },
 				{ command: "node", cwd: "../outside" },
+				{ command: "node", cwd: "./missing" },
+				{ command: "node", cwd: `\${PLUGIN_ROOT}/\${OTHER}` },
+				{ command: "node", cwd: `\${PLUGIN_DATA}/\${OTHER}` },
 			].map((server, index) => ({
 				label: `stdio ${index}`,
 				files: pluginFiles({
