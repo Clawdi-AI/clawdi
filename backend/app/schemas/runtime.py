@@ -879,7 +879,7 @@ class HostedRuntimeSkills(_StrictHostedWireModel):
 
 class HostedAgentPluginInstallation(_StrictHostedWireModel):
     installationId: str = Field(min_length=1, max_length=200)
-    version: str = Field(min_length=1, max_length=100)
+    version: str = Field(min_length=1, max_length=256)
     agentPluginsSchema: Literal["https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"]
     source: HostedRuntimeSkillSource
     contentDigest: str = Field(pattern=r"^sha256-tree-v1:[0-9a-f]{64}$")

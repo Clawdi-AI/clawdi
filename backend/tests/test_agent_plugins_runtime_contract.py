@@ -37,12 +37,23 @@ def test_agent_plugins_accepts_exact_immutable_secret_ref_contract() -> None:
         HostedAgentPlugins.model_validate({"schemaVersion": 1, "installations": {}}).installations
         == {}
     )
+    maximum_version = f"1.2.3+{'a' * 250}"
+    maximum_length = deepcopy(desired)
+    cast(dict[str, Any], maximum_length["installations"])["acme.tools"] = {
+        **_installation(),
+        "version": maximum_version,
+    }
+    assert (
+        HostedAgentPlugins.model_validate(maximum_length).installations["acme.tools"].version
+        == maximum_version
+    )
 
 
 @pytest.mark.parametrize(
     ("path", "value"),
     [
         (("installations", "acme.tools", "version"), "^1.2.3"),
+        (("installations", "acme.tools", "version"), f"1.2.3+{'a' * 251}"),
         (("installations", "acme.tools", "agentPluginsSchema"), "1.0.0"),
         (("installations", "acme.tools", "source", "commit"), "main"),
         (("installations", "acme.tools", "source", "path"), "plugins/../escape"),

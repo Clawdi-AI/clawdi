@@ -897,6 +897,18 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(hostedManifestToRuntimeManifest(parsed).projection?.agentPlugins).toEqual(
 			TEST_AGENT_PLUGINS,
 		);
+		const maximumVersion = `1.2.3+${"a".repeat(250)}`;
+		const maximumLengthPlugins = {
+			...TEST_AGENT_PLUGINS,
+			installations: {
+				"acme.tools": { ...TEST_AGENT_PLUGIN_INSTALLATION, version: maximumVersion },
+			},
+		};
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.parse(
+				hostedManifestFixture({ agentPlugins: maximumLengthPlugins }),
+			).agentPlugins,
+		).toEqual(maximumLengthPlugins);
 
 		const empty = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ agentPlugins: { schemaVersion: 1, installations: {} } }),
@@ -922,6 +934,10 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test.each([
 		["mutable version", { ...TEST_AGENT_PLUGIN_INSTALLATION, version: "^1.2.3" }],
+		[
+			"overlong version",
+			{ ...TEST_AGENT_PLUGIN_INSTALLATION, version: `1.2.3+${"a".repeat(251)}` },
+		],
 		["noncanonical schema URI", { ...TEST_AGENT_PLUGIN_INSTALLATION, agentPluginsSchema: "1.0.0" }],
 		[
 			"mutable source",
