@@ -128,6 +128,7 @@ import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client
 import { useReusableSubscriptions } from "@/hosted/billing/subscription/reusable-subscriptions-query";
 import {
 	existingSubscriptionCreateSelection,
+	resolveSubscriptionSource,
 	type SubscriptionCreateSelection,
 	type SubscriptionSource,
 	supportedBillingTerm,
@@ -466,7 +467,9 @@ export function DeployWizard() {
 		"Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
 	);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
-	const [subscriptionSource, setSubscriptionSource] = useState<SubscriptionSource | null>(null);
+	const [selectedSubscriptionSource, setSubscriptionSource] = useState<SubscriptionSource | null>(
+		null,
+	);
 	const [checkingDeployments, setCheckingDeployments] = useState(false);
 	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
 	const deploymentsResolved = deployments.data !== undefined;
@@ -516,6 +519,12 @@ export function DeployWizard() {
 			: activeIncludedBasicSlot
 				? "unavailable"
 				: "available";
+	const subscriptionSource = resolveSubscriptionSource({
+		selected: selectedSubscriptionSource,
+		includedAvailable: includedBasicAvailability === "available",
+		reusableSubscriptions:
+			reusableSubscriptions.error == null ? reusableSubscriptions.data : undefined,
+	});
 	const perfOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
 		[perfPlan, term],
@@ -652,10 +661,10 @@ export function DeployWizard() {
 		if (subscriptionSource.mode === "included") {
 			if (!deploymentsResolved) {
 				return blockingDeploymentsError
-					? "Retry the Included Basic availability check above."
-					: "Checking your Included Basic availability.";
+					? "Retry the free compute availability check above."
+					: "Checking your free compute availability.";
 			}
-			if (includedBasicAvailability !== "available") return "Included Basic is unavailable.";
+			if (includedBasicAvailability !== "available") return "Free compute is unavailable.";
 		} else {
 			if (reusableSubscriptions.isFetching) return "Checking reusable subscriptions.";
 			if (reusableSubscriptions.error != null || reusableSubscriptions.data === undefined) {
@@ -1160,7 +1169,7 @@ export function DeployWizard() {
 		language !== "" ||
 		timezone !== "" ||
 		term !== 1 ||
-		subscriptionSource !== null ||
+		selectedSubscriptionSource !== null ||
 		checkoutSession !== null;
 
 	return (
@@ -1296,32 +1305,29 @@ export function DeployWizard() {
 						<SubscriptionSourcePicker
 							value={subscriptionSource}
 							onChange={setSubscriptionSource}
-							showIncluded
-							includedAvailability={includedBasicAvailability}
+							showIncluded={includedBasicAvailability === "available"}
 							reusableSubscriptions={reusableSubscriptions.data ?? []}
 							isLoading={reusableSubscriptions.isFetching}
 							error={reusableSubscriptions.error}
 							onRetry={() => void reusableSubscriptions.refetch()}
 							disabled={submitting}
 						/>
-						{subscriptionSource?.mode === "included" && blockingDeploymentsError ? (
+						{blockingDeploymentsError ? (
 							<ApiErrorPanel
 								normalizer={billingErrorNormalizer}
 								error={blockingDeploymentsError}
 								onRetry={() => void deployments.refetch()}
-								title="Couldn't check Included Basic availability"
+								title="Couldn't check free compute availability"
 							/>
 						) : null}
-						{subscriptionSource?.mode === "included" &&
-						deploymentsResolved &&
-						activeIncludedBasicSlot === null ? (
+						{deploymentsResolved && activeIncludedBasicSlot === null ? (
 							<Alert data-hosted="true">
 								<TriangleAlert />
-								<AlertTitle>Included Basic availability is unknown</AlertTitle>
+								<AlertTitle>Free compute availability is unknown</AlertTitle>
 								<AlertDescription className="flex flex-col gap-3 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-between">
 									<span>
-										We can’t determine whether an existing agent is already using your included
-										Basic entitlement.
+										We can’t determine whether an existing agent is already using your free compute
+										entitlement.
 									</span>
 									<Button
 										type="button"

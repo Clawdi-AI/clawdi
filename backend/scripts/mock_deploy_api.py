@@ -556,6 +556,18 @@ async def create_deployment(request: Request) -> dict[str, Any]:
     body = await request.json()
     idempotency_key = request.headers.get("Idempotency-Key") or uuid.uuid4().hex
     created = _create_deployment_record(body)
+    if created["config_info"]["compute_plan_slug"] == "compute_basic":
+        created["compute_subscription"] = {
+            "subscription_id": len(DEPLOYMENTS),
+            "status": "active",
+            "funding_source": None,
+            "payment_state": "ok",
+            "billing_term_months": 1,
+            "price_cents": 0,
+            "currency": "usd",
+            "cancel_at_period_end": False,
+            "current_period_end": _iso(_now() + timedelta(days=30)),
+        }
     return _accept_operation(created, verb="create", idempotency_key=idempotency_key)
 
 
