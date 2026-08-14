@@ -60,6 +60,7 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_ID,
     archive_clawdi_managed_provider,
     is_v2_managed_provider_id,
+    managed_provider_accepted_api_modes,
     managed_provider_api_mode,
     runtime_managed_provider_id,
     upsert_clawdi_managed_provider,
@@ -269,16 +270,22 @@ async def _use_db_session_for_short_ai_provider_sessions(
         V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     ],
 )
-def test_v2_managed_ai_provider_ids_resolve_to_chat_mode(provider_id: str):
+def test_v2_managed_ai_provider_ids_use_responses_with_rollout_input_compatibility(
+    provider_id: str,
+):
     assert is_v2_managed_provider_id(provider_id)
     assert managed_provider_api_mode(provider_id) == V2_MANAGED_AI_PROVIDER_API_MODE
+    assert managed_provider_accepted_api_modes(provider_id) == (
+        V2_MANAGED_AI_PROVIDER_API_MODE,
+        "openai_chat",
+    )
 
 
-def test_v1_provider_mode_resolution_does_not_accept_deployment_scoped_ids():
+def test_deployment_scoped_v2_provider_uses_canonical_responses_mode():
     provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
 
     assert is_v2_managed_provider_id(provider_id)
-    assert managed_provider_api_mode(provider_id) is None
+    assert managed_provider_api_mode(provider_id) == V2_MANAGED_AI_PROVIDER_API_MODE
 
 
 @pytest.mark.parametrize(
@@ -2146,29 +2153,6 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     assert legacy_model_prefix.status_code == 422, legacy_model_prefix.text
     assert "legacy openai-codex prefix" in legacy_model_prefix.text
 
-    for managed_provider_id in (
-        V2_MANAGED_AI_PROVIDER_ID,
-        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
-        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
-    ):
-        managed = await client.post(
-            "/v1/ai-providers?replace=true",
-            json={
-                "provider_id": managed_provider_id,
-                "type": "custom_openai_compatible",
-                "base_url": "https://managed.example/v1",
-                "models": [{"id": "gpt-5.5"}],
-                "api_mode": "openai_chat",
-                "auth": {"type": "api_key", "source": "managed"},
-                "managed_by": "clawdi",
-                "runtime_env_name": "CLAWDI_AI_API_KEY",
-            },
-        )
-        assert managed.status_code == 200, managed.text
-        assert managed.json()["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
-        assert managed.json()["api_mode"] == "openai_chat"
-        assert managed.json()["models"] == [{"id": "gpt-5.5"}]
-
     v1_managed = await client.post(
         "/v1/ai-providers",
         json={
@@ -2230,6 +2214,49 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     )
     assert public_no_auth.status_code == 422, public_no_auth.text
     assert "none auth" in public_no_auth.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_id",
+    [
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    ],
+)
+async def test_legacy_v2_chat_input_is_persisted_and_returned_as_responses(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    provider_id: str,
+):
+    response = await client.post(
+        "/v1/ai-providers?replace=true",
+        json={
+            "provider_id": provider_id,
+            "type": "custom_openai_compatible",
+            "base_url": "https://managed.example/v1",
+            "models": [{"id": "gpt-5.5"}],
+            "api_mode": "openai_chat",
+            "auth": {"type": "api_key", "source": "managed"},
+            "managed_by": "clawdi",
+            "runtime_env_name": "CLAWDI_AI_API_KEY",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
+    assert response.json()["api_mode"] == V2_MANAGED_AI_PROVIDER_API_MODE
+    assert response.json()["models"] == [{"id": "gpt-5.5"}]
+    persisted = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == seed_user.id,
+            AiProvider.provider_id == CLAWDI_MANAGED_PROVIDER_ID,
+        )
+    )
+    assert persisted is not None
+    assert persisted.api_mode == V2_MANAGED_AI_PROVIDER_API_MODE
 
 
 @pytest.mark.asyncio

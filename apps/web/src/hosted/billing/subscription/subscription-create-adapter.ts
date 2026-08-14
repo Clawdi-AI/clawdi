@@ -39,6 +39,31 @@ export type SubscriptionSource =
 	| { mode: "existing"; subscriptionId: string }
 	| { mode: "new" };
 
+const NEW_SUBSCRIPTION_SOURCE: SubscriptionSource = { mode: "new" };
+
+export function resolveSubscriptionSource({
+	includedAvailable,
+	reusableSubscriptions,
+	selected,
+}: {
+	includedAvailable: boolean | undefined;
+	reusableSubscriptions: readonly ReusableSubscription[] | undefined;
+	selected: SubscriptionSource | null;
+}): SubscriptionSource | null {
+	if (includedAvailable === undefined || reusableSubscriptions === undefined) return selected;
+	if (selected?.mode === "included" && !includedAvailable) selected = null;
+	if (selected?.mode === "existing") {
+		const subscriptionId = selected.subscriptionId;
+		if (
+			!reusableSubscriptions.some((subscription) => subscription.subscription_id === subscriptionId)
+		) {
+			selected = null;
+		}
+	}
+	if (selected) return selected;
+	return !includedAvailable && reusableSubscriptions.length === 0 ? NEW_SUBSCRIPTION_SOURCE : null;
+}
+
 /** Presentation model plus the exact server assertion used at confirmation. */
 export type SubscriptionCreateQuoteView = {
 	selection: SubscriptionCreateSelection;

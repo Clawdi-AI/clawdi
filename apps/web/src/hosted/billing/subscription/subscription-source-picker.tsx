@@ -15,7 +15,6 @@ import { formatShortDate } from "@/lib/format";
 export function SubscriptionSourcePicker({
 	disabled = false,
 	error,
-	includedAvailability = "unknown",
 	isLoading,
 	onChange,
 	onRetry,
@@ -25,7 +24,6 @@ export function SubscriptionSourcePicker({
 }: {
 	disabled?: boolean;
 	error: unknown;
-	includedAvailability?: "available" | "unavailable" | "unknown";
 	isLoading: boolean;
 	onChange: (source: SubscriptionSource) => void;
 	onRetry: () => void;
@@ -33,31 +31,33 @@ export function SubscriptionSourcePicker({
 	showIncluded?: boolean;
 	value: SubscriptionSource | null;
 }) {
+	const onlyNewSubscription =
+		value?.mode === "new" &&
+		!isLoading &&
+		error == null &&
+		!showIncluded &&
+		reusableSubscriptions.length === 0;
+
+	if (onlyNewSubscription) return null;
+
 	const paidDisabled = disabled || error != null || isLoading;
-	const includedAvailable = includedAvailability === "available";
 	return (
 		<div data-hosted="true" className="flex min-w-0 flex-col gap-3">
 			<div className="grid min-w-0 gap-2 lg:grid-cols-2">
 				{showIncluded ? (
 					<EntityChoiceCard
 						selected={value?.mode === "included"}
-						onClick={includedAvailable ? () => onChange({ mode: "included" }) : undefined}
-						disabled={disabled || !includedAvailable}
+						onClick={disabled ? undefined : () => onChange({ mode: "included" })}
+						disabled={disabled}
 						icon={
 							<IconChip size="sm" tint="bg-identity-3-bg text-identity-3-fg">
 								<Cpu />
 							</IconChip>
 						}
-						title="Included Basic"
-						description={
-							includedAvailable
-								? "Use your included Basic entitlement."
-								: includedAvailability === "unavailable"
-									? "Your included Basic entitlement is currently in use."
-									: "Included Basic availability hasn’t been confirmed yet."
-						}
+						title="Basic compute"
+						description="Use your free compute entitlement."
 						details={<span className="text-xs font-medium text-foreground">$0 due now</span>}
-						badge={includedAvailable ? <Badge variant="secondary">Included</Badge> : undefined}
+						badge={<Badge variant="secondary">Free</Badge>}
 						className="items-start p-3"
 					/>
 				) : null}

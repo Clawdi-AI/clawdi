@@ -42,6 +42,15 @@ describe("EntityIcon LobeHub brands", () => {
 			expect(markup).toContain("text-black");
 		}
 	});
+
+	test("keeps the official Kimi color mark visible on a black tile", () => {
+		const markup = renderToStaticMarkup(<EntityIcon kind="provider" id="kimi" />);
+		expect({
+			blackTile: markup.includes("bg-black"),
+			blueAccent: /<path[^>]*fill="#1783ff"/i.test(markup),
+			whiteMark: /<path[^>]*fill="#fff"/i.test(markup),
+		}).toEqual({ blackTile: true, blueAccent: true, whiteMark: true });
+	});
 });
 
 describe("EntityIcon channels", () => {

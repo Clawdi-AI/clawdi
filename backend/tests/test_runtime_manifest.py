@@ -4989,7 +4989,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
         "baseUrl": "https://sub2api.test/v1",
-        "apiMode": "openai_chat",
+        "apiMode": "openai_responses",
         "managed_by": "clawdi",
         "models": managed_models,
         "runtimeEnvName": "CLAWDI_AI_API_KEY",

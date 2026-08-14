@@ -63,7 +63,7 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 		"aria-pressed",
 		"false",
 	);
-	const includedBasic = page.getByRole("button", { name: /Included Basic/ });
+	const includedBasic = page.getByRole("button", { name: /Basic compute/ });
 	await expect(includedBasic).toBeVisible();
 	await includedBasic.click();
 	await expect(includedBasic).toHaveAttribute("aria-pressed", "true");
@@ -78,5 +78,12 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 
 	await expect(page).toHaveURL(/\/agents\/hdep_dev_/);
 	await expect(page.getByText("Starting").first()).toBeVisible();
+
+	await page.goto("/deploy");
+	await expect(page.getByRole("heading", { name: "Deploy an Agent" })).toBeVisible();
+	await expect(page.getByRole("button", { name: /Basic compute/ })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: /New paid subscription/ })).toHaveCount(0);
+	await expect(page.getByText("Payment method", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: /Card subscription/ })).toBeVisible();
 	expect(errors, `deploy flow: ${errors.join(" | ")}`).toEqual([]);
 });

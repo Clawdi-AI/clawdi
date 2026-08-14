@@ -353,7 +353,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 							cost: { input: 1.5, output: 12, cache_read: 0.15, cache_write: 1.5 },
 						},
 					],
-					apiMode: "openai_chat",
+					apiMode: "openai_responses",
 					runtimeEnvName: "CLAWDI_AI_API_KEY",
 					apiKeySecretRef: "secret://providers/clawdi/api-key",
 				},

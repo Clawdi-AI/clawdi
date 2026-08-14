@@ -943,8 +943,8 @@ describe("ai-provider commands", () => {
 		expect(patch.models.providers["custom-openai"].models[0]).toMatchObject({
 			id: "gpt-5.5",
 			name: "gpt-5.5",
-			api: "openai-responses",
 		});
+		expect(patch.models.providers["custom-openai"].models[0].api).toBeUndefined();
 		expect(JSON.stringify(patch)).not.toContain("agentRuntime");
 	});
 

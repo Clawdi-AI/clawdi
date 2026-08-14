@@ -44,7 +44,7 @@
 		"providers": {
 			"clawdi": {
 				"apiKeySecretRef": "secret://tool.codex.apiKey",
-				"apiMode": "openai_chat",
+				"apiMode": "openai_responses",
 				"baseUrl": "https://provider.test/v1",
 				"kind": "openai-compatible",
 				"managed_by": "clawdi",
@@ -141,5 +141,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "2d0331a0dc7ef429482850b872ff43b0f5a5b8a3c3ddcb2648d1ef77d95a3918"
+	"sourceRevision": "460de6a65cefc052d34bf10be72943e602cb7a19a5daef0b2467f2f7faafdb5b"
 }

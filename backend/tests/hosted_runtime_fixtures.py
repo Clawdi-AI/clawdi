@@ -75,7 +75,7 @@ def canonical_codex_tool_provider_graph(
         label="Clawdi Managed",
         base_url="https://sub2api.test/v1",
         models=[{"id": "gpt-5.5"}],
-        api_mode="openai_chat",
+        api_mode="openai_responses",
         auth_type="api_key",
         auth_metadata={"source": "managed"},
         managed_by="clawdi",
