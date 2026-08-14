@@ -1185,6 +1185,16 @@ async def read_runtime_observations(
         .scalars()
         .all()
     )
+    event_evidence_references = {
+        event.event_id: _evidence_reference(
+            event_id=event.event_id,
+            environment_id=environment_id,
+            consumer_id=consumer_id,
+            cursor_epoch=cursor.cursor_epoch,
+            stream_position=event.id,
+        )
+        for event in page
+    }
     event_payloads = [
         {
             "runtimeIdentity": _identity_payload(
@@ -1198,13 +1208,7 @@ async def read_runtime_observations(
             "capturedAt": _utc(event.captured_at).isoformat(),
             "receivedAt": _utc(event.received_at).isoformat(),
             "freshnessDeadline": _utc(event.freshness_deadline).isoformat(),
-            "evidenceReference": _evidence_reference(
-                event_id=event.event_id,
-                environment_id=environment_id,
-                consumer_id=consumer_id,
-                cursor_epoch=cursor.cursor_epoch,
-                stream_position=event.id,
-            ),
+            "evidenceReference": event_evidence_references[event.event_id],
             "payloadHash": event.payload_hash,
             "health": event.health,
             "diagnostics": event.diagnostics,
@@ -1229,7 +1233,8 @@ async def read_runtime_observations(
                 if head.freshness_deadline is not None
                 else None
             ),
-            "evidenceReference": _evidence_reference(
+            "evidenceReference": event_evidence_references.get(head.latest_event_id)
+            or _evidence_reference(
                 event_id=head.latest_event_id,
                 environment_id=environment_id,
                 consumer_id=consumer_id,
