@@ -3147,6 +3147,45 @@ async def test_admin_delete_environment_accepts_matching_optional_owner(
 
 
 @pytest.mark.asyncio
+async def test_admin_delete_agent_accepts_matching_terminated_owner(
+    admin_client, db_session, seed_user
+):
+    from app.models.principal_lifecycle import PrincipalLifecycle
+    from app.models.session import AgentEnvironment
+    from tests.conftest import create_env_with_project
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"delete-terminated-owner-{uuid.uuid4().hex[:8]}",
+        machine_name="delete-terminated-owner",
+        agent_type="codex",
+    )
+    now = datetime.now(UTC)
+    db_session.add(
+        PrincipalLifecycle(
+            issuer=_CLERK_ISSUER,
+            subject=seed_user.clerk_id,
+            user_id=seed_user.id,
+            terminated_at=now,
+            next_cleanup_attempt_at=now,
+        )
+    )
+    await db_session.commit()
+
+    response = await admin_client.delete(
+        f"/api/admin/agents/{env.id}",
+        headers=_AUTH,
+        params={"target_clerk_id": seed_user.clerk_id},
+    )
+
+    assert response.status_code == 204, response.text
+    archived = await db_session.get(AgentEnvironment, env.id)
+    assert archived is not None
+    assert archived.archived_at is not None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "path_template",
     ["/v1/admin/agents/{env_id}", "/v1/admin/environments/{env_id}"],
