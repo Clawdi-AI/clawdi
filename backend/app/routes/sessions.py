@@ -46,6 +46,7 @@ from app.models.session_permission import (
 )
 from app.schemas.common import Paginated
 from app.schemas.runtime import (
+    HostedRuntimePlatformMcpServer,
     HostedRuntimeStdioMcpServer,
     PersistedHostedRuntimeBundledSkillEntry,
     PersistedHostedRuntimeMcp,
@@ -1200,7 +1201,7 @@ def _is_platform_only_mcp(persisted: PersistedHostedRuntimeMcp) -> bool:
     if set(persisted.servers) != {"clawdi"}:
         return False
     server = persisted.servers["clawdi"]
-    return (
+    return isinstance(server, HostedRuntimePlatformMcpServer) or (
         isinstance(server, HostedRuntimeStdioMcpServer)
         and server.command == "clawdi"
         and server.args == ["mcp"]

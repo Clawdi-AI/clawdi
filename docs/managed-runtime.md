@@ -148,10 +148,11 @@ boundary.
 
 The primary hosted runtime model is a Linux-like runtime host. The host image
 provides the OS envelope, a runtime user, a root-only `clawdi` bootstrap path,
-official Hermes/OpenClaw installs, and a process manager. Runtime behavior
-comes from the manifest and official runtime binaries, not from per-agent
-wrappers. The managed Clawdi CLI is an administrator capability: the runtime
-user, model tools, and browser terminal cannot resolve, read, or execute it.
+the prerequisites for official Hermes/OpenClaw installers, and a process
+manager. Runtime behavior comes from the manifest and official runtime
+binaries, not from per-agent wrappers. The managed Clawdi CLI is an
+administrator capability: the runtime user, model tools, and browser terminal
+cannot resolve, read, or execute it.
 
 ```mermaid
 flowchart TB
@@ -262,8 +263,8 @@ already-existing root. If a root disappears after preflight, no child writer
 recursively recreates it; convergence fails and leaves root restoration to the
 systemd/image boundary that owns it.
 
-That entrypoint reads the exact managed CLI pin from the canonical runtime
-context, installs it under a root-only versioned npm prefix, atomically activates
+That entrypoint reads the exact managed CLI pin from the authenticated Cloud
+manifest, installs it under a root-only versioned npm prefix, atomically activates
 `/var/lib/clawdi/maintained/clawdi/bin/clawdi`, and runs
 `runtime init --non-interactive`. `runtime init` is the local administrator
 convergence step. It invokes official non-interactive service installers for
@@ -575,7 +576,7 @@ Normalization maps hosted fields into the internal shape:
 | `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
-| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; CLI owns installer URL and args |
+| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; CLI owns the official installer URL and non-version arguments, and Hosted cannot select a version, channel, commit, digest, or custom installer |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
 | `runtimes.<name>.providerMode` | Required runtime-provider ownership discriminator: `configured` or `unmanaged` |
 | `runtimes.<name>.provider_ids` | Core Hosted configured mode requires exactly one provider; unmanaged mode requires an exact empty list. Selection is replacement-only, with no fallback or secondary pool. |
@@ -592,6 +593,11 @@ Normalization maps hosted fields into the internal shape:
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
 | `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
+
+When an OpenClaw or Hermes installation is missing or requires repair, the CLI
+invokes the official installer without a version selector, so the installer
+chooses its current upstream release. A healthy installed runtime is not
+reinstalled merely to poll for a newer release.
 
 Hosted parsing does not accept camel-case runtime binding aliases, snake-case
 provider transport aliases, or string `primary_model` values. Provider model
@@ -1300,9 +1306,9 @@ fields such as desired or observed replica generation.
 
 Strict-v2 workloads provide their bootstrap and apply authority through the
 single fixed file `/etc/clawdi/runtime-context.json`. The file
-is a strict `clawdi.runtimeContext.v2` object containing an `apply` tuple
+is a strict `clawdi.runtimeContext.v3` object containing an `apply` tuple
 (`generation`, `manifestETag`, `applyReceiptId`, and `bootNonce`), an exact
-`backend: "incus"` attestation, the exact bootstrap `cliPackageSpec`, and a typed HTTP
+`backend: "incus"` attestation, and a typed HTTP
 `manifestSource` with bearer auth. `backend` is required for every Hosted v2
 context and is validated by the common precondition gate before convergence.
 Business secrets are not bootstrap context: the fetched bundle's `secretValues`
@@ -1312,10 +1318,11 @@ process environment are not duplicated in the context. A missing or malformed
 context
 fails closed, and no field falls back to ambient process environment. The
 applied generation must match the fetched manifest before CLI installation,
-systemd mutation, or applied-authority commit can occur. The context package is
-validated as bootstrap identity but is not desired-state authority and need not
-match a later exact package selected by the manifest. The paired-image local
-tarball exception exists only when the explicit test-installer gate is enabled.
+systemd mutation, or applied-authority commit can occur. The CLI package is
+selected only by manifest `clawdiCli.packageSpec`. RuntimeContext v2 remains a
+read-only compatibility input; its legacy `cliPackageSpec` is ignored and new
+contexts never write it. The paired-image local tarball exception exists only
+in manifest fixtures when the explicit test-installer gate is enabled.
 `manifestETag` names the
 Hosted control-plane snapshot and is persisted separately from the fetched
 bundle's HTTP ETag, which remains the strong validator derived from

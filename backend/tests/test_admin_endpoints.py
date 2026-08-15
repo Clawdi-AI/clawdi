@@ -25,7 +25,9 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
 from app.services.managed_ai_provider import (
+    MANAGED_AI_PROVIDER_API_MODE,
     MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY,
+    MANAGED_AI_PROVIDER_RUNTIME_ENV,
     V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
@@ -1391,10 +1393,15 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "legacy_runtime_env",
+    ["CLAWDI_MANAGED_OPENAI_API_KEY", MANAGED_AI_PROVIDER_RUNTIME_ENV],
+)
 async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manifest_changes(
     admin_client,
     db_session,
     seed_user,
+    legacy_runtime_env: str,
 ):
     from sqlalchemy import select
 
@@ -1512,24 +1519,88 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
         )
         assert provider is not None and payload is not None
 
-        def auth_storage():
+        provider.api_mode = "openai_chat"
+        provider.runtime_env_name = legacy_runtime_env
+        payload.payload_metadata = {"runtime_env_name": legacy_runtime_env}
+        await db_session.commit()
+        await db_session.refresh(provider)
+        await db_session.refresh(payload)
+
+        def preserved_storage():
             return (
+                provider.id,
+                provider.owner_user_id,
+                provider.provider_id,
                 provider.auth_type,
                 provider.auth_ref,
                 provider.auth_metadata,
                 provider.label,
                 provider.capabilities,
+                payload.id,
+                payload.owner_user_id,
+                payload.provider_id,
+                payload.auth_profile,
                 payload.encrypted_payload,
                 payload.nonce,
                 payload.credential_revision,
                 payload.kind,
                 payload.source,
                 payload.payload_metadata,
+                payload.consumer_environment_id,
+                payload.consumer_runtime,
                 payload.archived_at,
+                payload.created_at,
                 payload.updated_at,
             )
 
-        preserved = auth_storage()
+        preserved = preserved_storage()
+        readback = await admin_client.get(
+            f"/v1/admin/ai-providers/{provider_id}", headers=_AUTH, params=owner
+        )
+        assert readback.status_code == 200, readback.text
+        assert readback.json()["api_mode"] == MANAGED_AI_PROVIDER_API_MODE
+        assert readback.json()["runtime_env_name"] == MANAGED_AI_PROVIDER_RUNTIME_ENV
+        assert readback.json()["base_url"] == request_body["base_url"]
+        assert readback.json()["models"] == request_body["models"]
+        await db_session.refresh(provider)
+        assert provider.api_mode == "openai_chat"
+        assert provider.runtime_env_name == legacy_runtime_env
+        assert all(queue.empty() for queue in queues)
+
+        legacy_metadata = {
+            "owner": owner,
+            "base_url": request_body["base_url"],
+            "models": request_body["models"],
+        }
+        upgraded = await _replace_managed_provider_runtime_metadata(
+            admin_client, provider_id, legacy_metadata
+        )
+        assert upgraded.status_code == 200, upgraded.text
+        assert upgraded.json()["api_mode"] == MANAGED_AI_PROVIDER_API_MODE
+        assert upgraded.json()["runtime_env_name"] == MANAGED_AI_PROVIDER_RUNTIME_ENV
+        assert_only_bound_event()
+        await db_session.refresh(provider)
+        await db_session.refresh(payload)
+        assert provider.type == "custom_openai_compatible"
+        assert provider.api_mode == MANAGED_AI_PROVIDER_API_MODE
+        assert provider.managed_by == "clawdi"
+        assert provider.runtime_env_name == MANAGED_AI_PROVIDER_RUNTIME_ENV
+        assert provider.base_url == legacy_metadata["base_url"]
+        assert provider.models == legacy_metadata["models"]
+        assert preserved_storage() == preserved
+
+        unchanged_at = datetime.now(UTC) - timedelta(days=1)
+        provider.updated_at = unchanged_at
+        await db_session.commit()
+        replay = await _replace_managed_provider_runtime_metadata(
+            admin_client, provider_id, legacy_metadata
+        )
+        assert replay.status_code == 200, replay.text
+        assert replay.json() == upgraded.json()
+        await db_session.refresh(provider)
+        assert provider.updated_at == unchanged_at
+        assert all(queue.empty() for queue in queues)
+
         metadata = {
             "owner": owner,
             "base_url": "https://catalog-gateway.example.test/v1",
@@ -1555,20 +1626,28 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
         assert_only_bound_event()
         await db_session.refresh(provider)
         await db_session.refresh(payload)
-        assert auth_storage() == preserved
-        unchanged_at = datetime.now(UTC) - timedelta(days=1)
-        provider.updated_at = unchanged_at
-        await db_session.commit()
+        assert preserved_storage() == preserved
 
-        replay = await _replace_managed_provider_runtime_metadata(
+        provider.runtime_env_name = "CLAWDI_MANAGED_OPENAI_API_KEY"
+        await db_session.commit()
+        invalid_readback = await admin_client.get(
+            f"/v1/admin/ai-providers/{provider_id}", headers=_AUTH, params=owner
+        )
+        assert invalid_readback.status_code == 409, invalid_readback.text
+        invalid_replay = await _replace_managed_provider_runtime_metadata(
             admin_client, provider_id, metadata
         )
-        assert replay.status_code == 200, replay.text
-        assert replay.json() == changed.json()
+        assert invalid_replay.status_code == 409, invalid_replay.text
         await db_session.refresh(provider)
-        assert provider.updated_at == unchanged_at
+        await db_session.refresh(payload)
+        assert provider.runtime_env_name == "CLAWDI_MANAGED_OPENAI_API_KEY"
+        assert provider.base_url == metadata["base_url"]
+        assert provider.models == metadata["models"]
+        assert preserved_storage() == preserved
         assert all(queue.empty() for queue in queues)
 
+        provider.runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
+        await db_session.commit()
         cleared = await _replace_managed_provider_runtime_metadata(
             admin_client, provider_id, {**metadata, "models": None}
         )
@@ -2553,14 +2632,21 @@ async def test_admin_register_env_rejects_default_name_request_field(admin_clien
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
 async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     admin_client, db_session, seed_user
 ):
     from sqlalchemy import select
 
+    from app.core.config import settings
     from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
     from app.models.session import AgentEnvironment
-    from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
+    from app.services.runtime_source import (
+        expected_runtime_bundle_v2_etag,
+        load_runtime_source_batch,
+        render_runtime_source,
+        vault_key_identity,
+    )
     from app.services.vault_crypto import decrypt
     from tests.hosted_runtime_fixtures import (
         CANONICAL_CODEX_TOOL_PROVIDER_ID,
@@ -2681,6 +2767,33 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     )
     assert first_source.manifest["runtimes"]["openclaw"]["provider_ids"] == ["clawdi"]
     assert first_source.manifest["terminalTooling"]["codex"]["provider_id"] == "clawdi"
+
+    authority_source = render_runtime_source(
+        first_batch,
+        environment_id=agent_id,
+        public_api_url=settings.public_api_url,
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+        decrypt_secrets=False,
+    )
+    authority = await admin_client.get(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+        params={"kind": "clerk", "ref": seed_user.clerk_id},
+    )
+    assert authority.status_code == 200, authority.text
+    assert authority.json() == {
+        "environmentId": str(agent_id),
+        "deploymentId": "dep-admin-agent-alias",
+        "instanceId": "iid-admin-agent-alias",
+        "sourceRevision": authority_source.source_revision,
+        "etag": expected_runtime_bundle_v2_etag(authority_source.source_revision),
+    }
+    cross_owner = await admin_client.get(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+        params={"kind": "clerk", "ref": "user_another_owner"},
+    )
+    assert cross_owner.status_code == 404, cross_owner.text
 
     repeated = await admin_client.put(
         f"/v1/admin/agents/{agent_id}/runtime-state",

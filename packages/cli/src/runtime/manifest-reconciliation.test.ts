@@ -98,6 +98,12 @@ const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
 const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
 const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
+const FILE_BROWSER_VERSION = "v1.5.0-stable";
+const FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6";
+const FILE_BROWSER_AMD64_SHA256 =
+	"8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e";
+const FILE_BROWSER_ARM64_SHA256 =
+	"3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f";
 const TEST_HOSTED_SECRET_VALUES = {
 	"secret://clawdi/auth-token": "test-auth-token",
 	"secret://runtime/openclaw/gateway-token": "gateway-token",
@@ -285,7 +291,6 @@ function manifestLoad(
 				applyReceiptId: "test-apply-receipt",
 				bootNonce: "test-boot-nonce",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
@@ -5901,6 +5906,22 @@ exit 42
 			false,
 		);
 		expect(fileBrowserCompanionSchema.safeParse({ ...pinned, port: 9000 }).success).toBe(false);
+		const nextRelease = {
+			...pinned,
+			version: "v1.6.0-stable",
+			commit: "b".repeat(40),
+			assets: {
+				amd64: {
+					url: "https://github.com/gtsteffaniak/filebrowser/releases/download/v1.6.0-stable/linux-amd64-filebrowser",
+					sha256: "c".repeat(64),
+				},
+				arm64: {
+					url: "https://github.com/gtsteffaniak/filebrowser/releases/download/v1.6.0-stable/linux-arm64-filebrowser",
+					sha256: "d".repeat(64),
+				},
+			},
+		};
+		expect(fileBrowserCompanionSchema.safeParse(nextRelease).success).toBe(true);
 		expect(
 			fileBrowserCompanionSchema.safeParse({
 				...pinned,
@@ -5912,7 +5933,10 @@ exit 42
 				...pinned,
 				assets: {
 					...pinned.assets,
-					amd64: { ...pinned.assets.amd64, sha256: "d".repeat(64) },
+					amd64: {
+						...pinned.assets.amd64,
+						url: "https://github.com/gtsteffaniak/filebrowser/releases/download/v1.6.0-stable/linux-amd64-filebrowser",
+					},
 				},
 			}).success,
 		).toBe(false);

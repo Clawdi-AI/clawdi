@@ -507,6 +507,55 @@ def test_runtime_source_revalidates_persisted_agent_plugins_before_rendering() -
         _render(batch)
 
 
+def test_runtime_source_owns_the_public_clawdi_mcp_url() -> None:
+    first = _batch()
+    second = _batch()
+    for batch in (first, second):
+        state = batch.rows[ENV_ID].state
+        assert state is not None
+        state.mcp = {
+            "servers": {
+                "clawdi": {
+                    "platform": "clawdi",
+                    "transport": "streamable-http",
+                    "headers": {
+                        "Authorization": {
+                            "secretRef": "secret://clawdi/auth-token",
+                            "prefix": "Bearer ",
+                        }
+                    },
+                }
+            }
+        }
+    second_state = second.rows[ENV_ID].state
+    assert second_state is not None
+    second_state.mcp["servers"]["clawdi"] = {
+        **second_state.mcp["servers"]["clawdi"],
+        "url": "https://stale-hosted.example/v1/mcp/clawdi",
+    }
+    del second_state.mcp["servers"]["clawdi"]["platform"]
+
+    first_render = _render(first)
+    second_render = _render(second)
+
+    assert first_render.manifest["mcp"]["servers"]["clawdi"]["url"] == (
+        "https://cloud.test/v1/mcp/clawdi"
+    )
+    assert first_render.source_revision == second_render.source_revision
+    first_state = first.rows[ENV_ID].state
+    assert first_state is not None
+    assert first_state.mcp["servers"]["clawdi"] == {
+        "platform": "clawdi",
+        "transport": "streamable-http",
+        "headers": {
+            "Authorization": {
+                "secretRef": "secret://clawdi/auth-token",
+                "prefix": "Bearer ",
+            }
+        },
+    }
+
+
 def test_runtime_source_switches_only_clawdi_components_for_capable_clients() -> None:
     batch = _batch()
     state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())

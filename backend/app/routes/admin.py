@@ -90,7 +90,7 @@ from app.schemas.channel import (
     ChannelCommandSyncResponse,
     ChannelWhatsAppOnboardingSessionResponse,
 )
-from app.schemas.platform import PlatformOwner
+from app.schemas.platform import PlatformOwner, RuntimeSourceAuthorityResponse
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
@@ -162,6 +162,7 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_IDS,
     archive_clawdi_managed_provider,
     find_clawdi_managed_provider,
+    is_supported_deployment_managed_provider_contract,
     is_v2_deployment_managed_provider_id,
     lock_deployment_managed_provider_mutation,
     replace_deployment_managed_provider_metadata,
@@ -187,6 +188,8 @@ from app.services.runtime_manifest_resources import (
     lock_runtime_manifest_skill_reservations,
 )
 from app.services.runtime_observation import RuntimeObservationProtocolError
+from app.services.runtime_source import RuntimeSourceError, RuntimeSourceNotFoundError
+from app.services.runtime_source_authority import load_runtime_source_authority
 from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
@@ -461,15 +464,7 @@ async def _resolve_or_create_admin_owner(
 
 
 def _require_managed_provider_contract(provider: AiProvider) -> None:
-    if (
-        provider.type != MANAGED_AI_PROVIDER_TYPE
-        or provider.api_mode != MANAGED_AI_PROVIDER_API_MODE
-        or provider.auth_type != "api_key"
-        or provider.auth_ref is not None
-        or (provider.auth_metadata or {}).get("source") != "managed"
-        or provider.managed_by != "clawdi"
-        or provider.runtime_env_name != MANAGED_AI_PROVIDER_RUNTIME_ENV
-    ):
+    if not is_supported_deployment_managed_provider_contract(provider):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Stored managed AI provider contract is invalid",
@@ -517,10 +512,10 @@ async def _admin_deployment_managed_provider_response(
         scope=MANAGED_AI_PROVIDER_SCOPE,
         type=MANAGED_AI_PROVIDER_TYPE,
         label=provider.label or MANAGED_AI_PROVIDER_LABEL,
-        api_mode=provider.api_mode or "",
+        api_mode=MANAGED_AI_PROVIDER_API_MODE,
         auth=auth,
         managed_by="clawdi",
-        runtime_env_name=provider.runtime_env_name or "",
+        runtime_env_name=MANAGED_AI_PROVIDER_RUNTIME_ENV,
         base_url=provider.base_url,
         capabilities=provider.capabilities,
         models=provider.models,
@@ -2153,6 +2148,39 @@ async def _admin_upsert_runtime_state(
         instance_id=body.instance_id,
         generation=body.generation,
         apply_generation=apply_generation,
+    )
+
+
+@router.get(
+    "/agents/{agent_id}/runtime-state",
+    response_model=RuntimeSourceAuthorityResponse,
+    include_in_schema=False,
+)
+async def admin_get_runtime_source_authority(
+    agent_id: UUID,
+    owner: Annotated[PlatformOwner, Query()],
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeSourceAuthorityResponse:
+    target = await _find_admin_owner(db, owner)
+    try:
+        authority = await load_runtime_source_authority(
+            environment_id=agent_id,
+            owner_user_id=target.id,
+        )
+    except RuntimeSourceNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found") from None
+    except RuntimeSourceError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Runtime source is invalid",
+        ) from None
+    return RuntimeSourceAuthorityResponse(
+        environmentId=authority.environment_id,
+        deploymentId=authority.deployment_id,
+        instanceId=authority.instance_id,
+        sourceRevision=authority.source_revision,
+        etag=authority.etag,
     )
 
 

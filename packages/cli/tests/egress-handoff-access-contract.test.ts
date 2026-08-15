@@ -276,7 +276,6 @@ esac
 				applyReceiptId: "apply-receipt-handoff-access-0001",
 				bootNonce: "boot-nonce-handoff-access-0000001",
 			},
-			cliPackageSpec: "clawdi@1.2.3-test",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest",

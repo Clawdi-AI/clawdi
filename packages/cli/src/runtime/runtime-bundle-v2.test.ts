@@ -90,7 +90,6 @@ function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): Ru
 				applyReceiptId: "test-apply-receipt",
 				bootNonce: "test-boot-nonce",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
@@ -115,16 +114,14 @@ function readFileTree(root: string): string {
 function setRuntimeApplyIdentityFile(
 	root: string,
 	identity: { generation: number; manifestETag: string; applyReceiptId: string; bootNonce: string },
-	cliPackageSpec = "clawdi@1.2.3",
 ): RuntimeApplyContext {
 	const path = join(root, "runtime-context.json");
 	writeFileSync(
 		path,
 		JSON.stringify({
-			schemaVersion: "clawdi.runtimeContext.v2",
+			schemaVersion: "clawdi.runtimeContext.v3",
 			backend: "incus",
 			apply: identity,
-			cliPackageSpec,
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
@@ -1181,16 +1178,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-		const applyContext = setRuntimeApplyIdentityFile(
-			root,
-			{
-				generation: 1,
-				manifestETag: '"bundle-golden"',
-				applyReceiptId: "apply-receipt-golden-0001",
-				bootNonce: "boot-nonce-golden-000001",
-			},
-			"clawdi@1.2.3-test",
-		);
+		const applyContext = setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		const paths = getRuntimePaths({ mode: "hosted" });
 		globalThis.fetch = Object.assign(
 			async () =>
@@ -1214,16 +1207,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
-		const applyContext = setRuntimeApplyIdentityFile(
-			root,
-			{
-				generation: 1,
-				manifestETag: '"bundle-golden"',
-				applyReceiptId: "apply-receipt-golden-0001",
-				bootNonce: "boot-nonce-golden-000001",
-			},
-			"clawdi@1.2.3-test",
-		);
+		const applyContext = setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		const paths = getRuntimePaths({ mode: "hosted" });
 		globalThis.fetch = Object.assign(
 			async () =>
@@ -1311,22 +1300,18 @@ describe("hosted runtime bundle v2", () => {
 		);
 	});
 
-	test("takes the desired CLI package from the runtime manifest", async () => {
+	test("takes the desired CLI package only from the runtime manifest", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-cli-update-"));
 		roots.push(root);
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
-		const applyContext = setRuntimeApplyIdentityFile(
-			root,
-			{
-				generation: 1,
-				manifestETag: '"bundle-golden"',
-				applyReceiptId: "apply-receipt-golden-0001",
-				bootNonce: "boot-nonce-golden-000001",
-			},
-			"clawdi@1.2.2-test",
-		);
+		const applyContext = setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		globalThis.fetch = Object.assign(
 			async () =>
 				new Response(readFileSync(goldenPath, "utf-8"), {
@@ -1344,7 +1329,6 @@ describe("hosted runtime bundle v2", () => {
 		});
 
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
-		expect(applyContext.cliPackageSpec).toBe("clawdi@1.2.2-test");
 		expect(loaded.manifest.clawdiCli?.packageSpec).toBe("clawdi@1.2.3-test");
 	});
 
@@ -1354,16 +1338,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
-		const applyContext = setRuntimeApplyIdentityFile(
-			root,
-			{
-				generation: 1,
-				manifestETag: '"bundle-golden"',
-				applyReceiptId: "apply-receipt-golden-0001",
-				bootNonce: "boot-nonce-golden-000001",
-			},
-			"clawdi@1.2.3-test",
-		);
+		const applyContext = setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		globalThis.fetch = Object.assign(
 			async () =>
 				new Response(readFileSync(goldenPath, "utf-8"), {
@@ -1434,16 +1414,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_EGRESS_UID = "10002";
 		process.env.CLAWDI_EGRESS_GID = "10002";
 		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
-		const applyContext = setRuntimeApplyIdentityFile(
-			root,
-			{
-				generation: 1,
-				manifestETag: '"bundle-golden"',
-				applyReceiptId: "apply-receipt-golden-0001",
-				bootNonce: "boot-nonce-golden-000001",
-			},
-			"clawdi@1.2.3-test",
-		);
+		const applyContext = setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const goldenRaw = JSON.parse(readFileSync(goldenPath, "utf-8")) as {
 			sourceRevision: string;

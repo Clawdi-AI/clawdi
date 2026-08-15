@@ -60,7 +60,6 @@ function convergeRuntimeManifest(
 					applyReceiptId: "test-apply-receipt",
 					bootNonce: "test-boot-nonce",
 				},
-				cliPackageSpec: "clawdi@1.2.3",
 				manifestSource: {
 					type: "http",
 					url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
@@ -713,7 +712,6 @@ describe("runtime manifest services", () => {
 				applyReceiptId: "apply-receipt-0001",
 				bootNonce: "boot-nonce-000001",
 			},
-			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http" as const,
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",

@@ -2127,6 +2127,9 @@ async def test_snapshot_and_high_water_share_one_repeatable_read_snapshot(
         )
     assert [event["sequence"] for event in incremental["events"]] == [2]
     assert [head["sequence"] for head in incremental["heads"]] == [2]
+    assert incremental["heads"][0]["evidenceReference"] == (
+        incremental["events"][0]["evidenceReference"]
+    )
     assert first.stream_position < second.stream_position
     assert incremental["events"][0]["runtimeIdentity"]["bootSessionId"] == ("boot-session-0001")
     assert (
