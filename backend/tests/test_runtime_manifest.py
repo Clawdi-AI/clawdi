@@ -48,6 +48,7 @@ from app.routes.sessions import (
 )
 from app.schemas.admin import AdminRuntimeStateUpsert
 from app.schemas.runtime import (
+    HostedAgentPlugins,
     HostedEgressEngine,
     HostedEgressProfiles,
     HostedRuntimeMcp,
@@ -59,9 +60,11 @@ from app.services.audit import _sanitize_audit_details
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
 from app.services.runtime_source import (
+    RUNTIME_AGENT_PLUGIN_PROOF_HEADER,
     RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RUNTIME_CAPABILITIES_HEADER,
+    _agent_plugin_ownership_identity,
     expected_runtime_bundle_v2_etag,
     runtime_manifest_issued_at,
 )
@@ -4076,12 +4079,13 @@ async def test_runtime_manifest_requires_exact_v2_media_type(admin_client, db_se
     }
     assert bundle.headers["content-type"] == RUNTIME_BUNDLE_V2_MEDIA_TYPE
     assert bundle.headers["cache-control"] == "no-store, no-transform"
-    assert bundle.headers["vary"] == f"Accept, {RUNTIME_CAPABILITIES_HEADER}"
+    expected_vary = f"Accept, {RUNTIME_CAPABILITIES_HEADER}, {RUNTIME_AGENT_PLUGIN_PROOF_HEADER}"
+    assert bundle.headers["vary"] == expected_vary
     assert bundle.headers["etag"] == expected_runtime_bundle_v2_etag(body["sourceRevision"])
     assert bundle_not_modified.status_code == 304
     assert bundle_not_modified.headers["etag"] == bundle.headers["etag"]
     assert bundle_not_modified.headers["cache-control"] == "no-store, no-transform"
-    assert bundle_not_modified.headers["vary"] == f"Accept, {RUNTIME_CAPABILITIES_HEADER}"
+    assert bundle_not_modified.headers["vary"] == expected_vary
     assert unsupported.status_code == 406
     assert unsupported.headers["cache-control"] == "no-store"
     assert unsupported.headers["vary"] == "Accept"
@@ -4170,6 +4174,12 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
     }
     await db_session.commit()
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle-capability")
+    validated_plugins = HostedAgentPlugins.model_validate(state.agent_plugins)
+    ownership_identity = _agent_plugin_ownership_identity(
+        "clawdi-cloud",
+        validated_plugins.installations["clawdi-cloud"],
+    )
+    proof = f"v1:openclaw:{ownership_identity}:{'c' * 64}"
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         old_client = await client.get("/v1/runtime/manifest")
@@ -4191,6 +4201,22 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
                 "If-None-Match": capable_client.headers["etag"],
             },
         )
+        native_client = await client.get(
+            "/v1/runtime/manifest",
+            headers={
+                RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                RUNTIME_AGENT_PLUGIN_PROOF_HEADER: proof,
+                "If-None-Match": capable_client.headers["etag"],
+            },
+        )
+        native_not_modified = await client.get(
+            "/v1/runtime/manifest",
+            headers={
+                RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                RUNTIME_AGENT_PLUGIN_PROOF_HEADER: proof,
+                "If-None-Match": native_client.headers["etag"],
+            },
+        )
     app.dependency_overrides.clear()
 
     assert old_client.status_code == 200, old_client.text
@@ -4206,15 +4232,35 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
     assert old_client.json()["manifest"]["clawdiCli"]["packageSpec"] == state.cli_package_spec
     assert capable_client.status_code == 200, capable_client.text
     assert capable_client.json()["manifest"]["agentPlugins"] == state.agent_plugins
-    assert set(capable_client.json()["manifest"]["mcp"]["servers"]) == {"workspace-tools"}
-    assert set(capable_client.json()["manifest"]["skills"]["entries"]) == {"workspace-helper"}
+    assert capable_client.json()["manifest"]["agentPluginCapabilityProbe"] == {
+        "installations": ["clawdi-cloud"]
+    }
+    assert "clawdi" in capable_client.json()["manifest"]["mcp"]["servers"]
+    assert "clawdi" in capable_client.json()["manifest"]["skills"]["entries"]
     assert capable_client.headers["etag"] != old_client.headers["etag"]
     assert capable_client.json()["sourceRevision"] != old_client.json()["sourceRevision"]
     assert wrong_variant_validator.status_code == 200
     assert wrong_variant_validator.headers["etag"] == capable_client.headers["etag"]
     assert capable_not_modified.status_code == 304
     assert capable_not_modified.headers["etag"] == capable_client.headers["etag"]
-    assert capable_client.headers["vary"] == (f"Accept, {RUNTIME_CAPABILITIES_HEADER}")
+    assert native_client.status_code == 200, native_client.text
+    assert native_client.json()["manifest"]["agentPlugins"] == state.agent_plugins
+    assert "agentPluginCapabilityProbe" not in native_client.json()["manifest"]
+    assert set(native_client.json()["manifest"]["mcp"]["servers"]) == {"workspace-tools"}
+    assert set(native_client.json()["manifest"]["skills"]["entries"]) == {"workspace-helper"}
+    assert native_client.headers["etag"] not in {
+        old_client.headers["etag"],
+        capable_client.headers["etag"],
+    }
+    assert native_client.json()["sourceRevision"] not in {
+        old_client.json()["sourceRevision"],
+        capable_client.json()["sourceRevision"],
+    }
+    assert native_not_modified.status_code == 304
+    assert native_not_modified.headers["etag"] == native_client.headers["etag"]
+    assert capable_client.headers["vary"] == (
+        f"Accept, {RUNTIME_CAPABILITIES_HEADER}, {RUNTIME_AGENT_PLUGIN_PROOF_HEADER}"
+    )
 
 
 @pytest.mark.asyncio

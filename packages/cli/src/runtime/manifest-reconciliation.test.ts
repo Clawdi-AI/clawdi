@@ -34,6 +34,10 @@ import {
 	type PreparedHostedAgentPlugin,
 	type PreparedHostedAgentPlugins,
 } from "./hosted-agent-plugin-package";
+import {
+	type HostedAgentPluginCommandRunner,
+	hostedAgentPluginCommands,
+} from "./hosted-agent-plugin-runtime";
 import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
@@ -47,6 +51,7 @@ import { shouldIgnoreUserSkill } from "./managed-skill-reservation";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
+	planHostedAgentPluginConvergence,
 	type RuntimeManifest,
 	type RuntimePrivateAppliedAuthority,
 	runtimeInstallerMutationTargets,
@@ -56,10 +61,6 @@ import {
 import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
-	FILE_BROWSER_AMD64_SHA256,
-	FILE_BROWSER_ARM64_SHA256,
-	FILE_BROWSER_COMMIT,
-	FILE_BROWSER_VERSION,
 	fileBrowserCompanionSchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	hostedRuntimeManifestFixtureResponseSchema,
@@ -71,6 +72,7 @@ import {
 } from "./manifest-contract";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
+	FIRST_PARTY_CLAWDI_AGENT_PLUGIN,
 	type HostedAgentPluginsDesiredState,
 } from "./manifest-resources";
 import {
@@ -140,6 +142,23 @@ const TEST_AGENT_PLUGIN_INSTALLATION: HostedAgentPluginsDesiredState["installati
 const TEST_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
 	schemaVersion: 1,
 	installations: { "acme.tools": TEST_AGENT_PLUGIN_INSTALLATION },
+};
+const FIRST_PARTY_CLAWDI_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
+	schemaVersion: 1,
+	installations: {
+		[FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name]: {
+			installationId: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.installationId,
+			version: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.version,
+			agentPluginsSchema: AGENT_PLUGINS_SCHEMA_1_0_0,
+			source: {
+				type: "github",
+				url: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourceUrl,
+				path: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourcePath,
+				commit: "c5a6da2011958e5295b3b58ee4a9afb75ab39fda",
+			},
+			contentDigest: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.contentDigest,
+		},
+	},
 };
 
 function preparedTestAgentPlugin(
@@ -895,12 +914,23 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("strictly parses and preserves the Agent Plugins desired-state contract", () => {
 		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(
-			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
+			hostedManifestFixture({
+				agentPlugins: FIRST_PARTY_CLAWDI_AGENT_PLUGINS,
+				agentPluginCapabilityProbe: {
+					installations: [FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
+				},
+			}),
 		);
-		expect(parsed.agentPlugins).toEqual(TEST_AGENT_PLUGINS);
+		expect(parsed.agentPlugins).toEqual(FIRST_PARTY_CLAWDI_AGENT_PLUGINS);
+		expect(parsed.agentPluginCapabilityProbe).toEqual({
+			installations: [FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
+		});
 		expect(hostedManifestToRuntimeManifest(parsed).projection?.agentPlugins).toEqual(
-			TEST_AGENT_PLUGINS,
+			FIRST_PARTY_CLAWDI_AGENT_PLUGINS,
 		);
+		expect(hostedManifestToRuntimeManifest(parsed).projection?.agentPluginCapabilityProbe).toEqual({
+			installations: [FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
+		});
 		const maximumVersion = `1.2.3+${"a".repeat(250)}`;
 		const maximumLengthPlugins = {
 			...TEST_AGENT_PLUGINS,
@@ -926,6 +956,14 @@ describe("runtime manifest reconciliation invariants", () => {
 				hostedRuntimeBundleV2ManifestSchema.parse(hostedManifestFixture()),
 			).projection?.agentPlugins,
 		).toBeUndefined();
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
+				hostedManifestFixture({
+					agentPlugins: TEST_AGENT_PLUGINS,
+					agentPluginCapabilityProbe: { installations: ["other"] },
+				}),
+			).success,
+		).toBe(false);
 	});
 
 	test("rejects Agent Plugins on the legacy Hosted manifest v1 contract", () => {
@@ -1019,6 +1057,88 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			),
 		).toThrow(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
+	});
+
+	test("falls back only for an explicit first-party capability probe", () => {
+		const paths = tempRuntimePaths();
+		const desired = {
+			...preparedTestAgentPlugin(
+				FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name,
+				FIRST_PARTY_CLAWDI_AGENT_PLUGIN.version,
+				"a".repeat(64),
+			),
+			installation: {
+				...FIRST_PARTY_CLAWDI_AGENT_PLUGINS.installations[FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
+				ownershipIdentity: "a".repeat(64),
+			},
+		};
+		const prepared = preparedTestAgentPluginState(desired);
+		const probed = hostedManifestToRuntimeManifest(
+			hostedRuntimeBundleV2ManifestSchema.parse(
+				hostedManifestFixture({
+					agentPlugins: testAgentPluginDesiredState(desired),
+					agentPluginCapabilityProbe: { installations: [desired.name] },
+				}),
+			),
+		);
+		const unavailableRunner: HostedAgentPluginCommandRunner = {
+			available: () => false,
+			run: () => {
+				throw new Error("unsupported runtime must not execute Agent Plugin commands");
+			},
+		};
+		const commands = hostedAgentPluginCommands(paths.userHome);
+
+		expect(
+			planHostedAgentPluginConvergence({
+				manifest: probed,
+				prepared,
+				home: paths.userHome,
+				commands,
+				runner: unavailableRunner,
+			}),
+		).toEqual({ transaction: null, evidence: null });
+
+		const explicit: RuntimeManifest = {
+			...probed,
+			projection: { ...probed.projection, agentPluginCapabilityProbe: undefined },
+		};
+		expect(() =>
+			planHostedAgentPluginConvergence({
+				manifest: explicit,
+				prepared,
+				home: paths.userHome,
+				commands,
+				runner: unavailableRunner,
+			}),
+		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+
+		const generic = preparedTestAgentPlugin("acme.tools", "1.2.3", "b".repeat(64));
+		const forgedProbe: RuntimeManifest = {
+			...probed,
+			projection: {
+				...probed.projection,
+				agentPlugins: testAgentPluginDesiredState(generic),
+				agentPluginCapabilityProbe: { installations: [generic.name] },
+			},
+		};
+		expect(() =>
+			planHostedAgentPluginConvergence({
+				manifest: forgedProbe,
+				prepared: preparedTestAgentPluginState(generic),
+				home: paths.userHome,
+				commands,
+				runner: unavailableRunner,
+			}),
+		).toThrow("Agent Plugin capability probe requires the first-party clawdi-cloud package");
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
+				hostedManifestFixture({
+					agentPlugins: testAgentPluginDesiredState(generic),
+					agentPluginCapabilityProbe: { installations: [generic.name] },
+				}),
+			).success,
+		).toBe(false);
 	});
 
 	test("orders cold native plugin activation and restores the full preimage after rollback failure", () => {

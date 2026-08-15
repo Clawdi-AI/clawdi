@@ -75,7 +75,7 @@ export interface HostedAgentPluginCommandRunner {
 	run(input: AgentPluginCommandInput): AgentPluginCommandResult;
 }
 
-interface HostedAgentPluginPackageProof {
+export interface HostedAgentPluginPackageProof {
 	runtime: HostedAgentPluginRuntime;
 	command: string;
 	name: string;
@@ -87,6 +87,12 @@ export interface HostedAgentPluginCapabilityProof {
 	readonly [capabilityProofMarker]: true;
 	readonly runner: HostedAgentPluginCommandRunner;
 	readonly packages: ReadonlyMap<string, HostedAgentPluginPackageProof>;
+}
+
+export interface HostedAgentPluginBehavioralEvidence {
+	runtime: HostedAgentPluginRuntime;
+	command: string;
+	package: HostedAgentPluginPackageProof;
 }
 
 export type HermesRemoteCapabilityProbe = (input: {
@@ -673,6 +679,31 @@ export function proveHostedAgentPluginCapabilities(input: {
 	}
 	assertNoNativeIdentityCollisions(packages.values());
 	return { [capabilityProofMarker]: true, runner, packages };
+}
+
+export function hostedAgentPluginBehavioralEvidence(input: {
+	prepared: PreparedHostedAgentPlugins;
+	commands: HostedAgentPluginCommands;
+	proof: HostedAgentPluginCapabilityProof;
+	runner?: HostedAgentPluginCommandRunner;
+}): HostedAgentPluginBehavioralEvidence {
+	const runner = input.runner ?? defaultCommandRunner;
+	assertCapabilityProof({
+		prepared: input.prepared,
+		commands: input.commands,
+		runner,
+		proof: input.proof,
+	});
+	if (input.prepared.desired.size !== 1) {
+		throw new Error("Agent Plugin behavioral evidence requires one desired package");
+	}
+	const prepared = input.prepared.desired.values().next().value;
+	if (!prepared) throw new Error("Agent Plugin behavioral evidence is missing its package");
+	return {
+		runtime: input.prepared.runtime,
+		command: input.commands[input.prepared.runtime],
+		package: proofFor(input.proof, input.prepared.runtime, prepared),
+	};
 }
 
 function assertCapabilityProof(input: {

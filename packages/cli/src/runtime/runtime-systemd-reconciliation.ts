@@ -502,7 +502,11 @@ function runtimeFileCurrentRevision(path: string): string | null {
 	}
 }
 
-function runtimeCommandCurrentRevision(command: string, home: string, cwd: string): string | null {
+export function runtimeCommandCurrentRevision(
+	command: string,
+	home: string,
+	cwd: string,
+): string | null {
 	const executableRevision = runtimeFileCurrentRevision(command);
 	if (!executableRevision) return null;
 	try {

@@ -13,6 +13,7 @@ import {
 	runtimeApplyIdentitiesEqual,
 } from "./apply-identity";
 import { egressProfileSecretRefs } from "./egress-profiles";
+import { hostedAgentPluginCapabilityHeader } from "./hosted-agent-plugin-capability";
 import {
 	hostedManifestEgressProfiles,
 	isClawdiManagedProviderProjection,
@@ -59,6 +60,7 @@ export interface RuntimeManifestLoad {
 export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
 export const HOSTED_RUNTIME_CAPABILITIES_HEADER = "x-clawdi-runtime-capabilities";
 export const HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1";
+export const HOSTED_AGENT_PLUGIN_PROOF_HEADER = "x-clawdi-agent-plugin-proof";
 
 const runtimeBundleTokenChannelBindingSchema = z
 	.object({
@@ -246,6 +248,7 @@ function rawGeneration(value: unknown): number | null {
 
 async function fetchRuntimeManifestPayload(
 	applyContext: RuntimeApplyContext,
+	paths: RuntimePaths,
 	opts: { ifNoneMatch?: string } = {},
 ): Promise<
 	| {
@@ -265,12 +268,14 @@ async function fetchRuntimeManifestPayload(
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
+		const agentPluginProof = hostedAgentPluginCapabilityHeader(paths);
 		const response = await fetch(url, {
 			method: "GET",
 			headers: {
 				accept: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 				authorization: `Bearer ${token}`,
 				[HOSTED_RUNTIME_CAPABILITIES_HEADER]: HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
+				...(agentPluginProof ? { [HOSTED_AGENT_PLUGIN_PROOF_HEADER]: agentPluginProof } : {}),
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},
 			signal: controller.signal,
@@ -328,7 +333,7 @@ async function loadRemoteRuntimeManifestPipeline(
 	}
 	let fetched: Awaited<ReturnType<typeof fetchRuntimeManifestPayload>>;
 	try {
-		fetched = await fetchRuntimeManifestPayload(applyContext, opts);
+		fetched = await fetchRuntimeManifestPayload(applyContext, paths, opts);
 	} catch (error) {
 		return {
 			mode: "repair",
@@ -438,7 +443,7 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 }
 
 type NormalizableHostedRuntimeManifest = HostedRuntimeManifest &
-	Partial<Pick<HostedRuntimeBundleV2Manifest, "agentPlugins">>;
+	Partial<Pick<HostedRuntimeBundleV2Manifest, "agentPluginCapabilityProbe" | "agentPlugins">>;
 
 export function hostedManifestToRuntimeManifest(
 	hosted: NormalizableHostedRuntimeManifest,
@@ -495,6 +500,9 @@ export function hostedManifestToRuntimeManifest(
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
 			...(hosted.skills === undefined ? {} : { skills: hosted.skills }),
 			...(hosted.agentPlugins === undefined ? {} : { agentPlugins: hosted.agentPlugins }),
+			...(hosted.agentPluginCapabilityProbe === undefined
+				? {}
+				: { agentPluginCapabilityProbe: hosted.agentPluginCapabilityProbe }),
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
 			...(hosted.terminalTooling === undefined ? {} : { terminalTooling: hosted.terminalTooling }),
 		},

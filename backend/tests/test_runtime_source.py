@@ -20,7 +20,7 @@ from app.models.hosted_runtime import (
     HostedRuntimeState,
 )
 from app.models.session import AgentEnvironment
-from app.schemas.runtime import HostedCodexProviderProjection
+from app.schemas.runtime import HostedAgentPlugins, HostedCodexProviderProjection
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
@@ -32,6 +32,7 @@ from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceError,
     RuntimeSourceRow,
+    _agent_plugin_ownership_identity,
     expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
     render_runtime_source,
@@ -122,6 +123,20 @@ def _clawdi_agent_plugin_egress_profiles(*, marker: str = "clawdi-cloud") -> dic
             }
         ]
     }
+
+
+def _clawdi_agent_plugin_proof(
+    agent_plugins: dict[str, object],
+    *,
+    runtime: str = "openclaw",
+    command_revision: str = "c" * 64,
+) -> str:
+    validated = HostedAgentPlugins.model_validate(agent_plugins)
+    ownership = _agent_plugin_ownership_identity(
+        "clawdi-cloud",
+        validated.installations["clawdi-cloud"],
+    )
+    return f"v1:{runtime}:{ownership}:{command_revision}"
 
 
 def _use_clawdi_component_migration_state(
@@ -556,9 +571,42 @@ def test_runtime_source_owns_the_public_clawdi_mcp_url() -> None:
     }
 
 
-def test_runtime_source_switches_only_clawdi_components_for_capable_clients() -> None:
+@pytest.mark.parametrize("runtime", ["openclaw", "hermes"])
+def test_runtime_source_switches_only_clawdi_components_after_native_proof(
+    runtime: str,
+) -> None:
     batch = _batch()
     state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())
+    if runtime == "hermes":
+        hermes = dict(state.runtimes["openclaw"])
+        hermes["services"] = {
+            "dashboard": {
+                "args": [
+                    "dashboard",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "9119",
+                    "--no-open",
+                ]
+            }
+        }
+        state.runtimes = {"hermes": hermes}
+        state.system = {
+            "hermesDashboardAuth": {
+                "mode": "password",
+                "provider": "basic",
+                "username": "admin",
+                "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
+                "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
+                "sessionTtlSeconds": 43_200,
+                "publicUrl": "https://agent.example.test/hermes",
+                "activation": {
+                    "enabled": True,
+                    "capability": "hermes-basic-auth-v1",
+                },
+            }
+        }
 
     old_client = render_runtime_source(
         batch,
@@ -568,7 +616,18 @@ def test_runtime_source_switches_only_clawdi_components_for_capable_clients() ->
         decrypt_secrets=False,
         project_agent_plugins=False,
     )
-    capable_client = _render(batch)
+    probe_client = _render(batch)
+    native_client = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(
+            state.agent_plugins,
+            runtime=runtime,
+        ),
+    )
 
     assert "agentPlugins" not in old_client.manifest
     assert set(old_client.manifest["mcp"]["servers"]) == {"clawdi", "workspace-tools"}
@@ -576,10 +635,58 @@ def test_runtime_source_switches_only_clawdi_components_for_capable_clients() ->
         "clawdi",
         "workspace-helper",
     }
-    assert capable_client.manifest["agentPlugins"] == state.agent_plugins
-    assert set(capable_client.manifest["mcp"]["servers"]) == {"workspace-tools"}
-    assert set(capable_client.manifest["skills"]["entries"]) == {"workspace-helper"}
-    assert capable_client.source_revision != old_client.source_revision
+    assert probe_client.manifest["agentPlugins"] == state.agent_plugins
+    assert probe_client.manifest["agentPluginCapabilityProbe"] == {
+        "installations": ["clawdi-cloud"]
+    }
+    assert "clawdi" in probe_client.manifest["mcp"]["servers"]
+    assert "clawdi" in probe_client.manifest["skills"]["entries"]
+    assert native_client.manifest["agentPlugins"] == state.agent_plugins
+    assert "agentPluginCapabilityProbe" not in native_client.manifest
+    assert set(native_client.manifest["mcp"]["servers"]) == {"workspace-tools"}
+    assert set(native_client.manifest["skills"]["entries"]) == {"workspace-helper"}
+    assert (
+        len(
+            {
+                old_client.source_revision,
+                probe_client.source_revision,
+                native_client.source_revision,
+            }
+        )
+        == 3
+    )
+
+
+def test_runtime_source_invalidates_native_proof_on_runtime_or_package_change() -> None:
+    batch = _batch()
+    state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())
+    proof = _clawdi_agent_plugin_proof(state.agent_plugins)
+
+    state.agent_plugins["installations"]["clawdi-cloud"]["source"]["commit"] = "b" * 40
+    package_changed = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        agent_plugin_capability_proof=proof,
+    )
+    runtime_changed = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(
+            state.agent_plugins,
+            runtime="hermes",
+        ),
+    )
+
+    for source in (package_changed, runtime_changed):
+        assert source.manifest["agentPluginCapabilityProbe"] == {"installations": ["clawdi-cloud"]}
+        assert "clawdi" in source.manifest["mcp"]["servers"]
+        assert "clawdi" in source.manifest["skills"]["entries"]
 
 
 @pytest.mark.parametrize(

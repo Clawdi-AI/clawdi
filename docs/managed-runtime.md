@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-08-14 |
+| Last updated | 2026-08-15 |
 | Owner | CLI runtime and cloud-api layers |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
@@ -500,7 +500,8 @@ sanitized Telegram, Discord, and WhatsApp `channelBindings`, one merged
 media types return `406`; the CLI does not fall back to another representation
 or a second `/v1/channels` request.
 
-Bundle responses identify the vendor media type and return `Vary: Accept`.
+Bundle responses identify the vendor media type and vary on `Accept`,
+`X-Clawdi-Runtime-Capabilities`, and `X-Clawdi-Agent-Plugin-Proof`.
 Negotiation `406` responses also return `Vary: Accept` and
 `Cache-Control: no-store`, so errors are not reused across media types.
 The v2 strong ETag is `"sha256:<sourceRevision>"`; the immutable renderer and
@@ -755,19 +756,33 @@ Agent Plugins 1.0.0 schema/name/version identity, and verifies the canonical
 `sha256-tree-v1` regular-file tree digest. Symlinks, non-regular entries,
 unsafe or colliding paths, and bounded-size violations fail closed.
 
-Agent Plugins use an explicit rollout capability because the v2 inner manifest
-is strict. The CLI sends
-`X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1`; Cloud omits
-`agentPlugins` for clients that do not send that token while retaining the
-`clawdiCli` desired update and legacy Clawdi Skill/MCP. After that update
-re-execs, the capable CLI fetches the plugin-bearing variant. When the complete
-first-party `clawdi-cloud` package identity and its explicit first-party egress
-profile are both present, that variant removes only the legacy `clawdi` Skill
-and MCP entries; unrelated Workspace and Project components are unchanged.
-Removing either half reverses the switch. Each projection has its own canonical
-`sourceRevision` and strong ETag, and successful responses vary on both
-`Accept` and `X-Clawdi-Runtime-Capabilities`, so a validator from one variant
-cannot produce a false `304` for the other.
+Agent Plugins use a two-phase behavioral capability protocol because the v2
+inner manifest is strict. An old CLI sends no capability and receives only the
+legacy Clawdi Skill/MCP. A new CLI sends
+`X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1`. Until it has local
+positive proof, Cloud returns the immutable first-party `agentPlugins` intent
+plus `agentPluginCapabilityProbe`, while retaining legacy components. The CLI
+downloads and validates the package and probes the selected native runtime in
+an isolated HOME without changing the live plugin state.
+
+After the full legacy convergence succeeds, the CLI stores a root-owned `0600`
+proof. It binds runtime kind, absolute command, command-file contents and
+metadata, symlink target, effective file ownership and mode, the actual
+`--version` output, and the desired package ownership identity. The next normal
+bounded manifest poll sends `X-Clawdi-Agent-Plugin-Proof`. Cloud accepts it only
+for the selected runtime and exact first-party package ownership, then removes
+only the legacy `clawdi` Skill and MCP entries. Any command, binary, symlink,
+runtime, package commit, digest, or ownership change invalidates proof and
+returns to the probe-plus-legacy variant. No SemVer, release tag, upstream SHA,
+or allowlist decides capability.
+
+The old, unproven, and proven projections each have their own canonical
+`sourceRevision` and strong ETag. Successful and `304` responses vary on
+`Accept`, `X-Clawdi-Runtime-Capabilities`, and
+`X-Clawdi-Agent-Plugin-Proof`, so validators cannot cross variants. Missing
+native support is fallback only for this exact first-party probe intent;
+corrupt or ambiguous package state and general explicit installations remain
+fail closed.
 
 Clawdi remains a lifecycle and ownership driver. It gives the complete,
 already-verified package to the selected runtime's native plugin commands and
@@ -800,21 +815,18 @@ for `plugin.schema.json` and
 `6539175bfcdf43085855183e86da40ea94b166547a72b47ae9a0a390516d3acb`
 for `mcp.schema.json`.
 
-Upstream capability evidence was refreshed on 2026-08-14. OpenClaw main was
+Upstream capability evidence was refreshed on 2026-08-15. OpenClaw main was
 audited at
-[`8865c2539b19907e7fb7b38b912b836755c1882d`](https://github.com/openclaw/openclaw/commit/8865c2539b19907e7fb7b38b912b836755c1882d).
+[`a2d1b0c03bec383d927657140aa8f1254ff1b370`](https://github.com/openclaw/openclaw/commit/a2d1b0c03bec383d927657140aa8f1254ff1b370).
 Agent Plugins support landed in
 [`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
 that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
 `PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
-[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/8865c2539b19907e7fb7b38b912b836755c1882d/src/plugins/status.ts)
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/a2d1b0c03bec383d927657140aa8f1254ff1b370/src/plugins/status.ts)
 exposes every MCP server name, unsupported state, and plugin diagnostics.
 Clawdi requires the reported names to equal the already-validated `mcp.json`
 names and requires no unsupported entry or diagnostic during every isolated and
 live observation. This is native component proof rather than a version guess.
-The 27 commits from the prior `848a7e3` audit through `8865c25` do not touch
-the Agent Plugins loader, lifecycle, or inspect files according to the official
-compare file list.
 
 The GitHub Releases API latest release and npm `latest` remain
 [`v2026.7.1-2`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2),
@@ -837,9 +849,7 @@ the older Codex, Claude, and Cursor bundle path rather than the current Agent
 Plugins implementation. Release numbering is therefore not capability proof.
 
 Hermes main was audited at
-[`56a41715dc3b8bf6f50a740ff9416c4036ef4259`](https://github.com/NousResearch/hermes-agent/commit/56a41715dc3b8bf6f50a740ff9416c4036ef4259).
-The 47 commits from the prior `7a96345` audit do not touch the portable Plugin
-loader or MCP translation files according to the official compare file list.
+[`cb47f59ffa1056732c0a5194d2a1847dc64c2c37`](https://github.com/NousResearch/hermes-agent/commit/cb47f59ffa1056732c0a5194d2a1847dc64c2c37).
 The latest release is
 [`v2026.8.13`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.13),
 published 2026-08-13 as package `0.20.1`; annotated tag object
@@ -888,8 +898,10 @@ and MCP names `clawdi` and package digest
 `sha256-tree-v1:f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c`.
 Its deployable source must be an exact commit in the public
 `https://github.com/Clawdi-AI/store` repository at
-`v2/plugins/clawdi-cloud`. A private review repository, mutable ref, or
-unpublished future commit is not a valid production identity.
+`v2/plugins/clawdi-cloud`. The current public pin is
+`c5a6da2011958e5295b3b58ee4a9afb75ab39fda`. A private review repository,
+mutable ref, empty setting, or unpublished future commit is not a valid
+production identity and cannot be used as a capability switch.
 Every package must also carry the complete Store `ai.clawdi` extension and at
 least one Skill or MCP server; bare MCP commands require declared compatible
 executables. Exact duplicate JSON keys remain a Store ingestion rejection
@@ -905,7 +917,7 @@ task-local directory. Hermes documents that variable as the packaged-install
 bundled-root override at both the
 [`v2026.8.13` source](https://github.com/NousResearch/hermes-agent/blob/f80f453ae0679347e38abc917c7f94f717bf96c5/hermes_cli/plugins.py#L75-L86)
 and the
-[`56a4171` main audit](https://github.com/NousResearch/hermes-agent/blob/56a41715dc3b8bf6f50a740ff9416c4036ef4259/hermes_cli/plugins.py#L75-L86).
+[`cb47f59` main audit](https://github.com/NousResearch/hermes-agent/blob/cb47f59ffa1056732c0a5194d2a1847dc64c2c37/hermes_cli/plugins.py#L75-L86).
 Its scanner still reads user portable packages independently from
 `HERMES_HOME/plugins`; native install/enable, portable translation, MCP
 handshake, literal-header forwarding, tool execution, and result delivery all

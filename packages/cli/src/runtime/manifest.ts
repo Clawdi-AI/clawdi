@@ -95,8 +95,11 @@ import {
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
 import {
+	type HostedAgentPluginBehavioralEvidence,
 	type HostedAgentPluginCommandRunner,
+	type HostedAgentPluginCommands,
 	type HostedAgentPluginTransaction,
+	hostedAgentPluginBehavioralEvidence,
 	hostedAgentPluginCommands,
 	prepareHostedAgentPluginTransaction,
 	proveHostedAgentPluginCapabilities,
@@ -167,9 +170,11 @@ import {
 	type RuntimeManifest,
 } from "./manifest-contract";
 import {
+	FIRST_PARTY_CLAWDI_AGENT_PLUGIN,
 	type HostedMcpServerDesiredState,
 	type HostedSkillSource,
 	hostedMcpDesiredStateSchema,
+	isFirstPartyClawdiAgentPlugin,
 } from "./manifest-resources";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
@@ -279,6 +284,7 @@ export interface RuntimeConvergenceResult {
 	enabledRuntimes: string[];
 	installErrors: string[];
 	projectedProviderIds: Record<string, string[]>;
+	agentPluginCapabilityEvidence: HostedAgentPluginBehavioralEvidence | null;
 	outputs: {
 		processManager: "systemd";
 		workspaceRoot: string;
@@ -306,6 +312,75 @@ export interface RuntimeConvergenceResult {
 		instanceSemaphores: string[];
 		bootFinished: string;
 	};
+}
+
+export function planHostedAgentPluginConvergence(input: {
+	manifest: RuntimeManifest;
+	prepared: PreparedHostedAgentPlugins;
+	home: string;
+	commands: HostedAgentPluginCommands;
+	runner?: HostedAgentPluginCommandRunner;
+}): {
+	transaction: HostedAgentPluginTransaction | null;
+	evidence: HostedAgentPluginBehavioralEvidence | null;
+} {
+	const probeInstallations = input.manifest.projection?.agentPluginCapabilityProbe?.installations;
+	const desiredNames = [...input.prepared.desired.keys()].sort();
+	if (
+		probeInstallations &&
+		(probeInstallations.length !== desiredNames.length ||
+			![...probeInstallations].sort().every((name, index) => name === desiredNames[index]))
+	) {
+		throw new Error("Agent Plugin capability probe does not match desired installations");
+	}
+	if (probeInstallations) {
+		const prepared = input.prepared.desired.get(FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name);
+		if (!prepared || !isFirstPartyClawdiAgentPlugin(prepared.name, prepared.installation)) {
+			throw new Error(
+				"Agent Plugin capability probe requires the first-party clawdi-cloud package",
+			);
+		}
+	}
+	const capabilityPrepared = probeInstallations
+		? { ...input.prepared, previousReceipt: null, rollback: new Map() }
+		: input.prepared;
+	try {
+		const proof = proveHostedAgentPluginCapabilities({
+			prepared: capabilityPrepared,
+			commands: input.commands,
+			...(input.runner ? { runner: input.runner } : {}),
+		});
+		if (probeInstallations) {
+			return {
+				transaction: null,
+				evidence: hostedAgentPluginBehavioralEvidence({
+					prepared: capabilityPrepared,
+					commands: input.commands,
+					proof,
+					...(input.runner ? { runner: input.runner } : {}),
+				}),
+			};
+		}
+		return {
+			transaction: prepareHostedAgentPluginTransaction({
+				prepared: capabilityPrepared,
+				home: input.home,
+				commands: input.commands,
+				capabilityProof: proof,
+				...(input.runner ? { runner: input.runner } : {}),
+			}),
+			evidence: null,
+		};
+	} catch (error) {
+		if (
+			!probeInstallations ||
+			!(error instanceof Error) ||
+			error.message !== AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR
+		) {
+			throw error;
+		}
+		return { transaction: null, evidence: null };
+	}
 }
 
 type RuntimeSystemdApplyResult = {
@@ -5080,6 +5155,7 @@ function runtimeConvergenceWithoutApply(input: {
 		enabledRuntimes: input.enabledRuntimes,
 		installErrors: input.installErrors,
 		projectedProviderIds: input.projectedProviderIds,
+		agentPluginCapabilityEvidence: null,
 		outputs: {
 			processManager: "systemd",
 			workspaceRoot: input.workspaceRoot,
@@ -5690,6 +5766,7 @@ export function convergeRuntimeManifest(
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
+	let agentPluginCapabilityEvidence: HostedAgentPluginBehavioralEvidence | null = null;
 	let agentPluginSnapshot: RuntimeLiveSnapshot | null = null;
 	let agentPluginQuiesceAttempted = false;
 	let agentPluginUnitsQuiesced = false;
@@ -5978,23 +6055,18 @@ export function convergeRuntimeManifest(
 		}
 		if (opts.preparedHostedAgentPlugins) {
 			const commands = hostedAgentPluginCommands(projectionHome);
-			const capabilityProof = proveHostedAgentPluginCapabilities({
-				prepared: opts.preparedHostedAgentPlugins,
-				commands,
-				...(opts.hostedAgentPluginCommandRunner
-					? { runner: opts.hostedAgentPluginCommandRunner }
-					: {}),
-			});
-			agentPluginTransaction = prepareHostedAgentPluginTransaction({
+			const planned = planHostedAgentPluginConvergence({
+				manifest,
 				prepared: opts.preparedHostedAgentPlugins,
 				home: projectionHome,
 				commands,
-				capabilityProof,
 				...(opts.hostedAgentPluginCommandRunner
 					? { runner: opts.hostedAgentPluginCommandRunner }
 					: {}),
 			});
-			if (agentPluginTransaction.hasMutations && !opts.systemdApply) {
+			agentPluginTransaction = planned.transaction;
+			agentPluginCapabilityEvidence = planned.evidence;
+			if (agentPluginTransaction?.hasMutations && !opts.systemdApply) {
 				throw new Error("Agent Plugin mutations require systemd activation and readiness");
 			}
 		}
@@ -6657,6 +6729,7 @@ export function convergeRuntimeManifest(
 			enabledRuntimes,
 			installErrors,
 			projectedProviderIds,
+			agentPluginCapabilityEvidence,
 			outputs: {
 				processManager: "systemd",
 				workspaceRoot,

@@ -38,6 +38,7 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
+    HostedAgentPluginInstallation,
     HostedAgentPlugins,
     HostedCodexProviderProjection,
     HostedEgressEngine,
@@ -93,6 +94,7 @@ RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
+RUNTIME_AGENT_PLUGIN_PROOF_HEADER = "X-Clawdi-Agent-Plugin-Proof"
 _CLAWDI_AGENT_PLUGIN_PACKAGE = "clawdi-cloud"
 _CLAWDI_AGENT_PLUGIN_COMPONENT = "clawdi"
 _CLAWDI_AGENT_PLUGIN_INSTALLATION_ID = "first-party:clawdi-cloud"
@@ -109,6 +111,7 @@ _CLAWDI_AGENT_PLUGIN_MCP_AUTHORITY = "cloud-api.clawdi.ai:443"
 _CLAWDI_AGENT_PLUGIN_MCP_PATH = "/v1/mcp/clawdi"
 _CLAWDI_AGENT_PLUGIN_MARKER_HEADER = "X-Clawdi-Agent-Plugin"
 _CLAWDI_AUTH_TOKEN_SECRET_REF = "secret://clawdi/auth-token"
+_AGENT_PLUGIN_PROOF_PATTERN = re.compile(r"^v1:(openclaw|hermes):([0-9a-f]{64}):([0-9a-f]{64})$")
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
 _CODEX_TOOL_LEGACY_RUNTIME_ENV = "OPENAI_API_KEY"
@@ -573,7 +576,7 @@ def _without_legacy_clawdi_components(
 def _is_first_party_clawdi_agent_plugin(
     agent_plugins: HostedAgentPlugins | None,
 ) -> bool:
-    if agent_plugins is None:
+    if agent_plugins is None or set(agent_plugins.installations) != {_CLAWDI_AGENT_PLUGIN_PACKAGE}:
         return False
     installation = agent_plugins.installations.get(_CLAWDI_AGENT_PLUGIN_PACKAGE)
     if installation is None:
@@ -587,6 +590,43 @@ def _is_first_party_clawdi_agent_plugin(
         and source.url == _CLAWDI_AGENT_PLUGIN_STORE_URL
         and source.path == _CLAWDI_AGENT_PLUGIN_STORE_PATH
         and installation.contentDigest == _CLAWDI_AGENT_PLUGIN_CONTENT_DIGEST
+    )
+
+
+def _agent_plugin_ownership_identity(
+    name: str,
+    installation: HostedAgentPluginInstallation,
+) -> str:
+    source = installation.source
+    payload = [
+        installation.installationId,
+        name,
+        installation.version,
+        installation.agentPluginsSchema,
+        source.type,
+        source.url,
+        source.path,
+        source.commit,
+        installation.contentDigest,
+    ]
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _matches_agent_plugin_capability_proof(
+    proof: str | None,
+    *,
+    runtime: HostedRuntimeName,
+    agent_plugins: HostedAgentPlugins,
+) -> bool:
+    match = _AGENT_PLUGIN_PROOF_PATTERN.fullmatch(proof or "")
+    if match is None or match.group(1) != runtime:
+        return False
+    installation = agent_plugins.installations[_CLAWDI_AGENT_PLUGIN_PACKAGE]
+    return match.group(2) == _agent_plugin_ownership_identity(
+        _CLAWDI_AGENT_PLUGIN_PACKAGE,
+        installation,
     )
 
 
@@ -649,6 +689,7 @@ def render_runtime_source(
     vault_key_identity: str,
     decrypt_secrets: bool,
     project_agent_plugins: bool = True,
+    agent_plugin_capability_proof: str | None = None,
 ) -> RenderedRuntimeSource:
     row = batch.rows.get(environment_id)
     if row is None:
@@ -734,18 +775,27 @@ def render_runtime_source(
         public_api_url=public_api_url,
         signing_key=vault_key_identity,
     )
-    project_clawdi_agent_plugin = (
+    runtime_name, runtime = _runtime(state.runtimes)
+    first_party_clawdi_agent_plugin = (
         project_agent_plugins
         and _is_first_party_clawdi_agent_plugin(agent_plugins)
         and _has_first_party_clawdi_agent_plugin_egress_profile(egress_profiles)
     )
-    if project_clawdi_agent_plugin:
+    native_clawdi_agent_plugin = bool(
+        first_party_clawdi_agent_plugin
+        and agent_plugins is not None
+        and _matches_agent_plugin_capability_proof(
+            agent_plugin_capability_proof,
+            runtime=runtime_name,
+            agent_plugins=agent_plugins,
+        )
+    )
+    if native_clawdi_agent_plugin:
         mcp, skills = _without_legacy_clawdi_components(mcp, skills)
     try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:
         raise RuntimeSourceError("Hosted runtime CLI package spec is invalid") from exc
-    runtime_name, runtime = _runtime(state.runtimes)
     bound_runtime_provider_ids = list(runtime["provider_ids"])
     runtime = _agent_runtime_binding(runtime)
     dashboard_auth = system.hermesDashboardAuth
@@ -981,6 +1031,8 @@ def render_runtime_source(
         manifest["skills"] = skills
     if project_agent_plugins and agent_plugins is not None:
         manifest["agentPlugins"] = agent_plugins.model_dump(mode="json")
+    if first_party_clawdi_agent_plugin and not native_clawdi_agent_plugin:
+        manifest["agentPluginCapabilityProbe"] = {"installations": [_CLAWDI_AGENT_PLUGIN_PACKAGE]}
     if tool_projection:
         manifest["tools"] = tool_projection
     manifest["terminalTooling"] = terminal_tooling

@@ -1155,6 +1155,7 @@ describe("hosted runtime bundle v2", () => {
 				expect(headers.get("accept")).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 				expect(headers.get("if-none-match")).toBe('"bundle-1"');
 				expect(headers.get("x-clawdi-runtime-capabilities")).toBe("agent-plugins-manifest-v1");
+				expect(headers.get("x-clawdi-agent-plugin-proof")).toBeNull();
 				expect(headers.get("x-clawdi-runtime-generation")).toBeNull();
 				expect(headers.get("x-clawdi-runtime-manifest-etag")).toBeNull();
 				expect(headers.get("x-clawdi-runtime-apply-receipt-id")).toBeNull();
@@ -1239,16 +1240,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-		const applyContext = setRuntimeApplyIdentityFile(
-			root,
-			{
-				generation: 1,
-				manifestETag: '"bundle-golden"',
-				applyReceiptId: "apply-receipt-golden-0001",
-				bootNonce: "boot-nonce-golden-000001",
-			},
-			"clawdi@1.2.3-test",
-		);
+		const applyContext = setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const raw = z
 			.record(z.string(), z.unknown())

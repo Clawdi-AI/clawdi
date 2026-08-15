@@ -427,12 +427,14 @@ export function cleanupHostedAgentPluginTransientArchives(
 export function gcHostedAgentPluginArchives(
 	receipt: HostedAgentPluginReceipt | null,
 	paths: RuntimePaths,
+	additionalOwnerships: Iterable<string> = [],
 ): void {
 	const keep = new Set(
 		Object.values(receipt?.installations ?? {}).map(
 			(installation) => installation.ownershipIdentity,
 		),
 	);
+	for (const ownership of additionalOwnerships) keep.add(ownership);
 	const container = cacheContainer(paths);
 	let entries: string[];
 	try {
