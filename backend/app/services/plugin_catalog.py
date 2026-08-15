@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -50,6 +50,12 @@ _SNAPSHOT_RETENTION = 20
 
 class PluginCatalogSyncError(RuntimeError):
     pass
+
+
+class _GitHubHeadResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    sha: str
 
 
 @dataclass(frozen=True)
@@ -296,14 +302,11 @@ class PluginCatalogSyncWorker:
         except httpx.HTTPError as exc:
             raise PluginCatalogSyncError("head_network_error") from exc
         try:
-            payload = json.loads(body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            revision = _GitHubHeadResponse.model_validate_json(body).sha
+        except ValidationError as exc:
             raise PluginCatalogSyncError("head_response_invalid") from exc
-        revision = payload.get("sha") if isinstance(payload, dict) else None
-        if (
-            not isinstance(revision, str)
-            or len(revision) != 40
-            or any(character not in "0123456789abcdef" for character in revision)
+        if len(revision) != 40 or any(
+            character not in "0123456789abcdef" for character in revision
         ):
             raise PluginCatalogSyncError("head_revision_invalid")
         return revision, head_etag

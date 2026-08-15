@@ -47,6 +47,7 @@ from app.schemas.runtime import (
     HostedAgentPlugins,
     HostedCodexProviderProjection,
     HostedEgressEngine,
+    HostedEgressProfile,
     HostedEgressProfiles,
     HostedRuntimeCompanions,
     HostedRuntimeLiveSync,
@@ -664,41 +665,43 @@ def _matches_agent_plugin_capability_proof(
 def _first_party_clawdi_agent_plugin_egress_profile(
     *,
     public_api_url: str,
-) -> dict[str, Any]:
-    return {
-        "id": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID,
-        "enabled": True,
-        "kind": "http",
-        "match": {
-            "scheme": "https",
-            "host": _CLAWDI_AGENT_PLUGIN_MCP_AUTHORITY,
-            "path": {"type": "equals", "value": _CLAWDI_AGENT_PLUGIN_MCP_PATH},
-            "headers": {
-                _CLAWDI_AGENT_PLUGIN_MARKER_HEADER: {
-                    "type": "equals",
-                    "value": _CLAWDI_AGENT_PLUGIN_PACKAGE,
-                }
+) -> HostedEgressProfile:
+    return HostedEgressProfile.model_validate(
+        {
+            "id": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID,
+            "enabled": True,
+            "kind": "http",
+            "match": {
+                "scheme": "https",
+                "host": _CLAWDI_AGENT_PLUGIN_MCP_AUTHORITY,
+                "path": {"type": "equals", "value": _CLAWDI_AGENT_PLUGIN_MCP_PATH},
+                "headers": {
+                    _CLAWDI_AGENT_PLUGIN_MARKER_HEADER: {
+                        "type": "equals",
+                        "value": _CLAWDI_AGENT_PLUGIN_PACKAGE,
+                    }
+                },
+                "query": {},
             },
-            "query": {},
-        },
-        "rewrite": {
-            "upstreamBaseUrl": public_api_url.rstrip("/"),
-            "preservePath": True,
-            "setHeaders": {
-                "Authorization": {
-                    "type": "secretRef",
-                    "secretRef": _CLAWDI_AUTH_TOKEN_SECRET_REF,
-                    "prefix": "Bearer ",
-                }
+            "rewrite": {
+                "upstreamBaseUrl": public_api_url.rstrip("/"),
+                "preservePath": True,
+                "setHeaders": {
+                    "Authorization": {
+                        "type": "secretRef",
+                        "secretRef": _CLAWDI_AUTH_TOKEN_SECRET_REF,
+                        "prefix": "Bearer ",
+                    }
+                },
             },
-        },
-        "logging": {
-            "redactHeaders": ["Authorization"],
-            "redactUrlPatterns": [],
-        },
-        "priority": 60,
-        "owner": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER,
-    }
+            "logging": {
+                "redactHeaders": ["Authorization"],
+                "redactUrlPatterns": [],
+            },
+            "priority": 60,
+            "owner": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER,
+        }
+    )
 
 
 def _has_reserved_clawdi_agent_plugin_egress_profile(
@@ -835,12 +838,12 @@ def render_runtime_source(
     if _has_reserved_clawdi_agent_plugin_egress_profile(egress_profiles):
         raise RuntimeSourceError("Hosted runtime state uses a Clawdi-reserved egress profile")
     if project_agent_plugins and first_party_clawdi_agent_plugin:
-        profiles = list(egress_profiles.profiles or []) if egress_profiles is not None else []
-        profiles.append(
-            _first_party_clawdi_agent_plugin_egress_profile(public_api_url=public_api_url)
-        )
         try:
-            egress_profiles = HostedEgressProfiles.model_validate({"profiles": profiles})
+            profiles = list(egress_profiles.profiles or []) if egress_profiles is not None else []
+            profiles.append(
+                _first_party_clawdi_agent_plugin_egress_profile(public_api_url=public_api_url)
+            )
+            egress_profiles = HostedEgressProfiles(profiles=profiles)
         except ValidationError as exc:
             raise RuntimeSourceError("Clawdi Agent Plugin egress policy is invalid") from exc
     native_clawdi_agent_plugin = bool(
