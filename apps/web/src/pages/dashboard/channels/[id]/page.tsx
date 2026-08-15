@@ -1,8 +1,7 @@
 "use client";
 
-import { lazy, Suspense } from "react";
-import { HostedProductGate } from "@/components/hosted-product-gate";
-import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
+import { lazy } from "react";
+import { HostedProductRoute } from "@/components/hosted-product-route";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -15,13 +14,9 @@ const ChannelDetailPage = IS_HOSTED_BUILD
 	: null;
 
 export default function ChannelDetailRoutePage({ channelId }: { channelId: string }) {
-	return (
-		<HostedProductGate fallbackHref="/">
-			{ChannelDetailPage ? (
-				<Suspense fallback={<HostedRouteSkeleton />}>
-					<ChannelDetailPage channelId={channelId} />
-				</Suspense>
-			) : null}
-		</HostedProductGate>
-	);
+	return ChannelDetailPage ? (
+		<HostedProductRoute>
+			<ChannelDetailPage channelId={channelId} />
+		</HostedProductRoute>
+	) : null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isLegacyHostedDashboardUrlAvailable } from "@/lib/legacy-hosted-dashboard";
+import { isLegacyHostedDashboardUrlAvailable } from "@/hosted/access/legacy-dashboard-url";
 
 describe("isLegacyHostedDashboardUrlAvailable", () => {
 	it("treats production URLs as configured without browser host gating", () => {

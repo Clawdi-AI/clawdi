@@ -9,6 +9,7 @@ import {
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
 import { z } from "zod";
+import { isDeployApiConfigured } from "@/hosted/access/api";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	CheckoutRequest,
@@ -50,7 +51,6 @@ import {
 } from "@/hosted/billing/errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
-import { isDeployApiConfigured } from "@/lib/hosted-api";
 
 const BASE_URL = env.VITE_CLAWDI_DEPLOY_API_URL;
 const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);

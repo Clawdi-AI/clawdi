@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 
 /**
  * OSS-clean invariant tests.
@@ -56,31 +56,6 @@ function walkSrcExceptQuarantined(dir: string, out: string[] = []): string[] {
 	return out;
 }
 
-function hasHostedProductGate(file: string): boolean {
-	const src = readFileSync(file, "utf8");
-	return (
-		src.includes('from "@/components/hosted-product-gate"') &&
-		/<HostedProductGate(?:\s|>)/.test(src)
-	);
-}
-
-function nearestHostedProductGateFile(routeFile: string): string | null {
-	if (hasHostedProductGate(routeFile)) return routeFile;
-
-	let dir = dirname(routeFile);
-	while (dir.startsWith(PAGES_DIR)) {
-		const layoutFile = join(dir, "layout.tsx");
-		if (layoutFile !== routeFile && existsSync(layoutFile) && hasHostedProductGate(layoutFile)) {
-			return layoutFile;
-		}
-		const parent = dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
-	}
-
-	return null;
-}
-
 function routeUsesHostedProductOnlyModule(src: string): boolean {
 	for (const match of src.matchAll(GATED_ROUTE_DYNAMIC_IMPORT)) {
 		const target = match[1];
@@ -96,8 +71,7 @@ function routeUsesHostedProductOnlyModule(src: string): boolean {
 }
 
 function discoverHostedProductOnlyRouteFiles(): string[] {
-	const gateFiles = new Set<string>();
-	const ungatedRouteFiles: string[] = [];
+	const routeFiles: string[] = [];
 
 	for (const file of listTsx(PAGES_DIR)) {
 		if (!/(?:^|\/)(?:page|layout)\.tsx$/.test(file)) continue;
@@ -106,23 +80,11 @@ function discoverHostedProductOnlyRouteFiles(): string[] {
 		// OAuth protocol callbacks must hand the authorization response back to
 		// their opener even while the per-user capability check is unavailable.
 		if (CAPABILITY_INDEPENDENT_HOSTED_ROUTES.has(relative(PAGES_DIR, file))) continue;
-
-		const gateFile = nearestHostedProductGateFile(file);
-		if (gateFile) {
-			gateFiles.add(relative(SRC_DIR, gateFile));
-		} else {
-			ungatedRouteFiles.push(relative(SRC_DIR, file));
-		}
+		routeFiles.push(relative(SRC_DIR, file));
 	}
 
-	if (ungatedRouteFiles.length > 0) {
-		throw new Error(
-			`Hosted product route entrypoints must render inside <HostedProductGate> directly or through a parent layout:\n  ${ungatedRouteFiles.join("\n  ")}`,
-		);
-	}
-
-	expect(gateFiles.size).toBeGreaterThan(0);
-	return [...gateFiles].sort();
+	expect(routeFiles.length).toBeGreaterThan(0);
+	return routeFiles.sort();
 }
 
 describe("IS_HOSTED flag", () => {
@@ -189,7 +151,10 @@ describe("hosted/ directory invariants", () => {
 		const files = listTsx(HOSTED_DIR);
 		expect(files.length).toBeGreaterThan(0);
 		// Effect-only hosted modules should render no DOM instead of a tagged sentinel.
-		const rootlessEffectOnlyFiles = new Set(["hosted/analytics-client.tsx"]);
+		const rootlessEffectOnlyFiles = new Set([
+			"hosted/access/product-access-sensor.tsx",
+			"hosted/analytics-client.tsx",
+		]);
 
 		for (const file of files) {
 			const rel = relative(SRC_DIR, file);
@@ -271,8 +236,8 @@ describe("no static @/hosted/v2/* imports outside hosted/", () => {
 	});
 });
 
-describe("lazy gated-module imports are gated by the Vite hosted flag", () => {
-	test('every `lazy(import("@/hosted/…"))` or `lazy(import("@/hosted/v2/…"))` is constructed inside `IS_HOSTED_BUILD ? … : null`', () => {
+describe("gated-module imports use the Vite hosted flag", () => {
+	test("every hosted dynamic import outside hosted/ is constructed behind a compile-time ternary", () => {
 		// Why this matters: a bare `lazy(() => import("@/hosted/x"))`
 		// or `lazy(() => import("@/hosted/v2/x"))` at module top level would
 		// register the gated chunk in the OSS
@@ -288,51 +253,66 @@ describe("lazy gated-module imports are gated by the Vite hosted flag", () => {
 		// then walk backwards to the most recent `const ` keyword. The
 		// snippet between the two must contain `IS_HOSTED_BUILD ?` — that's
 		// the gate the bundler folds at build time.
-		const gatedLazy = /lazy\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/hosted\/[^"']+["']/g;
+		const hostedDynamic = /import\s*\(\s*["']@\/hosted\/[^"']+["']\s*\)/g;
 		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
-			for (const match of src.matchAll(gatedLazy)) {
+			for (const match of src.matchAll(hostedDynamic)) {
 				const idx = match.index ?? 0;
 				const lastConst = src.lastIndexOf("\nconst ", idx);
 				const start = lastConst >= 0 ? lastConst : 0;
 				const snippet = src.slice(start, idx);
-				if (!/\bIS_HOSTED_BUILD\s*\?/.test(snippet)) {
+				if (!/\bIS_HOSTED(?:_BUILD)?\s*\?/.test(snippet)) {
 					offenders.push(`${relative(SRC_DIR, file)} — ${match[0].slice(0, 80)}…`);
 				}
 			}
 		}
 		if (offenders.length > 0) {
 			throw new Error(
-				`Ungated lazy imports of @/hosted/* or @/hosted/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED_BUILD ? lazy(…) : null\`.`,
+				`Ungated dynamic imports of @/hosted/* leak hosted chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nConstruct each importer in an IS_HOSTED_BUILD ternary.`,
 			);
 		}
 	});
 });
 
 describe("hosted product route exposure", () => {
-	test("hosted product routes are behind the per-user access gate, not only the build flag", () => {
+	test("hosted product routes load their product chunk only through the shared access shell", () => {
 		const routeFiles = discoverHostedProductOnlyRouteFiles();
-
 		const offenders: string[] = [];
 		for (const routeFile of routeFiles) {
 			const full = join(SRC_DIR, routeFile);
 			const src = readFileSync(full, "utf8");
 			if (
-				!src.includes('from "@/components/hosted-product-gate"') ||
-				!/<HostedProductGate(?:\s|>)/.test(src)
+				!src.includes('from "@/components/hosted-product-route"') ||
+				!/<HostedProductRoute(?:\s|>)/.test(src) ||
+				!/\bIS_HOSTED_BUILD\s*\?\s*lazy\s*\(/.test(src)
 			) {
 				offenders.push(routeFile);
 			}
-			if (/return\s+[A-Z][A-Za-z0-9]*\s*\?\s*\(\s*<HostedProductGate/.test(src)) {
-				offenders.push(`${routeFile} (short-circuits before HostedProductGate)`);
+			if (src.includes("hosted-product-gate") || /<HostedProductGate(?:\s|>)/.test(src)) {
+				offenders.push(`${routeFile} (reaches the hosted gate directly)`);
 			}
 		}
 
 		if (offenders.length > 0) {
 			throw new Error(
-				`Hosted product routes must render through <HostedProductGate>, not just IS_HOSTED:\n  ${offenders.join("\n  ")}`,
+				`Hosted product routes must lazy-load their page through <HostedProductRoute>:\n  ${offenders.join("\n  ")}`,
 			);
 		}
+
+		const shellPath = join(SRC_DIR, "components/hosted-product-route.tsx");
+		const shell = readFileSync(shellPath, "utf8");
+		expect(shell).toContain('import("@/hosted/access/hosted-product-gate")');
+		expect(shell).toMatch(/const HostedProductGate = IS_HOSTED_BUILD\s*\?\s*lazy\s*\(/);
+		expect(shell).toMatch(/<Suspense[^>]*>[\s\S]*<HostedProductGate(?:\s|>)/);
+
+		const directGateConsumers = walkSrcExceptQuarantined(SRC_DIR)
+			.filter((file) =>
+				/import\s*\(\s*["']@\/hosted\/access\/hosted-product-gate["']\s*\)/.test(
+					readFileSync(file, "utf8"),
+				),
+			)
+			.map((file) => relative(SRC_DIR, file));
+		expect(directGateConsumers).toEqual(["components/hosted-product-route.tsx"]);
 	});
 
 	test("the unified new-agent entrypoint opens the in-app deploy wizard", () => {
@@ -407,6 +387,101 @@ describe("@xterm packages are hosted-only", () => {
 				`@xterm packages must stay hosted-only. Keep terminal runtime imports under src/hosted and reach them via IS_HOSTED-gated lazy import:\n  ${offenders.join("\n  ")}`,
 			);
 		}
+	});
+
+	test("global CSS does not import or style the hosted terminal", () => {
+		const globalCss = readFileSync(join(SRC_DIR, "styles/globals.css"), "utf8");
+		const hostedCss = readFileSync(join(HOSTED_DIR, "agents/hosted-terminal.css"), "utf8");
+
+		expect(globalCss).not.toContain("@xterm/");
+		expect(globalCss).not.toContain(".hosted-terminal");
+		expect(hostedCss).toContain('@import "@xterm/xterm/css/xterm.css"');
+		expect(hostedCss).toContain(".hosted-terminal");
+	});
+});
+
+describe("hosted implementation ownership", () => {
+	test("hosted-only implementation signatures do not occur in shared production modules", () => {
+		const signatures = [
+			["Deploy API schema client", /\bDeployPaths\b/],
+			["hosted capability wire fields", /\bcan_use_v[12]\b/],
+			[
+				"hosted analytics identity",
+				/\b(?:resolveHostedAuthIdentityAction|buildHostedPersonProperties)\b/,
+			],
+			["Mava SDK globals", /\b(?:MavaWebChatToggle|loadMavaWebchat)\b|window\.Mava\b/],
+			[
+				"Wallet return lifecycle",
+				/\b(?:WalletStripeReturnState|coordinateWallet(?:Payment|Setup)Return|walletSetupIdentityIsCanonical)\b/,
+			],
+			["Stripe SDK", /(?:from\s+|import\s*\()["']@stripe\//],
+		] as const;
+		const offenders: string[] = [];
+
+		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
+			if (/\.test\.tsx?$/.test(file)) continue;
+			const src = readFileSync(file, "utf8");
+			for (const [label, pattern] of signatures) {
+				if (pattern.test(src)) offenders.push(`${relative(SRC_DIR, file)} (${label})`);
+			}
+		}
+
+		expect(offenders).toEqual([]);
+	});
+
+	test("retired hosted implementation paths stay absent", () => {
+		for (const path of [
+			"components/hosted-product-gate.tsx",
+			"components/header-wallet-balance.tsx",
+			"components/providers/analytics-provider.logic.ts",
+			"lib/hosted-api.ts",
+			"lib/hosted-product-access.ts",
+			"lib/hosted-product-access-model.ts",
+			"lib/hosted-product-access-request.ts",
+			"lib/hosted-url.ts",
+			"lib/legacy-hosted-dashboard.ts",
+			"lib/wallet-stripe-return.ts",
+		]) {
+			expect(existsSync(join(SRC_DIR, path))).toBe(false);
+		}
+	});
+
+	test("shared API errors do not claim hosted or v2 ownership", () => {
+		const panel = readFileSync(join(SRC_DIR, "components/api-error-panel.tsx"), "utf8");
+		expect(panel).not.toContain("data-hosted");
+		expect(panel).not.toContain("data-v2");
+	});
+});
+
+describe("Mava composition boundary", () => {
+	test("the shared Help menu only lazy-composes the hosted Live chat item", () => {
+		const sidebar = readFileSync(join(SRC_DIR, "components/app-sidebar.tsx"), "utf8");
+		const item = readFileSync(join(HOSTED_DIR, "mava-live-chat-menu-item.tsx"), "utf8");
+
+		expect(sidebar).toContain('import("@/hosted/mava-live-chat-menu-item")');
+		expect(sidebar).toMatch(/const MavaLiveChatMenuItem = IS_HOSTED_BUILD\s*\?/);
+		expect(sidebar).not.toContain("MavaWebChatToggle");
+		expect(sidebar).not.toContain("Live chat");
+		expect(item).toContain("requestMavaWebChatToggle");
+		expect(item).toContain("<DropdownMenuItem");
+		expect(item).toContain("Live chat");
+	});
+});
+
+describe("Wallet return security boundary", () => {
+	test("client scrubs or captures return secrets before telemetry evaluates", () => {
+		const client = readFileSync(join(SRC_DIR, "client.tsx"), "utf8");
+		const bootstrap = readFileSync(join(SRC_DIR, "wallet-stripe-return.bootstrap.ts"), "utf8");
+
+		expect(client.indexOf("await bootstrapWalletStripeReturnBeforeTelemetry()")).toBeLessThan(
+			client.indexOf('import("./instrument.client")'),
+		);
+		expect(bootstrap).toMatch(/const loadHostedWalletStripeReturn = IS_HOSTED_BUILD\s*\?/);
+		expect(bootstrap).toContain('import("@/hosted/billing/wallet/stripe-return")');
+		expect(bootstrap).toContain("if (!hasWalletStripeReturnUrl(currentHref)) return");
+		expect(bootstrap.indexOf("scrubWalletStripeReturnLocation(")).toBeLessThan(
+			bootstrap.indexOf("await loadHostedWalletStripeReturn()"),
+		);
 	});
 });
 

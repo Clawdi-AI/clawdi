@@ -1,10 +1,10 @@
-import { SETTINGS_QUERY_KEY } from "@/lib/settings-routes";
 import {
 	buildWalletStripeReturnUrl,
 	WALLET_PAYMENT_FLOW_PARAM,
 	WALLET_PAYMENT_RETURN_PARAM,
 	type WalletPaymentReturnFlow,
-} from "@/lib/wallet-stripe-return";
+} from "@/hosted/billing/wallet/stripe-return";
+import { SETTINGS_QUERY_KEY } from "@/lib/settings-routes";
 
 export type WalletTopupReturnToastKind = "info" | "error";
 

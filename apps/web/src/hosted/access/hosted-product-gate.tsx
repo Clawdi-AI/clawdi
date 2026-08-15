@@ -3,8 +3,8 @@
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
+import { useProductAccess } from "@/lib/product-access";
 import { useCommittedRouteIsLatestTarget } from "@/lib/use-committed-location";
 
 export function HostedProductGate({
@@ -15,7 +15,7 @@ export function HostedProductGate({
 	fallbackHref?: string;
 }) {
 	const router = useRouter();
-	const access = useHostedProductAccess();
+	const access = useProductAccess();
 	const isLatestTarget = useCommittedRouteIsLatestTarget();
 
 	useEffect(() => {
@@ -23,9 +23,10 @@ export function HostedProductGate({
 			void router.navigate({ href: fallbackHref, replace: true });
 	}, [access.isDenied, fallbackHref, isLatestTarget, router]);
 
-	if (access.isLoading || access.isDenied) return <HostedRouteSkeleton />;
+	let content: ReactNode = null;
+	if (access.isLoading || access.isDenied) content = <RouteLoadingSkeleton />;
 	if (access.isError) {
-		return (
+		content = (
 			<div className="mx-auto flex min-h-[50vh] w-full max-w-2xl items-center p-6">
 				<ApiErrorPanel
 					error={access.error}
@@ -37,6 +38,10 @@ export function HostedProductGate({
 			</div>
 		);
 	}
-	if (!access.isAllowed) return null;
-	return <>{children}</>;
+	if (access.isAllowed) content = children;
+	return (
+		<div data-hosted="true" className="contents">
+			{content}
+		</div>
+	);
 }

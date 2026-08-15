@@ -1,1 +1,1 @@
-export { hostedApiBaseUrl } from "@/lib/hosted-url";
+export { hostedApiBaseUrl } from "@/hosted/access/url";

@@ -109,8 +109,6 @@ import {
 	connectionsQueryOptions,
 } from "@/lib/connectors-data";
 import { IS_HOSTED } from "@/lib/hosted";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import type { AgentNavigationVariant } from "@/lib/navigation-model";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
@@ -119,6 +117,7 @@ import {
 	consoleNavigationGroups,
 	hostedAgentVisibleSectionIds,
 } from "@/lib/navigation-model";
+import { useProductAccess } from "@/lib/product-access";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { DEFAULT_SETTINGS_SECTION, type SettingsSectionId } from "@/lib/settings-routes";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -130,6 +129,14 @@ const HostedUnifiedAgentListSensor = IS_HOSTED_BUILD
 	? lazy(() =>
 			import("@/hosted/use-unified-agent-list").then((m) => ({
 				default: m.HostedUnifiedAgentListSensor,
+			})),
+		)
+	: null;
+
+const MavaLiveChatMenuItem = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/mava-live-chat-menu-item").then((m) => ({
+				default: m.MavaLiveChatMenuItem,
 			})),
 		)
 	: null;
@@ -479,7 +486,8 @@ function AgentFocusSections({
 	primaryProject?: AgentPrimaryProjectNavigation | null;
 	onNavigate?: () => void;
 }) {
-	const legacyDashboardHref = kind === "legacy" ? legacyHostedDashboardUrl() : null;
+	const { legacyDashboardUrl } = useProductAccess();
+	const legacyDashboardHref = kind === "legacy" ? legacyDashboardUrl : null;
 	const extraPrimaryItems: SidebarNavItem[] = legacyDashboardHref
 		? [
 				{
@@ -1205,6 +1213,7 @@ function FocusHeader({
 	activeAgentId: string | null;
 	activeAgentName: string | null;
 }) {
+	const { legacyDashboardUrl } = useProductAccess();
 	if (!activeAgent && !activeAgentId) {
 		return (
 			<div className="min-w-0">
@@ -1241,8 +1250,7 @@ function FocusHeader({
 		activeAgentKind === "cloud" ? null : (meta?.activityLabel ?? "Agent details unavailable");
 	const visibleLabel = meta?.visibleLabel;
 	const detailLabel = meta?.detailLabel;
-	const manageHref =
-		activeAgentKind === "legacy" ? (legacyHostedDashboardUrl() ?? undefined) : undefined;
+	const manageHref = activeAgentKind === "legacy" ? (legacyDashboardUrl ?? undefined) : undefined;
 	const syncSource = focusHeaderSyncSource(activeAgentKind, Boolean(activeAgent));
 	const computeStatus = focusHeaderComputeStatus(activeAgentKind, activeAgentTile);
 	return (
@@ -1368,6 +1376,11 @@ function GitHubIcon({ className, ...props }: React.ComponentProps<"svg">) {
 function HelpMenuItems() {
 	return (
 		<DropdownMenuGroup>
+			{MavaLiveChatMenuItem ? (
+				<Suspense fallback={null}>
+					<MavaLiveChatMenuItem />
+				</Suspense>
+			) : null}
 			<DropdownMenuItem
 				render={
 					<a
@@ -1628,7 +1641,7 @@ export function AppSidebar({
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
 	const $api = useOpenApi();
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
 	const [hostedAgentTiles, setHostedAgentTiles] = useState<AgentTile[] | null>(null);
 	const [hostedMembershipResolved, setHostedMembershipResolved] = useState(false);
