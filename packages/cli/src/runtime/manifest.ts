@@ -95,8 +95,8 @@ import {
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
 import {
-	HostedAgentPluginCapabilityUnsupportedError,
 	type HostedAgentPluginBehavioralEvidence,
+	HostedAgentPluginCapabilityUnsupportedError,
 	type HostedAgentPluginCommandRunner,
 	type HostedAgentPluginCommands,
 	type HostedAgentPluginTransaction,

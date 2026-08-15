@@ -560,16 +560,9 @@ export function runtimeCommandCurrentRevision(
 	}
 }
 
-type RuntimeCommandRevisionResolver = (
-	command: string,
-	home: string,
-	cwd: string,
-) => string | null;
+type RuntimeCommandRevisionResolver = (command: string, home: string, cwd: string) => string | null;
 
-const runtimeCommandRevisionCache = new Map<
-	string,
-	{ statIdentity: string; revision: string }
->();
+const runtimeCommandRevisionCache = new Map<string, { statIdentity: string; revision: string }>();
 
 export function runtimeCommandCurrentRevisionCached(
 	command: string,

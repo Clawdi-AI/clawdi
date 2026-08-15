@@ -298,8 +298,7 @@ function createOpenClawDriver(input: {
 		const version =
 			inspect.plugin.version ?? inspect.install.resolvedVersion ?? inspect.install.version ?? "";
 		const formatSupported =
-			inspect.plugin.format === "bundle" &&
-			inspect.plugin.bundleFormat === "agent";
+			inspect.plugin.format === "bundle" && inspect.plugin.bundleFormat === "agent";
 		const compatible = inspect.install.source === "path";
 		let installPath: string | null = null;
 		let contentDigest: string | null = null;
@@ -661,9 +660,7 @@ function probeNativeCapability(input: {
 		driver.setEnabled(installed, true);
 		const enabled = driver.observe(input.prepared.name, installed.nativeId);
 		if (!enabled) throw new Error("native Agent Plugin disappeared after enable");
-		if (
-			probeObservationCapability(enabled, input.prepared, installed.nativeId) === "unsupported"
-		) {
+		if (probeObservationCapability(enabled, input.prepared, installed.nativeId) === "unsupported") {
 			return { kind: "unsupported" };
 		}
 		if (!enabled.enabled) throw new Error("native Agent Plugin did not enable during probe");

@@ -1061,11 +1061,12 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("falls back only for an explicit first-party capability probe", () => {
 		const paths = tempRuntimePaths();
-		const fixtureRoot = join(
-			import.meta.dir,
-			"../../tests/fixtures/agent-plugins/clawdi-cloud",
-		);
-		const fixturePaths = ["mcp.json", "plugin.json", "skills/clawdi/SKILL.md"];
+		const fixtureRoot = join(import.meta.dir, "../../tests/fixtures/agent-plugins/clawdi-cloud");
+		const fixtureFiles = [
+			{ path: "mcp.json", source: "mcp.json.blob" },
+			{ path: "plugin.json", source: "plugin.json.blob" },
+			{ path: "skills/clawdi/SKILL.md", source: "skills/clawdi/SKILL.md" },
+		];
 		const desired: PreparedHostedAgentPlugin = {
 			...preparedTestAgentPlugin(
 				FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name,
@@ -1078,10 +1079,10 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			mcpServerNames: ["clawdi"],
 			hasStreamableHttpMcp: true,
-			tree: fixturePaths.map((path) => ({
+			tree: fixtureFiles.map(({ path, source }) => ({
 				path,
 				mode: 0o100644,
-				bytes: readFileSync(join(fixtureRoot, ...path.split("/"))),
+				bytes: readFileSync(join(fixtureRoot, ...source.split("/"))),
 			})),
 		};
 		const prepared = preparedTestAgentPluginState(desired);
@@ -1119,15 +1120,15 @@ describe("runtime manifest reconciliation invariants", () => {
 						stdout: JSON.stringify({
 							plugins: probeInstalled
 								? [
-									{
-										id: desired.name,
-										name: desired.name,
-										version: desired.installation.version,
-										enabled: false,
-										status: "disabled",
-										format: "openclaw",
-									},
-								]
+										{
+											id: desired.name,
+											name: desired.name,
+											version: desired.installation.version,
+											enabled: false,
+											status: "disabled",
+											format: "openclaw",
+										},
+									]
 								: [],
 						}),
 						stderr: "",

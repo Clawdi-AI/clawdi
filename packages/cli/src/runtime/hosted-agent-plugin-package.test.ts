@@ -27,10 +27,7 @@ import {
 	hostedAgentPluginCommands,
 	proveHostedAgentPluginCapabilities,
 } from "./hosted-agent-plugin-runtime";
-import {
-	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
-	type RuntimeManifest,
-} from "./manifest-contract";
+import { AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR, type RuntimeManifest } from "./manifest-contract";
 import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
 import { getRuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
