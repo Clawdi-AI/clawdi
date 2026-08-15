@@ -242,13 +242,26 @@ function convergeRuntimeManifest(
 	);
 }
 
+function hermesManagedBaileysRoot(home: string): string {
+	return join(
+		home,
+		".hermes",
+		"hermes-agent",
+		"scripts",
+		"whatsapp-bridge",
+		"node_modules",
+		"@whiskeysockets",
+		"baileys",
+	);
+}
+
 function seedHermesManagedBaileys(home: string): void {
 	const sourceRoot = resolve(
 		import.meta.dir,
 		"../../whatsapp-baileys-sidecar/node_modules/baileys",
 	);
 	const bridgeRoot = join(home, ".hermes", "hermes-agent", "scripts", "whatsapp-bridge");
-	const baileysRoot = join(bridgeRoot, "node_modules", "@whiskeysockets", "baileys");
+	const baileysRoot = hermesManagedBaileysRoot(home);
 	for (const relativePath of [
 		"package.json",
 		...MANAGED_BAILEYS_STATIC_PATCH_TARGETS.map((target) => target.relativePath),
@@ -6906,18 +6919,13 @@ exit 64
 		expect(active.manifest.projection?.channels).toMatchObject({
 			telegram: { defaultAccount: accountKey, accounts: { [accountKey]: { enabled: true } } },
 		});
-		expect(active.manifest.egressProfiles?.profiles).toHaveLength(3);
+		expect(active.manifest.egressProfiles?.profiles).toHaveLength(2);
 		expect(JSON.stringify(active.manifest)).not.toContain("agent-token-v1");
 		expect(JSON.stringify(active)).not.toContain("provider-token");
 		expect(rotated.sourceRevision).toBe("b".repeat(64));
 		expect(rotated.secretValues?.[agentRef]).toBe("agent-token-v2");
 		expect(removed.manifest.projection?.channels).toEqual({});
-		expect(removed.manifest.egressProfiles?.profiles).toEqual([
-			expect.objectContaining({
-				id: "native-whatsapp-baileys-invalid-capability",
-				kind: "deny",
-			}),
-		]);
+		expect(removed.manifest.egressProfiles?.profiles).toEqual([]);
 		expect(removed.manifest.runtimes.openclaw?.run?.secretEnv ?? {}).toEqual({});
 		expect(removed.secretValues).toEqual({});
 	});
@@ -7011,7 +7019,6 @@ exit 64
 
 		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"explicit-provider-profile",
-			"native-whatsapp-baileys-invalid-capability",
 		]);
 	});
 
@@ -7071,7 +7078,6 @@ exit 64
 		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"native-telegram-clawdi_accttelegram-managed",
 			"native-telegram-clawdi_accttelegram-file-managed",
-			"native-whatsapp-baileys-invalid-capability",
 		]);
 	});
 
@@ -13642,6 +13648,7 @@ exit 64
 			.digest("hex")
 			.slice(0, 32)}`;
 		const sessionDir = join(home, ".hermes", "platforms", "whatsapp", "session");
+		const baileysSocket = join(hermesManagedBaileysRoot(home), "lib", "Socket", "socket.js");
 		const legacySessionDir = join(home, ".hermes", "whatsapp", "session");
 		const legacySentinel = join(legacySessionDir, "unmanaged-session-sentinel");
 		const systemctlPath = join(root, "bin", "systemctl");
@@ -13887,7 +13894,26 @@ exit 64
 			{ ...load, channelBindings: [], secretValues: {} },
 			paths,
 		);
-		materializeHostedChannelCredentials(removed.manifest, removed.secretValues, home);
+		const patchedSocket = readFileSync(baileysSocket, "utf8");
+		writeFileSync(
+			baileysSocket,
+			patchedSocket.replace(
+				"DEFAULT_CONNECTION_CONFIG.waWebSocketUrl",
+				"DRIFTED_CONNECTION_CONFIG.waWebSocketUrl",
+			),
+		);
+		const blockedRemoval = convergeRuntimeManifest(removed, paths);
+		expect(blockedRemoval.installErrors.join("\n")).toContain(
+			"runtime managed WhatsApp compatibility cleanup failed",
+		);
+		expect(readFileSync(paths.egressProfileBundle, "utf8")).toContain(
+			"native-whatsapp-baileys-invalid-capability",
+		);
+
+		writeFileSync(baileysSocket, patchedSocket);
+		const removedConvergence = convergeRuntimeManifest(removed, paths);
+		expect(removedConvergence.installErrors).toEqual([]);
+		expect(existsSync(paths.egressProfileBundle)).toBe(false);
 		expect(existsSync(sessionDir)).toBe(false);
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
