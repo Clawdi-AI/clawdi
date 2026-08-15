@@ -3197,9 +3197,12 @@ function applyHostedChannelProjection(
 	if (name === "hermes") {
 		const configPath = join(home, ".hermes", "config.yaml");
 		withRuntimeUserFileAccess(() => {
+			const configContent = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
 			mergeHermesChannelConfig(
 				configPath,
-				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials),
+				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials, {
+					cleanupWhatsApp: hermesManagedWhatsAppProjectionOwned(configContent, home),
+				}),
 			);
 			makeRuntimeUserOwned(configPath);
 		});
@@ -3243,6 +3246,7 @@ function installHostedChannelProjectionDependencies(
 function hermesManagedChannelsPatch(
 	channels: Record<string, unknown>,
 	channelCredentials: unknown,
+	options: { cleanupWhatsApp?: boolean } = {},
 ): Record<string, unknown> {
 	const telegramEnabled = channelHasAccounts(channels.telegram);
 	const discordEnabled = channelHasAccounts(channels.discord);
@@ -3253,6 +3257,50 @@ function hermesManagedChannelsPatch(
 	if (whatsappEnabled && !whatsappSessionPath) {
 		throw new Error("managed Hermes WhatsApp projection is missing its auth directory");
 	}
+	const whatsapp = whatsappEnabled
+		? {
+				enabled: true,
+				dm_policy: "allowlist",
+				group_policy: "open",
+				allow_from: ["*"],
+				group_allow_from: ["*"],
+			}
+		: options.cleanupWhatsApp !== false
+			? {
+					enabled: false,
+					dm_policy: null,
+					group_policy: null,
+					allow_from: null,
+					group_allow_from: null,
+				}
+			: null;
+	const whatsappPlatform = whatsappEnabled
+		? {
+				enabled: true,
+				extra: {
+					session_path: whatsappSessionPath,
+					dm_policy: "allowlist",
+					group_policy: "open",
+					allow_from: ["*"],
+					group_allow_from: ["*"],
+					group_sessions_per_user: false,
+					thread_sessions_per_user: false,
+				},
+			}
+		: options.cleanupWhatsApp !== false
+			? {
+					enabled: false,
+					extra: {
+						session_path: null,
+						dm_policy: null,
+						group_policy: null,
+						allow_from: null,
+						group_allow_from: null,
+						group_sessions_per_user: null,
+						thread_sessions_per_user: null,
+					},
+				}
+			: null;
 	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled || whatsappEnabled;
 	return {
 		telegram: telegramEnabled
@@ -3280,17 +3328,7 @@ function hermesManagedChannelsPatch(
 					bots_require_inline_mention: false,
 				}
 			: { enabled: false },
-		...(whatsappEnabled
-			? {
-					whatsapp: {
-						enabled: true,
-						dm_policy: "allowlist",
-						group_policy: "open",
-						allow_from: ["*"],
-						group_allow_from: ["*"],
-					},
-				}
-			: {}),
+		...(whatsapp ? { whatsapp } : {}),
 		group_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		thread_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		platforms: {
@@ -3300,22 +3338,7 @@ function hermesManagedChannelsPatch(
 					thread_sessions_per_user: telegramEnabled ? false : null,
 				},
 			},
-			...(whatsappEnabled
-				? {
-						whatsapp: {
-							enabled: true,
-							extra: {
-								session_path: whatsappSessionPath,
-								dm_policy: "allowlist",
-								group_policy: "open",
-								allow_from: ["*"],
-								group_allow_from: ["*"],
-								group_sessions_per_user: false,
-								thread_sessions_per_user: false,
-							},
-						},
-					}
-				: {}),
+			...(whatsappPlatform ? { whatsapp: whatsappPlatform } : {}),
 		},
 		display: {
 			platforms: {
@@ -3325,6 +3348,18 @@ function hermesManagedChannelsPatch(
 			},
 		},
 	};
+}
+
+function hermesManagedWhatsAppProjectionOwned(configContent: string, home: string): boolean {
+	try {
+		const root = recordValue(parseYaml(configContent));
+		const platforms = recordValue(root?.platforms);
+		const whatsapp = recordValue(platforms?.whatsapp);
+		const extra = recordValue(whatsapp?.extra);
+		return extra?.session_path === managedWhatsAppAuthRoot(home, "hermes");
+	} catch {
+		return false;
+	}
 }
 
 function hermesManagedWhatsAppSessionPath(channelCredentials: unknown): string | null {
@@ -5253,7 +5288,9 @@ function validateRuntimeProjectionPlan(input: {
 		if (channels && name === "hermes" && runtime.enabled) {
 			hermesConfig = renderHermesChannelConfig(
 				hermesConfig,
-				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials),
+				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials, {
+					cleanupWhatsApp: hermesManagedWhatsAppProjectionOwned(hermesConfig, home),
+				}),
 			);
 		}
 	}
