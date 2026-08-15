@@ -111,23 +111,13 @@ describe("native WhatsApp egress contract", () => {
 		expect(profiles.at(-1)?.match.path).toBeUndefined();
 	});
 
-	it("retains the stale-marker deny rule after every managed Link is removed", () => {
+	it("does not intercept WhatsApp without a managed Link", () => {
 		const profiles = buildManagedWhatsAppEgressProfiles({
 			controlPlaneApiUrl: "https://control-plane.test",
 			links: [],
 		});
 
-		expect(profiles).toHaveLength(1);
-		expect(profiles[0]).toMatchObject({
-			id: "native-whatsapp-baileys-invalid-capability",
-			kind: "deny",
-			match: {
-				host: "web.whatsapp.com",
-				headers: {
-					[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]: { type: "exists" },
-				},
-			},
-		});
+		expect(profiles).toEqual([]);
 	});
 
 	it("qualifies the pinned rc14 physical sidecar artifact", () => {

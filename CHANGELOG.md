@@ -10,6 +10,15 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.78
+
+Package: `clawdi@0.13.78`
+
+### Fixed
+
+- Hosted agents no longer retain redundant installer egress profiles or
+  intercept WhatsApp traffic when no managed WhatsApp Link is configured.
+
 ## Clawdi CLI v0.13.65
 
 Package: `clawdi@0.13.65`

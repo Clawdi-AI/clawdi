@@ -6117,17 +6117,16 @@ export function convergeRuntimeManifest(
 				...(observation?.appRoot ? { appRoot: observation.appRoot } : {}),
 				paths,
 			});
-			if (managedWhatsAppRuntime && compatibility.status === "rollback-refused") {
+			if (compatibility.status === "rollback-refused") {
 				throw new Error(compatibility.errors.join(", "));
 			}
 		} catch (error) {
-			if (managedWhatsAppRuntime) {
-				installErrors.push(
-					`runtime ${managedWhatsAppRuntime} managed WhatsApp compatibility failed: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
-				);
-			}
+			const operation = managedWhatsAppRuntime
+				? `runtime ${managedWhatsAppRuntime} managed WhatsApp compatibility`
+				: "runtime managed WhatsApp compatibility cleanup";
+			installErrors.push(
+				`${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 

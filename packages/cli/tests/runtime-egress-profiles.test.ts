@@ -1,9 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { egressProfileSchema, secretRefSchema } from "../src/runtime/egress-profiles";
-import {
-	hostedManifestEgressProfiles,
-	runtimeInstallerEgressProfiles,
-} from "../src/runtime/hosted-egress-profiles";
+import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
 
 const providerProfiles = (profiles: ReturnType<typeof hostedManifestEgressProfiles>["profiles"]) =>
 	profiles.filter((profile) => profile.owner === "provider-projection");
@@ -207,7 +204,6 @@ describe("runtime egress profile schema", () => {
 			},
 		});
 
-		expect(bundle.profiles.map((profile) => profile.id)).toContain("runtime-installer-nodejs-dist");
 		expect(providerProfiles(bundle.profiles)).toEqual([
 			{
 				id: "managed-provider",
@@ -263,88 +259,8 @@ describe("runtime egress profile schema", () => {
 		);
 	});
 
-	it("adds explicit runtime installer passthrough allowlist profiles", () => {
-		const profiles = runtimeInstallerEgressProfiles();
-		expect(profiles).toContainEqual(
-			expect.objectContaining({
-				id: "runtime-installer-openclaw-install",
-				kind: "passthrough",
-				match: expect.objectContaining({
-					scheme: "https",
-					host: "openclaw.ai",
-					pathPrefix: "/install-cli.sh",
-				}),
-				owner: "runtime-installer",
-			}),
-		);
-		expect(profiles).toContainEqual(
-			expect.objectContaining({
-				id: "runtime-installer-nodejs-dist",
-				kind: "passthrough",
-				match: expect.objectContaining({
-					scheme: "https",
-					host: "nodejs.org",
-					pathPrefix: "/dist/",
-				}),
-				owner: "runtime-installer",
-			}),
-		);
-		expect(profiles).toContainEqual(
-			expect.objectContaining({
-				id: "runtime-installer-npm-registry",
-				kind: "passthrough",
-				match: expect.objectContaining({
-					scheme: "https",
-					host: "registry.npmjs.org",
-					pathPrefix: "/",
-				}),
-				owner: "runtime-installer",
-			}),
-		);
-		expect(profiles).toContainEqual(
-			expect.objectContaining({
-				id: "runtime-installer-hermes-install",
-				kind: "passthrough",
-				match: expect.objectContaining({
-					scheme: "https",
-					host: "hermes-agent.nousresearch.com",
-					pathPrefix: "/install.sh",
-				}),
-				owner: "runtime-installer",
-			}),
-		);
-		expect(profiles).toContainEqual(
-			expect.objectContaining({
-				id: "runtime-installer-uv-releases",
-				kind: "passthrough",
-				match: expect.objectContaining({
-					scheme: "https",
-					host: "releases.astral.sh",
-					pathPrefix: "/installers/uv/",
-				}),
-				owner: "runtime-installer",
-			}),
-		);
-		expect(profiles).toEqual(
-			expect.arrayContaining([
-				{
-					id: "runtime-installer-pythonhosted",
-					enabled: true,
-					kind: "passthrough",
-					match: {
-						scheme: "https",
-						host: "files.pythonhosted.org",
-						pathPrefix: "/",
-						headers: {},
-						query: {},
-					},
-					logging: { redactHeaders: [], redactUrlPatterns: [] },
-					priority: 200,
-					owner: "runtime-installer",
-					description: "Hermes Python package artifacts.",
-				},
-			]),
-		);
+	it("does not generate egress profiles without managed inputs", () => {
+		expect(hostedManifestEgressProfiles({}).profiles).toEqual([]);
 	});
 
 	it("builds managed provider profiles for runtime-scoped providers", () => {
@@ -479,8 +395,7 @@ describe("runtime egress profile schema", () => {
 			},
 		});
 
-		expect(providerProfiles(bundle.profiles)).toEqual([]);
-		expect(bundle.profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
+		expect(bundle.profiles).toEqual([]);
 	});
 
 	it("does not derive provider egress profiles for BYOK providers", () => {
@@ -495,8 +410,7 @@ describe("runtime egress profile schema", () => {
 			},
 		});
 
-		expect(providerProfiles(bundle.profiles)).toEqual([]);
-		expect(bundle.profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
+		expect(bundle.profiles).toEqual([]);
 	});
 
 	it("does not derive provider egress profiles for unsupported provider API modes", () => {
@@ -511,7 +425,6 @@ describe("runtime egress profile schema", () => {
 			},
 		});
 
-		expect(providerProfiles(bundle.profiles)).toEqual([]);
-		expect(bundle.profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
+		expect(bundle.profiles).toEqual([]);
 	});
 });
