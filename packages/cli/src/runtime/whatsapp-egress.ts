@@ -20,6 +20,7 @@ export function buildManagedWhatsAppEgressProfiles(input: {
 	controlPlaneApiUrl: string;
 	links: ManagedWhatsAppEgressLink[];
 }): EgressProfile[] {
+	if (input.links.length === 0) return [];
 	const upstreamBaseUrl = managedWhatsAppWebSocketUrl(input.controlPlaneApiUrl);
 	const profiles = [...input.links]
 		.sort((left, right) => left.linkId.localeCompare(right.linkId))
