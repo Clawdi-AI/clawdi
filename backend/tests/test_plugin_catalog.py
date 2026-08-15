@@ -3,21 +3,25 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
-from typing import Any, cast
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.schemas.plugin_catalog import catalog_source_path, parse_catalog_document
 from app.services.plugin_catalog import (
     PluginCatalogSyncError,
     PluginCatalogSyncWorker,
+    _fetch_catalog_document,
+    _resolve_github_head,
     _SyncClaim,
 )
 
 
-def _catalog() -> dict[str, object]:
+def _catalog() -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "plugins": [
@@ -43,7 +47,7 @@ def _catalog() -> dict[str, object]:
     }
 
 
-def _catalog_bytes(value: dict[str, object] | None = None) -> bytes:
+def _catalog_bytes(value: dict[str, Any] | None = None) -> bytes:
     return json.dumps(value or _catalog(), separators=(",", ":")).encode()
 
 
@@ -81,7 +85,7 @@ def test_catalog_v1_parses_closed_component_summary_and_normalizes_path() -> Non
 )
 def test_catalog_v1_rejects_untrusted_or_unbounded_shapes(mutate) -> None:
     catalog = deepcopy(_catalog())
-    entry = cast(dict[str, Any], cast(list[object], catalog["plugins"])[0])
+    entry = catalog["plugins"][0]
     mutate(entry)
 
     with pytest.raises(ValidationError):
@@ -104,11 +108,10 @@ async def test_catalog_fetch_resolves_head_then_uses_the_exact_commit() -> None:
             return httpx.Response(200, json={"sha": revision}, headers={"etag": '"head"'})
         return httpx.Response(200, content=_catalog_bytes(), headers={"etag": '"catalog"'})
 
-    worker = PluginCatalogSyncWorker(cast(Any, None))
-    claim = _SyncClaim(attempted_at=cast(Any, None), current_revision=None, head_etag=None)
+    claim = _SyncClaim(attempted_at=datetime.now(UTC), current_revision=None, head_etag=None)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        resolved, head_etag = await worker._resolve_head(client, claim)
-        document, catalog_etag = await worker._fetch_catalog(client, resolved)
+        resolved, head_etag = await _resolve_github_head(client, claim)
+        document, catalog_etag = await _fetch_catalog_document(client, resolved)
 
     assert resolved == revision
     assert head_etag == '"head"'
@@ -124,15 +127,14 @@ async def test_catalog_fetch_is_bounded_before_body_read() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-length": str(4 * 1024 * 1024 + 1)})
 
-    worker = PluginCatalogSyncWorker(cast(Any, None))
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(PluginCatalogSyncError, match="upstream_response_too_large"):
-            await worker._fetch_catalog(client, "c" * 40)
+            await _fetch_catalog_document(client, "c" * 40)
 
 
 @pytest.mark.asyncio
 async def test_catalog_worker_survives_a_failed_cycle(monkeypatch) -> None:
-    worker = PluginCatalogSyncWorker(cast(Any, None), interval_seconds=30)
+    worker = PluginCatalogSyncWorker(async_sessionmaker(), interval_seconds=30)
     stop = asyncio.Event()
     calls = 0
 

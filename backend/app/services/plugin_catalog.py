@@ -199,6 +199,64 @@ async def _bounded_response_bytes(response: httpx.Response, *, maximum: int) -> 
     return bytes(body)
 
 
+async def _resolve_github_head(
+    client: httpx.AsyncClient,
+    claim: _SyncClaim,
+) -> tuple[str, str | None]:
+    headers = dict(_HTTP_HEADERS)
+    if claim.head_etag is not None:
+        headers["If-None-Match"] = claim.head_etag
+    try:
+        async with client.stream("GET", _GITHUB_HEAD_URL, headers=headers) as response:
+            if response.status_code == 304:
+                if claim.current_revision is None:
+                    raise PluginCatalogSyncError("head_not_modified_without_snapshot")
+                return claim.current_revision, claim.head_etag
+            if response.status_code != 200:
+                raise PluginCatalogSyncError(f"head_http_{response.status_code}")
+            body = await _bounded_response_bytes(
+                response,
+                maximum=_MAX_HEAD_RESPONSE_BYTES,
+            )
+            head_etag = response.headers.get("etag")
+    except httpx.HTTPError as exc:
+        raise PluginCatalogSyncError("head_network_error") from exc
+    try:
+        revision = _GitHubHeadResponse.model_validate_json(body).sha
+    except ValidationError as exc:
+        raise PluginCatalogSyncError("head_response_invalid") from exc
+    if len(revision) != 40 or any(character not in "0123456789abcdef" for character in revision):
+        raise PluginCatalogSyncError("head_revision_invalid")
+    return revision, head_etag
+
+
+async def _fetch_catalog_document(
+    client: httpx.AsyncClient,
+    revision: str,
+) -> tuple[PluginCatalogDocument, str | None]:
+    url = _GITHUB_RAW_CATALOG_URL.format(revision=revision)
+    try:
+        async with client.stream(
+            "GET",
+            url,
+            headers={"Accept": "application/json", "User-Agent": _HTTP_HEADERS["User-Agent"]},
+        ) as response:
+            if response.status_code != 200:
+                raise PluginCatalogSyncError(f"catalog_http_{response.status_code}")
+            body = await _bounded_response_bytes(
+                response,
+                maximum=_MAX_CATALOG_RESPONSE_BYTES,
+            )
+            catalog_etag = response.headers.get("etag")
+    except httpx.HTTPError as exc:
+        raise PluginCatalogSyncError("catalog_network_error") from exc
+    try:
+        document = parse_catalog_document(body)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+        raise PluginCatalogSyncError("catalog_schema_invalid") from exc
+    return document, catalog_etag
+
+
 class PluginCatalogSyncWorker:
     def __init__(
         self,
@@ -218,7 +276,7 @@ class PluginCatalogSyncWorker:
             return PluginCatalogSyncResult(attempted=False)
         try:
             async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=False) as client:
-                revision, head_etag = await self._resolve_head(client, claim)
+                revision, head_etag = await _resolve_github_head(client, claim)
                 if revision == claim.current_revision:
                     await self._record_success(claim, revision=revision, head_etag=head_etag)
                     return PluginCatalogSyncResult(
@@ -226,7 +284,7 @@ class PluginCatalogSyncWorker:
                         updated=False,
                         revision=revision,
                     )
-                document, catalog_etag = await self._fetch_catalog(client, revision)
+                document, catalog_etag = await _fetch_catalog_document(client, revision)
             updated = await self._activate_snapshot(
                 claim,
                 revision=revision,
@@ -277,66 +335,6 @@ class PluginCatalogSyncWorker:
             )
             await db.commit()
             return claim
-
-    async def _resolve_head(
-        self,
-        client: httpx.AsyncClient,
-        claim: _SyncClaim,
-    ) -> tuple[str, str | None]:
-        headers = dict(_HTTP_HEADERS)
-        if claim.head_etag is not None:
-            headers["If-None-Match"] = claim.head_etag
-        try:
-            async with client.stream("GET", _GITHUB_HEAD_URL, headers=headers) as response:
-                if response.status_code == 304:
-                    if claim.current_revision is None:
-                        raise PluginCatalogSyncError("head_not_modified_without_snapshot")
-                    return claim.current_revision, claim.head_etag
-                if response.status_code != 200:
-                    raise PluginCatalogSyncError(f"head_http_{response.status_code}")
-                body = await _bounded_response_bytes(
-                    response,
-                    maximum=_MAX_HEAD_RESPONSE_BYTES,
-                )
-                head_etag = response.headers.get("etag")
-        except httpx.HTTPError as exc:
-            raise PluginCatalogSyncError("head_network_error") from exc
-        try:
-            revision = _GitHubHeadResponse.model_validate_json(body).sha
-        except ValidationError as exc:
-            raise PluginCatalogSyncError("head_response_invalid") from exc
-        if len(revision) != 40 or any(
-            character not in "0123456789abcdef" for character in revision
-        ):
-            raise PluginCatalogSyncError("head_revision_invalid")
-        return revision, head_etag
-
-    async def _fetch_catalog(
-        self,
-        client: httpx.AsyncClient,
-        revision: str,
-    ) -> tuple[PluginCatalogDocument, str | None]:
-        url = _GITHUB_RAW_CATALOG_URL.format(revision=revision)
-        try:
-            async with client.stream(
-                "GET",
-                url,
-                headers={"Accept": "application/json", "User-Agent": _HTTP_HEADERS["User-Agent"]},
-            ) as response:
-                if response.status_code != 200:
-                    raise PluginCatalogSyncError(f"catalog_http_{response.status_code}")
-                body = await _bounded_response_bytes(
-                    response,
-                    maximum=_MAX_CATALOG_RESPONSE_BYTES,
-                )
-                catalog_etag = response.headers.get("etag")
-        except httpx.HTTPError as exc:
-            raise PluginCatalogSyncError("catalog_network_error") from exc
-        try:
-            document = parse_catalog_document(body)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, ValueError) as exc:
-            raise PluginCatalogSyncError("catalog_schema_invalid") from exc
-        return document, catalog_etag
 
     async def _activate_snapshot(
         self,
