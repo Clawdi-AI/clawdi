@@ -1006,7 +1006,7 @@ export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSche
 		if (!probeName || !installation || !isFirstPartyClawdiAgentPlugin(probeName, installation)) {
 			ctx.addIssue({
 				code: "custom",
-				message: "Agent Plugin capability probe requires the first-party clawdi-cloud package",
+				message: "Agent Plugin capability probe requires the first-party clawdi package",
 				path: ["agentPluginCapabilityProbe", "installations"],
 			});
 		}

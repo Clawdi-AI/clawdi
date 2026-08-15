@@ -5,7 +5,7 @@
       "type": "streamable-http",
       "url": "https://cloud-api.clawdi.ai/v1/mcp/clawdi",
       "headers": {
-        "X-Clawdi-Agent-Plugin": "clawdi-cloud"
+        "X-Clawdi-Agent-Plugin": "clawdi"
       }
     }
   }

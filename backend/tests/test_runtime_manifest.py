@@ -22,6 +22,11 @@ from app.core.config import settings
 from app.core.database import engine as runtime_engine
 from app.core.database import get_session
 from app.main import app
+from app.models.agent_plugin import (
+    AgentPluginInstallation,
+    PluginCatalogEntry,
+    PluginCatalogSnapshot,
+)
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
@@ -4112,11 +4117,13 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
             "workspace-helper": {"enabled": True, "version": 1},
         }
     }
-    state.agent_plugins = {
+    installation_id = uuid4()
+    catalog_revision = f"{uuid4().hex}{uuid4().hex[:8]}"
+    desired_plugins = {
         "schemaVersion": 1,
         "installations": {
-            "clawdi-cloud": {
-                "installationId": "first-party:clawdi-cloud",
+            "clawdi": {
+                "installationId": str(installation_id),
                 "version": "1.0.0",
                 "agentPluginsSchema": (
                     "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
@@ -4124,60 +4131,61 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
                 "source": {
                     "type": "github",
                     "url": "https://github.com/Clawdi-AI/store",
-                    "path": "v2/plugins/clawdi-cloud",
-                    "commit": "a" * 40,
+                    "path": "v2/plugins/clawdi",
+                    "commit": catalog_revision,
                 },
                 "contentDigest": (
                     "sha256-tree-v1:"
-                    "f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c"
+                    "6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3"
                 ),
             }
         },
     }
-    state.egress_profiles = {
-        "profiles": [
-            {
-                "id": "first-party-clawdi-cloud-mcp",
-                "enabled": True,
-                "kind": "http",
-                "match": {
-                    "scheme": "https",
-                    "host": "cloud-api.clawdi.ai:443",
-                    "path": {"type": "equals", "value": "/v1/mcp/clawdi"},
-                    "headers": {
-                        "X-Clawdi-Agent-Plugin": {
-                            "type": "equals",
-                            "value": "clawdi-cloud",
-                        }
-                    },
-                    "query": {},
-                },
-                "rewrite": {
-                    "upstreamBaseUrl": settings.public_api_url.rstrip("/"),
-                    "preservePath": True,
-                    "setHeaders": {
-                        "Authorization": {
-                            "type": "secretRef",
-                            "secretRef": "secret://clawdi/auth-token",
-                            "prefix": "Bearer ",
-                        }
-                    },
-                },
-                "logging": {
-                    "redactHeaders": ["Authorization"],
-                    "redactUrlPatterns": [],
-                },
-                "priority": 60,
-                "owner": "first-party:clawdi-cloud",
-            }
-        ]
-    }
+    db_session.add(
+        PluginCatalogSnapshot(
+            revision=catalog_revision,
+            schema_version=1,
+            entry_count=1,
+            fetched_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+    db_session.add(
+        PluginCatalogEntry(
+            snapshot_revision=catalog_revision,
+            name="clawdi",
+            version="1.0.0",
+            agent_plugins_schema=("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"),
+            source_path="v2/plugins/clawdi",
+            content_digest=(
+                "sha256-tree-v1:6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3"
+            ),
+            public_metadata={},
+            has_configuration=False,
+            compatible_runtimes=["openclaw", "hermes"],
+        )
+    )
+    await db_session.flush()
+    db_session.add(
+        AgentPluginInstallation(
+            id=installation_id,
+            environment_id=env.id,
+            plugin_name="clawdi",
+            catalog_revision=catalog_revision,
+            version="1.0.0",
+            agent_plugins_schema=("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"),
+            source_path="v2/plugins/clawdi",
+            content_digest=(
+                "sha256-tree-v1:6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3"
+            ),
+        )
+    )
     await db_session.commit()
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle-capability")
-    validated_plugins = HostedAgentPlugins.model_validate(state.agent_plugins)
+    validated_plugins = HostedAgentPlugins.model_validate(desired_plugins)
     ownership_identity = _agent_plugin_ownership_identity(
-        "clawdi-cloud",
-        validated_plugins.installations["clawdi-cloud"],
+        "clawdi",
+        validated_plugins.installations["clawdi"],
     )
     proof = f"v1:openclaw:{ownership_identity}:{'c' * 64}"
 
@@ -4229,11 +4237,15 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
         "clawdi",
         "workspace-helper",
     }
+    assert (
+        old_client.json()["manifest"]["egressProfiles"]["profiles"][0]["id"]
+        == "first-party-clawdi-mcp"
+    )
     assert old_client.json()["manifest"]["clawdiCli"]["packageSpec"] == state.cli_package_spec
     assert capable_client.status_code == 200, capable_client.text
-    assert capable_client.json()["manifest"]["agentPlugins"] == state.agent_plugins
+    assert capable_client.json()["manifest"]["agentPlugins"] == desired_plugins
     assert capable_client.json()["manifest"]["agentPluginCapabilityProbe"] == {
-        "installations": ["clawdi-cloud"]
+        "installations": ["clawdi"]
     }
     assert "clawdi" in capable_client.json()["manifest"]["mcp"]["servers"]
     assert "clawdi" in capable_client.json()["manifest"]["skills"]["entries"]
@@ -4244,7 +4256,7 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
     assert capable_not_modified.status_code == 304
     assert capable_not_modified.headers["etag"] == capable_client.headers["etag"]
     assert native_client.status_code == 200, native_client.text
-    assert native_client.json()["manifest"]["agentPlugins"] == state.agent_plugins
+    assert native_client.json()["manifest"]["agentPlugins"] == desired_plugins
     assert "agentPluginCapabilityProbe" not in native_client.json()["manifest"]
     assert set(native_client.json()["manifest"]["mcp"]["servers"]) == {"workspace-tools"}
     assert set(native_client.json()["manifest"]["skills"]["entries"]) == {"workspace-helper"}

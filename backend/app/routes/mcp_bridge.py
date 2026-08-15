@@ -582,7 +582,7 @@ async def _handle_clawdi_mcp_request(
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": {
-                        "name": "clawdi-cloud",
+                        "name": "clawdi",
                         "title": "Clawdi Cloud",
                         "version": "1.0.0",
                     },

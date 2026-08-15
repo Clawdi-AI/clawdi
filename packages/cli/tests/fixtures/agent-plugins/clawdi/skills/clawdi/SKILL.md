@@ -3,7 +3,7 @@ name: clawdi
 description: "Use the user's account-wide long-term memory and past agent sessions; inspect the current Hosted Project and safe Vault metadata; use connected services such as Gmail, GitHub, Notion, Drive, and Calendar; and read Clawdi share URLs."
 ---
 
-# Clawdi Cloud
+# Clawdi
 
 Use Clawdi Cloud tools through the `clawdi` MCP server. Treat the live tool schemas as authoritative.
 

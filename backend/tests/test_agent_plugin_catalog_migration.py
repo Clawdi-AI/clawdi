@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import uuid
+from pathlib import Path
+
+import pytest
+import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+
+def _migration():
+    path = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / "e6a1c9f3b7d2_plugin_catalog_desired_state.py"
+    )
+    spec = importlib.util.spec_from_file_location("plugin_catalog_desired_state", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _base_tables(conn: sa.Connection) -> None:
+    conn.execute(sa.text("CREATE TABLE agent_environments (id uuid PRIMARY KEY)"))
+    conn.execute(
+        sa.text(
+            "CREATE TABLE hosted_runtime_states ("
+            "environment_id uuid PRIMARY KEY, agent_plugins jsonb)"
+        )
+    )
+
+
+def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
+    engine: AsyncEngine,
+) -> None:
+    migration = _migration()
+    schema = f"plugin_catalog_migration_{uuid.uuid4().hex}"
+    environment_id = uuid.uuid4()
+    installation_id = uuid.uuid4()
+    entry_id = uuid.uuid4()
+    revision = "a" * 40
+
+    def run(conn: sa.Connection) -> None:
+        old_op = migration.op
+        conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+        conn.execute(sa.text(f'SET search_path TO "{schema}"'))
+        try:
+            _base_tables(conn)
+            conn.execute(
+                sa.text(
+                    "INSERT INTO agent_environments (id) VALUES (CAST(:id AS uuid));"
+                    "INSERT INTO hosted_runtime_states (environment_id, agent_plugins) "
+                    "VALUES (CAST(:id AS uuid), CAST(:plugins AS jsonb))"
+                ),
+                {
+                    "id": str(environment_id),
+                    "plugins": json.dumps({"schemaVersion": 1, "installations": {}}),
+                },
+            )
+            migration.op = Operations(MigrationContext.configure(conn))
+            migration.upgrade()
+
+            columns = {
+                row.column_name
+                for row in conn.execute(
+                    sa.text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = :schema AND table_name = 'hosted_runtime_states'"
+                    ),
+                    {"schema": schema},
+                )
+            }
+            assert "agent_plugins" not in columns
+
+            conn.execute(
+                sa.text(
+                    "INSERT INTO plugin_catalog_snapshots "
+                    "(revision, schema_version, entry_count, fetched_at) "
+                    "VALUES (:revision, 1, 1, now());"
+                    "INSERT INTO plugin_catalog_entries "
+                    "(id, snapshot_revision, name, version, agent_plugins_schema, "
+                    "source_path, content_digest, metadata, has_configuration, "
+                    "compatible_runtimes) VALUES "
+                    "(CAST(:entry_id AS uuid), :revision, 'clawdi', '1.0.0', :schema_uri, "
+                    "'v2/plugins/clawdi', :digest, '{}'::jsonb, false, '[\"openclaw\"]'::jsonb);"
+                    "INSERT INTO agent_plugin_installations "
+                    "(id, environment_id, plugin_name, catalog_revision, version, "
+                    "agent_plugins_schema, source_path, content_digest) VALUES "
+                    "(CAST(:installation_id AS uuid), CAST(:environment_id AS uuid), "
+                    "'clawdi', :revision, '1.0.0', :schema_uri, 'v2/plugins/clawdi', :digest)"
+                ),
+                {
+                    "revision": revision,
+                    "entry_id": str(entry_id),
+                    "installation_id": str(installation_id),
+                    "environment_id": str(environment_id),
+                    "schema_uri": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                    "digest": f"sha256-tree-v1:{'b' * 64}",
+                },
+            )
+            with pytest.raises(RuntimeError, match="Cannot downgrade"):
+                migration.downgrade()
+
+            conn.execute(sa.text("DELETE FROM agent_plugin_installations"))
+            migration.downgrade()
+            restored = conn.execute(
+                sa.text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = 'hosted_runtime_states' "
+                    "AND column_name = 'agent_plugins'"
+                ),
+                {"schema": schema},
+            ).scalar_one()
+            assert restored == "jsonb"
+        finally:
+            migration.op = old_op
+
+    sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
+    try:
+        with sync_engine.begin() as conn:
+            run(conn)
+    finally:
+        with sync_engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        sync_engine.dispose()
+
+
+def test_agent_plugin_catalog_migration_rejects_malformed_legacy_state(
+    engine: AsyncEngine,
+) -> None:
+    migration = _migration()
+    schema = f"plugin_catalog_legacy_guard_{uuid.uuid4().hex}"
+
+    def run(conn: sa.Connection) -> None:
+        old_op = migration.op
+        conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+        conn.execute(sa.text(f'SET search_path TO "{schema}"'))
+        try:
+            _base_tables(conn)
+            conn.execute(
+                sa.text(
+                    "INSERT INTO hosted_runtime_states (environment_id, agent_plugins) "
+                    "VALUES (CAST(:id AS uuid), '{}'::jsonb)"
+                ),
+                {"id": str(uuid.uuid4())},
+            )
+            migration.op = Operations(MigrationContext.configure(conn))
+            with pytest.raises(RuntimeError, match="Cannot migrate non-empty or malformed"):
+                migration.upgrade()
+        finally:
+            migration.op = old_op
+
+    sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
+    try:
+        with sync_engine.begin() as conn:
+            run(conn)
+    finally:
+        with sync_engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        sync_engine.dispose()

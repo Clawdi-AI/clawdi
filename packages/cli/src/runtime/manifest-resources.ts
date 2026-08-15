@@ -15,12 +15,9 @@ export const AGENT_PLUGINS_SCHEMA_1_0_0 =
 	"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 
 export const FIRST_PARTY_CLAWDI_AGENT_PLUGIN = {
-	name: "clawdi-cloud",
-	installationId: "first-party:clawdi-cloud",
-	version: "1.0.0",
+	name: "clawdi",
 	sourceUrl: "https://github.com/Clawdi-AI/store",
-	sourcePath: "v2/plugins/clawdi-cloud",
-	contentDigest: "sha256-tree-v1:f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c",
+	sourcePath: "v2/plugins/clawdi",
 } as const;
 
 const mcpSecretHeaderSchema = z
@@ -206,14 +203,12 @@ export function isFirstPartyClawdiAgentPlugin(
 ): boolean {
 	return (
 		name === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name &&
-		installation.installationId === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.installationId &&
-		installation.version === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.version &&
 		installation.agentPluginsSchema === AGENT_PLUGINS_SCHEMA_1_0_0 &&
 		installation.source.type === "github" &&
 		installation.source.url === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourceUrl &&
 		installation.source.path === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourcePath &&
 		/^[0-9a-f]{40}$/.test(installation.source.commit) &&
-		installation.contentDigest === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.contentDigest
+		/^sha256-tree-v1:[0-9a-f]{64}$/.test(installation.contentDigest)
 	);
 }
 

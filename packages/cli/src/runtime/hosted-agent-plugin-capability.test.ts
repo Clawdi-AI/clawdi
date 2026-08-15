@@ -52,9 +52,9 @@ test("binds native capability proof to command and package ownership", () => {
 			package: {
 				runtime: "openclaw",
 				command,
-				name: "clawdi-cloud",
+				name: "clawdi",
 				ownershipIdentity,
-				nativeId: "clawdi-cloud",
+				nativeId: "clawdi",
 			},
 		},
 		paths,
@@ -79,9 +79,9 @@ test("clears proof when desired package ownership changes", () => {
 			package: {
 				runtime: "openclaw",
 				command,
-				name: "clawdi-cloud",
+				name: "clawdi",
 				ownershipIdentity,
-				nativeId: "clawdi-cloud",
+				nativeId: "clawdi",
 			},
 		},
 		paths,
@@ -91,17 +91,17 @@ test("clears proof when desired package ownership changes", () => {
 		runtime: "openclaw",
 		desired: new Map([
 			[
-				"clawdi-cloud",
+				"clawdi",
 				{
-					name: "clawdi-cloud",
+					name: "clawdi",
 					installation: {
-						installationId: "first-party:clawdi-cloud",
+						installationId: "01987b48-b641-79f2-b839-92ae5fc782fe",
 						version: "1.0.0",
 						agentPluginsSchema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 						source: {
 							type: "github",
 							url: "https://github.com/Clawdi-AI/store",
-							path: "v2/plugins/clawdi-cloud",
+							path: "v2/plugins/clawdi",
 							commit: "e".repeat(40),
 						},
 						contentDigest: `sha256-tree-v1:${"f".repeat(64)}`,
