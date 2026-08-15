@@ -57,8 +57,8 @@ import {
 } from "@/lib/agent-routes";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
-import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -80,6 +80,7 @@ export function ConnectedAgentDetail({
 	const id = environmentId;
 	const $api = useOpenApi();
 	const ownership = useAgentOwnership();
+	const { legacyDashboardUrl: projectedLegacyDashboardUrl } = useProductAccess();
 	const activeTab = parseAgentTab(section) ?? "overview";
 
 	const {
@@ -149,7 +150,7 @@ export function ConnectedAgentDetail({
 		activeTab === "overview" && agent && showSourceBadge ? (
 			<AgentSourceBadgeForEnvironment env={agent} ownershipKind={ownershipKind} compact />
 		) : null;
-	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
+	const legacyDashboardUrl = ownershipKind === "legacy" ? projectedLegacyDashboardUrl : null;
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});

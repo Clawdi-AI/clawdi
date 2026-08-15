@@ -1,7 +1,7 @@
 "use client";
 
-import { lazy, Suspense } from "react";
-import { HostedProductGate } from "@/components/hosted-product-gate";
+import { lazy } from "react";
+import { HostedProductRoute } from "@/components/hosted-product-route";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,20 +11,18 @@ const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
 const DeployWizard = IS_HOSTED_BUILD
 	? lazy(() =>
-			import("@/hosted/billing/deploy/deploy-wizard").then((m) => ({ default: m.DeployWizard })),
+			import("@/hosted/billing/deploy/deploy-wizard").then((m) => ({
+				default: m.DeployWizard,
+			})),
 		)
 	: null;
 
 export default function Page() {
-	return (
-		<HostedProductGate fallbackHref="/">
-			{DeployWizard ? (
-				<Suspense fallback={<DeployRouteSkeleton />}>
-					<DeployWizard />
-				</Suspense>
-			) : null}
-		</HostedProductGate>
-	);
+	return DeployWizard ? (
+		<HostedProductRoute fallback={<DeployRouteSkeleton />}>
+			<DeployWizard />
+		</HostedProductRoute>
+	) : null;
 }
 
 function DeployRouteSkeleton() {

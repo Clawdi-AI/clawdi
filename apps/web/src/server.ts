@@ -2,7 +2,7 @@ import "../instrument.server.mjs";
 
 import { wrapFetchWithSentry } from "@sentry/tanstackstart-react";
 import handler, { createServerEntry } from "@tanstack/react-start/server-entry";
-import { fetchWithWalletStripeReturnPolicy } from "@/lib/wallet-stripe-return";
+import { fetchWithWalletStripeReturnPolicy } from "@/lib/wallet-stripe-return-security";
 
 const routerEntry = {
 	fetch(request: Request) {

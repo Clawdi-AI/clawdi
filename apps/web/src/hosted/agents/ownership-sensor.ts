@@ -9,10 +9,12 @@ import { BillingApiError, billingQueryRetry } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
 import { claimedEnvIdsFromDeployments } from "@/hosted/hosted-agent-resolution";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
-import type { AgentOwnership } from "@/lib/agent-ownership";
-import { normalizeAgentEnvId } from "@/lib/agent-ownership";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import type { LegacyHostedAccessStatus } from "@/lib/hosted-product-access-model";
+import {
+	type AgentOwnership,
+	EMPTY_AGENT_OWNERSHIP,
+	normalizeAgentEnvId,
+} from "@/lib/agent-ownership";
+import { type LegacyProductAccessStatus, useProductAccess } from "@/lib/product-access";
 
 const EMPTY_ENV_IDS: ReadonlySet<string> = new Set();
 
@@ -26,7 +28,7 @@ function envIdSet(ids: readonly string[] | undefined): ReadonlySet<string> {
 }
 
 export function resolveLegacyEnvIds(
-	accessStatus: LegacyHostedAccessStatus,
+	accessStatus: LegacyProductAccessStatus,
 	environmentIds: readonly string[] | undefined,
 	error: Error | null,
 ): {
@@ -47,7 +49,7 @@ export function resolveLegacyEnvIds(
 }
 
 export function useLegacyEnvIds() {
-	const access = useHostedProductAccess();
+	const access = useProductAccess();
 	const client = useBillingClient();
 	const accessStatus = isDeployApiConfigured() ? access.legacyHostedAccessStatus : "disabled";
 	const enabled = accessStatus === "enabled";
@@ -104,6 +106,7 @@ export function HostedAgentOwnershipSensor({
 }: {
 	onChange: (ownership: AgentOwnership | null, existingCloudDeploymentCount: number | null) => void;
 }) {
+	const deployApiConfigured = isDeployApiConfigured();
 	const cloudInventory = useHostedDeploymentInventory();
 	const legacy = useLegacyEnvIds();
 
@@ -113,17 +116,20 @@ export function HostedAgentOwnershipSensor({
 	);
 
 	const ownership = useMemo<AgentOwnership>(
-		() => ({
-			cloudEnvIds,
-			legacyEnvIds: legacy.envIds ?? EMPTY_ENV_IDS,
-			isResolved: cloudInventory.status === "resolved" && legacy.envIds !== null,
-		}),
-		[cloudEnvIds, cloudInventory.status, legacy.envIds],
+		() =>
+			deployApiConfigured
+				? {
+						cloudEnvIds,
+						legacyEnvIds: legacy.envIds ?? EMPTY_ENV_IDS,
+						isResolved: cloudInventory.status === "resolved" && legacy.envIds !== null,
+					}
+				: EMPTY_AGENT_OWNERSHIP,
+		[cloudEnvIds, cloudInventory.status, deployApiConfigured, legacy.envIds],
 	);
 
 	useEffect(() => {
-		onChange(ownership, cloudInventory.deployments?.length ?? null);
-	}, [cloudInventory.deployments?.length, ownership, onChange]);
+		onChange(ownership, deployApiConfigured ? (cloudInventory.deployments?.length ?? null) : 0);
+	}, [cloudInventory.deployments?.length, deployApiConfigured, ownership, onChange]);
 	useEffect(() => () => onChange(null, null), [onChange]);
 
 	return null;

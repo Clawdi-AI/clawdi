@@ -17,7 +17,7 @@ import {
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_HOSTED } from "@/lib/hosted";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useProductAccess } from "@/lib/product-access";
 import { useHydrated } from "@/lib/use-hydrated";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +33,7 @@ export function NewAgentButton({
 	className?: string;
 } = {}) {
 	const router = useRouter();
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
 	const [chooserOpen, setChooserOpen] = useState(false);
 	const [connectOpen, setConnectOpen] = useState(false);

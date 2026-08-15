@@ -35,7 +35,7 @@ import {
 } from "@/hosted/billing/wallet/wallet-funding";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { formatShortDate } from "@/lib/format";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useProductAccess } from "@/lib/product-access";
 
 const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY = {
 	insufficientBalance: "Top up the shortfall, then request a fresh plan-change quote.",
@@ -117,7 +117,7 @@ function PlanChangeControllerState({
 	target: PlanChangeTarget;
 	plans: Plan[];
 }) {
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const quotePlanChange = useQuotePlanChange();
 	const billingPortal = useSensitiveBillingPortal();
 	const [acceptedOperationName, setAcceptedOperationName] = useState<string | null>(null);

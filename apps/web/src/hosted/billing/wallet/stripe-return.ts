@@ -1,41 +1,25 @@
-export const WALLET_PAYMENT_RETURN_PARAM = "wallet_payment_return";
-export const WALLET_PAYMENT_FLOW_PARAM = "wallet_payment_flow";
-export const WALLET_SETUP_RETURN_PARAM = "wallet_setup_return";
-export const WALLET_SETUP_IDENTITY_PARAM = "wallet_setup_id";
-export const STRIPE_PAYMENT_INTENT_PARAM = "payment_intent";
-export const STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM = "payment_intent_client_secret";
-export const STRIPE_SETUP_INTENT_PARAM = "setup_intent";
-export const STRIPE_SETUP_INTENT_CLIENT_SECRET_PARAM = "setup_intent_client_secret";
-export const STRIPE_REDIRECT_STATUS_PARAM = "redirect_status";
+import {
+	cleanWalletStripeReturnUrl,
+	hasWalletStripeReturnParam,
+	WALLET_STRIPE_RETURN_SECURITY_PARAMS,
+	walletStripeReturnUrl,
+	walletStripeReturnUrlString,
+} from "@/lib/wallet-stripe-return-security";
 
-const WALLET_STRIPE_RETURN_PARAMS = [
-	WALLET_PAYMENT_RETURN_PARAM,
-	WALLET_PAYMENT_FLOW_PARAM,
-	"topup_return",
-	WALLET_SETUP_RETURN_PARAM,
-	WALLET_SETUP_IDENTITY_PARAM,
-	STRIPE_PAYMENT_INTENT_PARAM,
-	STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM,
-	STRIPE_SETUP_INTENT_PARAM,
-	STRIPE_SETUP_INTENT_CLIENT_SECRET_PARAM,
-	STRIPE_REDIRECT_STATUS_PARAM,
-] as const;
+export { cleanWalletStripeReturnUrl };
 
-const WALLET_STRIPE_RETURN_OWNER_PARAMS = [
-	WALLET_PAYMENT_RETURN_PARAM,
-	WALLET_PAYMENT_FLOW_PARAM,
-	"topup_return",
-	WALLET_SETUP_RETURN_PARAM,
-	WALLET_SETUP_IDENTITY_PARAM,
-] as const;
+export const WALLET_PAYMENT_RETURN_PARAM = WALLET_STRIPE_RETURN_SECURITY_PARAMS.walletPaymentReturn;
+export const WALLET_PAYMENT_FLOW_PARAM = WALLET_STRIPE_RETURN_SECURITY_PARAMS.walletPaymentFlow;
+export const WALLET_SETUP_RETURN_PARAM = WALLET_STRIPE_RETURN_SECURITY_PARAMS.walletSetupReturn;
+export const WALLET_SETUP_IDENTITY_PARAM = WALLET_STRIPE_RETURN_SECURITY_PARAMS.walletSetupIdentity;
+export const STRIPE_PAYMENT_INTENT_PARAM = WALLET_STRIPE_RETURN_SECURITY_PARAMS.stripePaymentIntent;
+export const STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM =
+	WALLET_STRIPE_RETURN_SECURITY_PARAMS.stripePaymentIntentClientSecret;
+export const STRIPE_SETUP_INTENT_PARAM = WALLET_STRIPE_RETURN_SECURITY_PARAMS.stripeSetupIntent;
+export const STRIPE_SETUP_INTENT_CLIENT_SECRET_PARAM =
+	WALLET_STRIPE_RETURN_SECURITY_PARAMS.stripeSetupIntentClientSecret;
 
-const STRIPE_RETURN_PARAMS = [
-	STRIPE_PAYMENT_INTENT_PARAM,
-	STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM,
-	STRIPE_SETUP_INTENT_PARAM,
-	STRIPE_SETUP_INTENT_CLIENT_SECRET_PARAM,
-	STRIPE_REDIRECT_STATUS_PARAM,
-] as const;
+const WALLET_STRIPE_RETURN_PARAMS = Object.values(WALLET_STRIPE_RETURN_SECURITY_PARAMS);
 
 type WalletStripeReturnKind = "payment_intent" | "setup_intent";
 export type WalletPaymentReturnFlow = "manual_topup" | "auto_reload";
@@ -77,7 +61,6 @@ const SETUP_INTENT_MISMATCH_ERROR =
 	"The returned card setup could not be verified. Start a new card authorization.";
 const PAYMENT_INTENT_MISMATCH_ERROR =
 	"The returned payment could not be verified. Open Wallet and check your balance before trying again.";
-const ROOT_RELATIVE_URL_BASE = "https://wallet-return.invalid";
 
 type ResolutionSlot<TResult> = {
 	fingerprint: string;
@@ -157,34 +140,14 @@ function walletPaymentFlow(value: string | null): WalletPaymentReturnFlow | null
 	return value === "manual_topup" || value === "auto_reload" ? value : null;
 }
 
-function hasWalletStripeReturnParam(params: URLSearchParams): boolean {
-	if (WALLET_STRIPE_RETURN_OWNER_PARAMS.some((key) => params.has(key))) return true;
-	return (
-		params.getAll("settings").includes("billing-wallet") &&
-		STRIPE_RETURN_PARAMS.some((key) => params.has(key))
-	);
-}
-
 function hasExactWalletStripeReturnCardinality(params: URLSearchParams): boolean {
 	return WALLET_STRIPE_RETURN_PARAMS.every((key) => params.getAll(key).length <= 1);
-}
-
-function walletStripeUrl(value: string): { url: URL; rootRelative: boolean } {
-	const rootRelative = value.startsWith("/") && !value.startsWith("//");
-	return {
-		url: rootRelative ? new URL(value, ROOT_RELATIVE_URL_BASE) : new URL(value),
-		rootRelative,
-	};
-}
-
-function walletStripeUrlString(url: URL, rootRelative: boolean): string {
-	return rootRelative ? `${url.pathname}${url.search}${url.hash}` : url.toString();
 }
 
 export function readWalletStripeReturn(search: string): WalletStripeReturnState | null {
 	const params = new URLSearchParams(search);
 	if (!hasExactWalletStripeReturnCardinality(params)) return null;
-	if (params.has("topup_return")) return null;
+	if (params.has(WALLET_STRIPE_RETURN_SECURITY_PARAMS.legacyTopupReturn)) return null;
 	if (params.has(WALLET_SETUP_RETURN_PARAM) && params.has(WALLET_PAYMENT_RETURN_PARAM)) return null;
 	const setupMarked = canonicalParam(params, WALLET_SETUP_RETURN_PARAM) === "1";
 	const paymentMarked = canonicalParam(params, WALLET_PAYMENT_RETURN_PARAM) === "1";
@@ -238,18 +201,14 @@ export function buildWalletStripeReturnUrl(
 	currentHref: string,
 	params: readonly (readonly [string, string])[] = [],
 ): string {
-	const { url, rootRelative } = walletStripeUrl(currentHref);
+	const { url, rootRelative } = walletStripeReturnUrl(currentHref);
 	for (const key of WALLET_STRIPE_RETURN_PARAMS) {
 		url.searchParams.delete(key);
 	}
 	for (const [key, value] of params) {
 		url.searchParams.set(key, value);
 	}
-	return walletStripeUrlString(url, rootRelative);
-}
-
-export function cleanWalletStripeReturnUrl(currentHref: string): string {
-	return buildWalletStripeReturnUrl(currentHref);
+	return walletStripeReturnUrlString(url, rootRelative);
 }
 
 export function consumeWalletStripeReturn(
@@ -257,7 +216,7 @@ export function consumeWalletStripeReturn(
 	historyState: unknown,
 	replaceState: (state: unknown, unused: string, url: string) => void,
 ): WalletStripeReturnState | null {
-	const { url } = walletStripeUrl(currentHref);
+	const { url } = walletStripeReturnUrl(currentHref);
 	if (!hasWalletStripeReturnParam(url.searchParams)) return null;
 	const result = readWalletStripeReturn(url.search);
 	replaceState(historyState, "", cleanWalletStripeReturnUrl(currentHref));
@@ -269,7 +228,7 @@ export function bootstrapWalletStripeReturn(
 	historyState: unknown,
 	replaceState: (state: unknown, unused: string, url: string) => void,
 ): void {
-	const { url } = walletStripeUrl(currentHref);
+	const { url } = walletStripeReturnUrl(currentHref);
 	const hasReturnParam = hasWalletStripeReturnParam(url.searchParams);
 	const result = consumeWalletStripeReturn(currentHref, historyState, replaceState);
 	if (result) {
@@ -369,33 +328,4 @@ export function coordinateWalletSetupReturn(
 		if (setupResolution === slot) setupResolution = null;
 	});
 	return setupResolution.promise;
-}
-
-export function cleanWalletStripeReturnRequest(request: Request): Request {
-	const url = new URL(request.url);
-	if (!hasWalletStripeReturnParam(url.searchParams)) return request;
-	return new Request(cleanWalletStripeReturnUrl(request.url), request);
-}
-
-function secureWalletStripeReturnResponse(response: Response): Response {
-	const headers = new Headers(response.headers);
-	headers.set("Referrer-Policy", "no-referrer");
-	headers.set("Cache-Control", "no-store");
-	return new Response(response.body, {
-		headers,
-		status: response.status,
-		statusText: response.statusText,
-	});
-}
-
-export function fetchWithWalletStripeReturnPolicy(
-	request: Request,
-	fetchRequest: (request: Request) => Response | Promise<Response>,
-): Response | Promise<Response> {
-	const url = new URL(request.url);
-	if (!hasWalletStripeReturnParam(url.searchParams)) return fetchRequest(request);
-	const response = fetchRequest(cleanWalletStripeReturnRequest(request));
-	return response instanceof Response
-		? secureWalletStripeReturnResponse(response)
-		: response.then(secureWalletStripeReturnResponse);
 }

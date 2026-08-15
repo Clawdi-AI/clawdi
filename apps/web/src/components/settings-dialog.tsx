@@ -13,8 +13,8 @@ import {
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import type { AgentTile } from "@/components/dashboard/agents-card";
-import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { IconChip } from "@/components/icon-chip";
+import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
 import { GeneralPanel } from "@/components/settings/general-panel";
 import { type SettingsEditState, SettingsEditStateContext } from "@/components/settings-edit-state";
@@ -29,7 +29,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useProductAccess } from "@/lib/product-access";
 import {
 	DEFAULT_SETTINGS_SECTION,
 	SETTINGS_SECTION_IDS,
@@ -126,7 +126,7 @@ export function SettingsDialog({
 	onOpenChange: (open: boolean) => void;
 }) {
 	const activeButtonRef = useRef<HTMLButtonElement | null>(null);
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const [mounted, setMounted] = useState(false);
 	const [editStates, setEditStates] = useState<Map<symbol, SettingsEditState>>(() => new Map());
 	const registerEditState = useCallback((token: symbol, state: SettingsEditState | null) => {
@@ -288,7 +288,7 @@ export function SettingsDialog({
 							<section className="min-h-0 min-w-0 overflow-y-auto py-6 md:py-8">
 								<div className="mx-auto w-full max-w-4xl">
 									{billingAccessPending ? (
-										<HostedRouteSkeleton />
+										<RouteLoadingSkeleton />
 									) : billingAccessError ? (
 										<div className="px-5 sm:px-6 lg:px-8">
 											<ApiErrorPanel
@@ -346,7 +346,7 @@ function SettingsPanel({
 			return <ApiKeysPanel />;
 		case "billing-wallet":
 			return WalletPage ? (
-				<Suspense fallback={<HostedRouteSkeleton />}>
+				<Suspense fallback={<RouteLoadingSkeleton />}>
 					<WalletPage />
 				</Suspense>
 			) : (
@@ -354,7 +354,7 @@ function SettingsPanel({
 			);
 		case "billing-plan":
 			return SubscriptionPage ? (
-				<Suspense fallback={<HostedRouteSkeleton />}>
+				<Suspense fallback={<RouteLoadingSkeleton />}>
 					<SubscriptionPage agentTiles={agentTiles} />
 				</Suspense>
 			) : (
@@ -362,7 +362,7 @@ function SettingsPanel({
 			);
 		case "billing-usage":
 			return UsagePage ? (
-				<Suspense fallback={<HostedRouteSkeleton />}>
+				<Suspense fallback={<RouteLoadingSkeleton />}>
 					<UsagePage agentTiles={agentTiles} />
 				</Suspense>
 			) : (

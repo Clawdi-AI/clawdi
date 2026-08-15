@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import {
 	buildHostedPersonProperties,
 	resolveHostedAuthIdentityAction,
-} from "@/components/providers/analytics-provider.logic";
+} from "@/hosted/analytics-identity.logic";
 import {
 	buildMavaIdentity,
 	createMavaIdentityController,
-	startMavaIdentitySync,
 	type MavaIdentityController,
+	startMavaIdentitySync,
 } from "@/hosted/mava";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 

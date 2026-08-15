@@ -1,9 +1,9 @@
-import { SETTINGS_QUERY_KEY } from "@/lib/settings-routes";
 import {
 	buildWalletStripeReturnUrl,
 	WALLET_SETUP_IDENTITY_PARAM,
 	WALLET_SETUP_RETURN_PARAM,
-} from "@/lib/wallet-stripe-return";
+} from "@/hosted/billing/wallet/stripe-return";
+import { SETTINGS_QUERY_KEY } from "@/lib/settings-routes";
 
 export function buildWalletSetupReturnUrl(currentHref: string, setupIdentity: string): string {
 	return buildWalletStripeReturnUrl(currentHref, [

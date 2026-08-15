@@ -5,6 +5,7 @@ const MAVA_RETRY_LIMIT = 30;
 declare global {
 	interface Window {
 		Mava?: unknown;
+		MavaWebChatToggle?: unknown;
 	}
 }
 
@@ -70,7 +71,11 @@ function isMavaSdk(value: unknown): value is MavaSdk {
 }
 
 function identityKey(identity: MavaIdentity): string {
-	return JSON.stringify([identity.userId, identity.emailAddress ?? null, identity.fullName ?? null]);
+	return JSON.stringify([
+		identity.userId,
+		identity.emailAddress ?? null,
+		identity.fullName ?? null,
+	]);
 }
 
 function readConfiguredMavaSdk(): unknown {
@@ -115,10 +120,81 @@ export function createMavaIdentityController(
 	};
 }
 
-function subscribeToMavaReady(listener: () => void): () => void {
+export function subscribeToMavaReady(listener: () => void): () => void {
 	window.addEventListener(MAVA_READY_EVENT, listener);
 	return () => window.removeEventListener(MAVA_READY_EVENT, listener);
 }
+
+function readMavaWebChatToggle(): unknown {
+	return typeof window === "undefined" ? undefined : window.MavaWebChatToggle;
+}
+
+export function toggleMavaWebChat(readToggle: () => unknown = readMavaWebChatToggle): boolean {
+	try {
+		const toggle = readToggle();
+		if (typeof toggle !== "function") return false;
+		toggle();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export function requestMavaWebChatToggle({
+	toggle = toggleMavaWebChat,
+	retryDelayMs = MAVA_RETRY_DELAY_MS,
+	retryLimit = MAVA_RETRY_LIMIT,
+	subscribeReady = subscribeToMavaReady,
+	scheduleRetry = scheduleBrowserRetry,
+}: {
+	toggle?: () => boolean;
+	retryDelayMs?: number;
+	retryLimit?: number;
+	subscribeReady?: (listener: () => void) => () => void;
+	scheduleRetry?: (listener: () => void, delayMs: number) => () => void;
+} = {}): void {
+	pendingMavaWebChatToggle?.();
+	const boundedRetryLimit = Math.max(0, Math.floor(retryLimit));
+	const boundedRetryDelayMs = Math.max(0, retryDelayMs);
+	let stopped = false;
+	let retryCount = 0;
+	let cancelRetry: (() => void) | null = null;
+	let unsubscribeReady = () => {};
+
+	const stop = () => {
+		if (stopped) return;
+		stopped = true;
+		unsubscribeReady();
+		cancelRetry?.();
+		cancelRetry = null;
+		if (pendingMavaWebChatToggle === stop) pendingMavaWebChatToggle = null;
+	};
+
+	const attempt = () => {
+		if (stopped) return;
+		if (toggle()) {
+			stop();
+			return;
+		}
+		if (cancelRetry) return;
+		if (retryCount >= boundedRetryLimit) {
+			stop();
+			return;
+		}
+		retryCount += 1;
+		cancelRetry = scheduleRetry(() => {
+			cancelRetry = null;
+			attempt();
+		}, boundedRetryDelayMs);
+	};
+
+	pendingMavaWebChatToggle = stop;
+	unsubscribeReady = subscribeReady(attempt);
+	if (stopped) unsubscribeReady();
+	attempt();
+}
+
+let pendingMavaWebChatToggle: (() => void) | null = null;
 
 function scheduleBrowserRetry(listener: () => void, delayMs: number): () => void {
 	const timeoutId = window.setTimeout(listener, delayMs);

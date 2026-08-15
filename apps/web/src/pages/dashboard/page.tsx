@@ -24,7 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
@@ -66,7 +66,7 @@ const HostedFleetSummary = IS_HOSTED_BUILD
 
 export default function DashboardPage() {
 	const $api = useOpenApi();
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 
 	const {
 		data: stats,

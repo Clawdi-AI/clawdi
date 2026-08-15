@@ -1,4 +1,4 @@
-import { cleanWalletStripeReturnUrl } from "@/lib/wallet-stripe-return";
+import { cleanWalletStripeReturnUrl } from "@/hosted/billing/wallet/stripe-return";
 
 export type PaymentOutcome = "succeeded" | "processing";
 

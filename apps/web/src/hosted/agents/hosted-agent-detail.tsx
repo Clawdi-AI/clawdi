@@ -295,8 +295,8 @@ import {
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -3562,7 +3562,7 @@ function ComputeSettingsSections({
 		onCancelCopy: "You were not charged. Your compute plan is unchanged.",
 		onNavigate: navigateCheckoutReturn,
 	});
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const lifecycle = useDeploymentLifecycle();
 	const plans = usePlans();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);

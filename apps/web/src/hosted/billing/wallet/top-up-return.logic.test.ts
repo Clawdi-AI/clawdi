@@ -1,21 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { buildWalletSetupReturnUrl } from "@/hosted/billing/wallet/setup-return.logic";
 import {
-	buildWalletAutoReloadReturnUrl,
-	buildWalletTopupReturnUrl,
-	walletTopupReturnToast,
-} from "@/hosted/billing/wallet/top-up-return.logic";
-import {
 	bootstrapWalletStripeReturn,
 	cleanWalletStripeReturnUrl,
 	consumeWalletStripeReturn,
 	coordinateWalletPaymentReturn,
 	coordinateWalletSetupReturn,
-	fetchWithWalletStripeReturnPolicy,
 	readWalletStripeReturn,
 	type WalletPaymentReturnResolution,
 	walletSetupIntentMatchesClientSecret,
-} from "@/lib/wallet-stripe-return";
+} from "@/hosted/billing/wallet/stripe-return";
+import {
+	buildWalletAutoReloadReturnUrl,
+	buildWalletTopupReturnUrl,
+	walletTopupReturnToast,
+} from "@/hosted/billing/wallet/top-up-return.logic";
+import {
+	fetchWithWalletStripeReturnPolicy,
+	hasWalletStripeReturnUrl,
+} from "@/lib/wallet-stripe-return-security";
 
 describe("Wallet Stripe returns", () => {
 	test("parses and scrubs valid, invalid, and mixed returns before routing", async () => {
@@ -90,6 +93,7 @@ describe("Wallet Stripe returns", () => {
 		for (const testCase of cases) {
 			const current = `https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&${testCase.query}&redirect_status=succeeded#billing`;
 			const replacements: unknown[][] = [];
+			expect(hasWalletStripeReturnUrl(current)).toBe(true);
 			expect(readWalletStripeReturn(new URL(current).search)).toEqual(testCase.result);
 			expect(
 				consumeWalletStripeReturn(current, historyState, (...args) => replacements.push(args)),
@@ -161,6 +165,7 @@ describe("Wallet Stripe returns", () => {
 		const ordinaryRequest = new Request(
 			"https://cloud.clawdi.ai/?checkout_session_id=cs_1&payment_intent=pi_checkout&payment_intent_client_secret=pi_checkout_secret_test&redirect_status=succeeded#checkout",
 		);
+		expect(hasWalletStripeReturnUrl(ordinaryRequest.url)).toBe(false);
 		const unrelatedReplacements: unknown[][] = [];
 		expect(
 			consumeWalletStripeReturn(ordinaryRequest.url, historyState, (...args) =>

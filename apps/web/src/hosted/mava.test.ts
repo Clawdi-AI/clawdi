@@ -2,8 +2,10 @@ import { describe, expect, mock, test } from "bun:test";
 import {
 	buildMavaIdentity,
 	createMavaIdentityController,
-	startMavaIdentitySync,
 	type MavaIdentity,
+	requestMavaWebChatToggle,
+	startMavaIdentitySync,
+	toggleMavaWebChat,
 } from "@/hosted/mava";
 
 async function flushPromises() {
@@ -132,5 +134,55 @@ describe("startMavaIdentitySync", () => {
 		expect(retries).toHaveLength(2);
 
 		stop();
+	});
+});
+
+describe("Mava live chat toggle", () => {
+	test("validates the global toggle and contains widget failures", () => {
+		const toggle = mock(() => {});
+
+		expect(toggleMavaWebChat(() => undefined)).toBe(false);
+		expect(toggleMavaWebChat(() => toggle)).toBe(true);
+		expect(toggle).toHaveBeenCalledTimes(1);
+		expect(
+			toggleMavaWebChat(() => {
+				throw new Error("widget unavailable");
+			}),
+		).toBe(false);
+	});
+
+	test("keeps delayed readiness beyond the caller lifecycle and replaces a stale request", () => {
+		const readyListeners: Array<() => void> = [];
+		let ready = false;
+		let toggleCount = 0;
+		let unsubscribeCount = 0;
+		let retryCancellationCount = 0;
+		const options = {
+			toggle: () => {
+				toggleCount += 1;
+				return ready;
+			},
+			retryLimit: 1,
+			subscribeReady: (listener: () => void) => {
+				readyListeners.push(listener);
+				return () => {
+					unsubscribeCount += 1;
+				};
+			},
+			scheduleRetry: () => () => {
+				retryCancellationCount += 1;
+			},
+		};
+
+		requestMavaWebChatToggle(options);
+		requestMavaWebChatToggle(options);
+		expect(unsubscribeCount).toBe(1);
+		expect(retryCancellationCount).toBe(1);
+
+		ready = true;
+		readyListeners[1]?.();
+		expect(toggleCount).toBe(3);
+		expect(unsubscribeCount).toBe(2);
+		expect(retryCancellationCount).toBe(2);
 	});
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { lazy, Suspense } from "react";
-import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
+import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 const CodexOAuthCallback = IS_HOSTED_BUILD
@@ -14,7 +14,7 @@ const CodexOAuthCallback = IS_HOSTED_BUILD
 
 export default function CodexOAuthCallbackPage() {
 	return CodexOAuthCallback ? (
-		<Suspense fallback={<HostedRouteSkeleton />}>
+		<Suspense fallback={<RouteLoadingSkeleton />}>
 			<CodexOAuthCallback />
 		</Suspense>
 	) : null;

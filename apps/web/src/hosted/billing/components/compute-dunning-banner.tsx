@@ -11,7 +11,7 @@ import { activePlanChangeOperationName } from "@/hosted/billing/subscription/pla
 import { pendingComputePlanSlug } from "@/hosted/billing/subscription/subscription-utils";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useProductAccess } from "@/lib/product-access";
 import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
@@ -35,7 +35,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 			})
 		: [];
 	const primaryAction = actions[0] ?? null;
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
 	const transactionsLink = (
 		<Link to="." search={{ ...routeSearch, settings: "billing-wallet" }} hash="transactions" />

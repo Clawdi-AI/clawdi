@@ -1,8 +1,7 @@
 "use client";
 
-import { lazy, Suspense } from "react";
-import { HostedProductGate } from "@/components/hosted-product-gate";
-import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
+import { lazy } from "react";
+import { HostedProductRoute } from "@/components/hosted-product-route";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -17,13 +16,9 @@ const AiProvidersPage = IS_HOSTED_BUILD
 	: null;
 
 export default function Page() {
-	return (
-		<HostedProductGate fallbackHref="/">
-			{AiProvidersPage ? (
-				<Suspense fallback={<HostedRouteSkeleton />}>
-					<AiProvidersPage />
-				</Suspense>
-			) : null}
-		</HostedProductGate>
-	);
+	return AiProvidersPage ? (
+		<HostedProductRoute>
+			<AiProvidersPage />
+		</HostedProductRoute>
+	) : null;
 }
