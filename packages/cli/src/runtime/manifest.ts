@@ -337,9 +337,7 @@ export function planHostedAgentPluginConvergence(input: {
 	if (probeInstallations) {
 		const prepared = input.prepared.desired.get(FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name);
 		if (!prepared || !isFirstPartyClawdiAgentPlugin(prepared.name, prepared.installation)) {
-			throw new Error(
-				"Agent Plugin capability probe requires the first-party clawdi package",
-			);
+			throw new Error("Agent Plugin capability probe requires the first-party clawdi package");
 		}
 	}
 	const capabilityPrepared = probeInstallations
