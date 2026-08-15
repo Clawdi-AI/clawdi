@@ -889,29 +889,47 @@ async def test_v2_provision_precedes_scoped_deploy_key_and_retirement_replays_ex
     assert transition.details["previous_state"] == "active"
     assert transition.details["new_state"] == "retired"
 
-    conflicting = await workload_harness.client.post(
+    adopted_request_id = f"other-{environment_id}"
+    adopted = await workload_harness.client.post(
         path,
         headers={
             "X-Admin-Key": _ADMIN_KEY,
-            "Idempotency-Key": f"retire-conflict-{environment_id}",
+            "Idempotency-Key": f"retire-adopt-{environment_id}",
         },
-        json={**body, "retirementId": f"other-{environment_id}"},
+        json={**body, "retirementId": adopted_request_id},
     )
-    assert conflicting.status_code == 409, conflicting.text
-    assert conflicting.json()["detail"]["code"] == "runtime_environment_retirement_conflict"
-    rejection_audit = (
+    assert adopted.status_code == 200, adopted.text
+    assert adopted.content == first.content
+    adoption_audit = (
         await db_session.execute(
             select(ControlPlaneAuditEvent).where(
                 ControlPlaneAuditEvent.source == "api.v2.runtime",
-                ControlPlaneAuditEvent.action == "runtime_environment.retire",
+                ControlPlaneAuditEvent.action == "runtime_environment.retire_adopted",
                 ControlPlaneAuditEvent.resource_id == str(environment_id),
-                ControlPlaneAuditEvent.details["outcome"].astext
-                == "runtime_environment_retirement_conflict",
             )
         )
     ).scalar_one()
-    assert rejection_audit.actor_type == "admin"
-    assert rejection_audit.details["auth_method"] == "x_admin_key"
+    assert adoption_audit.actor_type == "admin"
+    assert adoption_audit.details["auth_method"] == "x_admin_key"
+    assert adoption_audit.details["requested_retirement_id"] == adopted_request_id
+    assert adoption_audit.details["authoritative_retirement_id"] == body["retirementId"]
+    await db_session.refresh(fence)
+    assert fence.retirement_id == body["retirementId"]
+    assert fence.retirement_receipt == first.json()
+
+    mismatched_binding = await workload_harness.client.post(
+        path,
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"retire-binding-conflict-{environment_id}",
+        },
+        json={
+            "expectedDeploymentBinding": f"other-{deployment_id}",
+            "retirementId": f"binding-conflict-{environment_id}",
+        },
+    )
+    assert mismatched_binding.status_code == 409, mismatched_binding.text
+    assert mismatched_binding.json()["detail"]["code"] == ("runtime_environment_binding_conflict")
 
 
 @pytest.mark.asyncio

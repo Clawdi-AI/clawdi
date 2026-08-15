@@ -603,6 +603,79 @@ async def test_ingestion_and_retirement_serialize_on_the_environment_fence(
 
 @pytest.mark.committed_db
 @pytest.mark.asyncio
+async def test_competing_retirements_adopt_the_first_authoritative_receipt(
+    engine,
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as principal_session:
+        principal = await _retire_runtime_environment(
+            principal_session,
+            environment_id=environment.id,
+            expected_deployment_id=_DEPLOYMENT_ID,
+            retirement_id="principal-termination:lifecycle-1",
+            owner_id=seed_user.id,
+        )
+
+        async def retire_from_hosted():
+            async with session_factory() as hosted_session:
+                result = await _retire_runtime_environment(
+                    hosted_session,
+                    environment_id=environment.id,
+                    expected_deployment_id=_DEPLOYMENT_ID,
+                    retirement_id="runtime-retirement:deployment-delete-1",
+                    owner_id=seed_user.id,
+                )
+                await hosted_session.commit()
+                return result
+
+        hosted_retirement = asyncio.create_task(retire_from_hosted())
+        await asyncio.sleep(0.05)
+        assert not hosted_retirement.done()
+        await principal_session.commit()
+        adopted = await asyncio.wait_for(hosted_retirement, timeout=5)
+
+    assert principal.transitioned
+    assert not adopted.transitioned
+    assert adopted.receipt == principal.receipt
+    assert adopted.receipt["retirementId"] == "principal-termination:lifecycle-1"
+
+    fence = await db_session.get(V2RuntimeEnvironmentFence, environment.id)
+    assert fence is not None
+    await db_session.refresh(fence)
+    assert fence.retirement_id == "principal-termination:lifecycle-1"
+    assert fence.retirement_receipt == principal.receipt
+
+    fence.retirement_receipt = {
+        **principal.receipt,
+        "expectedDeploymentBinding": "another-deployment",
+    }
+    with pytest.raises(
+        RuntimeError,
+        match="persisted runtime retirement receipt identity is invalid",
+    ):
+        runtime_observation_service._validated_retirement_receipt(fence)
+
+    fence.final_session_high_waters = {"boot-session-malformed": 1}
+    fence.retirement_receipt = {
+        **principal.receipt,
+        "finalSessionHighWaterMarks": [
+            {"bootSessionId": "boot-session-malformed", "sequence": "1"}
+        ],
+    }
+    with pytest.raises(
+        RuntimeError,
+        match="persisted runtime retirement receipt is invalid",
+    ):
+        runtime_observation_service._validated_retirement_receipt(fence)
+    await db_session.rollback()
+
+
+@pytest.mark.committed_db
+@pytest.mark.asyncio
 async def test_retirement_first_rejects_delayed_new_session(
     engine,
     db_session: AsyncSession,
