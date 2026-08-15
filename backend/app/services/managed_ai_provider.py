@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
 from pydantic import JsonValue
@@ -64,6 +66,20 @@ _SUPPORTED_DEPLOYMENT_MANAGED_PROVIDER_CONTRACTS = frozenset(
 )
 
 _V2_DEPLOYMENT_ID_RE = re.compile(r"^[1-9][0-9]*$")
+
+
+class DeploymentManagedProviderCleanupMismatchError(ValueError):
+    pass
+
+
+class DeploymentManagedProviderCleanupInvariantError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentManagedProviderCleanupResult:
+    provider: AiProvider
+    status: Literal["archived", "already_archived"]
 
 
 def is_v2_deployment_managed_provider_id(provider_id: str) -> bool:
@@ -317,3 +333,61 @@ async def archive_clawdi_managed_provider(
         archive_provider=True,
     )
     return provider
+
+
+async def cleanup_deployment_managed_provider(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+    expected_provider_uuid: UUID,
+    provisioning_discovery_key: str,
+    authority: Literal["active_owner", "completed_principal_cleanup"],
+) -> DeploymentManagedProviderCleanupResult | None:
+    """Atomically archive or prove the exact retained managed provider."""
+
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
+    )
+    provider = (
+        await db.execute(
+            select(AiProvider)
+            .where(
+                AiProvider.owner_user_id == owner_user_id,
+                AiProvider.provider_id == provider_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if provider is None:
+        return None
+    if (
+        not is_supported_deployment_managed_provider_contract(provider)
+        or provider.id != expected_provider_uuid
+        or (provider.capabilities or {}).get(MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY)
+        != provisioning_discovery_key
+    ):
+        raise DeploymentManagedProviderCleanupMismatchError(
+            "managed AI provider cleanup identity did not match"
+        )
+    if provider.archived_at is not None:
+        return DeploymentManagedProviderCleanupResult(
+            provider=provider,
+            status="already_archived",
+        )
+    if authority == "completed_principal_cleanup":
+        raise DeploymentManagedProviderCleanupInvariantError(
+            "completed principal cleanup retained an active managed AI provider"
+        )
+    await transition_ai_provider_auth(
+        db,
+        owner_user_id=owner_user_id,
+        provider=provider,
+        auth_type=provider.auth_type,
+        auth_ref=provider.auth_ref,
+        auth_metadata=provider.auth_metadata,
+        archive_provider=True,
+    )
+    return DeploymentManagedProviderCleanupResult(provider=provider, status="archived")
