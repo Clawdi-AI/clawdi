@@ -4153,7 +4153,7 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
                     "query": {},
                 },
                 "rewrite": {
-                    "upstreamBaseUrl": "https://staging.cloud-api.clawdi.ai",
+                    "upstreamBaseUrl": settings.public_api_url.rstrip("/"),
                     "preservePath": True,
                     "setHeaders": {
                         "Authorization": {
