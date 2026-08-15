@@ -9568,7 +9568,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		expect(readFileSync(systemctlLog, "utf-8")).toContain(`--user restart ${unit}`);
 	});
 
-	it("rolls back a manager reload without attributing or stopping business units", () => {
+	it("scopes reload-only and explicit user-unit rollback without touching unrelated units", () => {
 		const home = join(root, "home", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const systemctlPath = join(root, "bin", "systemctl");
@@ -9650,6 +9650,25 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		expect(
 			existsSync(
 				fakeSystemdStatePath(systemctlStateRoot, "system", "clawdi-files.service", "active"),
+			),
+		).toBe(true);
+
+		writeFileSync(systemctlLog, "");
+		const agentPluginTransaction = new SystemdRuntimeTransaction();
+		agentPluginTransaction.quiesce(paths, ["openclaw-gateway.service"]);
+		agentPluginTransaction.rollback(paths);
+		const pluginRollbackCalls = readFileSync(systemctlLog, "utf8").trim().split("\n");
+		expect(pluginRollbackCalls).toContain("--user stop openclaw-gateway.service");
+		expect(pluginRollbackCalls).toContain("--user start openclaw-gateway.service");
+		expect(pluginRollbackCalls.some((call) => call.includes("clawdi-files.service"))).toBe(false);
+		expect(
+			existsSync(
+				fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "active"),
+			),
+		).toBe(true);
+		expect(
+			existsSync(
+				fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "enabled"),
 			),
 		).toBe(true);
 	});
@@ -11921,7 +11940,7 @@ chmod +x "$HOME/.local/bin/openclaw"
 			logs.push(String(value));
 		};
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
-		const { restore } = mockFetch([
+		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
 				path: "/v1/runtime/manifest",
@@ -11944,6 +11963,24 @@ chmod +x "$HOME/.local/bin/openclaw"
 									source: "npm:clawdi",
 									packageSpec: "clawdi@1.3.0-test.1",
 									registry: "https://registry.npmjs.org",
+								},
+								agentPlugins: {
+									schemaVersion: 1,
+									installations: {
+										"unavailable.plugin": {
+											installationId: "install_unavailable_plugin",
+											version: "1.0.0",
+											agentPluginsSchema:
+												"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+											source: {
+												type: "github",
+												url: "https://github.com/acme/unavailable-agent-plugin",
+												path: "plugin",
+												commit: "d".repeat(40),
+											},
+											contentDigest: `sha256-tree-v1:${"e".repeat(64)}`,
+										},
+									},
 								},
 								runtimes: {
 									openclaw: hostedOpenClawRuntime({}),
@@ -11979,6 +12016,7 @@ chmod +x "$HOME/.local/bin/openclaw"
 			expect(event.cliUpdate.status).toBe("installed");
 			expect(event.selfReexec).toBe(true);
 			expect(event.errors).toBeUndefined();
+			expect(captured.map((request) => request.path)).toEqual(["/v1/runtime/manifest"]);
 			expect(existsSync(join(home, ".local", "bin", "openclaw"))).toBe(false);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
 			expect(existsSync(getRuntimePaths().appliedState)).toBe(false);

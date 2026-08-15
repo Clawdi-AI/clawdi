@@ -91,6 +91,21 @@ import {
 	probeFileBrowserReadiness,
 } from "./file-browser-companion";
 import {
+	type PreparedHostedAgentPlugins,
+	writeHostedAgentPluginReceipt,
+} from "./hosted-agent-plugin-package";
+import {
+	type HostedAgentPluginBehavioralEvidence,
+	HostedAgentPluginCapabilityUnsupportedError,
+	type HostedAgentPluginCommandRunner,
+	type HostedAgentPluginCommands,
+	type HostedAgentPluginTransaction,
+	hostedAgentPluginBehavioralEvidence,
+	hostedAgentPluginCommands,
+	prepareHostedAgentPluginTransaction,
+	proveHostedAgentPluginCapabilities,
+} from "./hosted-agent-plugin-runtime";
+import {
 	adoptableLegacyHostedBundledSkill,
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
@@ -127,6 +142,7 @@ import {
 } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
+	type RuntimeLiveSnapshot,
 	type RuntimeManagedMutationPlan,
 	restoreRuntimeLiveSnapshot,
 	runtimeRootLiveMutationDirectories,
@@ -146,16 +162,22 @@ import {
 	reserveManagedSkill,
 } from "./managed-skill-reservation";
 import {
+	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
+	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+	hasUnsupportedAgentPluginInstallations,
 	isHostedCodexManagedRuntimeEnv,
 	type LiveSyncAgent,
 	type RuntimeInstall,
 	type RuntimeManifest,
 } from "./manifest-contract";
 import {
+	FIRST_PARTY_CLAWDI_AGENT_PLUGIN,
 	type HostedMcpServerDesiredState,
 	type HostedSkillSource,
 	hostedMcpDesiredStateSchema,
+	isFirstPartyClawdiAgentPlugin,
 } from "./manifest-resources";
+import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
 export type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
@@ -206,6 +228,7 @@ import {
 	installOfficialRuntimeService,
 	planHermesDashboardArtifact,
 	planOfficialRuntimeServices,
+	planRuntimeMutationSystemdUserUnits,
 	planRuntimeSystemdUserMutations,
 	prepareHermesDashboardArtifact,
 	type RuntimeEgressSystemdProgram,
@@ -262,6 +285,7 @@ export interface RuntimeConvergenceResult {
 	enabledRuntimes: string[];
 	installErrors: string[];
 	projectedProviderIds: Record<string, string[]>;
+	agentPluginCapabilityEvidence: HostedAgentPluginBehavioralEvidence | null;
 	outputs: {
 		processManager: "systemd";
 		workspaceRoot: string;
@@ -291,6 +315,71 @@ export interface RuntimeConvergenceResult {
 	};
 }
 
+export function planHostedAgentPluginConvergence(input: {
+	manifest: RuntimeManifest;
+	prepared: PreparedHostedAgentPlugins;
+	home: string;
+	commands: HostedAgentPluginCommands;
+	runner?: HostedAgentPluginCommandRunner;
+}): {
+	transaction: HostedAgentPluginTransaction | null;
+	evidence: HostedAgentPluginBehavioralEvidence | null;
+} {
+	const probeInstallations = input.manifest.projection?.agentPluginCapabilityProbe?.installations;
+	const desiredNames = [...input.prepared.desired.keys()].sort();
+	if (
+		probeInstallations &&
+		(probeInstallations.length !== desiredNames.length ||
+			![...probeInstallations].sort().every((name, index) => name === desiredNames[index]))
+	) {
+		throw new Error("Agent Plugin capability probe does not match desired installations");
+	}
+	if (probeInstallations) {
+		const prepared = input.prepared.desired.get(FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name);
+		if (!prepared || !isFirstPartyClawdiAgentPlugin(prepared.name, prepared.installation)) {
+			throw new Error(
+				"Agent Plugin capability probe requires the first-party clawdi-cloud package",
+			);
+		}
+	}
+	const capabilityPrepared = probeInstallations
+		? { ...input.prepared, previousReceipt: null, rollback: new Map() }
+		: input.prepared;
+	try {
+		const proof = proveHostedAgentPluginCapabilities({
+			prepared: capabilityPrepared,
+			commands: input.commands,
+			...(input.runner ? { runner: input.runner } : {}),
+		});
+		if (probeInstallations) {
+			return {
+				transaction: null,
+				evidence: hostedAgentPluginBehavioralEvidence({
+					prepared: capabilityPrepared,
+					commands: input.commands,
+					proof,
+					...(input.runner ? { runner: input.runner } : {}),
+				}),
+			};
+		}
+		return {
+			transaction: prepareHostedAgentPluginTransaction({
+				prepared: capabilityPrepared,
+				home: input.home,
+				commands: input.commands,
+				capabilityProof: proof,
+				...(input.runner ? { runner: input.runner } : {}),
+			}),
+			evidence: null,
+		};
+	} catch (error) {
+		if (!probeInstallations || !(error instanceof HostedAgentPluginCapabilityUnsupportedError)) {
+			throw error;
+		}
+		return { transaction: null, evidence: null };
+	}
+}
+
 type RuntimeSystemdApplyResult = {
 	applied: boolean;
 	systemUnitsChanged: string[];
@@ -304,6 +393,7 @@ interface RuntimeSystemdApplySignal {
 	restartEgressSidecar: boolean;
 	stopEgressSidecar: boolean;
 	reconcileUserUnits: string[];
+	restartUserUnits: string[];
 	staleSystemUnits: string[];
 	staleUserUnits: string[];
 }
@@ -313,7 +403,7 @@ interface RuntimeSystemdApplyHooks {
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	transactionState: () => "pristine" | "mutated";
 	installOfficialService: (unit: string, install: () => string | null) => string | null;
-	quiesce: () => void;
+	quiesce: (affectedUserUnits: readonly string[]) => void;
 	rollback: (signal: RuntimeSystemdApplySignal) => void;
 }
 
@@ -374,46 +464,6 @@ interface RuntimeInstallReceiptTargets {
 	channelPlugins: Map<string, RuntimeInstallReceiptTarget>;
 	companions: Map<"filebrowser", RuntimeInstallReceiptTarget>;
 }
-
-// Supported by `openclaw plugins inspect <id> --json`. The command returns
-// `{ ...inspect, install }` from the cold registry and persisted install index:
-// https://github.com/openclaw/openclaw/blob/main/src/cli/plugins-inspect-command.ts
-// Keep this as a passthrough boundary because OpenClaw exposes additional
-// diagnostics; the receipt only depends on documented registry/install identity.
-const openClawPluginInspectSchema = z
-	.object({
-		plugin: z
-			.object({
-				id: z.string().min(1),
-				source: z.string().min(1),
-				origin: z.enum(["bundled", "global", "workspace", "config"]),
-				status: z.enum(["loaded", "disabled", "error"]),
-				version: z.string().min(1).optional(),
-				enabled: z.boolean(),
-			})
-			.passthrough(),
-		install: z
-			.object({
-				source: z.enum(["npm", "archive", "path", "clawhub", "git"]),
-				spec: z.string().min(1).optional(),
-				sourcePath: z.string().min(1).optional(),
-				installPath: z.string().min(1).optional(),
-				version: z.string().min(1).optional(),
-				resolvedName: z.string().min(1).optional(),
-				resolvedVersion: z.string().min(1).optional(),
-				resolvedSpec: z.string().min(1).optional(),
-				integrity: z.string().min(1).optional(),
-				shasum: z.string().min(1).optional(),
-				npmIntegrity: z.string().min(1).optional(),
-				npmShasum: z.string().min(1).optional(),
-				clawpackSha256: z.string().min(1).optional(),
-				gitUrl: z.string().min(1).optional(),
-				gitRef: z.string().min(1).optional(),
-				gitCommit: z.string().min(1).optional(),
-			})
-			.passthrough(),
-	})
-	.passthrough();
 
 function writeRuntimePrivateFileAtomic(
 	paths: RuntimePaths,
@@ -5102,6 +5152,7 @@ function runtimeConvergenceWithoutApply(input: {
 		enabledRuntimes: input.enabledRuntimes,
 		installErrors: input.installErrors,
 		projectedProviderIds: input.projectedProviderIds,
+		agentPluginCapabilityEvidence: null,
 		outputs: {
 			processManager: "systemd",
 			workspaceRoot: input.workspaceRoot,
@@ -5672,12 +5723,23 @@ export function convergeRuntimeManifest(
 		fileBrowserInstallOptions?: FileBrowserCompanionInstallOptions;
 		fileBrowserReadinessProbe?: (url: string) => boolean;
 		preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+		preparedHostedAgentPlugins?: PreparedHostedAgentPlugins;
+		hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 		hostedHermesSkillExactSourceDriver?: HostedHermesSkillExactSourceDriver;
 		hostedOpenClawSkillDriver?: HostedOpenClawSkillDriver;
 		hostedRuntimeContract?: HostedRuntimeContractOptions;
 	} = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
+	if (
+		(hasUnsupportedAgentPluginInstallations(manifest) || opts.preparedHostedAgentPlugins) &&
+		manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2"
+	) {
+		throw new Error(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
+	}
+	if (hasUnsupportedAgentPluginInstallations(manifest) && !opts.preparedHostedAgentPlugins) {
+		throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+	}
 	const secretValues = runtimeSecretValues(load);
 	const applyContext = load.applyContext;
 	if (!applyContext) {
@@ -5700,6 +5762,14 @@ export function convergeRuntimeManifest(
 	}
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
+	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
+	let agentPluginCapabilityEvidence: HostedAgentPluginBehavioralEvidence | null = null;
+	let agentPluginSnapshot: RuntimeLiveSnapshot | null = null;
+	let agentPluginQuiesceAttempted = false;
+	let agentPluginUnitsQuiesced = false;
+	let agentPluginMutationAttempted = false;
+	let agentPluginQuiesceUserUnits: string[] = [];
+	let agentPluginRestartUserUnits: string[] = [];
 	const enabledRuntimes = Object.entries(manifest.runtimes)
 		.filter(([, runtime]) => runtime.enabled)
 		.map(([name]) => name)
@@ -5979,6 +6049,23 @@ export function convergeRuntimeManifest(
 				resolve(openClawWorkspaceRoot)
 		) {
 			throw new Error("OpenClaw official agent workspace changed during runtime reconciliation");
+		}
+		if (opts.preparedHostedAgentPlugins) {
+			const commands = hostedAgentPluginCommands(projectionHome);
+			const planned = planHostedAgentPluginConvergence({
+				manifest,
+				prepared: opts.preparedHostedAgentPlugins,
+				home: projectionHome,
+				commands,
+				...(opts.hostedAgentPluginCommandRunner
+					? { runner: opts.hostedAgentPluginCommandRunner }
+					: {}),
+			});
+			agentPluginTransaction = planned.transaction;
+			agentPluginCapabilityEvidence = planned.evidence;
+			if (agentPluginTransaction?.hasMutations && !opts.systemdApply) {
+				throw new Error("Agent Plugin mutations require systemd activation and readiness");
+			}
 		}
 
 		hostedRuntimeContract.assertPlatformRoots();
@@ -6533,6 +6620,36 @@ export function convergeRuntimeManifest(
 				hermesDashboardArtifactPlan.target,
 			);
 		}
+		// Agent Plugin mutations must precede every native service installer.
+		// The final activation below restarts the affected runtime units.
+		const appliedAgentPluginTransaction = agentPluginTransaction;
+		if (appliedAgentPluginTransaction?.hasMutations) {
+			const affectedUserUnits = planRuntimeMutationSystemdUserUnits({
+				runtimePrograms: runtimeSystemdUserPrograms,
+				staleUserUnits: staleSystemdFiles.userUnits,
+				mutationRuntimes: appliedAgentPluginTransaction.mutationRuntimes,
+			});
+			agentPluginQuiesceUserUnits = affectedUserUnits.quiesceUserUnits;
+			agentPluginRestartUserUnits = affectedUserUnits.restartUserUnits;
+			agentPluginQuiesceAttempted = true;
+			opts.systemdApply?.quiesce(agentPluginQuiesceUserUnits);
+			agentPluginUnitsQuiesced = true;
+			if (appliedAgentPluginTransaction.snapshotTargets.length > 0) {
+				agentPluginSnapshot = captureRuntimeLiveSnapshot({
+					rootTargets: [],
+					trustedRootDirectories: [],
+					runtimeUserTargets: [...appliedAgentPluginTransaction.snapshotTargets],
+					runtimeUserTrustedRoots: [projectionHome],
+					runtimeUserSymlinkTargets: [],
+					metadataTargets: mutationAncestorMetadataTargets(
+						appliedAgentPluginTransaction.snapshotTargets,
+						[projectionHome],
+					),
+				});
+			}
+			agentPluginMutationAttempted = true;
+		}
+		appliedAgentPluginTransaction?.apply();
 		if (
 			(officialServicePlan.pending.length > 0 ||
 				(hermesDashboardArtifactPlan.program !== null &&
@@ -6540,11 +6657,13 @@ export function convergeRuntimeManifest(
 			systemdUnits.egressSidecarActive &&
 			opts.systemdApply
 		) {
+			agentPluginUnitsQuiesced = false;
 			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 				restartDaemon,
 				restartEgressSidecar,
 				stopEgressSidecar: false,
 				reconcileUserUnits: mutationPlan.systemdUserUnits,
+				restartUserUnits: [],
 				staleSystemUnits: [],
 				staleUserUnits: [],
 			});
@@ -6553,6 +6672,7 @@ export function convergeRuntimeManifest(
 			}
 		}
 
+		if (officialServicePlan.pending.length > 0) agentPluginUnitsQuiesced = false;
 		for (const item of officialServicePlan.pending) {
 			hostedRuntimeContract.assertPlatformRoots();
 			const install = () => installOfficialRuntimeService(item, paths);
@@ -6572,11 +6692,13 @@ export function convergeRuntimeManifest(
 		const bootFinished = join(instanceRoot, "boot-finished");
 		writeRuntimePrivateFileAtomic(paths, bootFinished, `${generatedAt}\n`);
 		if (opts.systemdApply) {
+			agentPluginUnitsQuiesced = false;
 			const activation = opts.systemdApply.activate({
 				restartDaemon,
 				restartEgressSidecar,
 				stopEgressSidecar: false,
 				reconcileUserUnits: mutationPlan.systemdUserUnits,
+				restartUserUnits: agentPluginRestartUserUnits,
 				staleSystemUnits: staleSystemdFiles.systemUnits,
 				staleUserUnits: staleSystemdFiles.userUnits,
 			});
@@ -6604,6 +6726,7 @@ export function convergeRuntimeManifest(
 			enabledRuntimes,
 			installErrors,
 			projectedProviderIds,
+			agentPluginCapabilityEvidence,
 			outputs: {
 				processManager: "systemd",
 				workspaceRoot,
@@ -6644,6 +6767,9 @@ export function convergeRuntimeManifest(
 				desiredEgressSidecarSecretRevision !== undefined &&
 				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
 			commitRuntimeInstallReceipts(installReceiptTargets, paths);
+			if (agentPluginTransaction) {
+				writeHostedAgentPluginReceipt(agentPluginTransaction.nextReceipt, paths);
+			}
 			opts.commitAuthority?.(convergence, {
 				...(desiredDaemonAuthTokenRevision !== undefined &&
 				(systemdActivationApplied || daemonAuthTokenRevisionPreviouslyCommitted)
@@ -6691,10 +6817,12 @@ export function convergeRuntimeManifest(
 	} catch (error) {
 		const applyError = error instanceof Error ? error.message : String(error);
 		const systemdMutated = opts.systemdApply?.transactionState() === "mutated";
-		let candidateQuiesced = !systemdMutated;
-		if (systemdMutated) {
+		const rollbackRequiresQuiesce =
+			systemdMutated || agentPluginQuiesceAttempted || agentPluginMutationAttempted;
+		let candidateQuiesced = agentPluginUnitsQuiesced || !rollbackRequiresQuiesce;
+		if (rollbackRequiresQuiesce && !candidateQuiesced) {
 			try {
-				opts.systemdApply?.quiesce();
+				opts.systemdApply?.quiesce(agentPluginQuiesceUserUnits);
 				candidateQuiesced = true;
 			} catch (quiesceError) {
 				installErrors.push(
@@ -6706,6 +6834,20 @@ export function convergeRuntimeManifest(
 		}
 		let filesystemRollbackSucceeded = false;
 		if (candidateQuiesced) {
+			if (agentPluginTransaction) installErrors.push(...agentPluginTransaction.rollback());
+			let pluginFilesystemRollbackSucceeded = true;
+			if (agentPluginSnapshot) {
+				try {
+					restoreRuntimeLiveSnapshot(agentPluginSnapshot);
+				} catch (rollbackError) {
+					pluginFilesystemRollbackSucceeded = false;
+					installErrors.push(
+						`runtime Agent Plugin filesystem rollback failed: ${
+							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+						}`,
+					);
+				}
+			}
 			try {
 				hostedRuntimeContract.assertPlatformRoots();
 				restoreRuntimeLiveSnapshot(liveSnapshot);
@@ -6722,7 +6864,7 @@ export function convergeRuntimeManifest(
 				} else if (!egressRollbackAuthorityVerified) {
 					rmSync(egressSecretFilePath(paths), { force: true });
 				}
-				filesystemRollbackSucceeded = true;
+				filesystemRollbackSucceeded = pluginFilesystemRollbackSucceeded;
 			} catch (rollbackError) {
 				installErrors.push(
 					`runtime filesystem rollback failed: ${
@@ -6755,13 +6897,14 @@ export function convergeRuntimeManifest(
 				);
 			}
 		}
-		if (opts.systemdApply && filesystemRollbackSucceeded && systemdMutated) {
+		if (opts.systemdApply && filesystemRollbackSucceeded && rollbackRequiresQuiesce) {
 			try {
 				opts.systemdApply.rollback({
 					restartDaemon,
 					restartEgressSidecar: restartEgressSidecar && egressRollbackAuthorityVerified,
 					stopEgressSidecar: restartEgressSidecar && !egressRollbackAuthorityVerified,
 					reconcileUserUnits: mutationPlan.systemdUserUnits,
+					restartUserUnits: agentPluginRestartUserUnits,
 					staleSystemUnits: staleSystemdFiles.systemUnits,
 					staleUserUnits: staleSystemdFiles.userUnits,
 				});
@@ -6772,11 +6915,11 @@ export function convergeRuntimeManifest(
 					}`,
 				);
 			}
-		} else if (opts.systemdApply && systemdMutated && candidateQuiesced) {
+		} else if (opts.systemdApply && rollbackRequiresQuiesce && candidateQuiesced) {
 			installErrors.push(
 				"runtime systemd rollback skipped because filesystem authority restoration failed",
 			);
-		} else if (opts.systemdApply && systemdMutated) {
+		} else if (opts.systemdApply && rollbackRequiresQuiesce) {
 			installErrors.push(
 				"runtime systemd reconciliation skipped because candidate services did not quiesce",
 			);

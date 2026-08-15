@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-08-02 |
+| Last updated | 2026-08-15 |
 | Owner | CLI runtime and cloud-api layers |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
@@ -500,7 +500,8 @@ sanitized Telegram, Discord, and WhatsApp `channelBindings`, one merged
 media types return `406`; the CLI does not fall back to another representation
 or a second `/v1/channels` request.
 
-Bundle responses identify the vendor media type and return `Vary: Accept`.
+Bundle responses identify the vendor media type and vary on `Accept`,
+`X-Clawdi-Runtime-Capabilities`, and `X-Clawdi-Agent-Plugin-Proof`.
 Negotiation `406` responses also return `Vary: Accept` and
 `Cache-Control: no-store`, so errors are not reused across media types.
 The v2 strong ETag is `"sha256:<sourceRevision>"`; the immutable renderer and
@@ -556,8 +557,9 @@ The CLI normalizes these wire contracts into the desired-state shape:
   consumed by `runtime init`.
 - `clawdi.hosted-runtime.bundle.v2` wraps an inner
   `clawdi.hosted-runtime.manifest.v1` and is marked locally after validation.
-  OpenClaw requires typed native auth, the exact gateway command, and an
-  environment secret reference for the gateway token.
+  Its inner manifest additionally accepts the optional `agentPlugins`
+  projection. OpenClaw requires typed native auth, the exact gateway command,
+  and an environment secret reference for the gateway token.
 
 Normalization maps hosted fields into the internal shape:
 
@@ -587,6 +589,7 @@ Normalization maps hosted fields into the internal shape:
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with the selected model plus minimal Clawdi-managed endpoint/secret metadata; it has no provider model catalog and is independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
 | `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
+| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional runtime-native Agent Plugins desired state, projected only when the client declares `agent-plugins-manifest-v1`; schema version `1` entries are secret-free immutable package intent that pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable GitHub commit and safe repository path, and a `sha256-tree-v1` content digest |
 | `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
@@ -743,6 +746,246 @@ drift without following them. The public sync hash remains unchanged for old
 and new clients.
 
 ### Skill And MCP Authority Boundaries
+
+The `agentPlugins` projection is supported only in the v2 Hosted bundle. Each
+installation key is the Agent Plugins name and must equal `plugin.json.name`;
+`installationId` is an opaque Hosted lifecycle identity rather than a native
+runtime plugin id. Before touching the runtime, the CLI downloads the exact
+GitHub commit, safely extracts only the declared repository path, validates the
+Agent Plugins 1.0.0 schema/name/version identity, and verifies the canonical
+`sha256-tree-v1` regular-file tree digest. Symlinks, non-regular entries,
+unsafe or colliding paths, and bounded-size violations fail closed.
+
+Agent Plugins use a two-phase behavioral capability protocol because the v2
+inner manifest is strict. An old CLI sends no capability and receives only the
+legacy Clawdi Skill/MCP. A new CLI sends
+`X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1`. Until it has local
+positive proof, Cloud returns the immutable first-party `agentPlugins` intent
+plus `agentPluginCapabilityProbe`, while retaining legacy components. The CLI
+downloads and validates the package and probes the selected native runtime in
+an isolated HOME without changing the live plugin state.
+
+After the full legacy convergence succeeds, the CLI stores a root-owned `0600`
+proof. It binds runtime kind, absolute command, command-file contents and
+metadata, symlink target, effective file ownership and mode, the actual
+`--version` output, and the desired package ownership identity. The next normal
+bounded manifest poll sends `X-Clawdi-Agent-Plugin-Proof`. Cloud accepts it only
+for the selected runtime and exact first-party package ownership, then removes
+only the legacy `clawdi` Skill and MCP entries. Any command, binary, symlink,
+runtime, package commit, digest, or ownership change invalidates proof and
+returns to the probe-plus-legacy variant. No SemVer, release tag, upstream SHA,
+or allowlist decides capability.
+
+The old, unproven, and proven projections each have their own canonical
+`sourceRevision` and strong ETag. Successful and `304` responses vary on
+`Accept`, `X-Clawdi-Runtime-Capabilities`, and
+`X-Clawdi-Agent-Plugin-Proof`, so validators cannot cross variants. Missing
+native support is fallback only for this exact first-party probe intent;
+corrupt or ambiguous package state and general explicit installations remain
+fail closed.
+
+Clawdi remains a lifecycle and ownership driver. It gives the complete,
+already-verified package to the selected runtime's native plugin commands and
+does not flatten Skills or MCP declarations into separately managed resources.
+OpenClaw installs from a task-scoped local directory. Hermes accepts only Git,
+so Clawdi creates a task-scoped local `file://` Git transport from the verified
+bytes and removes it after the native command completes; the Hosted repository
+URL is never passed to Hermes for another download. Packages containing Git
+control directories or attributes that could change verified checkout bytes
+fail closed instead of weakening that transport boundary.
+
+There is no release-version cutoff. After the official runtime binary is
+installed and observed, but before any live plugin or gateway-service mutation,
+the CLI runs an install, enable, JSON observation, disable, and uninstall probe
+for every desired and rollback package with the absolute installed runtime
+command. Each probe has a separate temporary HOME and runtime-specific state
+root. OpenClaw location overrides and Hermes
+`HERMES_HOME`, `HERMES_PROFILE`, `HERMES_CONFIG`, and `HERMES_ENV` are
+explicitly cleared or replaced so inherited process state cannot redirect the
+probe into the live Hosted profile. The proof binds the command, injected
+runner identity, package ownership identity, and observed native id; one failed
+package prevents every live package mutation. Fallback is allowed only when a
+successful structured native observation proves that the Agent Plugin format
+or an explicitly marked component/transport is unsupported. An unavailable command,
+nonzero command, malformed report, runner or filesystem failure, ambiguous
+identity or component inventory, unclassified diagnostics, package-byte drift,
+lifecycle or cleanup failure, Hermes canary failure, or unexpected install
+source remains an operational error and fails closed. An older runtime that exposes
+capability absence only through an undifferentiated nonzero exit cannot be
+safely classified as unsupported.
+
+The canonical schemas audited from
+[`agentplugins/agent-plugins-spec`](https://github.com/agentplugins/agent-plugins-spec/tree/bd383552095128f6effe895b9257cfd580a6d179)
+remain Agent Plugins 1.0.0. Their SHA-256 digests are
+`0a4aad95ce337878ad38802ebf0daa3fde76abe3f65400c86bcbb1ec0b3ab883`
+for `plugin.schema.json` and
+`6539175bfcdf43085855183e86da40ea94b166547a72b47ae9a0a390516d3acb`
+for `mcp.schema.json`.
+
+Upstream capability evidence was refreshed on 2026-08-15. OpenClaw main was
+audited at
+[`2276dca1d349c36bf3bdc4768e58301200fbde46`](https://github.com/openclaw/openclaw/commit/2276dca1d349c36bf3bdc4768e58301200fbde46),
+16 commits ahead of the prior
+[`a2d1b0c03bec383d927657140aa8f1254ff1b370`](https://github.com/openclaw/openclaw/commit/a2d1b0c03bec383d927657140aa8f1254ff1b370)
+audit. The compare file list contains plugin-sdk documentation and test-fixture
+changes, but does not touch the Agent Plugins loader, native plugin lifecycle,
+or inspect contract.
+Agent Plugins support landed in
+[`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
+that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
+`PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/2276dca1d349c36bf3bdc4768e58301200fbde46/src/plugins/status.ts)
+exposes every MCP server name, unsupported state, and plugin diagnostics.
+Clawdi requires the reported names to equal the already-validated `mcp.json`
+names and requires no unsupported entry or diagnostic during every isolated and
+live observation. This is native component proof rather than a version guess.
+
+The GitHub Releases API latest release and npm `latest` remain
+[`v2026.7.1-2`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2),
+whose annotated tag object `be8b8a9e8838f832e4fa47cde8bea0a33aec71ba`
+points to
+[`0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c),
+which predates Agent Plugins support. Clawdi passes no `--version` to the
+official installer; the reviewed installer defaults to npm `latest`. A runtime
+at the current release therefore fails the native package probe instead of
+silently accepting components it cannot load. A future compatible release can
+pass without a Clawdi version-table change. The latest listed GitHub prerelease
+is [`v2026.7.2-beta.7`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.2-beta.7),
+whose annotated tag object `3ddd783e3f2465f5221ab27e8849eb165c61b498`
+points to `dabe1915362e20c25704af91612a32a8f4c96e83`. The separate annotated Git
+tag and npm package tag `v2026.8.1-beta.1` is not a GitHub Release; its tag
+object `9ab21e0b1ab3cf3845ec47f7b7b8803255a8af80` points to
+`ff8a3fe9d03eff4a70f5464714c3a389b06bfec8`. Inspection of the bundle source
+at all three tag commits, and of the stable and beta npm packages, finds only
+the older Codex, Claude, and Cursor bundle path rather than the current Agent
+Plugins implementation. Release numbering is therefore not capability proof.
+
+Hermes main was audited at
+[`cb47f59ffa1056732c0a5194d2a1847dc64c2c37`](https://github.com/NousResearch/hermes-agent/commit/cb47f59ffa1056732c0a5194d2a1847dc64c2c37).
+The latest release is
+[`v2026.8.13`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.13),
+published 2026-08-13 as package `0.20.1`; annotated tag object
+`4e693dc685b5716e7da22656eccc6ece37c5db72` points to
+[`f80f453ae0679347e38abc917c7f94f717bf96c5`](https://github.com/NousResearch/hermes-agent/commit/f80f453ae0679347e38abc917c7f94f717bf96c5).
+That release contains portable Skills, stdio and streamable-http MCP, literal
+headers, and one-shot discovery; portable SSE remains diagnostics plus skip.
+The reviewed official installer still defaults `BRANCH=main`, and Clawdi
+passes neither `--branch` nor `--commit`.
+
+Hermes `plugins list --json` still reports only name, status, version,
+description, and source. `plugins show` and `plugins doctor` likewise expose no
+stable component-execution JSON proof. Before live mutation of any remote
+package, Clawdi instead runs
+the public `hermes -z` consumer in an isolated HOME against task-local
+OpenAI-compatible inference and Streamable HTTP MCP fixtures. Hermes startup
+must discover the enabled portable canary, advertise its exact MCP tool to the
+stub model, execute the model's tool call through its own MCP runtime, return a
+nonce-bearing result, and finish with the unique expected token. The canary's
+portable `mcp.json` also carries a unique nonce-bearing literal header, which
+the loopback controller requires on every MCP request before recording protocol
+or tool evidence. This detects
+older binaries that install the package while silently skipping remote entries;
+it does not import Hermes Python modules or rewrite Hermes configuration
+formats. The canary package points only to loopback and never connects to a
+desired package URL. Desired streamable-http URLs and literal headers are
+validated without contacting the endpoint during reconciliation. Public
+literal headers and public stdio environment values are supported. Native
+runtimes perform the standard single expansion of `PLUGIN_ROOT` and
+`PLUGIN_DATA`; other env text, including `${OTHER}`, remains literal.
+Agent Plugin installation intent has no secret field. Package-declared Clawdi
+`configuration` remains fail closed because this runtime does not consume the
+Store configuration extension. The first-party package instead carries a
+public `X-Clawdi-Agent-Plugin: clawdi-cloud` routing marker. Hosted emits an
+explicit egress profile that matches the fixed public package URL's exact
+scheme, authority, path, and marker, rewrites it to the current environment's
+validated Cloud API origin, and sets `Authorization` from
+`secret://clawdi/auth-token` with the public `Bearer ` prefix. The public marker
+may continue upstream. Real values enter only the existing root-side egress
+secret material; they do not enter package bytes, installation intent, native
+plugin config, runtime process env, receipts, profile bundles, logs, or public
+projections.
+
+The first-party migration identity is `clawdi-cloud@1.0.0`, with portable Skill
+and MCP names `clawdi` and package digest
+`sha256-tree-v1:f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c`.
+Its deployable source must be an exact commit in the public
+`https://github.com/Clawdi-AI/store` repository at
+`v2/plugins/clawdi-cloud`. The currently reviewed public commit is
+`c5a6da2011958e5295b3b58ee4a9afb75ab39fda`; production also requires the
+selected commit to be reachable from public Store `main`. A private review
+repository, mutable ref, empty setting, or unpublished future commit is not a
+valid production identity. Artifact ancestry and the pin itself cannot be used
+as capability switches.
+The reserved package identity and its reserved egress profile are one atomic
+control-plane invariant. A missing profile, marker or rewrite drift, a reserved
+package mismatch, or an orphaned reserved profile stops manifest rendering.
+When desired state also contains other Agent Plugins, the unproven variant
+projects only `clawdi-cloud` plus its capability probe and retains legacy
+`clawdi` components. A matching first-party proof selects the full desired
+installation set and removes legacy components; the CLI then proves every
+package before one live transaction. This keeps proof scoped to the first-party
+migration without bypassing generic installation failures.
+Every package must also carry the complete Store `ai.clawdi` extension and at
+least one Skill or MCP server; bare MCP commands require declared compatible
+executables. Exact duplicate JSON keys remain a Store ingestion rejection
+before the immutable content digest is issued. The runtime binds that digest
+and performs structured secondary validation instead of duplicating a JSON
+tokenizer. Portable SSE remains fail closed for Hermes.
+
+The binary proof uses the same curated MCP dependency path as the official
+installer's
+[`uv sync --extra all --locked`](https://github.com/NousResearch/hermes-agent/blob/f80f453ae0679347e38abc917c7f94f717bf96c5/scripts/install.sh#L1561-L1599).
+During this isolated proof only, `HERMES_BUNDLED_PLUGINS` points at an empty
+task-local directory. Hermes documents that variable as the packaged-install
+bundled-root override at both the
+[`v2026.8.13` source](https://github.com/NousResearch/hermes-agent/blob/f80f453ae0679347e38abc917c7f94f717bf96c5/hermes_cli/plugins.py#L75-L86)
+and the
+[`cb47f59` main audit](https://github.com/NousResearch/hermes-agent/blob/cb47f59ffa1056732c0a5194d2a1847dc64c2c37/hermes_cli/plugins.py#L75-L86).
+Its scanner still reads user portable packages independently from
+`HERMES_HOME/plugins`; native install/enable, portable translation, MCP
+handshake, literal-header forwarding, tool execution, and result delivery all
+remain on the ordinary runtime path. The override only removes unrelated
+bundled backends from this bounded probe, so it cannot make an unavailable user
+package capability pass.
+
+| Agent Plugin surface | Hosted support |
+| --- | --- |
+| Remote query and public literal headers | Supported |
+| Public stdio env, including native `PLUGIN_ROOT`/`PLUGIN_DATA` expansion and literal `${OTHER}` | Supported |
+| First-party remote auth through explicit marker-bound Hosted egress | Supported |
+| Package `ai.clawdi.configuration` | Rejected |
+| Portable SSE | OpenClaw requires native inspect proof; Hermes rejects |
+
+A private last-applied receipt binds each managed name to `installationId`,
+version, schema, immutable source tuple, content digest, and native id. Native
+id collisions are checked across desired packages and against installed state,
+so an OpenClaw slug collision cannot authorize `--force`. A same-name or
+same-native-id plugin without that receipt is unmanaged and is never replaced
+or removed. Repeat convergence is a no-op only after native JSON observation
+confirms the installed version and enabled state and the controlled install
+directory hashes to the receipt digest; Hermes hashing ignores only its
+top-level generated `.git` metadata. Removal disables and uninstalls only a
+receipt-owned plugin.
+
+Live package mutation precedes the runtime's official gateway installer and
+final systemd activation. Once native mutation intent is known, only the
+affected runtime user units are quiesced; the adapter then captures the exact
+native package directories, runtime plugin configuration, receipt, and
+OpenClaw SQLite/WAL/SHM preimage before applying any native mutation. Any
+package change forces those units through final restart and readiness even when
+their unit/config revision did not change. If native mutation or a later
+installer fails before final activation, compensation runs native rollback,
+filesystem and database snapshot restoration, then systemd rollback and unit
+restart while the affected units remain stopped. Unrelated units are not
+globally quiesced when systemd remains pristine. Native rollback errors remain
+visible, and authority commits only after native state and receipt converge.
+
+Online preparation stores verified archives in private ownership-keyed cache
+entries. Failed convergence removes entries first created by that attempt while
+retaining the previously committed rollback set. After authority commits, GC
+keeps only receipt-owned archives and ignores unknown or symlink entries.
+Offline convergence never fetches: it revalidates the retained archive and
+fails repair explicitly when that cache is missing or corrupt.
 
 The bundled `clawdi` Skill is platform infrastructure. Hosted constructs its
 private `skills.entries` runtime state internally, and capable CLIs reconcile

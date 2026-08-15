@@ -1,17 +1,27 @@
 import { z } from "zod";
 import { hasAsciiControlCharacter } from "../lib/github-skill-archive";
 import { secretRefSchema } from "./egress-profiles";
+import { isMcpSensitiveHeaderName } from "./mcp-credential-policy";
 
 const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
+export const agentPluginNameSchema = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
 const mcpHeaderNameSchema = z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/);
 
-function isMcpCredentialHeader(name: string): boolean {
-	const normalized = name.toLowerCase();
-	if (["authorization", "proxy-authorization", "cookie"].includes(normalized)) return true;
-	return /(?:^|[-_])(?:api[-_]?key|apikey|tokens?|secrets?|credentials?)(?:$|[-_])/.test(
-		normalized,
-	);
-}
+export const AGENT_PLUGINS_SCHEMA_1_0_0 =
+	"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+
+export const FIRST_PARTY_CLAWDI_AGENT_PLUGIN = {
+	name: "clawdi-cloud",
+	installationId: "first-party:clawdi-cloud",
+	version: "1.0.0",
+	sourceUrl: "https://github.com/Clawdi-AI/store",
+	sourcePath: "v2/plugins/clawdi-cloud",
+	contentDigest: "sha256-tree-v1:f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c",
+} as const;
 
 const mcpSecretHeaderSchema = z
 	.object({
@@ -70,7 +80,7 @@ const hostedRemoteMcpServerDesiredStateSchema = z
 					path: ["headers", header],
 				});
 			}
-			if (typeof server.headers[header] === "string" && isMcpCredentialHeader(header)) {
+			if (typeof server.headers[header] === "string" && isMcpSensitiveHeaderName(header)) {
 				ctx.addIssue({
 					code: "custom",
 					message: `credential-bearing HTTP header ${header} must use secretRef`,
@@ -143,6 +153,69 @@ const hostedGithubSkillSourceSchema = z
 		commit: exactGitCommitSchema,
 	})
 	.strict();
+
+const exactAgentPluginSemverSchema = z
+	.string()
+	.min(1)
+	.max(256)
+	.regex(
+		/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+	);
+
+export const hostedAgentPluginInstallationSchema = z
+	.object({
+		installationId: z
+			.string()
+			.min(1)
+			.max(200)
+			.refine(
+				(value) => value === value.trim() && !hasAsciiControlCharacter(value),
+				"must be a canonical non-empty identifier",
+			),
+		version: exactAgentPluginSemverSchema,
+		agentPluginsSchema: z.literal(AGENT_PLUGINS_SCHEMA_1_0_0),
+		source: hostedGithubSkillSourceSchema,
+		contentDigest: z.string().regex(/^sha256-tree-v1:[0-9a-f]{64}$/),
+	})
+	.strict();
+
+export const hostedAgentPluginsDesiredStateSchema = z
+	.object({
+		schemaVersion: z.literal(1),
+		installations: z
+			.record(agentPluginNameSchema, hostedAgentPluginInstallationSchema)
+			.refine((value) => Object.keys(value).length <= 128, "must contain at most 128 entries"),
+	})
+	.strict();
+
+export const hostedAgentPluginCapabilityProbeSchema = z
+	.object({
+		installations: z
+			.array(agentPluginNameSchema)
+			.length(1)
+			.refine((value) => new Set(value).size === value.length, "must not contain duplicates"),
+	})
+	.strict();
+
+export type HostedAgentPluginsDesiredState = z.infer<typeof hostedAgentPluginsDesiredStateSchema>;
+export type HostedAgentPluginInstallation = z.infer<typeof hostedAgentPluginInstallationSchema>;
+
+export function isFirstPartyClawdiAgentPlugin(
+	name: string,
+	installation: HostedAgentPluginInstallation,
+): boolean {
+	return (
+		name === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name &&
+		installation.installationId === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.installationId &&
+		installation.version === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.version &&
+		installation.agentPluginsSchema === AGENT_PLUGINS_SCHEMA_1_0_0 &&
+		installation.source.type === "github" &&
+		installation.source.url === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourceUrl &&
+		installation.source.path === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourcePath &&
+		/^[0-9a-f]{40}$/.test(installation.source.commit) &&
+		installation.contentDigest === FIRST_PARTY_CLAWDI_AGENT_PLUGIN.contentDigest
+	);
+}
 
 const cleanHttpUrlSchema = z
 	.string()

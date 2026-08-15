@@ -2,7 +2,13 @@ import { join } from "node:path";
 import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { z } from "zod";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
-import { hostedMcpDesiredStateSchema, hostedSkillsDesiredStateSchema } from "./manifest-resources";
+import {
+	hostedAgentPluginCapabilityProbeSchema,
+	hostedAgentPluginsDesiredStateSchema,
+	hostedMcpDesiredStateSchema,
+	hostedSkillsDesiredStateSchema,
+	isFirstPartyClawdiAgentPlugin,
+} from "./manifest-resources";
 import {
 	runtimeNameSchema,
 	runtimeRunSettingsSchema,
@@ -349,6 +355,8 @@ const runtimeProjectionSchema = z.object({
 	aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
 	mcp: hostedMcpDesiredStateSchema.optional(),
 	skills: hostedSkillsDesiredStateSchema.optional(),
+	agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
+	agentPluginCapabilityProbe: hostedAgentPluginCapabilityProbeSchema.optional(),
 	tools: z.unknown().optional(),
 	terminalTooling: z.unknown().optional(),
 });
@@ -974,9 +982,35 @@ export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSche
 	.safeExtend({
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
 		clawdiCli: hostedCliPayloadPolicySchema,
+		agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
+		agentPluginCapabilityProbe: hostedAgentPluginCapabilityProbeSchema.optional(),
 	})
 	.strict()
-	.superRefine(validateHostedRuntimeManifest);
+	.superRefine((manifest, ctx) => {
+		validateHostedRuntimeManifest(manifest, ctx);
+		const probeNames = manifest.agentPluginCapabilityProbe?.installations;
+		if (!probeNames) return;
+		const installationNames = Object.keys(manifest.agentPlugins?.installations ?? {}).sort();
+		if (
+			probeNames.length !== installationNames.length ||
+			![...probeNames].sort().every((name, index) => name === installationNames[index])
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Agent Plugin capability probe must cover every desired installation",
+				path: ["agentPluginCapabilityProbe", "installations"],
+			});
+		}
+		const probeName = probeNames[0];
+		const installation = probeName ? manifest.agentPlugins?.installations[probeName] : undefined;
+		if (!probeName || !installation || !isFirstPartyClawdiAgentPlugin(probeName, installation)) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Agent Plugin capability probe requires the first-party clawdi-cloud package",
+				path: ["agentPluginCapabilityProbe", "installations"],
+			});
+		}
+	});
 export const hostedRuntimeManifestResponseSchema = z
 	.object({
 		manifest: hostedRuntimeManifestSchema,
@@ -1018,4 +1052,16 @@ export const hostedRuntimeManifestFixtureResponseSchema = z
 export type RuntimeManifest = z.output<typeof manifestSchema>;
 export type RuntimeInstall = z.infer<typeof installSchema>;
 export type HostedRuntimeManifest = z.infer<typeof hostedRuntimeManifestSchema>;
+export type HostedRuntimeBundleV2Manifest = z.infer<typeof hostedRuntimeBundleV2ManifestSchema>;
 export type LiveSyncAgent = z.infer<typeof liveSyncAgentSchema>;
+
+export const AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR =
+	"Agent Plugin installations require a newer Clawdi runtime capability";
+export const AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR =
+	"Agent Plugin reconciliation requires a hosted v2 bundle";
+
+export function hasUnsupportedAgentPluginInstallations(
+	manifest: Pick<RuntimeManifest, "projection">,
+): boolean {
+	return Object.keys(manifest.projection?.agentPlugins?.installations ?? {}).length > 0;
+}

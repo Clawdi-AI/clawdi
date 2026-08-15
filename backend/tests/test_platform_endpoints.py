@@ -5,6 +5,7 @@ import hashlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from copy import deepcopy
 
 import httpx
 import pytest
@@ -75,6 +76,23 @@ _TEST_TOOLS = {
     }
 }
 _TEST_COMPANIONS = filebrowser_companion("deployment-1")
+_TEST_AGENT_PLUGINS = {
+    "schemaVersion": 1,
+    "installations": {
+        "acme.tools": {
+            "installationId": "install_01hxyz",
+            "version": "1.2.3",
+            "agentPluginsSchema": ("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"),
+            "source": {
+                "type": "github",
+                "url": "https://github.com/acme/agent-plugins",
+                "path": "plugins/acme.tools",
+                "commit": "a" * 40,
+            },
+            "contentDigest": f"sha256-tree-v1:{'b' * 64}",
+        }
+    },
+}
 
 
 @pytest_asyncio.fixture
@@ -672,6 +690,106 @@ async def test_platform_runtime_state_accepts_and_projects_filebrowser_companion
         decrypt_secrets=False,
     )
     assert "companions" not in cleared_source.manifest
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_state_persists_detects_and_projects_agent_plugins(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    provider_id = CANONICAL_CODEX_TOOL_PROVIDER_ID
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key="agent-plugins-agent-create",
+    )
+    assert created.status_code == 200, created.text
+
+    body = _runtime_body(owner, agent_id, provider_id=provider_id)
+    body["agent_plugins"] = deepcopy(_TEST_AGENT_PLUGINS)
+    written = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("agent-plugins-runtime-create"),
+        json=body,
+    )
+    assert written.status_code == 200, written.text
+
+    state = await db_session.get(HostedRuntimeState, agent_id)
+    assert state is not None
+    assert state.agent_plugins == _TEST_AGENT_PLUGINS
+    initial_source = render_runtime_source(
+        await load_runtime_source_batch(db_session, environment_ids=[agent_id]),
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert initial_source.manifest["agentPlugins"] == _TEST_AGENT_PLUGINS
+
+    changed_plugins = deepcopy(_TEST_AGENT_PLUGINS)
+    changed_plugins["installations"]["acme.tools"]["contentDigest"] = f"sha256-tree-v1:{'c' * 64}"
+    conflict = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("agent-plugins-runtime-conflict"),
+        json={**body, "agent_plugins": changed_plugins},
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.json()["detail"]["code"] == "generation_conflict"
+
+    advanced = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("agent-plugins-runtime-advance"),
+        json={**body, "generation": 2, "agent_plugins": changed_plugins},
+    )
+    assert advanced.status_code == 200, advanced.text
+    await db_session.refresh(state)
+    assert state.agent_plugins == changed_plugins
+    changed_source = render_runtime_source(
+        await load_runtime_source_batch(db_session, environment_ids=[agent_id]),
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert changed_source.source_revision != initial_source.source_revision
+    assert changed_source.manifest["agentPlugins"] == changed_plugins
+
+    empty = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("agent-plugins-runtime-empty"),
+        json={
+            **body,
+            "generation": 3,
+            "agent_plugins": {"schemaVersion": 1, "installations": {}},
+        },
+    )
+    assert empty.status_code == 200, empty.text
+    await db_session.refresh(state)
+    assert state.agent_plugins == {"schemaVersion": 1, "installations": {}}
+
+    cleared_body = {**body, "generation": 4}
+    cleared_body.pop("agent_plugins")
+    cleared = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("agent-plugins-runtime-clear"),
+        json=cleared_body,
+    )
+    assert cleared.status_code == 200, cleared.text
+    await db_session.refresh(state)
+    assert state.agent_plugins is None
+    cleared_source = render_runtime_source(
+        await load_runtime_source_batch(db_session, environment_ids=[agent_id]),
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert "agentPlugins" not in cleared_source.manifest
 
 
 @pytest.mark.asyncio

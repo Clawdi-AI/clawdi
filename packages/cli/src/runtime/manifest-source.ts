@@ -13,12 +13,16 @@ import {
 	runtimeApplyIdentitiesEqual,
 } from "./apply-identity";
 import { egressProfileSecretRefs } from "./egress-profiles";
+import { hostedAgentPluginCapabilityHeader } from "./hosted-agent-plugin-capability";
 import {
 	hostedManifestEgressProfiles,
 	isClawdiManagedProviderProjection,
 } from "./hosted-egress-profiles";
 import {
+	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+	type HostedRuntimeBundleV2Manifest,
 	type HostedRuntimeManifest,
+	hasUnsupportedAgentPluginInstallations,
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	manifestSchema,
@@ -54,6 +58,9 @@ export interface RuntimeManifestLoad {
 }
 
 export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
+export const HOSTED_RUNTIME_CAPABILITIES_HEADER = "x-clawdi-runtime-capabilities";
+export const HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1";
+export const HOSTED_AGENT_PLUGIN_PROOF_HEADER = "x-clawdi-agent-plugin-proof";
 
 const runtimeBundleTokenChannelBindingSchema = z
 	.object({
@@ -241,6 +248,7 @@ function rawGeneration(value: unknown): number | null {
 
 async function fetchRuntimeManifestPayload(
 	applyContext: RuntimeApplyContext,
+	paths: RuntimePaths,
 	opts: { ifNoneMatch?: string } = {},
 ): Promise<
 	| {
@@ -260,11 +268,14 @@ async function fetchRuntimeManifestPayload(
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
+		const agentPluginProof = hostedAgentPluginCapabilityHeader(paths);
 		const response = await fetch(url, {
 			method: "GET",
 			headers: {
 				accept: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 				authorization: `Bearer ${token}`,
+				[HOSTED_RUNTIME_CAPABILITIES_HEADER]: HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
+				...(agentPluginProof ? { [HOSTED_AGENT_PLUGIN_PROOF_HEADER]: agentPluginProof } : {}),
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},
 			signal: controller.signal,
@@ -322,7 +333,7 @@ async function loadRemoteRuntimeManifestPipeline(
 	}
 	let fetched: Awaited<ReturnType<typeof fetchRuntimeManifestPayload>>;
 	try {
-		fetched = await fetchRuntimeManifestPayload(applyContext, opts);
+		fetched = await fetchRuntimeManifestPayload(applyContext, paths, opts);
 	} catch (error) {
 		return {
 			mode: "repair",
@@ -431,8 +442,11 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 	return error instanceof RuntimeAuthError ? "auth" : "network";
 }
 
+type NormalizableHostedRuntimeManifest = HostedRuntimeManifest &
+	Partial<Pick<HostedRuntimeBundleV2Manifest, "agentPluginCapabilityProbe" | "agentPlugins">>;
+
 export function hostedManifestToRuntimeManifest(
-	hosted: HostedRuntimeManifest,
+	hosted: NormalizableHostedRuntimeManifest,
 	applyGeneration?: number,
 ): RuntimeManifest {
 	const paths = getRuntimePaths({ mode: "hosted" });
@@ -485,6 +499,10 @@ export function hostedManifestToRuntimeManifest(
 			providers: hosted.providers,
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
 			...(hosted.skills === undefined ? {} : { skills: hosted.skills }),
+			...(hosted.agentPlugins === undefined ? {} : { agentPlugins: hosted.agentPlugins }),
+			...(hosted.agentPluginCapabilityProbe === undefined
+				? {}
+				: { agentPluginCapabilityProbe: hosted.agentPluginCapabilityProbe }),
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
 			...(hosted.terminalTooling === undefined ? {} : { terminalTooling: hosted.terminalTooling }),
 		},
@@ -498,7 +516,7 @@ export function hostedManifestToRuntimeManifest(
 }
 
 function hostedRuntimeProviderBinding(
-	runtime: HostedRuntimeManifest["runtimes"][string],
+	runtime: NormalizableHostedRuntimeManifest["runtimes"][string],
 ):
 	| { provider_ids: string[]; primary_model: { provider_id: string; model: string } }
 	| { provider_ids: [] } {
@@ -549,6 +567,9 @@ function validateManifestSemantics(
 	trustDomain: "generic" | "hosted" = "generic",
 ): string[] {
 	const errors: string[] = [];
+	const isHostedV2 =
+		trustDomain === "hosted" &&
+		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 	const expiryError = manifestExpiryError(manifest);
 	if (expiryError) errors.push(expiryError);
 	if (!isAbsolute(paths.userHome)) errors.push(`runtime HOME must be absolute: ${paths.userHome}`);
@@ -556,6 +577,9 @@ function validateManifestSemantics(
 		errors.push(`runtime workspaceRoot must be absolute: ${manifest.workspaceRoot}`);
 	}
 	if (trustDomain !== "generic") {
+		if (hasUnsupportedAgentPluginInstallations(manifest) && !isHostedV2) {
+			errors.push(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+		}
 		const cliPolicy = hostedCliPayloadPolicySchema.safeParse(manifest.clawdiCli);
 		if (!cliPolicy.success) {
 			errors.push(...zodErrors(cliPolicy.error).map((error) => `clawdiCli.${error}`));
@@ -575,9 +599,6 @@ function validateManifestSemantics(
 		if (manifest.runtimes[runtime]?.enabled !== true) {
 			errors.push(`manifest runtime ${runtime} must be enabled`);
 		}
-		const isHostedV2 =
-			trustDomain !== "generic" &&
-			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 		if (runtime === "openclaw" && isHostedV2) {
 			const auth = manifest.openclawGatewayAuth;
 			if (!auth) {

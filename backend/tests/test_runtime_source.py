@@ -20,7 +20,7 @@ from app.models.hosted_runtime import (
     HostedRuntimeState,
 )
 from app.models.session import AgentEnvironment
-from app.schemas.runtime import HostedCodexProviderProjection
+from app.schemas.runtime import HostedAgentPlugins, HostedCodexProviderProjection
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
@@ -32,6 +32,7 @@ from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceError,
     RuntimeSourceRow,
+    _agent_plugin_ownership_identity,
     expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
     render_runtime_source,
@@ -48,6 +49,121 @@ PREFIX_COLLISION_ACCOUNT_ID = UUID("50000000-0000-ffff-0000-000000000007")
 PREFIX_COLLISION_LINK_ID = UUID("60000000-0000-0000-0000-000000000008")
 AUTH_TOKEN_SECRET_ID = UUID("70000000-0000-0000-0000-000000000009")
 GATEWAY_TOKEN_SECRET_ID = UUID("70000000-0000-0000-0000-000000000010")
+CLAWDI_AGENT_PLUGIN_DIGEST = (
+    "sha256-tree-v1:f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c"
+)
+
+
+def _clawdi_agent_plugins(
+    *,
+    package_key: str = "clawdi-cloud",
+    installation_id: str = "first-party:clawdi-cloud",
+    version: str = "1.0.0",
+    store_url: str = "https://github.com/Clawdi-AI/store",
+    store_path: str = "v2/plugins/clawdi-cloud",
+    content_digest: str = CLAWDI_AGENT_PLUGIN_DIGEST,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "installations": {
+            package_key: {
+                "installationId": installation_id,
+                "version": version,
+                "agentPluginsSchema": (
+                    "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+                ),
+                "source": {
+                    "type": "github",
+                    "url": store_url,
+                    "path": store_path,
+                    "commit": "a" * 40,
+                },
+                "contentDigest": content_digest,
+            }
+        },
+    }
+
+
+def _clawdi_agent_plugin_egress_profiles(
+    *,
+    marker: str = "clawdi-cloud",
+    upstream_base_url: str = "https://cloud.test",
+) -> dict[str, object]:
+    return {
+        "profiles": [
+            {
+                "id": "first-party-clawdi-cloud-mcp",
+                "enabled": True,
+                "kind": "http",
+                "match": {
+                    "scheme": "https",
+                    "host": "cloud-api.clawdi.ai:443",
+                    "path": {"type": "equals", "value": "/v1/mcp/clawdi"},
+                    "headers": {
+                        "X-Clawdi-Agent-Plugin": {
+                            "type": "equals",
+                            "value": marker,
+                        }
+                    },
+                    "query": {},
+                },
+                "rewrite": {
+                    "upstreamBaseUrl": upstream_base_url,
+                    "preservePath": True,
+                    "setHeaders": {
+                        "Authorization": {
+                            "type": "secretRef",
+                            "secretRef": "secret://clawdi/auth-token",
+                            "prefix": "Bearer ",
+                        }
+                    },
+                },
+                "logging": {
+                    "redactHeaders": ["Authorization"],
+                    "redactUrlPatterns": [],
+                },
+                "priority": 60,
+                "owner": "first-party:clawdi-cloud",
+            }
+        ]
+    }
+
+
+def _clawdi_agent_plugin_proof(
+    agent_plugins: dict[str, object],
+    *,
+    runtime: str = "openclaw",
+    command_revision: str = "c" * 64,
+) -> str:
+    validated = HostedAgentPlugins.model_validate(agent_plugins)
+    ownership = _agent_plugin_ownership_identity(
+        "clawdi-cloud",
+        validated.installations["clawdi-cloud"],
+    )
+    return f"v1:{runtime}:{ownership}:{command_revision}"
+
+
+def _use_clawdi_component_migration_state(
+    batch: RuntimeSourceBatch,
+    agent_plugins: dict[str, object],
+) -> HostedRuntimeState:
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    state.mcp = {
+        "servers": {
+            "clawdi": {"command": "clawdi", "args": ["mcp"]},
+            "workspace-tools": {"command": "node", "args": ["workspace-tools.js"]},
+        }
+    }
+    state.skills = {
+        "entries": {
+            "clawdi": {"enabled": True, "version": 1},
+            "workspace-helper": {"enabled": True, "version": 1},
+        }
+    }
+    state.agent_plugins = agent_plugins
+    state.egress_profiles = _clawdi_agent_plugin_egress_profiles()
+    return state
 
 
 def test_runtime_bundle_v2_etag_is_derived_from_source_revision() -> None:
@@ -381,6 +497,35 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
     ]
 
 
+def test_runtime_source_revalidates_persisted_agent_plugins_before_rendering() -> None:
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    state.agent_plugins = {
+        "schemaVersion": 1,
+        "installations": {
+            "acme.tools": {
+                "installationId": "install_01hxyz",
+                "version": "1.2.3",
+                "agentPluginsSchema": (
+                    "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+                ),
+                "source": {
+                    "type": "github",
+                    "url": "https://github.com/acme/agent-plugins",
+                    "path": "plugins/acme.tools",
+                    "commit": "a" * 40,
+                },
+                "contentDigest": f"sha256-tree-v1:{'b' * 64}",
+                "plaintextSecrets": {"token": "must-not-render"},
+            }
+        },
+    }
+
+    with pytest.raises(RuntimeSourceError, match="Agent Plugins state is invalid"):
+        _render(batch)
+
+
 def test_runtime_source_owns_the_public_clawdi_mcp_url() -> None:
     first = _batch()
     second = _batch()
@@ -428,6 +573,262 @@ def test_runtime_source_owns_the_public_clawdi_mcp_url() -> None:
             }
         },
     }
+
+
+@pytest.mark.parametrize("runtime", ["openclaw", "hermes"])
+def test_runtime_source_switches_only_clawdi_components_after_native_proof(
+    runtime: str,
+) -> None:
+    batch = _batch()
+    state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())
+    if runtime == "hermes":
+        hermes = dict(state.runtimes["openclaw"])
+        hermes["services"] = {
+            "dashboard": {
+                "args": [
+                    "dashboard",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "9119",
+                    "--no-open",
+                ]
+            }
+        }
+        state.runtimes = {"hermes": hermes}
+        state.system = {
+            "hermesDashboardAuth": {
+                "mode": "password",
+                "provider": "basic",
+                "username": "admin",
+                "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
+                "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
+                "sessionTtlSeconds": 43_200,
+                "publicUrl": "https://agent.example.test/hermes",
+                "activation": {
+                    "enabled": True,
+                    "capability": "hermes-basic-auth-v1",
+                },
+            }
+        }
+
+    old_client = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        project_agent_plugins=False,
+    )
+    probe_client = _render(batch)
+    native_client = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(
+            state.agent_plugins,
+            runtime=runtime,
+        ),
+    )
+
+    assert "agentPlugins" not in old_client.manifest
+    assert set(old_client.manifest["mcp"]["servers"]) == {"clawdi", "workspace-tools"}
+    assert set(old_client.manifest["skills"]["entries"]) == {
+        "clawdi",
+        "workspace-helper",
+    }
+    assert probe_client.manifest["agentPlugins"] == state.agent_plugins
+    assert probe_client.manifest["agentPluginCapabilityProbe"] == {
+        "installations": ["clawdi-cloud"]
+    }
+    assert "clawdi" in probe_client.manifest["mcp"]["servers"]
+    assert "clawdi" in probe_client.manifest["skills"]["entries"]
+    assert native_client.manifest["agentPlugins"] == state.agent_plugins
+    assert "agentPluginCapabilityProbe" not in native_client.manifest
+    assert set(native_client.manifest["mcp"]["servers"]) == {"workspace-tools"}
+    assert set(native_client.manifest["skills"]["entries"]) == {"workspace-helper"}
+    assert (
+        len(
+            {
+                old_client.source_revision,
+                probe_client.source_revision,
+                native_client.source_revision,
+            }
+        )
+        == 3
+    )
+
+
+def test_runtime_source_invalidates_native_proof_on_runtime_or_package_change() -> None:
+    batch = _batch()
+    state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())
+    proof = _clawdi_agent_plugin_proof(state.agent_plugins)
+
+    state.agent_plugins["installations"]["clawdi-cloud"]["source"]["commit"] = "b" * 40
+    package_changed = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        agent_plugin_capability_proof=proof,
+    )
+    runtime_changed = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(
+            state.agent_plugins,
+            runtime="hermes",
+        ),
+    )
+
+    for source in (package_changed, runtime_changed):
+        assert source.manifest["agentPluginCapabilityProbe"] == {"installations": ["clawdi-cloud"]}
+        assert "clawdi" in source.manifest["mcp"]["servers"]
+        assert "clawdi" in source.manifest["skills"]["entries"]
+
+
+@pytest.mark.parametrize(
+    "agent_plugins",
+    [
+        _clawdi_agent_plugins(package_key="clawdi-cloud-fork"),
+        _clawdi_agent_plugins(installation_id="first-party:clawdi-cloud-fork"),
+        _clawdi_agent_plugins(version="1.0.1"),
+        _clawdi_agent_plugins(store_url="https://github.com/Clawdi-AI/store-fork"),
+        _clawdi_agent_plugins(store_path="v2/plugins/clawdi-cloud-fork"),
+        _clawdi_agent_plugins(content_digest=f"sha256-tree-v1:{'b' * 64}"),
+    ],
+    ids=[
+        "package-key",
+        "installation-id",
+        "version",
+        "store-url",
+        "store-path",
+        "content-digest",
+    ],
+)
+def test_runtime_source_rejects_mismatched_reserved_first_party_plugin_identity(
+    agent_plugins: dict[str, object],
+) -> None:
+    batch = _batch()
+    _use_clawdi_component_migration_state(batch, agent_plugins)
+
+    with pytest.raises(
+        RuntimeSourceError,
+        match="Hosted first-party Clawdi Agent Plugin state is incomplete or invalid",
+    ):
+        _render(batch)
+
+
+def test_runtime_source_preserves_generic_plugin_semantics() -> None:
+    batch = _batch()
+    agent_plugins = _clawdi_agent_plugins(
+        package_key="acme-tools",
+        installation_id="explicit:acme-tools",
+        store_url="https://github.com/acme/plugins",
+        store_path="plugins/acme-tools",
+        content_digest=f"sha256-tree-v1:{'b' * 64}",
+    )
+    state = _use_clawdi_component_migration_state(batch, agent_plugins)
+    state.egress_profiles = None
+
+    capable_client = _render(batch)
+
+    assert capable_client.manifest["agentPlugins"] == agent_plugins
+    assert set(capable_client.manifest["mcp"]["servers"]) == {
+        "clawdi",
+        "workspace-tools",
+    }
+    assert set(capable_client.manifest["skills"]["entries"]) == {
+        "clawdi",
+        "workspace-helper",
+    }
+
+
+@pytest.mark.parametrize(
+    "egress_profiles",
+    [
+        None,
+        _clawdi_agent_plugin_egress_profiles(marker="drift"),
+        _clawdi_agent_plugin_egress_profiles(
+            upstream_base_url="https://staging.cloud-api.clawdi.ai"
+        ),
+    ],
+    ids=["missing", "marker-drift", "origin-drift"],
+)
+def test_runtime_source_rejects_incomplete_first_party_plugin_egress_state(
+    egress_profiles: dict[str, object] | None,
+) -> None:
+    batch = _batch()
+    state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())
+    state.egress_profiles = egress_profiles
+
+    with pytest.raises(
+        RuntimeSourceError,
+        match="Hosted first-party Clawdi Agent Plugin state is incomplete or invalid",
+    ):
+        _render(batch)
+
+
+def test_runtime_source_defers_mixed_plugins_until_first_party_proof() -> None:
+    batch = _batch()
+    state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())
+    generic = _clawdi_agent_plugins(
+        package_key="acme-tools",
+        installation_id="explicit:acme-tools",
+        store_url="https://github.com/acme/plugins",
+        store_path="plugins/acme-tools",
+        content_digest=f"sha256-tree-v1:{'b' * 64}",
+    )["installations"]["acme-tools"]
+    state.agent_plugins["installations"]["acme-tools"] = generic
+
+    old_client = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        project_agent_plugins=False,
+    )
+    probe_client = _render(batch)
+    native_client = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(state.agent_plugins),
+    )
+
+    assert "agentPlugins" not in old_client.manifest
+    assert set(probe_client.manifest["agentPlugins"]["installations"]) == {"clawdi-cloud"}
+    assert probe_client.manifest["agentPluginCapabilityProbe"] == {
+        "installations": ["clawdi-cloud"]
+    }
+    assert "clawdi" in probe_client.manifest["mcp"]["servers"]
+    assert "clawdi" in probe_client.manifest["skills"]["entries"]
+    assert set(native_client.manifest["agentPlugins"]["installations"]) == {
+        "clawdi-cloud",
+        "acme-tools",
+    }
+    assert "agentPluginCapabilityProbe" not in native_client.manifest
+    assert "clawdi" not in native_client.manifest["mcp"]["servers"]
+    assert "clawdi" not in native_client.manifest["skills"]["entries"]
+    assert (
+        len(
+            {
+                old_client.source_revision,
+                probe_client.source_revision,
+                native_client.source_revision,
+            }
+        )
+        == 3
+    )
 
 
 def test_runtime_source_binds_whatsapp_capability_and_revision_to_link_credential_and_cert(

@@ -49,6 +49,7 @@ class HostedRuntimeState(Base, TimestampMixin):
     egress_profiles: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     mcp: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     skills: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
+    agent_plugins: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     tools: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
 
 

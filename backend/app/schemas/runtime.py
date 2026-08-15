@@ -42,6 +42,7 @@ _EGRESS_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _EGRESS_PROFILE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_.]*$")
 _RUNTIME_SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _MANAGED_ENTRY_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_AGENT_PLUGIN_NAME_PATTERN = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 _SECRET_REF_PATTERN = re.compile(r"^secret://\S+$")
 _SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
 _GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -53,6 +54,13 @@ _EXACT_SEMVER_PATTERN = re.compile(
     rf"({_SEMVER_CORE_IDENTIFIER})(?:-({_SEMVER_PRERELEASE_IDENTIFIER}"
     rf"(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*))?$"
 )
+_AGENT_PLUGIN_EXACT_SEMVER_PATTERN = re.compile(
+    rf"^{_SEMVER_CORE_IDENTIFIER}\.{_SEMVER_CORE_IDENTIFIER}\."
+    rf"{_SEMVER_CORE_IDENTIFIER}(?:-{_SEMVER_PRERELEASE_IDENTIFIER}"
+    rf"(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+AGENT_PLUGINS_SCHEMA_1_0_0 = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 _FORBIDDEN_TOOL_SECRET_KEYS = {
     "apikey",
     "api_key",
@@ -894,6 +902,48 @@ class HostedRuntimeSkills(_StrictHostedWireModel):
     ) -> dict[str, HostedRuntimeSkillEntry]:
         if any(_MANAGED_ENTRY_NAME_PATTERN.fullmatch(name) is None for name in value):
             raise ValueError("skill entry names must be canonical")
+        return value
+
+
+class HostedAgentPluginInstallation(_StrictHostedWireModel):
+    installationId: str = Field(min_length=1, max_length=200)
+    version: str = Field(min_length=1, max_length=256)
+    agentPluginsSchema: Literal["https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"]
+    source: HostedRuntimeSkillSource
+    contentDigest: str = Field(pattern=r"^sha256-tree-v1:[0-9a-f]{64}$")
+
+    @field_validator("installationId")
+    @classmethod
+    def _validate_installation_id(cls, value: str) -> str:
+        if value != value.strip() or any(
+            ord(character) <= 0x1F or ord(character) == 0x7F for character in value
+        ):
+            raise ValueError("installationId must be a canonical non-empty identifier")
+        return value
+
+    @field_validator("version")
+    @classmethod
+    def _validate_version(cls, value: str) -> str:
+        if _AGENT_PLUGIN_EXACT_SEMVER_PATTERN.fullmatch(value) is None:
+            raise ValueError("version must be an exact SemVer")
+        return value
+
+
+class HostedAgentPlugins(_StrictHostedWireModel):
+    schemaVersion: Literal[1]
+    installations: dict[str, HostedAgentPluginInstallation] = Field(max_length=128)
+
+    @field_validator("installations")
+    @classmethod
+    def _validate_plugin_keys(
+        cls,
+        value: dict[str, HostedAgentPluginInstallation],
+    ) -> dict[str, HostedAgentPluginInstallation]:
+        if any(
+            len(plugin_key) > 64 or _AGENT_PLUGIN_NAME_PATTERN.fullmatch(plugin_key) is None
+            for plugin_key in value
+        ):
+            raise ValueError("Agent Plugin installation keys must be canonical plugin names")
         return value
 
 

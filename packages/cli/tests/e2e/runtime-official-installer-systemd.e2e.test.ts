@@ -920,7 +920,7 @@ http.createServer((request, response) => {
 				transactionState: () => transaction.state,
 				installOfficialService: (unit, install) =>
 					transaction.installOfficialService(paths, unit, install),
-				quiesce: () => transaction.quiesce(paths),
+				quiesce: (affectedUserUnits) => transaction.quiesce(paths, affectedUserUnits),
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],

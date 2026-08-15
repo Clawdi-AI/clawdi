@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+	type BigIntStats,
 	chmodSync,
 	chownSync,
 	existsSync,
@@ -296,6 +297,52 @@ function systemdUnitFileName(name: string): string {
 	return `${systemdUnitNameSegment(name)}.service`;
 }
 
+export function runtimeSystemdUserUnitName(program: RuntimeSystemdUserProgram): string {
+	return systemdUnitFileName(runtimeSystemdProgramName(program));
+}
+
+function runtimeForSystemdUserUnitName(unitName: string): "openclaw" | "hermes" | null {
+	const officialRuntime = officialRuntimeServiceDescriptorForUnit(unitName)?.runtime;
+	if (officialRuntime === "openclaw" || officialRuntime === "hermes") return officialRuntime;
+	for (const runtime of ["openclaw", "hermes"] as const) {
+		const managedPrefix = `clawdi-${systemdUnitNameSegment(runtime)}`;
+		if (
+			unitName === systemdUnitFileName(managedPrefix) ||
+			(unitName.startsWith(`${managedPrefix}-`) && unitName.endsWith(".service"))
+		) {
+			return runtime;
+		}
+	}
+	return null;
+}
+
+export function planRuntimeMutationSystemdUserUnits(input: {
+	runtimePrograms: readonly RuntimeSystemdUserProgram[];
+	staleUserUnits: readonly string[];
+	mutationRuntimes: ReadonlySet<string>;
+}): { quiesceUserUnits: string[]; restartUserUnits: string[] } {
+	const restartUserUnits = [
+		...new Set(
+			input.runtimePrograms
+				.filter(
+					(program) =>
+						program.programKind === "runtime" && input.mutationRuntimes.has(program.runtime),
+				)
+				.map(runtimeSystemdUserUnitName),
+		),
+	].sort();
+	const quiesceUserUnits = [
+		...new Set([
+			...restartUserUnits,
+			...input.staleUserUnits.filter((unitName) => {
+				const runtime = runtimeForSystemdUserUnitName(unitName);
+				return runtime !== null && input.mutationRuntimes.has(runtime);
+			}),
+		]),
+	].sort();
+	return { quiesceUserUnits, restartUserUnits };
+}
+
 const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
@@ -456,7 +503,40 @@ function runtimeFileCurrentRevision(path: string): string | null {
 	}
 }
 
-function runtimeCommandCurrentRevision(command: string, home: string, cwd: string): string | null {
+function runtimeCommandStatIdentity(path: string): string | null {
+	if (!isAbsolute(path)) return null;
+	const statIdentity = (stat: BigIntStats) => ({
+		dev: stat.dev.toString(),
+		ino: stat.ino.toString(),
+		mode: stat.mode.toString(),
+		uid: stat.uid.toString(),
+		gid: stat.gid.toString(),
+		size: stat.size.toString(),
+		mtimeNs: stat.mtimeNs.toString(),
+		ctimeNs: stat.ctimeNs.toString(),
+	});
+	try {
+		const linkStat = lstatSync(path, { bigint: true });
+		if (!linkStat.isFile() && !linkStat.isSymbolicLink()) return null;
+		const fileStat = linkStat.isSymbolicLink() ? statSync(path, { bigint: true }) : linkStat;
+		if (!fileStat.isFile()) return null;
+		return runtimeContentSha256({
+			path,
+			kind: linkStat.isSymbolicLink() ? "symlink" : "file",
+			linkTarget: linkStat.isSymbolicLink() ? readlinkSync(path) : null,
+			link: statIdentity(linkStat),
+			file: statIdentity(fileStat),
+		});
+	} catch {
+		return null;
+	}
+}
+
+export function runtimeCommandCurrentRevision(
+	command: string,
+	home: string,
+	cwd: string,
+): string | null {
 	const executableRevision = runtimeFileCurrentRevision(command);
 	if (!executableRevision) return null;
 	try {
@@ -478,6 +558,33 @@ function runtimeCommandCurrentRevision(command: string, home: string, cwd: strin
 		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;
 	}
+}
+
+type RuntimeCommandRevisionResolver = (command: string, home: string, cwd: string) => string | null;
+
+const runtimeCommandRevisionCache = new Map<string, { statIdentity: string; revision: string }>();
+
+export function runtimeCommandCurrentRevisionCached(
+	command: string,
+	home: string,
+	cwd: string,
+	resolveRevision: RuntimeCommandRevisionResolver = runtimeCommandCurrentRevision,
+): string | null {
+	const key = `${command}\0${home}\0${cwd}`;
+	const statIdentity = runtimeCommandStatIdentity(command);
+	if (!statIdentity) {
+		runtimeCommandRevisionCache.delete(key);
+		return null;
+	}
+	const cached = runtimeCommandRevisionCache.get(key);
+	if (cached?.statIdentity === statIdentity) return cached.revision;
+	const revision = resolveRevision(command, home, cwd);
+	if (!revision) {
+		runtimeCommandRevisionCache.delete(key);
+		return null;
+	}
+	runtimeCommandRevisionCache.set(key, { statIdentity, revision });
+	return revision;
 }
 
 function officialServiceCurrentRevision(
