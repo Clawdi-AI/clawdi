@@ -15,7 +15,8 @@ import { isGeneratedRuntimeSystemdFile, runtimeUserName } from "./systemd-user";
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
-export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"];
+export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"] &
+	Pick<components["schemas"]["RuntimeObservationEventV2"], "agentPlugins">;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
 type HostedRuntimeObservedProviderPayload =

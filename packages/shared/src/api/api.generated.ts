@@ -5867,7 +5867,6 @@ export interface components {
             providers?: {
                 [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
             } | null;
-            agentPlugins?: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
             /** Error */
             error?: string | null;
             /** Convergeerror */

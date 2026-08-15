@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +29,7 @@ from app.schemas.plugin_catalog import (
     PluginName,
 )
 from app.schemas.runtime import MAX_HOSTED_AGENT_PLUGIN_INSTALLATIONS
-from app.schemas.runtime_observed import (
+from app.schemas.runtime_observation import (
     HostedRuntimeObservedAgentPluginsV1,
     HostedRuntimeObservedAgentPluginV1,
 )
@@ -103,7 +104,8 @@ async def _latest_agent_plugin_observations(
     ).one_or_none()
     if latest is None or not isinstance(latest.diagnostics, dict):
         return {}, None, None
-    payload = latest.diagnostics.get("agentPlugins")
+    diagnostics = cast(dict[str, JsonValue], latest.diagnostics)
+    payload = diagnostics.get("agentPlugins")
     if payload is None:
         return {}, None, None
     try:
