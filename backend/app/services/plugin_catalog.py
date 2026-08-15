@@ -19,7 +19,6 @@ from app.models.agent_plugin import (
     PluginCatalogSyncState,
 )
 from app.schemas.plugin_catalog import (
-    AGENT_PLUGINS_SCHEMA_1_0_0,
     TRUSTED_PLUGIN_CATALOG_BRANCH,
     TRUSTED_PLUGIN_CATALOG_PATH,
     PluginCatalogDocument,
@@ -29,6 +28,7 @@ from app.schemas.plugin_catalog import (
     catalog_source_path,
     parse_catalog_document,
 )
+from app.schemas.runtime import AGENT_PLUGINS_SCHEMA_1_0_0
 
 log = logging.getLogger(__name__)
 

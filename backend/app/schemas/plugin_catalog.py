@@ -8,7 +8,6 @@ from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-AGENT_PLUGINS_SCHEMA_1_0_0 = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 TRUSTED_PLUGIN_REPOSITORY_URL = "https://github.com/Clawdi-AI/store"
 TRUSTED_PLUGIN_CATALOG_PATH = "v2/catalog.json"
 TRUSTED_PLUGIN_CATALOG_BRANCH = "main"

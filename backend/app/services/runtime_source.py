@@ -38,11 +38,9 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.ai_provider import AiProviderModel
-from app.schemas.plugin_catalog import (
-    AGENT_PLUGINS_SCHEMA_1_0_0,
-    TRUSTED_PLUGIN_REPOSITORY_URL,
-)
+from app.schemas.plugin_catalog import TRUSTED_PLUGIN_REPOSITORY_URL
 from app.schemas.runtime import (
+    AGENT_PLUGINS_SCHEMA_1_0_0,
     HostedAgentPluginInstallation,
     HostedAgentPlugins,
     HostedCodexProviderProjection,
