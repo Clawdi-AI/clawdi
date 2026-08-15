@@ -74,6 +74,7 @@ import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
 	FIRST_PARTY_CLAWDI_AGENT_PLUGIN,
 	type HostedAgentPluginsDesiredState,
+	isFirstPartyClawdiAgentPlugin,
 } from "./manifest-resources";
 import {
 	hostedManifestToRuntimeManifest,
@@ -143,12 +144,15 @@ const TEST_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
 	schemaVersion: 1,
 	installations: { "acme.tools": TEST_AGENT_PLUGIN_INSTALLATION },
 };
+const FIRST_PARTY_CLAWDI_TEST_VERSION = "1.0.0";
+const FIRST_PARTY_CLAWDI_TEST_DIGEST =
+	"sha256-tree-v1:6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3";
 const FIRST_PARTY_CLAWDI_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
 	schemaVersion: 1,
 	installations: {
 		[FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name]: {
-			installationId: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.installationId,
-			version: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.version,
+			installationId: "01987b48-b641-79f2-b839-92ae5fc782fe",
+			version: FIRST_PARTY_CLAWDI_TEST_VERSION,
 			agentPluginsSchema: AGENT_PLUGINS_SCHEMA_1_0_0,
 			source: {
 				type: "github",
@@ -156,7 +160,7 @@ const FIRST_PARTY_CLAWDI_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
 				path: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourcePath,
 				commit: "c5a6da2011958e5295b3b58ee4a9afb75ab39fda",
 			},
-			contentDigest: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.contentDigest,
+			contentDigest: FIRST_PARTY_CLAWDI_TEST_DIGEST,
 		},
 	},
 };
@@ -966,6 +970,33 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toBe(false);
 	});
 
+	test("recognizes first-party trust without version, digest, or installation ID gates", () => {
+		const installation =
+			FIRST_PARTY_CLAWDI_AGENT_PLUGINS.installations[FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name];
+		const dynamicIntent = {
+			...installation,
+			installationId: "01987b48-b641-79f2-b839-92ae5fc78200",
+			version: "17.4.2",
+			source: { ...installation.source, commit: "d".repeat(40) },
+			contentDigest: `sha256-tree-v1:${"e".repeat(64)}`,
+		};
+
+		expect(isFirstPartyClawdiAgentPlugin("clawdi", dynamicIntent)).toBe(true);
+		expect(isFirstPartyClawdiAgentPlugin("clawdi-fork", dynamicIntent)).toBe(false);
+		expect(
+			isFirstPartyClawdiAgentPlugin("clawdi", {
+				...dynamicIntent,
+				source: { ...dynamicIntent.source, path: "v2/plugins/clawdi-fork" },
+			}),
+		).toBe(false);
+		expect(
+			isFirstPartyClawdiAgentPlugin("clawdi", {
+				...dynamicIntent,
+				source: { ...dynamicIntent.source, url: "https://github.com/acme/store" },
+			}),
+		).toBe(false);
+	});
+
 	test("rejects Agent Plugins on the legacy Hosted manifest v1 contract", () => {
 		expect(
 			hostedRuntimeManifestSchema.safeParse(
@@ -1061,7 +1092,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("falls back only for an explicit first-party capability probe", () => {
 		const paths = tempRuntimePaths();
-		const fixtureRoot = join(import.meta.dir, "../../tests/fixtures/agent-plugins/clawdi-cloud");
+		const fixtureRoot = join(import.meta.dir, "../../tests/fixtures/agent-plugins/clawdi");
 		const fixtureFiles = [
 			{ path: "mcp.json", source: "mcp.json.blob" },
 			{ path: "plugin.json", source: "plugin.json.blob" },
@@ -1070,7 +1101,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const desired: PreparedHostedAgentPlugin = {
 			...preparedTestAgentPlugin(
 				FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name,
-				FIRST_PARTY_CLAWDI_AGENT_PLUGIN.version,
+				FIRST_PARTY_CLAWDI_TEST_VERSION,
 				"a".repeat(64),
 			),
 			installation: {
@@ -1214,7 +1245,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				commands,
 				runner: unavailableRunner,
 			}),
-		).toThrow("Agent Plugin capability probe requires the first-party clawdi-cloud package");
+		).toThrow("Agent Plugin capability probe requires the first-party clawdi package");
 		expect(
 			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({
@@ -3453,7 +3484,7 @@ chmod 0755 '${commandPath}'
 				egressProfiles: {
 					profiles: [
 						{
-							id: "first-party-clawdi-cloud-mcp",
+							id: "first-party-clawdi-mcp",
 							enabled: true,
 							kind: "http",
 							match: {
@@ -3463,7 +3494,7 @@ chmod 0755 '${commandPath}'
 								headers: {
 									"X-Clawdi-Agent-Plugin": {
 										type: "equals",
-										value: "clawdi-cloud",
+										value: "clawdi",
 									},
 								},
 								query: {},
@@ -3481,7 +3512,7 @@ chmod 0755 '${commandPath}'
 							},
 							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 							priority: 60,
-							owner: "first-party:clawdi-cloud",
+							owner: "first-party:clawdi",
 						},
 					],
 				},

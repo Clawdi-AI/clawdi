@@ -305,6 +305,7 @@ env:
     WEB_ORIGIN: https://cloud.clawdi.ai
     CORS_ORIGINS: '["https://www.clawdi.ai","https://clawdi.ai","https://api.clawdi.ai","https://cloud.clawdi.ai"]'
     TRUST_FORWARDED_FOR: "true"
+    PLUGIN_CATALOG_SYNC_ENABLED: "true"
     FILE_STORE_TYPE: s3
     MEMORY_EMBEDDING_MODE: local
     DB_POOL_SIZE: 20

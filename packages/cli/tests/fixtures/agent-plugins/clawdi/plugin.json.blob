@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "clawdi-cloud",
+  "name": "clawdi",
   "version": "1.0.0",
   "description": "Clawdi Cloud memory, session, project, Vault metadata, and connected-service tools.",
   "author": {
@@ -19,13 +19,8 @@
     "ai.clawdi": {
       "schemaVersion": 1,
       "display": {
-        "name": "Clawdi Cloud",
+        "name": "Clawdi",
         "category": "productivity",
-        "tags": [
-          "memory",
-          "sessions",
-          "connectors"
-        ],
         "languages": [
           "en"
         ]

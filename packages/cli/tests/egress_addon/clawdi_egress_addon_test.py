@@ -226,7 +226,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
     def test_agent_plugin_streamable_http_profile_rewrites_only_the_exact_route(self):
         marker_header = "X-Clawdi-Agent-Plugin"
         profile = {
-            "id": "first-party-clawdi-cloud-mcp",
+            "id": "first-party-clawdi-mcp",
             "enabled": True,
             "kind": "http",
             "match": {
@@ -234,7 +234,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 "host": "cloud-api.clawdi.ai:443",
                 "path": {"type": "equals", "value": "/v1/mcp/clawdi"},
                 "headers": {
-                    marker_header: {"type": "equals", "value": "clawdi-cloud"}
+                    marker_header: {"type": "equals", "value": "clawdi"}
                 },
                 "query": {},
             },
@@ -254,14 +254,14 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 "redactUrlPatterns": [],
             },
             "priority": 60,
-            "owner": "first-party:clawdi-cloud",
+            "owner": "first-party:clawdi",
         }
         egress = self.load(
             [profile],
             {"secret://clawdi/auth-token": "test-only-clawdi-auth-token"},
         )
         request_headers = {
-            marker_header: "clawdi-cloud",
+            marker_header: "clawdi",
             "accept": "application/json, text/event-stream",
             "content-type": "application/json",
         }
@@ -273,12 +273,12 @@ class AddonProfileInterpreterTest(unittest.TestCase):
 
         decision = egress.apply_to_flow(matched)
 
-        self.assertEqual(decision.profile_id, "first-party-clawdi-cloud-mcp")
+        self.assertEqual(decision.profile_id, "first-party-clawdi-mcp")
         self.assertEqual(matched.request.scheme, "http")
         self.assertEqual(matched.request.host, "localhost")
         self.assertEqual(matched.request.port, 8000)
         self.assertEqual(matched.request.path, "/v1/mcp/clawdi")
-        self.assertEqual(matched.request.headers[marker_header], "clawdi-cloud")
+        self.assertEqual(matched.request.headers[marker_header], "clawdi")
         self.assertEqual(
             matched.request.headers["Authorization"],
             "Bearer test-only-clawdi-auth-token",

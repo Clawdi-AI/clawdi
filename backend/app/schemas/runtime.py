@@ -27,6 +27,7 @@ HostedRuntimeLanguage = Literal[
     "pt",
 ]
 HostedRuntimeName = Literal["openclaw", "hermes"]
+MAX_HOSTED_AGENT_PLUGIN_INSTALLATIONS = 128
 
 
 class ProjectSkillCapabilityReport(BaseModel):
@@ -931,7 +932,9 @@ class HostedAgentPluginInstallation(_StrictHostedWireModel):
 
 class HostedAgentPlugins(_StrictHostedWireModel):
     schemaVersion: Literal[1]
-    installations: dict[str, HostedAgentPluginInstallation] = Field(max_length=128)
+    installations: dict[str, HostedAgentPluginInstallation] = Field(
+        max_length=MAX_HOSTED_AGENT_PLUGIN_INSTALLATIONS
+    )
 
     @field_validator("installations")
     @classmethod

@@ -2171,6 +2171,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/plugin-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Plugin Catalog */
+        get: operations["list_plugin_catalog_v1_plugin_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/plugin-catalog/{plugin_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Plugin Catalog Entry */
+        get: operations["get_plugin_catalog_entry_v1_plugin_catalog__plugin_name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/agent-plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Plugin Desired State */
+        get: operations["list_agent_plugin_desired_state_v1_agents__agent_id__agent_plugins_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/agent-plugins/{plugin_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Plugin Desired State */
+        get: operations["get_agent_plugin_desired_state_v1_agents__agent_id__agent_plugins__plugin_name__get"];
+        /** Put Agent Plugin Desired State */
+        put: operations["put_agent_plugin_desired_state_v1_agents__agent_id__agent_plugins__plugin_name__put"];
+        post?: never;
+        /** Delete Agent Plugin Desired State */
+        delete: operations["delete_agent_plugin_desired_state_v1_agents__agent_id__agent_plugins__plugin_name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vault": {
         parameters: {
             query?: never;
@@ -3112,6 +3182,79 @@ export interface components {
              */
             source: "explicit_user_declaration";
         };
+        /** AgentPluginDesiredStateDeleteResponse */
+        AgentPluginDesiredStateDeleteResponse: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Plugin Name */
+            plugin_name: string;
+            /**
+             * Desired State
+             * @default absent
+             * @constant
+             */
+            desired_state: "absent";
+            /**
+             * Convergence
+             * @default not_observed
+             * @constant
+             */
+            convergence: "not_observed";
+        };
+        /** AgentPluginDesiredStateListResponse */
+        AgentPluginDesiredStateListResponse: {
+            /** Plugins */
+            plugins: components["schemas"]["AgentPluginDesiredStateResponse"][];
+        };
+        /** AgentPluginDesiredStateResponse */
+        AgentPluginDesiredStateResponse: {
+            /**
+             * Installation Id
+             * Format: uuid
+             */
+            installation_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Plugin Name */
+            plugin_name: string;
+            /** Version */
+            version: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+            /**
+             * Desired State
+             * @default present
+             * @constant
+             */
+            desired_state: "present";
+            /**
+             * Convergence
+             * @default not_observed
+             * @constant
+             */
+            convergence: "not_observed";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AgentPluginInstallRequest */
+        AgentPluginInstallRequest: {
+            /** Version */
+            version?: string | null;
+        };
         /** AgentProjectBindingResponse */
         AgentProjectBindingResponse: {
             /** Id */
@@ -4033,6 +4176,15 @@ export interface components {
         CapabilitiesResponse: {
             /** Memory Providers */
             memory_providers: string[];
+        };
+        /** CatalogComponents */
+        CatalogComponents: {
+            /** Skills */
+            skills: string[];
+            /** Mcpservers */
+            mcpServers: {
+                [key: string]: "stdio" | "streamable-http" | "sse";
+            };
         };
         /** ChannelAccountCreate */
         ChannelAccountCreate: {
@@ -5102,33 +5254,6 @@ export interface components {
              * @constant
              */
             status: "ok";
-        };
-        /** HostedAgentPluginInstallation */
-        HostedAgentPluginInstallation: {
-            /** Installationid */
-            installationId: string;
-            /** Version */
-            version: string;
-            /**
-             * Agentpluginsschema
-             * @constant
-             */
-            agentPluginsSchema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
-            source: components["schemas"]["HostedRuntimeSkillSource"];
-            /** Contentdigest */
-            contentDigest: string;
-        };
-        /** HostedAgentPlugins */
-        HostedAgentPlugins: {
-            /**
-             * Schemaversion
-             * @constant
-             */
-            schemaVersion: 1;
-            /** Installations */
-            installations: {
-                [key: string]: components["schemas"]["HostedAgentPluginInstallation"];
-            };
         };
         /** HostedCodexTool */
         HostedCodexTool: {
@@ -6216,12 +6341,57 @@ export interface components {
             egress_profiles?: components["schemas"]["HostedEgressProfiles"] | null;
             mcp?: components["schemas"]["HostedRuntimeMcp"] | null;
             skills?: components["schemas"]["HostedRuntimeSkills"] | null;
-            agent_plugins?: components["schemas"]["HostedAgentPlugins"] | null;
+            /**
+             * Agent Plugins
+             * @deprecated
+             * @description Deprecated compatibility key. Agent Plugin selection is Clawdi-owned; this field must be omitted or null.
+             */
+            agent_plugins?: null;
             tools: components["schemas"]["HostedRuntimeTools"];
             /** Secretvalues */
             secretValues: {
                 [key: string]: string;
             };
+        };
+        /** PluginCatalogEntryResponse */
+        PluginCatalogEntryResponse: {
+            /** Name */
+            name: string;
+            /** Version */
+            version: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description?: string | null;
+            /** Publisher */
+            publisher?: string | null;
+            /** Category */
+            category: string;
+            /** Keywords */
+            keywords: string[];
+            /** Languages */
+            languages: string[];
+            /** Runtimes */
+            runtimes: ("openclaw" | "hermes")[];
+            /** Icon */
+            icon?: string | null;
+            components: components["schemas"]["CatalogComponents"];
+            /** Installable */
+            installable: boolean;
+            /** Installability Reason */
+            installability_reason?: ("configuration_not_supported" | "no_supported_runtime") | null;
+        };
+        /** PluginCatalogResponse */
+        PluginCatalogResponse: {
+            /** Revision */
+            revision: string;
+            /**
+             * Synced At
+             * Format: date-time
+             */
+            synced_at: string;
+            /** Plugins */
+            plugins: components["schemas"]["PluginCatalogEntryResponse"][];
         };
         /** ProjectArchiveResponse */
         ProjectArchiveResponse: {
@@ -12230,6 +12400,190 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiKeyRevokeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_plugin_catalog_v1_plugin_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginCatalogResponse"];
+                };
+            };
+        };
+    };
+    get_plugin_catalog_entry_v1_plugin_catalog__plugin_name__get: {
+        parameters: {
+            query?: {
+                version?: string | null;
+            };
+            header?: never;
+            path: {
+                plugin_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginCatalogEntryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_plugin_desired_state_v1_agents__agent_id__agent_plugins_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPluginDesiredStateListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_plugin_desired_state_v1_agents__agent_id__agent_plugins__plugin_name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                plugin_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPluginDesiredStateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_agent_plugin_desired_state_v1_agents__agent_id__agent_plugins__plugin_name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                plugin_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentPluginInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPluginDesiredStateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_agent_plugin_desired_state_v1_agents__agent_id__agent_plugins__plugin_name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                plugin_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPluginDesiredStateDeleteResponse"];
                 };
             };
             /** @description Validation Error */

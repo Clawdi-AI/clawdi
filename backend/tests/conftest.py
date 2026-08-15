@@ -92,6 +92,9 @@ def _test_runtime_settings():
     The production default memory embedder is a local fastembed model. It is
     intentionally warmed during ASGI lifespan, but most tests do not exercise
     semantic memory and should not pay that startup cost.
+
+    Catalog worker behavior is tested directly. Keep its external polling and
+    production connection pool out of unrelated ``TestClient`` lifespans.
     """
     prev_vault = settings.vault_encryption_key
     prev_jwt = settings.encryption_key
@@ -100,6 +103,7 @@ def _test_runtime_settings():
     prev_channel_long_poll_interval = settings.channel_long_poll_interval_seconds
     prev_discord_gateway_poll_interval = settings.discord_gateway_poll_interval_seconds
     prev_project_skill_specs = settings.project_skill_hosted_cli_package_specs
+    prev_plugin_catalog_sync_enabled = settings.plugin_catalog_sync_enabled
     settings.vault_encryption_key = secrets.token_hex(32)
     settings.encryption_key = secrets.token_hex(32)
     settings.memory_embedding_mode = "disabled"
@@ -107,6 +111,7 @@ def _test_runtime_settings():
     settings.channel_long_poll_interval_seconds = 0.005
     settings.discord_gateway_poll_interval_seconds = 0.01
     settings.project_skill_hosted_cli_package_specs = ["clawdi@1.2.3-test"]
+    settings.plugin_catalog_sync_enabled = False
     try:
         yield
     finally:
@@ -117,6 +122,7 @@ def _test_runtime_settings():
         settings.channel_long_poll_interval_seconds = prev_channel_long_poll_interval
         settings.discord_gateway_poll_interval_seconds = prev_discord_gateway_poll_interval
         settings.project_skill_hosted_cli_package_specs = prev_project_skill_specs
+        settings.plugin_catalog_sync_enabled = prev_plugin_catalog_sync_enabled
 
 
 @pytest.fixture(autouse=True)

@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.core.api_scopes import RUNTIME_MCP_SCOPES
 from app.schemas.runtime import (
-    HostedAgentPlugins,
     HostedEgressEngine,
     HostedEgressProfiles,
     HostedRuntimeCompanions,
@@ -106,7 +105,14 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
     egress_profiles: HostedEgressProfiles | None = None
     mcp: HostedRuntimeMcp | None = None
     skills: HostedRuntimeSkills | None = None
-    agent_plugins: HostedAgentPlugins | None = None
+    agent_plugins: None = Field(
+        default=None,
+        deprecated=True,
+        description=(
+            "Deprecated compatibility key. Agent Plugin selection is Clawdi-owned; "
+            "this field must be omitted or null."
+        ),
+    )
     tools: HostedRuntimeTools
     secret_values: HostedRuntimeSecretValues = Field(alias="secretValues")
 

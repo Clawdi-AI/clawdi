@@ -125,6 +125,7 @@ services:
       FILE_STORE_TYPE: local
       FILE_STORE_LOCAL_PATH: /data/files
       DEBUG: "false"
+      PLUGIN_CATALOG_SYNC_ENABLED: "true"
       # PUBLIC_API_URL / WEB_ORIGIN / CORS_ORIGINS are derived from SERVICE_FQDN_*
       # in the container's command at runtime — see below. (Compose-time
       # ${SERVICE_FQDN_API} would resolve from the project .env which holds the

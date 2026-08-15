@@ -42,6 +42,7 @@ from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
 from app.routes.metrics import router as metrics_router
 from app.routes.platform import router as platform_router
+from app.routes.plugin_catalog import router as plugin_catalog_router
 from app.routes.projects import router as projects_router
 from app.routes.public_sessions import (
     PUBLIC_SESSION_EXPORT_CACHE_CONTROL,
@@ -67,6 +68,7 @@ from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorru
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
+from app.services.plugin_catalog import PluginCatalogSyncWorker
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
 from app.services.whatsapp_managed_onboarding import (
@@ -121,6 +123,19 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         raise
 
     await warm_clerk_jwks()
+
+    if settings.plugin_catalog_sync_enabled:
+        catalog_worker = PluginCatalogSyncWorker(
+            async_session_factory,
+            interval_seconds=settings.plugin_catalog_sync_interval_seconds,
+            timeout_seconds=settings.plugin_catalog_sync_timeout_seconds,
+        )
+        task = asyncio.create_task(
+            catalog_worker.run_forever(),
+            name="plugin-catalog-sync",
+        )
+        background.add(task)
+        task.add_done_callback(background.discard)
 
     if whatsapp_sidecars.enabled:
 
@@ -363,6 +378,7 @@ _VERSIONED_ROUTERS = (
     settings_router,
     capabilities_router,
     platform_router,
+    plugin_catalog_router,
     vault_router,
     connectors_router,
     mcp_bridge_router,

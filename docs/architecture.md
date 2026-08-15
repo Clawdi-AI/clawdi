@@ -71,6 +71,40 @@ the name fallback.
 
 API compatibility policy lives in [`api-compatibility.md`](api-compatibility.md).
 
+## Plugin Catalog And Desired State
+
+Clawdi is the sole authority for user Agent Plugin selection. New and existing
+Agents have no plugin desired state by default. Authenticated product APIs read
+the last-known-good catalog and mutate one owned Agent's desired installation;
+they do not proxy selection through a hosted control plane and do not claim
+that native installation has converged.
+
+The catalog worker resolves `Clawdi-AI/store` `main` externally, then fetches
+`v2/catalog.json` at that exact 40-hex commit. The strict Store catalog v1 is a
+small public metadata and component-name summary. It contains no commit,
+source authority, credentials, MCP connection details, or secret bindings.
+Clawdi maps each accepted entry to the canonical Agent Plugins 1.0.0 schema
+and fixed trusted repository, retains last-known-good snapshots on upstream
+failure, and never makes a product or runtime request wait on GitHub.
+Catalog ingestion is deployment opt-in through
+`PLUGIN_CATALOG_SYNC_ENABLED=true`; Cloud and preview deployments enable it,
+while local and self-hosted deployments do not contact GitHub by default.
+
+Catalog snapshots and per-Agent desired installations are separate relational
+state. Each desired row pins catalog revision, exact version, normalized
+repository path, `sha256-tree-v1` digest, schema URI, and a stable opaque
+backend UUID. Catalog refreshes do not upgrade existing rows. Mutations emit
+the normal runtime-manifest invalidation; the changed manifest receives a new
+`sourceRevision` without taking ownership of Hosted's Apply generation. This
+release supports only Agents with the existing Hosted v2
+runtime-state/bundle path; it does not install plugins for self-managed daemon
+Agents.
+
+Agent Plugins 1.0.0 itself defines package manifests and component loading. It
+does not define a registry, marketplace, trust policy, installation source,
+integrity scheme, or portable secret binding. Those Clawdi-specific controls
+remain outside the official wire contract.
+
 ## CLI And Adapters
 
 The CLI owns local agent detection, data collection, sync, setup, MCP stdio,
