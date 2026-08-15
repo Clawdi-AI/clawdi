@@ -230,7 +230,17 @@ class AgentPluginDesiredStateResponse(_StrictModel):
     version: str
     catalog_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     desired_state: Literal["present"] = "present"
-    convergence: Literal["not_observed"] = "not_observed"
+    convergence: Literal["installed", "failed", "not_observed"] = "not_observed"
+    observation_error_code: (
+        Literal[
+            "reconcile_failed",
+            "receipt_missing",
+            "receipt_unreadable",
+            "receipt_mismatch",
+        ]
+        | None
+    ) = None
+    observed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -11,6 +11,7 @@ import {
 } from "./applied-state";
 import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
 import { assertRuntimeBundleAuthority } from "./manifest-source";
+import { agentPluginsObservationSchema } from "./hosted-agent-plugin-observation";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -106,6 +107,7 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 		systemd: observedSystemdSchema.nullable().optional(),
 		supervisor: observedSupervisorSchema.nullable().optional(),
 		providers: z.record(z.string(), z.record(z.string(), z.unknown())).nullable().optional(),
+		agentPlugins: agentPluginsObservationSchema.nullable().optional(),
 		error: z.string().nullable().optional(),
 		convergeError: z.string().nullable().optional(),
 		truncated: z.literal(false).nullable().optional(),

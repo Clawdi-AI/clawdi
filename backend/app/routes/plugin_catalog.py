@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +12,11 @@ from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
 from app.models.agent_plugin import AgentPluginInstallation
 from app.models.hosted_runtime import HostedRuntimeState
+from app.models.runtime_observation import (
+    RUNTIME_OBSERVATION_HEAD_ACTIVE,
+    V2RuntimeObservationHead,
+    V2RuntimeObservationInbox,
+)
 from app.schemas.plugin_catalog import (
     EXACT_SEMVER_PATTERN,
     AgentPluginDesiredStateDeleteResponse,
@@ -21,6 +28,10 @@ from app.schemas.plugin_catalog import (
     PluginName,
 )
 from app.schemas.runtime import MAX_HOSTED_AGENT_PLUGIN_INSTALLATIONS
+from app.schemas.runtime_observed import (
+    HostedRuntimeObservedAgentPluginsV1,
+    HostedRuntimeObservedAgentPluginV1,
+)
 from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.agent_lifecycle import active_owned_agent
 from app.services.audit import record_control_plane_audit
@@ -33,16 +44,84 @@ from app.services.sync_events import queue_runtime_manifest_changed
 
 router = APIRouter(tags=["plugin-catalog"])
 
+_ObservedInstallationKey = tuple[str, str, str, str]
 
-def _desired_response(row: AgentPluginInstallation) -> AgentPluginDesiredStateResponse:
+
+def _desired_response(
+    row: AgentPluginInstallation,
+    observations: dict[_ObservedInstallationKey, HostedRuntimeObservedAgentPluginV1],
+    observed_at: datetime | None,
+    received_at: datetime | None,
+) -> AgentPluginDesiredStateResponse:
+    observed = observations.get((str(row.id), row.plugin_name, row.version, row.content_digest))
+    if received_at is None or received_at < row.updated_at:
+        observed = None
     return AgentPluginDesiredStateResponse(
         installation_id=row.id,
         agent_id=row.environment_id,
         plugin_name=row.plugin_name,
         version=row.version,
         catalog_revision=row.catalog_revision,
+        convergence=(
+            "not_observed" if observed is None or observed.status == "unknown" else observed.status
+        ),
+        observation_error_code=observed.error_code if observed is not None else None,
+        observed_at=observed_at if observed is not None else None,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+async def _latest_agent_plugin_observations(
+    db: AsyncSession,
+    *,
+    agent_id: UUID,
+) -> tuple[
+    dict[_ObservedInstallationKey, HostedRuntimeObservedAgentPluginV1],
+    datetime | None,
+    datetime | None,
+]:
+    latest = (
+        await db.execute(
+            select(
+                V2RuntimeObservationInbox.diagnostics,
+                V2RuntimeObservationInbox.captured_at,
+                V2RuntimeObservationInbox.received_at,
+            )
+            .join(
+                V2RuntimeObservationHead,
+                V2RuntimeObservationHead.latest_inbox_id == V2RuntimeObservationInbox.id,
+            )
+            .where(
+                V2RuntimeObservationHead.environment_id == agent_id,
+                V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
+                V2RuntimeObservationInbox.freshness_deadline >= datetime.now(UTC),
+            )
+            .order_by(V2RuntimeObservationHead.latest_stream_position.desc())
+            .limit(1)
+        )
+    ).one_or_none()
+    if latest is None or not isinstance(latest.diagnostics, dict):
+        return {}, None, None
+    payload = latest.diagnostics.get("agentPlugins")
+    if payload is None:
+        return {}, None, None
+    try:
+        observed = HostedRuntimeObservedAgentPluginsV1.model_validate(payload)
+    except ValidationError:
+        return {}, None, None
+    return (
+        {
+            (
+                installation.installation_id,
+                installation.name,
+                installation.version,
+                installation.content_digest,
+            ): installation
+            for installation in observed.installations
+        },
+        latest.captured_at,
+        latest.received_at,
     )
 
 
@@ -114,7 +193,12 @@ async def list_agent_plugin_desired_state(
             )
         ).all()
     )
-    return AgentPluginDesiredStateListResponse(plugins=[_desired_response(row) for row in rows])
+    observations, observed_at, received_at = await _latest_agent_plugin_observations(
+        db, agent_id=agent_id
+    )
+    return AgentPluginDesiredStateListResponse(
+        plugins=[_desired_response(row, observations, observed_at, received_at) for row in rows]
+    )
 
 
 @router.get(
@@ -136,7 +220,10 @@ async def get_agent_plugin_desired_state(
     )
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent Plugin desired state not found")
-    return _desired_response(row)
+    observations, observed_at, received_at = await _latest_agent_plugin_observations(
+        db, agent_id=agent_id
+    )
+    return _desired_response(row, observations, observed_at, received_at)
 
 
 @router.put(
@@ -250,6 +337,9 @@ async def put_agent_plugin_desired_state(
     if changed:
         queue_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.flush()
+    observations, observed_at, received_at = await _latest_agent_plugin_observations(
+        db, agent_id=agent_id
+    )
     record_control_plane_audit(
         db,
         actor_type="user",
@@ -270,7 +360,7 @@ async def put_agent_plugin_desired_state(
     )
     await db.commit()
     await db.refresh(row)
-    return _desired_response(row)
+    return _desired_response(row, observations, observed_at, received_at)
 
 
 @router.delete(

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 
 from app.schemas.platform import PlatformOwner
 from app.schemas.runtime_observed import (
+    HostedRuntimeObservedAgentPluginsV1,
     HostedRuntimeObservedAppliedV2,
     HostedRuntimeObservedBootV1,
     HostedRuntimeObservedCliV1,
@@ -51,6 +52,10 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     systemd: HostedRuntimeObservedSystemdV1 | None = None
     supervisor: HostedRuntimeObservedSupervisorV1 | None = None
     providers: dict[str, HostedRuntimeObservedProviderPayload] | None = None
+    agent_plugins: HostedRuntimeObservedAgentPluginsV1 | None = Field(
+        alias="agentPlugins",
+        default=None,
+    )
     error: str | None = Field(default=None, max_length=4000)
     converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
     truncated: Literal[False] | None = None
@@ -110,6 +115,8 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
             raise ValueError("predecessorBootSessionId must differ from bootSessionId")
         if self.successor_boot_session_id == self.boot_session_id:
             raise ValueError("successorBootSessionId must differ from bootSessionId")
+        if self.agent_plugins is not None:
+            self.agent_plugins.validate_applied_identity(self.applied)
         return self
 
 

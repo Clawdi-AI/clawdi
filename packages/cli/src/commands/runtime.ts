@@ -58,6 +58,7 @@ import {
 	prepareHostedAgentPluginPackages,
 	readHostedAgentPluginReceipt,
 } from "../runtime/hosted-agent-plugin-package";
+import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
 import type { HostedAgentPluginCommandRunner } from "../runtime/hosted-agent-plugin-runtime";
 import {
 	assertHostedRuntimeContract,
@@ -207,6 +208,16 @@ interface RuntimeWatchTickOptions {
 	now: number;
 	applyContext?: RuntimeApplyContext;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
+}
+
+class RuntimeAgentPluginReconcileError extends Error {
+	constructor(
+		readonly installationNames: readonly string[],
+		error: unknown,
+	) {
+		super(error instanceof Error ? error.message : String(error));
+		this.name = "RuntimeAgentPluginReconcileError";
+	}
 }
 
 function writable(path: string): boolean {
@@ -2106,6 +2117,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 ): Promise<Record<string, unknown> | null> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
 	let failureEtag: string | null = null;
+	let agentPluginFailure: ReturnType<typeof failedHostedAgentPluginsObservation> = null;
 	const retryDeferred =
 		opts.failureBackoff !== undefined && opts.now < opts.failureBackoff.nextRetryAt;
 	const manifestEtag =
@@ -2180,28 +2192,40 @@ async function runtimeWatchTickAfterCliReconciliation(
 			paths,
 		);
 		const applyIdentity = loaded.applyContext?.identity ?? null;
-		const applyResult = await applyRuntimeDesiredState(loaded, paths, {
-			authorityCommit: (convergence, authority) =>
-				commitRuntimeAppliedState({
-					load: loaded,
-					paths,
-					etag: bundleEtag,
+		let applyResult: RuntimeApplyResult;
+		try {
+			applyResult = await applyRuntimeDesiredState(loaded, paths, {
+				authorityCommit: (convergence, authority) =>
+					commitRuntimeAppliedState({
+						load: loaded,
+						paths,
+						etag: bundleEtag,
+						sourceRevision,
+						convergence,
+						applyIdentity,
+						daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+						daemonProgramRevision: authority.daemonProgramRevision,
+						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+						userProcessRevisionAliases: authority.userProcessRevisionAliases,
+					}),
+				continueOnCliUpdateError: true,
+				deferCliInstall: opts.deferCliInstall,
+				deferCliInstallReason: opts.deferCliInstallReason,
+				manifestIdentity,
+				recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
+				requireSystemdApplied: applyIdentity !== null,
+				hostedRuntimeContract: opts.hostedRuntimeContract,
+			});
+		} catch (error) {
+			if (error instanceof RuntimeAgentPluginReconcileError) {
+				agentPluginFailure = failedHostedAgentPluginsObservation(
+					loaded.manifest,
 					sourceRevision,
-					convergence,
-					applyIdentity,
-					daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
-					daemonProgramRevision: authority.daemonProgramRevision,
-					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
-					userProcessRevisionAliases: authority.userProcessRevisionAliases,
-				}),
-			continueOnCliUpdateError: true,
-			deferCliInstall: opts.deferCliInstall,
-			deferCliInstallReason: opts.deferCliInstallReason,
-			manifestIdentity,
-			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
-			requireSystemdApplied: applyIdentity !== null,
-			hostedRuntimeContract: opts.hostedRuntimeContract,
-		});
+					error.installationNames,
+				);
+			}
+			throw error;
+		}
 		if (applyResult.kind === "cli_handoff") {
 			const activeAppliedState = readRuntimeAppliedState(paths);
 			return {
@@ -2254,6 +2278,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
 			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
+			agentPluginFailure = failedHostedAgentPluginsObservation(
+				loaded.manifest,
+				sourceRevision,
+				convergence.agentPluginFailedNames,
+			);
 			const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors);
 			if (cliRollback.status === "rolled_back") selfReexec = true;
 			const activeAppliedState = readRuntimeAppliedState(paths);
@@ -2273,6 +2302,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 				systemdUnitsChanged,
 				systemdApply: systemdApplyResult,
 				convergence: convergence.outputs,
+				...(agentPluginFailure ? { agentPlugins: agentPluginFailure } : {}),
 			};
 		}
 		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
@@ -2301,6 +2331,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			errors: [message],
 			error: message,
 			...(failureEtag ? { etag: failureEtag } : {}),
+			...(agentPluginFailure ? { agentPlugins: agentPluginFailure } : {}),
 		};
 	}
 }
@@ -2366,9 +2397,18 @@ async function applyRuntimeDesiredState(
 			if (load.manifest.projection?.agentPluginCapabilityProbe) {
 				clearHostedAgentPluginCapabilityProof(paths);
 			}
-			preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(load.manifest, paths, {
-				offline: load.offline,
-			});
+			try {
+				preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(
+					load.manifest,
+					paths,
+					{ offline: load.offline },
+				);
+			} catch (error) {
+				throw new RuntimeAgentPluginReconcileError(
+					Object.keys(load.manifest.projection?.agentPlugins?.installations ?? {}).sort(),
+					error,
+				);
+			}
 		}
 		if (!load.manifest.projection?.agentPluginCapabilityProbe) {
 			clearHostedAgentPluginCapabilityProofUnlessOwned(preparedHostedAgentPlugins ?? null, paths);

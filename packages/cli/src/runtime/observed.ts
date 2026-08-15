@@ -6,6 +6,7 @@ import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import { getCliVersion } from "../lib/version";
 import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
+import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
@@ -65,6 +66,14 @@ export function readHostedRuntimeObserved(
 	};
 	if (systemd) observed.systemd = systemd;
 	if (providers) observed.providers = providers;
+	if (appliedState) {
+		const agentPlugins = readHostedAgentPluginsObservation({
+			paths,
+			applied: appliedState,
+			watchStatus,
+		});
+		if (agentPlugins) observed.agentPlugins = agentPlugins;
+	}
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);
 	if (convergeError) observed.convergeError = convergeError;

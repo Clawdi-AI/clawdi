@@ -286,6 +286,7 @@ export interface RuntimeConvergenceResult {
 	installErrors: string[];
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginCapabilityEvidence: HostedAgentPluginBehavioralEvidence | null;
+	agentPluginFailedNames: string[];
 	outputs: {
 		processManager: "systemd";
 		workspaceRoot: string;
@@ -5139,6 +5140,7 @@ function runtimeConvergenceWithoutApply(input: {
 	enabledRuntimes: string[];
 	installErrors: string[];
 	projectedProviderIds: Record<string, string[]>;
+	agentPluginFailedNames?: string[];
 }): RuntimeConvergenceResult {
 	const instanceRoot = join(input.paths.instanceRoot, input.load.manifest.instanceId);
 	return {
@@ -5151,6 +5153,7 @@ function runtimeConvergenceWithoutApply(input: {
 		installErrors: input.installErrors,
 		projectedProviderIds: input.projectedProviderIds,
 		agentPluginCapabilityEvidence: null,
+		agentPluginFailedNames: input.agentPluginFailedNames ?? [],
 		outputs: {
 			processManager: "systemd",
 			workspaceRoot: input.workspaceRoot,
@@ -5762,6 +5765,7 @@ export function convergeRuntimeManifest(
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
 	let agentPluginCapabilityEvidence: HostedAgentPluginBehavioralEvidence | null = null;
+	const agentPluginFailedNames = new Set<string>();
 	let agentPluginSnapshot: RuntimeLiveSnapshot | null = null;
 	let agentPluginQuiesceAttempted = false;
 	let agentPluginUnitsQuiesced = false;
@@ -6050,15 +6054,23 @@ export function convergeRuntimeManifest(
 		}
 		if (opts.preparedHostedAgentPlugins) {
 			const commands = hostedAgentPluginCommands(projectionHome);
-			const planned = planHostedAgentPluginConvergence({
-				manifest,
-				prepared: opts.preparedHostedAgentPlugins,
-				home: projectionHome,
-				commands,
-				...(opts.hostedAgentPluginCommandRunner
-					? { runner: opts.hostedAgentPluginCommandRunner }
-					: {}),
-			});
+			let planned: ReturnType<typeof planHostedAgentPluginConvergence>;
+			try {
+				planned = planHostedAgentPluginConvergence({
+					manifest,
+					prepared: opts.preparedHostedAgentPlugins,
+					home: projectionHome,
+					commands,
+					...(opts.hostedAgentPluginCommandRunner
+						? { runner: opts.hostedAgentPluginCommandRunner }
+						: {}),
+				});
+			} catch (error) {
+				for (const name of opts.preparedHostedAgentPlugins.desired.keys()) {
+					agentPluginFailedNames.add(name);
+				}
+				throw error;
+			}
 			agentPluginTransaction = planned.transaction;
 			agentPluginCapabilityEvidence = planned.evidence;
 			if (agentPluginTransaction?.hasMutations && !opts.systemdApply) {
@@ -6724,6 +6736,7 @@ export function convergeRuntimeManifest(
 			installErrors,
 			projectedProviderIds,
 			agentPluginCapabilityEvidence,
+			agentPluginFailedNames: [],
 			outputs: {
 				processManager: "systemd",
 				workspaceRoot,
@@ -6765,7 +6778,14 @@ export function convergeRuntimeManifest(
 				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
 			commitRuntimeInstallReceipts(installReceiptTargets, paths);
 			if (agentPluginTransaction) {
-				writeHostedAgentPluginReceipt(agentPluginTransaction.nextReceipt, paths);
+				try {
+					writeHostedAgentPluginReceipt(agentPluginTransaction.nextReceipt, paths);
+				} catch (error) {
+					for (const name of opts.preparedHostedAgentPlugins?.desired.keys() ?? []) {
+						agentPluginFailedNames.add(name);
+					}
+					throw error;
+				}
 			}
 			opts.commitAuthority?.(convergence, {
 				...(desiredDaemonAuthTokenRevision !== undefined &&
@@ -6812,6 +6832,11 @@ export function convergeRuntimeManifest(
 		}
 		return convergence;
 	} catch (error) {
+		if (agentPluginMutationAttempted) {
+			for (const name of agentPluginTransaction?.mutationNames ?? []) {
+				agentPluginFailedNames.add(name);
+			}
+		}
 		const applyError = error instanceof Error ? error.message : String(error);
 		const systemdMutated = opts.systemdApply?.transactionState() === "mutated";
 		const rollbackRequiresQuiesce =
@@ -6939,6 +6964,7 @@ export function convergeRuntimeManifest(
 					[...providerIds],
 				]),
 			),
+			agentPluginFailedNames: [...agentPluginFailedNames].sort(),
 		});
 	}
 }

@@ -178,6 +178,56 @@ def test_runtime_observation_identity_envelope_is_additive_and_consistent() -> N
         RuntimeObservationEventV2.model_validate({**payload, "generation": 2})
 
 
+def test_agent_plugin_observation_rejects_stale_or_unfenced_apply_identity() -> None:
+    payload = _payload(generation=2).model_dump(mode="json", by_alias=True)
+    installation = {
+        "installationId": "11111111-1111-4111-8111-111111111111",
+        "name": "clawdi",
+        "version": "1.2.3",
+        "contentDigest": f"sha256-tree-v1:{'b' * 64}",
+        "sourceRevision": "b" * 64,
+        "generation": 3,
+        "status": "failed",
+        "errorCode": "reconcile_failed",
+    }
+    observed = RuntimeObservationEventV2.model_validate(
+        {
+            **payload,
+            "agentPlugins": {"schemaVersion": 1, "installations": [installation]},
+        }
+    )
+    assert observed.agent_plugins is not None
+
+    with pytest.raises(ValueError, match="failed Agent Plugin observation is stale"):
+        RuntimeObservationEventV2.model_validate(
+            {
+                **payload,
+                "agentPlugins": {
+                    "schemaVersion": 1,
+                    "installations": [{**installation, "generation": 1}],
+                },
+            }
+        )
+
+    with pytest.raises(ValueError, match="must match applied identity"):
+        RuntimeObservationEventV2.model_validate(
+            {
+                **payload,
+                "agentPlugins": {
+                    "schemaVersion": 1,
+                    "installations": [
+                        {
+                            **installation,
+                            "generation": 2,
+                            "status": "installed",
+                            "errorCode": None,
+                        }
+                    ],
+                },
+            }
+        )
+
+
 async def retire_runtime_environment(*args, **kwargs):
     return (await _retire_runtime_environment(*args, **kwargs)).receipt
 
@@ -2200,8 +2250,9 @@ async def test_snapshot_and_high_water_share_one_repeatable_read_snapshot(
         )
     assert [event["sequence"] for event in incremental["events"]] == [2]
     assert [head["sequence"] for head in incremental["heads"]] == [2]
-    assert incremental["heads"][0]["evidenceReference"] == (
-        incremental["events"][0]["evidenceReference"]
+    assert (
+        incremental["heads"][0]["evidenceReference"]
+        == (incremental["events"][0]["evidenceReference"])
     )
     assert first.stream_position < second.stream_position
     assert incremental["events"][0]["runtimeIdentity"]["bootSessionId"] == ("boot-session-0001")
