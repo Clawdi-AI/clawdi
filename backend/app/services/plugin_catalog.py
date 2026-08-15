@@ -110,7 +110,11 @@ def _semver_key(version: str) -> tuple[object, ...]:
 
 
 async def load_current_catalog(db: AsyncSession) -> PluginCatalogResponse | None:
-    state = await db.get(PluginCatalogSyncState, 1)
+    state = await db.scalar(
+        select(PluginCatalogSyncState)
+        .where(PluginCatalogSyncState.id == 1)
+        .with_for_update(read=True, key_share=True)
+    )
     if state is None or state.current_revision is None:
         return None
     snapshot = await db.get(PluginCatalogSnapshot, state.current_revision)
@@ -139,7 +143,7 @@ async def load_current_catalog_entry(
     *,
     plugin_name: str,
     version: str | None,
-    lock_entry: bool = False,
+    lock_selection: bool = False,
 ) -> tuple[str, PluginCatalogEntry] | None:
     statement = (
         select(PluginCatalogEntry)
@@ -153,11 +157,11 @@ async def load_current_catalog_entry(
             *((PluginCatalogEntry.version == version,) if version is not None else ()),
         )
     )
-    if lock_entry:
+    if lock_selection:
         statement = statement.with_for_update(
             read=True,
             key_share=True,
-            of=PluginCatalogEntry,
+            of=(PluginCatalogSyncState, PluginCatalogEntry),
         )
     entries = list((await db.scalars(statement)).all())
     if not entries:

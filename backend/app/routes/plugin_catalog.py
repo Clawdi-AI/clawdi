@@ -174,7 +174,7 @@ async def put_agent_plugin_desired_state(
         db,
         plugin_name=plugin_name,
         version=body.version,
-        lock_entry=True,
+        lock_selection=True,
     )
     if resolved is None:
         catalog = await load_current_catalog(db)
