@@ -1061,7 +1061,12 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("falls back only for an explicit first-party capability probe", () => {
 		const paths = tempRuntimePaths();
-		const desired = {
+		const fixtureRoot = join(
+			import.meta.dir,
+			"../../tests/fixtures/agent-plugins/clawdi-cloud",
+		);
+		const fixturePaths = ["mcp.json", "plugin.json", "skills/clawdi/SKILL.md"];
+		const desired: PreparedHostedAgentPlugin = {
 			...preparedTestAgentPlugin(
 				FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name,
 				FIRST_PARTY_CLAWDI_AGENT_PLUGIN.version,
@@ -1071,6 +1076,13 @@ describe("runtime manifest reconciliation invariants", () => {
 				...FIRST_PARTY_CLAWDI_AGENT_PLUGINS.installations[FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
 				ownershipIdentity: "a".repeat(64),
 			},
+			mcpServerNames: ["clawdi"],
+			hasStreamableHttpMcp: true,
+			tree: fixturePaths.map((path) => ({
+				path,
+				mode: 0o100644,
+				bytes: readFileSync(join(fixtureRoot, ...path.split("/"))),
+			})),
 		};
 		const prepared = preparedTestAgentPluginState(desired);
 		const probed = hostedManifestToRuntimeManifest(
@@ -1088,10 +1100,16 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 		};
 		let probeInstalled = false;
+		let probeInstallPath = "";
 		const structuredUnsupportedRunner: HostedAgentPluginCommandRunner = {
 			available: () => true,
-			run: ({ args }) => {
+			run: ({ args, home }) => {
 				if (args[1] === "install") {
+					const source = args[2];
+					if (!source) throw new Error("missing probe package source");
+					probeInstallPath = join(home, ".openclaw", "extensions", desired.name);
+					mkdirSync(dirname(probeInstallPath), { recursive: true });
+					cpSync(source, probeInstallPath, { recursive: true });
 					probeInstalled = true;
 					return { status: 0, stdout: "", stderr: "" };
 				}
@@ -1129,7 +1147,11 @@ describe("runtime manifest reconciliation invariants", () => {
 								enabled: false,
 								format: "openclaw",
 							},
-							install: { source: "path", version: desired.installation.version },
+							install: {
+								source: "path",
+								version: desired.installation.version,
+								installPath: probeInstallPath,
+							},
 							mcpServers: [],
 							diagnostics: [],
 						}),

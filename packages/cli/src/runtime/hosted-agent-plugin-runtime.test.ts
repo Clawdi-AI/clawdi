@@ -47,6 +47,8 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 	}> | null = null;
 	openClawDiagnostics: Array<{ level: "warn" | "error"; message: string }> = [];
 	omitOpenClawComponentObservation = false;
+	openClawInstallSource: "path" | "npm" = "path";
+	retainProbeRemoval = false;
 	readonly liveHome: string;
 
 	constructor() {
@@ -208,7 +210,7 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 						bundleFormat: plugin.compatible ? "agent" : undefined,
 					},
 					install: {
-						source: "path",
+						source: this.openClawInstallSource,
 						version: plugin.version,
 						installPath: this.installPath(input.home, runtime, plugin.nativeId),
 					},
@@ -270,6 +272,9 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 			return { status: 0, stdout: "", stderr: "" };
 		}
 		if (args[1] === "uninstall" || args[1] === "remove") {
+			if (input.home !== this.liveHome && this.retainProbeRemoval) {
+				return { status: 0, stdout: "", stderr: "" };
+			}
 			for (const [key, plugin] of this.states) {
 				if (
 					key.startsWith(`${input.home}\0${runtime}\0`) &&
@@ -455,7 +460,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		expect(runner.liveMutations()).toHaveLength(liveMutations);
 	});
 
-	test("requires OpenClaw inspect to prove every MCP component without diagnostics", () => {
+	test("classifies only explicit OpenClaw capability absence as unsupported", () => {
 		const desired = plugin("acme.tools", "1.2.3", "f".repeat(64), ["alpha", "zeta"]);
 		const prepared = desiredState("openclaw", desired);
 		expect(() =>
@@ -466,32 +471,53 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			}),
 		).not.toThrow();
 
-		for (const configure of [
-			(runner: FakeNativeRunner) => {
-				runner.openClawMcpServersOverride = [{ name: "alpha", hasStdioTransport: true }];
-			},
-			(runner: FakeNativeRunner) => {
-				runner.openClawMcpServersOverride = [
-					{ name: "alpha", hasStdioTransport: true },
-					{ name: "zeta", hasStdioTransport: false, unsupported: true },
-				];
-			},
-			(runner: FakeNativeRunner) => {
-				runner.openClawDiagnostics = [{ level: "error", message: "invalid MCP component" }];
-			},
-		]) {
-			const runner = new FakeNativeRunner();
-			configure(runner);
-			expect(() => proveHostedAgentPluginCapabilities({ prepared, commands, runner })).toThrow(
-				HostedAgentPluginCapabilityUnsupportedError,
-			);
-		}
+		const unsupportedRunner = new FakeNativeRunner();
+		unsupportedRunner.openClawMcpServersOverride = [
+			{ name: "alpha", hasStdioTransport: true },
+			{ name: "zeta", hasStdioTransport: false, unsupported: true },
+		];
+		expect(() =>
+			proveHostedAgentPluginCapabilities({ prepared, commands, runner: unsupportedRunner }),
+		).toThrow(HostedAgentPluginCapabilityUnsupportedError);
 
 		const malformedRunner = new FakeNativeRunner();
 		malformedRunner.omitOpenClawComponentObservation = true;
 		expect(() =>
 			proveHostedAgentPluginCapabilities({ prepared, commands, runner: malformedRunner }),
 		).toThrow("native Agent Plugin command returned malformed JSON");
+
+		for (const [configure, message] of [
+			[
+				(runner: FakeNativeRunner) => {
+					runner.openClawMcpServersOverride = [{ name: "alpha", hasStdioTransport: true }];
+				},
+				"unexpected MCP inventory",
+			],
+			[
+				(runner: FakeNativeRunner) => {
+					runner.openClawDiagnostics = [{ level: "error", message: "invalid MCP component" }];
+				},
+				"ambiguous diagnostics",
+			],
+			[
+				(runner: FakeNativeRunner) => {
+					runner.openClawInstallSource = "npm";
+				},
+				"unexpected package source",
+			],
+			[
+				(runner: FakeNativeRunner) => {
+					runner.retainProbeRemoval = true;
+				},
+				"remained installed after cleanup",
+			],
+		] as const) {
+			const runner = new FakeNativeRunner();
+			configure(runner);
+			expect(() => proveHostedAgentPluginCapabilities({ prepared, commands, runner })).toThrow(
+				message,
+			);
+		}
 	});
 
 	test("installs the Hermes stdio-capable package from a local file Git transport", () => {

@@ -805,11 +805,12 @@ explicitly cleared or replaced so inherited process state cannot redirect the
 probe into the live Hosted profile. The proof binds the command, injected
 runner identity, package ownership identity, and observed native id; one failed
 package prevents every live package mutation. Fallback is allowed only when a
-successful structured native observation proves that the Agent Plugin format,
-component inventory, or lifecycle is unsupported. An unavailable command,
+successful structured native observation proves that the Agent Plugin format
+or an explicitly marked component/transport is unsupported. An unavailable command,
 nonzero command, malformed report, runner or filesystem failure, ambiguous
-identity, package-byte drift, Hermes canary failure, or probe cleanup failure
-remains an operational error and fails closed. An older runtime that exposes
+identity or component inventory, unclassified diagnostics, package-byte drift,
+lifecycle or cleanup failure, Hermes canary failure, or unexpected install
+source remains an operational error and fails closed. An older runtime that exposes
 capability absence only through an undifferentiated nonzero exit cannot be
 safely classified as unsupported.
 

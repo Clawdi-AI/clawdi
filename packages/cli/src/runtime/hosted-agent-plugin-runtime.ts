@@ -142,6 +142,7 @@ interface NativePluginObservation {
 	nativeId: string;
 	version: string;
 	enabled: boolean;
+	formatSupported: boolean;
 	compatible: boolean;
 	mcpServerNames: readonly string[];
 	hasComponentDiagnostics: boolean;
@@ -296,10 +297,10 @@ function createOpenClawDriver(input: {
 		const observedName = inspect.plugin.name ?? listed.name ?? "";
 		const version =
 			inspect.plugin.version ?? inspect.install.resolvedVersion ?? inspect.install.version ?? "";
-		const compatible =
+		const formatSupported =
 			inspect.plugin.format === "bundle" &&
-			inspect.plugin.bundleFormat === "agent" &&
-			inspect.install.source === "path";
+			inspect.plugin.bundleFormat === "agent";
+		const compatible = inspect.install.source === "path";
 		let installPath: string | null = null;
 		let contentDigest: string | null = null;
 		if (compatible) {
@@ -320,6 +321,7 @@ function createOpenClawDriver(input: {
 			nativeId: inspect.plugin.id,
 			version,
 			enabled: inspect.plugin.enabled && inspect.plugin.status === "loaded",
+			formatSupported,
 			compatible,
 			mcpServerNames: inspect.mcpServers.map((server) => server.name).sort(),
 			hasComponentDiagnostics: inspect.diagnostics.length > 0,
@@ -426,6 +428,7 @@ function createHermesDriver(input: {
 			nativeId: plugin.name,
 			version: plugin.version,
 			enabled: plugin.status === "enabled",
+			formatSupported: true,
 			compatible,
 			mcpServerNames: [],
 			hasComponentDiagnostics: false,
@@ -562,6 +565,7 @@ function observationMatches(
 			stringArraysEqual(observation.mcpServerNames, prepared.mcpServerNames));
 	return Boolean(
 		observation?.compatible &&
+			observation.formatSupported &&
 			openClawComponentsMatch &&
 			observation.name === prepared.name &&
 			observation.nativeId === nativeId &&
@@ -581,6 +585,7 @@ function observationUnchanged(
 		current.nativeId === previous.nativeId &&
 		current.version === previous.version &&
 		current.enabled === previous.enabled &&
+		current.formatSupported === previous.formatSupported &&
 		current.compatible === previous.compatible &&
 		stringArraysEqual(current.mcpServerNames, previous.mcpServerNames) &&
 		current.hasComponentDiagnostics === previous.hasComponentDiagnostics &&
@@ -606,20 +611,20 @@ function probeObservationCapability(
 	) {
 		throw new Error("native Agent Plugin probe observed an unexpected package identity");
 	}
-	if (!observation.compatible) {
-		if (observation.runtime === "openclaw") return "unsupported";
-		throw new Error("Hermes Agent Plugin probe observed an ambiguous package source");
-	}
+	if (!observation.compatible)
+		throw new Error("native Agent Plugin probe observed an unexpected package source");
 	if (observation.contentDigest !== prepared.installation.contentDigest) {
 		throw new Error("native Agent Plugin probe observed unexpected package bytes");
 	}
-	if (
-		observation.runtime === "openclaw" &&
-		(observation.hasComponentDiagnostics ||
-			observation.hasUnsupportedComponents ||
-			!stringArraysEqual(observation.mcpServerNames, prepared.mcpServerNames))
-	) {
-		return "unsupported";
+	if (observation.runtime === "openclaw") {
+		if (observation.hasComponentDiagnostics) {
+			throw new Error("OpenClaw Agent Plugin probe reported ambiguous diagnostics");
+		}
+		if (!observation.formatSupported) return "unsupported";
+		if (!stringArraysEqual(observation.mcpServerNames, prepared.mcpServerNames)) {
+			throw new Error("OpenClaw Agent Plugin probe observed an unexpected MCP inventory");
+		}
+		if (observation.hasUnsupportedComponents) return "unsupported";
 	}
 	return "supported";
 }
@@ -657,28 +662,23 @@ function probeNativeCapability(input: {
 		const enabled = driver.observe(input.prepared.name, installed.nativeId);
 		if (!enabled) throw new Error("native Agent Plugin disappeared after enable");
 		if (
-			probeObservationCapability(enabled, input.prepared, installed.nativeId) ===
-				"unsupported" ||
-			!enabled.enabled
+			probeObservationCapability(enabled, input.prepared, installed.nativeId) === "unsupported"
 		) {
 			return { kind: "unsupported" };
 		}
+		if (!enabled.enabled) throw new Error("native Agent Plugin did not enable during probe");
 		driver.setEnabled(enabled, false);
 		const disabled = driver.observe(input.prepared.name, installed.nativeId);
 		if (!disabled) throw new Error("native Agent Plugin disappeared after disable");
 		if (
-			probeObservationCapability(disabled, input.prepared, installed.nativeId) ===
-				"unsupported" ||
-			disabled.enabled
+			probeObservationCapability(disabled, input.prepared, installed.nativeId) === "unsupported"
 		) {
 			return { kind: "unsupported" };
 		}
+		if (disabled.enabled) throw new Error("native Agent Plugin did not disable during probe");
 		driver.remove(disabled);
 		const removed = driver.observe(input.prepared.name, installed.nativeId);
-		if (removed !== null) {
-			probeObservationCapability(removed, input.prepared, installed.nativeId);
-			return { kind: "unsupported" };
-		}
+		if (removed !== null) throw new Error("native Agent Plugin remained installed after cleanup");
 		if (input.runtime === "hermes" && input.prepared.hasStreamableHttpMcp) {
 			input.hermesRemoteCapabilityProbe({
 				command: input.command,
