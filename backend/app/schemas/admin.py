@@ -246,6 +246,45 @@ class AdminDeploymentManagedAiProviderRuntimeMetadataReplace(BaseModel):
     models: list[AiProviderModel] | None
 
 
+class AdminDeploymentManagedAiProviderCleanup(BaseModel):
+    """Archive or prove one exact deployment-scoped managed provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner: PlatformOwner
+    expected_provider_uuid: UUID
+    provisioning_discovery_key: str = Field(min_length=1, max_length=191)
+
+    @field_validator("provisioning_discovery_key")
+    @classmethod
+    def _validate_discovery_key(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("provisioning_discovery_key must be canonical")
+        return value
+
+
+class AdminDeploymentManagedAiProviderCleanupReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["archived", "already_archived"]
+    authority: Literal["active_owner", "completed_principal_cleanup"]
+    owner: PlatformOwner
+    provider_id: str
+    provider_uuid: UUID
+    provisioning_discovery_key: str
+    archived_at: datetime
+    principal_cleanup_completed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _validate_authority_receipt(self) -> AdminDeploymentManagedAiProviderCleanupReceipt:
+        completed = self.principal_cleanup_completed_at is not None
+        if completed != (self.authority == "completed_principal_cleanup"):
+            raise ValueError("cleanup authority receipt is inconsistent")
+        if completed and self.status != "already_archived":
+            raise ValueError("completed principal cleanup can only prove an archived provider")
+        return self
+
+
 class AdminDeploymentManagedAiProviderResponse(BaseModel):
     id: UUID
     owner: PlatformOwner

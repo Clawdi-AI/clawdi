@@ -55,6 +55,7 @@ from app.models.channel import (
     ChannelBotAgentLink,
 )
 from app.models.hosted_runtime import HostedRuntimeState
+from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.session import AgentEnvironment
 from app.models.user import (
     PRINCIPAL_KIND_CLERK,
@@ -73,6 +74,8 @@ from app.schemas.admin import (
     AdminChannelUpdate,
     AdminChannelVisibility,
     AdminChannelWebhookSecretResponse,
+    AdminDeploymentManagedAiProviderCleanup,
+    AdminDeploymentManagedAiProviderCleanupReceipt,
     AdminDeploymentManagedAiProviderResponse,
     AdminDeploymentManagedAiProviderRuntimeMetadataReplace,
     AdminDeploymentManagedAiProviderUpsert,
@@ -160,7 +163,10 @@ from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_TYPE,
     V2_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_IDS,
+    DeploymentManagedProviderCleanupInvariantError,
+    DeploymentManagedProviderCleanupMismatchError,
     archive_clawdi_managed_provider,
+    cleanup_deployment_managed_provider,
     find_clawdi_managed_provider,
     is_supported_deployment_managed_provider_contract,
     is_v2_deployment_managed_provider_id,
@@ -173,6 +179,7 @@ from app.services.principal_lifecycle import (
     PrincipalLifecycleConfigurationError,
     PrincipalTerminatedError,
     assert_user_authority_active,
+    configured_clerk_issuer,
     load_clerk_user_for_issuer,
     resolve_clerk_owner_issuer,
 )
@@ -574,6 +581,60 @@ async def _find_deployment_managed_provider_owner(
         )
         await db.commit()
         raise
+
+
+async def _find_deployment_managed_provider_cleanup_owner(
+    db: AsyncSession,
+    *,
+    owner: PlatformOwner,
+    provider_id: str,
+    action: str,
+) -> tuple[User, datetime | None]:
+    """Resolve active authority or an exact completed Clerk cleanup fence."""
+
+    try:
+        return await _find_admin_owner(db, owner), None
+    except HTTPException as exc:
+        if owner.kind != PRINCIPAL_KIND_CLERK or exc.status_code != status.HTTP_403_FORBIDDEN:
+            _record_deployment_managed_provider_audit(
+                db,
+                action=action,
+                owner=owner,
+                owner_user_id=None,
+                provider_id=provider_id,
+                outcome="failed",
+            )
+            await db.commit()
+            raise
+
+        issuer = configured_clerk_issuer()
+        row = (
+            await db.execute(
+                select(User, PrincipalLifecycle.cleanup_completed_at)
+                .join(PrincipalLifecycle, PrincipalLifecycle.user_id == User.id)
+                .where(
+                    User.principal_kind == PRINCIPAL_KIND_CLERK,
+                    User.clerk_id == owner.ref,
+                    User.clerk_issuer == issuer,
+                    PrincipalLifecycle.issuer == issuer,
+                    PrincipalLifecycle.subject == owner.ref,
+                    PrincipalLifecycle.cleanup_completed_at.is_not(None),
+                )
+            )
+        ).one_or_none()
+        if row is None:
+            _record_deployment_managed_provider_audit(
+                db,
+                action=action,
+                owner=owner,
+                owner_user_id=None,
+                provider_id=provider_id,
+                outcome="failed",
+            )
+            await db.commit()
+            raise
+        target, cleanup_completed_at = row
+        return target, cleanup_completed_at
 
 
 async def _raise_deployment_managed_provider_scope_denied(
@@ -1154,6 +1215,104 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
         provider=provider,
         owner=owner,
         target=target,
+    )
+
+
+@router.post(
+    "/ai-providers/{provider_id}/cleanup",
+    response_model=AdminDeploymentManagedAiProviderCleanupReceipt,
+)
+async def admin_cleanup_deployment_managed_ai_provider(
+    provider_id: str,
+    body: AdminDeploymentManagedAiProviderCleanup,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminDeploymentManagedAiProviderCleanupReceipt:
+    """Archive or prove one exact deployment-scoped managed provider."""
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
+    owner = body.owner
+    action = "ai_provider.managed.cleanup"
+    target, principal_cleanup_completed_at = await _find_deployment_managed_provider_cleanup_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action=action,
+    )
+    authority = (
+        "active_owner" if principal_cleanup_completed_at is None else "completed_principal_cleanup"
+    )
+    try:
+        result = await cleanup_deployment_managed_provider(
+            db,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            expected_provider_uuid=body.expected_provider_uuid,
+            provisioning_discovery_key=body.provisioning_discovery_key,
+            authority=authority,
+        )
+    except DeploymentManagedProviderCleanupMismatchError as exc:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            outcome="identity_mismatch",
+        )
+        await db.commit()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Managed AI provider cleanup identity did not match",
+        ) from exc
+    except DeploymentManagedProviderCleanupInvariantError as exc:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            outcome="invariant_violation",
+        )
+        await db.commit()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Managed AI provider cleanup invariant did not hold",
+        ) from exc
+    if result is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+
+    provider = result.provider
+    if result.status == "archived":
+        await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome=result.status,
+    )
+    await db.commit()
+    if provider.archived_at is None:
+        raise RuntimeError("managed AI provider cleanup did not archive provider")
+    return AdminDeploymentManagedAiProviderCleanupReceipt(
+        status=result.status,
+        authority=authority,
+        owner=owner,
+        provider_id=provider.provider_id,
+        provider_uuid=provider.id,
+        provisioning_discovery_key=body.provisioning_discovery_key,
+        archived_at=provider.archived_at,
+        principal_cleanup_completed_at=principal_cleanup_completed_at,
     )
 
 

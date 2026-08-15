@@ -1393,6 +1393,239 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
 
 
 @pytest.mark.asyncio
+async def test_admin_cleanup_deployment_managed_provider_archives_exact_identity_idempotently(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from sqlalchemy import select
+
+    from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}5901"
+    marker = "a" * 64
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    created = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "owner": owner,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-cleanup-active",
+            "capabilities": {MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY: marker},
+        },
+    )
+    assert created.status_code == 200, created.text
+    provider_uuid = created.json()["id"]
+    request = {
+        "owner": owner,
+        "expected_provider_uuid": provider_uuid,
+        "provisioning_discovery_key": marker,
+    }
+
+    archived = await admin_client.post(
+        f"/v1/admin/ai-providers/{provider_id}/cleanup",
+        headers=_AUTH,
+        json=request,
+    )
+    assert archived.status_code == 200, archived.text
+    receipt = archived.json()
+    assert receipt == {
+        "status": "archived",
+        "authority": "active_owner",
+        "owner": owner,
+        "provider_id": provider_id,
+        "provider_uuid": provider_uuid,
+        "provisioning_discovery_key": marker,
+        "archived_at": receipt["archived_at"],
+        "principal_cleanup_completed_at": None,
+    }
+
+    replayed = await admin_client.post(
+        f"/v1/admin/ai-providers/{provider_id}/cleanup",
+        headers=_AUTH,
+        json=request,
+    )
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json() == {
+        **receipt,
+        "status": "already_archived",
+    }
+    provider = await db_session.get(AiProvider, UUID(provider_uuid))
+    assert provider is not None and provider.archived_at is not None
+    payload = (
+        await db_session.execute(
+            select(AiProviderAuthPayload).where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == provider_id,
+            )
+        )
+    ).scalar_one()
+    assert payload.archived_at is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_cleanup_proves_exact_provider_archived_by_completed_principal_cleanup(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from app.models.ai_provider import AiProvider
+    from app.models.principal_lifecycle import PrincipalLifecycle
+    from app.services.principal_lifecycle import complete_principal_cleanup
+
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}59"
+    marker = "b" * 64
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    created = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "owner": owner,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-cleanup-terminated",
+            "capabilities": {MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY: marker},
+        },
+    )
+    assert created.status_code == 200, created.text
+    provider_uuid = created.json()["id"]
+    now = datetime.now(UTC)
+    seed_user.clerk_issuer = _CLERK_ISSUER
+    lifecycle = PrincipalLifecycle(
+        issuer=_CLERK_ISSUER,
+        subject=seed_user.clerk_id,
+        user_id=seed_user.id,
+        terminated_at=now,
+        next_cleanup_attempt_at=now,
+    )
+    db_session.add(lifecycle)
+    await db_session.flush()
+    await complete_principal_cleanup(db_session, lifecycle_id=lifecycle.id, now=now)
+    await db_session.commit()
+
+    ordinary_read = await admin_client.get(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        params=owner,
+    )
+    assert ordinary_read.status_code == 403, ordinary_read.text
+    ordinary_metadata_write = await _replace_managed_provider_runtime_metadata(
+        admin_client,
+        provider_id,
+        {
+            "owner": owner,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "models": None,
+        },
+    )
+    assert ordinary_metadata_write.status_code == 403, ordinary_metadata_write.text
+
+    proved = await admin_client.post(
+        f"/v1/admin/ai-providers/{provider_id}/cleanup",
+        headers=_AUTH,
+        json={
+            "owner": owner,
+            "expected_provider_uuid": provider_uuid,
+            "provisioning_discovery_key": marker,
+        },
+    )
+    assert proved.status_code == 200, proved.text
+    receipt = proved.json()
+    assert receipt == {
+        "status": "already_archived",
+        "authority": "completed_principal_cleanup",
+        "owner": owner,
+        "provider_id": provider_id,
+        "provider_uuid": provider_uuid,
+        "provisioning_discovery_key": marker,
+        "archived_at": receipt["archived_at"],
+        "principal_cleanup_completed_at": receipt["principal_cleanup_completed_at"],
+    }
+    await db_session.refresh(lifecycle)
+    provider = await db_session.get(AiProvider, UUID(provider_uuid))
+    assert provider is not None and provider.archived_at is not None
+    assert lifecycle.cleanup_completed_at is not None
+    assert lifecycle.cleanup_attempts == 1
+    assert datetime.fromisoformat(receipt["archived_at"]) == provider.archived_at
+    assert (
+        datetime.fromisoformat(receipt["principal_cleanup_completed_at"])
+        == lifecycle.cleanup_completed_at
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_cleanup_deployment_managed_provider_rejects_mismatch_and_pending_cleanup(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from app.models.ai_provider import AiProvider
+    from app.models.principal_lifecycle import PrincipalLifecycle
+
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}5902"
+    marker = "c" * 64
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    created = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "owner": owner,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-cleanup-mismatch",
+            "capabilities": {MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY: marker},
+        },
+    )
+    assert created.status_code == 200, created.text
+    provider_uuid = created.json()["id"]
+    request = {
+        "owner": owner,
+        "expected_provider_uuid": provider_uuid,
+        "provisioning_discovery_key": marker,
+    }
+
+    for mismatch in (
+        {**request, "expected_provider_uuid": str(uuid.uuid4())},
+        {**request, "provisioning_discovery_key": "d" * 64},
+    ):
+        rejected = await admin_client.post(
+            f"/v1/admin/ai-providers/{provider_id}/cleanup",
+            headers=_AUTH,
+            json=mismatch,
+        )
+        assert rejected.status_code == 409, rejected.text
+
+    now = datetime.now(UTC)
+    seed_user.clerk_issuer = _CLERK_ISSUER
+    lifecycle = PrincipalLifecycle(
+        issuer=_CLERK_ISSUER,
+        subject=seed_user.clerk_id,
+        user_id=seed_user.id,
+        terminated_at=now,
+        next_cleanup_attempt_at=now,
+    )
+    db_session.add(lifecycle)
+    await db_session.commit()
+    pending = await admin_client.post(
+        f"/v1/admin/ai-providers/{provider_id}/cleanup",
+        headers=_AUTH,
+        json=request,
+    )
+    assert pending.status_code == 403, pending.text
+    lifecycle.cleanup_attempts = 1
+    lifecycle.cleanup_completed_at = now
+    lifecycle.next_cleanup_attempt_at = None
+    await db_session.commit()
+    inconsistent = await admin_client.post(
+        f"/v1/admin/ai-providers/{provider_id}/cleanup",
+        headers=_AUTH,
+        json=request,
+    )
+    assert inconsistent.status_code == 409, inconsistent.text
+    provider = await db_session.get(AiProvider, UUID(provider_uuid))
+    assert provider is not None and provider.archived_at is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "legacy_runtime_env",
     ["CLAWDI_MANAGED_OPENAI_API_KEY", MANAGED_AI_PROVIDER_RUNTIME_ENV],
