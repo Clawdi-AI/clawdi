@@ -804,8 +804,14 @@ root. OpenClaw location overrides and Hermes
 explicitly cleared or replaced so inherited process state cannot redirect the
 probe into the live Hosted profile. The proof binds the command, injected
 runner identity, package ownership identity, and observed native id; one failed
-package prevents every live package mutation. Missing, old, or incompatible
-runtimes fail with the stable unsupported-capability error.
+package prevents every live package mutation. Fallback is allowed only when a
+successful structured native observation proves that the Agent Plugin format,
+component inventory, or lifecycle is unsupported. An unavailable command,
+nonzero command, malformed report, runner or filesystem failure, ambiguous
+identity, package-byte drift, Hermes canary failure, or probe cleanup failure
+remains an operational error and fails closed. An older runtime that exposes
+capability absence only through an undifferentiated nonzero exit cannot be
+safely classified as unsupported.
 
 The canonical schemas audited from
 [`agentplugins/agent-plugins-spec`](https://github.com/agentplugins/agent-plugins-spec/tree/bd383552095128f6effe895b9257cfd580a6d179)
@@ -817,12 +823,17 @@ for `mcp.schema.json`.
 
 Upstream capability evidence was refreshed on 2026-08-15. OpenClaw main was
 audited at
-[`a2d1b0c03bec383d927657140aa8f1254ff1b370`](https://github.com/openclaw/openclaw/commit/a2d1b0c03bec383d927657140aa8f1254ff1b370).
+[`2276dca1d349c36bf3bdc4768e58301200fbde46`](https://github.com/openclaw/openclaw/commit/2276dca1d349c36bf3bdc4768e58301200fbde46),
+16 commits ahead of the prior
+[`a2d1b0c03bec383d927657140aa8f1254ff1b370`](https://github.com/openclaw/openclaw/commit/a2d1b0c03bec383d927657140aa8f1254ff1b370)
+audit. The compare file list contains plugin-sdk documentation and test-fixture
+changes, but does not touch the Agent Plugins loader, native plugin lifecycle,
+or inspect contract.
 Agent Plugins support landed in
 [`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
 that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
 `PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
-[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/a2d1b0c03bec383d927657140aa8f1254ff1b370/src/plugins/status.ts)
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/2276dca1d349c36bf3bdc4768e58301200fbde46/src/plugins/status.ts)
 exposes every MCP server name, unsupported state, and plugin diagnostics.
 Clawdi requires the reported names to equal the already-validated `mcp.json`
 names and requires no unsupported entry or diagnostic during every isolated and
@@ -898,10 +909,21 @@ and MCP names `clawdi` and package digest
 `sha256-tree-v1:f47e156aa043d9f09f8e5e1e7dfa58a3300fb12699a716f887b633d4a21bc38c`.
 Its deployable source must be an exact commit in the public
 `https://github.com/Clawdi-AI/store` repository at
-`v2/plugins/clawdi-cloud`. The current public pin is
-`c5a6da2011958e5295b3b58ee4a9afb75ab39fda`. A private review repository,
-mutable ref, empty setting, or unpublished future commit is not a valid
-production identity and cannot be used as a capability switch.
+`v2/plugins/clawdi-cloud`. The currently reviewed public commit is
+`c5a6da2011958e5295b3b58ee4a9afb75ab39fda`; production also requires the
+selected commit to be reachable from public Store `main`. A private review
+repository, mutable ref, empty setting, or unpublished future commit is not a
+valid production identity. Artifact ancestry and the pin itself cannot be used
+as capability switches.
+The reserved package identity and its reserved egress profile are one atomic
+control-plane invariant. A missing profile, marker or rewrite drift, a reserved
+package mismatch, or an orphaned reserved profile stops manifest rendering.
+When desired state also contains other Agent Plugins, the unproven variant
+projects only `clawdi-cloud` plus its capability probe and retains legacy
+`clawdi` components. A matching first-party proof selects the full desired
+installation set and removes legacy components; the CLI then proves every
+package before one live transaction. This keeps proof scoped to the first-party
+migration without bypassing generic installation failures.
 Every package must also carry the complete Store `ai.clawdi` extension and at
 least one Skill or MCP server; bare MCP commands require declared compatible
 executables. Exact duplicate JSON keys remain a Store ingestion rejection

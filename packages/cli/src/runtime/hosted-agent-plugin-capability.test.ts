@@ -1,5 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +19,7 @@ import {
 import type { PreparedHostedAgentPlugins } from "./hosted-agent-plugin-package";
 import { hostedAgentPluginCommands } from "./hosted-agent-plugin-runtime";
 import { getRuntimePaths } from "./paths";
+import { runtimeCommandCurrentRevisionCached } from "./runtime-systemd-reconciliation";
 import { ensureRuntimeStateDirs } from "./state";
 
 const originalEnv = { ...process.env };
@@ -112,4 +121,38 @@ test("clears proof when desired package ownership changes", () => {
 
 	clearHostedAgentPluginCapabilityProofUnlessOwned(prepared, paths);
 	expect(existsSync(hostedAgentPluginCapabilityProofPath(paths))).toBe(false);
+});
+
+test("reuses command revision until the symlink or target identity changes", () => {
+	const { paths, command } = fixture();
+	const firstTarget = join(root, "runtime-a");
+	const secondTarget = join(root, "runtime-b");
+	mkdirSync(join(command, ".."), { recursive: true });
+	writeFileSync(firstTarget, "first");
+	writeFileSync(secondTarget, "second");
+	symlinkSync(firstTarget, command);
+	let revisions = 0;
+	const resolveRevision = () => {
+		revisions += 1;
+		return revisions.toString(16).padStart(64, "0");
+	};
+
+	expect(
+		runtimeCommandCurrentRevisionCached(command, paths.userHome, paths.userHome, resolveRevision),
+	).toBe("1".padStart(64, "0"));
+	expect(
+		runtimeCommandCurrentRevisionCached(command, paths.userHome, paths.userHome, resolveRevision),
+	).toBe("1".padStart(64, "0"));
+	expect(revisions).toBe(1);
+
+	writeFileSync(firstTarget, "first target changed");
+	expect(
+		runtimeCommandCurrentRevisionCached(command, paths.userHome, paths.userHome, resolveRevision),
+	).toBe("2".padStart(64, "0"));
+	rmSync(command);
+	symlinkSync(secondTarget, command);
+	expect(
+		runtimeCommandCurrentRevisionCached(command, paths.userHome, paths.userHome, resolveRevision),
+	).toBe("3".padStart(64, "0"));
+	expect(revisions).toBe(3);
 });

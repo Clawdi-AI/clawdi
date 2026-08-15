@@ -1087,6 +1087,58 @@ describe("runtime manifest reconciliation invariants", () => {
 				throw new Error("unsupported runtime must not execute Agent Plugin commands");
 			},
 		};
+		let probeInstalled = false;
+		const structuredUnsupportedRunner: HostedAgentPluginCommandRunner = {
+			available: () => true,
+			run: ({ args }) => {
+				if (args[1] === "install") {
+					probeInstalled = true;
+					return { status: 0, stdout: "", stderr: "" };
+				}
+				if (args[1] === "list") {
+					return {
+						status: 0,
+						stdout: JSON.stringify({
+							plugins: probeInstalled
+								? [
+									{
+										id: desired.name,
+										name: desired.name,
+										version: desired.installation.version,
+										enabled: false,
+										status: "disabled",
+										format: "openclaw",
+									},
+								]
+								: [],
+						}),
+						stderr: "",
+					};
+				}
+				if (args[1] === "inspect") {
+					return {
+						status: 0,
+						stdout: JSON.stringify({
+							plugin: {
+								id: desired.name,
+								name: desired.name,
+								source: "probe",
+								origin: "global",
+								status: "disabled",
+								version: desired.installation.version,
+								enabled: false,
+								format: "openclaw",
+							},
+							install: { source: "path", version: desired.installation.version },
+							mcpServers: [],
+							diagnostics: [],
+						}),
+						stderr: "",
+					};
+				}
+				throw new Error("unexpected command after structured unsupported observation");
+			},
+		};
 		const commands = hostedAgentPluginCommands(paths.userHome);
 
 		expect(
@@ -1095,9 +1147,18 @@ describe("runtime manifest reconciliation invariants", () => {
 				prepared,
 				home: paths.userHome,
 				commands,
-				runner: unavailableRunner,
+				runner: structuredUnsupportedRunner,
 			}),
 		).toEqual({ transaction: null, evidence: null });
+		expect(() =>
+			planHostedAgentPluginConvergence({
+				manifest: probed,
+				prepared,
+				home: paths.userHome,
+				commands,
+				runner: unavailableRunner,
+			}),
+		).toThrow("Agent Plugin capability probe runtime command is unavailable");
 
 		const explicit: RuntimeManifest = {
 			...probed,
@@ -1109,7 +1170,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				prepared,
 				home: paths.userHome,
 				commands,
-				runner: unavailableRunner,
+				runner: structuredUnsupportedRunner,
 			}),
 		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
 
@@ -1139,6 +1200,41 @@ describe("runtime manifest reconciliation invariants", () => {
 				}),
 			).success,
 		).toBe(false);
+
+		const mixedPrepared: PreparedHostedAgentPlugins = {
+			...prepared,
+			desired: new Map([
+				[desired.name, desired],
+				[generic.name, generic],
+			]),
+		};
+		const firstPartyInstallation = testAgentPluginDesiredState(desired).installations[desired.name];
+		const genericInstallation = testAgentPluginDesiredState(generic).installations[generic.name];
+		if (!firstPartyInstallation || !genericInstallation) {
+			throw new Error("missing mixed Agent Plugin fixture installation");
+		}
+		const mixedExplicit: RuntimeManifest = {
+			...explicit,
+			projection: {
+				...explicit.projection,
+				agentPlugins: {
+					schemaVersion: 1,
+					installations: {
+						[desired.name]: firstPartyInstallation,
+						[generic.name]: genericInstallation,
+					},
+				},
+			},
+		};
+		expect(() =>
+			planHostedAgentPluginConvergence({
+				manifest: mixedExplicit,
+				prepared: mixedPrepared,
+				home: paths.userHome,
+				commands,
+				runner: unavailableRunner,
+			}),
+		).toThrow("Agent Plugin capability probe runtime command is unavailable");
 	});
 
 	test("orders cold native plugin activation and restores the full preimage after rollback failure", () => {

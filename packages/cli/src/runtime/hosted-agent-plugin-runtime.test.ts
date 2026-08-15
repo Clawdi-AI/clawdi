@@ -11,11 +11,11 @@ import type {
 	PreparedHostedAgentPlugins,
 } from "./hosted-agent-plugin-package";
 import {
+	HostedAgentPluginCapabilityUnsupportedError,
 	type HostedAgentPluginCommandRunner,
 	prepareHostedAgentPluginTransaction,
 	proveHostedAgentPluginCapabilities,
 } from "./hosted-agent-plugin-runtime";
-import { AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR } from "./manifest-contract";
 import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
 
 type CommandInput = Parameters<HostedAgentPluginCommandRunner["run"]>[0];
@@ -468,9 +468,6 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 
 		for (const configure of [
 			(runner: FakeNativeRunner) => {
-				runner.omitOpenClawComponentObservation = true;
-			},
-			(runner: FakeNativeRunner) => {
 				runner.openClawMcpServersOverride = [{ name: "alpha", hasStdioTransport: true }];
 			},
 			(runner: FakeNativeRunner) => {
@@ -486,9 +483,15 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			const runner = new FakeNativeRunner();
 			configure(runner);
 			expect(() => proveHostedAgentPluginCapabilities({ prepared, commands, runner })).toThrow(
-				AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+				HostedAgentPluginCapabilityUnsupportedError,
 			);
 		}
+
+		const malformedRunner = new FakeNativeRunner();
+		malformedRunner.omitOpenClawComponentObservation = true;
+		expect(() =>
+			proveHostedAgentPluginCapabilities({ prepared, commands, runner: malformedRunner }),
+		).toThrow("native Agent Plugin command returned malformed JSON");
 	});
 
 	test("installs the Hermes stdio-capable package from a local file Git transport", () => {
@@ -555,7 +558,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 					throw new Error("portable remote skipped");
 				},
 			}),
-		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+		).toThrow("portable remote skipped");
 		expect(oldProbeCalls).toBe(1);
 		expect(oldRunner.liveMutations()).toEqual([]);
 
@@ -576,7 +579,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		expect(currentRunner.liveMutations()).toEqual([]);
 	});
 
-	test("fails the capability gate before any command when the runtime is unsupported", () => {
+	test("fails closed before any command when the runtime command is unavailable", () => {
 		const runner = new FakeNativeRunner();
 		runner.availableResult = false;
 		expect(() =>
@@ -585,7 +588,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 				commands,
 				runner,
 			}),
-		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+		).toThrow("Agent Plugin capability probe runtime command is unavailable");
 		expect(runner.calls).toEqual([]);
 	});
 
@@ -680,7 +683,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		};
 
 		expect(() => proveHostedAgentPluginCapabilities({ prepared, commands, runner })).toThrow(
-			AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+			"OpenClaw native Agent Plugin install failed",
 		);
 		expect(runner.liveMutations()).toEqual([]);
 		expect(

@@ -5,7 +5,7 @@ import type { PreparedHostedAgentPlugins } from "./hosted-agent-plugin-package";
 import type { HostedAgentPluginBehavioralEvidence } from "./hosted-agent-plugin-runtime";
 import { hostedAgentPluginCommands } from "./hosted-agent-plugin-runtime";
 import type { RuntimePaths } from "./paths";
-import { runtimeCommandCurrentRevision } from "./runtime-systemd-reconciliation";
+import { runtimeCommandCurrentRevisionCached } from "./runtime-systemd-reconciliation";
 import { writeRuntimePlatformFileAtomic } from "./state";
 
 const CAPABILITY_PROOF_SCHEMA = "clawdi.hostedAgentPluginCapabilityProof.v1";
@@ -31,7 +31,7 @@ type HostedAgentPluginPersistentCapabilityProof = z.infer<typeof capabilityProof
 type CommandRevisionResolver = (command: string, home: string) => string | null;
 
 function defaultCommandRevision(command: string, home: string): string | null {
-	return runtimeCommandCurrentRevision(command, home, home);
+	return runtimeCommandCurrentRevisionCached(command, home, home);
 }
 
 export function hostedAgentPluginCapabilityProofPath(paths: RuntimePaths): string {

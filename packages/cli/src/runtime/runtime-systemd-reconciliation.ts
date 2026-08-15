@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+	type BigIntStats,
 	chmodSync,
 	chownSync,
 	existsSync,
@@ -502,6 +503,35 @@ function runtimeFileCurrentRevision(path: string): string | null {
 	}
 }
 
+function runtimeCommandStatIdentity(path: string): string | null {
+	if (!isAbsolute(path)) return null;
+	const statIdentity = (stat: BigIntStats) => ({
+		dev: stat.dev.toString(),
+		ino: stat.ino.toString(),
+		mode: stat.mode.toString(),
+		uid: stat.uid.toString(),
+		gid: stat.gid.toString(),
+		size: stat.size.toString(),
+		mtimeNs: stat.mtimeNs.toString(),
+		ctimeNs: stat.ctimeNs.toString(),
+	});
+	try {
+		const linkStat = lstatSync(path, { bigint: true });
+		if (!linkStat.isFile() && !linkStat.isSymbolicLink()) return null;
+		const fileStat = linkStat.isSymbolicLink() ? statSync(path, { bigint: true }) : linkStat;
+		if (!fileStat.isFile()) return null;
+		return runtimeContentSha256({
+			path,
+			kind: linkStat.isSymbolicLink() ? "symlink" : "file",
+			linkTarget: linkStat.isSymbolicLink() ? readlinkSync(path) : null,
+			link: statIdentity(linkStat),
+			file: statIdentity(fileStat),
+		});
+	} catch {
+		return null;
+	}
+}
+
 export function runtimeCommandCurrentRevision(
 	command: string,
 	home: string,
@@ -528,6 +558,40 @@ export function runtimeCommandCurrentRevision(
 		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;
 	}
+}
+
+type RuntimeCommandRevisionResolver = (
+	command: string,
+	home: string,
+	cwd: string,
+) => string | null;
+
+const runtimeCommandRevisionCache = new Map<
+	string,
+	{ statIdentity: string; revision: string }
+>();
+
+export function runtimeCommandCurrentRevisionCached(
+	command: string,
+	home: string,
+	cwd: string,
+	resolveRevision: RuntimeCommandRevisionResolver = runtimeCommandCurrentRevision,
+): string | null {
+	const key = `${command}\0${home}\0${cwd}`;
+	const statIdentity = runtimeCommandStatIdentity(command);
+	if (!statIdentity) {
+		runtimeCommandRevisionCache.delete(key);
+		return null;
+	}
+	const cached = runtimeCommandRevisionCache.get(key);
+	if (cached?.statIdentity === statIdentity) return cached.revision;
+	const revision = resolveRevision(command, home, cwd);
+	if (!revision) {
+		runtimeCommandRevisionCache.delete(key);
+		return null;
+	}
+	runtimeCommandRevisionCache.set(key, { statIdentity, revision });
+	return revision;
 }
 
 function officialServiceCurrentRevision(

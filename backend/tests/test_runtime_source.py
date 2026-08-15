@@ -708,11 +708,30 @@ def test_runtime_source_invalidates_native_proof_on_runtime_or_package_change() 
         "content-digest",
     ],
 )
-def test_runtime_source_preserves_legacy_for_non_first_party_plugin_identity(
+def test_runtime_source_rejects_mismatched_reserved_first_party_plugin_identity(
     agent_plugins: dict[str, object],
 ) -> None:
     batch = _batch()
     _use_clawdi_component_migration_state(batch, agent_plugins)
+
+    with pytest.raises(
+        RuntimeSourceError,
+        match="Hosted first-party Clawdi Agent Plugin state is incomplete or invalid",
+    ):
+        _render(batch)
+
+
+def test_runtime_source_preserves_generic_plugin_semantics() -> None:
+    batch = _batch()
+    agent_plugins = _clawdi_agent_plugins(
+        package_key="acme-tools",
+        installation_id="explicit:acme-tools",
+        store_url="https://github.com/acme/plugins",
+        store_path="plugins/acme-tools",
+        content_digest=f"sha256-tree-v1:{'b' * 64}",
+    )
+    state = _use_clawdi_component_migration_state(batch, agent_plugins)
+    state.egress_profiles = None
 
     capable_client = _render(batch)
 
@@ -727,16 +746,78 @@ def test_runtime_source_preserves_legacy_for_non_first_party_plugin_identity(
     }
 
 
-def test_runtime_source_preserves_legacy_without_exact_first_party_egress_profile() -> None:
+@pytest.mark.parametrize(
+    "egress_profiles",
+    [None, _clawdi_agent_plugin_egress_profiles(marker="drift")],
+)
+def test_runtime_source_rejects_incomplete_first_party_plugin_egress_state(
+    egress_profiles: dict[str, object] | None,
+) -> None:
     batch = _batch()
     state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())
-    state.egress_profiles = _clawdi_agent_plugin_egress_profiles(marker="clawdi-cloud-fork")
+    state.egress_profiles = egress_profiles
 
-    capable_client = _render(batch)
+    with pytest.raises(
+        RuntimeSourceError,
+        match="Hosted first-party Clawdi Agent Plugin state is incomplete or invalid",
+    ):
+        _render(batch)
 
-    assert capable_client.manifest["agentPlugins"] == state.agent_plugins
-    assert "clawdi" in capable_client.manifest["mcp"]["servers"]
-    assert "clawdi" in capable_client.manifest["skills"]["entries"]
+
+def test_runtime_source_defers_mixed_plugins_until_first_party_proof() -> None:
+    batch = _batch()
+    state = _use_clawdi_component_migration_state(batch, _clawdi_agent_plugins())
+    generic = _clawdi_agent_plugins(
+        package_key="acme-tools",
+        installation_id="explicit:acme-tools",
+        store_url="https://github.com/acme/plugins",
+        store_path="plugins/acme-tools",
+        content_digest=f"sha256-tree-v1:{'b' * 64}",
+    )["installations"]["acme-tools"]
+    state.agent_plugins["installations"]["acme-tools"] = generic
+
+    old_client = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        project_agent_plugins=False,
+    )
+    probe_client = _render(batch)
+    native_client = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(state.agent_plugins),
+    )
+
+    assert "agentPlugins" not in old_client.manifest
+    assert set(probe_client.manifest["agentPlugins"]["installations"]) == {"clawdi-cloud"}
+    assert probe_client.manifest["agentPluginCapabilityProbe"] == {
+        "installations": ["clawdi-cloud"]
+    }
+    assert "clawdi" in probe_client.manifest["mcp"]["servers"]
+    assert "clawdi" in probe_client.manifest["skills"]["entries"]
+    assert set(native_client.manifest["agentPlugins"]["installations"]) == {
+        "clawdi-cloud",
+        "acme-tools",
+    }
+    assert "agentPluginCapabilityProbe" not in native_client.manifest
+    assert "clawdi" not in native_client.manifest["mcp"]["servers"]
+    assert "clawdi" not in native_client.manifest["skills"]["entries"]
+    assert (
+        len(
+            {
+                old_client.source_revision,
+                probe_client.source_revision,
+                native_client.source_revision,
+            }
+        )
+        == 3
+    )
 
 
 def test_runtime_source_binds_whatsapp_capability_and_revision_to_link_credential_and_cert(

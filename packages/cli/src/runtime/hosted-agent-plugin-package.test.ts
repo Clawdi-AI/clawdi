@@ -29,7 +29,6 @@ import {
 } from "./hosted-agent-plugin-runtime";
 import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
-	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	type RuntimeManifest,
 } from "./manifest-contract";
 import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
@@ -799,7 +798,7 @@ describe("Hosted Agent Plugin package preparation", () => {
 					commands: hostedAgentPluginCommands(runtimePaths.userHome),
 					runner,
 				}),
-			).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+			).toThrow("Agent Plugin capability probe runtime command is unavailable");
 		} finally {
 			cleanupHostedAgentPluginTransientArchives(prepared, runtimePaths);
 		}

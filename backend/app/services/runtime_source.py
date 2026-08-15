@@ -576,11 +576,17 @@ def _without_legacy_clawdi_components(
 def _is_first_party_clawdi_agent_plugin(
     agent_plugins: HostedAgentPlugins | None,
 ) -> bool:
-    if agent_plugins is None or set(agent_plugins.installations) != {_CLAWDI_AGENT_PLUGIN_PACKAGE}:
+    if agent_plugins is None:
         return False
-    installation = agent_plugins.installations.get(_CLAWDI_AGENT_PLUGIN_PACKAGE)
-    if installation is None:
+    reserved = [
+        (name, installation)
+        for name, installation in agent_plugins.installations.items()
+        if name == _CLAWDI_AGENT_PLUGIN_PACKAGE
+        or installation.installationId == _CLAWDI_AGENT_PLUGIN_INSTALLATION_ID
+    ]
+    if len(reserved) != 1 or reserved[0][0] != _CLAWDI_AGENT_PLUGIN_PACKAGE:
         return False
+    installation = reserved[0][1]
     source = installation.source
     return (
         installation.installationId == _CLAWDI_AGENT_PLUGIN_INSTALLATION_ID
@@ -590,6 +596,18 @@ def _is_first_party_clawdi_agent_plugin(
         and source.url == _CLAWDI_AGENT_PLUGIN_STORE_URL
         and source.path == _CLAWDI_AGENT_PLUGIN_STORE_PATH
         and installation.contentDigest == _CLAWDI_AGENT_PLUGIN_CONTENT_DIGEST
+    )
+
+
+def _has_reserved_clawdi_agent_plugin(
+    agent_plugins: HostedAgentPlugins | None,
+) -> bool:
+    return agent_plugins is not None and (
+        _CLAWDI_AGENT_PLUGIN_PACKAGE in agent_plugins.installations
+        or any(
+            installation.installationId == _CLAWDI_AGENT_PLUGIN_INSTALLATION_ID
+            for installation in agent_plugins.installations.values()
+        )
     )
 
 
@@ -639,6 +657,7 @@ def _has_first_party_clawdi_agent_plugin_egress_profile(
         profile
         for profile in (egress_profiles.profiles or [])
         if profile.id == _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID
+        or profile.owner == _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER
     ]
     if len(matching_profiles) != 1:
         return False
@@ -679,6 +698,16 @@ def _has_first_party_clawdi_agent_plugin_egress_profile(
         "priority": 60,
         "owner": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER,
     }
+
+
+def _has_reserved_clawdi_agent_plugin_egress_profile(
+    egress_profiles: HostedEgressProfiles | None,
+) -> bool:
+    return egress_profiles is not None and any(
+        profile.id == _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID
+        or profile.owner == _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER
+        for profile in (egress_profiles.profiles or [])
+    )
 
 
 def render_runtime_source(
@@ -776,13 +805,20 @@ def render_runtime_source(
         signing_key=vault_key_identity,
     )
     runtime_name, runtime = _runtime(state.runtimes)
-    first_party_clawdi_agent_plugin = (
-        project_agent_plugins
-        and _is_first_party_clawdi_agent_plugin(agent_plugins)
-        and _has_first_party_clawdi_agent_plugin_egress_profile(egress_profiles)
+    first_party_clawdi_agent_plugin = _is_first_party_clawdi_agent_plugin(agent_plugins)
+    first_party_clawdi_agent_plugin_egress = _has_first_party_clawdi_agent_plugin_egress_profile(
+        egress_profiles
     )
+    if (
+        _has_reserved_clawdi_agent_plugin(agent_plugins)
+        or _has_reserved_clawdi_agent_plugin_egress_profile(egress_profiles)
+    ) and not (first_party_clawdi_agent_plugin and first_party_clawdi_agent_plugin_egress):
+        raise RuntimeSourceError(
+            "Hosted first-party Clawdi Agent Plugin state is incomplete or invalid"
+        )
     native_clawdi_agent_plugin = bool(
-        first_party_clawdi_agent_plugin
+        project_agent_plugins
+        and first_party_clawdi_agent_plugin
         and agent_plugins is not None
         and _matches_agent_plugin_capability_proof(
             agent_plugin_capability_proof,
@@ -792,6 +828,22 @@ def render_runtime_source(
     )
     if native_clawdi_agent_plugin:
         mcp, skills = _without_legacy_clawdi_components(mcp, skills)
+    projected_agent_plugins = agent_plugins
+    if (
+        project_agent_plugins
+        and first_party_clawdi_agent_plugin
+        and not native_clawdi_agent_plugin
+        and agent_plugins is not None
+    ):
+        projected_agent_plugins = agent_plugins.model_copy(
+            update={
+                "installations": {
+                    _CLAWDI_AGENT_PLUGIN_PACKAGE: agent_plugins.installations[
+                        _CLAWDI_AGENT_PLUGIN_PACKAGE
+                    ]
+                }
+            }
+        )
     try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:
@@ -1029,9 +1081,9 @@ def render_runtime_source(
         manifest["mcp"] = mcp
     if skills is not None:
         manifest["skills"] = skills
-    if project_agent_plugins and agent_plugins is not None:
-        manifest["agentPlugins"] = agent_plugins.model_dump(mode="json")
-    if first_party_clawdi_agent_plugin and not native_clawdi_agent_plugin:
+    if project_agent_plugins and projected_agent_plugins is not None:
+        manifest["agentPlugins"] = projected_agent_plugins.model_dump(mode="json")
+    if project_agent_plugins and first_party_clawdi_agent_plugin and not native_clawdi_agent_plugin:
         manifest["agentPluginCapabilityProbe"] = {"installations": [_CLAWDI_AGENT_PLUGIN_PACKAGE]}
     if tool_projection:
         manifest["tools"] = tool_projection

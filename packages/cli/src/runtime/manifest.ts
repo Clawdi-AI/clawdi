@@ -95,6 +95,7 @@ import {
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
 import {
+	HostedAgentPluginCapabilityUnsupportedError,
 	type HostedAgentPluginBehavioralEvidence,
 	type HostedAgentPluginCommandRunner,
 	type HostedAgentPluginCommands,
@@ -372,11 +373,7 @@ export function planHostedAgentPluginConvergence(input: {
 			evidence: null,
 		};
 	} catch (error) {
-		if (
-			!probeInstallations ||
-			!(error instanceof Error) ||
-			error.message !== AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR
-		) {
+		if (!probeInstallations || !(error instanceof HostedAgentPluginCapabilityUnsupportedError)) {
 			throw error;
 		}
 		return { transaction: null, evidence: null };
