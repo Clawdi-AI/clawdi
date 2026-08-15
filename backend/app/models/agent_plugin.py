@@ -46,12 +46,6 @@ class PluginCatalogSnapshot(Base):
 class PluginCatalogEntry(Base):
     __tablename__ = "plugin_catalog_entries"
     __table_args__ = (
-        UniqueConstraint(
-            "snapshot_revision",
-            "name",
-            "version",
-            name="uq_plugin_catalog_entries_revision_name_version",
-        ),
         CheckConstraint(
             "name ~ '^[a-z0-9][a-z0-9.-]{0,63}$' AND name NOT LIKE '%--%' AND name NOT LIKE '%..%'",
             name="ck_plugin_catalog_entries_name",
@@ -62,15 +56,14 @@ class PluginCatalogEntry(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     snapshot_revision: Mapped[str] = mapped_column(
         String(40),
         ForeignKey("plugin_catalog_snapshots.revision", ondelete="CASCADE"),
+        primary_key=True,
         nullable=False,
-        index=True,
     )
-    name: Mapped[str] = mapped_column(String(64), nullable=False)
-    version: Mapped[str] = mapped_column(String(256), nullable=False)
+    name: Mapped[str] = mapped_column(String(64), primary_key=True, nullable=False)
+    version: Mapped[str] = mapped_column(String(256), primary_key=True, nullable=False)
     agent_plugins_schema: Mapped[str] = mapped_column(String(200), nullable=False)
     source_path: Mapped[str] = mapped_column(String(500), nullable=False)
     content_digest: Mapped[str] = mapped_column(String(79), nullable=False)
@@ -96,7 +89,6 @@ class PluginCatalogSyncState(Base):
         ForeignKey("plugin_catalog_snapshots.revision", ondelete="RESTRICT"),
     )
     head_etag: Mapped[str | None] = mapped_column(String(512))
-    catalog_etag: Mapped[str | None] = mapped_column(String(512))
     failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

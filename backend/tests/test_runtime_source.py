@@ -638,7 +638,7 @@ def test_runtime_source_switches_only_clawdi_components_after_native_proof(
         "clawdi",
         "workspace-helper",
     }
-    assert old_client.manifest["egressProfiles"]["profiles"][0]["id"] == "first-party-clawdi-mcp"
+    assert "egressProfiles" not in old_client.manifest
     assert probe_client.manifest["agentPlugins"] == desired
     assert probe_client.manifest["agentPluginCapabilityProbe"] == {"installations": ["clawdi"]}
     assert "clawdi" in probe_client.manifest["mcp"]["servers"]

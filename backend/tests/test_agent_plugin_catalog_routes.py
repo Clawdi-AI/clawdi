@@ -104,7 +104,7 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     assert created.json()["convergence"] == "not_observed"
     installation_id = created.json()["installation_id"]
     await db_session.refresh(state)
-    assert state.apply_generation == 2
+    assert state.apply_generation is None
 
     row = await db_session.scalar(
         select(AgentPluginInstallation).where(
@@ -127,7 +127,7 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     assert repeated.status_code == 202, repeated.text
     assert repeated.json()["installation_id"] == installation_id
     await db_session.refresh(state)
-    assert state.apply_generation == 2
+    assert state.apply_generation is None
 
     second_revision = await _activate_catalog(
         db_session,
@@ -146,19 +146,19 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     assert updated.json()["installation_id"] == installation_id
     assert updated.json()["catalog_revision"] == second_revision
     await db_session.refresh(state)
-    assert state.apply_generation == 3
+    assert state.apply_generation is None
 
     removed = await client.delete(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
     assert removed.status_code == 202, removed.text
     assert removed.json()["desired_state"] == "absent"
     assert removed.json()["convergence"] == "not_observed"
     await db_session.refresh(state)
-    assert state.apply_generation == 4
+    assert state.apply_generation is None
 
     repeated_remove = await client.delete(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
     assert repeated_remove.status_code == 202, repeated_remove.text
     await db_session.refresh(state)
-    assert state.apply_generation == 4
+    assert state.apply_generation is None
 
 
 @pytest.mark.asyncio

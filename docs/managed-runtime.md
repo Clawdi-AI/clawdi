@@ -791,8 +791,9 @@ legacy Clawdi Skill/MCP. A new CLI sends
 `X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1`. Until it has local
 positive proof, Cloud returns the immutable first-party `agentPlugins` intent
 plus `agentPluginCapabilityProbe`, while retaining legacy components. The CLI
-receives the same backend-derived first-party egress profile in old-client,
-probe, and native variants; no producer supplies that policy. It then
+receives the backend-derived first-party egress profile in probe and native
+variants; incapable old clients receive neither the plugin nor its profile.
+No producer supplies that policy. It then
 downloads and validates the package and probes the selected native runtime in
 an isolated HOME without changing the live plugin state.
 

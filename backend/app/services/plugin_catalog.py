@@ -381,7 +381,6 @@ class PluginCatalogSyncWorker:
             previous = state.current_revision
             state.current_revision = revision
             state.head_etag = head_etag
-            state.catalog_etag = catalog_etag
             state.failure_count = 0
             state.last_success_at = now
             state.next_sync_at = now + self._interval

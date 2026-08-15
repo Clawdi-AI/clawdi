@@ -58,7 +58,6 @@ def upgrade() -> None:
     )
     op.create_table(
         "plugin_catalog_entries",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("snapshot_revision", sa.String(length=40), nullable=False),
         sa.Column("name", sa.String(length=64), nullable=False),
         sa.Column("version", sa.String(length=256), nullable=False),
@@ -81,25 +80,17 @@ def upgrade() -> None:
             ["plugin_catalog_snapshots.revision"],
             ondelete="CASCADE",
         ),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
+        sa.PrimaryKeyConstraint(
             "snapshot_revision",
             "name",
             "version",
-            name="uq_plugin_catalog_entries_revision_name_version",
         ),
-    )
-    op.create_index(
-        "ix_plugin_catalog_entries_snapshot_revision",
-        "plugin_catalog_entries",
-        ["snapshot_revision"],
     )
     op.create_table(
         "plugin_catalog_sync_state",
         sa.Column("id", sa.SmallInteger(), nullable=False),
         sa.Column("current_revision", sa.String(length=40), nullable=True),
         sa.Column("head_etag", sa.String(length=512), nullable=True),
-        sa.Column("catalog_etag", sa.String(length=512), nullable=True),
         sa.Column("failure_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_success_at", sa.DateTime(timezone=True), nullable=True),
@@ -199,9 +190,5 @@ def downgrade() -> None:
     )
     op.drop_table("agent_plugin_installations")
     op.drop_table("plugin_catalog_sync_state")
-    op.drop_index(
-        "ix_plugin_catalog_entries_snapshot_revision",
-        table_name="plugin_catalog_entries",
-    )
     op.drop_table("plugin_catalog_entries")
     op.drop_table("plugin_catalog_snapshots")

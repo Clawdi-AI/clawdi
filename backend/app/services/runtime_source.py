@@ -243,19 +243,30 @@ async def load_runtime_source_batch(
                 AgentEnvironment,
                 HostedRuntimeState,
                 HostedRuntimeConfigObservation,
+                AgentPluginInstallation,
             )
             .outerjoin(HostedRuntimeState, HostedRuntimeState.environment_id == AgentEnvironment.id)
             .outerjoin(
                 HostedRuntimeConfigObservation,
                 HostedRuntimeConfigObservation.environment_id == AgentEnvironment.id,
             )
+            .outerjoin(
+                AgentPluginInstallation,
+                AgentPluginInstallation.environment_id == AgentEnvironment.id,
+            )
             .where(*env_filters)
+            .order_by(AgentEnvironment.id, AgentPluginInstallation.plugin_name)
         )
     ).all()
-    rows = {
-        env.id: RuntimeSourceRow(environment=env, state=state, observation=observation)
-        for env, state, observation in env_rows
-    }
+    rows: dict[UUID, RuntimeSourceRow] = {}
+    agent_plugins: dict[UUID, list[AgentPluginInstallation]] = {}
+    for env, state, observation, installation in env_rows:
+        rows.setdefault(
+            env.id,
+            RuntimeSourceRow(environment=env, state=state, observation=observation),
+        )
+        if installation is not None:
+            agent_plugins.setdefault(env.id, []).append(installation)
     user_ids = sorted({row.environment.user_id for row in rows.values()}, key=str)
     if not user_ids:
         return RuntimeSourceBatch(rows=rows, providers={}, auth_payloads={}, channels={})
@@ -367,21 +378,6 @@ async def load_runtime_source_batch(
     runtime_secrets: dict[UUID, list[HostedRuntimeSecret]] = {}
     for secret in runtime_secret_rows:
         runtime_secrets.setdefault(secret.environment_id, []).append(secret)
-    agent_plugin_rows = list(
-        (
-            await db.scalars(
-                select(AgentPluginInstallation)
-                .where(AgentPluginInstallation.environment_id.in_(list(rows)))
-                .order_by(
-                    AgentPluginInstallation.environment_id,
-                    AgentPluginInstallation.plugin_name,
-                )
-            )
-        ).all()
-    )
-    agent_plugins: dict[UUID, list[AgentPluginInstallation]] = {}
-    for installation in agent_plugin_rows:
-        agent_plugins.setdefault(installation.environment_id, []).append(installation)
     membership = ProjectMembership.__table__.alias("runtime_project_membership")
     project_skill_rows = (
         await db.execute(
@@ -838,7 +834,7 @@ def render_runtime_source(
         raise RuntimeSourceError("Clawdi first-party Agent Plugin desired state is invalid")
     if _has_reserved_clawdi_agent_plugin_egress_profile(egress_profiles):
         raise RuntimeSourceError("Hosted runtime state uses a Clawdi-reserved egress profile")
-    if first_party_clawdi_agent_plugin:
+    if project_agent_plugins and first_party_clawdi_agent_plugin:
         profiles = list(egress_profiles.profiles or []) if egress_profiles is not None else []
         profiles.append(
             _first_party_clawdi_agent_plugin_egress_profile(public_api_url=public_api_url)

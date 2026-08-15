@@ -29,12 +29,9 @@ from app.services.plugin_catalog import (
     load_current_catalog,
     load_current_catalog_entry,
 )
-from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.sync_events import queue_runtime_manifest_changed
 
 router = APIRouter(tags=["plugin-catalog"])
-
-_MAX_APPLY_GENERATION = 2_147_483_647
 
 
 def _desired_response(row: AgentPluginInstallation) -> AgentPluginDesiredStateResponse:
@@ -47,19 +44,6 @@ def _desired_response(row: AgentPluginInstallation) -> AgentPluginDesiredStateRe
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
-
-
-def _bump_apply_generation(state: HostedRuntimeState) -> None:
-    current = resolve_runtime_apply_generation(
-        generation=state.generation,
-        apply_generation=state.apply_generation,
-    )
-    if current >= _MAX_APPLY_GENERATION:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {"code": "apply_generation_exhausted"},
-        )
-    state.apply_generation = current + 1
 
 
 def _selected_runtime(state: HostedRuntimeState) -> str:
@@ -264,7 +248,6 @@ async def put_agent_plugin_desired_state(
         row.source_path = entry.source_path
         row.content_digest = entry.content_digest
     if changed:
-        _bump_apply_generation(state)
         queue_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.flush()
     record_control_plane_audit(
@@ -320,15 +303,8 @@ async def delete_agent_plugin_desired_state(
     changed = row is not None
     resource_id = str(row.id) if row is not None else None
     if row is not None:
-        state = await db.scalar(
-            select(HostedRuntimeState)
-            .where(HostedRuntimeState.environment_id == agent_id)
-            .with_for_update()
-        )
         await db.delete(row)
-        if state is not None:
-            _bump_apply_generation(state)
-            queue_runtime_manifest_changed(db, auth.user_id, agent_id)
+        queue_runtime_manifest_changed(db, auth.user_id, agent_id)
     record_control_plane_audit(
         db,
         actor_type="user",

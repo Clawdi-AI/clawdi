@@ -44,7 +44,6 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
     schema = f"plugin_catalog_migration_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
     installation_id = uuid.uuid4()
-    entry_id = uuid.uuid4()
     revision = "a" * 40
 
     def run(conn: sa.Connection) -> None:
@@ -85,10 +84,10 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
                     "(revision, schema_version, entry_count, fetched_at) "
                     "VALUES (:revision, 1, 1, now());"
                     "INSERT INTO plugin_catalog_entries "
-                    "(id, snapshot_revision, name, version, agent_plugins_schema, "
+                    "(snapshot_revision, name, version, agent_plugins_schema, "
                     "source_path, content_digest, metadata, has_configuration, "
                     "compatible_runtimes) VALUES "
-                    "(CAST(:entry_id AS uuid), :revision, 'clawdi', '1.0.0', :schema_uri, "
+                    "(:revision, 'clawdi', '1.0.0', :schema_uri, "
                     "'v2/plugins/clawdi', :digest, '{}'::jsonb, false, '[\"openclaw\"]'::jsonb);"
                     "INSERT INTO agent_plugin_installations "
                     "(id, environment_id, plugin_name, catalog_revision, version, "
@@ -98,7 +97,6 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
                 ),
                 {
                     "revision": revision,
-                    "entry_id": str(entry_id),
                     "installation_id": str(installation_id),
                     "environment_id": str(environment_id),
                     "schema_uri": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",

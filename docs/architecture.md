@@ -90,9 +90,10 @@ failure, and never makes a product or runtime request wait on GitHub.
 Catalog snapshots and per-Agent desired installations are separate relational
 state. Each desired row pins catalog revision, exact version, normalized
 repository path, `sha256-tree-v1` digest, schema URI, and a stable opaque
-backend UUID. Catalog refreshes do not upgrade existing rows. Mutations advance
-the Hosted v2 Apply generation and emit the normal runtime-manifest
-invalidation. This release supports only Agents with the existing Hosted v2
+backend UUID. Catalog refreshes do not upgrade existing rows. Mutations emit
+the normal runtime-manifest invalidation; the changed manifest receives a new
+`sourceRevision` without taking ownership of Hosted's Apply generation. This
+release supports only Agents with the existing Hosted v2
 runtime-state/bundle path; it does not install plugins for self-managed daemon
 Agents.
 

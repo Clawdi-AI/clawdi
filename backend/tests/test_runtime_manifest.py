@@ -4237,10 +4237,7 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
         "clawdi",
         "workspace-helper",
     }
-    assert (
-        old_client.json()["manifest"]["egressProfiles"]["profiles"][0]["id"]
-        == "first-party-clawdi-mcp"
-    )
+    assert "egressProfiles" not in old_client.json()["manifest"]
     assert old_client.json()["manifest"]["clawdiCli"]["packageSpec"] == state.cli_package_spec
     assert capable_client.status_code == 200, capable_client.text
     assert capable_client.json()["manifest"]["agentPlugins"] == desired_plugins
