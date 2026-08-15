@@ -856,17 +856,16 @@ for `mcp.schema.json`.
 
 Upstream capability evidence was refreshed on 2026-08-15. OpenClaw main was
 audited at
-[`2276dca1d349c36bf3bdc4768e58301200fbde46`](https://github.com/openclaw/openclaw/commit/2276dca1d349c36bf3bdc4768e58301200fbde46),
-16 commits ahead of the prior
-[`a2d1b0c03bec383d927657140aa8f1254ff1b370`](https://github.com/openclaw/openclaw/commit/a2d1b0c03bec383d927657140aa8f1254ff1b370)
-audit. The compare file list contains plugin-sdk documentation and test-fixture
-changes, but does not touch the Agent Plugins loader, native plugin lifecycle,
-or inspect contract.
+[`160e368a8902b1c92027ddbe79d2e2a86873f19d`](https://github.com/openclaw/openclaw/commit/160e368a8902b1c92027ddbe79d2e2a86873f19d).
+Since the prior `2276dca1` audit, the Agent Plugins loader and component contract
+have not changed, and `src/plugins/status.ts` is byte-identical. The intervening
+native plugin uninstall fix removes isolated npm plugin files but does not alter
+the portable package or inspect contract.
 Agent Plugins support landed in
 [`f4387b7a5effd63fe2c0f05495175b9eacd12cec`](https://github.com/openclaw/openclaw/commit/f4387b7a5effd63fe2c0f05495175b9eacd12cec):
 that exact native implementation loads Skills, expands `PLUGIN_ROOT` and
 `PLUGIN_DATA`, and accepts stdio, streamable-http, and SSE MCP entries. Its
-[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/2276dca1d349c36bf3bdc4768e58301200fbde46/src/plugins/status.ts)
+[`plugins inspect --json` report](https://github.com/openclaw/openclaw/blob/160e368a8902b1c92027ddbe79d2e2a86873f19d/src/plugins/status.ts)
 exposes every MCP server name, unsupported state, and plugin diagnostics.
 Clawdi requires the reported names to equal the already-validated `mcp.json`
 names and requires no unsupported entry or diagnostic during every isolated and
@@ -881,19 +880,20 @@ which predates Agent Plugins support. Clawdi passes no `--version` to the
 official installer; the reviewed installer defaults to npm `latest`. A runtime
 at the current release therefore fails the native package probe instead of
 silently accepting components it cannot load. A future compatible release can
-pass without a Clawdi version-table change. The latest listed GitHub prerelease
-is [`v2026.7.2-beta.7`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.2-beta.7),
-whose annotated tag object `3ddd783e3f2465f5221ab27e8849eb165c61b498`
-points to `dabe1915362e20c25704af91612a32a8f4c96e83`. The separate annotated Git
-tag and npm package tag `v2026.8.1-beta.1` is not a GitHub Release; its tag
-object `9ab21e0b1ab3cf3845ec47f7b7b8803255a8af80` points to
-`ff8a3fe9d03eff4a70f5464714c3a389b06bfec8`. Inspection of the bundle source
-at all three tag commits, and of the stable and beta npm packages, finds only
-the older Codex, Claude, and Cursor bundle path rather than the current Agent
-Plugins implementation. Release numbering is therefore not capability proof.
+pass without a Clawdi version-table change. The latest GitHub prerelease and npm
+`beta` are
+[`v2026.8.1-beta.2`](https://github.com/openclaw/openclaw/releases/tag/v2026.8.1-beta.2):
+annotated tag object `b53e197f37cf1e42887c91a3003081bd74a17a34`
+points to `8f382a202ff1e15833394b481615dcdda99b04d7`, which descends the Agent Plugins
+implementation and whose npm artifact contains the agent-bundle MCP runtime.
+Clawdi still requires the same native lifecycle and inspect proof rather than
+treating the prerelease label as capability evidence.
 
 Hermes main was audited at
-[`cb47f59ffa1056732c0a5194d2a1847dc64c2c37`](https://github.com/NousResearch/hermes-agent/commit/cb47f59ffa1056732c0a5194d2a1847dc64c2c37).
+[`3f9150e5c4ca23ae7f060c3e4bf6d4bedd859f34`](https://github.com/NousResearch/hermes-agent/commit/3f9150e5c4ca23ae7f060c3e4bf6d4bedd859f34).
+The delta from the prior `cb47f59` audit includes a TUI-launch optimization that
+skips duplicate launcher-side discovery, but does not change the portable
+package, MCP translation, or `hermes -z` consumer contract.
 The latest release is
 [`v2026.8.13`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.13),
 published 2026-08-13 as package `0.20.1`; annotated tag object
@@ -967,7 +967,7 @@ task-local directory. Hermes documents that variable as the packaged-install
 bundled-root override at both the
 [`v2026.8.13` source](https://github.com/NousResearch/hermes-agent/blob/f80f453ae0679347e38abc917c7f94f717bf96c5/hermes_cli/plugins.py#L75-L86)
 and the
-[`cb47f59` main audit](https://github.com/NousResearch/hermes-agent/blob/cb47f59ffa1056732c0a5194d2a1847dc64c2c37/hermes_cli/plugins.py#L75-L86).
+[`3f9150e5` main audit](https://github.com/NousResearch/hermes-agent/blob/3f9150e5c4ca23ae7f060c3e4bf6d4bedd859f34/hermes_cli/plugins.py#L75-L86).
 Its scanner still reads user portable packages independently from
 `HERMES_HOME/plugins`; native install/enable, portable translation, MCP
 handshake, literal-header forwarding, tool execution, and result delivery all
