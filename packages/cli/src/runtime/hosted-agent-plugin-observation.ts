@@ -13,8 +13,7 @@ import {
 import type { RuntimePaths } from "./paths";
 
 type AgentPluginObservation = components["schemas"]["HostedRuntimeObservedAgentPluginV1"];
-export type AgentPluginsObservation =
-	components["schemas"]["HostedRuntimeObservedAgentPluginsV1"];
+export type AgentPluginsObservation = components["schemas"]["HostedRuntimeObservedAgentPluginsV1"];
 
 const observationErrorCodeSchema = z.enum([
 	"reconcile_failed",
@@ -22,37 +21,34 @@ const observationErrorCodeSchema = z.enum([
 	"receipt_unreadable",
 	"receipt_mismatch",
 ]);
-	const agentPluginObservationSchema: z.ZodType<AgentPluginObservation> =
-		hostedAgentPluginInstallationSchema
-			.pick({ version: true, contentDigest: true })
-			.extend({
-				installationId: z.uuid().max(200),
-				name: agentPluginNameSchema,
-				sourceRevision: z.string().regex(/^[0-9a-f]{64}$/),
-				generation: z.number().int().positive().safe(),
-				status: z.enum(["installed", "failed", "unknown"]),
-				errorCode: observationErrorCodeSchema.nullable().optional(),
-			})
-			.strict()
-			.superRefine((observation, ctx) => {
-				if (observation.status === "installed" && observation.errorCode != null) {
-					ctx.addIssue({ code: "custom", message: "installed observation cannot include errorCode" });
-				}
-				if (observation.status === "failed" && observation.errorCode !== "reconcile_failed") {
-					ctx.addIssue({ code: "custom", message: "failed observation requires reconcile_failed" });
-				}
-				if (
-					observation.status === "unknown" &&
-					!(["receipt_missing", "receipt_unreadable", "receipt_mismatch"] as const).includes(
-						observation.errorCode as
-							| "receipt_missing"
-							| "receipt_unreadable"
-							| "receipt_mismatch",
-					)
-				) {
-					ctx.addIssue({ code: "custom", message: "unknown observation requires a receipt error" });
-				}
-			});
+const agentPluginObservationSchema: z.ZodType<AgentPluginObservation> =
+	hostedAgentPluginInstallationSchema
+		.pick({ version: true, contentDigest: true })
+		.extend({
+			installationId: z.uuid().max(200),
+			name: agentPluginNameSchema,
+			sourceRevision: z.string().regex(/^[0-9a-f]{64}$/),
+			generation: z.number().int().positive().safe(),
+			status: z.enum(["installed", "failed", "unknown"]),
+			errorCode: observationErrorCodeSchema.nullable().optional(),
+		})
+		.strict()
+		.superRefine((observation, ctx) => {
+			if (observation.status === "installed" && observation.errorCode != null) {
+				ctx.addIssue({ code: "custom", message: "installed observation cannot include errorCode" });
+			}
+			if (observation.status === "failed" && observation.errorCode !== "reconcile_failed") {
+				ctx.addIssue({ code: "custom", message: "failed observation requires reconcile_failed" });
+			}
+			if (
+				observation.status === "unknown" &&
+				!(["receipt_missing", "receipt_unreadable", "receipt_mismatch"] as const).includes(
+					observation.errorCode as "receipt_missing" | "receipt_unreadable" | "receipt_mismatch",
+				)
+			) {
+				ctx.addIssue({ code: "custom", message: "unknown observation requires a receipt error" });
+			}
+		});
 
 export const agentPluginsObservationSchema: z.ZodType<AgentPluginsObservation> = z
 	.object({

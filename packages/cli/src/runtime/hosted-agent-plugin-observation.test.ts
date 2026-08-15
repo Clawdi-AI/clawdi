@@ -3,11 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RuntimeAppliedState } from "./applied-state";
+import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import {
 	hostedAgentPluginReceiptsPath,
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
-import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 
 const roots: string[] = [];

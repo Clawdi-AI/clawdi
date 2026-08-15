@@ -10,8 +10,8 @@ import {
 	runtimeAppliedApplyIdentity,
 } from "./applied-state";
 import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
-import { assertRuntimeBundleAuthority } from "./manifest-source";
 import { agentPluginsObservationSchema } from "./hosted-agent-plugin-observation";
+import { assertRuntimeBundleAuthority } from "./manifest-source";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { writeRuntimePlatformFileAtomic } from "./state";

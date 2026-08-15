@@ -51,6 +51,7 @@ import {
 	clearHostedAgentPluginCapabilityProofUnlessOwned,
 	writeHostedAgentPluginCapabilityProof,
 } from "../runtime/hosted-agent-plugin-capability";
+import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
 import {
 	cleanupHostedAgentPluginTransientArchives,
 	gcHostedAgentPluginArchives,
@@ -58,7 +59,6 @@ import {
 	prepareHostedAgentPluginPackages,
 	readHostedAgentPluginReceipt,
 } from "../runtime/hosted-agent-plugin-package";
-import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
 import type { HostedAgentPluginCommandRunner } from "../runtime/hosted-agent-plugin-runtime";
 import {
 	assertHostedRuntimeContract,
@@ -2398,11 +2398,9 @@ async function applyRuntimeDesiredState(
 				clearHostedAgentPluginCapabilityProof(paths);
 			}
 			try {
-				preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(
-					load.manifest,
-					paths,
-					{ offline: load.offline },
-				);
+				preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(load.manifest, paths, {
+					offline: load.offline,
+				});
 			} catch (error) {
 				throw new RuntimeAgentPluginReconcileError(
 					Object.keys(load.manifest.projection?.agentPlugins?.installations ?? {}).sort(),
