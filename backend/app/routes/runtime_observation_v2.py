@@ -573,6 +573,8 @@ async def retire_runtime_environment_endpoint(
                 outcome="transitioned",
                 details={
                     "retirement_id": body.retirement_id,
+                    "requested_retirement_id": body.retirement_id,
+                    "authoritative_retirement_id": receipt.retirement_id,
                     "retirement_receipt_id": str(binding.retirement_receipt_id),
                     "previous_state": "active",
                     "new_state": "retired",
@@ -582,7 +584,7 @@ async def retire_runtime_environment_endpoint(
                     "final_session_high_water_marks": result.final_session_high_waters,
                 },
             )
-        else:
+        elif receipt.retirement_id == body.retirement_id:
             _record_admin_audit(
                 db,
                 action="runtime_environment.retire_replay",
@@ -592,6 +594,22 @@ async def retire_runtime_environment_endpoint(
                 outcome="replayed",
                 details={
                     "retirement_id": body.retirement_id,
+                    "requested_retirement_id": body.retirement_id,
+                    "authoritative_retirement_id": receipt.retirement_id,
+                    "retirement_receipt_id": str(binding.retirement_receipt_id),
+                },
+            )
+        else:
+            _record_admin_audit(
+                db,
+                action="runtime_environment.retire_adopted",
+                target_user_id=binding_owner_id,
+                environment_id=environment_id,
+                deployment_id=body.expected_deployment_binding,
+                outcome="adopted",
+                details={
+                    "requested_retirement_id": body.retirement_id,
+                    "authoritative_retirement_id": receipt.retirement_id,
                     "retirement_receipt_id": str(binding.retirement_receipt_id),
                 },
             )
@@ -617,7 +635,10 @@ async def retire_runtime_environment_endpoint(
                 environment_id=environment_id,
                 deployment_id=body.expected_deployment_binding,
                 outcome=exc.code,
-                details={"retirement_id": body.retirement_id},
+                details={
+                    "retirement_id": body.retirement_id,
+                    "requested_retirement_id": body.retirement_id,
+                },
             )
             await db.commit()
         except Exception:
