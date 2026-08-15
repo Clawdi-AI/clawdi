@@ -67,6 +67,14 @@ def test_settings_redacts_whatsapp_sidecar_service_token():
     assert "sidecar-secret" not in repr(settings)
 
 
+def test_plugin_catalog_sync_is_deployment_opt_in(monkeypatch):
+    monkeypatch.delenv("PLUGIN_CATALOG_SYNC_ENABLED", raising=False)
+    assert Settings(_env_file=None).plugin_catalog_sync_enabled is False
+
+    monkeypatch.setenv("PLUGIN_CATALOG_SYNC_ENABLED", "true")
+    assert Settings(_env_file=None).plugin_catalog_sync_enabled is True
+
+
 def test_settings_canonicalizes_browser_clerk_issuer():
     settings = Settings(_env_file=None, clerk_jwt_issuer="  https://Clerk.Example.test/ ")
 

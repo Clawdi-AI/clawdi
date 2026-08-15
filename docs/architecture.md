@@ -86,6 +86,9 @@ source authority, credentials, MCP connection details, or secret bindings.
 Clawdi maps each accepted entry to the canonical Agent Plugins 1.0.0 schema
 and fixed trusted repository, retains last-known-good snapshots on upstream
 failure, and never makes a product or runtime request wait on GitHub.
+Catalog ingestion is deployment opt-in through
+`PLUGIN_CATALOG_SYNC_ENABLED=true`; Cloud and preview deployments enable it,
+while local and self-hosted deployments do not contact GitHub by default.
 
 Catalog snapshots and per-Agent desired installations are separate relational
 state. Each desired row pins catalog revision, exact version, normalized

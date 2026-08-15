@@ -164,9 +164,9 @@ class Settings(BaseSettings):
     # e.g. https://api.clawdi.example.
     public_api_url: str = "http://localhost:8000"
 
-    # Store catalog sync is an asynchronous, last-known-good cache fill. API
-    # requests only read PostgreSQL and never wait on GitHub.
-    plugin_catalog_sync_enabled: bool = True
+    # Store catalog sync is a deployment opt-in asynchronous, last-known-good
+    # cache fill. API requests only read PostgreSQL and never wait on GitHub.
+    plugin_catalog_sync_enabled: bool = False
     plugin_catalog_sync_interval_seconds: Annotated[int, Field(ge=30, le=86_400)] = 300
     plugin_catalog_sync_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 10.0
 
