@@ -66,6 +66,8 @@ dashboard should not grow public v1/v2 product concepts.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted
   gate (`VITE_CLAWDI_HOSTED === "true"`) plus dynamic import).
+- `mava.ts` — Hosted-only authenticated-user identity bridge for the Mava SDK
+  loaded and configured by the hosted deployment.
 
 Connector UI does not live here. Hosted and connected sessions both
 read connectors from the shared `/v1/connectors` route.
