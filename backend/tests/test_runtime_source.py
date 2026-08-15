@@ -84,7 +84,11 @@ def _clawdi_agent_plugins(
     }
 
 
-def _clawdi_agent_plugin_egress_profiles(*, marker: str = "clawdi-cloud") -> dict[str, object]:
+def _clawdi_agent_plugin_egress_profiles(
+    *,
+    marker: str = "clawdi-cloud",
+    upstream_base_url: str = "https://cloud.test",
+) -> dict[str, object]:
     return {
         "profiles": [
             {
@@ -104,7 +108,7 @@ def _clawdi_agent_plugin_egress_profiles(*, marker: str = "clawdi-cloud") -> dic
                     "query": {},
                 },
                 "rewrite": {
-                    "upstreamBaseUrl": "https://staging.cloud-api.clawdi.ai",
+                    "upstreamBaseUrl": upstream_base_url,
                     "preservePath": True,
                     "setHeaders": {
                         "Authorization": {
@@ -748,7 +752,14 @@ def test_runtime_source_preserves_generic_plugin_semantics() -> None:
 
 @pytest.mark.parametrize(
     "egress_profiles",
-    [None, _clawdi_agent_plugin_egress_profiles(marker="drift")],
+    [
+        None,
+        _clawdi_agent_plugin_egress_profiles(marker="drift"),
+        _clawdi_agent_plugin_egress_profiles(
+            upstream_base_url="https://staging.cloud-api.clawdi.ai"
+        ),
+    ],
+    ids=["missing", "marker-drift", "origin-drift"],
 )
 def test_runtime_source_rejects_incomplete_first_party_plugin_egress_state(
     egress_profiles: dict[str, object] | None,

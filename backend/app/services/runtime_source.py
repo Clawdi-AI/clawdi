@@ -650,6 +650,8 @@ def _matches_agent_plugin_capability_proof(
 
 def _has_first_party_clawdi_agent_plugin_egress_profile(
     egress_profiles: HostedEgressProfiles | None,
+    *,
+    public_api_url: str,
 ) -> bool:
     if egress_profiles is None:
         return False
@@ -681,7 +683,7 @@ def _has_first_party_clawdi_agent_plugin_egress_profile(
             "query": {},
         },
         "rewrite": {
-            "upstreamBaseUrl": profile.rewrite.upstreamBaseUrl,
+            "upstreamBaseUrl": public_api_url.rstrip("/"),
             "preservePath": True,
             "setHeaders": {
                 "Authorization": {
@@ -807,7 +809,8 @@ def render_runtime_source(
     runtime_name, runtime = _runtime(state.runtimes)
     first_party_clawdi_agent_plugin = _is_first_party_clawdi_agent_plugin(agent_plugins)
     first_party_clawdi_agent_plugin_egress = _has_first_party_clawdi_agent_plugin_egress_profile(
-        egress_profiles
+        egress_profiles,
+        public_api_url=public_api_url,
     )
     if (
         _has_reserved_clawdi_agent_plugin(agent_plugins)
