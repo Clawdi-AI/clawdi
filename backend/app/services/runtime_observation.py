@@ -31,6 +31,7 @@ from app.models.runtime_observation import (
 )
 from app.models.session import AgentEnvironment
 from app.schemas.runtime_observation import (
+    RuntimeEnvironmentRetirementReceipt,
     RuntimeObservationEventV2,
     RuntimeObservationIngestOutcome,
 )
@@ -597,6 +598,44 @@ async def _load_session_high_waters(
     return _session_high_waters(heads)
 
 
+def _validated_retirement_receipt(
+    fence: V2RuntimeEnvironmentFence,
+) -> dict[str, Any]:
+    try:
+        receipt = RuntimeEnvironmentRetirementReceipt.model_validate_json(
+            json.dumps(fence.retirement_receipt, separators=(",", ":"), ensure_ascii=True),
+            strict=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("persisted runtime retirement receipt is invalid") from exc
+
+    high_waters = {
+        item.boot_session_id: item.sequence for item in receipt.final_session_high_water_marks
+    }
+    if (
+        fence.retirement_id is None
+        or fence.retired_at is None
+        or fence.final_cursor is None
+        or fence.final_session_high_waters is None
+        or not receipt.retirement_id
+        or len(receipt.retirement_id) > 200
+        or receipt.retired_at.tzinfo is None
+        or receipt.retired_at.utcoffset() is None
+        or receipt.environment_reference != str(fence.environment_id)
+        or receipt.expected_deployment_binding != fence.deployment_id
+        or receipt.retirement_id != fence.retirement_id
+        or _utc(receipt.retired_at) != _utc(fence.retired_at)
+        or receipt.final_cursor != fence.final_cursor
+        or len(high_waters) != len(receipt.final_session_high_water_marks)
+        or high_waters != fence.final_session_high_waters
+        or any(
+            not boot_session_id or sequence < 0 for boot_session_id, sequence in high_waters.items()
+        )
+    ):
+        raise RuntimeError("persisted runtime retirement receipt identity is invalid")
+    return receipt.model_dump(mode="json", by_alias=True)
+
+
 async def retire_runtime_environment(
     db: AsyncSession,
     *,
@@ -636,17 +675,11 @@ async def retire_runtime_environment(
             "runtime environment deployment binding does not match",
         )
     if fence.state == RUNTIME_ENVIRONMENT_RETIRED:
-        if fence.retirement_id == retirement_id and isinstance(fence.retirement_receipt, dict):
-            return RuntimeEnvironmentRetirementResult(
-                receipt=fence.retirement_receipt,
-                transitioned=False,
-                final_stream_position=fence.final_stream_position or 0,
-                final_session_high_waters=dict(fence.final_session_high_waters or {}),
-            )
-        raise RuntimeObservationProtocolError(
-            409,
-            "runtime_environment_retirement_conflict",
-            "runtime environment was retired by another obligation",
+        return RuntimeEnvironmentRetirementResult(
+            receipt=_validated_retirement_receipt(fence),
+            transitioned=False,
+            final_stream_position=fence.final_stream_position or 0,
+            final_session_high_waters=dict(fence.final_session_high_waters or {}),
         )
 
     heads = (
