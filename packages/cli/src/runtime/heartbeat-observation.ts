@@ -359,6 +359,7 @@ export class HostedRuntimeHeartbeatSession {
 		const snapshot = readHostedRuntimeObserved(this.paths, {
 			reportedAt: capturedAt,
 			appliedState: this.capturedAppliedState,
+			includeAgentPlugins: true,
 		});
 		if (!snapshot) return null;
 		if (!snapshot.applied) {

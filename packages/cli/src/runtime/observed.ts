@@ -35,6 +35,7 @@ export function readHostedRuntimeObserved(
 	options: {
 		reportedAt?: string;
 		appliedState?: RuntimeAppliedState | null;
+		includeAgentPlugins?: boolean;
 	} = {},
 ): HostedRuntimeObserved | null {
 	if (paths.mode !== "hosted") return null;
@@ -67,7 +68,7 @@ export function readHostedRuntimeObserved(
 	};
 	if (systemd) observed.systemd = systemd;
 	if (providers) observed.providers = providers;
-	if (appliedState) {
+	if (appliedState && options.includeAgentPlugins) {
 		const agentPlugins = readHostedAgentPluginsObservation({
 			paths,
 			applied: appliedState,

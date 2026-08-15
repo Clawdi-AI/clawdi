@@ -9,6 +9,7 @@ import {
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { readHostedRuntimeObserved } from "./observed";
 
 const roots: string[] = [];
 const originalEnv = { ...process.env };
@@ -126,6 +127,24 @@ function failedWatchStatus(desired: ReturnType<typeof installation>, generation:
 }
 
 describe("hosted Agent Plugin heartbeat observation", () => {
+	test("keeps Agent Plugin evidence on the v2 companion heartbeat", () => {
+		const paths = tempPaths();
+		const desired = installation("1.0.0", "d");
+		const applied = appliedState();
+		writeAppliedManifest(paths, desired);
+		writeReceipt(paths, desired);
+
+		expect(readHostedRuntimeObserved(paths, { appliedState: applied })).not.toHaveProperty(
+			"agentPlugins",
+		);
+		expect(
+			readHostedRuntimeObserved(paths, {
+				appliedState: applied,
+				includeAgentPlugins: true,
+			})?.agentPlugins?.installations[0]?.status,
+		).toBe("installed");
+	});
+
 	test("reports only the identity-fenced failed revision instead of an old receipt", () => {
 		const paths = tempPaths();
 		const previous = installation("1.0.0", "d");
