@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	buildHostedPersonProperties,
 	resolveHostedAuthIdentityAction,
-} from "@/components/providers/analytics-provider.logic";
+} from "@/hosted/analytics-identity.logic";
 
 describe("resolveHostedAuthIdentityAction", () => {
 	test("identifies when signed in with a new user id", () => {

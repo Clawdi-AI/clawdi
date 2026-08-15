@@ -28,6 +28,7 @@ function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingE
 
 declare global {
 	interface Window {
+		__mavaLiveChatToggleCalls?: number;
 		__stripeCheckoutClientSecrets?: string[];
 		__stripeCheckoutLoadCalls?: number;
 		__stripeConfirmCalls?: number;
@@ -2915,6 +2916,25 @@ async function _gotoHostedSettingsDialog(page: Page, section: string) {
 	}
 	throw new Error("Settings dialog did not open.");
 }
+
+test("Help opens the hosted Mava live chat", async ({ page }) => {
+	await page.addInitScript(() => {
+		window.__mavaLiveChatToggleCalls = 0;
+		window.MavaWebChatToggle = () => {
+			window.__mavaLiveChatToggleCalls = (window.__mavaLiveChatToggleCalls ?? 0) + 1;
+		};
+	});
+	await stubHostedApi(page);
+	await page.goto("/agents");
+	await page.waitForLoadState("networkidle");
+
+	await page.getByTestId("app-sidebar-help-menu-button").click();
+	await expect(page.getByRole("menuitem", { name: "Docs" })).toBeVisible();
+	const liveChat = page.getByRole("menuitem", { name: "Live chat" });
+	await expect(liveChat).toBeVisible();
+	await liveChat.click();
+	await expect.poll(() => page.evaluate(() => window.__mavaLiveChatToggleCalls)).toBe(1);
+});
 
 test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
 	const sessionRequests: string[] = [];

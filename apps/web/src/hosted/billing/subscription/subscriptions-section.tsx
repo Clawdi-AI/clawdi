@@ -36,7 +36,7 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 function subscriptionAgentHref(subscription: ComputeSubscriptionListItem): string | null {
@@ -312,7 +312,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const subscriptions = useSubscriptions();
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const [showHistory, setShowHistory] = useState(false);
 	const [selectedSubscription, setSelectedSubscription] =
 		useState<ComputeSubscriptionListItem | null>(null);

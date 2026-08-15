@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 type GlobalWalletBalanceView =
 	typeof import("@/hosted/global-wallet-balance").GlobalWalletBalanceView;
 type HeaderWalletBalanceApplicable =
-	typeof import("@/components/header-wallet-balance").headerWalletBalanceApplicable;
+	typeof import("@/hosted/global-wallet-balance").headerWalletBalanceApplicable;
 
 let globalWalletBalanceView: GlobalWalletBalanceView | null = null;
 let walletBalanceApplicable: HeaderWalletBalanceApplicable | null = null;
@@ -15,9 +15,8 @@ beforeAll(async () => {
 	process.env.VITE_CLAWDI_DEPLOY_API_URL = "http://localhost:50021";
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/global-wallet-balance");
-	const headerModule = await import("@/components/header-wallet-balance");
 	globalWalletBalanceView = module.GlobalWalletBalanceView;
-	walletBalanceApplicable = headerModule.headerWalletBalanceApplicable;
+	walletBalanceApplicable = module.headerWalletBalanceApplicable;
 });
 
 describe("global Wallet balance applicability", () => {

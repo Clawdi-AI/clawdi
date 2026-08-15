@@ -4,22 +4,21 @@ import { lazy, type ReactNode, Suspense, useCallback, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
 import { CommandPaletteProvider } from "@/components/command-palette";
-import {
-	HeaderWalletBalanceControl,
-	HeaderWalletBalanceSlot,
-	headerWalletBalanceApplicable,
-} from "@/components/header-wallet-balance";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
 import {
 	type AgentOwnership,
 	AgentOwnershipProvider,
 	EMPTY_AGENT_OWNERSHIP,
 } from "@/lib/agent-ownership";
-import { IS_HOSTED } from "@/lib/hosted";
-import { isDeployApiConfigured } from "@/lib/hosted-api";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import {
+	LOADING_PRODUCT_ACCESS,
+	type ProductAccess,
+	ProductAccessProvider,
+	UNAVAILABLE_PRODUCT_ACCESS,
+} from "@/lib/product-access";
 import { useHydrated } from "@/lib/use-hydrated";
 
 // Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
@@ -30,6 +29,14 @@ import { useHydrated } from "@/lib/use-hydrated";
 // it means adding one.
 const CONTENT_MAX_WIDTH = "max-w-[96rem]";
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+const HostedProductAccessSensor = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/access/product-access-sensor").then((m) => ({
+				default: m.HostedProductAccessSensor,
+			})),
+		)
+	: null;
 
 const HostedAgentOwnershipSensor = IS_HOSTED_BUILD
 	? lazy(() =>
@@ -53,8 +60,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 	const [existingCloudDeploymentCount, setExistingCloudDeploymentCount] = useState<number | null>(
 		null,
 	);
-	const hostedAccess = useHostedProductAccess();
-	const showOwnershipSensor = hydrated && IS_HOSTED && isDeployApiConfigured();
+	const [productAccess, setProductAccess] = useState<ProductAccess>(() =>
+		IS_HOSTED_BUILD ? LOADING_PRODUCT_ACCESS : UNAVAILABLE_PRODUCT_ACCESS,
+	);
+	const showOwnershipSensor = hydrated && Boolean(HostedAgentOwnershipSensor);
 	const updateHostedOwnership = useCallback(
 		(nextOwnership: AgentOwnership | null, nextExistingCloudDeploymentCount: number | null) => {
 			setOwnership(nextOwnership);
@@ -63,20 +72,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 		[],
 	);
 	// `null` strictly means "resolving" (destructive actions wait on it), so
-	// the provider must decide when there is nothing to resolve: OSS builds,
-	// and hosted mirrors without a configured deploy API get resolved empty
-	// ownership immediately. Hosted builds with a deploy API keep resolving
+	// the shell decides when there is no external control plane: OSS builds.
+	// The hosted sensor reports resolved-empty ownership when its Deploy API is
+	// unavailable. Hosted builds with a configured Deploy API keep resolving
 	// deployment ownership even when new v2 deploys are disabled, because
 	// existing Cloud deployments remain manageable under rollback.
-	const noExternalControlPlane = !IS_HOSTED || !isDeployApiConfigured();
+	const noExternalControlPlane = !IS_HOSTED_BUILD;
 	const providedOwnership = noExternalControlPlane ? EMPTY_AGENT_OWNERSHIP : ownership;
-	const showHeaderWallet =
-		IS_HOSTED &&
-		headerWalletBalanceApplicable({
-			canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
-			existingCloudDeploymentCount,
-		});
-
 	return (
 		<SidebarProvider
 			defaultOpen
@@ -88,50 +90,63 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 				} as React.CSSProperties
 			}
 		>
-			<AgentOwnershipProvider value={providedOwnership}>
-				{HostedAgentOwnershipSensor && showOwnershipSensor ? (
+			<ProductAccessProvider value={productAccess}>
+				{HostedProductAccessSensor ? (
 					<Suspense fallback={null}>
-						<HostedAgentOwnershipSensor onChange={updateHostedOwnership} />
+						<HostedProductAccessSensor onChange={setProductAccess} />
 					</Suspense>
 				) : null}
-				<CommandPaletteProvider>
-					<BreadcrumbTitleProvider>
-						<AppSidebar variant="inset" />
-						{/* 1rem = SidebarInset's md:m-2 top+bottom when the sidebar uses
-						    dashboard-01's inset variant. Keep the scroll container inside
-						    the inset so the sticky SiteHeader pins correctly. */}
-						<SidebarInset
-							id="dashboard-scroll-container"
-							data-scroll-restoration-id="dashboard-scroll-container"
-							className="md:h-[calc(100svh-1rem)] md:overflow-y-auto"
-						>
-							<SiteHeader
-								actions={
-									IS_HOSTED_BUILD ? (
-										<HeaderWalletBalanceSlot>
-											{GlobalWalletBalance && showHeaderWallet ? (
-												<Suspense fallback={<HeaderWalletBalanceControl state="loading" />}>
-													<GlobalWalletBalance />
-												</Suspense>
-											) : null}
-										</HeaderWalletBalanceSlot>
-									) : null
-								}
-							/>
-							<div className="flex flex-1 flex-col">
-								<div className="@container/main flex flex-1 flex-col gap-2">
-									<div
-										className={`mx-auto flex w-full ${CONTENT_MAX_WIDTH} flex-col gap-4 py-4 md:gap-5 md:py-5`}
-									>
-										{children}
+				<AgentOwnershipProvider value={providedOwnership}>
+					{HostedAgentOwnershipSensor && showOwnershipSensor ? (
+						<Suspense fallback={null}>
+							<HostedAgentOwnershipSensor onChange={updateHostedOwnership} />
+						</Suspense>
+					) : null}
+					<CommandPaletteProvider>
+						<BreadcrumbTitleProvider>
+							<AppSidebar variant="inset" />
+							{/* 1rem = SidebarInset's md:m-2 top+bottom when the sidebar uses
+							    dashboard-01's inset variant. Keep the scroll container inside
+							    the inset so the sticky SiteHeader pins correctly. */}
+							<SidebarInset
+								id="dashboard-scroll-container"
+								data-scroll-restoration-id="dashboard-scroll-container"
+								className="md:h-[calc(100svh-1rem)] md:overflow-y-auto"
+							>
+								<SiteHeader
+									actions={
+										IS_HOSTED_BUILD ? (
+											<DashboardHeaderActionSlot>
+												{GlobalWalletBalance ? (
+													<Suspense fallback={<Skeleton className="h-8 w-full" />}>
+														<GlobalWalletBalance
+															existingCloudDeploymentCount={existingCloudDeploymentCount}
+														/>
+													</Suspense>
+												) : null}
+											</DashboardHeaderActionSlot>
+										) : null
+									}
+								/>
+								<div className="flex flex-1 flex-col">
+									<div className="@container/main flex flex-1 flex-col gap-2">
+										<div
+											className={`mx-auto flex w-full ${CONTENT_MAX_WIDTH} flex-col gap-4 py-4 md:gap-5 md:py-5`}
+										>
+											{children}
+										</div>
 									</div>
 								</div>
-							</div>
-						</SidebarInset>
-						<Toaster />
-					</BreadcrumbTitleProvider>
-				</CommandPaletteProvider>
-			</AgentOwnershipProvider>
+							</SidebarInset>
+							<Toaster />
+						</BreadcrumbTitleProvider>
+					</CommandPaletteProvider>
+				</AgentOwnershipProvider>
+			</ProductAccessProvider>
 		</SidebarProvider>
 	);
+}
+
+function DashboardHeaderActionSlot({ children }: { children?: ReactNode }) {
+	return <div className="flex h-8 w-20 shrink-0 items-stretch sm:w-24">{children}</div>;
 }

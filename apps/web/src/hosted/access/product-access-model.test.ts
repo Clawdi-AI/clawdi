@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	hostedProductAccessFromProfile,
 	hostedProductAccessStatus,
-} from "@/lib/hosted-product-access-model";
+} from "@/hosted/access/product-access-model";
 
 describe("hostedProductAccessFromProfile", () => {
 	it("keeps hosted product surfaces hidden by default", () => {

@@ -3,13 +3,8 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-/**
- * Loading fallback for hosted-build-gated lazy route imports (billing,
- * channels, ai-providers, deploy). Without it the chunk load shows a blank frame before
- * the page's own skeleton mounts. Its header and flat sections mirror Settings
- * page chrome so lazy loading does not shift the content hierarchy.
- */
-export function HostedRouteSkeleton() {
+/** Stable loading fallback for lazy dashboard routes and settings surfaces. */
+export function RouteLoadingSkeleton() {
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
 			<PageHeaderSkeleton actions />

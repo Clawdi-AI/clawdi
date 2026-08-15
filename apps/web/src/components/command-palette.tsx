@@ -27,8 +27,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { useOpenApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { consoleCommandPaletteItems } from "@/lib/navigation-model";
+import { useProductAccess } from "@/lib/product-access";
 import type { SettingsSectionId } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
@@ -113,7 +113,7 @@ function CommandPalette({
 }) {
 	const api = useOpenApi();
 	const router = useRouter();
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
 	const navShortcuts = useMemo(() => {

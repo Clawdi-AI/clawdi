@@ -28,7 +28,7 @@ import {
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
 import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
-import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
+import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -60,6 +60,7 @@ export function AgentSettingsPanel({
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const ownership = useAgentOwnership();
+	const { legacyDashboardUrl: projectedLegacyDashboardUrl } = useProductAccess();
 	const uploadAvatar = useAgentAvatarUploader();
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const lastServerNameRef = useRef<{ environmentId: string; name: string } | null>(null);
@@ -211,7 +212,7 @@ export function AgentSettingsPanel({
 	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
-	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
+	const legacyDashboardUrl = ownershipKind === "legacy" ? projectedLegacyDashboardUrl : null;
 
 	return (
 		<div className={cn("flex flex-col gap-8", className)}>

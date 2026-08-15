@@ -17,6 +17,11 @@ import { getStripe } from "@/hosted/billing/stripe";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
+import {
+	coordinateWalletPaymentReturn,
+	coordinateWalletSetupReturn,
+	type WalletSetupReturnFinalizer,
+} from "@/hosted/billing/wallet/stripe-return";
 import { confirmWalletTopup, TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { invalidateWalletData } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
@@ -28,11 +33,6 @@ import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import {
-	coordinateWalletPaymentReturn,
-	coordinateWalletSetupReturn,
-	type WalletSetupReturnFinalizer,
-} from "@/lib/wallet-stripe-return";
 
 const DESCRIPTION = "Add funds and manage how your Clawdi usage is paid.";
 const WALLET_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";

@@ -73,7 +73,7 @@ import {
 	useWalletTopUpDialog,
 } from "@/hosted/billing/wallet/wallet-funding";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const PLAN_ITEMS = [
@@ -113,7 +113,7 @@ export function SubscriptionCreateDialog({
 }) {
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
 	const createAttemptRef = useRef<IdempotencyAttempt | null>(null);

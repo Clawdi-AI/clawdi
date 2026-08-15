@@ -26,13 +26,13 @@ import {
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
 import {
+	walletSetupIdentityIsCanonical,
+	walletSetupIntentMatchesClientSecret,
+} from "@/hosted/billing/wallet/stripe-return";
+import {
 	StripeSetupForm,
 	type WalletSetupConfirmed,
 } from "@/hosted/billing/wallet/stripe-setup-form";
-import {
-	walletSetupIdentityIsCanonical,
-	walletSetupIntentMatchesClientSecret,
-} from "@/lib/wallet-stripe-return";
 
 type StartSetup = (
 	idempotencyKey: string,

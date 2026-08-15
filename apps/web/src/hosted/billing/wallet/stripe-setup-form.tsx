@@ -9,7 +9,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { StripeElementsProvider } from "@/hosted/billing/stripe-elements-provider";
 import { buildWalletSetupReturnUrl } from "@/hosted/billing/wallet/setup-return.logic";
-import { walletSetupIntentMatchesClientSecret } from "@/lib/wallet-stripe-return";
+import { walletSetupIntentMatchesClientSecret } from "@/hosted/billing/wallet/stripe-return";
 
 export interface WalletSetupConfirmed {
 	setupIdentity: string;

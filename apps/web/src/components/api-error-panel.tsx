@@ -22,30 +22,23 @@ function reauthenticate() {
 	window.location.href = `/sign-in?redirect_url=${redirect}`;
 }
 
-/**
- * Hosted API error panel. The chrome is shared; the `kind` selects the
- * product-specific normalizer so billing can keep its wallet copy while
- * channel/provider surfaces keep the general cloud-api copy.
- */
+/** Shared API error chrome with an optional domain-specific normalizer. */
 export function ApiErrorPanel({
 	error,
 	onRetry,
 	title = "Couldn't load this",
 	normalizer = DEFAULT_API_ERROR_NORMALIZER,
-	dataV2,
 	icon: Icon = AlertCircle,
 }: {
 	error: unknown;
 	onRetry?: () => void;
 	title?: string;
 	normalizer?: ApiErrorNormalizer;
-	dataV2?: boolean;
 	icon?: LucideIcon;
 }) {
 	const expired = normalizer.isAuthError(error);
-	const isV2 = dataV2 ?? normalizer === DEFAULT_API_ERROR_NORMALIZER;
 	return (
-		<Alert data-hosted="true" data-v2={isV2 ? "true" : undefined} variant="destructive">
+		<Alert variant="destructive">
 			<Icon />
 			<AlertTitle>{expired ? "Your session expired" : title}</AlertTitle>
 			<AlertDescription className="flex flex-col items-start gap-3">

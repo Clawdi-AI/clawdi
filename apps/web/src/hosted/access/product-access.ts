@@ -3,19 +3,20 @@
 import type { DeployPaths } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import createClient from "openapi-fetch";
-import { ApiError } from "@/lib/api-errors";
-import { useAuthToken } from "@/lib/auth-client";
-import { IS_HOSTED } from "@/lib/hosted";
-import { DEPLOY_API_URL, hostedApiBaseUrl, isDeployApiConfigured } from "@/lib/hosted-api";
+import { useCallback, useMemo } from "react";
+import { DEPLOY_API_URL, hostedApiBaseUrl, isDeployApiConfigured } from "@/hosted/access/api";
 import {
 	type HostedProductAccessProfile,
 	hostedProductAccessFromProfile,
 	hostedProductAccessStatus,
-} from "@/lib/hosted-product-access-model";
+} from "@/hosted/access/product-access-model";
 import {
 	fetchHostedProductAccessWithTimeout,
 	hostedProductAccessRetry,
-} from "@/lib/hosted-product-access-request";
+} from "@/hosted/access/product-access-request";
+import { ApiError } from "@/lib/api-errors";
+import { useAuthToken } from "@/lib/auth-client";
+import type { ProductAccess } from "@/lib/product-access";
 
 export const hostedProductAccessKeys = {
 	me: ["hosted-product-access", "me"] as const,
@@ -44,9 +45,9 @@ async function fetchHostedProductAccessProfile(
 	return result.data;
 }
 
-export function useHostedProductAccess() {
+export function useHostedProductAccessQuery(): Omit<ProductAccess, "legacyDashboardUrl"> {
 	const { getToken } = useAuthToken();
-	const enabled = IS_HOSTED && isDeployApiConfigured();
+	const enabled = isDeployApiConfigured();
 	const query = useQuery({
 		queryKey: hostedProductAccessKeys.me,
 		queryFn: () => fetchHostedProductAccessProfile(getToken),
@@ -54,27 +55,35 @@ export function useHostedProductAccess() {
 		retry: hostedProductAccessRetry,
 		staleTime: 60_000,
 	});
-	const access = hostedProductAccessFromProfile(query.data);
+	const access = useMemo(() => hostedProductAccessFromProfile(query.data), [query.data]);
 	const status = hostedProductAccessStatus({
 		enabled,
 		profile: query.data,
 		isFetching: query.isFetching,
 		error: query.error,
 	});
-	return {
-		...access,
-		status,
-		isLoading: status === "loading",
-		isError: status === "error",
-		isAllowed: status === "allowed",
-		isDenied: status === "denied",
-		isFetching: enabled && query.isFetching,
-		error: query.error,
-		refetch: query.refetch,
-		recheckCanCreateCloudAgents: async () => {
-			const result = await query.refetch();
-			if (result.error) throw result.error;
-			return hostedProductAccessFromProfile(result.data).canCreateCloudAgents;
-		},
-	};
+	const refetchQuery = query.refetch;
+	const refetch = useCallback(async () => {
+		await refetchQuery();
+	}, [refetchQuery]);
+	const recheckCanCreateCloudAgents = useCallback(async () => {
+		const result = await refetchQuery();
+		if (result.error) throw result.error;
+		return hostedProductAccessFromProfile(result.data).canCreateCloudAgents;
+	}, [refetchQuery]);
+	return useMemo(
+		() => ({
+			...access,
+			status,
+			isLoading: status === "loading",
+			isError: status === "error",
+			isAllowed: status === "allowed",
+			isDenied: status === "denied",
+			isFetching: enabled && query.isFetching,
+			error: query.error,
+			refetch,
+			recheckCanCreateCloudAgents,
+		}),
+		[access, enabled, query.error, query.isFetching, recheckCanCreateCloudAgents, refetch, status],
+	);
 }

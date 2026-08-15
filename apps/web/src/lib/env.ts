@@ -57,9 +57,8 @@ export const env = createEnv({
 		// profile calls in hosted builds.
 		VITE_CLAWDI_DEPLOY_API_URL: httpsOrHttp().default("http://localhost:50021"),
 
-		// Hosted-only legacy v1 dashboard URL. The localhost default is
-		// gated by `legacyHostedDashboardUrl()` so production builds only
-		// expose this entry when a real URL is configured.
+		// Hosted-only legacy v1 dashboard URL. Hosted access projection only
+		// exposes the localhost default during local development.
 		VITE_CLAWDI_LEGACY_DASHBOARD_URL: httpsOrHttp().default("http://localhost:3000/dashboard"),
 
 		// Clerk publishable key. Local auth bypass can run without

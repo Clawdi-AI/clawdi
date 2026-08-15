@@ -17,7 +17,7 @@ describe("query refresh presentation contract", () => {
 		const hostedInventory = source("hosted/hosted-agent-resolution.ts");
 		const hostedAgentHome = source("hosted/agents/agent-home.tsx");
 		const agentDetailClient = source("pages/dashboard/agents/agent-detail-client.tsx");
-		const hostedProductGate = source("components/hosted-product-gate.tsx");
+		const hostedProductGate = source("hosted/access/hosted-product-gate.tsx");
 		const connectedAgentDetail = source("components/dashboard/connected-agent-detail.tsx");
 		const channelDetail = source("hosted/v2/channels/channel-detail-page.tsx");
 		const memoryDetail = source("pages/dashboard/memories/[id]/page.tsx");
@@ -58,7 +58,7 @@ describe("query refresh presentation contract", () => {
 		expect(agentDetailClient).not.toContain("useHostedProductAccess");
 		expect(agentDetailClient).toContain("<AgentHome");
 		expect(hostedProductGate).toContain(
-			"if (access.isLoading || access.isDenied) return <HostedRouteSkeleton />;",
+			"if (access.isLoading || access.isDenied) content = <RouteLoadingSkeleton />;",
 		);
 		expect(connectedAgentDetail).toContain(
 			"isApiNotFoundError(error) || shouldBlockQueryError(error, agent)",

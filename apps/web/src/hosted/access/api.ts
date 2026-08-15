@@ -1,5 +1,5 @@
+import { hostedApiBaseUrl } from "@/hosted/access/url";
 import { env } from "@/lib/env";
-import { hostedApiBaseUrl } from "@/lib/hosted-url";
 
 export const DEPLOY_API_URL = env.VITE_CLAWDI_DEPLOY_API_URL;
 

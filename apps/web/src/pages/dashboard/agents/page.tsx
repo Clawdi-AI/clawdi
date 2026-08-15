@@ -5,7 +5,7 @@ import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { useOpenApi } from "@/lib/api";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
@@ -29,7 +29,7 @@ const HostedAgentsByCompute = IS_HOSTED_BUILD
 
 export default function AgentsIndexPage() {
 	const api = useOpenApi();
-	const hostedAccess = useHostedProductAccess();
+	const hostedAccess = useProductAccess();
 	const {
 		data: environments,
 		isLoading: envsLoading,

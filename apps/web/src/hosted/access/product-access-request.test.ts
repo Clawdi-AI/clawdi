@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { ApiError, ApiNetworkError } from "@/lib/api-errors";
 import {
 	fetchHostedProductAccessWithTimeout,
 	HOSTED_PRODUCT_ACCESS_TIMEOUT_MS,
 	hostedProductAccessRetry,
-} from "@/lib/hosted-product-access-request";
+} from "@/hosted/access/product-access-request";
+import { ApiError, ApiNetworkError } from "@/lib/api-errors";
 
 describe("fetchHostedProductAccessWithTimeout", () => {
 	test("uses the same 20 second application ceiling as the main clients", () => {

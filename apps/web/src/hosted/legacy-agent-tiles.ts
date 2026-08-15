@@ -1,9 +1,9 @@
 import type { components } from "@clawdi/shared/api";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
+import { legacyHostedDashboardUrl } from "@/hosted/access/legacy-dashboard-url";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
-import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 
 type Env = components["schemas"]["AgentResponse"];
 

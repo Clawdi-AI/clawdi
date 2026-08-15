@@ -4,6 +4,7 @@ import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
+import "@/hosted/agents/hosted-terminal.css";
 
 const TTYD_OUTPUT = "0";
 const TTYD_INPUT = "0";
