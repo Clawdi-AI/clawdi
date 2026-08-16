@@ -58,6 +58,8 @@ describe("structural secret boundaries without the denylist", () => {
 		const wallet: WalletState = {
 			balance_usd: "25.00",
 			x402_enabled: true,
+			x402_payment_authority: null,
+			x402_payment_status: "idle",
 			auto_reload_enabled: true,
 			auto_reload_has_payment_method: true,
 			auto_reload_card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },

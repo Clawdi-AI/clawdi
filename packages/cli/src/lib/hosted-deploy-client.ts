@@ -14,6 +14,7 @@ import {
 	type HostedDeploySubscriptionQuoteRequest,
 	type HostedDeployWallet,
 	type HostedSavedAiProvider,
+	type HostedWalletBinding,
 	type paths,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
@@ -169,6 +170,10 @@ export class HostedDeployClient {
 
 	async getWallet(): Promise<HostedDeployWallet> {
 		return unwrapHosted(await this.client.GET("/v2/wallet"));
+	}
+
+	async getWalletBinding(): Promise<HostedWalletBinding> {
+		return unwrapHosted(await this.client.GET("/v2/wallet-binding"));
 	}
 
 	async quoteSubscription(

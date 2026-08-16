@@ -25,6 +25,8 @@ type DeploySchemas = DeployComponents["schemas"];
 const wallet: DeploySchemas["V2WalletResponse"] = {
 	balance_usd: "25.000001",
 	x402_enabled: true,
+	x402_payment_authority: null,
+	x402_payment_status: "idle",
 	auto_reload_enabled: true,
 	auto_reload_has_payment_method: true,
 	auto_reload_currency: "usd",

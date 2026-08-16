@@ -59,6 +59,14 @@ The metadata tools never return plaintext secret values. Preserve exact referenc
 Vault mutation is not an Agent MCP capability. Ask the user to manage Vault data through an
 authorized human-facing surface; never call raw HTTP or invent an unavailable tool.
 
+## Wallet Funding
+
+Use `clawdi wallet status --json` to inspect the authenticated Wallet balance, verified
+binding, and x402 readiness. Binding and Base USDC top-up are available only through the
+browser wallet surface; Clawdi does not store the payment private key. Ask the user to fund
+there. Command-line spending requires a future owner-only or hardware signer authority and is not
+available.
+
 ## Connectors
 
 Use the Composio Tool Router meta-tools returned by `tools/list` on the `clawdi` MCP server.
