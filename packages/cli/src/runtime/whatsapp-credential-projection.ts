@@ -1,5 +1,6 @@
 export interface ManagedWhatsAppAuthCredential {
 	accountKey: string;
+	linkId: string | null;
 	credentialId: string;
 	authDir: string;
 	credsJsonSecretRef: string;
@@ -24,6 +25,7 @@ function parseManagedWhatsAppAuthCredential(value: unknown): ManagedWhatsAppAuth
 	if (!record) return [];
 	if (record.provider !== "whatsapp" || record.kind !== "whatsapp_baileys_auth_state") return [];
 	const accountKey = stringValue(record.accountKey);
+	const linkId = stringValue(record.linkId);
 	const credentialId = stringValue(record.credentialId);
 	const files = Array.isArray(record.files) ? record.files : [];
 	const credsFile = files
@@ -42,6 +44,7 @@ function parseManagedWhatsAppAuthCredential(value: unknown): ManagedWhatsAppAuth
 	if (openclawAuthDir) {
 		credentials.push({
 			accountKey,
+			linkId,
 			credentialId,
 			authDir: openclawAuthDir,
 			credsJsonSecretRef,
@@ -53,6 +56,7 @@ function parseManagedWhatsAppAuthCredential(value: unknown): ManagedWhatsAppAuth
 	if (hermesAuthDir) {
 		credentials.push({
 			accountKey,
+			linkId,
 			credentialId,
 			authDir: hermesAuthDir,
 			credsJsonSecretRef,
