@@ -13953,7 +13953,7 @@ exit 64
 
 		const sessionMarker = join(sessionDir, ".clawdi-managed-whatsapp-auth.json");
 		const committedMarker = readFileSync(sessionMarker, "utf8");
-		writeFileSync(sessionMarker, "{\"schemaVersion\":\"invalid\"}\n");
+		writeFileSync(sessionMarker, '{"schemaVersion":"invalid"}\n');
 		const invalidMarkerRemoval = convergeRuntimeManifest(removed, paths);
 		expect(invalidMarkerRemoval.installErrors.join("\n")).toContain(
 			"managed Hermes WhatsApp session marker is missing or invalid",

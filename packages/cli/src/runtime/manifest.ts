@@ -5328,10 +5328,7 @@ function hostedChannelCredentialMutationTargets(
 		}
 	}
 	const hermesAuthDir = managedWhatsAppAuthRoot(home, "hermes");
-	if (
-		hermesAuthDir &&
-		hermesWhatsAppPlan?.cleanupAuthorized
-	) {
+	if (hermesAuthDir && hermesWhatsAppPlan?.cleanupAuthorized) {
 		targets.add(hermesAuthDir);
 	}
 	return [...targets];
