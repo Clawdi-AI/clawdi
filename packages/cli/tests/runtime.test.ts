@@ -13695,6 +13695,7 @@ exit 64
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
 		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		const paths = getRuntimePaths();
+		const hermesWhatsAppReceipt = join(paths.managedResourceRoot, "hermes-whatsapp.json");
 		mkdirSync(legacySessionDir, { recursive: true });
 		writeFileSync(legacySentinel, "preserved\n");
 
@@ -13813,6 +13814,24 @@ exit 64
 		});
 		const convergence = convergeRuntimeManifest(projected, paths);
 		expect(convergence.installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(hermesWhatsAppReceipt, "utf8"))).toMatchObject({
+			schemaVersion: "clawdi.managedHermesWhatsApp.v1",
+			deploymentId: projected.manifest.deploymentId,
+			environmentId: projected.manifest.environmentId,
+			instanceId: projected.manifest.instanceId,
+			accountKey,
+			linkId,
+			credentialId,
+			authDir: sessionDir,
+		});
+		commitRuntimeAppliedState({
+			load: projected,
+			paths,
+			etag: '"hermes-whatsapp-active"',
+			sourceRevision: "a".repeat(64),
+			convergence,
+			applyIdentity: projected.applyContext?.identity ?? null,
+		});
 		expect(existsSync(sessionDir)).toBe(true);
 		expect(readFileSync(legacySentinel, "utf-8")).toBe("preserved\n");
 		expect(readHermesConfigYaml(home)).toHaveProperty(
@@ -13884,6 +13903,14 @@ exit 64
 		expect(preserveActiveUnits).toBe(false);
 		const changedCredential = convergeRuntimeManifest(changedCheckpoint, paths);
 		expect(changedCredential.installErrors).toEqual([]);
+		commitRuntimeAppliedState({
+			load: changedCheckpoint,
+			paths,
+			etag: '"hermes-whatsapp-rotated"',
+			sourceRevision: "b".repeat(64),
+			convergence: changedCredential,
+			applyIdentity: changedCheckpoint.applyContext?.identity ?? null,
+		});
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(
 			initialHermesRevision,
 		);
@@ -13911,6 +13938,40 @@ exit 64
 			{ ...load, channelBindings: [], secretValues: {} },
 			paths,
 		);
+		const committedReceipt = readFileSync(hermesWhatsAppReceipt, "utf8");
+		writeFileSync(
+			hermesWhatsAppReceipt,
+			`${JSON.stringify({
+				...(JSON.parse(committedReceipt) as Record<string, unknown>),
+				authDir: join(home, ".hermes", "user-session"),
+			})}\n`,
+		);
+		expect(() => convergeRuntimeManifest(removed, paths)).toThrow(
+			"managed Hermes WhatsApp receipt auth directory must be",
+		);
+		writeFileSync(hermesWhatsAppReceipt, committedReceipt);
+
+		const sessionMarker = join(sessionDir, ".clawdi-managed-whatsapp-auth.json");
+		const committedMarker = readFileSync(sessionMarker, "utf8");
+		writeFileSync(sessionMarker, '{"schemaVersion":"invalid"}\n');
+		const invalidMarkerRemoval = convergeRuntimeManifest(removed, paths);
+		expect(invalidMarkerRemoval.installErrors.join("\n")).toContain(
+			"managed Hermes WhatsApp session marker is missing or invalid",
+		);
+		expect(existsSync(sessionDir)).toBe(true);
+		expect(readFileSync(hermesWhatsAppReceipt, "utf8")).toBe(committedReceipt);
+		writeFileSync(sessionMarker, committedMarker);
+
+		// Simulate a pre-receipt CLI after Hermes normalized its own config.
+		rmSync(hermesWhatsAppReceipt);
+		const hermesConfigPath = join(home, ".hermes", "config.yaml");
+		const hermesConfigBeforeNormalization = readFileSync(hermesConfigPath, "utf8");
+		const hermesConfigAfterNormalization = hermesConfigBeforeNormalization
+			.split("\n")
+			.filter((line) => !line.trimStart().startsWith("session_path:"))
+			.join("\n");
+		expect(hermesConfigAfterNormalization).not.toBe(hermesConfigBeforeNormalization);
+		writeFileSync(hermesConfigPath, hermesConfigAfterNormalization);
 		const patchedSocket = readFileSync(baileysSocket, "utf8");
 		writeFileSync(
 			baileysSocket,
@@ -13932,6 +13993,7 @@ exit 64
 		expect(removedConvergence.installErrors).toEqual([]);
 		expect(existsSync(paths.egressProfileBundle)).toBe(false);
 		expect(existsSync(sessionDir)).toBe(false);
+		expect(existsSync(hermesWhatsAppReceipt)).toBe(false);
 		const removedHermesConfig = readHermesConfigYaml(home);
 		expect(removedHermesConfig).toHaveProperty("whatsapp", {
 			user_owned: "keep-whatsapp",
@@ -13949,6 +14011,7 @@ exit 64
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOW_ALL_USERS).toBeUndefined();
+		const removedHermesRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
 
 		writeFileSync(
 			join(home, ".hermes", "config.yaml"),
@@ -13969,6 +14032,9 @@ exit 64
 			whatsapp: { enabled: true, user_owned: "manual" },
 			platforms: { whatsapp: { enabled: true, extra: { session_path: "/user/session" } } },
 		});
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
+			removedHermesRevision,
+		);
 	});
 
 	it("isolates OpenClaw WhatsApp DMs and clears stale managed config", () => {
