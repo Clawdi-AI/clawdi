@@ -90,11 +90,16 @@ export interface HostedAgentPluginCapabilityProof {
 }
 
 export class HostedAgentPluginCapabilityUnsupportedError extends Error {
-	constructor() {
-		super(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
+	constructor(message = AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR) {
+		super(message);
 		this.name = "HostedAgentPluginCapabilityUnsupportedError";
 	}
 }
+
+class OpenClawAgentPluginNotObservedError extends Error {}
+
+const OPENCLAW_AGENT_PLUGIN_STANDARD_UNSUPPORTED_ERROR =
+	"OpenClaw installed the package but did not report it as an Agent Plugins 1.0.0 bundle; standards-native installation is unsupported";
 
 export type HermesRemoteCapabilityProbe = (input: {
 	command: string;
@@ -337,7 +342,11 @@ function createOpenClawDriver(input: {
 				if (result.status !== 0) throw new Error("OpenClaw native Agent Plugin install failed");
 			});
 			const installed = observe(prepared.name);
-			if (!installed) throw new Error("OpenClaw did not report the installed Agent Plugin");
+			if (!installed) {
+				throw new OpenClawAgentPluginNotObservedError(
+					"OpenClaw did not report the installed Agent Plugin",
+				);
+			}
 			return installed;
 		},
 		setEnabled(observation, enabled) {
@@ -590,7 +599,7 @@ function observationUnchanged(
 
 type NativeCapabilityProbeResult =
 	| { kind: "supported"; nativeId: string }
-	| { kind: "unsupported" };
+	| { kind: "unsupported"; message?: string };
 
 function probeObservationCapability(
 	observation: NativePluginObservation,
@@ -647,7 +656,15 @@ function probeNativeCapability(input: {
 			home,
 			runner: input.runner,
 		});
-		const installed = driver.install(input.prepared);
+		let installed: NativePluginObservation;
+		try {
+			installed = driver.install(input.prepared);
+		} catch (error) {
+			if (input.runtime === "openclaw" && error instanceof OpenClawAgentPluginNotObservedError) {
+				return { kind: "unsupported", message: OPENCLAW_AGENT_PLUGIN_STANDARD_UNSUPPORTED_ERROR };
+			}
+			throw error;
+		}
 		if (probeObservationCapability(installed, input.prepared) === "unsupported") {
 			return { kind: "unsupported" };
 		}
@@ -718,7 +735,7 @@ export function proveHostedAgentPluginCapabilities(input: {
 			},
 		});
 		if (probe.kind === "unsupported") {
-			throw new HostedAgentPluginCapabilityUnsupportedError();
+			throw new HostedAgentPluginCapabilityUnsupportedError(probe.message);
 		}
 		const proof = {
 			runtime: item.runtime,
