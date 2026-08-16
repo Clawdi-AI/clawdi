@@ -161,7 +161,6 @@ const clawdiDisplaySchema = z
 		name: z.string().min(1).max(80),
 		icon: z.string().min(1).max(512).optional(),
 		category: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
-		tags: boundedUniqueStrings(20, 32),
 		languages: boundedUniqueStrings(20, 64).refine(
 			(values) => values.every((value) => /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(value)),
 			"must contain language tags",
@@ -262,16 +261,22 @@ function sha256(value: string | Uint8Array): string {
 }
 
 function ownershipIdentity(name: string, installation: HostedAgentPluginInstallation): string {
+	const sourceIdentity =
+		installation.source.type === "github"
+			? [
+					installation.source.type,
+					installation.source.url,
+					installation.source.path,
+					installation.source.commit,
+				]
+			: [installation.source.type, installation.source.url, installation.source.archiveDigest];
 	return sha256(
 		JSON.stringify([
 			installation.installationId,
 			name,
 			installation.version,
 			installation.agentPluginsSchema,
-			installation.source.type,
-			installation.source.url,
-			installation.source.path,
-			installation.source.commit,
+			...sourceIdentity,
 			installation.contentDigest,
 		]),
 	);
@@ -1022,11 +1027,17 @@ async function validateArchive(
 ): Promise<PreparedHostedAgentPlugin> {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-agent-plugin-validate-"));
 	try {
-		const packageRoot = await extractPackageArchive(
-			root,
-			archive,
-			descriptor.installation.source.path,
-		);
+		if (
+			descriptor.installation.source.type === "github-release" &&
+			`sha256:${sha256(archive)}` !== descriptor.installation.source.archiveDigest
+		) {
+			throw new Error(
+				"Agent Plugin release archive digest does not match the desired installation",
+			);
+		}
+		const sourcePath =
+			descriptor.installation.source.type === "github" ? descriptor.installation.source.path : "";
+		const packageRoot = await extractPackageArchive(root, archive, sourcePath);
 		const collected = collectPackageTree(packageRoot);
 		if (collected.digest !== descriptor.installation.contentDigest) {
 			throw new Error(
@@ -1058,17 +1069,25 @@ async function fetchArchive(
 	descriptor: PackageDescriptor,
 	fetcher: GithubArchiveFetcher,
 ): Promise<Buffer> {
-	const repository = parseCanonicalGithubRepositoryUrl(descriptor.installation.source.url);
-	const url = new URL(
-		`https://codeload.github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/tar.gz/${encodeURIComponent(descriptor.installation.source.commit)}`,
-	);
+	const source = descriptor.installation.source;
+	const url =
+		source.type === "github"
+			? (() => {
+					const repository = parseCanonicalGithubRepositoryUrl(source.url);
+					return new URL(
+						`https://codeload.github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/tar.gz/${encodeURIComponent(source.commit)}`,
+					);
+				})()
+			: new URL(source.url);
 	const response = await fetcher(url, {
-		headers: { Accept: "application/vnd.github+json" },
+		headers: {
+			Accept: source.type === "github" ? "application/vnd.github+json" : "application/octet-stream",
+		},
 		redirect: "follow",
 	});
 	if (!response.ok) throw new Error(`Agent Plugin package download failed (${response.status})`);
 	return readBoundedResponseBytes(response, MAX_ARCHIVE_BYTES, {
-		resourceLabel: "Agent Plugin repository archive",
+		resourceLabel: "Agent Plugin source archive",
 		limitLabel: "100 MB",
 	});
 }

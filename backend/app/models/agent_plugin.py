@@ -3,7 +3,6 @@ from datetime import datetime
 
 from pydantic import JsonValue
 from sqlalchemy import (
-    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -27,7 +26,7 @@ class PluginCatalogSnapshot(Base):
             name="ck_plugin_catalog_snapshots_revision",
         ),
         CheckConstraint(
-            "schema_version = 1",
+            "schema_version IN (1, 2)",
             name="ck_plugin_catalog_snapshots_schema_version",
         ),
         CheckConstraint(
@@ -65,14 +64,13 @@ class PluginCatalogEntry(Base):
     name: Mapped[str] = mapped_column(String(64), primary_key=True, nullable=False)
     version: Mapped[str] = mapped_column(String(256), primary_key=True, nullable=False)
     agent_plugins_schema: Mapped[str] = mapped_column(String(200), nullable=False)
-    source_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    source: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
     content_digest: Mapped[str] = mapped_column(String(79), nullable=False)
     public_metadata: Mapped[dict[str, JsonValue]] = mapped_column(
         "metadata",
         JSONB(none_as_null=True),
         nullable=False,
     )
-    has_configuration: Mapped[bool] = mapped_column(Boolean, nullable=False)
     compatible_runtimes: Mapped[list[str]] = mapped_column(JSONB(none_as_null=True), nullable=False)
 
 
@@ -135,5 +133,5 @@ class AgentPluginInstallation(Base, TimestampMixin):
     catalog_revision: Mapped[str] = mapped_column(String(40), nullable=False)
     version: Mapped[str] = mapped_column(String(256), nullable=False)
     agent_plugins_schema: Mapped[str] = mapped_column(String(200), nullable=False)
-    source_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    source: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
     content_digest: Mapped[str] = mapped_column(String(79), nullable=False)

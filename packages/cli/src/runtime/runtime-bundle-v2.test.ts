@@ -1154,7 +1154,9 @@ describe("hosted runtime bundle v2", () => {
 				const headers = new Headers(init?.headers);
 				expect(headers.get("accept")).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 				expect(headers.get("if-none-match")).toBe('"bundle-1"');
-				expect(headers.get("x-clawdi-runtime-capabilities")).toBe("agent-plugins-manifest-v1");
+				expect(headers.get("x-clawdi-runtime-capabilities")).toBe(
+					"agent-plugins-manifest-v1, agent-plugin-github-release-source-v1",
+				);
 				expect(headers.get("x-clawdi-agent-plugin-proof")).toBeNull();
 				expect(headers.get("x-clawdi-runtime-generation")).toBeNull();
 				expect(headers.get("x-clawdi-runtime-manifest-etag")).toBeNull();

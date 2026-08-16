@@ -38,6 +38,7 @@ from app.services.project_runtime_skills import (
     project_skill_file_signature,
 )
 from app.services.runtime_source import (
+    RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
     RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RUNTIME_CAPABILITIES_HEADER,
@@ -84,11 +85,15 @@ async def get_runtime_manifest(
         if capability.strip()
     }
     project_agent_plugins = RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY in capabilities
+    project_agent_plugin_github_release_sources = (
+        RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY in capabilities
+    )
     try:
         source, repair_link_ids = await _render_runtime_source_snapshot(
             environment_id=environment_id,
             owner_user_id=auth.user_id,
             project_agent_plugins=project_agent_plugins,
+            project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
         )
         if repair_link_ids:
             await ensure_runtime_whatsapp_credentials(
@@ -102,6 +107,7 @@ async def get_runtime_manifest(
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
                 project_agent_plugins=project_agent_plugins,
+                project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
             )
         if source is None:
             raise RuntimeSourceError(
@@ -130,6 +136,7 @@ async def _render_runtime_source_snapshot(
     environment_id: UUID,
     owner_user_id: UUID,
     project_agent_plugins: bool,
+    project_agent_plugin_github_release_sources: bool,
 ) -> tuple[RenderedRuntimeSource | None, tuple[UUID, ...]]:
     async with runtime_snapshot_session() as source_db:
         batch = await load_runtime_source_batch(
@@ -151,6 +158,7 @@ async def _render_runtime_source_snapshot(
                 vault_key_identity=vault_key_identity(settings.vault_encryption_key),
                 decrypt_secrets=True,
                 project_agent_plugins=project_agent_plugins,
+                project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
             ),
             (),
         )

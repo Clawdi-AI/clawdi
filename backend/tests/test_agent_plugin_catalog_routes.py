@@ -28,14 +28,13 @@ async def _activate_catalog(
     name: str = THIRD_PARTY_PLUGIN_NAME,
     version: str = "1.0.0",
     digest_character: str = "a",
-    has_configuration: bool = False,
     runtimes: list[str] | None = None,
 ) -> str:
     revision = f"{uuid4().hex}{uuid4().hex[:8]}"
     db_session.add(
         PluginCatalogSnapshot(
             revision=revision,
-            schema_version=1,
+            schema_version=2,
             entry_count=1,
             fetched_at=datetime.now(UTC),
         )
@@ -47,7 +46,12 @@ async def _activate_catalog(
             name=name,
             version=version,
             agent_plugins_schema=("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"),
-            source_path=f"v2/plugins/{name}",
+            source={
+                "type": "github",
+                "url": "https://github.com/Clawdi-AI/store",
+                "path": f"v2/plugins/{name}",
+                "commit": revision,
+            },
             content_digest=f"sha256-tree-v1:{digest_character * 64}",
             public_metadata={
                 "display_name": "Acme Tools",
@@ -62,7 +66,6 @@ async def _activate_catalog(
                     "mcpServers": {"review": "streamable-http"},
                 },
             },
-            has_configuration=has_configuration,
             compatible_runtimes=(runtimes if runtimes is not None else ["openclaw", "hermes"]),
         )
     )
@@ -120,7 +123,12 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     assert row is not None
     assert str(row.id) == installation_id
     assert row.catalog_revision == first_revision
-    assert row.source_path == f"v2/plugins/{THIRD_PARTY_PLUGIN_NAME}"
+    assert row.source == {
+        "type": "github",
+        "url": "https://github.com/Clawdi-AI/store",
+        "path": f"v2/plugins/{THIRD_PARTY_PLUGIN_NAME}",
+        "commit": first_revision,
+    }
     assert row.content_digest == f"sha256-tree-v1:{'a' * 64}"
     projected = _project_agent_plugins((row,))
     assert projected is not None
@@ -325,19 +333,11 @@ async def test_agent_plugin_install_rejects_guaranteed_nonconvergence_before_per
     channel_agent,
     test_identity,
 ) -> None:
-    await _activate_catalog(db_session, has_configuration=True)
     not_owned = await client.put(
         f"/v1/agents/{uuid4()}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={},
     )
     assert not_owned.status_code == 404
-    configured = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
-        json={},
-    )
-    assert configured.status_code == 409, configured.text
-    assert configured.json()["detail"]["code"] == "plugin_configuration_not_supported"
-
     await _activate_catalog(db_session, runtimes=["hermes"])
     incompatible = await client.put(
         f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
@@ -395,7 +395,12 @@ async def test_reserved_clawdi_catalog_and_historical_desired_state_are_safe(
         catalog_revision=revision,
         version="1.0.0",
         agent_plugins_schema="https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-        source_path="v2/plugins/clawdi",
+        source={
+            "type": "github",
+            "url": "https://github.com/Clawdi-AI/store",
+            "path": "v2/plugins/clawdi",
+            "commit": revision,
+        },
         content_digest=f"sha256-tree-v1:{'a' * 64}",
     )
     db_session.add(row)

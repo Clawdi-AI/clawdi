@@ -145,6 +145,42 @@ const hostedGithubSkillSourceSchema = z
 	})
 	.strict();
 
+function isCanonicalGithubReleaseAssetUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return (
+			url.protocol === "https:" &&
+			url.hostname === "github.com" &&
+			!url.username &&
+			!url.password &&
+			!url.search &&
+			!url.hash &&
+			/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/releases\/download\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.tar\.gz$/.test(
+				url.pathname,
+			) &&
+			value === `https://github.com${url.pathname}`
+		);
+	} catch {
+		return false;
+	}
+}
+
+const hostedGithubReleaseAgentPluginSourceSchema = z
+	.object({
+		type: z.literal("github-release"),
+		url: z
+			.string()
+			.max(1_000)
+			.refine(isCanonicalGithubReleaseAssetUrl, "must be a canonical GitHub release asset URL"),
+		archiveDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+	})
+	.strict();
+
+const hostedAgentPluginSourceSchema = z.discriminatedUnion("type", [
+	hostedGithubSkillSourceSchema,
+	hostedGithubReleaseAgentPluginSourceSchema,
+]);
+
 const exactAgentPluginSemverSchema = z
 	.string()
 	.min(1)
@@ -165,7 +201,7 @@ export const hostedAgentPluginInstallationSchema = z
 			),
 		version: exactAgentPluginSemverSchema,
 		agentPluginsSchema: z.literal(AGENT_PLUGINS_SCHEMA_1_0_0),
-		source: hostedGithubSkillSourceSchema,
+		source: hostedAgentPluginSourceSchema,
 		contentDigest: z.string().regex(/^sha256-tree-v1:[0-9a-f]{64}$/),
 	})
 	.strict();

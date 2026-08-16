@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.plugin_catalog import AgentPluginGithubReleaseSource
+
 HostedRuntimeLanguage = Literal[
     "en",
     "zh-CN",
@@ -880,6 +882,12 @@ class HostedRuntimeSkillSource(_StrictHostedWireModel):
         return value
 
 
+HostedAgentPluginSource = Annotated[
+    HostedRuntimeSkillSource | AgentPluginGithubReleaseSource,
+    Field(discriminator="type"),
+]
+
+
 class HostedRuntimeBundledSkillEntry(_StrictHostedWireModel):
     enabled: bool
     version: int = Field(ge=1)
@@ -910,7 +918,7 @@ class HostedAgentPluginInstallation(_StrictHostedWireModel):
     installationId: str = Field(min_length=1, max_length=200)
     version: str = Field(min_length=1, max_length=256)
     agentPluginsSchema: Literal["https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"]
-    source: HostedRuntimeSkillSource
+    source: HostedAgentPluginSource
     contentDigest: str = Field(pattern=r"^sha256-tree-v1:[0-9a-f]{64}$")
 
     @field_validator("installationId")
