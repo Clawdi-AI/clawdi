@@ -137,7 +137,6 @@ class PluginCatalogDocumentEntry(_StrictModel):
     keywords: list[str] = Field(max_length=20)
     languages: list[str] = Field(max_length=20)
     runtimes: list[Literal["openclaw", "hermes"]] = Field(max_length=2)
-    hasConfiguration: bool
     components: CatalogComponents
     icon: str | None = Field(default=None, min_length=1, max_length=1024)
     source: CatalogSource

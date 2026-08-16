@@ -3,7 +3,6 @@ from datetime import datetime
 
 from pydantic import JsonValue
 from sqlalchemy import (
-    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -72,7 +71,6 @@ class PluginCatalogEntry(Base):
         JSONB(none_as_null=True),
         nullable=False,
     )
-    has_configuration: Mapped[bool] = mapped_column(Boolean, nullable=False)
     compatible_runtimes: Mapped[list[str]] = mapped_column(JSONB(none_as_null=True), nullable=False)
 
 

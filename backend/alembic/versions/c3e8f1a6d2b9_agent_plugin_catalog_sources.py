@@ -20,6 +20,16 @@ _STORE_URL = "https://github.com/Clawdi-AI/store"
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    has_configured_entries = bind.execute(
+        sa.text("SELECT EXISTS (SELECT 1 FROM plugin_catalog_entries WHERE has_configuration)")
+    ).scalar_one()
+    if has_configured_entries:
+        raise RuntimeError(
+            "Cannot remove unsupported Agent Plugin configuration metadata "
+            "while configured entries exist."
+        )
+
     op.drop_constraint(
         "ck_plugin_catalog_snapshots_schema_version",
         "plugin_catalog_snapshots",
@@ -67,6 +77,7 @@ def upgrade() -> None:
     for table in ("plugin_catalog_entries", "agent_plugin_installations"):
         op.alter_column(table, "source", nullable=False)
         op.drop_column(table, "source_path")
+    op.drop_column("plugin_catalog_entries", "has_configuration")
 
 
 def downgrade() -> None:
@@ -100,6 +111,17 @@ def downgrade() -> None:
             "Cannot downgrade Agent Plugin source identities while catalog v2 "
             "or non-Store sources exist."
         )
+
+    op.add_column(
+        "plugin_catalog_entries",
+        sa.Column(
+            "has_configuration",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.false(),
+        ),
+    )
+    op.alter_column("plugin_catalog_entries", "has_configuration", server_default=None)
 
     op.add_column(
         "plugin_catalog_entries",

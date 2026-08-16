@@ -773,8 +773,8 @@ upgrade existing Agents.
 
 This release installs only through the existing v2 Hosted bundle. An Agent
 without Hosted v2 runtime state is rejected before persistence. Catalog entries
-that declare `hasConfiguration` remain non-installable, and catalog runtime
-compatibility is checked against the selected known runtime before persistence.
+Catalog runtime compatibility is checked against the selected known runtime
+before persistence.
 The Platform compatibility input keeps optional `agent_plugins` only as
 omitted/null; non-null input is rejected and Platform no longer persists or
 assigns plugin selection.

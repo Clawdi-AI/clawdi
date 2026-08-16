@@ -4141,7 +4141,6 @@ async def test_runtime_manifest_keeps_historical_reserved_plugin_inert(
                 "sha256-tree-v1:6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3"
             ),
             public_metadata={},
-            has_configuration=False,
             compatible_runtimes=["openclaw", "hermes"],
         )
     )

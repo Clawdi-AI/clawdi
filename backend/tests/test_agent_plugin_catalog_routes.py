@@ -28,7 +28,6 @@ async def _activate_catalog(
     name: str = THIRD_PARTY_PLUGIN_NAME,
     version: str = "1.0.0",
     digest_character: str = "a",
-    has_configuration: bool = False,
     runtimes: list[str] | None = None,
 ) -> str:
     revision = f"{uuid4().hex}{uuid4().hex[:8]}"
@@ -67,7 +66,6 @@ async def _activate_catalog(
                     "mcpServers": {"review": "streamable-http"},
                 },
             },
-            has_configuration=has_configuration,
             compatible_runtimes=(runtimes if runtimes is not None else ["openclaw", "hermes"]),
         )
     )
@@ -335,19 +333,11 @@ async def test_agent_plugin_install_rejects_guaranteed_nonconvergence_before_per
     channel_agent,
     test_identity,
 ) -> None:
-    await _activate_catalog(db_session, has_configuration=True)
     not_owned = await client.put(
         f"/v1/agents/{uuid4()}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={},
     )
     assert not_owned.status_code == 404
-    configured = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
-        json={},
-    )
-    assert configured.status_code == 409, configured.text
-    assert configured.json()["detail"]["code"] == "plugin_configuration_not_supported"
-
     await _activate_catalog(db_session, runtimes=["hermes"])
     incompatible = await client.put(
         f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",

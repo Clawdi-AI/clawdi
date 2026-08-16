@@ -120,7 +120,20 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
                 },
             )
             source_migration.op = Operations(MigrationContext.configure(conn))
+            conn.execute(sa.text("UPDATE plugin_catalog_entries SET has_configuration = true"))
+            with pytest.raises(RuntimeError, match="configuration metadata"):
+                source_migration.upgrade()
+            conn.execute(sa.text("UPDATE plugin_catalog_entries SET has_configuration = false"))
             source_migration.upgrade()
+            has_configuration_column = conn.execute(
+                sa.text(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = 'plugin_catalog_entries' "
+                    "AND column_name = 'has_configuration')"
+                ),
+                {"schema": schema},
+            ).scalar_one()
+            assert has_configuration_column is False
             source = conn.execute(
                 sa.text("SELECT source FROM agent_plugin_installations WHERE id = :id"),
                 {"id": str(installation_id)},
@@ -148,6 +161,10 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
                 {"id": str(installation_id), "source": json.dumps(source)},
             )
             source_migration.downgrade()
+            restored_configuration = conn.execute(
+                sa.text("SELECT has_configuration FROM plugin_catalog_entries")
+            ).scalar_one()
+            assert restored_configuration is False
             with pytest.raises(RuntimeError, match="Cannot downgrade"):
                 migration.downgrade()
 

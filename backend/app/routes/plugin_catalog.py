@@ -280,11 +280,6 @@ async def put_agent_plugin_desired_state(
             )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Plugin catalog entry not found")
     catalog_revision, entry = resolved
-    if entry.has_configuration:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {"code": "plugin_configuration_not_supported"},
-        )
     if selected_runtime not in entry.compatible_runtimes:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

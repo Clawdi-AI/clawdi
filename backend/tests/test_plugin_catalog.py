@@ -35,7 +35,6 @@ def _catalog() -> dict[str, Any]:
                 "keywords": ["clawdi"],
                 "languages": ["en"],
                 "runtimes": ["openclaw", "hermes"],
-                "hasConfiguration": False,
                 "components": {
                     "skills": ["clawdi"],
                     "mcpServers": {"clawdi": "streamable-http"},
