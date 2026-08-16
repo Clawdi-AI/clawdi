@@ -1032,6 +1032,42 @@ function runtimeAppRoot(name: string, home: string): string | null {
 	return null;
 }
 
+const HERMES_DASHBOARD_CAPABILITY_PROBE =
+	"import uvicorn; assert callable(getattr(uvicorn.Server, 'capture_signals', None))";
+
+function hermesDashboardCapabilityError(
+	name: string,
+	runtime: RuntimeManifest["runtimes"][string],
+): string | null {
+	if (name !== "hermes" || !runtime.enabled || !runtime.install || !runtime.services?.dashboard)
+		return null;
+	const python = join(runtime.install.home, ".hermes", "hermes-agent", "venv", "bin", "python");
+	if (!executableExists(python)) {
+		return `Hermes dashboard runtime is missing its managed Python interpreter: ${python}`;
+	}
+	let result: ReturnType<typeof spawnRuntimeUserCommand>;
+	try {
+		result = spawnRuntimeUserCommand(
+			python,
+			["-c", HERMES_DASHBOARD_CAPABILITY_PROBE],
+			runtime.install.home,
+			runtime.install.home,
+			{ timeoutMs: 30_000 },
+		);
+	} catch (error) {
+		return `Hermes dashboard runtime capability probe failed: ${
+			error instanceof Error ? error.message : String(error)
+		}`;
+	}
+	if (result.status === 0) return null;
+	return `Hermes dashboard runtime is incompatible: ${
+		tail(String(result.stderr ?? "")) ??
+		(result.error instanceof Error
+			? result.error.message
+			: "uvicorn.Server.capture_signals is unavailable")
+	}`;
+}
+
 const liveSyncEnvironmentIndexSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.liveSyncEnvironments.v1"),
@@ -1252,6 +1288,7 @@ function observeRuntimeInstall(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
 	home: string,
+	planned?: RuntimeInstallObservation,
 ) {
 	if (!runtime.enabled) {
 		return {
@@ -1309,7 +1346,20 @@ function observeRuntimeInstall(
 			error: `runtime ${name} is enabled but missing install metadata`,
 		} satisfies RuntimeInstallObservation;
 	}
-	return runOfficialInstaller(name, runtime.install);
+	const commandPath = runtimeCommandPath(name, runtime.install.home);
+	const repairDashboardCapability =
+		name === "hermes" &&
+		Boolean(runtime.services?.dashboard) &&
+		Boolean(commandPath && executableExists(commandPath)) &&
+		planned?.status === "configured";
+	const observation = runOfficialInstaller(name, runtime.install, {
+		force: repairDashboardCapability,
+	});
+	if (observation.error) return observation;
+	const capabilityError = hermesDashboardCapabilityError(name, runtime);
+	return capabilityError
+		? { ...observation, status: "install_failed" as const, error: capabilityError }
+		: observation;
 }
 
 function planRuntimeInstallObservation(
@@ -1321,10 +1371,12 @@ function planRuntimeInstallObservation(
 	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home);
 	const commandPath = runtimeCommandPath(name, runtime.install.home);
 	const appRoot = runtimeAppRoot(name, runtime.install.home);
+	const capabilityError = hermesDashboardCapabilityError(name, runtime);
 	return {
 		runtime: name,
 		enabled: true,
-		status: commandPath && executableExists(commandPath) ? "present" : "configured",
+		status:
+			commandPath && executableExists(commandPath) && !capabilityError ? "present" : "configured",
 		executionUser: null,
 		commandPath,
 		appRoot,
@@ -5222,7 +5274,11 @@ export function runtimeInstallerMutationTargets(
 			join(home, ".hermes", "uv"),
 			join(home, ".hermes", ".env"),
 			join(home, ".hermes", ".no-bundled-skills"),
+			join(home, ".hermes", "config.yaml"),
+			join(home, ".hermes", "SOUL.md"),
+			join(home, ".hermes", "skills"),
 			join(home, ".local", "bin", "hermes"),
+			join(home, ".local", "bin", "hermes-agent"),
 			join(home, ".local", "bin", "hermes-acp"),
 			join(home, ".local", "bin", "node"),
 			join(home, ".local", "bin", "npm"),
@@ -5233,6 +5289,17 @@ export function runtimeInstallerMutationTargets(
 	}
 	return [...targets];
 }
+
+const HERMES_INSTALLER_DATA_DIRECTORIES = [
+	"cron",
+	"sessions",
+	"logs",
+	"pairing",
+	"hooks",
+	"image_cache",
+	"audio_cache",
+	"memories",
+] as const;
 
 function runtimeColdInstallMutationPlan(
 	manifest: RuntimeManifest,
@@ -5255,6 +5322,11 @@ function runtimeColdInstallMutationPlan(
 			paths.userHome,
 			paths.clawdiHome,
 			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserTrustedRoots),
+			...(manifest.runtimes.hermes?.enabled &&
+			manifest.runtimes.hermes.install &&
+			observations.get("hermes")?.status !== "present"
+				? HERMES_INSTALLER_DATA_DIRECTORIES.map((directory) => join(home, ".hermes", directory))
+				: []),
 		]),
 	].sort();
 	const runtimeCommandTargets = Object.keys(manifest.runtimes).flatMap((name) => {
@@ -5272,6 +5344,31 @@ function runtimeColdInstallMutationPlan(
 		},
 		runtimeUserOwnershipTargets: [...new Set([...metadataTargets, ...runtimeUserTargets])].sort(
 			(left, right) => left.length - right.length || left.localeCompare(right),
+		),
+	};
+}
+
+function excludeColdInstallSnapshotCoverage(
+	plan: RuntimeManagedMutationPlan,
+	coldInstallPlan: RuntimeManagedMutationPlan,
+): RuntimeManagedMutationPlan {
+	const contentRoots = coldInstallPlan.runtimeUserTargets.map((path) => resolve(path));
+	const coveredByContentRoot = (path: string): boolean => {
+		const candidate = resolve(path);
+		return contentRoots.some((root) => {
+			const relativePath = relative(root, candidate);
+			return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+		});
+	};
+	const coldMetadata = new Set(coldInstallPlan.metadataTargets.map((path) => resolve(path)));
+	return {
+		...plan,
+		runtimeUserTargets: plan.runtimeUserTargets.filter((path) => !coveredByContentRoot(path)),
+		runtimeUserSymlinkTargets: plan.runtimeUserSymlinkTargets.filter(
+			(path) => !coveredByContentRoot(path),
+		),
+		metadataTargets: plan.metadataTargets.filter(
+			(path) => !coveredByContentRoot(path) && !coldMetadata.has(resolve(path)),
 		),
 	};
 }
@@ -5748,9 +5845,13 @@ export function convergeRuntimeManifest(
 			hostedRuntimeContract.assertPlatformRoots();
 			ensureRuntimeUserOwnershipBoundaries(coldInstallPlan.runtimeUserOwnershipTargets);
 		}
-		observations.clear();
 		for (const [name, runtime] of runtimeEntries) {
-			const observation = observeRuntimeInstall(name, runtime, projectionHome);
+			const observation = observeRuntimeInstall(
+				name,
+				runtime,
+				projectionHome,
+				observations.get(name),
+			);
 			observations.set(name, observation);
 			if (observation.error) installErrors.push(observation.error);
 		}
@@ -5871,7 +5972,11 @@ export function convergeRuntimeManifest(
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
 	let liveSnapshot: ReturnType<typeof captureRuntimeLiveSnapshot>;
 	try {
-		liveSnapshot = captureRuntimeLiveSnapshot(mutationPlan.snapshot);
+		liveSnapshot = captureRuntimeLiveSnapshot(
+			coldInstallPlan
+				? excludeColdInstallSnapshotCoverage(mutationPlan.snapshot, coldInstallPlan.snapshot)
+				: mutationPlan.snapshot,
+		);
 		if (coldInstallSnapshot) {
 			for (const [path, node] of coldInstallSnapshot.entries) {
 				liveSnapshot.entries.set(path, node);
