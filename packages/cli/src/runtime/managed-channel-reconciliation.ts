@@ -50,7 +50,7 @@ export function planManagedHermesWhatsApp(input: {
 }): ManagedHermesWhatsAppPlan {
 	const desired = desiredHermesWhatsAppReceipt(input.manifest, input.home);
 	const stored = readManagedHermesWhatsAppReceipt(input.paths);
-	if (stored) assertReceiptScope(stored, input.manifest);
+	if (stored) assertReceiptAuthority(stored, input.manifest, input.home);
 	const commit =
 		input.manifest.runtimes.hermes?.enabled === true &&
 		input.manifest.projection !== undefined &&
@@ -248,7 +248,7 @@ function desiredHermesWhatsAppReceipt(
 		throw new Error("managed Hermes WhatsApp projection is missing its Link identity");
 	}
 	const authDir = resolve(credential.authDir);
-	const expectedAuthDir = resolve(home, ".hermes", "platforms", "whatsapp", "session");
+	const expectedAuthDir = managedHermesWhatsAppAuthDir(home);
 	if (authDir !== expectedAuthDir) {
 		throw new Error(`managed Hermes WhatsApp auth directory must be ${expectedAuthDir}`);
 	}
@@ -304,9 +304,10 @@ function readManagedHermesWhatsAppReceipt(
 	}
 }
 
-function assertReceiptScope(
+function assertReceiptAuthority(
 	receipt: ManagedHermesWhatsAppReceipt,
 	manifest: RuntimeManifest,
+	home: string,
 ): void {
 	if (
 		receipt.deploymentId !== manifest.deploymentId ||
@@ -315,6 +316,14 @@ function assertReceiptScope(
 	) {
 		throw new Error("managed Hermes WhatsApp receipt belongs to another runtime identity");
 	}
+	const expectedAuthDir = managedHermesWhatsAppAuthDir(home);
+	if (receipt.authDir !== expectedAuthDir) {
+		throw new Error(`managed Hermes WhatsApp receipt auth directory must be ${expectedAuthDir}`);
+	}
+}
+
+function managedHermesWhatsAppAuthDir(home: string): string {
+	return resolve(home, ".hermes", "platforms", "whatsapp", "session");
 }
 
 function hermesWhatsAppConfigCleanupAuthorized(

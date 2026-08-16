@@ -723,7 +723,9 @@ function managedWhatsAppAuthRoot(
 }
 
 interface ManagedWhatsAppAuthMarker {
-	target: string;
+	schemaVersion: "clawdi.managedWhatsAppAuth.v1";
+	provider: "whatsapp";
+	target: ManagedWhatsAppAuthCredential["target"];
 	accountKey: string;
 	credentialId: string;
 }
@@ -737,7 +739,22 @@ function readManagedWhatsAppAuthMarker(authDir: string): ManagedWhatsAppAuthMark
 		const target = record ? stringValue(record.target) : null;
 		const accountKey = record ? stringValue(record.accountKey) : null;
 		const credentialId = record ? stringValue(record.credentialId) : null;
-		return target && accountKey && credentialId ? { target, accountKey, credentialId } : null;
+		if (
+			record?.schemaVersion !== "clawdi.managedWhatsAppAuth.v1" ||
+			record.provider !== "whatsapp" ||
+			(target !== "openclaw" && target !== "hermes" && target !== "legacy") ||
+			!accountKey ||
+			!credentialId
+		) {
+			return null;
+		}
+		return {
+			schemaVersion: "clawdi.managedWhatsAppAuth.v1",
+			provider: "whatsapp",
+			target,
+			accountKey,
+			credentialId,
+		};
 	} catch {
 		return null;
 	}
@@ -745,6 +762,34 @@ function readManagedWhatsAppAuthMarker(authDir: string): ManagedWhatsAppAuthMark
 
 function removeManagedWhatsAppAuthDir(authDir: string): void {
 	if (!readManagedWhatsAppAuthMarker(authDir)) return;
+	rmSync(authDir, { recursive: true, force: true });
+}
+
+function removeManagedHermesWhatsAppAuthDir(
+	authDir: string,
+	expected: Pick<ManagedWhatsAppAuthMarker, "accountKey" | "credentialId">,
+): void {
+	let stat: ReturnType<typeof lstatSync>;
+	try {
+		stat = lstatSync(authDir);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!stat.isDirectory() || stat.isSymbolicLink()) {
+		throw new Error("managed Hermes WhatsApp session path is not a trusted directory");
+	}
+	const marker = readManagedWhatsAppAuthMarker(authDir);
+	if (!marker) {
+		throw new Error("managed Hermes WhatsApp session marker is missing or invalid");
+	}
+	if (
+		marker.target !== "hermes" ||
+		marker.accountKey !== expected.accountKey ||
+		marker.credentialId !== expected.credentialId
+	) {
+		throw new Error("managed Hermes WhatsApp session marker does not match its receipt");
+	}
 	rmSync(authDir, { recursive: true, force: true });
 }
 
@@ -764,16 +809,7 @@ function removeStaleManagedWhatsAppAuthDirs(
 		hermesWhatsAppPlan?.cleanupAuthorized &&
 		hermesWhatsAppPlan.previous
 	) {
-		const marker = readManagedWhatsAppAuthMarker(hermesAuthDir);
-		if (
-			marker &&
-			(marker.target !== "hermes" ||
-				marker.accountKey !== hermesWhatsAppPlan.previous.accountKey ||
-				marker.credentialId !== hermesWhatsAppPlan.previous.credentialId)
-		) {
-			throw new Error("managed Hermes WhatsApp session marker does not match its receipt");
-		}
-		removeManagedWhatsAppAuthDir(hermesAuthDir);
+		removeManagedHermesWhatsAppAuthDir(hermesAuthDir, hermesWhatsAppPlan.previous);
 	}
 }
 
@@ -5294,8 +5330,7 @@ function hostedChannelCredentialMutationTargets(
 	const hermesAuthDir = managedWhatsAppAuthRoot(home, "hermes");
 	if (
 		hermesAuthDir &&
-		hermesWhatsAppPlan?.cleanupAuthorized &&
-		readManagedWhatsAppAuthMarker(hermesAuthDir)
+		hermesWhatsAppPlan?.cleanupAuthorized
 	) {
 		targets.add(hermesAuthDir);
 	}

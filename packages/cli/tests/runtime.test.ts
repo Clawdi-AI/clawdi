@@ -13938,6 +13938,30 @@ exit 64
 			{ ...load, channelBindings: [], secretValues: {} },
 			paths,
 		);
+		const committedReceipt = readFileSync(hermesWhatsAppReceipt, "utf8");
+		writeFileSync(
+			hermesWhatsAppReceipt,
+			`${JSON.stringify({
+				...(JSON.parse(committedReceipt) as Record<string, unknown>),
+				authDir: join(home, ".hermes", "user-session"),
+			})}\n`,
+		);
+		expect(() => convergeRuntimeManifest(removed, paths)).toThrow(
+			"managed Hermes WhatsApp receipt auth directory must be",
+		);
+		writeFileSync(hermesWhatsAppReceipt, committedReceipt);
+
+		const sessionMarker = join(sessionDir, ".clawdi-managed-whatsapp-auth.json");
+		const committedMarker = readFileSync(sessionMarker, "utf8");
+		writeFileSync(sessionMarker, "{\"schemaVersion\":\"invalid\"}\n");
+		const invalidMarkerRemoval = convergeRuntimeManifest(removed, paths);
+		expect(invalidMarkerRemoval.installErrors.join("\n")).toContain(
+			"managed Hermes WhatsApp session marker is missing or invalid",
+		);
+		expect(existsSync(sessionDir)).toBe(true);
+		expect(readFileSync(hermesWhatsAppReceipt, "utf8")).toBe(committedReceipt);
+		writeFileSync(sessionMarker, committedMarker);
+
 		// Simulate a pre-receipt CLI after Hermes normalized its own config.
 		rmSync(hermesWhatsAppReceipt);
 		const hermesConfigPath = join(home, ".hermes", "config.yaml");
