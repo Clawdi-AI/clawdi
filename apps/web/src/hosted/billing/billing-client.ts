@@ -1,6 +1,8 @@
 "use client";
 
 import {
+	type AiProviderRemovalImpact,
+	type AiProviderRemovalResult,
 	type DeployPaths,
 	extractApiDetail,
 	projectHostedDeployRequest,
@@ -740,6 +742,30 @@ export function createBillingClient(
 	};
 
 	return {
+		getAiProviderRemovalImpact: async (providerId: string): Promise<AiProviderRemovalImpact> =>
+			unwrapDeploy(
+				await api.GET("/v2/ai-providers/{provider_id}/removal-impact", {
+					params: { path: { provider_id: providerId } },
+				}),
+			),
+		removeAiProvider: async (
+			providerId: string,
+			impactRevision: string,
+			providerIncarnationToken: string,
+			idempotencyKey: string,
+		): Promise<AiProviderRemovalResult> =>
+			unwrapDeploy(
+				await api.DELETE("/v2/ai-providers/{provider_id}", {
+					params: {
+						path: { provider_id: providerId },
+						header: {
+							"Idempotency-Key": idempotencyKey,
+							"Impact-Revision": impactRevision,
+							"Provider-Incarnation": providerIncarnationToken,
+						},
+					},
+				}),
+			),
 		getManagedModelCatalog: async () =>
 			unwrapDeploy(await api.GET("/v2/ai-providers/managed/models")),
 		getWallet: async () => unwrapDeploy(await api.GET("/v2/wallet")),

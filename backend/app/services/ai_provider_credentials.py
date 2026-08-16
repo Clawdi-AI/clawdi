@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +12,10 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.models.user import User
-from app.schemas.runtime import validate_hosted_runtime_desired_state
+from app.schemas.runtime import (
+    HostedRuntimeConfiguredDesiredState,
+    validate_hosted_runtime_desired_state,
+)
 from app.services.url_security import is_public_https_url
 
 OAuthConsumerRuntime = Literal["codex", "hermes", "openclaw"]
@@ -21,6 +24,15 @@ _RUNTIME_MAP_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, obj
 _OAUTH_CONSUMER_RUNTIME_ADAPTER: TypeAdapter[OAuthConsumerRuntime] = TypeAdapter(
     OAuthConsumerRuntime
 )
+
+
+class _PersistedHostedRuntimeConfiguredDesiredState(HostedRuntimeConfiguredDesiredState):
+    """Read provider pools persisted before single-provider admission."""
+
+    provider_ids: list[str] = Field(min_length=1)
+
+
+_PERSISTED_CONFIGURED_RUNTIME_ADAPTER = TypeAdapter(_PersistedHostedRuntimeConfiguredDesiredState)
 
 
 class OAuthCredentialClaimConflict(ValueError):
@@ -206,10 +218,26 @@ async def provider_has_hosted_runtime_consumer(
             .order_by(HostedRuntimeState.environment_id)
         )
     ).scalars()
-    return any(
-        (binding := selected_runtime_binding(runtimes)) is not None and provider_id == binding[1]
-        for runtimes in rows
-    )
+    for runtimes in rows:
+        try:
+            runtime_map = _RUNTIME_MAP_ADAPTER.validate_python(runtimes, strict=True)
+        except ValidationError:
+            return True
+        for raw_runtime_name, raw_runtime in runtime_map.items():
+            try:
+                _OAUTH_CONSUMER_RUNTIME_ADAPTER.validate_python(
+                    raw_runtime_name,
+                    strict=True,
+                )
+                runtime = _PERSISTED_CONFIGURED_RUNTIME_ADAPTER.validate_python(
+                    raw_runtime,
+                    strict=True,
+                )
+            except ValidationError:
+                return True
+            if provider_id in runtime.provider_ids:
+                return True
+    return False
 
 
 async def _lock_and_validate_runtime_provider(

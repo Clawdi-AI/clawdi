@@ -194,31 +194,30 @@ async def test_hosted_bound_provider_rejects_local_patch_and_replace(
         machine_name="Hosted bound provider",
         agent_type="openclaw",
     )
-    db_session.add(
-        HostedRuntimeState(
-            environment_id=environment.id,
-            deployment_id="dep-hosted-bound-provider",
-            instance_id="hri-hosted-bound-provider",
-            generation=1,
-            cli_package_spec="clawdi@1.2.3-test",
-            locale={"language": "en", "timezone": "UTC"},
-            system=_TEST_SYSTEM,
-            live_sync={"enabled": False, "agents": []},
-            recovery={"cacheManifest": True, "allowOfflineBoot": True},
-            runtimes={
-                "openclaw": {
-                    "enabled": True,
-                    "providerMode": "configured",
-                    "provider_ids": [provider_id],
-                    "primary_model": {
-                        "provider_id": provider_id,
-                        "model": "gpt-test",
-                    },
-                    "install": {"source": "official"},
-                }
-            },
-        )
+    runtime_state = HostedRuntimeState(
+        environment_id=environment.id,
+        deployment_id="dep-hosted-bound-provider",
+        instance_id="hri-hosted-bound-provider",
+        generation=1,
+        cli_package_spec="clawdi@1.2.3-test",
+        locale={"language": "en", "timezone": "UTC"},
+        system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        runtimes={
+            "openclaw": {
+                "enabled": True,
+                "providerMode": "configured",
+                "provider_ids": ["catalog-primary-provider", provider_id],
+                "primary_model": {
+                    "provider_id": "catalog-primary-provider",
+                    "model": "gpt-test",
+                },
+                "install": {"source": "official"},
+            }
+        },
     )
+    db_session.add(runtime_state)
     await db_session.commit()
 
     patched = await client.patch(
@@ -236,11 +235,20 @@ async def test_hosted_bound_provider_rejects_local_patch_and_replace(
             "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
         },
     )
+    deleted = await client.delete(f"/v1/ai-providers/{provider_id}")
 
     assert patched.status_code == 422, patched.text
     assert patched.json()["detail"] == ("Hosted AI Provider base_url must be a public HTTPS URL")
     assert replaced.status_code == 422, replaced.text
     assert replaced.json()["detail"] == ("Hosted AI Provider base_url must be a public HTTPS URL")
+    assert deleted.status_code == 409, deleted.text
+    assert "affected agents are set to Unset first" in deleted.json()["detail"]
+
+    runtime_state.runtimes = {"openclaw": {"provider_ids": [provider_id]}}
+    await db_session.commit()
+    malformed_state_delete = await client.delete(f"/v1/ai-providers/{provider_id}")
+    assert malformed_state_delete.status_code == 409, malformed_state_delete.text
+
     unchanged = await client.get(f"/v1/ai-providers/{provider_id}")
     assert unchanged.status_code == 200, unchanged.text
     assert unchanged.json()["base_url"] == "https://api.openai.com/v1"

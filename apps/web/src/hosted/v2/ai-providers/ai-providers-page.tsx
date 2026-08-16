@@ -1,7 +1,7 @@
 "use client";
 
 import { CircleAlert, Pencil, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -28,14 +28,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
+import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
-import { useDeleteProvider, useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import {
-	type ProviderUsage,
-	providerRemovalImpact,
-	providerUsage,
-} from "@/hosted/v2/ai-providers/ai-providers-page.logic";
+	useDeleteProvider,
+	useProviderRemovalImpact,
+	useUserAiProviders,
+} from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import {
 	AuthBadge,
 	ManagedProviderCard,
@@ -54,7 +53,6 @@ const PROVIDER_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function AiProvidersPage() {
 	const providers = useUserAiProviders();
-	const inventory = useHostedDeploymentInventory();
 	const [addOpen, setAddOpen] = useState(false);
 	const [editing, setEditing] = useState<AiProvider | null>(null);
 
@@ -129,7 +127,6 @@ export function AiProvidersPage() {
 							<ProviderCard
 								key={provider.provider_id}
 								provider={provider}
-								usage={providerUsage(provider.provider_id, inventory.deployments)}
 								onEdit={() => {
 									setEditing(provider);
 									setAddOpen(true);
@@ -145,15 +142,7 @@ export function AiProvidersPage() {
 	);
 }
 
-function ProviderCard({
-	provider,
-	usage,
-	onEdit,
-}: {
-	provider: AiProvider;
-	usage: ProviderUsage;
-	onEdit: () => void;
-}) {
+function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () => void }) {
 	const presentation = providerPresentation(provider);
 	const deployable =
 		(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none";
@@ -192,18 +181,26 @@ function ProviderCard({
 					{deployable ? <Pencil /> : <CircleAlert />}
 					{deployable ? "Edit" : "Finish setup"}
 				</Button>
-				<RemoveProviderAction provider={provider} usage={usage} />
+				<RemoveProviderAction provider={provider} />
 			</div>
 		</div>
 	);
 }
 
-function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage: ProviderUsage }) {
+function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 	const del = useDeleteProvider();
 	const [open, setOpen] = useState(false);
 	const [acknowledged, setAcknowledged] = useState(false);
+	const attemptRef = useRef<{
+		impactRevision: string;
+		providerIncarnationToken: string;
+		idempotencyKey: string;
+	} | null>(null);
+	const impact = useProviderRemovalImpact(provider.provider_id, open);
 	const providerLabel = providerPresentation(provider).label;
-	const impact = providerRemovalImpact(usage);
+	const affectedAgents = impact.data?.agents ?? [];
+	const acknowledgementRequired = affectedAgents.length > 0;
+	const impactError = impact.error;
 	const revokesChatGpt =
 		(provider.auth.type === "agent_profile" && provider.auth.tool === "codex") ||
 		provider.auth.type === "oauth_profile";
@@ -215,10 +212,29 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 	}
 
 	function removeProvider() {
+		if (!impact.data) return;
+		if (
+			attemptRef.current === null ||
+			attemptRef.current.impactRevision !== impact.data.impact_revision ||
+			attemptRef.current.providerIncarnationToken !== impact.data.provider_incarnation_token
+		) {
+			attemptRef.current = {
+				impactRevision: impact.data.impact_revision,
+				providerIncarnationToken: impact.data.provider_incarnation_token,
+				idempotencyKey: newIdempotencyKey("ai-provider-remove"),
+			};
+		}
+		const attempt = attemptRef.current;
 		del.mutate(
-			{ params: { path: { provider_id: provider.provider_id } } },
+			{
+				providerId: provider.provider_id,
+				impactRevision: attempt.impactRevision,
+				providerIncarnationToken: attempt.providerIncarnationToken,
+				idempotencyKey: attempt.idempotencyKey,
+			},
 			{
 				onSuccess: () => {
+					attemptRef.current = null;
 					setOpen(false);
 				},
 			},
@@ -257,10 +273,39 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 								asynchronously.
 							</p>
 						) : null}
-						<p>{impact.warning}</p>
+						{impact.isFetching ? (
+							<p className="flex items-center gap-2 text-muted-foreground">
+								<Spinner />
+								Checking affected agents...
+							</p>
+						) : impactError ? (
+							<ApiErrorPanel
+								error={impactError}
+								onRetry={() => impact.refetch()}
+								title="Couldn’t check affected agents"
+							/>
+						) : affectedAgents.length > 0 ? (
+							<>
+								<p>
+									These agents will be set to Provider unset with no primary model. They will keep
+									running, but model features will remain unavailable until reconfigured. There is
+									no automatic fallback to Clawdi AI.
+								</p>
+								<ul className="space-y-1 text-foreground">
+									{affectedAgents.map((agent) => (
+										<li key={agent.deployment_id}>
+											{agent.name}{" "}
+											<span className="text-muted-foreground">{agent.deployment_id}</span>
+										</li>
+									))}
+								</ul>
+							</>
+						) : (
+							<p>No hosted agents currently use this provider.</p>
+						)}
 					</AlertDialogDescription>
 				</AlertDialogHeader>
-				{impact.acknowledgementRequired ? (
+				{acknowledgementRequired ? (
 					<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
 						<Checkbox
 							id={acknowledgementId}
@@ -279,7 +324,13 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 							event.preventDefault();
 							removeProvider();
 						}}
-						disabled={del.isPending || (impact.acknowledgementRequired && !acknowledged)}
+						disabled={
+							del.isPending ||
+							impact.isFetching ||
+							impactError !== null ||
+							impact.data === undefined ||
+							(acknowledgementRequired && !acknowledged)
+						}
 						variant="destructive"
 					>
 						{del.isPending ? <Spinner /> : null}

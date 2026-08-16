@@ -227,7 +227,7 @@ async def upsert_clawdi_managed_provider(
         provider.models = [{"id": default_model}] if default_model else None
     provider.managed_by = "clawdi"
     provider.runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
-    provider.archived_at = None
+    provider.activate()
     db.add(provider)
     await db.flush()
     auth_metadata: dict[str, JsonValue] = {

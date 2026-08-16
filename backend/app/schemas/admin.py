@@ -263,6 +263,33 @@ class AdminDeploymentManagedAiProviderCleanup(BaseModel):
         return value
 
 
+class AdminAiProviderArchiveRequest(BaseModel):
+    """Archive one owner-bound provider after Hosted retracts its references."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner: PlatformOwner
+    expected_incarnation_token: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class AdminAiProviderRemovalAuthorityResponse(BaseModel):
+    """Opaque Cloud CAS authority for one owner-bound provider id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["active", "archived", "not_found"]
+    provider_id: str = Field(min_length=1, max_length=80)
+    incarnation_token: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class AdminAiProviderArchiveReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["archived", "already_archived", "not_found"]
+    provider_id: str = Field(min_length=1, max_length=80)
+    remote_revoke_status: Literal["pending", "not_required"] = "not_required"
+
+
 class AdminDeploymentManagedAiProviderCleanupReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

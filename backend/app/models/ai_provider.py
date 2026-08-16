@@ -12,6 +12,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -25,6 +26,12 @@ class AiProvider(Base, TimestampMixin):
     __tablename__ = "ai_providers"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    incarnation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(User.id, ondelete="CASCADE"),
@@ -48,6 +55,11 @@ class AiProvider(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("owner_user_id", "provider_id", name="uq_ai_providers_owner_provider_id"),
     )
+
+    def activate(self) -> None:
+        if self.archived_at is not None:
+            self.incarnation_id = uuid.uuid4()
+        self.archived_at = None
 
 
 class AiProviderAuthPayload(Base, TimestampMixin):
