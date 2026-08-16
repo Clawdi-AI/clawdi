@@ -27,6 +27,8 @@ export type DeploymentRead = S["V2HostedDeploymentReadResponse"];
 export type Deployment = DeploymentRead;
 export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
 export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
+export type AiProviderRemovalImpact = S["V2AiProviderRemovalImpactResponse"];
+export type AiProviderRemovalResult = S["V2AiProviderRemovalResponse"];
 export type RuntimeUiCredentials =
 	| S["V2HermesRuntimeUiCredentials"]
 	| S["V2OpenClawRuntimeUiCredentials"];

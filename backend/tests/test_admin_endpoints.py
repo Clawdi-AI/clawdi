@@ -1465,6 +1465,157 @@ async def test_admin_cleanup_deployment_managed_provider_archives_exact_identity
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_admin_provider_archive_is_idempotent_and_fences_recreated_incarnation(
+    admin_client,
+    db_session,
+    engine,
+    seed_user,
+):
+    from sqlalchemy import select
+
+    from app.models.ai_provider import AiProvider
+    from app.services.ai_provider_credentials import lock_ai_provider_owner
+
+    provider_id = "repairable-provider"
+    owner_user_id = seed_user.id
+    provider = AiProvider(
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        api_mode="openai_responses",
+        auth_type="none",
+        managed_by="user",
+    )
+    db_session.add(provider)
+    await db_session.commit()
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    authority_url = f"/v1/admin/ai-providers/{provider_id}/removal-authority"
+    archive_url = f"/v1/admin/ai-providers/{provider_id}/archive"
+    active_authority = await admin_client.get(
+        authority_url,
+        headers=_AUTH,
+        params=owner,
+    )
+    assert active_authority.status_code == 200, active_authority.text
+    active_token = active_authority.json()["incarnation_token"]
+    active_incarnation_id = provider.incarnation_id
+    provider.label = "Edited without reactivation"
+    provider.activate()
+    await db_session.commit()
+    edited_authority = await admin_client.get(
+        authority_url,
+        headers=_AUTH,
+        params=owner,
+    )
+    assert edited_authority.json()["incarnation_token"] == active_token
+    assert provider.incarnation_id == active_incarnation_id
+    body = {"owner": owner, "expected_incarnation_token": active_token}
+    archive_headers = {**_AUTH, "Idempotency-Key": "archive-active-incarnation"}
+
+    archived = await admin_client.post(
+        archive_url,
+        headers=archive_headers,
+        json=body,
+    )
+    replayed = await admin_client.post(
+        archive_url,
+        headers=archive_headers,
+        json=body,
+    )
+    archived_authority = await admin_client.get(
+        authority_url,
+        headers=_AUTH,
+        params=owner,
+    )
+    archived_token = archived_authority.json()["incarnation_token"]
+    already_archived = await admin_client.post(
+        archive_url,
+        headers={**_AUTH, "Idempotency-Key": "archive-archived-incarnation"},
+        json={"owner": owner, "expected_incarnation_token": archived_token},
+    )
+    absent_authority = await admin_client.get(
+        "/v1/admin/ai-providers/never-created/removal-authority",
+        headers=_AUTH,
+        params=owner,
+    )
+    absent = await admin_client.post(
+        "/v1/admin/ai-providers/never-created/archive",
+        headers={**_AUTH, "Idempotency-Key": "archive-absent-incarnation"},
+        json={
+            "owner": owner,
+            "expected_incarnation_token": absent_authority.json()["incarnation_token"],
+        },
+    )
+
+    assert archived.status_code == 200, archived.text
+    assert archived.json() == {
+        "status": "archived",
+        "provider_id": provider_id,
+        "remote_revoke_status": "not_required",
+    }
+    assert replayed.json() == archived.json()
+    assert archived_token == active_token
+    assert already_archived.json()["status"] == "already_archived"
+    assert absent.json()["status"] == "not_found"
+    await db_session.refresh(provider)
+    assert provider.archived_at is not None
+
+    await db_session.rollback()
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    reactivation_holds_lock = asyncio.Event()
+    allow_reactivation_commit = asyncio.Event()
+
+    async def reactivate_provider() -> None:
+        async with session_factory() as session:
+            await lock_ai_provider_owner(session, owner_user_id)
+            recreated = await session.scalar(
+                select(AiProvider)
+                .where(
+                    AiProvider.owner_user_id == owner_user_id,
+                    AiProvider.provider_id == provider_id,
+                )
+                .with_for_update()
+            )
+            assert recreated is not None
+            recreated.activate()
+            recreated.label = "Recreated provider"
+            reactivation_holds_lock.set()
+            await allow_reactivation_commit.wait()
+            await session.commit()
+
+    reactivation = asyncio.create_task(reactivate_provider())
+    await asyncio.wait_for(reactivation_holds_lock.wait(), timeout=5)
+    stale_archive_request = asyncio.create_task(
+        admin_client.post(
+            archive_url,
+            headers={**_AUTH, "Idempotency-Key": "delayed-old-incarnation"},
+            json={"owner": owner, "expected_incarnation_token": archived_token},
+        )
+    )
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(stale_archive_request), timeout=0.05)
+    finally:
+        allow_reactivation_commit.set()
+    stale_archive = await asyncio.wait_for(stale_archive_request, timeout=5)
+    await asyncio.wait_for(reactivation, timeout=5)
+
+    recreated_authority = await admin_client.get(
+        authority_url,
+        headers=_AUTH,
+        params=owner,
+    )
+    recreated_token = recreated_authority.json()["incarnation_token"]
+    assert recreated_token != archived_token
+    assert stale_archive.status_code == 409
+    assert stale_archive.json()["detail"]["code"] == "provider_incarnation_mismatch"
+    await db_session.refresh(provider)
+    assert provider.archived_at is None
+
+
+@pytest.mark.asyncio
 async def test_admin_cleanup_proves_exact_provider_archived_by_completed_principal_cleanup(
     admin_client,
     db_session,

@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Response, status
 from pydantic import JsonValue, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -64,6 +64,9 @@ from app.models.user import (
 )
 from app.schemas.admin import (
     AdminAgentCreate,
+    AdminAiProviderArchiveReceipt,
+    AdminAiProviderArchiveRequest,
+    AdminAiProviderRemovalAuthorityResponse,
     AdminApiKeyCreate,
     AdminAppSettingListResponse,
     AdminAppSettingResponse,
@@ -106,6 +109,7 @@ from app.services.agent_lifecycle import (
     active_agent_filter,
     archive_agent_and_project,
 )
+from app.services.ai_provider_auth_transition import transition_ai_provider_auth
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
     lock_ai_provider_owner,
@@ -174,6 +178,12 @@ from app.services.managed_ai_provider import (
     replace_deployment_managed_provider_metadata,
     upsert_clawdi_managed_provider,
 )
+from app.services.platform_contract import (
+    lock_platform_idempotency,
+    platform_request_hash,
+    read_platform_replay,
+    store_platform_response,
+)
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
     PrincipalLifecycleConfigurationError,
@@ -230,6 +240,8 @@ whatsapp_pairing_router = APIRouter(
     tags=["admin"],
     include_in_schema=False,
 )
+
+_AI_PROVIDER_ARCHIVE_OPERATION = "admin.ai_provider.archive"
 
 
 def _no_store(response: Response) -> None:
@@ -559,6 +571,29 @@ def _record_deployment_managed_provider_audit(
         source="api.admin",
         details=details,
     )
+
+
+def _ai_provider_removal_incarnation_token(
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+    provider: AiProvider | None,
+) -> str:
+    """Return an opaque provider-incarnation CAS token."""
+
+    if provider is None:
+        authority: dict[str, JsonValue] = {
+            "owner_user_id": str(owner_user_id),
+            "provider_id": provider_id,
+            "authority": "absent",
+        }
+    else:
+        authority = {
+            "owner_user_id": str(owner_user_id),
+            "provider_row_id": str(provider.id),
+            "incarnation_id": str(provider.incarnation_id),
+        }
+    return platform_request_hash(authority)
 
 
 async def _find_deployment_managed_provider_owner(
@@ -1216,6 +1251,181 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
         owner=owner,
         target=target,
     )
+
+
+@router.get(
+    "/ai-providers/{provider_id}/removal-authority",
+    response_model=AdminAiProviderRemovalAuthorityResponse,
+)
+async def admin_get_ai_provider_removal_authority(
+    provider_id: str = Path(..., min_length=1, max_length=80),
+    owner_kind: Annotated[str | None, Query(alias="kind")] = None,
+    owner_ref: Annotated[str | None, Query(alias="ref")] = None,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminAiProviderRemovalAuthorityResponse:
+    """Read the exact Cloud incarnation to which removal must compare-and-set."""
+
+    owner = _deployment_managed_provider_query_owner(kind=owner_kind, ref=owner_ref)
+    target = await _find_deployment_managed_provider_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action="ai_provider.removal_authority.read",
+    )
+    provider = (
+        await db.execute(
+            select(AiProvider)
+            .where(
+                AiProvider.owner_user_id == target.id,
+                AiProvider.provider_id == provider_id,
+            )
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    provider_status = (
+        "not_found"
+        if provider is None
+        else "archived"
+        if provider.archived_at is not None
+        else "active"
+    )
+    return AdminAiProviderRemovalAuthorityResponse(
+        status=provider_status,
+        provider_id=provider_id,
+        incarnation_token=_ai_provider_removal_incarnation_token(
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider=provider,
+        ),
+    )
+
+
+@router.post(
+    "/ai-providers/{provider_id}/archive",
+    response_model=AdminAiProviderArchiveReceipt,
+)
+async def admin_archive_ai_provider(
+    body: AdminAiProviderArchiveRequest,
+    idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    ],
+    provider_id: str = Path(..., min_length=1, max_length=80),
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminAiProviderArchiveReceipt:
+    """Archive exactly the Cloud incarnation confirmed before Hosted Unset."""
+
+    owner = body.owner
+    action = "ai_provider.archive"
+    target = await _find_deployment_managed_provider_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action=action,
+    )
+    request_hash = platform_request_hash(
+        {
+            "owner": owner.model_dump(mode="json"),
+            "provider_id": provider_id,
+            "expected_incarnation_token": body.expected_incarnation_token,
+        }
+    )
+    replay_row = await lock_platform_idempotency(
+        db,
+        operation=_AI_PROVIDER_ARCHIVE_OPERATION,
+        idempotency_key=idempotency_key,
+    )
+    if replay_row is not None:
+        if replay_row.owner_user_id != target.id or replay_row.request_hash != request_hash:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Idempotency-Key was already used with a different archive request",
+            )
+        return AdminAiProviderArchiveReceipt.model_validate(read_platform_replay(replay_row).body)
+
+    await lock_ai_provider_owner(db, target.id)
+    provider = (
+        await db.execute(
+            select(AiProvider)
+            .where(
+                AiProvider.owner_user_id == target.id,
+                AiProvider.provider_id == provider_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    current_token = _ai_provider_removal_incarnation_token(
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider=provider,
+    )
+    if current_token != body.expected_incarnation_token:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider_uuid=None if provider is None else provider.id,
+            outcome="incarnation_mismatch",
+        )
+        await db.commit()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "provider_incarnation_mismatch",
+                "message": "AI provider changed after removal was confirmed.",
+            },
+        )
+
+    remote_revoke_status = "not_required"
+    if provider is None:
+        archive_status = "not_found"
+    elif provider.archived_at is not None:
+        archive_status = "already_archived"
+    else:
+        transition = await transition_ai_provider_auth(
+            db,
+            owner_user_id=target.id,
+            provider=provider,
+            auth_type=provider.auth_type,
+            auth_ref=provider.auth_ref,
+            auth_metadata=provider.auth_metadata,
+            archive_provider=True,
+        )
+        archive_status = "archived"
+        remote_revoke_status = transition.remote_revoke_status
+
+    receipt = AdminAiProviderArchiveReceipt(
+        status=archive_status,
+        provider_id=provider_id,
+        remote_revoke_status=remote_revoke_status,
+    )
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=None if provider is None else provider.id,
+        outcome=archive_status,
+    )
+    store_platform_response(
+        db,
+        operation=_AI_PROVIDER_ARCHIVE_OPERATION,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        owner_user_id=target.id,
+        resource_type="ai_provider",
+        resource_id=provider_id,
+        response_status=status.HTTP_200_OK,
+        response_body=receipt.model_dump(mode="json"),
+    )
+    await db.commit()
+    return receipt
 
 
 @router.post(

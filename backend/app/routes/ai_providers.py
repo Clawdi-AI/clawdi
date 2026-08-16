@@ -281,7 +281,7 @@ async def upsert_ai_provider(
         except OAuthCredentialClaimConflict as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         auth_event_queued = transition.manifest_event_queued
-    provider.archived_at = None
+    provider.activate()
     db.add(provider)
     if (
         previous_non_auth_signature != runtime_manifest_provider_non_auth_signature(provider)
@@ -717,6 +717,15 @@ async def delete_ai_provider(
 ) -> AiProviderDeleteResponse:
     await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
+    if await provider_has_hosted_runtime_consumer(
+        db,
+        owner_user_id=auth.user_id,
+        provider_id=provider.provider_id,
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Remove this provider through Hosted so affected agents are set to Unset first.",
+        )
     result = await transition_ai_provider_auth(
         db,
         owner_user_id=auth.user_id,
@@ -1141,7 +1150,7 @@ async def _accept_ai_provider(
         provider.auth_type = provider_body.auth.type
         provider.auth_ref = auth_ref
         provider.auth_metadata = auth_metadata
-    provider.archived_at = None
+    provider.activate()
     db.add(provider)
     # Make the provider row real inside the transaction before the credential
     # write. A later failure must roll this flush back, never expose a half row.

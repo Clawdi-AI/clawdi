@@ -55,6 +55,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/ai-providers/{provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove V2 Ai Provider */
+        delete: operations["remove_v2_ai_provider_v2_ai_providers__provider_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/ai-providers/{provider_id}/removal-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Ai Provider Removal Impact */
+        get: operations["get_v2_ai_provider_removal_impact_v2_ai_providers__provider_id__removal_impact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments": {
         parameters: {
             query?: never;
@@ -1191,6 +1225,50 @@ export interface components {
             /** Model */
             model: string;
         };
+        /** V2AiProviderRemovalImpactAgent */
+        V2AiProviderRemovalImpactAgent: {
+            /**
+             * Deployment Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            deployment_id: string;
+            /** Name */
+            name: string;
+        };
+        /** V2AiProviderRemovalImpactResponse */
+        V2AiProviderRemovalImpactResponse: {
+            /** Provider Id */
+            provider_id: string;
+            /** Impact Revision */
+            impact_revision: string;
+            /** Provider Incarnation Token */
+            provider_incarnation_token: string;
+            /** Agents */
+            agents: components["schemas"]["V2AiProviderRemovalImpactAgent"][];
+        };
+        /** V2AiProviderRemovalResponse */
+        V2AiProviderRemovalResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "removed";
+            /** Provider Id */
+            provider_id: string;
+            /** Affected Agents */
+            affected_agents: components["schemas"]["V2AiProviderRemovalImpactAgent"][];
+            /**
+             * Cloud Archive Status
+             * @enum {string}
+             */
+            cloud_archive_status: "archived" | "already_archived" | "not_found";
+            /**
+             * Remote Revoke Status
+             * @enum {string}
+             */
+            remote_revoke_status: "pending" | "not_required";
+        };
         /** V2BillingOfferResponse */
         V2BillingOfferResponse: {
             /** Billing Term Months */
@@ -2110,6 +2188,11 @@ export interface components {
              * @description Canonical provider identifier from the bundled Hosted model catalog.
              */
             provider_id: string;
+            /**
+             * Api Mode
+             * @description Optional model-specific protocol override. Null means the model inherits the managed provider protocol.
+             */
+            api_mode?: ("openai_chat" | "openai_responses") | null;
             /** Is Default */
             is_default: boolean;
             /** Is Featured */
@@ -2683,6 +2766,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2ManagedModelCatalogResponse"];
+                };
+            };
+        };
+    };
+    remove_v2_ai_provider_v2_ai_providers__provider_id__delete: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "Impact-Revision": string;
+                "Provider-Incarnation": string;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2AiProviderRemovalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_ai_provider_removal_impact_v2_ai_providers__provider_id__removal_impact_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2AiProviderRemovalImpactResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

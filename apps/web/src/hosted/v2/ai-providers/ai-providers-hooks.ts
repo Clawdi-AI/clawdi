@@ -1,8 +1,11 @@
 "use client";
 
 import { projectUserSelectableAiProviders } from "@clawdi/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
+import { billingQueryRetry, normalizeBillingError } from "@/hosted/billing/errors";
+import { billingKeys } from "@/hosted/billing/query-keys";
 import type {
 	AiProviderAcceptRequest,
 	AiProviderAcceptResponse,
@@ -75,11 +78,26 @@ export function usePatchProvider() {
 }
 
 export function useDeleteProvider() {
-	const api = useOpenApi();
+	const client = useBillingClient();
 	const qc = useQueryClient();
-	return api.useMutation("delete", "/v1/ai-providers/{provider_id}", {
+	return useMutation({
+		mutationFn: ({
+			providerId,
+			impactRevision,
+			providerIncarnationToken,
+			idempotencyKey,
+		}: {
+			providerId: string;
+			impactRevision: string;
+			providerIncarnationToken: string;
+			idempotencyKey: string;
+		}) =>
+			client.removeAiProvider(providerId, impactRevision, providerIncarnationToken, idempotencyKey),
 		onSuccess: (result) => {
-			qc.invalidateQueries({ queryKey: KEY });
+			void Promise.all([
+				qc.invalidateQueries({ queryKey: KEY }),
+				qc.invalidateQueries({ queryKey: billingKeys.deployments }),
+			]);
 			toast.success("Provider removed", {
 				description:
 					result.remote_revoke_status === "pending"
@@ -87,7 +105,21 @@ export function useDeleteProvider() {
 						: "Local access is removed immediately.",
 			});
 		},
-		onError: toastApiError("Couldn't remove provider"),
+		onError: (error) => {
+			toast.error("Couldn't remove provider", {
+				description: normalizeBillingError(error),
+			});
+		},
+	});
+}
+
+export function useProviderRemovalImpact(providerId: string, enabled: boolean) {
+	const client = useBillingClient();
+	return useQuery({
+		queryKey: ["hosted-ai-provider-removal-impact", providerId],
+		queryFn: () => client.getAiProviderRemovalImpact(providerId),
+		enabled: enabled && isDeployApiConfigured(),
+		retry: billingQueryRetry,
 	});
 }
 

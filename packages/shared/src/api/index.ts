@@ -1,5 +1,7 @@
 export type { components, paths } from "./api.generated";
 export type {
+	AiProviderRemovalImpact,
+	AiProviderRemovalResult,
 	DeployComponents,
 	Deployment,
 	DeploymentEventStreamSnapshotHandoff,
