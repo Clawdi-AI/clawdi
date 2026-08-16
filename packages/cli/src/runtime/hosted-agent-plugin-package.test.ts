@@ -427,35 +427,9 @@ describe("Hosted Agent Plugin package preparation", () => {
 				},
 			},
 			{
-				label: "Skill frontmatter",
-				files: {
-					...pluginFiles(),
-					"skills/review/SKILL.md": Buffer.from("---\nname: other\ndescription: Review\n---\n"),
-				},
-			},
-			{
-				label: "Skill unknown frontmatter field",
-				files: {
-					...pluginFiles(),
-					"skills/review/SKILL.md": Buffer.from(
-						"---\nname: review\ndescription: Review\nunknown: rejected\n---\n",
-					),
-				},
-			},
-			{
-				label: "Clawdi secret slots",
-				files: pluginFiles(undefined, "1.2.3", {
-					"ai.clawdi": clawdiExtension({
-						configuration: { secretSlots: {} },
-					}),
-				}),
-			},
-			{
 				label: "Clawdi unknown extension field",
 				files: pluginFiles(undefined, "1.2.3", {
-					"ai.clawdi": clawdiExtension({
-						unknown: true,
-					}),
+					"ai.clawdi": clawdiExtension({ unknown: true }),
 				}),
 			},
 			{
@@ -518,6 +492,22 @@ describe("Hosted Agent Plugin package preparation", () => {
 						}),
 					},
 				),
+			},
+			{
+				label: "Skill frontmatter",
+				files: {
+					...pluginFiles(),
+					"skills/review/SKILL.md": Buffer.from("---\nname: other\ndescription: Review\n---\n"),
+				},
+			},
+			{
+				label: "Skill unknown frontmatter field",
+				files: {
+					...pluginFiles(),
+					"skills/review/SKILL.md": Buffer.from(
+						"---\nname: review\ndescription: Review\nunknown: rejected\n---\n",
+					),
+				},
 			},
 			...[
 				{ command: "node server.js" },

@@ -38,14 +38,11 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.ai_provider import AiProviderModel
-from app.schemas.plugin_catalog import TRUSTED_PLUGIN_REPOSITORY_URL
+from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES, TRUSTED_PLUGIN_REPOSITORY_URL
 from app.schemas.runtime import (
-    AGENT_PLUGINS_SCHEMA_1_0_0,
-    HostedAgentPluginInstallation,
     HostedAgentPlugins,
     HostedCodexProviderProjection,
     HostedEgressEngine,
-    HostedEgressProfile,
     HostedEgressProfiles,
     HostedRuntimeCompanions,
     HostedRuntimeLiveSync,
@@ -98,19 +95,7 @@ RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
-RUNTIME_AGENT_PLUGIN_PROOF_HEADER = "X-Clawdi-Agent-Plugin-Proof"
-_CLAWDI_AGENT_PLUGIN_PACKAGE = "clawdi"
-_CLAWDI_AGENT_PLUGIN_COMPONENT = "clawdi"
-_CLAWDI_AGENT_PLUGIN_SCHEMA = AGENT_PLUGINS_SCHEMA_1_0_0
-_CLAWDI_AGENT_PLUGIN_STORE_URL = TRUSTED_PLUGIN_REPOSITORY_URL
-_CLAWDI_AGENT_PLUGIN_STORE_PATH = "v2/plugins/clawdi"
-_CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID = "first-party-clawdi-mcp"
-_CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER = "first-party:clawdi"
-_CLAWDI_AGENT_PLUGIN_MCP_AUTHORITY = "cloud-api.clawdi.ai:443"
-_CLAWDI_AGENT_PLUGIN_MCP_PATH = "/v1/mcp/clawdi"
-_CLAWDI_AGENT_PLUGIN_MARKER_HEADER = "X-Clawdi-Agent-Plugin"
 _CLAWDI_AUTH_TOKEN_SECRET_REF = "secret://clawdi/auth-token"
-_AGENT_PLUGIN_PROOF_PATTERN = re.compile(r"^v1:(openclaw|hermes):([0-9a-f]{64}):([0-9a-f]{64})$")
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
 _CODEX_TOOL_LEGACY_RUNTIME_ENV = "OPENAI_API_KEY"
@@ -567,155 +552,15 @@ def _project_runtime_skills(
     return {"entries": entries} if entries else None
 
 
-def _without_legacy_clawdi_components(
-    mcp: dict[str, Any] | None,
-    skills: dict[str, Any] | None,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    projected_mcp = mcp
-    if mcp is not None:
-        servers = dict(mcp.get("servers", {}))
-        servers.pop(_CLAWDI_AGENT_PLUGIN_COMPONENT, None)
-        projected_mcp = {**mcp, "servers": servers} if servers else None
-
-    projected_skills = skills
-    if skills is not None:
-        entries = dict(skills.get("entries", {}))
-        entries.pop(_CLAWDI_AGENT_PLUGIN_COMPONENT, None)
-        projected_skills = {**skills, "entries": entries} if entries else None
-    return projected_mcp, projected_skills
-
-
-def _is_first_party_clawdi_agent_plugin(
-    agent_plugins: HostedAgentPlugins | None,
-) -> bool:
-    if agent_plugins is None:
-        return False
-    reserved = [
-        (name, installation)
-        for name, installation in agent_plugins.installations.items()
-        if name == _CLAWDI_AGENT_PLUGIN_PACKAGE
-    ]
-    if len(reserved) != 1 or reserved[0][0] != _CLAWDI_AGENT_PLUGIN_PACKAGE:
-        return False
-    installation = reserved[0][1]
-    source = installation.source
-    return (
-        installation.agentPluginsSchema == _CLAWDI_AGENT_PLUGIN_SCHEMA
-        and source.type == "github"
-        and source.url == _CLAWDI_AGENT_PLUGIN_STORE_URL
-        and source.path == _CLAWDI_AGENT_PLUGIN_STORE_PATH
-    )
-
-
-def _has_reserved_clawdi_agent_plugin(
-    agent_plugins: HostedAgentPlugins | None,
-) -> bool:
-    if agent_plugins is None:
-        return False
-    return any(
-        name == _CLAWDI_AGENT_PLUGIN_PACKAGE
-        or (
-            installation.source.type == "github"
-            and installation.source.url == _CLAWDI_AGENT_PLUGIN_STORE_URL
-            and installation.source.path == _CLAWDI_AGENT_PLUGIN_STORE_PATH
-        )
-        for name, installation in agent_plugins.installations.items()
-    )
-
-
-def _agent_plugin_ownership_identity(
-    name: str,
-    installation: HostedAgentPluginInstallation,
-) -> str:
-    source = installation.source
-    payload = [
-        installation.installationId,
-        name,
-        installation.version,
-        installation.agentPluginsSchema,
-        source.type,
-        source.url,
-        source.path,
-        source.commit,
-        installation.contentDigest,
-    ]
-    return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
-    ).hexdigest()
-
-
-def _matches_agent_plugin_capability_proof(
-    proof: str | None,
-    *,
-    runtime: HostedRuntimeName,
-    agent_plugins: HostedAgentPlugins,
-) -> bool:
-    match = _AGENT_PLUGIN_PROOF_PATTERN.fullmatch(proof or "")
-    if match is None or match.group(1) != runtime:
-        return False
-    installation = agent_plugins.installations[_CLAWDI_AGENT_PLUGIN_PACKAGE]
-    return match.group(2) == _agent_plugin_ownership_identity(
-        _CLAWDI_AGENT_PLUGIN_PACKAGE,
-        installation,
-    )
-
-
-def _first_party_clawdi_agent_plugin_egress_profile(
-    *,
-    public_api_url: str,
-) -> HostedEgressProfile:
-    return HostedEgressProfile.model_validate(
-        {
-            "id": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID,
-            "enabled": True,
-            "kind": "http",
-            "match": {
-                "scheme": "https",
-                "host": _CLAWDI_AGENT_PLUGIN_MCP_AUTHORITY,
-                "path": {"type": "equals", "value": _CLAWDI_AGENT_PLUGIN_MCP_PATH},
-                "headers": {
-                    _CLAWDI_AGENT_PLUGIN_MARKER_HEADER: {
-                        "type": "equals",
-                        "value": _CLAWDI_AGENT_PLUGIN_PACKAGE,
-                    }
-                },
-                "query": {},
-            },
-            "rewrite": {
-                "upstreamBaseUrl": public_api_url.rstrip("/"),
-                "preservePath": True,
-                "setHeaders": {
-                    "Authorization": {
-                        "type": "secretRef",
-                        "secretRef": _CLAWDI_AUTH_TOKEN_SECRET_REF,
-                        "prefix": "Bearer ",
-                    }
-                },
-            },
-            "logging": {
-                "redactHeaders": ["Authorization"],
-                "redactUrlPatterns": [],
-            },
-            "priority": 60,
-            "owner": _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER,
-        }
-    )
-
-
-def _has_reserved_clawdi_agent_plugin_egress_profile(
-    egress_profiles: HostedEgressProfiles | None,
-) -> bool:
-    return egress_profiles is not None and any(
-        profile.id == _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_ID
-        or profile.owner == _CLAWDI_AGENT_PLUGIN_EGRESS_PROFILE_OWNER
-        for profile in (egress_profiles.profiles or [])
-    )
-
-
 def _project_agent_plugins(
     installations: tuple[AgentPluginInstallation, ...],
 ) -> HostedAgentPlugins | None:
-    if not installations:
+    projected = tuple(
+        installation
+        for installation in installations
+        if installation.plugin_name not in RESERVED_AGENT_PLUGIN_NAMES
+    )
+    if not projected:
         return None
     return HostedAgentPlugins.model_validate(
         {
@@ -727,13 +572,13 @@ def _project_agent_plugins(
                     "agentPluginsSchema": installation.agent_plugins_schema,
                     "source": {
                         "type": "github",
-                        "url": _CLAWDI_AGENT_PLUGIN_STORE_URL,
+                        "url": TRUSTED_PLUGIN_REPOSITORY_URL,
                         "path": installation.source_path,
                         "commit": installation.catalog_revision,
                     },
                     "contentDigest": installation.content_digest,
                 }
-                for installation in installations
+                for installation in projected
             },
         }
     )
@@ -747,7 +592,6 @@ def render_runtime_source(
     vault_key_identity: str,
     decrypt_secrets: bool,
     project_agent_plugins: bool = True,
-    agent_plugin_capability_proof: str | None = None,
 ) -> RenderedRuntimeSource:
     row = batch.rows.get(environment_id)
     if row is None:
@@ -830,48 +674,6 @@ def render_runtime_source(
         signing_key=vault_key_identity,
     )
     runtime_name, runtime = _runtime(state.runtimes)
-    first_party_clawdi_agent_plugin = _is_first_party_clawdi_agent_plugin(agent_plugins)
-    if _has_reserved_clawdi_agent_plugin(agent_plugins) and not first_party_clawdi_agent_plugin:
-        raise RuntimeSourceError("Clawdi first-party Agent Plugin desired state is invalid")
-    if _has_reserved_clawdi_agent_plugin_egress_profile(egress_profiles):
-        raise RuntimeSourceError("Hosted runtime state uses a Clawdi-reserved egress profile")
-    if project_agent_plugins and first_party_clawdi_agent_plugin:
-        try:
-            profiles = list(egress_profiles.profiles or []) if egress_profiles is not None else []
-            profiles.append(
-                _first_party_clawdi_agent_plugin_egress_profile(public_api_url=public_api_url)
-            )
-            egress_profiles = HostedEgressProfiles(profiles=profiles)
-        except ValidationError as exc:
-            raise RuntimeSourceError("Clawdi Agent Plugin egress policy is invalid") from exc
-    native_clawdi_agent_plugin = bool(
-        project_agent_plugins
-        and first_party_clawdi_agent_plugin
-        and agent_plugins is not None
-        and _matches_agent_plugin_capability_proof(
-            agent_plugin_capability_proof,
-            runtime=runtime_name,
-            agent_plugins=agent_plugins,
-        )
-    )
-    if native_clawdi_agent_plugin:
-        mcp, skills = _without_legacy_clawdi_components(mcp, skills)
-    projected_agent_plugins = agent_plugins
-    if (
-        project_agent_plugins
-        and first_party_clawdi_agent_plugin
-        and not native_clawdi_agent_plugin
-        and agent_plugins is not None
-    ):
-        projected_agent_plugins = agent_plugins.model_copy(
-            update={
-                "installations": {
-                    _CLAWDI_AGENT_PLUGIN_PACKAGE: agent_plugins.installations[
-                        _CLAWDI_AGENT_PLUGIN_PACKAGE
-                    ]
-                }
-            }
-        )
     try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:
@@ -1109,10 +911,8 @@ def render_runtime_source(
         manifest["mcp"] = mcp
     if skills is not None:
         manifest["skills"] = skills
-    if project_agent_plugins and projected_agent_plugins is not None:
-        manifest["agentPlugins"] = projected_agent_plugins.model_dump(mode="json")
-    if project_agent_plugins and first_party_clawdi_agent_plugin and not native_clawdi_agent_plugin:
-        manifest["agentPluginCapabilityProbe"] = {"installations": [_CLAWDI_AGENT_PLUGIN_PACKAGE]}
+    if project_agent_plugins and agent_plugins is not None:
+        manifest["agentPlugins"] = agent_plugins.model_dump(mode="json")
     if tool_projection:
         manifest["tools"] = tool_projection
     manifest["terminalTooling"] = terminal_tooling

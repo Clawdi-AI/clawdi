@@ -53,7 +53,6 @@ from app.routes.sessions import (
 )
 from app.schemas.admin import AdminRuntimeStateUpsert
 from app.schemas.runtime import (
-    HostedAgentPlugins,
     HostedEgressEngine,
     HostedEgressProfiles,
     HostedRuntimeMcp,
@@ -65,11 +64,9 @@ from app.services.audit import _sanitize_audit_details
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
 from app.services.runtime_source import (
-    RUNTIME_AGENT_PLUGIN_PROOF_HEADER,
     RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RUNTIME_CAPABILITIES_HEADER,
-    _agent_plugin_ownership_identity,
     expected_runtime_bundle_v2_etag,
     runtime_manifest_issued_at,
 )
@@ -4084,7 +4081,7 @@ async def test_runtime_manifest_requires_exact_v2_media_type(admin_client, db_se
     }
     assert bundle.headers["content-type"] == RUNTIME_BUNDLE_V2_MEDIA_TYPE
     assert bundle.headers["cache-control"] == "no-store, no-transform"
-    expected_vary = f"Accept, {RUNTIME_CAPABILITIES_HEADER}, {RUNTIME_AGENT_PLUGIN_PROOF_HEADER}"
+    expected_vary = f"Accept, {RUNTIME_CAPABILITIES_HEADER}"
     assert bundle.headers["vary"] == expected_vary
     assert bundle.headers["etag"] == expected_runtime_bundle_v2_etag(body["sourceRevision"])
     assert bundle_not_modified.status_code == 304
@@ -4097,7 +4094,7 @@ async def test_runtime_manifest_requires_exact_v2_media_type(admin_client, db_se
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_agent_plugins_are_capability_projected_with_distinct_validators(
+async def test_runtime_manifest_keeps_historical_reserved_plugin_inert(
     admin_client,
     db_session,
     seed_user,
@@ -4119,28 +4116,6 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
     }
     installation_id = uuid4()
     catalog_revision = f"{uuid4().hex}{uuid4().hex[:8]}"
-    desired_plugins = {
-        "schemaVersion": 1,
-        "installations": {
-            "clawdi": {
-                "installationId": str(installation_id),
-                "version": "1.0.0",
-                "agentPluginsSchema": (
-                    "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
-                ),
-                "source": {
-                    "type": "github",
-                    "url": "https://github.com/Clawdi-AI/store",
-                    "path": "v2/plugins/clawdi",
-                    "commit": catalog_revision,
-                },
-                "contentDigest": (
-                    "sha256-tree-v1:"
-                    "6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3"
-                ),
-            }
-        },
-    }
     db_session.add(
         PluginCatalogSnapshot(
             revision=catalog_revision,
@@ -4182,94 +4157,41 @@ async def test_runtime_manifest_agent_plugins_are_capability_projected_with_dist
     )
     await db_session.commit()
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle-capability")
-    validated_plugins = HostedAgentPlugins.model_validate(desired_plugins)
-    ownership_identity = _agent_plugin_ownership_identity(
-        "clawdi",
-        validated_plugins.installations["clawdi"],
-    )
-    proof = f"v1:openclaw:{ownership_identity}:{'c' * 64}"
-
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        old_client = await client.get("/v1/runtime/manifest")
+        legacy_client = await client.get("/v1/runtime/manifest")
         capable_client = await client.get(
             "/v1/runtime/manifest",
             headers={RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY},
-        )
-        wrong_variant_validator = await client.get(
-            "/v1/runtime/manifest",
-            headers={
-                RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
-                "If-None-Match": old_client.headers["etag"],
-            },
         )
         capable_not_modified = await client.get(
             "/v1/runtime/manifest",
             headers={
                 RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
-                "If-None-Match": capable_client.headers["etag"],
-            },
-        )
-        native_client = await client.get(
-            "/v1/runtime/manifest",
-            headers={
-                RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
-                RUNTIME_AGENT_PLUGIN_PROOF_HEADER: proof,
-                "If-None-Match": capable_client.headers["etag"],
-            },
-        )
-        native_not_modified = await client.get(
-            "/v1/runtime/manifest",
-            headers={
-                RUNTIME_CAPABILITIES_HEADER: RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
-                RUNTIME_AGENT_PLUGIN_PROOF_HEADER: proof,
-                "If-None-Match": native_client.headers["etag"],
+                "If-None-Match": legacy_client.headers["etag"],
             },
         )
     app.dependency_overrides.clear()
 
-    assert old_client.status_code == 200, old_client.text
-    assert "agentPlugins" not in old_client.json()["manifest"]
-    assert set(old_client.json()["manifest"]["mcp"]["servers"]) == {
-        "clawdi",
-        "workspace-tools",
-    }
-    assert set(old_client.json()["manifest"]["skills"]["entries"]) == {
-        "clawdi",
-        "workspace-helper",
-    }
-    assert "egressProfiles" not in old_client.json()["manifest"]
-    assert old_client.json()["manifest"]["clawdiCli"]["packageSpec"] == state.cli_package_spec
+    assert legacy_client.status_code == 200, legacy_client.text
     assert capable_client.status_code == 200, capable_client.text
-    assert capable_client.json()["manifest"]["agentPlugins"] == desired_plugins
-    assert capable_client.json()["manifest"]["agentPluginCapabilityProbe"] == {
-        "installations": ["clawdi"]
-    }
-    assert "clawdi" in capable_client.json()["manifest"]["mcp"]["servers"]
-    assert "clawdi" in capable_client.json()["manifest"]["skills"]["entries"]
-    assert capable_client.headers["etag"] != old_client.headers["etag"]
-    assert capable_client.json()["sourceRevision"] != old_client.json()["sourceRevision"]
-    assert wrong_variant_validator.status_code == 200
-    assert wrong_variant_validator.headers["etag"] == capable_client.headers["etag"]
+    for response in (legacy_client, capable_client):
+        manifest = response.json()["manifest"]
+        assert "agentPlugins" not in manifest
+        assert "egressProfiles" not in manifest
+        assert set(manifest["mcp"]["servers"]) == {
+            "clawdi",
+            "workspace-tools",
+        }
+        assert set(manifest["skills"]["entries"]) == {
+            "clawdi",
+            "workspace-helper",
+        }
+    assert legacy_client.headers["etag"] == capable_client.headers["etag"]
+    assert legacy_client.json()["sourceRevision"] == capable_client.json()["sourceRevision"]
+    assert capable_client.json()["manifest"]["clawdiCli"]["packageSpec"] == state.cli_package_spec
     assert capable_not_modified.status_code == 304
     assert capable_not_modified.headers["etag"] == capable_client.headers["etag"]
-    assert native_client.status_code == 200, native_client.text
-    assert native_client.json()["manifest"]["agentPlugins"] == desired_plugins
-    assert "agentPluginCapabilityProbe" not in native_client.json()["manifest"]
-    assert set(native_client.json()["manifest"]["mcp"]["servers"]) == {"workspace-tools"}
-    assert set(native_client.json()["manifest"]["skills"]["entries"]) == {"workspace-helper"}
-    assert native_client.headers["etag"] not in {
-        old_client.headers["etag"],
-        capable_client.headers["etag"],
-    }
-    assert native_client.json()["sourceRevision"] not in {
-        old_client.json()["sourceRevision"],
-        capable_client.json()["sourceRevision"],
-    }
-    assert native_not_modified.status_code == 304
-    assert native_not_modified.headers["etag"] == native_client.headers["etag"]
-    assert capable_client.headers["vary"] == (
-        f"Accept, {RUNTIME_CAPABILITIES_HEADER}, {RUNTIME_AGENT_PLUGIN_PROOF_HEADER}"
-    )
+    assert capable_client.headers["vary"] == f"Accept, {RUNTIME_CAPABILITIES_HEADER}"
 
 
 @pytest.mark.asyncio

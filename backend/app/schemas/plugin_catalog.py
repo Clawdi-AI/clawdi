@@ -11,6 +11,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validat
 TRUSTED_PLUGIN_REPOSITORY_URL = "https://github.com/Clawdi-AI/store"
 TRUSTED_PLUGIN_CATALOG_PATH = "v2/catalog.json"
 TRUSTED_PLUGIN_CATALOG_BRANCH = "main"
+RESERVED_AGENT_PLUGIN_NAMES = frozenset({"clawdi"})
 
 _PLUGIN_NAME_PATTERN = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 _SEMVER_CORE = r"(?:0|[1-9][0-9]*)"
@@ -201,6 +202,7 @@ class PluginCatalogEntryResponse(_StrictModel):
         Literal[
             "configuration_not_supported",
             "no_supported_runtime",
+            "reserved_name",
         ]
         | None
     ) = None

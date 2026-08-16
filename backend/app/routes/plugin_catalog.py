@@ -20,6 +20,7 @@ from app.models.runtime_observation import (
 )
 from app.schemas.plugin_catalog import (
     EXACT_SEMVER_PATTERN,
+    RESERVED_AGENT_PLUGIN_NAMES,
     AgentPluginDesiredStateDeleteResponse,
     AgentPluginDesiredStateListResponse,
     AgentPluginDesiredStateResponse,
@@ -248,6 +249,11 @@ async def put_agent_plugin_desired_state(
     )
     if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
+    if plugin_name in RESERVED_AGENT_PLUGIN_NAMES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "agent_plugin_name_reserved"},
+        )
     state = await db.scalar(
         select(HostedRuntimeState)
         .where(HostedRuntimeState.environment_id == agent_id)
@@ -299,7 +305,10 @@ async def put_agent_plugin_desired_state(
         installation_count = await db.scalar(
             select(func.count())
             .select_from(AgentPluginInstallation)
-            .where(AgentPluginInstallation.environment_id == agent_id)
+            .where(
+                AgentPluginInstallation.environment_id == agent_id,
+                AgentPluginInstallation.plugin_name.not_in(RESERVED_AGENT_PLUGIN_NAMES),
+            )
         )
         if (installation_count or 0) >= MAX_HOSTED_AGENT_PLUGIN_INSTALLATIONS:
             raise HTTPException(

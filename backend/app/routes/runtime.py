@@ -38,7 +38,6 @@ from app.services.project_runtime_skills import (
     project_skill_file_signature,
 )
 from app.services.runtime_source import (
-    RUNTIME_AGENT_PLUGIN_PROOF_HEADER,
     RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RUNTIME_CAPABILITIES_HEADER,
@@ -57,9 +56,7 @@ from app.services.tar_utils import tar_from_content
 
 router = APIRouter(prefix="/runtime", tags=["runtime"])
 _RUNTIME_MANIFEST_CACHE_CONTROL = "no-store, no-transform"
-_RUNTIME_MANIFEST_VARY = (
-    f"Accept, {RUNTIME_CAPABILITIES_HEADER}, {RUNTIME_AGENT_PLUGIN_PROOF_HEADER}"
-)
+_RUNTIME_MANIFEST_VARY = f"Accept, {RUNTIME_CAPABILITIES_HEADER}"
 _PROJECT_SKILL_SUPPORT_DIRS = {"references", "templates", "scripts", "assets", "examples"}
 _MAX_PROJECT_SKILL_FILE_BYTES = 16 * 1024 * 1024
 _MAX_PROJECT_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024
@@ -87,15 +84,11 @@ async def get_runtime_manifest(
         if capability.strip()
     }
     project_agent_plugins = RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY in capabilities
-    agent_plugin_capability_proof = (
-        request.headers.get(RUNTIME_AGENT_PLUGIN_PROOF_HEADER) if project_agent_plugins else None
-    )
     try:
         source, repair_link_ids = await _render_runtime_source_snapshot(
             environment_id=environment_id,
             owner_user_id=auth.user_id,
             project_agent_plugins=project_agent_plugins,
-            agent_plugin_capability_proof=agent_plugin_capability_proof,
         )
         if repair_link_ids:
             await ensure_runtime_whatsapp_credentials(
@@ -109,7 +102,6 @@ async def get_runtime_manifest(
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
                 project_agent_plugins=project_agent_plugins,
-                agent_plugin_capability_proof=agent_plugin_capability_proof,
             )
         if source is None:
             raise RuntimeSourceError(
@@ -138,7 +130,6 @@ async def _render_runtime_source_snapshot(
     environment_id: UUID,
     owner_user_id: UUID,
     project_agent_plugins: bool,
-    agent_plugin_capability_proof: str | None,
 ) -> tuple[RenderedRuntimeSource | None, tuple[UUID, ...]]:
     async with runtime_snapshot_session() as source_db:
         batch = await load_runtime_source_batch(
@@ -160,7 +151,6 @@ async def _render_runtime_source_snapshot(
                 vault_key_identity=vault_key_identity(settings.vault_encryption_key),
                 decrypt_secrets=True,
                 project_agent_plugins=project_agent_plugins,
-                agent_plugin_capability_proof=agent_plugin_capability_proof,
             ),
             (),
         )

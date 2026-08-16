@@ -19,10 +19,13 @@ from app.services.runtime_observation import ingest_runtime_observation
 from app.services.runtime_source import _project_agent_plugins
 from tests.conftest import create_env_with_project
 
+THIRD_PARTY_PLUGIN_NAME = "acme.tools"
+
 
 async def _activate_catalog(
     db_session,
     *,
+    name: str = THIRD_PARTY_PLUGIN_NAME,
     version: str = "1.0.0",
     digest_character: str = "a",
     has_configuration: bool = False,
@@ -41,22 +44,22 @@ async def _activate_catalog(
     db_session.add(
         PluginCatalogEntry(
             snapshot_revision=revision,
-            name="clawdi",
+            name=name,
             version=version,
             agent_plugins_schema=("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"),
-            source_path="v2/plugins/clawdi",
+            source_path=f"v2/plugins/{name}",
             content_digest=f"sha256-tree-v1:{digest_character * 64}",
             public_metadata={
-                "display_name": "Clawdi",
-                "description": "Clawdi tools.",
-                "publisher": "Clawdi",
+                "display_name": "Acme Tools",
+                "description": "Acme tools.",
+                "publisher": "Acme",
                 "category": "productivity",
-                "keywords": ["clawdi"],
+                "keywords": ["acme"],
                 "languages": ["en"],
                 "icon": None,
                 "components": {
-                    "skills": ["clawdi"],
-                    "mcpServers": {"clawdi": "streamable-http"},
+                    "skills": ["review"],
+                    "mcpServers": {"review": "streamable-http"},
                 },
             },
             has_configuration=has_configuration,
@@ -86,20 +89,20 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     assert catalog.status_code == 200, catalog.text
     assert catalog.json()["revision"] == first_revision
     assert catalog.json()["plugins"][0]["components"] == {
-        "skills": ["clawdi"],
-        "mcpServers": {"clawdi": "streamable-http"},
+        "skills": ["review"],
+        "mcpServers": {"review": "streamable-http"},
     }
     empty = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins")
     assert empty.status_code == 200
     assert empty.json() == {"plugins": []}
     internal_intent = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={"source": "https://github.com/Clawdi-AI/store"},
     )
     assert internal_intent.status_code == 422
 
     created = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={},
     )
     assert created.status_code == 202, created.text
@@ -117,14 +120,14 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     assert row is not None
     assert str(row.id) == installation_id
     assert row.catalog_revision == first_revision
-    assert row.source_path == "v2/plugins/clawdi"
+    assert row.source_path == f"v2/plugins/{THIRD_PARTY_PLUGIN_NAME}"
     assert row.content_digest == f"sha256-tree-v1:{'a' * 64}"
     projected = _project_agent_plugins((row,))
     assert projected is not None
-    assert projected.installations["clawdi"].source.commit == first_revision
+    assert projected.installations[THIRD_PARTY_PLUGIN_NAME].source.commit == first_revision
 
     repeated = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={"version": "1.0.0"},
     )
     assert repeated.status_code == 202, repeated.text
@@ -142,7 +145,7 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     assert row.version == "1.0.0"
 
     updated = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={"version": "1.1.0"},
     )
     assert updated.status_code == 202, updated.text
@@ -151,14 +154,18 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     await db_session.refresh(state)
     assert state.apply_generation is None
 
-    removed = await client.delete(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    removed = await client.delete(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}"
+    )
     assert removed.status_code == 202, removed.text
     assert removed.json()["desired_state"] == "absent"
     assert removed.json()["convergence"] == "not_observed"
     await db_session.refresh(state)
     assert state.apply_generation is None
 
-    repeated_remove = await client.delete(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    repeated_remove = await client.delete(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}"
+    )
     assert repeated_remove.status_code == 202, repeated_remove.text
     await db_session.refresh(state)
     assert state.apply_generation is None
@@ -172,7 +179,7 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
 ) -> None:
     await _activate_catalog(db_session)
     created = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={},
     )
     assert created.status_code == 202, created.text
@@ -193,7 +200,7 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
         observed_at = event_captured or captured + timedelta(seconds=sequence - 1)
         plugin = {
             "installationId": installation_id,
-            "name": "clawdi",
+            "name": THIRD_PARTY_PLUGIN_NAME,
             "version": version,
             "contentDigest": f"sha256-tree-v1:{digest_character * 64}",
             "sourceRevision": digest_character * 64,
@@ -244,7 +251,9 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
         received_at=captured,
     )
     await db_session.commit()
-    stale = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    stale = await client.get(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}"
+    )
     assert stale.status_code == 200, stale.text
     assert stale.json()["convergence"] == "not_observed"
 
@@ -261,7 +270,9 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
         received_at=captured + timedelta(seconds=1),
     )
     await db_session.commit()
-    installed = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    installed = await client.get(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}"
+    )
     assert installed.status_code == 200, installed.text
     assert installed.json()["convergence"] == "installed"
     assert installed.json()["observation_error_code"] is None
@@ -269,7 +280,7 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
 
     await _activate_catalog(db_session, version="1.1.0", digest_character="b")
     updated = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={"version": "1.1.0"},
     )
     assert updated.status_code == 202, updated.text
@@ -290,14 +301,16 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
         received_at=captured + timedelta(seconds=3),
     )
     await db_session.commit()
-    failed = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    failed = await client.get(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}"
+    )
     assert failed.status_code == 200, failed.text
     assert failed.json()["convergence"] == "failed"
     assert failed.json()["observation_error_code"] == "reconcile_failed"
 
     await _activate_catalog(db_session, version="1.0.0", digest_character="a")
     restored = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={"version": "1.0.0"},
     )
     assert restored.status_code == 202, restored.text
@@ -314,12 +327,12 @@ async def test_agent_plugin_install_rejects_guaranteed_nonconvergence_before_per
 ) -> None:
     await _activate_catalog(db_session, has_configuration=True)
     not_owned = await client.put(
-        f"/v1/agents/{uuid4()}/agent-plugins/clawdi",
+        f"/v1/agents/{uuid4()}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={},
     )
     assert not_owned.status_code == 404
     configured = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={},
     )
     assert configured.status_code == 409, configured.text
@@ -327,7 +340,7 @@ async def test_agent_plugin_install_rejects_guaranteed_nonconvergence_before_per
 
     await _activate_catalog(db_session, runtimes=["hermes"])
     incompatible = await client.put(
-        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={},
     )
     assert incompatible.status_code == 409, incompatible.text
@@ -343,7 +356,7 @@ async def test_agent_plugin_install_rejects_guaranteed_nonconvergence_before_per
         machine_name="Plugin unmanaged",
     )
     no_hosted_v2 = await client.put(
-        f"/v1/agents/{unmanaged.id}/agent-plugins/clawdi",
+        f"/v1/agents/{unmanaged.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
         json={},
     )
     assert no_hosted_v2.status_code == 409, no_hosted_v2.text
@@ -351,7 +364,52 @@ async def test_agent_plugin_install_rejects_guaranteed_nonconvergence_before_per
     assert await db_session.scalar(select(AgentPluginInstallation.id).limit(1)) is None
 
     await _activate_catalog(db_session, runtimes=[])
-    unavailable = await client.get("/v1/plugin-catalog/clawdi")
+    unavailable = await client.get(f"/v1/plugin-catalog/{THIRD_PARTY_PLUGIN_NAME}")
     assert unavailable.status_code == 200, unavailable.text
     assert unavailable.json()["installable"] is False
     assert unavailable.json()["installability_reason"] == "no_supported_runtime"
+
+
+@pytest.mark.asyncio
+async def test_reserved_clawdi_catalog_and_historical_desired_state_are_safe(
+    client,
+    db_session,
+    channel_agent,
+) -> None:
+    revision = await _activate_catalog(db_session, name="clawdi")
+    catalog = await client.get("/v1/plugin-catalog/clawdi")
+    assert catalog.status_code == 200, catalog.text
+    assert catalog.json()["installable"] is False
+    assert catalog.json()["installability_reason"] == "reserved_name"
+
+    rejected = await client.put(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        json={},
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"] == {"code": "agent_plugin_name_reserved"}
+
+    row = AgentPluginInstallation(
+        environment_id=channel_agent.id,
+        plugin_name="clawdi",
+        catalog_revision=revision,
+        version="1.0.0",
+        agent_plugins_schema="https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+        source_path="v2/plugins/clawdi",
+        content_digest=f"sha256-tree-v1:{'a' * 64}",
+    )
+    db_session.add(row)
+    await db_session.commit()
+
+    desired = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    desired_list = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins")
+    assert desired.status_code == 200, desired.text
+    assert desired.json()["plugin_name"] == "clawdi"
+    assert desired_list.status_code == 200, desired_list.text
+    assert [item["plugin_name"] for item in desired_list.json()["plugins"]] == ["clawdi"]
+    assert _project_agent_plugins((row,)) is None
+
+    removed = await client.delete(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    assert removed.status_code == 202, removed.text
+    assert removed.json()["desired_state"] == "absent"
+    assert await db_session.get(AgentPluginInstallation, row.id) is None

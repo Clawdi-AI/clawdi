@@ -103,7 +103,20 @@ Agents.
 Agent Plugins 1.0.0 itself defines package manifests and component loading. It
 does not define a registry, marketplace, trust policy, installation source,
 integrity scheme, or portable secret binding. Those Clawdi-specific controls
-remain outside the official wire contract.
+remain outside the official wire contract. Its `extensions` object permits
+client policy namespaces; the Store's closed `ai.clawdi` extension contains
+only schema version, display metadata, and optional runtime/executable
+compatibility. It does not declare authentication.
+
+The built-in Clawdi Skill and MCP server remain first-party runtime
+infrastructure, not an Agent Plugin. The catalog name `clawdi` is reserved:
+new desired-state writes fail closed, while historical rows remain readable
+and explicitly removable but are inert during runtime projection. Third-party
+public remote and stdio components keep using the generic Agent Plugins
+lifecycle. Protected remote MCP authorization is separate owner-managed native
+runtime state; a same-name native server override may opt into the runtime's
+official OAuth flow without changing Store metadata, package bytes, or Clawdi
+desired state.
 
 ## CLI And Adapters
 

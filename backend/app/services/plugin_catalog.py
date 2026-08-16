@@ -19,6 +19,7 @@ from app.models.agent_plugin import (
     PluginCatalogSyncState,
 )
 from app.schemas.plugin_catalog import (
+    RESERVED_AGENT_PLUGIN_NAMES,
     TRUSTED_PLUGIN_CATALOG_BRANCH,
     TRUSTED_PLUGIN_CATALOG_PATH,
     PluginCatalogDocument,
@@ -87,7 +88,9 @@ def _entry_metadata(entry: PluginCatalogDocumentEntry) -> dict[str, Any]:
 
 def _entry_response(entry: PluginCatalogEntry) -> PluginCatalogEntryResponse:
     installability_reason = None
-    if entry.has_configuration:
+    if entry.name in RESERVED_AGENT_PLUGIN_NAMES:
+        installability_reason = "reserved_name"
+    elif entry.has_configuration:
         installability_reason = "configuration_not_supported"
     elif not entry.compatible_runtimes:
         installability_reason = "no_supported_runtime"
