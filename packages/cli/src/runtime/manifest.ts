@@ -3182,7 +3182,6 @@ function openClawGatewayHostedPatch(
 										...(nativeAuth
 											? {
 													basePath: openClawControlUiBasePath(manifest),
-													allowInsecureAuth: false,
 													dangerouslyAllowHostHeaderOriginFallback: false,
 													dangerouslyDisableDeviceAuth: true,
 												}
@@ -5894,7 +5893,11 @@ export function convergeRuntimeManifest(
 			manifest.runtimes.openclaw?.enabled === true ||
 			Boolean(openClawCommand && executableExists(openClawCommand));
 		openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
-			? openClawSkillDriver.resolveWorkspace({ home: projectionHome })
+			? openClawSkillDriver.resolveWorkspace({
+					home: projectionHome,
+					repairInvalidConfig:
+						manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2",
+				})
 			: null;
 		recoverHostedSourcedSkillReservations(
 			manifest,

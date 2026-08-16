@@ -4955,7 +4955,6 @@ exit 0
 				controlUi: {
 					basePath: "/",
 					allowedOrigins: ["https://app-v2-18789.k3s.example.test"],
-					allowInsecureAuth: false,
 					dangerouslyAllowHostHeaderOriginFallback: false,
 					dangerouslyDisableDeviceAuth: true,
 				},
