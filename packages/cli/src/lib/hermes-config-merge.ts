@@ -104,7 +104,10 @@ export function renderHermesChannelConfig(content: string, patch: Record<string,
 				applyHermesChannelNestedPatch(document, [platform], config);
 			} else {
 				for (const [nestedPlatform, nestedConfig] of Object.entries(config)) {
-					if (nestedPlatform === "telegram" && isPlainRecord(nestedConfig)) {
+					if (
+						(nestedPlatform === "telegram" || nestedPlatform === "whatsapp") &&
+						isPlainRecord(nestedConfig)
+					) {
 						applyHermesChannelNestedPatch(document, [platform, nestedPlatform], nestedConfig);
 						const updated = valueAtPath(document.toJS(), [platform, nestedPlatform]);
 						if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
@@ -119,6 +122,14 @@ export function renderHermesChannelConfig(content: string, patch: Record<string,
 			if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
 				document.delete(platform);
 			}
+			continue;
+		}
+		if (platform === "whatsapp" && isPlainRecord(config)) {
+			const root = document.toJS();
+			if (!isPlainRecord(root) || !isPlainRecord(root.whatsapp)) {
+				document.set(platform, document.createNode({}));
+			}
+			applyHermesChannelNestedPatch(document, [platform], config);
 			continue;
 		}
 		if (config === null) {

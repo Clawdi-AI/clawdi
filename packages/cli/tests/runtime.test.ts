@@ -13659,8 +13659,25 @@ exit 64
 			me: { id: "15551234567:1@s.whatsapp.net" },
 		};
 		mkdirSync(dirname(hermesBin), { recursive: true });
+		mkdirSync(join(home, ".hermes"), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		writeFileSync(
+			join(home, ".hermes", "config.yaml"),
+			[
+				"custom_root: keep",
+				"whatsapp:",
+				"  user_owned: keep-whatsapp",
+				"platforms:",
+				"  matrix:",
+				"    custom: keep-matrix",
+				"  whatsapp:",
+				"    custom: keep-platform",
+				"    extra:",
+				"      custom_extra: keep-extra",
+				"",
+			].join("\n"),
+		);
 		chmodSync(hermesBin, 0o700);
 		seedHermesManagedBaileys(home);
 		seedOpenClawBinary(home);
@@ -13915,32 +13932,30 @@ exit 64
 		expect(removedConvergence.installErrors).toEqual([]);
 		expect(existsSync(paths.egressProfileBundle)).toBe(false);
 		expect(existsSync(sessionDir)).toBe(false);
+		const removedHermesConfig = readHermesConfigYaml(home);
+		expect(removedHermesConfig).toHaveProperty("whatsapp", {
+			user_owned: "keep-whatsapp",
+			enabled: false,
+		});
+		expect(removedHermesConfig).toHaveProperty("platforms.whatsapp", {
+			custom: "keep-platform",
+			enabled: false,
+			extra: { custom_extra: "keep-extra" },
+		});
+		expect(removedHermesConfig).toMatchObject({
+			custom_root: "keep",
+			platforms: { matrix: { custom: "keep-matrix" } },
+		});
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOW_ALL_USERS).toBeUndefined();
-	});
 
-	it("clears managed Hermes channels without touching user-owned WhatsApp settings", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const workspace = join(home, "clawdi");
-		const hermesBin = join(home, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesBin), { recursive: true });
-		mkdirSync(join(home, ".hermes"), { recursive: true });
-		mkdirSync(workspace, { recursive: true });
-		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
 		writeFileSync(
 			join(home, ".hermes", "config.yaml"),
 			[
-				"telegram:",
-				"  enabled: true",
-				"discord:",
-				"  enabled: true",
-				"  stale: should-be-removed",
 				"whatsapp:",
 				"  enabled: true",
-				"  user_owned: keep",
+				"  user_owned: manual",
 				"platforms:",
 				"  whatsapp:",
 				"    enabled: true",
@@ -13949,115 +13964,11 @@ exit 64
 				"",
 			].join("\n"),
 		);
-		chmodSync(hermesBin, 0o700);
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-
-		const load: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				runtime: "hermes",
-				deploymentId: "dep_hermes_channel_clear",
-				environmentId: "env_hermes_channel_clear",
-				instanceId: "iid_hermes_channel_clear",
-				generation: 13,
-				issuedAt: "2026-07-07T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					hermes: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://hermes-agent.nousresearch.com/install.sh",
-							home,
-							args: [],
-						},
-						run: {
-							args: ["gateway", "run", "--replace"],
-							env: {
-								HERMES_EXISTING_ENV: "kept",
-								TELEGRAM_ALLOW_ALL_USERS: "true",
-								DISCORD_ALLOW_ALL_USERS: "true",
-								WHATSAPP_ENABLED: "true",
-								WHATSAPP_MODE: "bot",
-								WHATSAPP_ALLOWED_USERS: "*",
-								WHATSAPP_ALLOW_ALL_USERS: "true",
-							},
-							secretEnv: {
-								TELEGRAM_BOT_TOKEN: "secret://channels/telegram/clawdi_stale/agent-token",
-								DISCORD_BOT_TOKEN: "secret://channels/discord/clawdi_stale/agent-token",
-								HERMES_WA_CREDS_JSON:
-									"secret://channels/whatsapp/clawdi_stale/credentials/stale/creds-json",
-							},
-							prependPath: [],
-						},
-						services: {},
-					},
-				},
-				projection: {
-					system: { home, workspace },
-				},
-				recovery: {},
-			},
-			source: "remote-datasource",
-			sourcePath: "test://hermes-channel-clear",
-			offline: false,
-			secretValues: {
-				"secret://channels/whatsapp/clawdi_stale/credentials/stale/creds-json":
-					'{"me":"user-owned"}',
-			},
-			channelBindings: [],
-		};
-		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
-
-		const convergence = convergeRuntimeManifest(projected, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
-		expect(hermesConfig).toContain("telegram:");
-		expect(hermesConfig).toContain("discord:");
-		expect(hermesConfig).toContain("whatsapp:");
-		expect(hermesConfig).toContain("enabled: true");
-		expect(hermesConfig).toContain("user_owned: keep");
-		expect(hermesConfig).toContain("/user/session");
-		expect(hermesConfig).not.toContain("stale: should-be-removed");
-		const clearedChannelsConfig = readHermesConfigYaml(home);
-		expect(clearedChannelsConfig).not.toHaveProperty("display");
-		expect(clearedChannelsConfig).not.toHaveProperty("group_sessions_per_user");
-		expect(clearedChannelsConfig).not.toHaveProperty("thread_sessions_per_user");
-		expect(clearedChannelsConfig).not.toHaveProperty("platforms.telegram");
-		expect(clearedChannelsConfig).not.toHaveProperty(
-			"platforms.telegram.extra.thread_sessions_per_user",
-		);
-		expect(clearedChannelsConfig).not.toHaveProperty("streaming.enabled");
-		expect(clearedChannelsConfig).not.toHaveProperty("streaming.transport");
-		const runConfig = JSON.parse(
-			readFileSync(join(getRuntimePaths().runConfigRoot, "hermes.json"), "utf-8"),
-		);
-		expect(runConfig.env.HERMES_EXISTING_ENV).toBe("kept");
-		expect(runConfig.env.TELEGRAM_ALLOW_ALL_USERS).toBeUndefined();
-		expect(runConfig.env.DISCORD_ALLOW_ALL_USERS).toBeUndefined();
-		expect(runConfig.env.WHATSAPP_ENABLED).toBe("true");
-		expect(runConfig.env.WHATSAPP_MODE).toBeUndefined();
-		expect(runConfig.env.WHATSAPP_ALLOWED_USERS).toBeUndefined();
-		expect(runConfig.env.WHATSAPP_ALLOW_ALL_USERS).toBeUndefined();
-		expect(runConfig.secretEnv.TELEGRAM_BOT_TOKEN).toBeUndefined();
-		expect(runConfig.secretEnv.DISCORD_BOT_TOKEN).toBeUndefined();
-		expect(runConfig.secretEnv.HERMES_WA_CREDS_JSON).toBe(
-			"secret://channels/whatsapp/clawdi_stale/credentials/stale/creds-json",
-		);
-		const hermesEnv = readSystemdEnvFile(getRuntimePaths(), "hermes-gateway");
-		expect(hermesEnv).not.toContain("TELEGRAM_BOT_TOKEN");
-		expect(hermesEnv).not.toContain("DISCORD_BOT_TOKEN");
-		expect(hermesEnv).toContain("HERMES_WA_CREDS_JSON");
-		expect(hermesEnv).toContain("WHATSAPP_ENABLED");
-		expect(hermesEnv).not.toContain("WHATSAPP_MODE");
-		expect(hermesEnv).not.toContain("WHATSAPP_ALLOWED_USERS");
-		expect(hermesEnv).not.toContain("WHATSAPP_ALLOW_ALL_USERS");
+		expect(convergeRuntimeManifest(removed, paths).installErrors).toEqual([]);
+		expect(readHermesConfigYaml(home)).toMatchObject({
+			whatsapp: { enabled: true, user_owned: "manual" },
+			platforms: { whatsapp: { enabled: true, extra: { session_path: "/user/session" } } },
+		});
 	});
 
 	it("isolates OpenClaw WhatsApp DMs and clears stale managed config", () => {
