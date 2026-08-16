@@ -39,6 +39,8 @@ import type {
 	WalletAutoReloadRequest,
 	WalletAutoReloadSetupFinalizeRequest,
 	WalletAutoReloadSetupRequest,
+	WalletBindingChallengeRequest,
+	WalletBindingVerifyRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import {
@@ -56,6 +58,8 @@ import { env } from "@/lib/env";
 
 const BASE_URL = env.VITE_CLAWDI_DEPLOY_API_URL;
 const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);
+
+export const BILLING_API_ORIGIN = new URL(ROOT_BASE_URL).origin;
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const RETRYABLE_IDEMPOTENT_POST_PATHS = new Set([
@@ -769,6 +773,18 @@ export function createBillingClient(
 		getManagedModelCatalog: async () =>
 			unwrapDeploy(await api.GET("/v2/ai-providers/managed/models")),
 		getWallet: async () => unwrapDeploy(await api.GET("/v2/wallet")),
+		createX402TopupAttempt: async () => unwrapDeploy(await api.POST("/v2/x402/attempts")),
+		getWalletBinding: async () => unwrapDeploy(await api.GET("/v2/wallet-binding")),
+		createWalletBindingChallenge: async (body: WalletBindingChallengeRequest) =>
+			unwrapDeploy(await api.POST("/v2/wallet-binding/challenge", { body })),
+		verifyWalletBinding: async (body: WalletBindingVerifyRequest) =>
+			unwrapDeploy(await api.POST("/v2/wallet-binding", { body })),
+		deleteWalletBinding: async () => {
+			const response = await api.DELETE("/v2/wallet-binding");
+			if (!response.response.ok) {
+				throw new BillingApiError(response.response.status, response.response.statusText);
+			}
+		},
 		getTransactions: async (limit = 50, cursor?: string | null) =>
 			unwrapDeploy(
 				await api.GET("/v2/wallet/transactions", {
