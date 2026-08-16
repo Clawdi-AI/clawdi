@@ -1921,7 +1921,19 @@ function writeHermesVersionBinary(home: string, version: string): string {
 		].join("\n"),
 	);
 	chmodSync(hermesBin, 0o700);
+	writeHermesDashboardPython(home, true);
 	return hermesBin;
+}
+
+function writeHermesDashboardPython(home: string, compatible: boolean): string {
+	const python = join(home, ".hermes", "hermes-agent", "venv", "bin", "python");
+	mkdirSync(dirname(python), { recursive: true });
+	writeFileSync(
+		python,
+		`#!/usr/bin/env bash\n${compatible ? "exit 0" : "printf '%s\\n' 'missing capture_signals' >&2\nexit 1"}\n`,
+	);
+	chmodSync(python, 0o700);
+	return python;
 }
 
 function writeFakeOpenClawProviderAuthSdk(directory: string, callsPath: string): string {
@@ -2025,6 +2037,34 @@ function hostedHermesProviderLoad(home: string): RuntimeManifestLoad {
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		},
 	};
+}
+
+function hostedHermesDashboardCapabilityLoad(home: string): RuntimeManifestLoad {
+	const load = hostedHermesProviderLoad(home);
+	load.manifest.runtime = "hermes";
+	load.manifest.runtimes.hermes.services = {
+		dashboard: {
+			args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
+			env: {},
+			prependPath: [],
+		},
+	};
+	load.manifest.hermesDashboardAuth = {
+		mode: "password",
+		provider: "basic",
+		username: "admin",
+		passwordSecretRef: "secret://runtime/hermes/dashboard-password",
+		sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret",
+		sessionTtlSeconds: 43_200,
+		publicUrl: "https://agent.example.test/hermes",
+		activation: { enabled: true, capability: "hermes-basic-auth-v1" },
+	};
+	load.secretValues = {
+		...load.secretValues,
+		"secret://runtime/hermes/dashboard-password": "dashboard-password",
+		"secret://runtime/hermes/dashboard-session-secret": "dashboard-session-secret",
+	};
+	return load;
 }
 
 const HOSTED_PROVIDER_SWITCH_PROVIDERS: Record<string, Record<string, unknown>> = {
@@ -3261,6 +3301,12 @@ cat > "$HOME/.local/bin/hermes" <<'SH'
 exit 0
 SH
 chmod +x "$HOME/.local/bin/hermes"
+install -d "$HOME/.hermes/hermes-agent/venv/bin"
+cat > "$HOME/.hermes/hermes-agent/venv/bin/python" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 `,
 		);
 		chmodSync(hermesInstaller, 0o700);
@@ -3382,6 +3428,72 @@ chmod +x "$HOME/.local/bin/hermes"
 		} finally {
 			restore();
 		}
+	});
+
+	it("repairs Hermes dashboard runtime drift once and rolls back an incompatible repair", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const installer = join(root, "install-hermes.sh");
+		const installerCalls = join(root, "install-hermes.calls");
+		const incompatibleRepair = join(root, "incompatible-repair");
+		const appMarker = join(home, ".hermes", "hermes-agent", "repair-marker");
+		const skillMarker = join(home, ".hermes", "skills", "user-skill", "content.txt");
+		const command = writeHermesVersionBinary(home, "0.20.1");
+		writeHermesDashboardPython(home, false);
+		mkdirSync(dirname(skillMarker), { recursive: true });
+		writeFileSync(appMarker, "before-repair\n");
+		writeFileSync(skillMarker, "user-skill-before-repair\n");
+		writeFileSync(
+			installer,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' install >> '${installerCalls}'
+install -d "$HOME/.local/bin" "$HOME/.hermes/hermes-agent/venv/bin" "$HOME/.hermes/skills/user-skill"
+printf '%s\\n' '#!/usr/bin/env bash' 'exit 0' > "$HOME/.local/bin/hermes"
+chmod +x "$HOME/.local/bin/hermes"
+printf '%s\\n' installer-mutated > "$HOME/.hermes/hermes-agent/repair-marker"
+printf '%s\\n' installer-mutated > "$HOME/.hermes/skills/user-skill/content.txt"
+if [ -f '${incompatibleRepair}' ]; then
+  printf '%s\\n' '#!/usr/bin/env bash' 'exit 1' > "$HOME/.hermes/hermes-agent/venv/bin/python"
+else
+  printf '%s\\n' '#!/usr/bin/env bash' 'exit 0' > "$HOME/.hermes/hermes-agent/venv/bin/python"
+fi
+chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
+`,
+		);
+		chmodSync(installer, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_HERMES_INSTALLER = installer;
+		const paths = getRuntimePaths();
+		const load = hostedHermesDashboardCapabilityLoad(home);
+
+		const repaired = convergeRuntimeManifest(load, paths);
+		expect(repaired.installErrors).toEqual([]);
+		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install"]);
+
+		const unchanged = convergeRuntimeManifest(load, paths);
+		expect(unchanged.installErrors).toEqual([]);
+		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install"]);
+
+		writeFileSync(appMarker, "stable-app\n");
+		writeFileSync(skillMarker, "stable-user-skill\n");
+		const stableCommand = readFileSync(command, "utf8");
+		writeHermesDashboardPython(home, false);
+		writeFileSync(incompatibleRepair, "1\n");
+		const rejected = convergeRuntimeManifest(load, paths);
+
+		expect(rejected.installErrors.join("\n")).toContain(
+			"uvicorn.Server.capture_signals is unavailable",
+		);
+		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install", "install"]);
+		expect(readFileSync(appMarker, "utf8")).toBe("stable-app\n");
+		expect(readFileSync(skillMarker, "utf8")).toBe("stable-user-skill\n");
+		expect(readFileSync(command, "utf8")).toBe(stableCommand);
 	});
 
 	it("keeps explicit OpenAI chat providers on direct provider projection", async () => {
@@ -10102,6 +10214,7 @@ exit 0
 		);
 		chmodSync(runtimeBin, 0o700);
 		if (runtime === "hermes") {
+			writeHermesDashboardPython(home, true);
 			const distIndex = join(
 				home,
 				".hermes",
