@@ -13483,7 +13483,10 @@ exit 64
 						},
 						run: {
 							args: ["gateway", "run", "--replace"],
-							env: { HERMES_EXISTING_ENV: "kept" },
+							env: {
+								HERMES_EXISTING_ENV: "kept",
+								WHATSAPP_ENABLED: "stale",
+							},
 							prependPath: [],
 						},
 						services: {},
@@ -13814,6 +13817,8 @@ exit 64
 		});
 		const convergence = convergeRuntimeManifest(projected, paths);
 		expect(convergence.installErrors).toEqual([]);
+		expect(projected.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
+		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		expect(JSON.parse(readFileSync(hermesWhatsAppReceipt, "utf8"))).toMatchObject({
 			schemaVersion: "clawdi.managedHermesWhatsApp.v1",
 			deploymentId: projected.manifest.deploymentId,
@@ -14009,8 +14014,10 @@ exit 64
 			platforms: { matrix: { custom: "keep-matrix" } },
 		});
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
+		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOW_ALL_USERS).toBeUndefined();
+		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		const removedHermesRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
 
 		writeFileSync(
