@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.models.agent_plugin import (
     AgentPluginInstallation,
     PluginCatalogEntry,
@@ -13,6 +14,8 @@ from app.models.agent_plugin import (
     PluginCatalogSyncState,
 )
 from app.models.hosted_runtime import HostedRuntimeState
+from app.schemas.runtime_observation import RuntimeObservationEventV2
+from app.services.runtime_observation import ingest_runtime_observation
 from app.services.runtime_source import _project_agent_plugins
 from tests.conftest import create_env_with_project
 
@@ -159,6 +162,146 @@ async def test_agent_plugin_desired_state_is_explicit_pinned_and_idempotent(
     assert repeated_remove.status_code == 202, repeated_remove.text
     await db_session.refresh(state)
     assert state.apply_generation is None
+
+
+@pytest.mark.asyncio
+async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
+    client,
+    db_session,
+    channel_agent,
+) -> None:
+    await _activate_catalog(db_session)
+    created = await client.put(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        json={},
+    )
+    assert created.status_code == 202, created.text
+    installation_id = created.json()["installation_id"]
+    state = await db_session.get(HostedRuntimeState, channel_agent.id)
+    assert state is not None
+    captured = datetime.now(UTC)
+
+    def observation(
+        *,
+        sequence: int,
+        version: str,
+        digest_character: str,
+        plugin_status: str,
+        error_code: str | None = None,
+        event_captured: datetime | None = None,
+    ) -> RuntimeObservationEventV2:
+        observed_at = event_captured or captured + timedelta(seconds=sequence - 1)
+        plugin = {
+            "installationId": installation_id,
+            "name": "clawdi",
+            "version": version,
+            "contentDigest": f"sha256-tree-v1:{digest_character * 64}",
+            "sourceRevision": digest_character * 64,
+            "generation": 1 if plugin_status == "installed" else 2,
+            "status": plugin_status,
+            **({"errorCode": error_code} if error_code is not None else {}),
+        }
+        return RuntimeObservationEventV2.model_validate(
+            {
+                "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+                "reportedAt": observed_at.isoformat(),
+                "runtimeMode": "hosted",
+                "status": "ok" if plugin_status == "installed" else "error",
+                "activeCliVersion": "1.2.3-test",
+                "applied": {
+                    "etag": f'"sha256:{"a" * 64}"',
+                    "sourceRevision": "a" * 64,
+                    "generation": 1,
+                    "instanceId": state.instance_id,
+                    "appliedProviderIds": [],
+                },
+                "boot": None,
+                "cli": None,
+                "agentPlugins": {"schemaVersion": 1, "installations": [plugin]},
+                "generation": 1,
+                "manifestETag": '"manifest-agent-plugin-observation"',
+                "applyReceiptId": "apply-receipt-agent-plugin-observation",
+                "bootNonce": "boot-nonce-agent-plugin-observation",
+                "bootSessionId": "boot-session-agent-plugin-observation",
+                "sequence": sequence,
+                "eventId": f"event-agent-plugin-observation-{sequence}",
+                "capturedAt": observed_at.isoformat(),
+            }
+        )
+
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=channel_agent.id,
+        credential_deployment_id=state.deployment_id,
+        value=observation(
+            sequence=1,
+            version="1.0.0",
+            digest_character="a",
+            plugin_status="installed",
+            event_captured=captured
+            - timedelta(seconds=settings.runtime_observation_freshness_seconds + 1),
+        ),
+        received_at=captured,
+    )
+    await db_session.commit()
+    stale = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    assert stale.status_code == 200, stale.text
+    assert stale.json()["convergence"] == "not_observed"
+
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=channel_agent.id,
+        credential_deployment_id=state.deployment_id,
+        value=observation(
+            sequence=2,
+            version="1.0.0",
+            digest_character="a",
+            plugin_status="installed",
+        ),
+        received_at=captured + timedelta(seconds=1),
+    )
+    await db_session.commit()
+    installed = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    assert installed.status_code == 200, installed.text
+    assert installed.json()["convergence"] == "installed"
+    assert installed.json()["observation_error_code"] is None
+    assert installed.json()["observed_at"] is not None
+
+    await _activate_catalog(db_session, version="1.1.0", digest_character="b")
+    updated = await client.put(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        json={"version": "1.1.0"},
+    )
+    assert updated.status_code == 202, updated.text
+    assert updated.json()["convergence"] == "not_observed"
+    assert updated.json()["observed_at"] is None
+
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=channel_agent.id,
+        credential_deployment_id=state.deployment_id,
+        value=observation(
+            sequence=3,
+            version="1.1.0",
+            digest_character="b",
+            plugin_status="failed",
+            error_code="reconcile_failed",
+        ),
+        received_at=captured + timedelta(seconds=3),
+    )
+    await db_session.commit()
+    failed = await client.get(f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi")
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["convergence"] == "failed"
+    assert failed.json()["observation_error_code"] == "reconcile_failed"
+
+    await _activate_catalog(db_session, version="1.0.0", digest_character="a")
+    restored = await client.put(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/clawdi",
+        json={"version": "1.0.0"},
+    )
+    assert restored.status_code == 202, restored.text
+    assert restored.json()["convergence"] == "not_observed"
 
 
 @pytest.mark.asyncio

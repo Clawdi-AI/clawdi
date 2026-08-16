@@ -3236,9 +3236,13 @@ export interface components {
             /**
              * Convergence
              * @default not_observed
-             * @constant
+             * @enum {string}
              */
-            convergence: "not_observed";
+            convergence: "installed" | "failed" | "not_observed";
+            /** Observation Error Code */
+            observation_error_code?: ("reconcile_failed" | "receipt_missing" | "receipt_unreadable" | "receipt_mismatch") | null;
+            /** Observed At */
+            observed_at?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -5685,6 +5689,38 @@ export interface components {
              */
             prefix: string;
         };
+        /** HostedRuntimeObservedAgentPluginV1 */
+        HostedRuntimeObservedAgentPluginV1: {
+            /** Installationid */
+            installationId: string;
+            /** Name */
+            name: string;
+            /** Version */
+            version: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Sourcerevision */
+            sourceRevision: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "installed" | "failed" | "unknown";
+            /** Errorcode */
+            errorCode?: ("reconcile_failed" | "receipt_missing" | "receipt_unreadable" | "receipt_mismatch") | null;
+        };
+        /** HostedRuntimeObservedAgentPluginsV1 */
+        HostedRuntimeObservedAgentPluginsV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Installations */
+            installations: components["schemas"]["HostedRuntimeObservedAgentPluginV1"][];
+        };
         /** HostedRuntimeObservedAppliedV2 */
         HostedRuntimeObservedAppliedV2: {
             /** Etag */
@@ -6782,6 +6818,7 @@ export interface components {
             providers?: {
                 [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
             } | null;
+            agentPlugins?: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
             /** Error */
             error?: string | null;
             /** Convergeerror */

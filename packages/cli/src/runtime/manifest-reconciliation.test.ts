@@ -1553,6 +1553,7 @@ chmod 0755 '${commandPath}'
 		expect(failed.installErrors.join("\n")).toContain(
 			"runtime openclaw Agent Plugin acme.tools rollback failed",
 		);
+		expect(failed.agentPluginFailedNames).toEqual(["acme.tools"]);
 		expect(rollbackLifecycle).toEqual(["quiesce", "systemd rollback"]);
 		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
 			"probe-install:1.0.0",

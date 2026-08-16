@@ -839,6 +839,7 @@ interface PlannedMutation {
 
 export interface HostedAgentPluginTransaction {
 	readonly nextReceipt: HostedAgentPluginReceipt | null;
+	readonly mutationNames: readonly string[];
 	readonly snapshotTargets: readonly string[];
 	readonly mutationRuntimes: ReadonlySet<HostedAgentPluginRuntime>;
 	readonly hasMutations: boolean;
@@ -951,6 +952,7 @@ export function prepareHostedAgentPluginTransaction(input: {
 	const touched: PlannedMutation[] = [];
 	return {
 		nextReceipt: desiredReceipt(input.prepared, input.capabilityProof),
+		mutationNames: [...new Set(mutations.map((mutation) => mutation.name))].sort(),
 		snapshotTargets: [...snapshotTargets].sort(),
 		mutationRuntimes: new Set(mutations.map((mutation) => mutation.runtime)),
 		hasMutations: mutations.length > 0,

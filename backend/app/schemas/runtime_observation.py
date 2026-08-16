@@ -31,6 +31,115 @@ class RuntimeObservationRequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+AgentPluginObservedStatus = Literal["installed", "failed", "unknown"]
+AgentPluginObservationErrorCode = Literal[
+    "reconcile_failed",
+    "receipt_missing",
+    "receipt_unreadable",
+    "receipt_mismatch",
+]
+
+
+class HostedRuntimeObservedAgentPluginV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    installation_id: str = Field(alias="installationId", min_length=1, max_length=200)
+    name: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9.-]{0,63}$",
+    )
+    version: str = Field(
+        min_length=1,
+        max_length=256,
+        pattern=(
+            r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+            r"(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+            r"(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+            r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+        ),
+    )
+    content_digest: str = Field(
+        alias="contentDigest",
+        pattern=r"^sha256-tree-v1:[0-9a-f]{64}$",
+    )
+    source_revision: str = Field(alias="sourceRevision", pattern=r"^[0-9a-f]{64}$")
+    generation: int = Field(ge=1, le=9_007_199_254_740_991)
+    status: AgentPluginObservedStatus
+    error_code: AgentPluginObservationErrorCode | None = Field(
+        alias="errorCode",
+        default=None,
+    )
+
+    @field_validator("installation_id")
+    @classmethod
+    def validate_installation_id(cls, value: str) -> str:
+        try:
+            parsed = UUID(value)
+        except ValueError as exc:
+            raise ValueError("installationId must be a canonical UUID") from exc
+        if str(parsed) != value:
+            raise ValueError("installationId must be a canonical UUID")
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        if "--" in value or ".." in value or value[-1] in {".", "-"}:
+            raise ValueError("name must be a canonical Agent Plugin name")
+        return value
+
+    @model_validator(mode="after")
+    def validate_status_error(self) -> HostedRuntimeObservedAgentPluginV1:
+        if self.status == "installed" and self.error_code is not None:
+            raise ValueError("installed Agent Plugin observation cannot include errorCode")
+        if self.status == "failed" and self.error_code != "reconcile_failed":
+            raise ValueError("failed Agent Plugin observation requires reconcile_failed")
+        if self.status == "unknown" and self.error_code not in {
+            "receipt_missing",
+            "receipt_unreadable",
+            "receipt_mismatch",
+        }:
+            raise ValueError("unknown Agent Plugin observation requires a receipt error code")
+        return self
+
+
+class HostedRuntimeObservedAgentPluginsV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    installations: list[HostedRuntimeObservedAgentPluginV1] = Field(max_length=128)
+
+    @field_validator("installations")
+    @classmethod
+    def validate_installations(
+        cls,
+        value: list[HostedRuntimeObservedAgentPluginV1],
+    ) -> list[HostedRuntimeObservedAgentPluginV1]:
+        names = [installation.name for installation in value]
+        installation_ids = [installation.installation_id for installation in value]
+        if len(names) != len(set(names)) or len(installation_ids) != len(set(installation_ids)):
+            raise ValueError("Agent Plugin observations must have unique identities")
+        if names != sorted(names, key=lambda name: name.encode("utf-8")):
+            raise ValueError("Agent Plugin observations must be sorted by name")
+        return value
+
+    def validate_applied_identity(self, applied: HostedRuntimeObservedAppliedV2) -> None:
+        for installation in self.installations:
+            if installation.status == "failed":
+                if installation.generation < applied.generation or (
+                    installation.generation == applied.generation
+                    and installation.source_revision != applied.source_revision
+                ):
+                    raise ValueError("failed Agent Plugin observation is stale")
+                continue
+            if (
+                installation.generation != applied.generation
+                or installation.source_revision != applied.source_revision
+            ):
+                raise ValueError("Agent Plugin observation must match applied identity")
+
+
 class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     """Strict v2 companion event; deliberately separate from the frozen v1 wire model."""
 
@@ -51,6 +160,10 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     systemd: HostedRuntimeObservedSystemdV1 | None = None
     supervisor: HostedRuntimeObservedSupervisorV1 | None = None
     providers: dict[str, HostedRuntimeObservedProviderPayload] | None = None
+    agent_plugins: HostedRuntimeObservedAgentPluginsV1 | None = Field(
+        alias="agentPlugins",
+        default=None,
+    )
     error: str | None = Field(default=None, max_length=4000)
     converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
     truncated: Literal[False] | None = None
@@ -110,6 +223,8 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
             raise ValueError("predecessorBootSessionId must differ from bootSessionId")
         if self.successor_boot_session_id == self.boot_session_id:
             raise ValueError("successorBootSessionId must differ from bootSessionId")
+        if self.agent_plugins is not None:
+            self.agent_plugins.validate_applied_identity(self.applied)
         return self
 
 

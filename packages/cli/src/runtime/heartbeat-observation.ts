@@ -10,6 +10,7 @@ import {
 	runtimeAppliedApplyIdentity,
 } from "./applied-state";
 import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
+import { agentPluginsObservationSchema } from "./hosted-agent-plugin-observation";
 import { assertRuntimeBundleAuthority } from "./manifest-source";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -106,6 +107,7 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 		systemd: observedSystemdSchema.nullable().optional(),
 		supervisor: observedSupervisorSchema.nullable().optional(),
 		providers: z.record(z.string(), z.record(z.string(), z.unknown())).nullable().optional(),
+		agentPlugins: agentPluginsObservationSchema.nullable().optional(),
 		error: z.string().nullable().optional(),
 		convergeError: z.string().nullable().optional(),
 		truncated: z.literal(false).nullable().optional(),
@@ -357,6 +359,7 @@ export class HostedRuntimeHeartbeatSession {
 		const snapshot = readHostedRuntimeObserved(this.paths, {
 			reportedAt: capturedAt,
 			appliedState: this.capturedAppliedState,
+			includeAgentPlugins: true,
 		});
 		if (!snapshot) return null;
 		if (!snapshot.applied) {

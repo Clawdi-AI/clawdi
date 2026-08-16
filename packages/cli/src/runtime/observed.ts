@@ -6,6 +6,7 @@ import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import { getCliVersion } from "../lib/version";
 import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
+import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
@@ -14,7 +15,8 @@ import { isGeneratedRuntimeSystemdFile, runtimeUserName } from "./systemd-user";
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
-export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"];
+export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"] &
+	Pick<components["schemas"]["RuntimeObservationEventV2"], "agentPlugins">;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
 type HostedRuntimeObservedProviderPayload =
@@ -33,6 +35,7 @@ export function readHostedRuntimeObserved(
 	options: {
 		reportedAt?: string;
 		appliedState?: RuntimeAppliedState | null;
+		includeAgentPlugins?: boolean;
 	} = {},
 ): HostedRuntimeObserved | null {
 	if (paths.mode !== "hosted") return null;
@@ -65,6 +68,14 @@ export function readHostedRuntimeObserved(
 	};
 	if (systemd) observed.systemd = systemd;
 	if (providers) observed.providers = providers;
+	if (appliedState && options.includeAgentPlugins) {
+		const agentPlugins = readHostedAgentPluginsObservation({
+			paths,
+			applied: appliedState,
+			watchStatus,
+		});
+		if (agentPlugins) observed.agentPlugins = agentPlugins;
+	}
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);
 	if (convergeError) observed.convergeError = convergeError;
