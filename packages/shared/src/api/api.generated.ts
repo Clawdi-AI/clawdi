@@ -6415,7 +6415,7 @@ export interface components {
             /** Installable */
             installable: boolean;
             /** Installability Reason */
-            installability_reason?: ("configuration_not_supported" | "no_supported_runtime") | null;
+            installability_reason?: ("configuration_not_supported" | "no_supported_runtime" | "reserved_name") | null;
         };
         /** PluginCatalogResponse */
         PluginCatalogResponse: {

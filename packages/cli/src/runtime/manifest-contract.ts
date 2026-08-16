@@ -3,11 +3,9 @@ import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { z } from "zod";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
 import {
-	hostedAgentPluginCapabilityProbeSchema,
 	hostedAgentPluginsDesiredStateSchema,
 	hostedMcpDesiredStateSchema,
 	hostedSkillsDesiredStateSchema,
-	isFirstPartyClawdiAgentPlugin,
 } from "./manifest-resources";
 import {
 	runtimeNameSchema,
@@ -356,7 +354,6 @@ const runtimeProjectionSchema = z.object({
 	mcp: hostedMcpDesiredStateSchema.optional(),
 	skills: hostedSkillsDesiredStateSchema.optional(),
 	agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
-	agentPluginCapabilityProbe: hostedAgentPluginCapabilityProbeSchema.optional(),
 	tools: z.unknown().optional(),
 	terminalTooling: z.unknown().optional(),
 });
@@ -983,34 +980,9 @@ export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSche
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
 		clawdiCli: hostedCliPayloadPolicySchema,
 		agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
-		agentPluginCapabilityProbe: hostedAgentPluginCapabilityProbeSchema.optional(),
 	})
 	.strict()
-	.superRefine((manifest, ctx) => {
-		validateHostedRuntimeManifest(manifest, ctx);
-		const probeNames = manifest.agentPluginCapabilityProbe?.installations;
-		if (!probeNames) return;
-		const installationNames = Object.keys(manifest.agentPlugins?.installations ?? {}).sort();
-		if (
-			probeNames.length !== installationNames.length ||
-			![...probeNames].sort().every((name, index) => name === installationNames[index])
-		) {
-			ctx.addIssue({
-				code: "custom",
-				message: "Agent Plugin capability probe must cover every desired installation",
-				path: ["agentPluginCapabilityProbe", "installations"],
-			});
-		}
-		const probeName = probeNames[0];
-		const installation = probeName ? manifest.agentPlugins?.installations[probeName] : undefined;
-		if (!probeName || !installation || !isFirstPartyClawdiAgentPlugin(probeName, installation)) {
-			ctx.addIssue({
-				code: "custom",
-				message: "Agent Plugin capability probe requires the first-party clawdi package",
-				path: ["agentPluginCapabilityProbe", "installations"],
-			});
-		}
-	});
+	.superRefine(validateHostedRuntimeManifest);
 export const hostedRuntimeManifestResponseSchema = z
 	.object({
 		manifest: hostedRuntimeManifestSchema,

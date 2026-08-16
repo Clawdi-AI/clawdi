@@ -21,7 +21,7 @@ from app.models.hosted_runtime import (
     HostedRuntimeState,
 )
 from app.models.session import AgentEnvironment
-from app.schemas.runtime import HostedAgentPlugins, HostedCodexProviderProjection
+from app.schemas.runtime import HostedCodexProviderProjection
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
@@ -33,7 +33,6 @@ from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceError,
     RuntimeSourceRow,
-    _agent_plugin_ownership_identity,
     expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
     render_runtime_source,
@@ -50,19 +49,17 @@ PREFIX_COLLISION_ACCOUNT_ID = UUID("50000000-0000-ffff-0000-000000000007")
 PREFIX_COLLISION_LINK_ID = UUID("60000000-0000-0000-0000-000000000008")
 AUTH_TOKEN_SECRET_ID = UUID("70000000-0000-0000-0000-000000000009")
 GATEWAY_TOKEN_SECRET_ID = UUID("70000000-0000-0000-0000-000000000010")
-CLAWDI_AGENT_PLUGIN_DIGEST = (
-    "sha256-tree-v1:6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3"
-)
-CLAWDI_AGENT_PLUGIN_ID = UUID("01987b48-b641-79f2-b839-92ae5fc782fe")
+TEST_AGENT_PLUGIN_DIGEST = f"sha256-tree-v1:{'b' * 64}"
+TEST_AGENT_PLUGIN_ID = UUID("01987b48-b641-79f2-b839-92ae5fc782fe")
 
 
 def _agent_plugin_row(
     *,
-    package_key: str = "clawdi",
-    installation_id: UUID = CLAWDI_AGENT_PLUGIN_ID,
+    package_key: str = "acme-tools",
+    installation_id: UUID = TEST_AGENT_PLUGIN_ID,
     version: str = "1.0.0",
-    store_path: str = "v2/plugins/clawdi",
-    content_digest: str = CLAWDI_AGENT_PLUGIN_DIGEST,
+    store_path: str = "v2/plugins/acme-tools",
+    content_digest: str = TEST_AGENT_PLUGIN_DIGEST,
 ) -> AgentPluginInstallation:
     return AgentPluginInstallation(
         id=installation_id,
@@ -97,66 +94,7 @@ def _agent_plugins(*rows: AgentPluginInstallation) -> dict[str, object]:
     }
 
 
-def _clawdi_agent_plugin_egress_profiles(
-    *,
-    marker: str = "clawdi",
-    upstream_base_url: str = "https://cloud.test",
-) -> dict[str, object]:
-    return {
-        "profiles": [
-            {
-                "id": "first-party-clawdi-mcp",
-                "enabled": True,
-                "kind": "http",
-                "match": {
-                    "scheme": "https",
-                    "host": "cloud-api.clawdi.ai:443",
-                    "path": {"type": "equals", "value": "/v1/mcp/clawdi"},
-                    "headers": {
-                        "X-Clawdi-Agent-Plugin": {
-                            "type": "equals",
-                            "value": marker,
-                        }
-                    },
-                    "query": {},
-                },
-                "rewrite": {
-                    "upstreamBaseUrl": upstream_base_url,
-                    "preservePath": True,
-                    "setHeaders": {
-                        "Authorization": {
-                            "type": "secretRef",
-                            "secretRef": "secret://clawdi/auth-token",
-                            "prefix": "Bearer ",
-                        }
-                    },
-                },
-                "logging": {
-                    "redactHeaders": ["Authorization"],
-                    "redactUrlPatterns": [],
-                },
-                "priority": 60,
-                "owner": "first-party:clawdi",
-            }
-        ]
-    }
-
-
-def _clawdi_agent_plugin_proof(
-    agent_plugins: dict[str, object],
-    *,
-    runtime: str = "openclaw",
-    command_revision: str = "c" * 64,
-) -> str:
-    validated = HostedAgentPlugins.model_validate(agent_plugins)
-    ownership = _agent_plugin_ownership_identity(
-        "clawdi",
-        validated.installations["clawdi"],
-    )
-    return f"v1:{runtime}:{ownership}:{command_revision}"
-
-
-def _use_clawdi_component_migration_state(
+def _use_agent_plugin_state(
     batch: RuntimeSourceBatch,
     *installations: AgentPluginInstallation,
 ) -> HostedRuntimeState:
@@ -568,50 +506,18 @@ def test_runtime_source_owns_the_public_clawdi_mcp_url() -> None:
     }
 
 
-@pytest.mark.parametrize("runtime", ["openclaw", "hermes"])
-def test_runtime_source_switches_only_clawdi_components_after_native_proof(
-    runtime: str,
-) -> None:
+def test_runtime_source_keeps_builtin_clawdi_and_makes_reserved_desired_row_inert() -> None:
     batch = _batch()
-    installation = _agent_plugin_row(
-        installation_id=UUID("01987b48-b641-79f2-b839-92ae5fc782ff"),
-        version="9.8.7",
-        content_digest=f"sha256-tree-v1:{'d' * 64}",
+    reserved = _agent_plugin_row(
+        package_key="clawdi",
+        store_path="v2/plugins/clawdi",
     )
-    desired = _agent_plugins(installation)
-    state = _use_clawdi_component_migration_state(batch, installation)
-    if runtime == "hermes":
-        hermes = dict(state.runtimes["openclaw"])
-        hermes["services"] = {
-            "dashboard": {
-                "args": [
-                    "dashboard",
-                    "--host",
-                    "0.0.0.0",
-                    "--port",
-                    "9119",
-                    "--no-open",
-                ]
-            }
-        }
-        state.runtimes = {"hermes": hermes}
-        state.system = {
-            "hermesDashboardAuth": {
-                "mode": "password",
-                "provider": "basic",
-                "username": "admin",
-                "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
-                "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
-                "sessionTtlSeconds": 43_200,
-                "publicUrl": "https://agent.example.test/hermes",
-                "activation": {
-                    "enabled": True,
-                    "capability": "hermes-basic-auth-v1",
-                },
-            }
-        }
+    generic = _agent_plugin_row(
+        installation_id=UUID("01987b48-b641-79f2-b839-92ae5fc782ff"),
+    )
+    _use_agent_plugin_state(batch, reserved, generic)
 
-    old_client = render_runtime_source(
+    legacy_client = render_runtime_source(
         batch,
         environment_id=ENV_ID,
         public_api_url="https://cloud.test/",
@@ -619,215 +525,17 @@ def test_runtime_source_switches_only_clawdi_components_after_native_proof(
         decrypt_secrets=False,
         project_agent_plugins=False,
     )
-    probe_client = _render(batch)
-    native_client = render_runtime_source(
-        batch,
-        environment_id=ENV_ID,
-        public_api_url="https://cloud.test/",
-        vault_key_identity="vault-key-generation-1",
-        decrypt_secrets=False,
-        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(
-            desired,
-            runtime=runtime,
-        ),
-    )
-
-    assert "agentPlugins" not in old_client.manifest
-    assert set(old_client.manifest["mcp"]["servers"]) == {"clawdi", "workspace-tools"}
-    assert set(old_client.manifest["skills"]["entries"]) == {
-        "clawdi",
-        "workspace-helper",
-    }
-    assert "egressProfiles" not in old_client.manifest
-    assert probe_client.manifest["agentPlugins"] == desired
-    assert probe_client.manifest["agentPluginCapabilityProbe"] == {"installations": ["clawdi"]}
-    assert "clawdi" in probe_client.manifest["mcp"]["servers"]
-    assert "clawdi" in probe_client.manifest["skills"]["entries"]
-    assert native_client.manifest["agentPlugins"] == desired
-    assert "agentPluginCapabilityProbe" not in native_client.manifest
-    assert set(native_client.manifest["mcp"]["servers"]) == {"workspace-tools"}
-    assert set(native_client.manifest["skills"]["entries"]) == {"workspace-helper"}
-    assert (
-        len(
-            {
-                old_client.source_revision,
-                probe_client.source_revision,
-                native_client.source_revision,
-            }
-        )
-        == 3
-    )
-
-
-def test_runtime_source_invalidates_native_proof_on_runtime_or_package_change() -> None:
-    batch = _batch()
-    installation = _agent_plugin_row()
-    _use_clawdi_component_migration_state(batch, installation)
-    proof = _clawdi_agent_plugin_proof(_agent_plugins(installation))
-    initial = _render(batch)
-
-    installation.catalog_revision = "b" * 40
-    package_changed = render_runtime_source(
-        batch,
-        environment_id=ENV_ID,
-        public_api_url="https://cloud.test/",
-        vault_key_identity="vault-key-generation-1",
-        decrypt_secrets=False,
-        agent_plugin_capability_proof=proof,
-    )
-    runtime_changed = render_runtime_source(
-        batch,
-        environment_id=ENV_ID,
-        public_api_url="https://cloud.test/",
-        vault_key_identity="vault-key-generation-1",
-        decrypt_secrets=False,
-        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(
-            _agent_plugins(installation),
-            runtime="hermes",
-        ),
-    )
-
-    for source in (package_changed, runtime_changed):
-        assert source.manifest["agentPluginCapabilityProbe"] == {"installations": ["clawdi"]}
-        assert "clawdi" in source.manifest["mcp"]["servers"]
-        assert "clawdi" in source.manifest["skills"]["entries"]
-    assert package_changed.source_revision != initial.source_revision
-
-
-@pytest.mark.parametrize(
-    "installation",
-    [
-        _agent_plugin_row(package_key="clawdi-fork"),
-        _agent_plugin_row(store_path="v2/plugins/clawdi-fork"),
-    ],
-    ids=[
-        "package-key",
-        "store-path",
-    ],
-)
-def test_runtime_source_rejects_mismatched_reserved_first_party_plugin_identity(
-    installation: AgentPluginInstallation,
-) -> None:
-    batch = _batch()
-    _use_clawdi_component_migration_state(batch, installation)
-
-    with pytest.raises(
-        RuntimeSourceError,
-        match="Clawdi first-party Agent Plugin desired state is invalid",
-    ):
-        _render(batch)
-
-
-def test_runtime_source_rejects_noncanonical_first_party_agent_plugins_schema() -> None:
-    batch = _batch()
-    installation = _agent_plugin_row()
-    installation.agent_plugins_schema = "https://example.test/plugin.schema.json"
-    _use_clawdi_component_migration_state(batch, installation)
-
-    with pytest.raises(RuntimeSourceError, match="Agent Plugins desired state is invalid"):
-        _render(batch)
-
-
-def test_runtime_source_preserves_generic_plugin_semantics() -> None:
-    batch = _batch()
-    installation = _agent_plugin_row(
-        package_key="acme-tools",
-        store_path="v2/plugins/acme-tools",
-        content_digest=f"sha256-tree-v1:{'b' * 64}",
-    )
-    desired = _agent_plugins(installation)
-    _use_clawdi_component_migration_state(batch, installation)
-
     capable_client = _render(batch)
 
-    assert capable_client.manifest["agentPlugins"] == desired
-    assert set(capable_client.manifest["mcp"]["servers"]) == {
-        "clawdi",
-        "workspace-tools",
-    }
+    assert "agentPlugins" not in legacy_client.manifest
+    assert set(capable_client.manifest["agentPlugins"]["installations"]) == {"acme-tools"}
+    assert set(capable_client.manifest["mcp"]["servers"]) == {"clawdi", "workspace-tools"}
     assert set(capable_client.manifest["skills"]["entries"]) == {
         "clawdi",
         "workspace-helper",
     }
-
-
-def test_runtime_source_derives_first_party_egress_from_canonical_desired_state() -> None:
-    batch = _batch()
-    _use_clawdi_component_migration_state(batch, _agent_plugin_row())
-
-    rendered = _render(batch)
-
-    profile = rendered.manifest["egressProfiles"]["profiles"][0]
-    assert profile["id"] == "first-party-clawdi-mcp"
-    assert profile["owner"] == "first-party:clawdi"
-    assert profile["match"]["headers"]["X-Clawdi-Agent-Plugin"]["value"] == "clawdi"
-    assert profile["rewrite"]["upstreamBaseUrl"] == "https://cloud.test"
-
-
-def test_runtime_source_rejects_hosted_reserved_first_party_egress_state() -> None:
-    batch = _batch()
-    state = _use_clawdi_component_migration_state(batch, _agent_plugin_row())
-    state.egress_profiles = _clawdi_agent_plugin_egress_profiles(marker="drift")
-
-    with pytest.raises(
-        RuntimeSourceError,
-        match="Hosted runtime state uses a Clawdi-reserved egress profile",
-    ):
-        _render(batch)
-
-
-def test_runtime_source_defers_mixed_plugins_until_first_party_proof() -> None:
-    batch = _batch()
-    clawdi = _agent_plugin_row()
-    generic = _agent_plugin_row(
-        package_key="acme-tools",
-        installation_id=UUID("01987b48-b641-79f2-b839-92ae5fc782fd"),
-        store_path="v2/plugins/acme-tools",
-        content_digest=f"sha256-tree-v1:{'b' * 64}",
-    )
-    desired = _agent_plugins(clawdi, generic)
-    _use_clawdi_component_migration_state(batch, clawdi, generic)
-
-    old_client = render_runtime_source(
-        batch,
-        environment_id=ENV_ID,
-        public_api_url="https://cloud.test/",
-        vault_key_identity="vault-key-generation-1",
-        decrypt_secrets=False,
-        project_agent_plugins=False,
-    )
-    probe_client = _render(batch)
-    native_client = render_runtime_source(
-        batch,
-        environment_id=ENV_ID,
-        public_api_url="https://cloud.test/",
-        vault_key_identity="vault-key-generation-1",
-        decrypt_secrets=False,
-        agent_plugin_capability_proof=_clawdi_agent_plugin_proof(desired),
-    )
-
-    assert "agentPlugins" not in old_client.manifest
-    assert set(probe_client.manifest["agentPlugins"]["installations"]) == {"clawdi"}
-    assert probe_client.manifest["agentPluginCapabilityProbe"] == {"installations": ["clawdi"]}
-    assert "clawdi" in probe_client.manifest["mcp"]["servers"]
-    assert "clawdi" in probe_client.manifest["skills"]["entries"]
-    assert set(native_client.manifest["agentPlugins"]["installations"]) == {
-        "clawdi",
-        "acme-tools",
-    }
-    assert "agentPluginCapabilityProbe" not in native_client.manifest
-    assert "clawdi" not in native_client.manifest["mcp"]["servers"]
-    assert "clawdi" not in native_client.manifest["skills"]["entries"]
-    assert (
-        len(
-            {
-                old_client.source_revision,
-                probe_client.source_revision,
-                native_client.source_revision,
-            }
-        )
-        == 3
-    )
+    assert "egressProfiles" not in capable_client.manifest
+    assert legacy_client.source_revision != capable_client.source_revision
 
 
 def test_runtime_source_binds_whatsapp_capability_and_revision_to_link_credential_and_cert(

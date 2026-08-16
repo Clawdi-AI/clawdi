@@ -72,9 +72,7 @@ import {
 } from "./manifest-contract";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
-	FIRST_PARTY_CLAWDI_AGENT_PLUGIN,
 	type HostedAgentPluginsDesiredState,
-	isFirstPartyClawdiAgentPlugin,
 } from "./manifest-resources";
 import {
 	hostedManifestToRuntimeManifest,
@@ -144,27 +142,6 @@ const TEST_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
 	schemaVersion: 1,
 	installations: { "acme.tools": TEST_AGENT_PLUGIN_INSTALLATION },
 };
-const FIRST_PARTY_CLAWDI_TEST_VERSION = "1.0.0";
-const FIRST_PARTY_CLAWDI_TEST_DIGEST =
-	"sha256-tree-v1:6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3";
-const FIRST_PARTY_CLAWDI_AGENT_PLUGINS: HostedAgentPluginsDesiredState = {
-	schemaVersion: 1,
-	installations: {
-		[FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name]: {
-			installationId: "01987b48-b641-79f2-b839-92ae5fc782fe",
-			version: FIRST_PARTY_CLAWDI_TEST_VERSION,
-			agentPluginsSchema: AGENT_PLUGINS_SCHEMA_1_0_0,
-			source: {
-				type: "github",
-				url: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourceUrl,
-				path: FIRST_PARTY_CLAWDI_AGENT_PLUGIN.sourcePath,
-				commit: "c5a6da2011958e5295b3b58ee4a9afb75ab39fda",
-			},
-			contentDigest: FIRST_PARTY_CLAWDI_TEST_DIGEST,
-		},
-	},
-};
-
 function preparedTestAgentPlugin(
 	name: string,
 	version: string,
@@ -918,23 +895,12 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("strictly parses and preserves the Agent Plugins desired-state contract", () => {
 		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(
-			hostedManifestFixture({
-				agentPlugins: FIRST_PARTY_CLAWDI_AGENT_PLUGINS,
-				agentPluginCapabilityProbe: {
-					installations: [FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
-				},
-			}),
+			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
 		);
-		expect(parsed.agentPlugins).toEqual(FIRST_PARTY_CLAWDI_AGENT_PLUGINS);
-		expect(parsed.agentPluginCapabilityProbe).toEqual({
-			installations: [FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
-		});
+		expect(parsed.agentPlugins).toEqual(TEST_AGENT_PLUGINS);
 		expect(hostedManifestToRuntimeManifest(parsed).projection?.agentPlugins).toEqual(
-			FIRST_PARTY_CLAWDI_AGENT_PLUGINS,
+			TEST_AGENT_PLUGINS,
 		);
-		expect(hostedManifestToRuntimeManifest(parsed).projection?.agentPluginCapabilityProbe).toEqual({
-			installations: [FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
-		});
 		const maximumVersion = `1.2.3+${"a".repeat(250)}`;
 		const maximumLengthPlugins = {
 			...TEST_AGENT_PLUGINS,
@@ -960,41 +926,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				hostedRuntimeBundleV2ManifestSchema.parse(hostedManifestFixture()),
 			).projection?.agentPlugins,
 		).toBeUndefined();
-		expect(
-			hostedRuntimeBundleV2ManifestSchema.safeParse(
-				hostedManifestFixture({
-					agentPlugins: TEST_AGENT_PLUGINS,
-					agentPluginCapabilityProbe: { installations: ["other"] },
-				}),
-			).success,
-		).toBe(false);
-	});
-
-	test("recognizes first-party trust without version, digest, or installation ID gates", () => {
-		const installation =
-			FIRST_PARTY_CLAWDI_AGENT_PLUGINS.installations[FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name];
-		const dynamicIntent = {
-			...installation,
-			installationId: "01987b48-b641-79f2-b839-92ae5fc78200",
-			version: "17.4.2",
-			source: { ...installation.source, commit: "d".repeat(40) },
-			contentDigest: `sha256-tree-v1:${"e".repeat(64)}`,
-		};
-
-		expect(isFirstPartyClawdiAgentPlugin("clawdi", dynamicIntent)).toBe(true);
-		expect(isFirstPartyClawdiAgentPlugin("clawdi-fork", dynamicIntent)).toBe(false);
-		expect(
-			isFirstPartyClawdiAgentPlugin("clawdi", {
-				...dynamicIntent,
-				source: { ...dynamicIntent.source, path: "v2/plugins/clawdi-fork" },
-			}),
-		).toBe(false);
-		expect(
-			isFirstPartyClawdiAgentPlugin("clawdi", {
-				...dynamicIntent,
-				source: { ...dynamicIntent.source, url: "https://github.com/acme/store" },
-			}),
-		).toBe(false);
 	});
 
 	test("rejects Agent Plugins on the legacy Hosted manifest v1 contract", () => {
@@ -1090,200 +1021,20 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
 	});
 
-	test("falls back only for an explicit first-party capability probe", () => {
+	test("fails closed when native Agent Plugin lifecycle support is unavailable", () => {
 		const paths = tempRuntimePaths();
-		const fixtureRoot = join(import.meta.dir, "../../tests/fixtures/agent-plugins/clawdi");
-		const fixtureFiles = [
-			{ path: "mcp.json", source: "mcp.json.blob" },
-			{ path: "plugin.json", source: "plugin.json.blob" },
-			{ path: "skills/clawdi/SKILL.md", source: "skills/clawdi/SKILL.md" },
-		];
-		const desired: PreparedHostedAgentPlugin = {
-			...preparedTestAgentPlugin(
-				FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name,
-				FIRST_PARTY_CLAWDI_TEST_VERSION,
-				"a".repeat(64),
-			),
-			installation: {
-				...FIRST_PARTY_CLAWDI_AGENT_PLUGINS.installations[FIRST_PARTY_CLAWDI_AGENT_PLUGIN.name],
-				ownershipIdentity: "a".repeat(64),
-			},
-			mcpServerNames: ["clawdi"],
-			hasStreamableHttpMcp: true,
-			tree: fixtureFiles.map(({ path, source }) => ({
-				path,
-				mode: 0o100644,
-				bytes: readFileSync(join(fixtureRoot, ...source.split("/"))),
-			})),
-		};
+		const desired = preparedTestAgentPlugin("acme.tools", "1.2.3", "a".repeat(64));
 		const prepared = preparedTestAgentPluginState(desired);
-		const probed = hostedManifestToRuntimeManifest(
-			hostedRuntimeBundleV2ManifestSchema.parse(
-				hostedManifestFixture({
-					agentPlugins: testAgentPluginDesiredState(desired),
-					agentPluginCapabilityProbe: { installations: [desired.name] },
-				}),
-			),
-		);
 		const unavailableRunner: HostedAgentPluginCommandRunner = {
 			available: () => false,
 			run: () => {
 				throw new Error("unsupported runtime must not execute Agent Plugin commands");
 			},
 		};
-		let probeInstalled = false;
-		let probeInstallPath = "";
-		const structuredUnsupportedRunner: HostedAgentPluginCommandRunner = {
-			available: () => true,
-			run: ({ args, home }) => {
-				if (args[1] === "install") {
-					const source = args[2];
-					if (!source) throw new Error("missing probe package source");
-					probeInstallPath = join(home, ".openclaw", "extensions", desired.name);
-					mkdirSync(dirname(probeInstallPath), { recursive: true });
-					cpSync(source, probeInstallPath, { recursive: true });
-					probeInstalled = true;
-					return { status: 0, stdout: "", stderr: "" };
-				}
-				if (args[1] === "list") {
-					return {
-						status: 0,
-						stdout: JSON.stringify({
-							plugins: probeInstalled
-								? [
-										{
-											id: desired.name,
-											name: desired.name,
-											version: desired.installation.version,
-											enabled: false,
-											status: "disabled",
-											format: "openclaw",
-										},
-									]
-								: [],
-						}),
-						stderr: "",
-					};
-				}
-				if (args[1] === "inspect") {
-					return {
-						status: 0,
-						stdout: JSON.stringify({
-							plugin: {
-								id: desired.name,
-								name: desired.name,
-								source: "probe",
-								origin: "global",
-								status: "disabled",
-								version: desired.installation.version,
-								enabled: false,
-								format: "openclaw",
-							},
-							install: {
-								source: "path",
-								version: desired.installation.version,
-								installPath: probeInstallPath,
-							},
-							mcpServers: [],
-							diagnostics: [],
-						}),
-						stderr: "",
-					};
-				}
-				throw new Error("unexpected command after structured unsupported observation");
-			},
-		};
 		const commands = hostedAgentPluginCommands(paths.userHome);
-
-		expect(
+		expect(() =>
 			planHostedAgentPluginConvergence({
-				manifest: probed,
 				prepared,
-				home: paths.userHome,
-				commands,
-				runner: structuredUnsupportedRunner,
-			}),
-		).toEqual({ transaction: null, evidence: null });
-		expect(() =>
-			planHostedAgentPluginConvergence({
-				manifest: probed,
-				prepared,
-				home: paths.userHome,
-				commands,
-				runner: unavailableRunner,
-			}),
-		).toThrow("Agent Plugin capability probe runtime command is unavailable");
-
-		const explicit: RuntimeManifest = {
-			...probed,
-			projection: { ...probed.projection, agentPluginCapabilityProbe: undefined },
-		};
-		expect(() =>
-			planHostedAgentPluginConvergence({
-				manifest: explicit,
-				prepared,
-				home: paths.userHome,
-				commands,
-				runner: structuredUnsupportedRunner,
-			}),
-		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
-
-		const generic = preparedTestAgentPlugin("acme.tools", "1.2.3", "b".repeat(64));
-		const forgedProbe: RuntimeManifest = {
-			...probed,
-			projection: {
-				...probed.projection,
-				agentPlugins: testAgentPluginDesiredState(generic),
-				agentPluginCapabilityProbe: { installations: [generic.name] },
-			},
-		};
-		expect(() =>
-			planHostedAgentPluginConvergence({
-				manifest: forgedProbe,
-				prepared: preparedTestAgentPluginState(generic),
-				home: paths.userHome,
-				commands,
-				runner: unavailableRunner,
-			}),
-		).toThrow("Agent Plugin capability probe requires the first-party clawdi package");
-		expect(
-			hostedRuntimeBundleV2ManifestSchema.safeParse(
-				hostedManifestFixture({
-					agentPlugins: testAgentPluginDesiredState(generic),
-					agentPluginCapabilityProbe: { installations: [generic.name] },
-				}),
-			).success,
-		).toBe(false);
-
-		const mixedPrepared: PreparedHostedAgentPlugins = {
-			...prepared,
-			desired: new Map([
-				[desired.name, desired],
-				[generic.name, generic],
-			]),
-		};
-		const firstPartyInstallation = testAgentPluginDesiredState(desired).installations[desired.name];
-		const genericInstallation = testAgentPluginDesiredState(generic).installations[generic.name];
-		if (!firstPartyInstallation || !genericInstallation) {
-			throw new Error("missing mixed Agent Plugin fixture installation");
-		}
-		const mixedExplicit: RuntimeManifest = {
-			...explicit,
-			projection: {
-				...explicit.projection,
-				agentPlugins: {
-					schemaVersion: 1,
-					installations: {
-						[desired.name]: firstPartyInstallation,
-						[generic.name]: genericInstallation,
-					},
-				},
-			},
-		};
-		expect(() =>
-			planHostedAgentPluginConvergence({
-				manifest: mixedExplicit,
-				prepared: mixedPrepared,
 				home: paths.userHome,
 				commands,
 				runner: unavailableRunner,
@@ -3470,7 +3221,7 @@ chmod 0755 '${commandPath}'
 		mkdirSync(dirname(engineBinary), { recursive: true });
 		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(engineBinary, 0o700);
-		const secretRef = "secret://clawdi/auth-token";
+		const secretRef = "secret://runtime/egress/test-token";
 		const activeManifest = baseManifest(
 			paths,
 			{
@@ -3485,23 +3236,23 @@ chmod 0755 '${commandPath}'
 				egressProfiles: {
 					profiles: [
 						{
-							id: "first-party-clawdi-mcp",
+							id: "managed-api",
 							enabled: true,
 							kind: "http",
 							match: {
 								scheme: "https",
-								host: "cloud-api.clawdi.ai:443",
-								path: { type: "equals", value: "/v1/mcp/clawdi" },
+								host: "api.example.test:443",
+								path: { type: "equals", value: "/v1/data" },
 								headers: {
-									"X-Clawdi-Agent-Plugin": {
+									"X-Route-Key": {
 										type: "equals",
-										value: "clawdi",
+										value: "managed",
 									},
 								},
 								query: {},
 							},
 							rewrite: {
-								upstreamBaseUrl: "http://localhost:8000",
+								upstreamBaseUrl: "http://localhost:9000",
 								preservePath: true,
 								setHeaders: {
 									authorization: {
@@ -3513,7 +3264,7 @@ chmod 0755 '${commandPath}'
 							},
 							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 							priority: 60,
-							owner: "first-party:clawdi",
+							owner: "runtime:test",
 						},
 					],
 				},

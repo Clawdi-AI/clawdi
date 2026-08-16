@@ -46,11 +46,6 @@ import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { withEffectiveFilesystemIdentity } from "../runtime/effective-identity";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
-import {
-	clearHostedAgentPluginCapabilityProof,
-	clearHostedAgentPluginCapabilityProofUnlessOwned,
-	writeHostedAgentPluginCapabilityProof,
-} from "../runtime/hosted-agent-plugin-capability";
 import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
 import {
 	cleanupHostedAgentPluginTransientArchives,
@@ -2394,9 +2389,6 @@ async function applyRuntimeDesiredState(
 		}
 		const preserveActiveUnits = isRuntimeCliOnlyCheckpoint(load, paths);
 		if (preparedHostedAgentPlugins === undefined) {
-			if (load.manifest.projection?.agentPluginCapabilityProbe) {
-				clearHostedAgentPluginCapabilityProof(paths);
-			}
 			try {
 				preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(load.manifest, paths, {
 					offline: load.offline,
@@ -2407,9 +2399,6 @@ async function applyRuntimeDesiredState(
 					error,
 				);
 			}
-		}
-		if (!load.manifest.projection?.agentPluginCapabilityProbe) {
-			clearHostedAgentPluginCapabilityProofUnlessOwned(preparedHostedAgentPlugins ?? null, paths);
 		}
 		const preparedHostedSourcedSkills =
 			opts.preparedHostedSourcedSkills ??
@@ -2552,17 +2541,6 @@ async function applyRuntimeDesiredState(
 		});
 		if (convergence.installErrors.length === 0) {
 			preservePreparedAgentPluginArchives = true;
-			if (convergence.agentPluginCapabilityEvidence) {
-				try {
-					writeHostedAgentPluginCapabilityProof(convergence.agentPluginCapabilityEvidence, paths);
-				} catch (error) {
-					console.warn(
-						`post-commit Agent Plugin capability proof persistence deferred: ${
-							error instanceof Error ? error.message : String(error)
-						}`,
-					);
-				}
-			}
 			try {
 				gcHostedAgentPluginArchives(
 					readHostedAgentPluginReceipt(paths),

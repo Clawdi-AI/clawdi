@@ -42,8 +42,6 @@ import type { RuntimePaths } from "./paths";
 import { makeRuntimeUserOwned, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { writeRuntimePlatformFileAtomic } from "./state";
 
-export const AGENT_PLUGIN_CONFIGURATION_UNSUPPORTED_ERROR =
-	"Agent Plugin ai.clawdi configuration is not supported by native runtimes";
 export const HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR =
 	"Hermes Agent Plugins only support the portable streamable-http remote transport";
 export const HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR =
@@ -192,15 +190,6 @@ const clawdiExtensionSchema = z
 	.object({
 		schemaVersion: z.literal(1),
 		display: clawdiDisplaySchema,
-		configuration: z
-			.object({
-				secretSlots: z.record(
-					z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
-					z.unknown(),
-				),
-			})
-			.strict()
-			.optional(),
 		compatibility: clawdiCompatibilitySchema.optional(),
 	})
 	.strict();
@@ -992,9 +981,6 @@ function assertPackageIdentity(
 	const clawdi = clawdiExtensionSchema.safeParse(extension);
 	if (!clawdi.success) {
 		throw new Error("Agent Plugin ai.clawdi extension does not match the Store contract");
-	}
-	if (clawdi.data.configuration) {
-		throw new Error(AGENT_PLUGIN_CONFIGURATION_UNSUPPORTED_ERROR);
 	}
 	if (clawdi.data.display.icon) {
 		const icon = clawdi.data.display.icon;
