@@ -215,7 +215,7 @@ class RuntimeAgentPluginReconcileError extends Error {
 		readonly installationNames: readonly string[],
 		error: unknown,
 	) {
-		super(error instanceof Error ? error.message : String(error));
+		super(error instanceof Error ? error.message : String(error), { cause: error });
 		this.name = "RuntimeAgentPluginReconcileError";
 	}
 }

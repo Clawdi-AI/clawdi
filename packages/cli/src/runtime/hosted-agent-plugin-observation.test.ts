@@ -8,8 +8,8 @@ import {
 	hostedAgentPluginReceiptsPath,
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
-import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { readHostedRuntimeObserved } from "./observed";
+import { getRuntimePaths, type RuntimePaths } from "./paths";
 
 const roots: string[] = [];
 const originalEnv = { ...process.env };
