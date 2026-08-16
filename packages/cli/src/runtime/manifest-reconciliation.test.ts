@@ -1986,7 +1986,6 @@ chmod 0755 '${commandPath}'
 				auth: { mode: "token", token: "gateway-token" },
 				controlUi: {
 					allowedOrigins,
-					allowInsecureAuth: false,
 					dangerouslyAllowHostHeaderOriginFallback: false,
 					dangerouslyDisableDeviceAuth: true,
 				},
@@ -2055,7 +2054,6 @@ chmod 0755 '${commandPath}'
 				controlUi: {
 					basePath: "/control",
 					allowedOrigins: ["https://agent.example.test"],
-					allowInsecureAuth: false,
 					dangerouslyAllowHostHeaderOriginFallback: false,
 					dangerouslyDisableDeviceAuth: true,
 				},

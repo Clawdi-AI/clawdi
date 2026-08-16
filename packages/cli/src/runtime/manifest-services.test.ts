@@ -466,6 +466,47 @@ afterEach(() => {
 });
 
 describe("runtime manifest services", () => {
+	test("enables invalid-config repair only for the hosted v2 workspace probe", () => {
+		for (const [sourceBundleVersion, expected] of [
+			[undefined, false],
+			["clawdi.hosted-runtime.bundle.v2", true],
+		] as const) {
+			const paths = tempRuntimePaths();
+			const command = join(paths.userHome, ".local", "bin", "openclaw");
+			mkdirSync(dirname(command), { recursive: true });
+			writeFileSync(command, "#!/bin/sh\nexit 0\n");
+			chmodSync(command, 0o700);
+			const manifest = installGateManifest(paths, "openclaw", command);
+			manifest.projection = {
+				...manifest.projection,
+				...(sourceBundleVersion ? { sourceBundleVersion } : {}),
+			};
+			let repairInvalidConfig: boolean | undefined;
+
+			expect(() =>
+				convergeRuntimeManifest(
+					{
+						manifest,
+						source: "remote-datasource",
+						sourcePath: "inline-workspace-repair-gate",
+						offline: false,
+					},
+					paths,
+					{
+						hostedOpenClawSkillDriver: {
+							...hostedOpenClawSkillDriver,
+							resolveWorkspace: (input) => {
+								repairInvalidConfig = input.repairInvalidConfig;
+								throw new Error("workspace probe captured");
+							},
+						},
+					},
+				),
+			).toThrow("workspace probe captured");
+			expect(repairInvalidConfig).toBe(expected);
+		}
+	});
+
 	test("renders systemd runtime services without creating user command shims", () => {
 		const paths = tempRuntimePaths();
 		process.env.PATH = `${dirname(paths.cliManagedBin)}:${process.env.PATH ?? ""}`;
