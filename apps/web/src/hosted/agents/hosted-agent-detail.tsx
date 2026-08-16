@@ -216,6 +216,7 @@ import {
 	runtimeConsoleUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
+import { AgentPluginsSurface } from "@/hosted/v2/agent-plugins/agent-plugins-surface";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
 	aiBindingBuildErrorCopy,
@@ -309,6 +310,7 @@ type HostedAgentTab =
 	| "console"
 	| "files"
 	| "terminal"
+	| "plugins"
 	| "sessions"
 	| "memories"
 	| "connectors"
@@ -427,6 +429,7 @@ export function HostedAgentDetail({
 	runtime,
 	section = "overview",
 	routeSearch,
+	pluginName,
 	onDeleteAccepted,
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
@@ -438,6 +441,7 @@ export function HostedAgentDetail({
 	runtime: Runtime;
 	section?: AgentSectionId;
 	routeSearch: AgentRouteSearch;
+	pluginName?: string;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
@@ -531,7 +535,9 @@ export function HostedAgentDetail({
 		>
 			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
 			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-6"}>
-				{isLiveToolTab || (activeTab === "projects" && projection.status === "resolved") ? null : (
+				{isLiveToolTab ||
+				(activeTab === "projects" && projection.status === "resolved") ||
+				(activeTab === "plugins" && pluginName) ? null : (
 					<PageHeader
 						title={activeTab === "overview" ? availableAgentTitle : activeTabLabel}
 						titleAdornment={
@@ -558,7 +564,7 @@ export function HostedAgentDetail({
 				{isLiveToolTab || activeTab === "settings" ? null : (
 					<ComputeDunningBanner deployment={deployment} />
 				)}
-				{!deploymentStatus.known && activeTab !== "overview" ? (
+				{!deploymentStatus.known && activeTab !== "overview" && activeTab !== "plugins" ? (
 					<DeploymentStatusUnavailableState
 						deployment={deployment}
 						isRetrying={isCheckingDeployment}
@@ -628,6 +634,14 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
+					{activeTab === "plugins" ? (
+						<AgentPluginsSurface
+							agentId={environmentId}
+							runtime={runtime}
+							routeSearch={routeSearch}
+							pluginName={pluginName}
+						/>
+					) : null}
 					{activeTab === "projects" ? (
 						projection.status === "resolved" ? (
 							<AgentProjectsTab

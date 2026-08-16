@@ -34,6 +34,7 @@ const AGENT_SECTION_SEGMENTS = {
 	console: "console",
 	files: "files",
 	terminal: "terminal",
+	plugins: "plugins",
 	connectors: "connectors",
 	ai: "model-provider",
 	channels: "channel-links",
@@ -56,6 +57,7 @@ export type ParsedAgentPathname = {
 	vaultSlug?: string;
 	memoryId?: string;
 	connectorName?: string;
+	pluginName?: string;
 };
 
 export type AgentProjectResourceSection = "skills" | "vaults";
@@ -91,11 +93,14 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 	if (section === "sessions" && parts.length > 4) return null;
 	if (
 		section !== "overview" &&
-		!["sessions", "skills", "projects", "vaults", "memories", "connectors"].includes(section)
+		!["sessions", "skills", "projects", "vaults", "memories", "connectors", "plugins"].includes(
+			section,
+		)
 	) {
 		if (parts.length !== 3) return null;
 	}
-	if (["vaults", "memories", "connectors"].includes(section) && parts.length > 4) return null;
+	if (["vaults", "memories", "connectors", "plugins"].includes(section) && parts.length > 4)
+		return null;
 	if (section === "projects" && parts.length > 5) return null;
 	const sessionId =
 		section === "sessions" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
@@ -115,6 +120,8 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 		section === "memories" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	const connectorName =
 		section === "connectors" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	const pluginName =
+		section === "plugins" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	return {
 		agentId,
 		section,
@@ -125,6 +132,7 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 		...(vaultSlug ? { vaultSlug } : {}),
 		...(memoryId ? { memoryId } : {}),
 		...(connectorName ? { connectorName } : {}),
+		...(pluginName ? { pluginName } : {}),
 	};
 }
 
@@ -157,7 +165,8 @@ export function agentRouteOwnsSection(
 		!route.projectResource &&
 		!route.vaultSlug &&
 		!route.memoryId &&
-		!route.connectorName
+		!route.connectorName &&
+		!route.pluginName
 	);
 }
 
@@ -224,6 +233,7 @@ const LEGACY_AGENT_TAB_SECTIONS: Readonly<Record<string, AgentSectionId>> = {
 	console: "console",
 	files: "files",
 	terminal: "terminal",
+	plugins: "plugins",
 	connectors: "connectors",
 	ai: "ai",
 	"model-provider": "ai",
@@ -376,6 +386,28 @@ export function agentSkillDetailLink(
 		to: "/agents/$id/skills/$",
 		params: { id: agentId, _splat: skillKey },
 		search: Object.keys(search).length > 0 ? search : undefined,
+	});
+}
+
+export function agentPluginDetailHref(
+	agentId: string,
+	pluginName: string,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "plugins")}/${encodeURIComponent(pluginName)}`;
+	return agentDetailHref(path, query);
+}
+
+/** Typed TanStack Router options for an Agent Plugin viewed in the Agent shell. */
+export function agentPluginDetailLink(
+	agentId: string,
+	pluginName: string,
+	query?: AgentRouteQuery,
+) {
+	return linkOptions({
+		to: "/agents/$id/plugins/$pluginName",
+		params: { id: agentId, pluginName },
+		search: agentRouteSearch(query),
 	});
 }
 

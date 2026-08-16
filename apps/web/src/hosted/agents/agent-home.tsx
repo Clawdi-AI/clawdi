@@ -42,6 +42,7 @@ import {
 	bindAgentDeploymentSearch,
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
+	parseAgentPathname,
 } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { hostedAgentVisibleSectionIds } from "@/lib/navigation-model";
@@ -73,10 +74,12 @@ export function AgentHome({
 	environmentId,
 	section,
 	routeSearch,
+	pluginName,
 }: {
 	environmentId: string;
 	section: AgentSectionId;
 	routeSearch: AgentRouteSearch;
+	pluginName?: string;
 }) {
 	const router = useRouter();
 	const pathname = useLocation({ select: (location) => location.pathname });
@@ -110,6 +113,12 @@ export function AgentHome({
 	const manualCheckInFlightRef = useRef(false);
 	const [manualChecking, setManualChecking] = useState(false);
 	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
+	const currentRoute = parseAgentPathname(pathname);
+	const ownsCurrentRoute = pluginName
+		? currentRoute?.section === "plugins" &&
+			agentRouteIdsEqual(currentRoute.agentId, environmentId) &&
+			agentRouteIdsEqual(currentRoute.pluginName, pluginName)
+		: ownsCurrentSection;
 	const hostedSectionIds = deployment
 		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null)
 		: HOSTED_AGENT_SECTION_IDS;
@@ -120,7 +129,7 @@ export function AgentHome({
 	// Only the exact current section may add deployment identity or redirect an
 	// unsupported section; a stale rendered match cannot rewrite a newer route.
 	useEffect(() => {
-		if (!ownsCurrentSection) return;
+		if (!ownsCurrentRoute) return;
 
 		if (deployment) {
 			const deploymentId = deployment.resource.id;
@@ -169,7 +178,7 @@ export function AgentHome({
 		environmentId,
 		hostedSection,
 		membershipResolved,
-		ownsCurrentSection,
+		ownsCurrentRoute,
 		requestedHostedAgent,
 		router,
 		section,
@@ -285,6 +294,7 @@ export function AgentHome({
 				runtime={runtime}
 				section={section}
 				routeSearch={deploymentRouteSearch}
+				pluginName={pluginName}
 				onDeleteAccepted={() => router.navigate({ href: "/", replace: true })}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 				deploymentTransitionEscalated={deploymentTransitionEscalated}

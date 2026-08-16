@@ -1,4 +1,5 @@
 import {
+	Blocks,
 	FolderOpen,
 	LayoutDashboard,
 	type LucideIcon,
@@ -26,6 +27,7 @@ export type AgentSectionId =
 	| "console"
 	| "files"
 	| "terminal"
+	| "plugins"
 	| "connectors"
 	| "ai"
 	| "channels"
@@ -309,6 +311,15 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		tooltip: "Use a terminal for this agent",
 		variants: ["hosted"],
 	},
+	plugins: {
+		id: "plugins",
+		label: "Plugins",
+		icon: Blocks,
+		tint: "bg-identity-6-bg text-identity-6-fg",
+		description: "Extend this agent with portable Skills and MCP servers.",
+		tooltip: "Manage this agent's plugins",
+		variants: ["hosted"],
+	},
 	sessions: {
 		id: "sessions",
 		...CANONICAL_NAVIGATION_IDENTITIES.sessions,
@@ -427,7 +438,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "operate",
 		label: "Tools",
-		itemIds: ["console", "files", "terminal", "channels", "ai"],
+		itemIds: ["console", "files", "terminal", "plugins", "channels", "ai"],
 		separated: false,
 	},
 	{ id: "settings", label: null, itemIds: ["settings"], separated: true },
