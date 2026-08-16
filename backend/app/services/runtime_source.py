@@ -562,11 +562,7 @@ def _project_agent_plugins(
         installation
         for installation in installations
         if installation.plugin_name not in RESERVED_AGENT_PLUGIN_NAMES
-        and (
-            include_github_release_sources
-            or not isinstance(installation.source, dict)
-            or installation.source.get("type") != "github-release"
-        )
+        and (include_github_release_sources or installation.source.get("type") != "github-release")
     )
     if not projected:
         return None
