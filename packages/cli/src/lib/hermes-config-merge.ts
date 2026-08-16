@@ -79,11 +79,15 @@ export function renderHermesMcpServer(
 	return String(document);
 }
 
-export function mergeHermesChannelConfig(configPath: string, patch: Record<string, unknown>): void {
-	writeHermesConfig(
-		configPath,
-		renderHermesChannelConfig(readHermesConfigContent(configPath), patch),
-	);
+export function mergeHermesChannelConfig(
+	configPath: string,
+	patch: Record<string, unknown>,
+): boolean {
+	const current = readHermesConfigContent(configPath);
+	const rendered = renderHermesChannelConfig(current, patch);
+	if (rendered === current) return false;
+	writeHermesConfig(configPath, rendered);
+	return true;
 }
 
 export function renderHermesChannelConfig(content: string, patch: Record<string, unknown>): string {
