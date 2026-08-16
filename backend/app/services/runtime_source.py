@@ -38,7 +38,7 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.ai_provider import AiProviderModel
-from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES, TRUSTED_PLUGIN_REPOSITORY_URL
+from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES
 from app.schemas.runtime import (
     HostedAgentPlugins,
     HostedCodexProviderProjection,
@@ -95,6 +95,7 @@ RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
+RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY = "agent-plugin-github-release-source-v1"
 _CLAWDI_AUTH_TOKEN_SECRET_REF = "secret://clawdi/auth-token"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
@@ -554,11 +555,18 @@ def _project_runtime_skills(
 
 def _project_agent_plugins(
     installations: tuple[AgentPluginInstallation, ...],
+    *,
+    include_github_release_sources: bool = True,
 ) -> HostedAgentPlugins | None:
     projected = tuple(
         installation
         for installation in installations
         if installation.plugin_name not in RESERVED_AGENT_PLUGIN_NAMES
+        and (
+            include_github_release_sources
+            or not isinstance(installation.source, dict)
+            or installation.source.get("type") != "github-release"
+        )
     )
     if not projected:
         return None
@@ -570,12 +578,7 @@ def _project_agent_plugins(
                     "installationId": str(installation.id),
                     "version": installation.version,
                     "agentPluginsSchema": installation.agent_plugins_schema,
-                    "source": {
-                        "type": "github",
-                        "url": TRUSTED_PLUGIN_REPOSITORY_URL,
-                        "path": installation.source_path,
-                        "commit": installation.catalog_revision,
-                    },
+                    "source": installation.source,
                     "contentDigest": installation.content_digest,
                 }
                 for installation in projected
@@ -592,6 +595,7 @@ def render_runtime_source(
     vault_key_identity: str,
     decrypt_secrets: bool,
     project_agent_plugins: bool = True,
+    project_agent_plugin_github_release_sources: bool = True,
 ) -> RenderedRuntimeSource:
     row = batch.rows.get(environment_id)
     if row is None:
@@ -649,7 +653,10 @@ def render_runtime_source(
     except (ValidationError, ValueError) as exc:
         raise RuntimeSourceError("Hosted runtime MCP or skills state is invalid") from exc
     try:
-        agent_plugins = _project_agent_plugins(batch.agent_plugins.get(environment_id, ()))
+        agent_plugins = _project_agent_plugins(
+            batch.agent_plugins.get(environment_id, ()),
+            include_github_release_sources=project_agent_plugin_github_release_sources,
+        )
     except ValidationError as exc:
         raise RuntimeSourceError("Clawdi Agent Plugins desired state is invalid") from exc
     if mcp_document is None:

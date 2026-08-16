@@ -33,6 +33,7 @@ from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceError,
     RuntimeSourceRow,
+    _project_agent_plugins,
     expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
     render_runtime_source,
@@ -68,7 +69,12 @@ def _agent_plugin_row(
         catalog_revision="a" * 40,
         version=version,
         agent_plugins_schema="https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-        source_path=store_path,
+        source={
+            "type": "github",
+            "url": "https://github.com/Clawdi-AI/store",
+            "path": store_path,
+            "commit": "a" * 40,
+        },
         content_digest=content_digest,
     )
 
@@ -81,17 +87,26 @@ def _agent_plugins(*rows: AgentPluginInstallation) -> dict[str, object]:
                 "installationId": str(row.id),
                 "version": row.version,
                 "agentPluginsSchema": (row.agent_plugins_schema),
-                "source": {
-                    "type": "github",
-                    "url": "https://github.com/Clawdi-AI/store",
-                    "path": row.source_path,
-                    "commit": row.catalog_revision,
-                },
+                "source": row.source,
                 "contentDigest": row.content_digest,
             }
             for row in rows
         },
     }
+
+
+def test_agent_plugin_release_source_requires_its_independent_capability() -> None:
+    row = _agent_plugin_row()
+    row.source = {
+        "type": "github-release",
+        "url": "https://github.com/acme/plugins/releases/download/acme-v1.0.0/acme-1.0.0.tar.gz",
+        "archiveDigest": f"sha256:{'c' * 64}",
+    }
+
+    assert _project_agent_plugins((row,), include_github_release_sources=False) is None
+    projected = _project_agent_plugins((row,))
+    assert projected is not None
+    assert projected.installations[row.plugin_name].source.type == "github-release"
 
 
 def _use_agent_plugin_state(

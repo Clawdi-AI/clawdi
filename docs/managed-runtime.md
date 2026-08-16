@@ -589,7 +589,7 @@ Normalization maps hosted fields into the internal shape:
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with the selected model plus minimal Clawdi-managed endpoint/secret metadata; it has no provider model catalog and is independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
 | `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
-| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional Clawdi-owned runtime-native Agent Plugins desired state, projected only when the client declares `agent-plugins-manifest-v1`; schema version `1` entries are secret-free immutable package intent that pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable Store commit and safe repository path, and a `sha256-tree-v1` content digest |
+| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional Clawdi-owned runtime-native Agent Plugins desired state, projected only when the client declares `agent-plugins-manifest-v1`; schema version `1` entries are secret-free immutable package intent that pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, a closed immutable source, and a `sha256-tree-v1` content digest; GitHub Release sources additionally require `agent-plugin-github-release-source-v1` and bind the archive SHA-256 |
 | `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit generic local sidecar profiles; Agent Plugin packages, Store metadata, and public installation APIs cannot declare them |
@@ -751,7 +751,7 @@ Agent Plugins 1.0.0 defines package manifests and Skill/MCP component loading;
 it does not define a registry, marketplace, trust policy, installation source,
 integrity scheme, or portable secret binding. Clawdi supplies those separate
 control-plane concerns through a strict catalog cache and desired-state rows.
-The asynchronous worker resolves fixed public Store `main`, fetches the catalog
+The asynchronous worker resolves fixed public Store `main`, fetches catalog v2
 at the resolved exact commit, and retains the last-known-good snapshot across
 timeouts, invalid upstream content, and GitHub failures. Runtime and product
 requests read PostgreSQL only.
@@ -779,21 +779,31 @@ The Platform compatibility input keeps optional `agent_plugins` only as
 omitted/null; non-null input is rejected and Platform no longer persists or
 assigns plugin selection.
 
+Catalog source is a closed union. Authored Store packages use a catalog-relative
+path that Clawdi binds to the exact Store snapshot commit. Source-built packages
+use a canonical GitHub Release asset URL plus archive SHA-256. The selected
+source object and tree digest are copied into the installation row, so later
+catalog changes never alter an existing desired installation.
+
 The `agentPlugins` projection is supported only in the v2 Hosted bundle. Each
 installation key is the Agent Plugins name and must equal `plugin.json.name`;
 `installationId` is an opaque Clawdi lifecycle identity rather than a native
-runtime plugin id. Before touching the runtime, the CLI downloads the exact
-GitHub commit, safely extracts only the declared repository path, validates the
-Agent Plugins 1.0.0 schema/name/version identity, and verifies the canonical
-`sha256-tree-v1` regular-file tree digest. Symlinks, non-regular entries,
-unsafe or colliding paths, and bounded-size violations fail closed.
+runtime plugin id. Before touching the runtime, the CLI downloads either the
+exact GitHub commit or the exact Release asset. Release bytes must first match
+their archive SHA-256. The CLI then safely extracts the declared package root,
+validates the Agent Plugins 1.0.0 schema/name/version identity, and verifies the
+canonical `sha256-tree-v1` regular-file tree digest. Symlinks, non-regular
+entries, unsafe or colliding paths, and bounded-size violations fail closed.
 
 `X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1` negotiates only the
 generic third-party desired-state projection. Clients without it receive no
-`agentPlugins` field. There is no package-specific proof header or migration
-variant. The built-in `clawdi` MCP and Skill remain projected through their
-existing first-party paths for every client and are never removed in response
-to Agent Plugin state.
+`agentPlugins` field. `agent-plugin-github-release-source-v1` independently
+proves parsing and download support for the Release source variant; without it,
+only installations using the already-supported commit source are projected.
+Neither token is a version gate. There is no package-specific proof header or
+migration variant. The built-in `clawdi` MCP and Skill remain projected through
+their existing first-party paths for every client and are never removed in
+response to Agent Plugin state.
 
 The plugin name `clawdi` is reserved. New catalog installations return
 `agent_plugin_name_reserved`; catalog responses expose `reserved_name` and are

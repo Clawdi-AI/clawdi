@@ -319,13 +319,13 @@ async def put_agent_plugin_desired_state(
         row.catalog_revision,
         row.version,
         row.agent_plugins_schema,
-        row.source_path,
+        row.source,
         row.content_digest,
     ) != (
         catalog_revision,
         entry.version,
         entry.agent_plugins_schema,
-        entry.source_path,
+        entry.source,
         entry.content_digest,
     )
     if row is None:
@@ -335,7 +335,7 @@ async def put_agent_plugin_desired_state(
             catalog_revision=catalog_revision,
             version=entry.version,
             agent_plugins_schema=entry.agent_plugins_schema,
-            source_path=entry.source_path,
+            source=entry.source,
             content_digest=entry.content_digest,
         )
         db.add(row)
@@ -343,7 +343,7 @@ async def put_agent_plugin_desired_state(
         row.catalog_revision = catalog_revision
         row.version = entry.version
         row.agent_plugins_schema = entry.agent_plugins_schema
-        row.source_path = entry.source_path
+        row.source = entry.source
         row.content_digest = entry.content_digest
     if changed:
         queue_runtime_manifest_changed(db, auth.user_id, agent_id)

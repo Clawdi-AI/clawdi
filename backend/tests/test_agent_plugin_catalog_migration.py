@@ -27,6 +27,20 @@ def _migration():
     return module
 
 
+def _source_migration():
+    path = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / "c3e8f1a6d2b9_agent_plugin_catalog_sources.py"
+    )
+    spec = importlib.util.spec_from_file_location("agent_plugin_catalog_sources", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _base_tables(conn: sa.Connection) -> None:
     conn.execute(sa.text("CREATE TABLE agent_environments (id uuid PRIMARY KEY)"))
     conn.execute(
@@ -41,6 +55,7 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
     engine: AsyncEngine,
 ) -> None:
     migration = _migration()
+    source_migration = _source_migration()
     schema = f"plugin_catalog_migration_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
     installation_id = uuid.uuid4()
@@ -48,6 +63,7 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
 
     def run(conn: sa.Connection) -> None:
         old_op = migration.op
+        old_source_op = source_migration.op
         conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
         conn.execute(sa.text(f'SET search_path TO "{schema}"'))
         try:
@@ -103,6 +119,35 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
                     "digest": f"sha256-tree-v1:{'b' * 64}",
                 },
             )
+            source_migration.op = Operations(MigrationContext.configure(conn))
+            source_migration.upgrade()
+            source = conn.execute(
+                sa.text("SELECT source FROM agent_plugin_installations WHERE id = :id"),
+                {"id": str(installation_id)},
+            ).scalar_one()
+            assert source == {
+                "type": "github",
+                "url": "https://github.com/Clawdi-AI/store",
+                "path": "v2/plugins/clawdi",
+                "commit": revision,
+            }
+            conn.execute(
+                sa.text(
+                    "UPDATE agent_plugin_installations SET source = "
+                    "jsonb_build_object('type', 'github-release') WHERE id = :id"
+                ),
+                {"id": str(installation_id)},
+            )
+            with pytest.raises(RuntimeError, match="Cannot downgrade Agent Plugin source"):
+                source_migration.downgrade()
+            conn.execute(
+                sa.text(
+                    "UPDATE agent_plugin_installations "
+                    "SET source = CAST(:source AS jsonb) WHERE id = :id"
+                ),
+                {"id": str(installation_id), "source": json.dumps(source)},
+            )
+            source_migration.downgrade()
             with pytest.raises(RuntimeError, match="Cannot downgrade"):
                 migration.downgrade()
 
@@ -119,6 +164,7 @@ def test_agent_plugin_catalog_migration_moves_authority_and_guards_downgrade(
             assert restored == "jsonb"
         finally:
             migration.op = old_op
+            source_migration.op = old_source_op
 
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
     try:

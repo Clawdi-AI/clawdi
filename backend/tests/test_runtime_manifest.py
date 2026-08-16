@@ -4119,7 +4119,7 @@ async def test_runtime_manifest_keeps_historical_reserved_plugin_inert(
     db_session.add(
         PluginCatalogSnapshot(
             revision=catalog_revision,
-            schema_version=1,
+            schema_version=2,
             entry_count=1,
             fetched_at=datetime.now(UTC),
         )
@@ -4131,7 +4131,12 @@ async def test_runtime_manifest_keeps_historical_reserved_plugin_inert(
             name="clawdi",
             version="1.0.0",
             agent_plugins_schema=("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"),
-            source_path="v2/plugins/clawdi",
+            source={
+                "type": "github",
+                "url": "https://github.com/Clawdi-AI/store",
+                "path": "v2/plugins/clawdi",
+                "commit": catalog_revision,
+            },
             content_digest=(
                 "sha256-tree-v1:6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3"
             ),
@@ -4149,7 +4154,12 @@ async def test_runtime_manifest_keeps_historical_reserved_plugin_inert(
             catalog_revision=catalog_revision,
             version="1.0.0",
             agent_plugins_schema=("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"),
-            source_path="v2/plugins/clawdi",
+            source={
+                "type": "github",
+                "url": "https://github.com/Clawdi-AI/store",
+                "path": "v2/plugins/clawdi",
+                "commit": catalog_revision,
+            },
             content_digest=(
                 "sha256-tree-v1:6a9c13c187de7f8a2b9e59e3a9e1ef25b39e07ad6687f92d2d6dcaf2c12a27d3"
             ),
