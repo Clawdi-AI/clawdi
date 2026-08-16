@@ -223,18 +223,18 @@ class AddonProfileInterpreterTest(unittest.TestCase):
 
         self.assertNotIn(marker_header, cases[2][0].request.headers)
 
-    def test_agent_plugin_streamable_http_profile_rewrites_only_the_exact_route(self):
-        marker_header = "X-Clawdi-Agent-Plugin"
+    def test_generic_http_profile_rewrites_only_the_exact_route(self):
+        marker_header = "X-Route-Key"
         profile = {
-            "id": "first-party-clawdi-mcp",
+            "id": "managed-api-route",
             "enabled": True,
             "kind": "http",
             "match": {
                 "scheme": "https",
-                "host": "cloud-api.clawdi.ai:443",
-                "path": {"type": "equals", "value": "/v1/mcp/clawdi"},
+                "host": "api.example.test:443",
+                "path": {"type": "equals", "value": "/v1/data"},
                 "headers": {
-                    marker_header: {"type": "equals", "value": "clawdi"}
+                    marker_header: {"type": "equals", "value": "managed"}
                 },
                 "query": {},
             },
@@ -244,7 +244,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 "setHeaders": {
                     "Authorization": {
                         "type": "secretRef",
-                        "secretRef": "secret://clawdi/auth-token",
+                        "secretRef": "secret://runtime/egress/test-token",
                         "prefix": "Bearer ",
                     }
                 },
@@ -254,34 +254,34 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 "redactUrlPatterns": [],
             },
             "priority": 60,
-            "owner": "first-party:clawdi",
+            "owner": "runtime:test",
         }
         egress = self.load(
             [profile],
-            {"secret://clawdi/auth-token": "test-only-clawdi-auth-token"},
+            {"secret://runtime/egress/test-token": "test-only-egress-token"},
         )
         request_headers = {
-            marker_header: "clawdi",
+            marker_header: "managed",
             "accept": "application/json, text/event-stream",
             "content-type": "application/json",
         }
         matched = Flow(
-            host="cloud-api.clawdi.ai",
-            path="/v1/mcp/clawdi",
+            host="api.example.test",
+            path="/v1/data",
             headers=request_headers,
         )
 
         decision = egress.apply_to_flow(matched)
 
-        self.assertEqual(decision.profile_id, "first-party-clawdi-mcp")
+        self.assertEqual(decision.profile_id, "managed-api-route")
         self.assertEqual(matched.request.scheme, "http")
         self.assertEqual(matched.request.host, "localhost")
         self.assertEqual(matched.request.port, 8000)
-        self.assertEqual(matched.request.path, "/v1/mcp/clawdi")
-        self.assertEqual(matched.request.headers[marker_header], "clawdi")
+        self.assertEqual(matched.request.path, "/v1/data")
+        self.assertEqual(matched.request.headers[marker_header], "managed")
         self.assertEqual(
             matched.request.headers["Authorization"],
-            "Bearer test-only-clawdi-auth-token",
+            "Bearer test-only-egress-token",
         )
         self.assertEqual(
             addon.redacted_headers(matched.request.headers, profile)["Authorization"],
@@ -289,25 +289,25 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         )
 
         wrong_port = Flow(
-            host="cloud-api.clawdi.ai",
-            path="/v1/mcp/clawdi",
+            host="api.example.test",
+            path="/v1/data",
             headers=request_headers,
         )
         wrong_port.request.port = 8443
         for flow in (
             Flow(
-                host="cloud-api.clawdi.ai",
-                path="/v1/mcp/clawdi",
-                headers={**request_headers, marker_header: "other-plugin"},
+                host="api.example.test",
+                path="/v1/data",
+                headers={**request_headers, marker_header: "unmanaged"},
             ),
             Flow(
-                host="cloud-api.clawdi.ai",
-                path="/v1/mcp/clawdi/other",
+                host="api.example.test",
+                path="/v1/data/other",
                 headers=request_headers,
             ),
             Flow(
-                host="other.clawdi.ai",
-                path="/v1/mcp/clawdi",
+                host="other.example.test",
+                path="/v1/data",
                 headers=request_headers,
             ),
             wrong_port,
