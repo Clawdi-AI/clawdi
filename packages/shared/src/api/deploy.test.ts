@@ -92,7 +92,7 @@ describe("deployment list response split", () => {
 });
 
 describe("Runtime UI access contracts", () => {
-	test("accepts embedded endpoints and the explicit OpenClaw fragment handoff", () => {
+	test("accepts embedded endpoints and the official OpenClaw browser handoff", () => {
 		expect(
 			isRuntimeUiEndpointInfo({
 				runtime: "openclaw",
@@ -109,21 +109,29 @@ describe("Runtime UI access contracts", () => {
 				url: "https://runtime.example/openclaw/",
 				deployment_resource_version: "rv-current",
 				token: "gateway-token",
-				handoff_url: "https://runtime.example/openclaw/#token=gateway-token",
+				handoff_url:
+					"https://runtime.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
 			}),
 		).toBe(true);
 	});
 
-	test("rejects token query parameters and mismatched OpenClaw handoffs", () => {
+	test("rejects shared-token and mismatched OpenClaw handoffs", () => {
 		const credential = {
 			runtime: "openclaw",
 			auth_mode: "openclaw_token",
-			url: "https://runtime.example/openclaw/?token=gateway-token",
+			url: "https://runtime.example/openclaw/",
 			deployment_resource_version: "rv-current",
 			token: "gateway-token",
-			handoff_url: "https://runtime.example/openclaw/#token=other-token",
+			handoff_url: "https://runtime.example/openclaw/#token=gateway-token",
 		};
 		expect(isRuntimeUiCredentials(credential)).toBe(false);
+		expect(
+			isRuntimeUiCredentials({
+				...credential,
+				handoff_url:
+					"https://other.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
+			}),
+		).toBe(false);
 	});
 });
 

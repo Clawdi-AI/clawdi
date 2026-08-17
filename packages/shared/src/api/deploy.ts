@@ -81,9 +81,29 @@ export function isRuntimeUiCredentials(value: unknown): value is RuntimeUiCreden
 		typeof value.token === "string" &&
 		Boolean(value.token) &&
 		typeof value.handoff_url === "string" &&
-		value.handoff_url === `${value.url}#token=${encodeURIComponent(value.token)}` &&
+		isOpenClawBrowserHandoff(value.handoff_url, value.url) &&
 		isCleanRuntimeUiUrl(value.url)
 	);
+}
+
+function isOpenClawBrowserHandoff(handoff: string, endpoint: string): boolean {
+	try {
+		const target = new URL(handoff);
+		const cleanEndpoint = new URL(endpoint);
+		const fragment = new URLSearchParams(target.hash.slice(1));
+		const entries = [...fragment.entries()];
+		target.hash = "";
+		return (
+			target.href === cleanEndpoint.href &&
+			entries.length === 2 &&
+			new Set(entries.map(([key]) => key)).size === 2 &&
+			typeof fragment.get("bootstrapToken") === "string" &&
+			Boolean(fragment.get("bootstrapToken")) &&
+			fragment.get("bootstrapProfile") === "owner"
+		);
+	} catch {
+		return false;
+	}
 }
 
 function isCleanRuntimeUiUrl(value: string): boolean {

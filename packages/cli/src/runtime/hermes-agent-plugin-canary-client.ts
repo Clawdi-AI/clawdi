@@ -4,7 +4,10 @@ import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { resolveCurrentCliInvocation } from "../lib/current-cli-invocation";
-import type { PreparedHostedAgentPlugin } from "./hosted-agent-plugin-package";
+import {
+	hostedAgentPluginTreeDigest,
+	type PreparedHostedAgentPlugin,
+} from "./hosted-agent-plugin-package";
 import { makeRuntimeUserOwned, withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const HERMES_REMOTE_PROBE_TIMEOUT_MS = 30_000;
@@ -71,20 +74,6 @@ function waitForJsonFile<T>(path: string, schema: z.ZodType<T>, timeoutMs: numbe
 	throw new Error("Hermes Agent Plugin canary did not become ready");
 }
 
-function preparedTreeDigest(tree: PreparedHostedAgentPlugin["tree"]): string {
-	const digest = createHash("sha256");
-	for (const file of [...tree].sort((left, right) =>
-		Buffer.compare(Buffer.from(left.path, "utf8"), Buffer.from(right.path, "utf8")),
-	)) {
-		const fileDigest = createHash("sha256").update(file.bytes).digest("hex");
-		digest.update(
-			`${file.mode.toString(8)}\0${file.path}\0${file.bytes.length}\0${fileDigest}\n`,
-			"utf8",
-		);
-	}
-	return `sha256-tree-v1:${digest.digest("hex")}`;
-}
-
 function hermesCanaryPackage(input: {
 	name: string;
 	nonce: string;
@@ -134,7 +123,7 @@ function hermesCanaryPackage(input: {
 				path: "",
 				commit: input.nonce.padEnd(40, "0"),
 			},
-			contentDigest: preparedTreeDigest(tree),
+			contentDigest: hostedAgentPluginTreeDigest(tree),
 			ownershipIdentity: createHash("sha256").update(`canary:${input.nonce}`).digest("hex"),
 		},
 		receiptNativeId: null,

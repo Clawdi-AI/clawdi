@@ -53,7 +53,8 @@ describe("runtime UI credential targeting", () => {
 			url: "https://other.example/openclaw/",
 			deployment_resource_version: "rv-current",
 			token: "deployment-token",
-			handoff_url: "https://other.example/openclaw/#token=deployment-token",
+			handoff_url:
+				"https://other.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
 		};
 		expect(
 			resolveRuntimeUiCredentials(hermes, "https://runtime.example/hermes", "rv-current"),
@@ -63,14 +64,15 @@ describe("runtime UI credential targeting", () => {
 		).toBeNull();
 	});
 
-	test("preserves the exact official OpenClaw token fragment URL", () => {
+	test("preserves the exact official OpenClaw browser handoff URL", () => {
 		const credentials: RuntimeUiCredentials = {
 			runtime: "openclaw",
 			auth_mode: "openclaw_token",
 			url: "https://runtime.example/openclaw/",
 			deployment_resource_version: "rv-current",
 			token: "deployment-token",
-			handoff_url: "https://runtime.example/openclaw/#token=deployment-token",
+			handoff_url:
+				"https://runtime.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
 		};
 		expect(
 			resolveRuntimeUiCredentials(credentials, "https://runtime.example/openclaw/", "rv-current"),
@@ -79,19 +81,22 @@ describe("runtime UI credential targeting", () => {
 		expect(runtimeUiLaunchTarget(credentials)).not.toBe(credentials.url);
 	});
 
-	test("rejects a stale rollout or a handoff without the exact token fragment", () => {
+	test("rejects a stale rollout or a noncanonical browser handoff", () => {
 		const credentials: RuntimeUiCredentials = {
 			runtime: "openclaw",
 			auth_mode: "openclaw_token",
 			url: "https://runtime.example/openclaw/",
 			deployment_resource_version: "rv-current",
 			token: "deployment-token",
-			handoff_url: "https://runtime.example/openclaw/#token=wrong-token",
+			handoff_url: "https://runtime.example/openclaw/#token=deployment-token",
 		};
 		expect(resolveRuntimeUiCredentials(credentials, credentials.url, "rv-current")).toBeNull();
 		expect(
 			resolveRuntimeUiCredentials(
-				{ ...credentials, handoff_url: `${credentials.url}#token=deployment-token` },
+				{
+					...credentials,
+					handoff_url: `${credentials.url}#bootstrapToken=one-time-token&bootstrapProfile=owner`,
+				},
 				credentials.url,
 				"rv-new",
 			),
