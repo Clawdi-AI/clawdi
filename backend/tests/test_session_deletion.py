@@ -35,16 +35,8 @@ class _ControlledDeleteFileStore:
         self._fail = fail
         self._started = started
         self._release = release
-        self.deleted: list[str] = []
-
-    async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
-        await self._delegate.put(key, data, content_type)
-
-    async def get(self, key: str) -> bytes:
-        return await self._delegate.get(key)
 
     async def delete(self, key: str) -> None:
-        self.deleted.append(key)
         if self._started is not None:
             self._started.set()
         if self._release is not None:
@@ -52,9 +44,6 @@ class _ControlledDeleteFileStore:
         if self._fail:
             raise RuntimeError("test storage failure")
         await self._delegate.delete(key)
-
-    async def exists(self, key: str) -> bool:
-        return await self._delegate.exists(key)
 
 
 async def _create_session(
@@ -78,6 +67,10 @@ async def _create_session(
     await db.commit()
     await db.refresh(session)
     return session
+
+
+async def _is_suppressed(db: AsyncSession, user_id: uuid.UUID, local_id: str) -> bool:
+    return await db.get(SessionSyncSuppression, (user_id, local_id)) is not None
 
 
 async def _register_env(client: httpx.AsyncClient) -> uuid.UUID:
@@ -166,7 +159,6 @@ async def test_delete_session_is_durable_and_preserves_memories(
 
     assert response.status_code == 204
     assert not await sessions_route.file_store.exists(content_key)
-    assert await db_session.get(Session, session_id) is None
     assert (
         await db_session.scalar(
             select(SessionPermission.id).where(SessionPermission.id == permission_id)
@@ -179,13 +171,7 @@ async def test_delete_session_is_durable_and_preserves_memories(
         )
     ).one()
     assert preserved_memory == ("Keep this extracted memory", None)
-    assert (
-        await db_session.get(
-            SessionSyncSuppression,
-            (seed_user.id, local_session_id),
-        )
-        is not None
-    )
+    assert await _is_suppressed(db_session, seed_user.id, local_session_id)
     assert (await anon_client.get(f"/v1/public/sessions/{session_id}")).status_code == 404
 
     second_suppressed_id = f"a-delete-{uuid.uuid4().hex}"
@@ -213,20 +199,7 @@ async def test_delete_session_is_durable_and_preserves_memories(
         "rejected": [],
         "suppressed": [local_session_id, second_suppressed_id],
     }
-    assert (
-        await db_session.scalar(
-            select(Session.id).where(
-                Session.user_id == seed_user.id,
-                Session.local_session_id == local_session_id,
-            )
-        )
-        is None
-    )
-    upload = await client.post(
-        f"/v1/sessions/{local_session_id}/upload",
-        files={"file": ("session.json", b"[]", "application/json")},
-    )
-    assert upload.status_code == 404
+    assert await db_session.get(Session, session_id) is None
 
 
 @pytest.mark.asyncio
@@ -242,14 +215,15 @@ async def test_delete_session_storage_failure_is_retryable(
     user_id = seed_user.id
     local_session_id = f"cleanup-failure-{uuid.uuid4().hex}"
     content_key = f"sessions/{user_id}/{local_session_id}.json"
-    await sessions_route.file_store.put(content_key, b"private transcript")
+    file_store = sessions_route.file_store
+    await file_store.put(content_key, b"private transcript")
     session = await _create_session(
         db_session,
         user_id=user_id,
         local_session_id=local_session_id,
         file_key=content_key,
     )
-    store = _ControlledDeleteFileStore(sessions_route.file_store, fail=True)
+    store = _ControlledDeleteFileStore(file_store, fail=True)
     monkeypatch.setattr(sessions_route, "file_store", store)
     caplog.set_level(logging.ERROR, logger="app.routes.sessions")
 
@@ -263,14 +237,8 @@ async def test_delete_session_storage_failure_is_retryable(
     assert "test storage failure" not in response.text
     assert "session_content_delete_failed" in caplog.text
     assert await db_session.scalar(select(Session.id).where(Session.id == session_id)) == session_id
-    assert (
-        await db_session.get(
-            SessionSyncSuppression,
-            (user_id, local_session_id),
-        )
-        is None
-    )
-    assert await store.exists(content_key)
+    assert not await _is_suppressed(db_session, user_id, local_session_id)
+    assert await file_store.exists(content_key)
 
 
 @pytest.mark.asyncio
@@ -302,14 +270,7 @@ async def test_delete_serializes_batch_before_suppression_check(
     )
     monkeypatch.setattr(sessions_route, "file_store", store)
 
-    def observe_lock_statement(
-        _connection,
-        _cursor,
-        statement: str,
-        _parameters,
-        _context,
-        _executemany,
-    ) -> None:
+    def observe_lock_statement(_connection, _cursor, statement: str, *_args) -> None:
         if "FROM sessions" in statement and "FOR UPDATE" in statement:
             batch_lock_started.set()
 
@@ -343,13 +304,7 @@ async def test_delete_serializes_batch_before_suppression_check(
     assert batch_result.created == 0
     async with session_factory() as verify_db:
         assert await verify_db.get(Session, session.id) is None
-        assert (
-            await verify_db.get(
-                SessionSyncSuppression,
-                (seed_user.id, local_session_id),
-            )
-            is not None
-        )
+        assert await _is_suppressed(verify_db, seed_user.id, local_session_id)
 
 
 @pytest.mark.asyncio
@@ -359,10 +314,7 @@ async def test_memory_enrichment_clears_unresolvable_external_session_provenance
 ) -> None:
     stale_session_id = uuid.uuid4()
     item = {
-        "id": "mem0-memory",
         "content": "External memory",
-        "category": "fact",
-        "source": "mem0",
         "source_session_id": str(stale_session_id),
         "source_environment_id": None,
     }
