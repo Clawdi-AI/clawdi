@@ -96,8 +96,7 @@ export function SessionDetailContent({
 			toast.error("Couldn't delete session", { description: normalizeApiError(error) });
 		},
 	});
-	const onDelete = () =>
-		deleteSession.mutateAsync({ params: { path: { session_id: sessionId } } });
+	const onDelete = () => deleteSession.mutateAsync({ params: { path: { session_id: sessionId } } });
 
 	const {
 		data: session,
@@ -369,35 +368,32 @@ export function SessionDetailContent({
 				}
 				actions={
 					<div className="flex items-center gap-2">
-						<SessionShareControls
-							sessionId={session.id}
-							isShared={session.is_shared ?? false}
-						/>
+						<SessionShareControls sessionId={session.id} isShared={session.is_shared ?? false} />
 						<ConfirmAction
-								title="Delete this synced session?"
-								description={
-									<>
-										<p>This removes the cloud copy and its share link.</p>
-										<p>Memories extracted from this session will remain.</p>
-										<p>
-											If the session still exists locally, a future local <code>clawdi push</code> can
-											sync it again.
-										</p>
-									</>
-								}
-								confirmLabel="Delete session"
-								destructive
-								onConfirm={onDelete}
+							title="Delete this synced session?"
+							description={
+								<>
+									<p>This removes the cloud copy and its share link.</p>
+									<p>Memories extracted from this session will remain.</p>
+									<p>
+										If the session still exists locally, <code>clawdi push</code> can sync it again
+										later.
+									</p>
+								</>
+							}
+							confirmLabel="Delete session"
+							destructive
+							onConfirm={onDelete}
+						>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={deleteSession.isPending}
+								className="w-fit shrink-0 text-destructive hover:text-destructive"
 							>
-								<Button
-									variant="outline"
-									size="sm"
-									disabled={deleteSession.isPending}
-									className="w-fit shrink-0 text-destructive hover:text-destructive"
-								>
-									<Trash2 />
-									Delete
-								</Button>
+								<Trash2 />
+								Delete
+							</Button>
 						</ConfirmAction>
 					</div>
 				}

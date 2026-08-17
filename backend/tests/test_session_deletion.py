@@ -10,6 +10,7 @@ import httpx
 import pytest
 from fastapi import UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
@@ -357,18 +358,24 @@ async def test_upload_keys_do_not_reuse_deleted_session_generation(
         async with session_factory() as delete_db:
             await sessions_route.delete_session(second.id, auth=auth, db=delete_db)
 
-    upload_task = asyncio.create_task(reupload())
-    await asyncio.wait_for(put_started.wait(), timeout=5)
-    delete_task = asyncio.create_task(delete_during_upload())
-    await asyncio.sleep(0.05)
-    delete_waited_for_upload = not delete_task.done()
-    release_put.set()
-    uploaded_key, _ = await asyncio.wait_for(
-        asyncio.gather(upload_task, delete_task),
-        timeout=10,
-    )
+    async with asyncio.TaskGroup() as tasks:
+        upload_task = tasks.create_task(reupload())
+        await asyncio.wait_for(put_started.wait(), timeout=5)
+        try:
+            async with session_factory() as lock_probe_db:
+                with pytest.raises(DBAPIError) as lock_error:
+                    await lock_probe_db.execute(
+                        select(Session.id)
+                        .where(Session.id == second.id)
+                        .with_for_update(nowait=True)
+                    )
+                assert getattr(lock_error.value.orig, "sqlstate", None) == "55P03"
+                await lock_probe_db.rollback()
+            tasks.create_task(delete_during_upload())
+        finally:
+            release_put.set()
 
-    assert delete_waited_for_upload
+    uploaded_key = upload_task.result()
     assert uploaded_key == second_key
     async with session_factory() as verify_db:
         assert await verify_db.get(Session, second.id) is None
