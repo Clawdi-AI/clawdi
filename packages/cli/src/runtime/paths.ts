@@ -39,7 +39,7 @@ export interface RuntimePaths {
 	cliManagedBin: string;
 	cliNpmPrefix: string;
 	cliNpmCache: string;
-	codexInstallRoot: string;
+	userNpmPrefix: string;
 	codexCommand: string;
 	cliBootstrapStatus: string;
 	cliUpgradeState: string;
@@ -174,7 +174,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	const maintainedRoot = join(serviceStateRoot, "maintained");
 	const managedCliRoot = join(maintainedRoot, "clawdi");
 	const npmRoot = join(managedCliRoot, "npm");
-	const codexInstallRoot = join(userDataRoot, "clawdi", "codex");
+	const userNpmPrefix = join(userDataRoot, "npm");
 	const instanceRoot = join(serviceStateRoot, "instances");
 
 	return {
@@ -200,7 +200,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		cliManagedBin: join(managedCliRoot, "bin", "clawdi"),
 		cliNpmPrefix: npmRoot,
 		cliNpmCache: join(cacheRoot, "npm"),
-		codexInstallRoot,
+		userNpmPrefix,
 		codexCommand: join(userLocalBin, "codex"),
 		cliBootstrapStatus: join(statusRoot, "cli-bootstrap.json"),
 		cliUpgradeState: join(statusRoot, "cli-upgrade-state.json"),

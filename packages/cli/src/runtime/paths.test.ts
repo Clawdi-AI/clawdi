@@ -36,7 +36,7 @@ describe("runtime paths", () => {
 		expect(paths.fileBrowserStateRoot).toBe("/var/lib/clawdi-files");
 		expect(paths.egressServiceBinary).toBe("/run/clawdi/egress/systemd/mitmdump");
 		expect(paths.fileBrowserServiceBinary).toBe("/run/clawdi-files/filebrowser");
-		expect(paths.codexInstallRoot).toBe("/home/clawdi/.local/share/clawdi/codex");
+		expect(paths.userNpmPrefix).toBe("/home/clawdi/.local/share/npm");
 		expect(paths.codexCommand).toBe("/home/clawdi/.local/bin/codex");
 	});
 
