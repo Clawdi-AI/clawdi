@@ -95,10 +95,14 @@ export function SessionDetailContent({
 				queryKey: ["get", "/v1/dashboard/stats"],
 				refetchType: "none",
 			});
-			queryClient.removeQueries({ queryKey: sessionDetailQueryKey(sessionId), exact: true });
-			queryClient.removeQueries({ queryKey: ["session-messages", sessionId] });
-			queryClient.removeQueries({ queryKey: ["session-permissions", sessionId] });
-			void router.navigate({ href: sessionsHref });
+			void router.navigate({ href: sessionsHref, replace: true }).then(
+				() => {
+					queryClient.removeQueries({ queryKey: sessionDetailQueryKey(sessionId), exact: true });
+					queryClient.removeQueries({ queryKey: ["session-messages", sessionId] });
+					queryClient.removeQueries({ queryKey: ["session-permissions", sessionId] });
+				},
+				() => window.location.replace(sessionsHref),
+			);
 		},
 		onError: (error) => {
 			toast.error("Couldn't delete session", { description: normalizeApiError(error) });
