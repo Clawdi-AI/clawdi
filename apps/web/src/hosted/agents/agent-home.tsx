@@ -22,7 +22,10 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { agentRouteTargetsHostedDeployment, isCloudEnvId } from "@/hosted/agent-route";
+import {
+	agentRouteTargetsHostedDeployment,
+	canonicalHostedAgentSearch,
+} from "@/hosted/agent-route";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -39,7 +42,6 @@ import {
 	agentRouteOwnsSection,
 	agentRouteSource,
 	agentSectionLink,
-	bindAgentDeploymentSearch,
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
@@ -96,9 +98,7 @@ export function AgentHome({
 		error,
 		refetch,
 	} = useAgentDeployment(environmentId, deploymentSelector);
-	const isCloudEnvironmentId = isCloudEnvId(environmentId);
 	const routeSource = agentRouteSource(routeSearch);
-	const requestedFromCloudRedirect = routeSource === "on-clawdi";
 	const requestedHostedAgent = agentRouteTargetsHostedDeployment(
 		environmentId,
 		routeSource,
@@ -106,8 +106,7 @@ export function AgentHome({
 	);
 	const unresolvedHostedAgent =
 		requestedHostedAgent && !deployment && ambiguousMatches.length === 0 && !error && !isLoading;
-	const shouldAutoRefetchUnresolvedHostedAgent =
-		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
+	const shouldAutoRefetchUnresolvedHostedAgent = unresolvedHostedAgent;
 	const isFetchingRef = useRef(isFetching);
 	const manualCheckInFlightRef = useRef(false);
 	const [manualChecking, setManualChecking] = useState(false);
@@ -128,22 +127,17 @@ export function AgentHome({
 
 		if (deployment) {
 			const deploymentId = deployment.resource.id;
-			const selectorMatches = agentRouteIdsEqual(deploymentSelector, deploymentId);
-			if (!hostedSection) {
+			const routeIsCanonical =
+				agentRouteIdsEqual(environmentId, deploymentId) &&
+				routeSource === null &&
+				deploymentSelector === null;
+			if (!routeIsCanonical || !hostedSection) {
 				void router.navigate({
-					to: "/agents/$id",
-					params: { id: environmentId },
-					search: (current) =>
-						selectorMatches ? current : bindAgentDeploymentSearch(current, deploymentId),
-					hash: true,
-					replace: true,
-				});
-				return;
-			}
-			if (!selectorMatches) {
-				void router.navigate({
-					to: ".",
-					search: (current) => bindAgentDeploymentSearch(current, deploymentId),
+					...agentSectionLink(
+						deploymentId,
+						hostedSection ? section : "overview",
+						canonicalHostedAgentSearch(routeSearch),
+					),
 					hash: true,
 					replace: true,
 				});
@@ -175,6 +169,8 @@ export function AgentHome({
 		membershipResolved,
 		ownsCurrentSection,
 		requestedHostedAgent,
+		routeSearch,
+		routeSource,
 		router,
 		section,
 	]);
@@ -264,7 +260,6 @@ export function AgentHome({
 	if (ambiguousMatches.length > 0) {
 		return (
 			<DeploymentChooser
-				environmentId={environmentId}
 				section={section}
 				routeSearch={routeSearch}
 				matches={ambiguousMatches}
@@ -284,10 +279,11 @@ export function AgentHome({
 			matchedRuntime && isHostedRuntime(matchedRuntime)
 				? matchedRuntime
 				: defaultDeploymentRuntime(deployment);
-		const deploymentRouteSearch = bindAgentDeploymentSearch(routeSearch, deployment.resource.id);
+		const deploymentRouteSearch = canonicalHostedAgentSearch(routeSearch);
 		return (
 			<HostedAgentDetail
 				environmentId={resolvedEnvId}
+				routeAgentId={deployment.resource.id}
 				deployment={deployment}
 				runtime={runtime}
 				section={section}
@@ -336,14 +332,12 @@ export function AgentHome({
 }
 
 function DeploymentChooser({
-	environmentId,
 	section,
 	routeSearch,
 	matches,
 	isChecking,
 	onRetry,
 }: {
-	environmentId: string;
 	section: AgentSectionId;
 	routeSearch: AgentRouteSearch;
 	matches: readonly AgentDeploymentMatch[];
@@ -392,9 +386,9 @@ function DeploymentChooser({
 						<Link
 							key={deployment.resource.id}
 							{...agentSectionLink(
-								environmentId,
+								deployment.resource.id,
 								section,
-								bindAgentDeploymentSearch(routeSearch, deployment.resource.id),
+								canonicalHostedAgentSearch(routeSearch),
 							)}
 							aria-label={`Open ${name}`}
 							className={cn(

@@ -3020,6 +3020,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
+	await expect(page).toHaveURL(`/agents/${railHostedDeployment.id}`);
 	await expect.poll(() => sessionRequests.length).toBe(1);
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
@@ -3090,9 +3091,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		.getByRole("button", { name: "View all", exact: true });
 	const viewAllHref = await viewAllSessions.getAttribute("href");
 	const viewAllUrl = new URL(viewAllHref ?? "", page.url());
-	expect(viewAllUrl.pathname).toBe(`/agents/${railHostedEnvironmentId}/sessions`);
-	expect(viewAllUrl.searchParams.get("source")).toBe("on-clawdi");
-	expect(viewAllUrl.searchParams.get("d")).toBe(railHostedDeployment.id);
+	expect(viewAllUrl.pathname).toBe(`/agents/${railHostedDeployment.id}/sessions`);
+	expect(viewAllUrl.search).toBe("");
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
 	await expect(recentSessions.locator("article")).toHaveCount(3);
 	await expect(recentSessions).not.toContainText("Review risks");

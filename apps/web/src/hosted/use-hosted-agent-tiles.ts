@@ -26,7 +26,7 @@ import {
 } from "@/hosted/hosted-agent-resolution";
 import { deploymentFilesUrl, deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
-import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
+import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
 type DeploymentStatusInput = HostedDeploymentStatus | null;
@@ -170,7 +170,7 @@ export function useHostedAgentTiles({
 
 /**
  * One deployment renders as one hosted agent tile. The selected runtime's stored
- * environment id owns the detail route. Lifecycle and recovery controls stay on
+ * deployment id owns the detail route. Lifecycle and recovery controls stay on
  * the detail/settings surfaces; the tile projects only identity and status.
  */
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
@@ -183,11 +183,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	const name = agentDisplayName(
 		matchedEnv ?? { default_name: d.resource.name, agent_type: runtime },
 	);
-	const routeQuery = {
-		source: "on-clawdi",
-		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.resource.id,
-	};
-	const detailHref = agentSectionHref(envId ?? d.resource.id, "overview", routeQuery);
+	const detailHref = agentSectionHref(d.resource.id);
 	const failure = deploymentFailurePresentation(d);
 	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv, failure);
 	const cardStatus: AgentCardStatusProjection = {

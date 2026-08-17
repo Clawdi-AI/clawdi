@@ -207,7 +207,7 @@ describe("deploymentToTiles", () => {
 		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
 		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
 		expect(tiles.map((tile) => tile.name)).toEqual(["Research Agent"]);
-		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
+		expect(tiles[0]?.href).toBe("/agents/dep_123");
 		expect(tiles[0]?.env).toBe(openclawEnv);
 		expect(tiles[0]?.filesAvailable).toBe(false);
 		expectHostedTileStatus(tiles[0], "Running");
@@ -278,7 +278,7 @@ describe("deploymentToTiles", () => {
 		expect(tile?.cardStatus?.labels).toEqual(["Temporarily unavailable"]);
 	});
 
-	test("links by deployment env identity when the cloud-api projection is missing", () => {
+	test("keeps the deployment route stable when the cloud-api projection is missing", () => {
 		const failureReason = "startup_probe_failing; restart_count=2";
 		const environmentId = "env-failed-openclaw";
 		const hostedDeployment = deployment({ status: "failed", failureReason, environmentId });
@@ -288,12 +288,11 @@ describe("deploymentToTiles", () => {
 			id: "dep_123",
 			source: "on-clawdi",
 			name: "hosted-test",
-			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
+			href: "/agents/dep_123",
 			env: null,
 		});
 		expect(tile?.env).toBeNull();
 		expectHostedTileStatus(tile, "Temporarily unavailable");
-		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 
 	test("does not flash pending sync while the environment join is unresolved", () => {
@@ -318,7 +317,7 @@ describe("deploymentToTiles", () => {
 		const [tile] = hostedDeploymentToTiles(planFailure);
 
 		expectHostedTileStatus(tile, "Failed");
-		expect(tile?.href).toBe(`/agents/${environmentId}?source=on-clawdi&d=dep_123`);
+		expect(tile?.href).toBe("/agents/dep_123");
 	});
 
 	test("keeps the exact name, stopped status, and navigation on a summary-only tile", () => {
@@ -333,7 +332,7 @@ describe("deploymentToTiles", () => {
 
 		expect(tile).toMatchObject({
 			name: "deployment-create-generated-id",
-			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
+			href: "/agents/dep_123",
 		});
 		expectHostedTileStatus(tile, "Stopped");
 	});
@@ -410,7 +409,7 @@ describe("deploymentToTiles", () => {
 		expect(tile).toMatchObject({
 			id: "dep_123",
 			name: "hosted-test",
-			href: "/agents/dep_123?source=on-clawdi&d=dep_123",
+			href: "/agents/dep_123",
 			env: null,
 		});
 		expectHostedTileStatus(tile, "Temporarily unavailable");

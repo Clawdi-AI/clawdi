@@ -93,6 +93,7 @@ import {
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
 import {
+	type AgentRouteQuery,
 	type AgentSectionId,
 	agentDeploymentRouteQuery,
 	agentDeploymentSelector,
@@ -362,6 +363,8 @@ function ConsoleNavigationSections({
 
 function AgentSectionList({
 	agentId,
+	resourceAgentId = agentId,
+	resourceRouteQuery,
 	variant,
 	visibleSectionIds,
 	activeSection,
@@ -370,6 +373,8 @@ function AgentSectionList({
 	onNavigate,
 }: {
 	agentId: string;
+	resourceAgentId?: string;
+	resourceRouteQuery?: AgentRouteQuery;
 	variant: AgentNavigationVariant;
 	visibleSectionIds?: readonly AgentSectionId[];
 	activeSection: AgentSectionId;
@@ -384,6 +389,7 @@ function AgentSectionList({
 		}),
 	});
 	const routeQuery = agentDeploymentRouteQuery(searchStr);
+	const scopedResourceRouteQuery = resourceRouteQuery ?? routeQuery;
 	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
 	const groups = agentNavigationGroups(variant, visibleSectionIds);
 	const activeAgentRoute = parseAgentPathname(pathname);
@@ -420,7 +426,12 @@ function AgentSectionList({
 				return {
 					id: `primary-project-${section}`,
 					label: item.label,
-					href: agentProjectResourceHref(agentId, primaryProject.id, section, routeQuery),
+					href: agentProjectResourceHref(
+						resourceAgentId,
+						primaryProject.id,
+						section,
+						scopedResourceRouteQuery,
+					),
 					icon: item.icon,
 					tint: item.tint,
 					tooltip: `${item.label} in Workspace`,
@@ -473,6 +484,8 @@ function AgentSectionList({
 
 function AgentFocusSections({
 	agentId,
+	resourceAgentId,
+	resourceRouteQuery,
 	kind,
 	filesAvailable,
 	activeSection,
@@ -480,6 +493,8 @@ function AgentFocusSections({
 	onNavigate,
 }: {
 	agentId: string;
+	resourceAgentId?: string;
+	resourceRouteQuery?: AgentRouteQuery;
 	kind: Exclude<AgentChromeKind, "unresolved">;
 	filesAvailable?: boolean;
 	activeSection: AgentSectionId;
@@ -505,6 +520,8 @@ function AgentFocusSections({
 	return (
 		<AgentSectionList
 			agentId={agentId}
+			resourceAgentId={resourceAgentId}
+			resourceRouteQuery={resourceRouteQuery}
 			variant={kind === "cloud" ? "hosted" : "connected"}
 			visibleSectionIds={
 				kind === "cloud"
@@ -609,9 +626,17 @@ function SidebarMainNavigation({
 	onNavigate?: () => void;
 }) {
 	if (activeAgentId && activeAgentTile && activeAgentKind !== "unresolved") {
+		const hostedResourceRoute =
+			activeAgentTile.source === "on-clawdi" && activeAgentTile.env
+				? {
+						resourceAgentId: activeAgentTile.env.id,
+						resourceRouteQuery: { source: "on-clawdi", d: activeAgentTile.id },
+					}
+				: {};
 		return (
 			<AgentFocusSections
 				agentId={activeAgentId}
+				{...hostedResourceRoute}
 				kind={activeAgentKind}
 				filesAvailable={activeAgentTile.filesAvailable}
 				activeSection={activeSection}
@@ -1686,7 +1711,9 @@ export function AppSidebar({
 			) ?? null)
 		: null;
 	const activeAgent = activeAgentId
-		? (hydratedEnvironments?.find((env) => env.id === activeAgentId) ?? null)
+		? (hydratedEnvironments?.find((env) => env.id === activeAgentId) ??
+			activeAgentTile?.env ??
+			null)
 		: null;
 	const defaultProjectBindings = useAgentProjectBindings(activeAgent?.id, {
 		enabled: hydrated && Boolean(activeAgent?.default_project_id),

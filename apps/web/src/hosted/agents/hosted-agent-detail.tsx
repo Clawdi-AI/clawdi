@@ -294,6 +294,7 @@ import {
 	agentSectionLabel,
 	agentSectionLink,
 	agentSessionDetailLink,
+	bindAgentDeploymentSearch,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -428,6 +429,7 @@ function StartComputeAction({
  */
 export function HostedAgentDetail({
 	environmentId,
+	routeAgentId,
 	deployment,
 	runtime,
 	section = "overview",
@@ -439,6 +441,7 @@ export function HostedAgentDetail({
 	onCheckDeploymentAgain,
 }: {
 	environmentId: string;
+	routeAgentId: string;
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	section?: AgentSectionId;
@@ -502,9 +505,10 @@ export function HostedAgentDetail({
 	);
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
-	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);
+	const contentRouteSearch = bindAgentDeploymentSearch(routeSearch, deployment.resource.id);
+	const terminalHref = agentSectionHref(routeAgentId, "terminal", routeSearch);
 	const scopedSessionLink = (sessionId: string) => ({
-		...agentSessionDetailLink(environmentId, sessionId, routeSearch),
+		...agentSessionDetailLink(environmentId, sessionId, contentRouteSearch),
 	});
 
 	const sessions = useQuery({
@@ -515,7 +519,7 @@ export function HostedAgentDetail({
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
-	const resourceScope = agentResourceScope(environmentId, routeSearch);
+	const resourceScope = agentResourceScope(environmentId, contentRouteSearch);
 	const showInitialDeploymentPage =
 		activeTab === "overview" &&
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
@@ -553,7 +557,7 @@ export function HostedAgentDetail({
 								<MemoriesPageActions />
 							) : interfaceAvailable ? (
 								<Button
-									render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
+									render={<Link {...agentSectionLink(routeAgentId, "console", routeSearch)} />}
 									nativeButton={false}
 									variant="outline"
 								>
@@ -599,7 +603,9 @@ export function HostedAgentDetail({
 					) : activeTab === "overview" ? (
 						<OverviewTab
 							agentId={environmentId}
+							routeAgentId={routeAgentId}
 							routeSearch={routeSearch}
+							contentRouteSearch={contentRouteSearch}
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							projectionStatus={projection.status}
@@ -633,7 +639,10 @@ export function HostedAgentDetail({
 						<FilesTab deployment={deployment} url={filesUrl} />
 					) : null}
 					{activeTab === "sessions" ? (
-						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
+						<HostedAgentSessionsTab
+							environmentId={environmentId}
+							routeSearch={contentRouteSearch}
+						/>
 					) : null}
 					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
@@ -641,7 +650,7 @@ export function HostedAgentDetail({
 						projection.status === "resolved" ? (
 							<AgentProjectsTab
 								agentId={environmentId}
-								routeSearch={routeSearch}
+								routeSearch={contentRouteSearch}
 								headerAdornment={<AgentSourceBadge source="hosted" compact />}
 								headerIcon={
 									ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
@@ -669,7 +678,7 @@ export function HostedAgentDetail({
 								environmentId={environmentId}
 								agentType={runtime}
 								agentName={availableAgentTitle}
-								routeSearch={routeSearch}
+								routeSearch={contentRouteSearch}
 							/>
 						) : (
 							<ChannelsSyncState
@@ -1152,7 +1161,9 @@ export function InitialDeploymentPage({
 
 function OverviewTab({
 	agentId,
+	routeAgentId,
 	routeSearch,
+	contentRouteSearch,
 	deployment,
 	agent,
 	projectionStatus,
@@ -1166,7 +1177,9 @@ function OverviewTab({
 	deploymentTransitionEscalated,
 }: {
 	agentId: string;
+	routeAgentId: string;
 	routeSearch: AgentRouteSearch;
+	contentRouteSearch: AgentRouteSearch;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	projectionStatus: HostedProjectionResolution<unknown>["status"];
@@ -1251,7 +1264,7 @@ function OverviewTab({
 							Recent sessions
 						</h2>
 						<Button
-							render={<Link {...agentSectionLink(agentId, "sessions", routeSearch)} />}
+							render={<Link {...agentSectionLink(routeAgentId, "sessions", routeSearch)} />}
 							nativeButton={false}
 							variant="ghost"
 							size="sm"
@@ -1276,7 +1289,7 @@ function OverviewTab({
 				</div>
 				<div className="@3xl/main:row-start-2">
 					<AgentOverviewStatusCard
-						agentId={agentId}
+						agentId={routeAgentId}
 						section="settings"
 						routeSearch={routeSearch}
 						title="Compute"
@@ -1315,7 +1328,7 @@ function OverviewTab({
 				</div>
 			</div>
 			<AgentOverviewCapabilities
-				agentId={agentId}
+				agentId={routeAgentId}
 				variant="hosted"
 				routeSearch={routeSearch}
 				content={{
@@ -1333,14 +1346,14 @@ function OverviewTab({
 					skills: {
 						...skillsModule,
 						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "skills", routeSearch)
+							? agentProjectResourceLink(agentId, workspaceProjectId, "skills", contentRouteSearch)
 							: null,
 					},
 					memories: memoriesModule,
 					vaults: {
 						...vaultsModule,
 						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults", routeSearch)
+							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults", contentRouteSearch)
 							: null,
 					},
 					connectors: connectorsModule,
