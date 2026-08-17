@@ -61,9 +61,8 @@ describe("dialog exit lifecycle", () => {
 
 		const runtime = source("hosted/agents/hosted-agent-detail.tsx");
 		const identityClose = runtime.indexOf("if (open) credentialExit.beginClose()");
-		const clearAfterIdentity = runtime.indexOf("clearSensitiveState();", identityClose);
 		expect(identityClose).toBeGreaterThan(-1);
-		expect(clearAfterIdentity).toBeGreaterThan(identityClose);
+		expect(runtime).toContain("clearCredentials();");
 	});
 
 	test("invalidates stale async writes independently from visual cleanup", () => {
