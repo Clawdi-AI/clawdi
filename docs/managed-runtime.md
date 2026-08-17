@@ -1025,11 +1025,12 @@ binaries and do not add any platform install directory to `PATH`. Tenant tools
 use their normal home locations and inherited npm/XDG location overrides are
 cleared before official installers run. Unlike the root-owned, exactly managed
 Clawdi CLI above, Hosted Codex is user-version-owned: Clawdi bootstraps Codex
-into the tenant-owned `~/.local/share/npm` prefix only when its package metadata
-or executable is missing or damaged. A healthy installed Codex version is owned
-by the user and is never rolled back by Clawdi. `~/.local/bin/codex` remains the
-transparent-egress wrapper, while the shared npm prefix is excluded from Clawdi
-snapshot, ownership, and rollback targets.
+into the standard tenant-owned `~/.local` npm prefix only when its package
+metadata or executable is missing or damaged. A healthy installed Codex version
+is owned by the user and is never rolled back by Clawdi. Hosted terminal
+sessions provide the public egress placeholder and Codex CA through environment
+variables; the shared npm prefix remains outside Clawdi snapshot, ownership,
+and rollback targets.
 
 The hosted image's bootstrap package may expose
 `/usr/local/bin/clawdi -> ../lib/node_modules/clawdi/bin/clawdi.mjs` while root

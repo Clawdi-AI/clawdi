@@ -67,7 +67,6 @@ import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	loadRuntimeManifest as loadRuntimeManifestFromContext,
 	materializeHostedChannelCredentials,
-	runtimeUserMutationTargets,
 	type RuntimeConvergenceResult,
 	type RuntimeManifest,
 } from "../src/runtime/manifest";
@@ -1404,7 +1403,7 @@ function seedHostedCodexPackage(
 	version: string,
 	options: { executable?: boolean; validPackageJson?: boolean } = {},
 ): { packageJson: string; realBin: string } {
-	const npmPrefix = join(home, ".local", "share", "npm");
+	const npmPrefix = join(home, ".local");
 	const packageJson = join(npmPrefix, "lib", "node_modules", "@openai", "codex", "package.json");
 	const realBin = join(npmPrefix, "bin", "codex");
 	mkdirSync(dirname(packageJson), { recursive: true });
@@ -4042,14 +4041,27 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const npmArgsPath = join(root, "npm-args.txt");
 		const userCodexConfig = join(home, ".codex", "config.toml");
 		const legacyCodexMarker = join(home, ".local", "share", "clawdi", "codex", "user-data");
+		const legacyCodexCommand = join(home, ".local", "bin", "codex");
+		const legacyCodexRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
 		const userConfigBytes = Buffer.from('# user config\nmodel = "user-model"\n');
 		const previousPath = process.env.PATH;
 		const previousUmask = process.umask(0o077);
 		mkdirSync(binDir, { recursive: true });
 		mkdirSync(dirname(userCodexConfig), { recursive: true });
 		mkdirSync(dirname(legacyCodexMarker), { recursive: true });
+		mkdirSync(dirname(legacyCodexCommand), { recursive: true });
 		writeFileSync(userCodexConfig, userConfigBytes);
 		writeFileSync(legacyCodexMarker, "preserve\n");
+		writeFileSync(
+			legacyCodexCommand,
+			[
+				"#!/usr/bin/env sh",
+				"export CLAWDI_AI_API_KEY='clawdi-egress-placeholder'",
+				`exec '${legacyCodexRealBin}' "$@"`,
+				"",
+			].join("\n"),
+		);
+		chmodSync(legacyCodexCommand, 0o755);
 		writeFileSync(
 			join(binDir, "npm"),
 			[
@@ -4072,9 +4084,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				`printf '%s\\n' '{"version":"0.146.0"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
 				"cat > \"$prefix/bin/codex\" <<'SH'",
 				"#!/usr/bin/env sh",
-				"printf 'env=<%s>\\n' \"$" + '{CLAWDI_AI_API_KEY-unset}"',
-				"printf 'ca=<%s>\\n' \"$" + '{CODEX_CA_CERTIFICATE-unset}"',
-				"printf 'npm_prefix=<%s>\\n' \"$" + '{NPM_CONFIG_PREFIX-unset}"',
 				'for arg in "$@"; do printf \'arg=<%s>\\n\' "$arg"; done',
 				"SH",
 				'chmod 755 "$prefix/bin/codex"',
@@ -4091,55 +4100,51 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const paths = getRuntimePaths();
 
 		try {
-			const codexLoad: RuntimeManifestLoad = {
-				source: "remote-datasource",
-				sourcePath: "https://runtime-source.test/desired-state",
-				offline: false,
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_codex_addon",
-					environmentId: "env_codex_addon",
-					instanceId: "iid_codex_addon",
-					generation: 1,
-					issuedAt: "2026-07-10T00:00:00Z",
-					workspaceRoot: join(home, "clawdi"),
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: { enabled: false },
-					},
-					projection: {
-						system: { home },
-						providers: {},
-						terminalTooling: {
-							codex: {
-								enabled: true,
-								provider_id: "codex-managed",
-								primary_model: { provider_id: "codex-managed", model: "gpt-5.5" },
-								provider: {
-									kind: "openai-compatible",
-									baseUrl: "https://managed-provider.example.test/v1",
-									apiMode: "openai_responses",
-									managed_by: "clawdi",
-									runtimeEnvName: "OPENAI_API_KEY",
-									apiKeySecretRef: "secret://tool.codex.apiKey",
+			const convergence = convergeRuntimeManifest(
+				{
+					source: "remote-datasource",
+					sourcePath: "https://runtime-source.test/desired-state",
+					offline: false,
+					manifest: {
+						schemaVersion: "clawdi.runtimeDesiredState.v1",
+						deploymentId: "dep_codex_addon",
+						environmentId: "env_codex_addon",
+						instanceId: "iid_codex_addon",
+						generation: 1,
+						issuedAt: "2026-07-10T00:00:00Z",
+						workspaceRoot: join(home, "clawdi"),
+						controlPlane: { apiUrl: "https://cloud-api.test" },
+						runtimes: {
+							openclaw: { enabled: false },
+						},
+						projection: {
+							system: { home },
+							providers: {},
+							terminalTooling: {
+								codex: {
+									enabled: true,
+									provider_id: "codex-managed",
+									primary_model: {
+										provider_id: "codex-managed",
+										model: "gpt-5.5",
+									},
+									provider: {
+										kind: "openai-compatible",
+										baseUrl: "https://managed-provider.example.test/v1",
+										apiMode: "openai_responses",
+										managed_by: "clawdi",
+										runtimeEnvName: "OPENAI_API_KEY",
+										apiKeySecretRef: "secret://tool.codex.apiKey",
+									},
 								},
 							},
 						},
+						egressProfiles: { profiles: [] },
+						recovery: { cacheManifest: true, allowOfflineBoot: true },
 					},
-					egressProfiles: { profiles: [] },
-					recovery: { cacheManifest: true, allowOfflineBoot: true },
 				},
-			};
-			const mutationTargets = runtimeUserMutationTargets(
-				codexLoad.manifest,
 				paths,
-				null,
-				new Map(),
 			);
-			expect(mutationTargets).toContain(userCodexConfig);
-			expect(mutationTargets).toContain(paths.codexCommand);
-			expect(mutationTargets).not.toContain(paths.userNpmPrefix);
-			const convergence = convergeRuntimeManifest(codexLoad, paths);
 
 			expect(convergence.installErrors).toEqual([]);
 		} finally {
@@ -4152,36 +4157,25 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const npmArgs = readFileSync(npmArgsPath, "utf-8");
 		expect(npmArgs).toContain("@openai/codex@0.146.0");
 		expect(npmArgs).toContain(`${paths.userNpmPrefix}\n`);
+		expect(npmArgs).toContain("--force\n");
 		expect(npmArgs).not.toContain("--cache\n");
 		const realBin = join(paths.userNpmPrefix, "bin", "codex");
 		const packageJson = join(paths.userNpmPrefix, "lib/node_modules/@openai/codex/package.json");
-		const commandShim = paths.codexCommand;
 		expect(statSync(paths.userNpmPrefix).mode & 0o777).toBe(0o700);
 		expect(statSync(dirname(realBin)).mode & 0o777).toBe(0o700);
 		expect(statSync(realBin).mode & 0o777).toBe(0o755);
 		expect(statSync(packageJson).mode & 0o777).toBe(0o600);
-		expect(statSync(commandShim).mode & 0o777).toBe(0o755);
-		expect(readFileSync(commandShim, "utf8")).not.toContain("--profile");
-		expect(readFileSync(userCodexConfig, "utf8")).toContain('model_provider = "clawdi"');
+		expect(readFileSync(userCodexConfig, "utf8")).toContain('env_key = "CLAWDI_AI_API_KEY"');
 		expect(readFileSync(legacyCodexMarker, "utf8")).toBe("preserve\n");
 
-		const runShim = (args: string[]) => {
-			const result = spawnSync(commandShim, args, {
+		const runCodex = (args: string[]) => {
+			const result = spawnSync(realBin, args, {
 				encoding: "utf8",
-				env: {
-					...process.env,
-					CLAWDI_AI_API_KEY: "user-existing-key",
-					CODEX_CA_CERTIFICATE: "/parent/ca-must-be-overridden.pem",
-					NPM_CONFIG_PREFIX: "/parent/npm-prefix-must-be-overridden",
-				},
 			});
 			expect(result.status).toBe(0);
 			return result.stdout.trimEnd().split("\n");
 		};
-		expect(runShim(["exec", "quoted arg", ""])).toEqual([
-			"env=<clawdi-egress-placeholder>",
-			`ca=<${paths.egressSystemCaFile}>`,
-			`npm_prefix=<${paths.userNpmPrefix}>`,
+		expect(runCodex(["exec", "quoted arg", ""])).toEqual([
 			"arg=<exec>",
 			"arg=<quoted arg>",
 			"arg=<>",
@@ -4190,12 +4184,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			["resume", "session id", "--flag=value"],
 			["exec", "", "'quoted'", '"double quoted"'],
 		]) {
-			expect(runShim(args)).toEqual([
-				"env=<clawdi-egress-placeholder>",
-				`ca=<${paths.egressSystemCaFile}>`,
-				`npm_prefix=<${paths.userNpmPrefix}>`,
-				...args.map((arg) => `arg=<${arg}>`),
-			]);
+			expect(runCodex(args)).toEqual(args.map((arg) => `arg=<${arg}>`));
 		}
 	});
 
@@ -4234,7 +4223,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(readFileSync(join(home, ".codex", "config.toml"), "utf8")).toContain(
 			'model_provider = "clawdi"',
 		);
-		expect(readFileSync(getRuntimePaths().codexCommand, "utf8")).not.toContain("--profile");
+		expect(existsSync(join(getRuntimePaths().userNpmPrefix, "bin", "codex"))).toBe(true);
 	});
 
 	it("bootstraps missing or damaged Hosted Codex packages", () => {
@@ -4279,10 +4268,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				expect(
 					JSON.parse(
 						readFileSync(
-							join(
-								getRuntimePaths().userNpmPrefix,
-								"lib/node_modules/@openai/codex/package.json",
-							),
+							join(getRuntimePaths().userNpmPrefix, "lib/node_modules/@openai/codex/package.json"),
 							"utf8",
 						),
 					).version,
