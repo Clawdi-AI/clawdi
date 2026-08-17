@@ -3574,7 +3574,7 @@ test("header Wallet slot stays stable from unresolved access through a long bala
 	page,
 	browser,
 	baseURL,
-}) => {
+}, testInfo) => {
 	if (!baseURL) throw new Error("Playwright baseURL is required for the Wallet header test.");
 	let releaseProductAccess: (() => void) | undefined;
 	let releaseDeploymentList: (() => void) | undefined;
@@ -3625,17 +3625,16 @@ test("header Wallet slot stays stable from unresolved access through a long bala
 		await expect(walletSlot).toBeVisible();
 		await expect.poll(() => productAccessRequests.length).toBeGreaterThan(0);
 		await expect.poll(() => deploymentListRequests.length).toBeGreaterThan(0);
-		await expect(walletSlot).toBeEmpty();
+		await expect(walletSlot.locator('[data-slot="skeleton"]')).toBeVisible();
 		await expect(walletControl).toHaveCount(0);
-		expect(walletChunkRequests).toBe(0);
+		expect(walletChunkRequests).toBe(1);
 		const unresolvedSlotBox = await walletSlot.boundingBox();
 		if (!unresolvedSlotBox) throw new Error("Unresolved Wallet slot should reserve geometry.");
 
 		releaseProductAccess?.();
 		releaseDeploymentList?.();
-		await expect(walletControl).toBeVisible();
-		await expect(walletControl).toBeDisabled();
-		await expect(walletControl.locator('[data-slot="skeleton"]')).toBeVisible();
+		await expect(walletSlot.locator('[data-slot="skeleton"]')).toBeVisible();
+		await expect(walletControl).toHaveCount(0);
 		const fallbackSlotBox = await walletSlot.boundingBox();
 		if (!fallbackSlotBox) throw new Error("Wallet chunk fallback should preserve slot geometry.");
 		expect(Math.abs(fallbackSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
@@ -3646,6 +3645,7 @@ test("header Wallet slot stays stable from unresolved access through a long bala
 		releaseWalletChunk?.();
 		await expect.poll(() => walletRequests.length).toBe(1);
 		await expect(walletControl).toBeEnabled();
+		await expect(walletControl.locator('[data-slot="skeleton"]')).toBeVisible();
 
 		releaseWalletResponse?.();
 		await expect(walletControl).toContainText(longBalance);
@@ -3670,6 +3670,26 @@ test("header Wallet slot stays stable from unresolved access through a long bala
 				(element) => element.clientWidth > 0 && element.scrollWidth > element.clientWidth,
 			),
 		).toBe(true);
+
+		await page.setViewportSize({ width: 320, height: 568 });
+		const header = page.locator("header");
+		const sidebarTrigger = page.getByRole("button", { name: "Toggle Sidebar" });
+		const separator = header.locator('[data-slot="separator"]');
+		const notificationCenter = page.getByRole("button", { name: "Notification Center" });
+		await expectNoHorizontalOverflow(header, "Wallet header at 320px");
+		await expect(separator).toHaveCSS("width", "1px");
+		await expect(separator).toHaveCSS("height", "16px");
+		await expect(walletSlot).toHaveCSS("width", "96px");
+		await expectContainedInOwnerAndViewport(
+			page,
+			walletControl,
+			walletSlot,
+			"Wallet header control at 320px",
+		);
+		await _expectControlsDoNotOverlap(
+			[sidebarTrigger, separator, walletControl, notificationCenter],
+			"Wallet header at 320px",
+		);
 		expect(walletChunkRequests).toBe(1);
 	} finally {
 		releaseProductAccess?.();
@@ -3733,11 +3753,40 @@ test("header Wallet slot stays stable from unresolved access through a long bala
 		expect(Math.abs(resolvedSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
 		expect(Math.abs(resolvedSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
 		expect(Math.abs(resolvedSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
-		expect(inapplicableChunkRequests).toBe(0);
+		expect(inapplicableChunkRequests).toBe(1);
 	} finally {
 		releaseInapplicableProductAccess?.();
 		releaseInapplicableDeploymentList?.();
 		await inapplicableContext.close();
+	}
+
+	const narrowContext = await browser.newContext({
+		baseURL,
+		viewport: { width: 320, height: 568 },
+	});
+	const narrowPage = await narrowContext.newPage();
+	try {
+		await stubHostedApi(narrowPage);
+		await narrowPage.goto("/agents");
+		const walletControl = narrowPage.getByTestId("global-wallet-balance");
+		const balanceText = walletControl.locator("span").filter({ hasText: "$25.00" });
+		await expect(walletControl).toContainText("$25.00");
+		for (const viewport of [
+			{ width: 320, height: 568 },
+			{ width: 390, height: 844 },
+		]) {
+			await narrowPage.setViewportSize(viewport);
+			expect(
+				await balanceText.evaluate((element) => element.scrollWidth <= element.clientWidth),
+			).toBe(true);
+			const header = narrowPage.locator("header");
+			await expectNoHorizontalOverflow(header, `Wallet header at ${viewport.width}px`);
+			await header.screenshot({
+				path: testInfo.outputPath(`wallet-header-${viewport.width}x${viewport.height}.png`),
+			});
+		}
+	} finally {
+		await narrowContext.close();
 	}
 });
 
@@ -3883,6 +3932,55 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 		path: testInfo.outputPath("responsive-breadcrumb-320x568.png"),
 		fullPage: false,
 	});
+});
+
+test("Console keeps its desktop columns and places Recent sessions last on narrow screens", async ({
+	page,
+}, testInfo) => {
+	await stubHostedApi(page);
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/");
+
+	const main = page.locator("main");
+	const activity = main.getByText("Activity", { exact: true });
+	const library = main.getByText("Library", { exact: true });
+	const lastSevenDays = main.getByText("Last 7 days", { exact: true });
+	const recentSessions = main.getByRole("heading", { name: "Recent sessions", exact: true });
+	await expect(recentSessions).toBeVisible();
+
+	const [desktopActivity, desktopLibrary, desktopRecent] = await Promise.all([
+		activity.boundingBox(),
+		library.boundingBox(),
+		recentSessions.boundingBox(),
+	]);
+	if (!desktopActivity || !desktopLibrary || !desktopRecent) {
+		throw new Error("Console sections should render in the desktop grid.");
+	}
+	expect(desktopRecent.y).toBeGreaterThan(desktopActivity.y);
+	expect(desktopLibrary.x).toBeGreaterThan(desktopActivity.x);
+
+	for (const viewport of [
+		{ width: 320, height: 568 },
+		{ width: 390, height: 844 },
+	]) {
+		await page.setViewportSize(viewport);
+		const [mobileActivity, mobileLibrary, mobileLastSevenDays, mobileRecent] = await Promise.all([
+			activity.boundingBox(),
+			library.boundingBox(),
+			lastSevenDays.boundingBox(),
+			recentSessions.boundingBox(),
+		]);
+		if (!mobileActivity || !mobileLibrary || !mobileLastSevenDays || !mobileRecent) {
+			throw new Error(`Console sections should render at ${viewport.width}px.`);
+		}
+		expect(mobileLibrary.y).toBeGreaterThan(mobileActivity.y);
+		expect(mobileLastSevenDays.y).toBeGreaterThan(mobileLibrary.y);
+		expect(mobileRecent.y).toBeGreaterThan(mobileLastSevenDays.y);
+		await page.screenshot({
+			path: testInfo.outputPath(`console-${viewport.width}x${viewport.height}.png`),
+			fullPage: true,
+		});
+	}
 });
 
 test("Wallet auto-reload authorizes and replaces its dedicated card responsively", async ({

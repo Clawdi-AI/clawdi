@@ -190,7 +190,7 @@ export default function DashboardPage() {
 				    the grid track grow past its declared 1fr/2fr share. Below the
 				    `lg` breakpoint that means single-column overflow → cards
 				    spill past the viewport. */}
-				<div className="min-w-0 space-y-4 lg:col-span-2">
+				<div className="contents lg:col-span-2 lg:block lg:min-w-0 lg:space-y-4">
 					{hostedAccessLoading ? (
 						<AgentsCard agents={selfManagedTiles} isLoading />
 					) : hostedSectionEnabled && HostedAgentsSection ? (
@@ -243,7 +243,7 @@ export default function DashboardPage() {
 						</CardContent>
 					</Card>
 
-					<section className="space-y-2">
+					<section className="order-last space-y-2 lg:order-none">
 						<div className="flex items-end justify-between">
 							<h2 className="text-base font-semibold">Recent sessions</h2>
 							<Button
