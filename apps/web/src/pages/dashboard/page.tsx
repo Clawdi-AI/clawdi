@@ -184,13 +184,7 @@ export default function DashboardPage() {
 			)}
 
 			<div className="grid gap-4 lg:grid-cols-3">
-				{/* Left column — live status + activity. `min-w-0` is load-bearing:
-				    grid items default to `min-width: auto` (= min-content), so a
-				    fixed-width child (table-fixed table, code block, etc.) makes
-				    the grid track grow past its declared 1fr/2fr share. Below the
-				    `lg` breakpoint that means single-column overflow → cards
-				    spill past the viewport. */}
-				<div className="contents lg:col-span-2 lg:block lg:min-w-0 lg:space-y-4">
+				<div className="min-w-0 lg:col-span-2 lg:row-start-1">
 					{hostedAccessLoading ? (
 						<AgentsCard agents={selfManagedTiles} isLoading />
 					) : hostedSectionEnabled && HostedAgentsSection ? (
@@ -220,70 +214,32 @@ export default function DashboardPage() {
 							}}
 						/>
 					)}
-
-					<Card>
-						<CardHeader>
-							<CardTitle>Activity</CardTitle>
-							<CardDescription>Sessions per day in the last 12 months</CardDescription>
-						</CardHeader>
-						<CardContent>
-							{blockingStatsError ? (
-								<ApiErrorPanel
-									error={blockingStatsError}
-									onRetry={() => {
-										void refetchStats();
-									}}
-									title="Couldn't load activity"
-								/>
-							) : statsLoading ? (
-								<ActivityGraphSkeleton />
-							) : contribution ? (
-								<ContributionGraph data={contribution} />
-							) : null}
-						</CardContent>
-					</Card>
-
-					<section className="order-last space-y-2 lg:order-none">
-						<div className="flex items-end justify-between">
-							<h2 className="text-base font-semibold">Recent sessions</h2>
-							<Button
-								render={<Link to="/sessions" />}
-								nativeButton={false}
-								variant="ghost"
-								size="sm"
-								className="text-muted-foreground"
-							>
-								View all
-								<ArrowRight />
-							</Button>
-						</div>
-						{blockingSessionsError ? (
-							<ApiErrorPanel
-								error={blockingSessionsError}
-								onRetry={() => {
-									void refetchSessions();
-								}}
-								title="Couldn't load recent sessions"
-							/>
-						) : (
-							<SessionFeed
-								sessions={sessions ?? []}
-								isLoading={sessionsLoading}
-								grouped={false}
-								emptyMessage="No manual sessions yet. Once you start a conversation, it'll show up here."
-								emptyVariant="inset"
-							/>
-						)}
-					</section>
 				</div>
 
-				{/* Right column — once any agent exists (hosted OR self-managed),
-				    "Connect another" lives here as a secondary action. Empty
-				    state hides it entirely because the hero card above is
-				    already the onboarding. Hosted mode delegates the decision
-				    to a sibling component so it can include hosted tiles in
-				    the count. */}
-				<div className="min-w-0 space-y-4">
+				<Card className="min-w-0 lg:col-span-2 lg:row-start-2">
+					<CardHeader>
+						<CardTitle>Activity</CardTitle>
+						<CardDescription>Sessions per day in the last 12 months</CardDescription>
+					</CardHeader>
+					<CardContent>
+						{blockingStatsError ? (
+							<ApiErrorPanel
+								error={blockingStatsError}
+								onRetry={() => {
+									void refetchStats();
+								}}
+								title="Couldn't load activity"
+							/>
+						) : statsLoading ? (
+							<ActivityGraphSkeleton />
+						) : contribution ? (
+							<ContributionGraph data={contribution} />
+						) : null}
+					</CardContent>
+				</Card>
+
+				{/* This source order is also the mobile reading and focus order. */}
+				<div className="min-w-0 space-y-4 lg:col-start-3 lg:row-span-3 lg:row-start-1">
 					{hostedAccessLoading ? null : hostedSectionEnabled && HostedSecondaryCTA ? (
 						<Suspense fallback={null}>
 							<HostedSecondaryCTA
@@ -312,6 +268,39 @@ export default function DashboardPage() {
 						}}
 					/>
 				</div>
+
+				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-3">
+					<div className="flex items-end justify-between">
+						<h2 className="text-base font-semibold">Recent sessions</h2>
+						<Button
+							render={<Link to="/sessions" />}
+							nativeButton={false}
+							variant="ghost"
+							size="sm"
+							className="text-muted-foreground"
+						>
+							View all
+							<ArrowRight />
+						</Button>
+					</div>
+					{blockingSessionsError ? (
+						<ApiErrorPanel
+							error={blockingSessionsError}
+							onRetry={() => {
+								void refetchSessions();
+							}}
+							title="Couldn't load recent sessions"
+						/>
+					) : (
+						<SessionFeed
+							sessions={sessions ?? []}
+							isLoading={sessionsLoading}
+							grouped={false}
+							emptyMessage="No manual sessions yet. Once you start a conversation, it'll show up here."
+							emptyVariant="inset"
+						/>
+					)}
+				</section>
 			</div>
 		</div>
 	);

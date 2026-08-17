@@ -149,7 +149,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
 function DashboardHeaderActionSlot({ children }: { children?: ReactNode }) {
 	return (
-		<div data-testid="global-wallet-balance-slot" className="flex h-8 w-24 shrink-0 items-stretch">
+		<div
+			data-testid="global-wallet-balance-slot"
+			className="flex h-8 w-fit min-w-20 shrink items-stretch"
+		>
 			{children}
 		</div>
 	);

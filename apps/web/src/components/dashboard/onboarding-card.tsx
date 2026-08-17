@@ -68,7 +68,7 @@ export function OnboardingCard({
 							type="button"
 							variant={canDeployOnClawdi ? "outline" : "default"}
 							size="lg"
-							className="w-full"
+							className="h-auto min-h-10 w-full whitespace-normal py-2"
 							onClick={() => setConnectOpen(true)}
 						>
 							<TerminalSquare data-icon="inline-start" /> Connect an agent on your machine
