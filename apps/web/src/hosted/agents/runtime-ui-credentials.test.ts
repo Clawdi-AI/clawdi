@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
+	loadRuntimeUiLaunchCredentials,
 	openSecureRuntimeWindow,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
@@ -104,5 +105,48 @@ describe("runtime UI credential targeting", () => {
 				"rv-new",
 			),
 		).toBeNull();
+	});
+
+	test("requests a fresh single-use handoff for every OpenClaw window", async () => {
+		const embedded: RuntimeUiCredentials = {
+			runtime: "openclaw",
+			auth_mode: "openclaw_token",
+			url: "https://runtime.example/openclaw/",
+			deployment_resource_version: "rv-current",
+			token: "deployment-token",
+			handoff_url:
+				"https://runtime.example/openclaw/#bootstrapToken=embedded-token&bootstrapProfile=owner",
+		};
+		const fresh: RuntimeUiCredentials = {
+			...embedded,
+			handoff_url:
+				"https://runtime.example/openclaw/#bootstrapToken=fresh-token&bootstrapProfile=owner",
+		};
+		let requests = 0;
+
+		const resolved = await loadRuntimeUiLaunchCredentials("openclaw", embedded, async () => {
+			requests += 1;
+			return fresh;
+		});
+
+		expect(requests).toBe(1);
+		expect(resolved).toBe(fresh);
+	});
+
+	test("reuses non-single-use Hermes credentials", async () => {
+		const current: RuntimeUiCredentials = {
+			runtime: "hermes",
+			auth_mode: "password",
+			url: "https://runtime.example/hermes",
+			deployment_resource_version: "rv-current",
+			username: "admin",
+			password: "deployment-password",
+		};
+
+		const resolved = await loadRuntimeUiLaunchCredentials("hermes", current, async () => {
+			throw new Error("Hermes credentials should not be requested again");
+		});
+
+		expect(resolved).toBe(current);
 	});
 });
