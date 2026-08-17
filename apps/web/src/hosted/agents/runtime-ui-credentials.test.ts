@@ -81,7 +81,7 @@ describe("runtime UI credential targeting", () => {
 		expect(runtimeUiLaunchTarget(credentials)).not.toBe(credentials.url);
 	});
 
-	test("rejects a stale rollout or a noncanonical browser handoff", () => {
+	test("opens the exact legacy fallback and rejects a stale rollout", () => {
 		const credentials: RuntimeUiCredentials = {
 			runtime: "openclaw",
 			auth_mode: "openclaw_token",
@@ -90,7 +90,10 @@ describe("runtime UI credential targeting", () => {
 			token: "deployment-token",
 			handoff_url: "https://runtime.example/openclaw/#token=deployment-token",
 		};
-		expect(resolveRuntimeUiCredentials(credentials, credentials.url, "rv-current")).toBeNull();
+		expect(resolveRuntimeUiCredentials(credentials, credentials.url, "rv-current")).toEqual(
+			credentials,
+		);
+		expect(runtimeUiLaunchTarget(credentials)).toBe(credentials.handoff_url);
 		expect(
 			resolveRuntimeUiCredentials(
 				{

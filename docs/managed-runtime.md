@@ -1126,13 +1126,16 @@ Direct OpenClaw exposure remains fail closed behind the typed
 `openclaw-native-auth-v1` capability and an available
 managed gateway token. Hosted returns a clean endpoint plus an explicit token
 and `handoff_url` through an owner-checked, no-store credential endpoint. The
-backend executes the fixed official `openclaw dashboard --json` command in the
-currently receipted runtime instance and returns its single-use, ten-minute
-`browserUrl` after binding it to the deployment's clean HTTPS endpoint. The
-browser consumes the official `bootstrapToken` and `bootstrapProfile=owner`
-fragment, creates its signed device identity, and receives the durable owner
-credential without a manual pairing step. Clawdi never approves pending devices
-or implements a parallel device-auth protocol.
+backend first executes the fixed official `openclaw dashboard --json` command
+in the currently receipted runtime instance. When supported, it returns the
+single-use, ten-minute `browserUrl` after binding it to the deployment's clean
+HTTPS endpoint. The browser consumes the official `bootstrapToken` and
+`bootstrapProfile=owner` fragment, creates its signed device identity, and
+receives the durable owner credential without a manual pairing step. If the
+installed binary cannot issue that handoff, Hosted preserves the existing exact
+`#token=` launch for older deployments; OpenClaw then enforces that deployment's
+own device-auth policy. This fallback neither disables device auth nor approves
+pending devices, and Clawdi implements no parallel device-auth protocol.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
@@ -1606,10 +1609,11 @@ fallback for environments that reject custom WebSocket subprotocols.
   channel descriptors, filesystem paths, and process launch arguments.
 - Remove `CLAWDI_AUTH_TOKEN` from agent child process environments unless that
   process is explicitly the Clawdi daemon or runtime reconciler.
-- Disable OpenClaw device auth only for hosted strict v2, where the managed
-  shared token authenticates the dashboard handoff without an additional
-  pairing approval. Keep device auth enabled outside hosted mode, and never
-  enable insecure or Host-header fallback modes.
+- Keep OpenClaw device auth at its native default and use the official owner
+  bootstrap when available. Older hosted deployments may temporarily retain
+  their existing shared-token launch until their runtime and CLI are upgraded
+  together; do not project the retired device-auth disable setting into new
+  desired state, and never enable insecure or Host-header fallback modes.
 - Prefer WebSocket subprotocol auth for Terminal sessions so bearer tokens do
   not normally appear in URLs or proxy access logs.
 

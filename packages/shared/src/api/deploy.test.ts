@@ -115,7 +115,7 @@ describe("Runtime UI access contracts", () => {
 		).toBe(true);
 	});
 
-	test("rejects shared-token and mismatched OpenClaw handoffs", () => {
+	test("accepts the exact legacy token fallback and rejects mismatched handoffs", () => {
 		const credential = {
 			runtime: "openclaw",
 			auth_mode: "openclaw_token",
@@ -124,7 +124,13 @@ describe("Runtime UI access contracts", () => {
 			token: "gateway-token",
 			handoff_url: "https://runtime.example/openclaw/#token=gateway-token",
 		};
-		expect(isRuntimeUiCredentials(credential)).toBe(false);
+		expect(isRuntimeUiCredentials(credential)).toBe(true);
+		expect(
+			isRuntimeUiCredentials({
+				...credential,
+				handoff_url: "https://runtime.example/openclaw/#token=other-token",
+			}),
+		).toBe(false);
 		expect(
 			isRuntimeUiCredentials({
 				...credential,

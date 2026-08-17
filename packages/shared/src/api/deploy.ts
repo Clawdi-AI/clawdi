@@ -81,12 +81,13 @@ export function isRuntimeUiCredentials(value: unknown): value is RuntimeUiCreden
 		typeof value.token === "string" &&
 		Boolean(value.token) &&
 		typeof value.handoff_url === "string" &&
-		isOpenClawBrowserHandoff(value.handoff_url, value.url) &&
+		isOpenClawLaunchHandoff(value.handoff_url, value.url, value.token) &&
 		isCleanRuntimeUiUrl(value.url)
 	);
 }
 
-function isOpenClawBrowserHandoff(handoff: string, endpoint: string): boolean {
+function isOpenClawLaunchHandoff(handoff: string, endpoint: string, token: string): boolean {
+	if (handoff === `${endpoint}#token=${encodeURIComponent(token)}`) return true;
 	try {
 		const target = new URL(handoff);
 		const cleanEndpoint = new URL(endpoint);
