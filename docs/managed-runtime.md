@@ -1027,10 +1027,10 @@ cleared before official installers run. Unlike the root-owned, exactly managed
 Clawdi CLI above, Hosted Codex is user-version-owned: Clawdi bootstraps Codex
 into the standard tenant-owned `~/.local` npm prefix only when its package
 metadata or executable is missing or damaged. A healthy installed Codex version
-is owned by the user and is never rolled back by Clawdi. Hosted terminal
-sessions provide the public egress placeholder and Codex CA through environment
-variables; the shared npm prefix remains outside Clawdi snapshot, ownership,
-and rollback targets.
+is owned by the user and is never rolled back by Clawdi. The hosted execution
+environment provides the public egress placeholder, Codex CA, and user npm
+prefix without exposing the real provider credential; the shared npm prefix
+remains outside Clawdi snapshot, ownership, and rollback targets.
 
 The hosted image's bootstrap package may expose
 `/usr/local/bin/clawdi -> ../lib/node_modules/clawdi/bin/clawdi.mjs` while root
