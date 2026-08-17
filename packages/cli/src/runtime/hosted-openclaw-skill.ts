@@ -23,7 +23,7 @@ const EXCLUDED_NATIVE_FILES = new Set([SOURCE_RECEIPT]);
 const RECEIPT_SCHEMA = "clawdi.openclawManifestSkillReceipt.v2";
 
 export interface HostedOpenClawSkillDriver {
-	resolveWorkspace(input: { home: string }): string;
+	resolveWorkspace(input: { home: string; repairInvalidConfig?: boolean }): string;
 	installDirectory(input: {
 		home: string;
 		workspaceRoot: string;
@@ -78,17 +78,10 @@ function receiptInput(workspaceRoot: string, skillId: string, ownershipIdentity:
 	};
 }
 
-function resolveOfficialWorkspace(home: string): string {
-	const command = commandPath(home);
-	const result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
-		timeoutMs: 15_000,
-		maxBufferBytes: 1024 * 1024,
-	});
-	if (result.status !== 0)
-		throw new Error("OpenClaw official agent workspace roster is unavailable");
+function parseOfficialWorkspaceRoster(stdout: string): string {
 	let roster: OpenClawAgentWorkspace[];
 	try {
-		roster = parseOpenClawAgentWorkspaces(String(result.stdout));
+		roster = parseOpenClawAgentWorkspaces(stdout);
 	} catch {
 		throw new Error("OpenClaw official agent workspace roster is malformed");
 	}
@@ -96,6 +89,69 @@ function resolveOfficialWorkspace(home: string): string {
 	if (main.length !== 1 || !isAbsolute(main[0].workspace))
 		throw new Error("OpenClaw official agent workspace roster is malformed");
 	return resolve(main[0].workspace);
+}
+
+function invalidConfigValidation(result: ReturnType<typeof spawnRuntimeUserCommand>): boolean {
+	if (result.status !== 1 || result.error || result.signal) return false;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(String(result.stdout));
+	} catch {
+		return false;
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+	const validation = parsed as Record<string, unknown>;
+	if (
+		validation.valid !== false ||
+		typeof validation.path !== "string" ||
+		!Array.isArray(validation.issues) ||
+		validation.issues.length === 0
+	) {
+		return false;
+	}
+	return validation.issues.every((value) => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+		const issue = value as Record<string, unknown>;
+		return typeof issue.path === "string" && typeof issue.message === "string";
+	});
+}
+
+function repairInvalidConfig(command: string, home: string): boolean {
+	const validation = spawnRuntimeUserCommand(
+		command,
+		["config", "validate", "--json"],
+		home,
+		home,
+		{ timeoutMs: 15_000, maxBufferBytes: 1024 * 1024 },
+	);
+	if (!invalidConfigValidation(validation)) return false;
+	const repair = spawnRuntimeUserCommand(
+		command,
+		["doctor", "--fix", "--non-interactive"],
+		home,
+		home,
+		{ timeoutMs: 120_000, maxBufferBytes: 4 * 1024 * 1024 },
+	);
+	if (repair.status !== 0) throw new Error("OpenClaw official config repair failed");
+	return true;
+}
+
+function resolveOfficialWorkspace(home: string, repairInvalidConfigOnFailure = false): string {
+	const command = commandPath(home);
+	let result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
+		timeoutMs: 15_000,
+		maxBufferBytes: 1024 * 1024,
+	});
+	if (result.status !== 0 && repairInvalidConfigOnFailure && repairInvalidConfig(command, home)) {
+		result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
+			timeoutMs: 15_000,
+			maxBufferBytes: 1024 * 1024,
+		});
+	}
+	if (result.status !== 0) {
+		throw new Error("OpenClaw official agent workspace roster is unavailable");
+	}
+	return parseOfficialWorkspaceRoster(String(result.stdout));
 }
 
 function assertOfficialWorkspace(input: { home: string; workspaceRoot: string }): void {
@@ -128,7 +184,7 @@ function commandFailureDetail(result: ReturnType<typeof spawnRuntimeUserCommand>
 
 export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 	resolveWorkspace(input) {
-		return resolveOfficialWorkspace(input.home);
+		return resolveOfficialWorkspace(input.home, input.repairInvalidConfig);
 	},
 	installDirectory(input) {
 		const target = targetDir(input.workspaceRoot, input.skillId);

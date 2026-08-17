@@ -62,11 +62,13 @@ async def attach_source_machines(
                 pass
         raw_session_id = item.get("source_session_id")
         if not isinstance(raw_session_id, str):
+            if raw_session_id is not None:
+                item["source_session_id"] = None
             continue
         try:
             sids.add(UUID(raw_session_id))
         except ValueError:
-            continue
+            item["source_session_id"] = None
     if not environment_ids and not sids:
         return items
     machine_by_environment: dict[UUID, str | None] = {}
@@ -102,6 +104,20 @@ async def attach_source_machines(
             for session_id, environment_id, machine_name in session_rows
         }
     for item in items:
+        source_session: tuple[UUID | None, str | None] | None = None
+        raw_session_id = item.get("source_session_id")
+        if isinstance(raw_session_id, str):
+            try:
+                session_id = UUID(raw_session_id)
+            except ValueError:
+                item["source_session_id"] = None
+            else:
+                source_session = by_session.get(session_id)
+                if source_session is None:
+                    item["source_session_id"] = None
+                else:
+                    item["source_session_id"] = str(session_id)
+
         raw_environment_id = item.get("source_environment_id")
         if isinstance(raw_environment_id, str):
             try:
@@ -112,16 +128,12 @@ async def attach_source_machines(
                 item["source_environment_id"] = str(environment_id)
                 item["source_machine_name"] = machine_by_environment[environment_id]
                 continue
-        raw_session_id = item.get("source_session_id")
-        if not isinstance(raw_session_id, str):
-            continue
-        try:
-            session_id = UUID(raw_session_id)
-        except ValueError:
-            continue
-        environment_id, machine_name = by_session.get(session_id, (None, None))
-        item["source_environment_id"] = str(environment_id) if environment_id is not None else None
-        item["source_machine_name"] = machine_name
+        if source_session is not None:
+            environment_id, machine_name = source_session
+            item["source_environment_id"] = (
+                str(environment_id) if environment_id is not None else None
+            )
+            item["source_machine_name"] = machine_name
     return items
 
 

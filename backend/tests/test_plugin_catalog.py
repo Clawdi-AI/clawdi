@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.schemas.plugin_catalog import catalog_source_path, parse_catalog_document
+from app.schemas.plugin_catalog import catalog_runtime_source, parse_catalog_document
 from app.services.plugin_catalog import (
     PluginCatalogSyncError,
     PluginCatalogSyncWorker,
@@ -23,7 +23,7 @@ from app.services.plugin_catalog import (
 
 def _catalog() -> dict[str, Any]:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "plugins": [
             {
                 "name": "clawdi",
@@ -35,12 +35,11 @@ def _catalog() -> dict[str, Any]:
                 "keywords": ["clawdi"],
                 "languages": ["en"],
                 "runtimes": ["openclaw", "hermes"],
-                "hasConfiguration": False,
                 "components": {
                     "skills": ["clawdi"],
                     "mcpServers": {"clawdi": "streamable-http"},
                 },
-                "path": "./plugins/clawdi",
+                "source": {"type": "store", "path": "./plugins/clawdi"},
                 "digest": f"sha256-tree-v1:{'a' * 64}",
             }
         ],
@@ -51,22 +50,39 @@ def _catalog_bytes(value: dict[str, Any] | None = None) -> bytes:
     return json.dumps(value or _catalog(), separators=(",", ":")).encode()
 
 
-def test_catalog_v1_parses_closed_component_summary_and_normalizes_path() -> None:
+def test_catalog_v2_parses_closed_component_summary_and_binds_store_source() -> None:
     document = parse_catalog_document(_catalog_bytes())
 
     entry = document.plugins[0]
-    assert catalog_source_path(entry) == "v2/plugins/clawdi"
+    assert catalog_runtime_source(entry, revision="b" * 40) == {
+        "type": "github",
+        "url": "https://github.com/Clawdi-AI/store",
+        "path": "v2/plugins/clawdi",
+        "commit": "b" * 40,
+    }
     assert entry.components.model_dump(mode="json") == {
         "skills": ["clawdi"],
         "mcpServers": {"clawdi": "streamable-http"},
     }
+
+    release_catalog = deepcopy(_catalog())
+    release_catalog["plugins"][0]["source"] = {
+        "type": "github-release",
+        "url": "https://github.com/acme/plugins/releases/download/acme-v1.0.0/acme-1.0.0.tar.gz",
+        "archiveDigest": f"sha256:{'c' * 64}",
+    }
+    release_entry = parse_catalog_document(_catalog_bytes(release_catalog)).plugins[0]
+    assert (
+        catalog_runtime_source(release_entry, revision="b" * 40)
+        == release_catalog["plugins"][0]["source"]
+    )
 
 
 @pytest.mark.parametrize(
     "mutate",
     [
         lambda entry: entry.__setitem__("commit", "a" * 40),
-        lambda entry: entry.__setitem__("path", "../plugins/clawdi"),
+        lambda entry: entry["source"].__setitem__("path", "../plugins/clawdi"),
         lambda entry: entry.__setitem__("description", None),
         lambda entry: entry.__setitem__("components", {"skills": [], "mcpServers": {}}),
         lambda entry: entry["components"].__setitem__("skills", ["safe", "bad\x00"]),
@@ -83,7 +99,7 @@ def test_catalog_v1_parses_closed_component_summary_and_normalizes_path() -> Non
         "unknown",
     ],
 )
-def test_catalog_v1_rejects_untrusted_or_unbounded_shapes(mutate) -> None:
+def test_catalog_v2_rejects_untrusted_or_unbounded_shapes(mutate) -> None:
     catalog = deepcopy(_catalog())
     entry = catalog["plugins"][0]
     mutate(entry)
@@ -92,9 +108,9 @@ def test_catalog_v1_rejects_untrusted_or_unbounded_shapes(mutate) -> None:
         parse_catalog_document(_catalog_bytes(catalog))
 
 
-def test_catalog_v1_rejects_duplicate_json_keys() -> None:
+def test_catalog_v2_rejects_duplicate_json_keys() -> None:
     with pytest.raises(ValueError, match="duplicate catalog key"):
-        parse_catalog_document(b'{"schemaVersion":1,"schemaVersion":1,"plugins":[]}')
+        parse_catalog_document(b'{"schemaVersion":2,"schemaVersion":2,"plugins":[]}')
 
 
 @pytest.mark.asyncio

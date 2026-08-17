@@ -152,6 +152,11 @@ import {
 	reconcileManagedBaileysCompatibility,
 } from "./managed-baileys-compat";
 import {
+	buildHermesManagedChannelsPatch,
+	managedChannelHasAccounts,
+	managedHermesWhatsAppAuthDir,
+} from "./managed-channel-reconciliation";
+import {
 	installReservedManagedSkill,
 	managedSkillReservationOwner,
 	managedSkillReservations,
@@ -232,6 +237,7 @@ import {
 	removeStaleRuntimeSystemdFiles,
 	resolveRuntimeSystemdIdentity,
 	runtimeSystemdCommonEnvironment,
+	runtimeSystemdUserUnitName,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
 	writeRuntimeSystemdState,
@@ -503,6 +509,7 @@ function omitSecretRefs(
 }
 
 const MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
+const RETIRED_MANAGED_HERMES_WHATSAPP_RECEIPT = "hermes-whatsapp.json";
 
 export function materializeHostedChannelCredentials(
 	manifest: RuntimeManifest,
@@ -713,14 +720,39 @@ function managedWhatsAppAuthRoot(
 		: resolve(home, ".openclaw", "credentials", "whatsapp");
 }
 
-function readManagedWhatsAppAuthMarker(authDir: string): { credentialId: string } | null {
+interface ManagedWhatsAppAuthMarker {
+	schemaVersion: "clawdi.managedWhatsAppAuth.v1";
+	provider: "whatsapp";
+	target: ManagedWhatsAppAuthCredential["target"];
+	accountKey: string;
+	credentialId: string;
+}
+
+function readManagedWhatsAppAuthMarker(authDir: string): ManagedWhatsAppAuthMarker | null {
 	const markerPath = join(authDir, MANAGED_WHATSAPP_AUTH_MARKER);
 	try {
 		if (!lstatSync(markerPath).isFile()) return null;
 		const parsed = JSON.parse(readFileSync(markerPath, "utf-8")) as unknown;
 		const record = recordValue(parsed);
+		const target = record ? stringValue(record.target) : null;
+		const accountKey = record ? stringValue(record.accountKey) : null;
 		const credentialId = record ? stringValue(record.credentialId) : null;
-		return credentialId ? { credentialId } : null;
+		if (
+			record?.schemaVersion !== "clawdi.managedWhatsAppAuth.v1" ||
+			record.provider !== "whatsapp" ||
+			(target !== "openclaw" && target !== "hermes" && target !== "legacy") ||
+			!accountKey ||
+			!credentialId
+		) {
+			return null;
+		}
+		return {
+			schemaVersion: "clawdi.managedWhatsAppAuth.v1",
+			provider: "whatsapp",
+			target,
+			accountKey,
+			credentialId,
+		};
 	} catch {
 		return null;
 	}
@@ -731,6 +763,12 @@ function removeManagedWhatsAppAuthDir(authDir: string): void {
 	rmSync(authDir, { recursive: true, force: true });
 }
 
+function removeManagedHermesWhatsAppAuthDir(authDir: string): void {
+	const marker = readManagedWhatsAppAuthMarker(authDir);
+	if (marker?.target !== "hermes") return;
+	rmSync(authDir, { recursive: true, force: true });
+}
+
 function removeStaleManagedWhatsAppAuthDirs(home: string, expected: Set<string>): void {
 	const openclawRoot = managedWhatsAppAuthRoot(home, "openclaw");
 	if (openclawRoot && existsSync(openclawRoot)) {
@@ -738,7 +776,7 @@ function removeStaleManagedWhatsAppAuthDirs(home: string, expected: Set<string>)
 	}
 	const hermesAuthDir = managedWhatsAppAuthRoot(home, "hermes");
 	if (hermesAuthDir && !expected.has(hermesAuthDir)) {
-		removeManagedWhatsAppAuthDir(hermesAuthDir);
+		removeManagedHermesWhatsAppAuthDir(hermesAuthDir);
 	}
 }
 
@@ -994,6 +1032,42 @@ function runtimeAppRoot(name: string, home: string): string | null {
 	return null;
 }
 
+const HERMES_DASHBOARD_CAPABILITY_PROBE =
+	"import uvicorn; assert callable(getattr(uvicorn.Server, 'capture_signals', None))";
+
+function hermesDashboardCapabilityError(
+	name: string,
+	runtime: RuntimeManifest["runtimes"][string],
+): string | null {
+	if (name !== "hermes" || !runtime.enabled || !runtime.install || !runtime.services?.dashboard)
+		return null;
+	const python = join(runtime.install.home, ".hermes", "hermes-agent", "venv", "bin", "python");
+	if (!executableExists(python)) {
+		return `Hermes dashboard runtime is missing its managed Python interpreter: ${python}`;
+	}
+	let result: ReturnType<typeof spawnRuntimeUserCommand>;
+	try {
+		result = spawnRuntimeUserCommand(
+			python,
+			["-c", HERMES_DASHBOARD_CAPABILITY_PROBE],
+			runtime.install.home,
+			runtime.install.home,
+			{ timeoutMs: 30_000 },
+		);
+	} catch (error) {
+		return `Hermes dashboard runtime capability probe failed: ${
+			error instanceof Error ? error.message : String(error)
+		}`;
+	}
+	if (result.status === 0) return null;
+	return `Hermes dashboard runtime is incompatible: ${
+		tail(String(result.stderr ?? "")) ??
+		(result.error instanceof Error
+			? result.error.message
+			: "uvicorn.Server.capture_signals is unavailable")
+	}`;
+}
+
 const liveSyncEnvironmentIndexSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.liveSyncEnvironments.v1"),
@@ -1214,6 +1288,7 @@ function observeRuntimeInstall(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
 	home: string,
+	planned?: RuntimeInstallObservation,
 ) {
 	if (!runtime.enabled) {
 		return {
@@ -1271,7 +1346,20 @@ function observeRuntimeInstall(
 			error: `runtime ${name} is enabled but missing install metadata`,
 		} satisfies RuntimeInstallObservation;
 	}
-	return runOfficialInstaller(name, runtime.install);
+	const commandPath = runtimeCommandPath(name, runtime.install.home);
+	const repairDashboardCapability =
+		name === "hermes" &&
+		Boolean(runtime.services?.dashboard) &&
+		Boolean(commandPath && executableExists(commandPath)) &&
+		planned?.status === "configured";
+	const observation = runOfficialInstaller(name, runtime.install, {
+		force: repairDashboardCapability,
+	});
+	if (observation.error) return observation;
+	const capabilityError = hermesDashboardCapabilityError(name, runtime);
+	return capabilityError
+		? { ...observation, status: "install_failed" as const, error: capabilityError }
+		: observation;
 }
 
 function planRuntimeInstallObservation(
@@ -1283,10 +1371,12 @@ function planRuntimeInstallObservation(
 	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home);
 	const commandPath = runtimeCommandPath(name, runtime.install.home);
 	const appRoot = runtimeAppRoot(name, runtime.install.home);
+	const capabilityError = hermesDashboardCapabilityError(name, runtime);
 	return {
 		runtime: name,
 		enabled: true,
-		status: commandPath && executableExists(commandPath) ? "present" : "configured",
+		status:
+			commandPath && executableExists(commandPath) && !capabilityError ? "present" : "configured",
 		executionUser: null,
 		commandPath,
 		appRoot,
@@ -3092,11 +3182,9 @@ function openClawGatewayHostedPatch(
 										...(nativeAuth
 											? {
 													basePath: openClawControlUiBasePath(manifest),
-													allowInsecureAuth: false,
 													dangerouslyAllowHostHeaderOriginFallback: false,
-													dangerouslyDisableDeviceAuth: true,
 												}
-											: { dangerouslyDisableDeviceAuth: true }),
+											: {}),
 									},
 								}
 							: {}),
@@ -3186,27 +3274,25 @@ function applyHostedChannelProjection(
 	manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
-): string | null {
-	if (name !== "openclaw" && name !== "hermes") return null;
+	hermesWhatsAppAuthDir: string | null,
+): boolean {
+	if (name !== "openclaw" && name !== "hermes") return false;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
-		return null;
+		return false;
 	}
 	const channels = hostedChannelProjection(manifest);
-	if (!channels) return null;
+	if (!channels) return false;
 
 	if (name === "hermes") {
 		const configPath = join(home, ".hermes", "config.yaml");
-		withRuntimeUserFileAccess(() => {
-			const configContent = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
-			mergeHermesChannelConfig(
+		return withRuntimeUserFileAccess(() => {
+			const changed = mergeHermesChannelConfig(
 				configPath,
-				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials, {
-					cleanupWhatsApp: hermesManagedWhatsAppProjectionOwned(configContent, home),
-				}),
+				buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
 			);
 			makeRuntimeUserOwned(configPath);
+			return changed;
 		});
-		return configPath;
 	}
 	runRuntimeUserCommand(
 		observation.commandPath,
@@ -3215,7 +3301,7 @@ function applyHostedChannelProjection(
 		home,
 		workspaceRoot,
 	);
-	return observation.commandPath;
+	return false;
 }
 
 function installHostedChannelProjectionDependencies(
@@ -3243,149 +3329,9 @@ function installHostedChannelProjectionDependencies(
 	});
 }
 
-function hermesManagedChannelsPatch(
-	channels: Record<string, unknown>,
-	channelCredentials: unknown,
-	options: { cleanupWhatsApp?: boolean } = {},
-): Record<string, unknown> {
-	const telegramEnabled = channelHasAccounts(channels.telegram);
-	const discordEnabled = channelHasAccounts(channels.discord);
-	const whatsappEnabled = channelHasAccounts(channels.whatsapp);
-	const whatsappSessionPath = whatsappEnabled
-		? hermesManagedWhatsAppSessionPath(channelCredentials)
-		: null;
-	if (whatsappEnabled && !whatsappSessionPath) {
-		throw new Error("managed Hermes WhatsApp projection is missing its auth directory");
-	}
-	const whatsapp = whatsappEnabled
-		? {
-				enabled: true,
-				dm_policy: "allowlist",
-				group_policy: "open",
-				allow_from: ["*"],
-				group_allow_from: ["*"],
-			}
-		: options.cleanupWhatsApp !== false
-			? {
-					enabled: false,
-					dm_policy: null,
-					group_policy: null,
-					allow_from: null,
-					group_allow_from: null,
-				}
-			: null;
-	const whatsappPlatform = whatsappEnabled
-		? {
-				enabled: true,
-				extra: {
-					session_path: whatsappSessionPath,
-					dm_policy: "allowlist",
-					group_policy: "open",
-					allow_from: ["*"],
-					group_allow_from: ["*"],
-					group_sessions_per_user: false,
-					thread_sessions_per_user: false,
-				},
-			}
-		: options.cleanupWhatsApp !== false
-			? {
-					enabled: false,
-					extra: {
-						session_path: null,
-						dm_policy: null,
-						group_policy: null,
-						allow_from: null,
-						group_allow_from: null,
-						group_sessions_per_user: null,
-						thread_sessions_per_user: null,
-					},
-				}
-			: null;
-	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled || whatsappEnabled;
-	return {
-		telegram: telegramEnabled
-			? {
-					enabled: true,
-					dm_policy: "open",
-					group_policy: "open",
-					allow_from: ["*"],
-					group_allow_from: ["*"],
-					group_allowed_chats: ["*"],
-					require_mention: false,
-					extra: {
-						base_url: "https://api.telegram.org/bot",
-						base_file_url: "https://api.telegram.org/file/bot",
-					},
-				}
-			: { enabled: false },
-		discord: discordEnabled
-			? {
-					enabled: true,
-					dm_policy: "open",
-					group_policy: "open",
-					require_mention: false,
-					thread_require_mention: false,
-					bots_require_inline_mention: false,
-				}
-			: { enabled: false },
-		...(whatsapp ? { whatsapp } : {}),
-		group_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
-		thread_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
-		platforms: {
-			telegram: {
-				extra: {
-					group_sessions_per_user: telegramEnabled ? false : null,
-					thread_sessions_per_user: telegramEnabled ? false : null,
-				},
-			},
-			...(whatsappPlatform ? { whatsapp: whatsappPlatform } : {}),
-		},
-		display: {
-			platforms: {
-				telegram: {
-					streaming: telegramEnabled ? true : null,
-				},
-			},
-		},
-	};
-}
-
-function hermesManagedWhatsAppProjectionOwned(configContent: string, home: string): boolean {
-	try {
-		const root = recordValue(parseYaml(configContent));
-		const platforms = recordValue(root?.platforms);
-		const whatsapp = recordValue(platforms?.whatsapp);
-		const extra = recordValue(whatsapp?.extra);
-		return extra?.session_path === managedWhatsAppAuthRoot(home, "hermes");
-	} catch {
-		return false;
-	}
-}
-
-function hermesManagedWhatsAppSessionPath(channelCredentials: unknown): string | null {
-	if (!Array.isArray(channelCredentials)) return null;
-	for (const value of channelCredentials) {
-		const credential = recordValue(value);
-		if (credential?.provider !== "whatsapp" || credential.kind !== "whatsapp_baileys_auth_state") {
-			continue;
-		}
-		const targets = recordValue(credential.targets);
-		const hermes = recordValue(targets?.hermes);
-		const authDir = stringValue(hermes?.authDir);
-		if (authDir) return authDir;
-	}
-	return null;
-}
-
-function channelHasAccounts(channel: unknown): boolean {
-	if (!isPlainRecord(channel)) return false;
-	const accounts = channel.accounts;
-	return isPlainRecord(accounts) && Object.keys(accounts).length > 0;
-}
-
 function openClawManagedChannelUsesEnvSecretRefs(channels: Record<string, unknown>): boolean {
 	return ["telegram", "discord", "whatsapp"].some((channel) =>
-		channelHasAccounts(channels[channel]),
+		managedChannelHasAccounts(channels[channel]),
 	);
 }
 
@@ -3393,9 +3339,9 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 	const deleteEntries = openClawManagedChannelDeletes();
 	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(channels);
 	const isolatesManagedDms =
-		channelHasAccounts(channels.telegram) ||
-		channelHasAccounts(channels.discord) ||
-		channelHasAccounts(channels.whatsapp);
+		managedChannelHasAccounts(channels.telegram) ||
+		managedChannelHasAccounts(channels.discord) ||
+		managedChannelHasAccounts(channels.whatsapp);
 	return {
 		channels: {
 			...deleteEntries,
@@ -4860,7 +4806,8 @@ function runtimeProgramRevisionForManifest(
 	manifest: RuntimeManifest,
 	runtime: string,
 	secretValues: Record<string, string> | undefined,
-	providerProjectionRevision: string | null = null,
+	providerProjectionRevision: string | null,
+	hermesWhatsAppAuthDir: string | null,
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
 	const runtimeSecretRefs = desiredRuntime
@@ -4887,10 +4834,7 @@ function runtimeProgramRevisionForManifest(
 	if (channels && runtime === "openclaw") {
 		channelProjection = openClawManagedChannelsPatch(channels);
 	} else if (channels && runtime === "hermes" && desiredRuntime?.enabled) {
-		channelProjection = hermesManagedChannelsPatch(
-			channels,
-			manifest.projection?.channelCredentials,
-		);
+		channelProjection = buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
 	}
 	return runtimeProgramRevision({
 		renderedProjection: {
@@ -5180,6 +5124,7 @@ function validateRuntimeProjectionPlan(input: {
 	secretValues: Record<string, string> | undefined;
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
+	hermesWhatsAppAuthDir: string | null;
 }): void {
 	const {
 		manifest,
@@ -5188,6 +5133,7 @@ function validateRuntimeProjectionPlan(input: {
 		secretValues,
 		observations,
 		previousProjectedProviderIds,
+		hermesWhatsAppAuthDir,
 	} = input;
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
@@ -5288,9 +5234,7 @@ function validateRuntimeProjectionPlan(input: {
 		if (channels && name === "hermes" && runtime.enabled) {
 			hermesConfig = renderHermesChannelConfig(
 				hermesConfig,
-				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials, {
-					cleanupWhatsApp: hermesManagedWhatsAppProjectionOwned(hermesConfig, home),
-				}),
+				buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
 			);
 		}
 	}
@@ -5328,7 +5272,11 @@ export function runtimeInstallerMutationTargets(
 			join(home, ".hermes", "uv"),
 			join(home, ".hermes", ".env"),
 			join(home, ".hermes", ".no-bundled-skills"),
+			join(home, ".hermes", "config.yaml"),
+			join(home, ".hermes", "SOUL.md"),
+			join(home, ".hermes", "skills"),
 			join(home, ".local", "bin", "hermes"),
+			join(home, ".local", "bin", "hermes-agent"),
 			join(home, ".local", "bin", "hermes-acp"),
 			join(home, ".local", "bin", "node"),
 			join(home, ".local", "bin", "npm"),
@@ -5339,6 +5287,17 @@ export function runtimeInstallerMutationTargets(
 	}
 	return [...targets];
 }
+
+const HERMES_INSTALLER_DATA_DIRECTORIES = [
+	"cron",
+	"sessions",
+	"logs",
+	"pairing",
+	"hooks",
+	"image_cache",
+	"audio_cache",
+	"memories",
+] as const;
 
 function runtimeColdInstallMutationPlan(
 	manifest: RuntimeManifest,
@@ -5361,6 +5320,11 @@ function runtimeColdInstallMutationPlan(
 			paths.userHome,
 			paths.clawdiHome,
 			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserTrustedRoots),
+			...(manifest.runtimes.hermes?.enabled &&
+			manifest.runtimes.hermes.install &&
+			observations.get("hermes")?.status !== "present"
+				? HERMES_INSTALLER_DATA_DIRECTORIES.map((directory) => join(home, ".hermes", directory))
+				: []),
 		]),
 	].sort();
 	const runtimeCommandTargets = Object.keys(manifest.runtimes).flatMap((name) => {
@@ -5382,6 +5346,31 @@ function runtimeColdInstallMutationPlan(
 	};
 }
 
+function excludeColdInstallSnapshotCoverage(
+	plan: RuntimeManagedMutationPlan,
+	coldInstallPlan: RuntimeManagedMutationPlan,
+): RuntimeManagedMutationPlan {
+	const contentRoots = coldInstallPlan.runtimeUserTargets.map((path) => resolve(path));
+	const coveredByContentRoot = (path: string): boolean => {
+		const candidate = resolve(path);
+		return contentRoots.some((root) => {
+			const relativePath = relative(root, candidate);
+			return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+		});
+	};
+	const coldMetadata = new Set(coldInstallPlan.metadataTargets.map((path) => resolve(path)));
+	return {
+		...plan,
+		runtimeUserTargets: plan.runtimeUserTargets.filter((path) => !coveredByContentRoot(path)),
+		runtimeUserSymlinkTargets: plan.runtimeUserSymlinkTargets.filter(
+			(path) => !coveredByContentRoot(path),
+		),
+		metadataTargets: plan.metadataTargets.filter(
+			(path) => !coveredByContentRoot(path) && !coldMetadata.has(resolve(path)),
+		),
+	};
+}
+
 function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home: string): string[] {
 	const targets = new Set(
 		hostedChannelCredentialsDeclared(manifest)
@@ -5396,7 +5385,9 @@ function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home:
 		}
 	}
 	const hermesAuthDir = managedWhatsAppAuthRoot(home, "hermes");
-	if (hermesAuthDir && readManagedWhatsAppAuthMarker(hermesAuthDir)) targets.add(hermesAuthDir);
+	if (hermesAuthDir && readManagedWhatsAppAuthMarker(hermesAuthDir)?.target === "hermes") {
+		targets.add(hermesAuthDir);
+	}
 	return [...targets];
 }
 
@@ -5742,6 +5733,8 @@ export function convergeRuntimeManifest(
 		applyContext,
 		opts.hostedRuntimeContract,
 	);
+	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
+	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
 	removeLegacyTenantClawdiState(paths);
 	if (manifest.companions?.filebrowser) {
@@ -5752,7 +5745,6 @@ export function convergeRuntimeManifest(
 			throw new Error("Files companion requires systemd apply and readiness hooks");
 		}
 	}
-	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
 	const agentPluginFailedNames = new Set<string>();
@@ -5762,6 +5754,8 @@ export function convergeRuntimeManifest(
 	let agentPluginMutationAttempted = false;
 	let agentPluginQuiesceUserUnits: string[] = [];
 	let agentPluginRestartUserUnits: string[] = [];
+	const runtimeProjectionMutationRuntimes = new Set<string>();
+	let runtimeProjectionRestartUserUnits: string[] = [];
 	const enabledRuntimes = Object.entries(manifest.runtimes)
 		.filter(([, runtime]) => runtime.enabled)
 		.map(([name]) => name)
@@ -5849,9 +5843,13 @@ export function convergeRuntimeManifest(
 			hostedRuntimeContract.assertPlatformRoots();
 			ensureRuntimeUserOwnershipBoundaries(coldInstallPlan.runtimeUserOwnershipTargets);
 		}
-		observations.clear();
 		for (const [name, runtime] of runtimeEntries) {
-			const observation = observeRuntimeInstall(name, runtime, projectionHome);
+			const observation = observeRuntimeInstall(
+				name,
+				runtime,
+				projectionHome,
+				observations.get(name),
+			);
 			observations.set(name, observation);
 			if (observation.error) installErrors.push(observation.error);
 		}
@@ -5894,7 +5892,11 @@ export function convergeRuntimeManifest(
 			manifest.runtimes.openclaw?.enabled === true ||
 			Boolean(openClawCommand && executableExists(openClawCommand));
 		openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
-			? openClawSkillDriver.resolveWorkspace({ home: projectionHome })
+			? openClawSkillDriver.resolveWorkspace({
+					home: projectionHome,
+					repairInvalidConfig:
+						manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2",
+				})
 			: null;
 		recoverHostedSourcedSkillReservations(
 			manifest,
@@ -5928,6 +5930,7 @@ export function convergeRuntimeManifest(
 			secretValues,
 			observations,
 			previousProjectedProviderIds,
+			hermesWhatsAppAuthDir,
 		});
 		plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
 			manifest,
@@ -5971,7 +5974,11 @@ export function convergeRuntimeManifest(
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
 	let liveSnapshot: ReturnType<typeof captureRuntimeLiveSnapshot>;
 	try {
-		liveSnapshot = captureRuntimeLiveSnapshot(mutationPlan.snapshot);
+		liveSnapshot = captureRuntimeLiveSnapshot(
+			coldInstallPlan
+				? excludeColdInstallSnapshotCoverage(mutationPlan.snapshot, coldInstallPlan.snapshot)
+				: mutationPlan.snapshot,
+		);
 		if (coldInstallSnapshot) {
 			for (const [path, node] of coldInstallSnapshot.entries) {
 				liveSnapshot.entries.set(path, node);
@@ -6337,6 +6344,7 @@ export function convergeRuntimeManifest(
 			secretValues,
 			observations,
 			previousProjectedProviderIds,
+			hermesWhatsAppAuthDir,
 		});
 		const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
 		for (const [name] of runtimeEntries) {
@@ -6536,7 +6544,15 @@ export function convergeRuntimeManifest(
 				);
 			}
 			try {
-				applyHostedChannelProjection(name, observation, manifest, projectionHome, workspaceRoot);
+				const channelConfigChanged = applyHostedChannelProjection(
+					name,
+					observation,
+					manifest,
+					projectionHome,
+					workspaceRoot,
+					hermesWhatsAppAuthDir,
+				);
+				if (channelConfigChanged) runtimeProjectionMutationRuntimes.add(name);
 			} catch (error) {
 				installErrors.push(
 					`runtime ${name} channel projection failed: ${
@@ -6594,7 +6610,14 @@ export function convergeRuntimeManifest(
 			daemonAuthTokenFile,
 			secretValues,
 			providerProjectionRevisions,
-			runtimeRevision: runtimeProgramRevisionForManifest,
+			runtimeRevision: (desired, runtime, secrets, providerRevision) =>
+				runtimeProgramRevisionForManifest(
+					desired,
+					runtime,
+					secrets,
+					providerRevision,
+					hermesWhatsAppAuthDir,
+				),
 			commonEnvironment: commonSystemdEnvironment,
 		});
 		staleSystemdFiles = systemdUnits.staleFiles;
@@ -6604,6 +6627,21 @@ export function convergeRuntimeManifest(
 			previousInstallReceipts,
 			opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
 		);
+		const pendingOfficialUnits = new Set(officialServicePlan.pending.map((item) => item.unitName));
+		runtimeProjectionRestartUserUnits = [
+			...new Set(
+				runtimeSystemdUserPrograms
+					.filter(
+						(program) =>
+							program.programKind === "runtime" &&
+							program.service === null &&
+							runtimeProjectionMutationRuntimes.has(program.runtime),
+					)
+					.map(runtimeSystemdUserUnitName),
+			),
+		]
+			.filter((unitName) => !pendingOfficialUnits.has(unitName))
+			.sort();
 		installReceiptTargets.officialServices = officialServicePlan.targets;
 		const hermesDashboardArtifactPlan = planHermesDashboardArtifact(
 			runtimeSystemdUserPrograms,
@@ -6695,7 +6733,9 @@ export function convergeRuntimeManifest(
 				restartEgressSidecar,
 				stopEgressSidecar: false,
 				reconcileUserUnits: mutationPlan.systemdUserUnits,
-				restartUserUnits: agentPluginRestartUserUnits,
+				restartUserUnits: [
+					...new Set([...agentPluginRestartUserUnits, ...runtimeProjectionRestartUserUnits]),
+				].sort(),
 				staleSystemUnits: staleSystemdFiles.systemUnits,
 				staleUserUnits: staleSystemdFiles.userUnits,
 			});
@@ -6763,6 +6803,9 @@ export function convergeRuntimeManifest(
 			const egressRevisionPreviouslyCommitted =
 				desiredEgressSidecarSecretRevision !== undefined &&
 				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
+			rmSync(join(paths.managedResourceRoot, RETIRED_MANAGED_HERMES_WHATSAPP_RECEIPT), {
+				force: true,
+			});
 			commitRuntimeInstallReceipts(installReceiptTargets, paths);
 			if (agentPluginTransaction) {
 				try {
@@ -6913,7 +6956,9 @@ export function convergeRuntimeManifest(
 					restartEgressSidecar: restartEgressSidecar && egressRollbackAuthorityVerified,
 					stopEgressSidecar: restartEgressSidecar && !egressRollbackAuthorityVerified,
 					reconcileUserUnits: mutationPlan.systemdUserUnits,
-					restartUserUnits: agentPluginRestartUserUnits,
+					restartUserUnits: [
+						...new Set([...agentPluginRestartUserUnits, ...runtimeProjectionRestartUserUnits]),
+					].sort(),
 					staleSystemUnits: staleSystemdFiles.systemUnits,
 					staleUserUnits: staleSystemdFiles.userUnits,
 				});

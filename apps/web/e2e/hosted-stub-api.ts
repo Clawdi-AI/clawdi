@@ -1,5 +1,6 @@
 import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route } from "@playwright/test";
+import type { WalletState } from "../src/hosted/billing/contracts";
 
 export type DeploymentComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
@@ -496,18 +497,26 @@ export const interruptedIdentitylessDeployment = {
 	failure_reason: "creation_interrupted",
 };
 
-export const walletState = {
-	balance_credits: 25_000,
-	overdraft_credits: 0,
-	balance_snapshot_at: "2026-07-15T00:00:00Z",
-	payment_mode: "card",
+export const walletState: WalletState = {
+	balance_usd: "25.00",
 	x402_enabled: false,
+	x402_payment_authority: null,
+	x402_payment_status: "idle",
 	auto_reload_enabled: false,
-	auto_reload_threshold_credits: 5_000,
+	auto_reload_has_payment_method: false,
+	auto_reload_card: null,
+	auto_reload_currency: "usd",
+	auto_reload_required_consent_version: "wallet_auto_reload_off_session_v2",
+	auto_reload_amount_policy: "wallet_reload_configured_plus_negative_balance_v1",
+	auto_reload_consent_version: null,
+	auto_reload_consented_at: null,
+	auto_reload_threshold_usd: "5.00",
 	auto_reload_amount_cents: 2_500,
 	auto_reload_monthly_cap_cents: 10_000,
+	auto_reload_monthly_spent_cents: 0,
+	auto_reload_period_end: "2026-09-01T00:00:00Z",
+	auto_reload_status: "off",
 	auto_reload_action: null,
-	points_per_usd: 1_000,
 };
 
 export const walletActiveDeployment = {
@@ -790,7 +799,7 @@ export type HostedApiStubOptions = {
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
-	walletState?: typeof walletState;
+	walletState?: WalletState;
 	onTopUpSuccess?: () => void;
 	onWalletCheckoutSuccess?: () => void;
 };
@@ -852,7 +861,7 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
 			}
 			if (response) {
-				if (response.status < 400) currentWallet = response.body as typeof walletState;
+				if (response.status < 400) currentWallet = response.body as WalletState;
 				return fulfillJson(r, response.body, response.status);
 			}
 			const request = JSON.parse(requestBody) as Partial<typeof walletState>;

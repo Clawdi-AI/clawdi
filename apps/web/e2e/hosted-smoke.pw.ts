@@ -874,6 +874,8 @@ const _interruptedIdentitylessDeployment = {
 const walletState: WalletState = {
 	balance_usd: "25.00",
 	x402_enabled: false,
+	x402_payment_authority: null,
+	x402_payment_status: "idle",
 	auto_reload_enabled: false,
 	auto_reload_has_payment_method: false,
 	auto_reload_card: null,

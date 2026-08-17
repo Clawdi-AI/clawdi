@@ -1057,7 +1057,17 @@ mkdir -p '${dirname(commandPath)}'
 cat > '${commandPath}' <<'CLI'
 #!/usr/bin/env bash
 set -euo pipefail
-plugin_root="$HOME/.openclaw/extensions/acme-tools"
+plugin_root=""
+for plugin_file in "$HOME"/.openclaw/extensions/*/plugin.json; do
+  [[ -f "$plugin_file" ]] || continue
+  plugin_root="\${plugin_file%/plugin.json}"
+  break
+done
+plugin_native_id="\${plugin_root##*/}"
+plugin_name=""
+if [[ -n "$plugin_root" ]]; then
+  plugin_name=$(sed -n 's/.*"name":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
+fi
 plugin_config="$HOME/.openclaw/openclaw.json"
 plugin_database="$HOME/.openclaw/state/openclaw.sqlite"
 plugin_enabled=false
@@ -1091,20 +1101,23 @@ case "\${1:-}" in
     case "\${2:-}" in
       list)
         [[ "\${3:-}" == --json ]] || exit 2
-        if [[ ! -f "$plugin_root/plugin.json" ]]; then
+	        if [[ -z "$plugin_root" || ! -f "$plugin_root/plugin.json" ]]; then
           printf '%s\\n' '{"plugins":[]}'
           exit 0
         fi
         version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
-        printf '{"plugins":[{"id":"acme-tools","name":"acme.tools","version":"%s","enabled":%s,"status":"%s","format":"bundle","bundleFormat":"agent"}]}\\n' "$version" "$plugin_enabled" "$plugin_status"
+	        printf '{"plugins":[{"id":"%s","name":"%s","version":"%s","enabled":%s,"status":"%s","format":"bundle","bundleFormat":"agent"}]}\\n' "$plugin_native_id" "$plugin_name" "$version" "$plugin_enabled" "$plugin_status"
         ;;
       inspect)
-        [[ "\${3:-}" == acme-tools && "\${4:-}" == --json && -f "$plugin_root/plugin.json" ]] || exit 2
+	        [[ "\${3:-}" == "$plugin_native_id" && "\${4:-}" == --json && -f "$plugin_root/plugin.json" ]] || exit 2
         version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
-	        printf '{"plugin":{"id":"acme-tools","name":"acme.tools","source":"test","origin":"config","status":"%s","version":"%s","enabled":%s,"format":"bundle","bundleFormat":"agent"},"mcpServers":[],"diagnostics":[],"install":{"source":"path","installPath":"%s","resolvedVersion":"%s"}}\\n' "$plugin_status" "$version" "$plugin_enabled" "$plugin_root" "$version"
+	        printf '{"plugin":{"id":"%s","name":"%s","source":"test","origin":"config","status":"%s","version":"%s","enabled":%s,"format":"bundle","bundleFormat":"agent"},"mcpServers":[],"diagnostics":[],"install":{"source":"path","installPath":"%s","resolvedVersion":"%s"}}\\n' "$plugin_native_id" "$plugin_name" "$plugin_status" "$version" "$plugin_enabled" "$plugin_root" "$version"
         ;;
 	      install)
 	        [[ "\${4:-}" == --force && -f "\${3:-}/plugin.json" ]] || exit 2
+	        plugin_name=$(sed -n 's/.*"name":"\\([^"]*\\)".*/\\1/p' "$3/plugin.json")
+	        plugin_native_id="\${plugin_name//./-}"
+	        plugin_root="$HOME/.openclaw/extensions/$plugin_native_id"
 	        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$3/plugin.json")
 	        if [[ "$HOME" == '${paths.userHome}' ]]; then
 	          if [[ -f "$HOME/.openclaw/fail-rollback" && "$version" == 1.0.0 ]]; then
@@ -1119,17 +1132,17 @@ case "\${1:-}" in
         mkdir -p "$(dirname "$plugin_root")"
         cp -R "$3" "$plugin_root"
         mkdir -p "$(dirname "$plugin_config")"
-        printf '%s\\n' '{"plugins":{"entries":{"acme-tools":{"enabled":false}}}}' > "$plugin_config"
+	        printf '{"plugins":{"entries":{"%s":{"enabled":false}}}}\\n' "$plugin_native_id" > "$plugin_config"
         mkdir -p "$(dirname "$plugin_database")"
         printf 'installed:%s\\n' "$version" > "$plugin_database"
         printf 'wal:%s\\n' "$version" > "$plugin_database-wal"
         printf 'shm:%s\\n' "$version" > "$plugin_database-shm"
         ;;
 	      enable|disable)
-	        [[ "\${3:-}" == acme-tools && -f "$plugin_root/plugin.json" ]] || exit 2
+	        [[ "\${3:-}" == "$plugin_native_id" && -f "$plugin_root/plugin.json" ]] || exit 2
 	        enabled=false
 	        if [[ "$2" == enable ]]; then enabled=true; fi
-	        printf '{"plugins":{"entries":{"acme-tools":{"enabled":%s}}}}\\n' "$enabled" > "$plugin_config"
+	        printf '{"plugins":{"entries":{"%s":{"enabled":%s}}}}\\n' "$plugin_native_id" "$enabled" > "$plugin_config"
 	        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$plugin_root/plugin.json")
 	        if [[ "$HOME" == '${paths.userHome}' && "$2" == enable && "$version" == 2.0.0 ]]; then
 	          printf '%s\\n' enable-failed > "$plugin_database"
@@ -1140,7 +1153,7 @@ case "\${1:-}" in
 	        fi
 	        ;;
       uninstall)
-        [[ "\${3:-}" == acme-tools && "\${4:-}" == --force ]] || exit 2
+	        [[ "\${3:-}" == "$plugin_native_id" && "\${4:-}" == --force ]] || exit 2
         rm -rf "$plugin_root"
         printf '%s\\n' '{}' > "$plugin_config"
         printf '%s\\n' uninstalled > "$plugin_database"
@@ -1210,6 +1223,7 @@ chmod 0755 '${commandPath}'
 		expect(first.installErrors).toEqual([]);
 		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
 			"binary-install",
+			"probe-install:1.0.0",
 			"probe-install:1.0.0",
 			"quiesce",
 			"plugin-apply:1.0.0",
@@ -1307,6 +1321,7 @@ chmod 0755 '${commandPath}'
 		expect(failed.agentPluginFailedNames).toEqual(["acme.tools"]);
 		expect(rollbackLifecycle).toEqual(["quiesce", "systemd rollback"]);
 		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
+			"probe-install:1.0.0",
 			"probe-install:1.0.0",
 			"probe-install:2.0.0",
 			"quiesce",
@@ -1986,15 +2001,13 @@ chmod 0755 '${commandPath}'
 				auth: { mode: "token", token: "gateway-token" },
 				controlUi: {
 					allowedOrigins,
-					allowInsecureAuth: false,
 					dangerouslyAllowHostHeaderOriginFallback: false,
-					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});
 	});
 
-	test("projects hosted OpenClaw v2 direct token auth with device auth disabled", () => {
+	test("projects hosted OpenClaw v2 direct token auth", () => {
 		const paths = tempRuntimePaths();
 		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-native-auth-patch.json");
@@ -2055,9 +2068,7 @@ chmod 0755 '${commandPath}'
 				controlUi: {
 					basePath: "/control",
 					allowedOrigins: ["https://agent.example.test"],
-					allowInsecureAuth: false,
 					dangerouslyAllowHostHeaderOriginFallback: false,
-					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});
@@ -4892,7 +4903,11 @@ echo spawned > '${installerLog}'
 			join(home, ".hermes", "uv"),
 			join(home, ".hermes", ".env"),
 			join(home, ".hermes", ".no-bundled-skills"),
+			join(home, ".hermes", "config.yaml"),
+			join(home, ".hermes", "SOUL.md"),
+			join(home, ".hermes", "skills"),
 			join(home, ".local", "bin", "hermes"),
+			join(home, ".local", "bin", "hermes-agent"),
 			join(home, ".local", "bin", "hermes-acp"),
 			join(home, ".local", "bin", "node"),
 			join(home, ".local", "bin", "npm"),

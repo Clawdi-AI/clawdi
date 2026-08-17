@@ -589,7 +589,7 @@ Normalization maps hosted fields into the internal shape:
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with the selected model plus minimal Clawdi-managed endpoint/secret metadata; it has no provider model catalog and is independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
 | `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
-| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional Clawdi-owned runtime-native Agent Plugins desired state, projected only when the client declares `agent-plugins-manifest-v1`; schema version `1` entries are secret-free immutable package intent that pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, an immutable Store commit and safe repository path, and a `sha256-tree-v1` content digest |
+| v2 bundle inner manifest `agentPlugins.{schemaVersion,installations}` | Optional Clawdi-owned runtime-native Agent Plugins desired state, projected only when the client declares `agent-plugins-manifest-v1`; schema version `1` entries are secret-free immutable package intent that pin an exact SemVer, the canonical Agent Plugins 1.0.0 schema URI, a closed immutable source, and a `sha256-tree-v1` content digest; GitHub Release sources additionally require `agent-plugin-github-release-source-v1` and bind the archive SHA-256 |
 | `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit generic local sidecar profiles; Agent Plugin packages, Store metadata, and public installation APIs cannot declare them |
@@ -751,7 +751,7 @@ Agent Plugins 1.0.0 defines package manifests and Skill/MCP component loading;
 it does not define a registry, marketplace, trust policy, installation source,
 integrity scheme, or portable secret binding. Clawdi supplies those separate
 control-plane concerns through a strict catalog cache and desired-state rows.
-The asynchronous worker resolves fixed public Store `main`, fetches the catalog
+The asynchronous worker resolves fixed public Store `main`, fetches catalog v2
 at the resolved exact commit, and retains the last-known-good snapshot across
 timeouts, invalid upstream content, and GitHub failures. Runtime and product
 requests read PostgreSQL only.
@@ -773,27 +773,37 @@ upgrade existing Agents.
 
 This release installs only through the existing v2 Hosted bundle. An Agent
 without Hosted v2 runtime state is rejected before persistence. Catalog entries
-that declare `hasConfiguration` remain non-installable, and catalog runtime
-compatibility is checked against the selected known runtime before persistence.
+Catalog runtime compatibility is checked against the selected known runtime
+before persistence.
 The Platform compatibility input keeps optional `agent_plugins` only as
 omitted/null; non-null input is rejected and Platform no longer persists or
 assigns plugin selection.
 
+Catalog source is a closed union. Authored Store packages use a catalog-relative
+path that Clawdi binds to the exact Store snapshot commit. Source-built packages
+use a canonical GitHub Release asset URL plus archive SHA-256. The selected
+source object and tree digest are copied into the installation row, so later
+catalog changes never alter an existing desired installation.
+
 The `agentPlugins` projection is supported only in the v2 Hosted bundle. Each
 installation key is the Agent Plugins name and must equal `plugin.json.name`;
 `installationId` is an opaque Clawdi lifecycle identity rather than a native
-runtime plugin id. Before touching the runtime, the CLI downloads the exact
-GitHub commit, safely extracts only the declared repository path, validates the
-Agent Plugins 1.0.0 schema/name/version identity, and verifies the canonical
-`sha256-tree-v1` regular-file tree digest. Symlinks, non-regular entries,
-unsafe or colliding paths, and bounded-size violations fail closed.
+runtime plugin id. Before touching the runtime, the CLI downloads either the
+exact GitHub commit or the exact Release asset. Release bytes must first match
+their archive SHA-256. The CLI then safely extracts the declared package root,
+validates the Agent Plugins 1.0.0 schema/name/version identity, and verifies the
+canonical `sha256-tree-v1` regular-file tree digest. Symlinks, non-regular
+entries, unsafe or colliding paths, and bounded-size violations fail closed.
 
 `X-Clawdi-Runtime-Capabilities: agent-plugins-manifest-v1` negotiates only the
 generic third-party desired-state projection. Clients without it receive no
-`agentPlugins` field. There is no package-specific proof header or migration
-variant. The built-in `clawdi` MCP and Skill remain projected through their
-existing first-party paths for every client and are never removed in response
-to Agent Plugin state.
+`agentPlugins` field. `agent-plugin-github-release-source-v1` independently
+proves parsing and download support for the Release source variant; without it,
+only installations using the already-supported commit source are projected.
+Neither token is a version gate. There is no package-specific proof header or
+migration variant. The built-in `clawdi` MCP and Skill remain projected through
+their existing first-party paths for every client and are never removed in
+response to Agent Plugin state.
 
 The plugin name `clawdi` is reserved. New catalog installations return
 `agent_plugin_name_reserved`; catalog responses expose `reserved_name` and are
@@ -1099,10 +1109,11 @@ patch is required for caller-selected tokens:
 [`auth-token-resolution.ts` lines 38-60](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/gateway/auth-token-resolution.ts#L38-L60),
 and the official [`config patch --stdin` contract](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/docs/cli/config.md#L249-L263).
 
-The local config patch also sets official shared-token auth, intentionally sets
-`dangerouslyDisableDeviceAuth: true` for the managed v2 product, disables
-insecure and Host-header fallback modes, derives `gateway.controlUi.basePath`
-from the clean public URL, and includes that URL's origin in `allowedOrigins`.
+The local config patch also sets official shared-token auth, disables insecure
+and Host-header fallback modes, derives `gateway.controlUi.basePath` from the
+clean public URL, and includes that URL's origin in `allowedOrigins`. Device
+authentication remains on its official default; Clawdi does not project the
+retired `dangerouslyDisableDeviceAuth` setting.
 The managed backend value, transient installer environment, and
 `openclaw.json` token must remain identical. The gateway unit does not receive
 an `OPENCLAW_GATEWAY_TOKEN` environment entry because runtime auth resolves the
@@ -1115,10 +1126,26 @@ Direct OpenClaw exposure remains fail closed behind the typed
 `openclaw-native-auth-v1` capability and an available
 managed gateway token. Hosted returns a clean endpoint plus an explicit token
 and `handoff_url` through an owner-checked, no-store credential endpoint. The
-handoff carries exactly one official `#token=` fragment. In hosted mode that
-managed token is the authentication, so device pairing is intentionally
-disabled to avoid an additional approval step in the iframe or new-window
-handoff. OpenClaw retains its normal device-auth behavior outside hosted mode.
+backend first executes the fixed official `openclaw dashboard --json` command
+in the currently receipted runtime instance. When supported, it returns the
+single-use, ten-minute `browserUrl` after binding it to the deployment's clean
+HTTPS endpoint. The browser consumes the official `bootstrapToken` and
+`bootstrapProfile=owner` fragment, creates its signed device identity, and
+receives the durable owner credential without a manual pairing step. If the
+installed binary cannot issue that handoff, Hosted preserves the existing exact
+`#token=` launch for older deployments; OpenClaw then enforces that deployment's
+own device-auth policy. This fallback neither disables device auth nor approves
+pending devices, and Clawdi implements no parallel device-auth protocol.
+
+OpenClaw persists the issued device credential in its own browser origin and
+reuses it when that browser later opens the clean dashboard URL. Clawdi records
+only that a bootstrap was attempted for the deployment and published endpoint,
+so returning to Agent Interface and opening a new window do not request another
+single-use handoff. An endpoint change requires a new bootstrap.
+The embedding page cannot inspect OpenClaw's cross-origin storage or connection
+state, and an iframe load is not treated as authentication proof. `Reconnect`
+explicitly requests a fresh native handoff when the OpenClaw UI reports that its
+stored session is no longer usable.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
@@ -1133,8 +1160,9 @@ infer auth from the runtime name or fall back to legacy `native_url` fields.
 Both runtimes declare `browser_mode: embedded_and_top_level` and remain embedded
 in the Console. Public endpoint URLs contain no secret. The owner-checked
 credential response carries the Hermes username/password or the OpenClaw token
-and exact `handoff_url`, never a query token. Credentials fail closed unless the
-displayed resource version is the exact converged current Ready rollout.
+and exact one-time `handoff_url`, never a query token. Credentials fail closed
+unless the displayed resource version is the exact converged current Ready
+rollout.
 
 Both runtimes use the same Runtime UI Access dialog and declarative reset. Reset
 rotates the existing encrypted gateway credential and advances the durable
@@ -1184,20 +1212,18 @@ scripts/test-runtime-official-installer-systemd.sh
 
 Done: the command exits 0 and reports `1 pass`.
 
-The Runtime UI behavior evidence below remains pinned to exact official commit
-[`ba467fbd3efa9ab109e620c4e42cfe92388171c5`](https://github.com/openclaw/openclaw/commit/ba467fbd3efa9ab109e620c4e42cfe92388171c5).
+The Runtime UI behavior evidence below was refreshed against exact official
+commit
+[`f7a86382823d2b30dca8af578f717a4fa87670f5`](https://github.com/openclaw/openclaw/commit/f7a86382823d2b30dca8af578f717a4fa87670f5).
 
 | Requirement | Official line evidence | Contract consequence |
 | --- | --- | --- |
-| Gateway bind, port, auth, and token | [`docs/cli/gateway.md` lines 26-85](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/cli/gateway.md#L26-L85), [`configuration-reference.md` lines 629-661](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/configuration-reference.md#L629-L661) | Use native `18789`, container-reachable `lan`, required token auth, and explicit public `allowedOrigins`. |
-| Control UI auth | [`docs/web/control-ui.md` lines 33-69](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L33-L69) | Token is sent in `connect.params.auth.token`; managed v2 uses this shared-token path without device pairing. |
-| Device-auth policy | [`docs/web/control-ui.md` lines 588-632](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L588-L632) | `dangerouslyDisableDeviceAuth: true` is an intentional managed-product policy tradeoff, not an inferred security default. |
-| Dashboard URL discovery | [`docs/cli/dashboard.md` lines 20-42](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/cli/dashboard.md#L20-L42), [`src/commands/dashboard.ts` lines 33-118](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/commands/dashboard.ts#L33-L118) | Official JSON discovery reports resolved HTTP/WS URLs; the official handoff uses `#token=`, not a query token. |
-| Fragment browser handoff | [`ui/src/app/startup-settings.ts` lines 91-172](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/ui/src/app/startup-settings.ts#L91-L172), [`docs/web/control-ui.md` lines 742-754](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L742-L754) | Query tokens are legacy, warned, and stripped; Clawdi loads the clean URL plus the official `#token=` handoff in its embedded iframe and optional top-level window. |
-| WebSocket auth | [`docs/concepts/architecture.md` lines 75-112](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/concepts/architecture.md#L75-L112) | The first frame is `connect`; managed v2 supplies the shared token and does not initiate a device-pairing flow. |
-| Gateway health surfaces | [`docs/gateway/embedding.md` lines 91-107](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/embedding.md#L91-L107), [`docs/gateway/index.md` lines 40-49](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/index.md#L40-L49) | The CLI commit proof is the required systemd units reaching active/enabled. The workload platform separately gates Service exposure with loopback startup/readiness probes against the official `/healthz` and `/readyz` surfaces; it does not claim an authenticated WebSocket or `gateway status --require-rpc` proof. Hermes additionally requires readiness metadata asserting `auth_required` with provider `basic`. |
-| Base path/prefix | [`docs/web/control-ui.md` lines 10-15](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L10-L15) | Configure official `gateway.controlUi.basePath`; do not inject or rewrite browser paths. |
-| Service lifecycle | [`docs/cli/daemon.md` lines 13-47](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/cli/daemon.md#L13-L47) | Use official gateway install/start/stop/restart/status lifecycle and keep Clawdi ownership limited to its hosted drop-in/env. |
+| Gateway bind, port, auth, and token | [`docs/cli/gateway.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/cli/gateway.md), [`configuration-reference.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/gateway/configuration-reference.md) | Use native `18789`, container-reachable `lan`, required token auth, and explicit public `allowedOrigins`. |
+| Browser handoff command | [`docs/cli/dashboard.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/cli/dashboard.md), [`src/commands/dashboard.ts`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/src/commands/dashboard.ts) | `dashboard --json` is the official machine-readable integration surface. Against a running gateway it returns `browserUrl` plus its expiry without opening a browser. |
+| Owner bootstrap contract | [`control-ui-handoff.ts`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/src/commands/control-ui-handoff.ts), [`control-ui-contract.ts`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/src/gateway/control-ui-contract.ts), [`device-bootstrap-profile.ts`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/src/shared/device-bootstrap-profile.ts) | The fragment contains a single-use `bootstrapToken` and the closed `bootstrapProfile=owner` hint; the host-issued profile grants the browser owner credential through OpenClaw's native device flow. |
+| Gateway health surfaces | [`docs/gateway/embedding.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/gateway/embedding.md), [`docs/gateway/index.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/gateway/index.md) | The CLI commit proof is the required systemd units reaching active/enabled. The workload platform separately gates Service exposure with loopback startup/readiness probes against the official `/healthz` and `/readyz` surfaces. Hermes additionally requires readiness metadata asserting `auth_required` with provider `basic`. |
+| Base path/prefix | [`docs/web/control-ui.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/web/control-ui.md) | Configure official `gateway.controlUi.basePath`; rebind only the verified origin while preserving the official path and fragment. |
+| Service lifecycle | [`docs/cli/daemon.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/cli/daemon.md) | Use official gateway install/start/stop/restart/status lifecycle and keep Clawdi ownership limited to its hosted drop-in/env. |
 
 ## Desired State Boundary
 
@@ -1593,10 +1619,11 @@ fallback for environments that reject custom WebSocket subprotocols.
   channel descriptors, filesystem paths, and process launch arguments.
 - Remove `CLAWDI_AUTH_TOKEN` from agent child process environments unless that
   process is explicitly the Clawdi daemon or runtime reconciler.
-- Disable OpenClaw device auth only for hosted strict v2, where the managed
-  shared token authenticates the dashboard handoff without an additional
-  pairing approval. Keep device auth enabled outside hosted mode, and never
-  enable insecure or Host-header fallback modes.
+- Keep OpenClaw device auth at its native default and use the official owner
+  bootstrap when available. Older hosted deployments may temporarily retain
+  their existing shared-token launch until their runtime and CLI are upgraded
+  together; do not project the retired device-auth disable setting into new
+  desired state, and never enable insecure or Host-header fallback modes.
 - Prefer WebSocket subprotocol auth for Terminal sessions so bearer tokens do
   not normally appear in URLs or proxy access logs.
 

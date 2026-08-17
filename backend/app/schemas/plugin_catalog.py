@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -83,6 +84,49 @@ class CatalogComponents(_StrictModel):
         return self
 
 
+class CatalogStoreSource(_StrictModel):
+    type: Literal["store"]
+    path: str = Field(min_length=1, max_length=500)
+
+
+class AgentPluginGithubReleaseSource(_StrictModel):
+    type: Literal["github-release"]
+    url: str = Field(min_length=1, max_length=1000)
+    archiveDigest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        try:
+            parsed = urlsplit(value)
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("must be a canonical GitHub release asset URL") from exc
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "github.com"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or re.fullmatch(
+                r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/download/"
+                r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\.tar\.gz",
+                parsed.path,
+            )
+            is None
+            or value != f"https://github.com{parsed.path}"
+        ):
+            raise ValueError("must be a canonical GitHub release asset URL")
+        return value
+
+
+CatalogSource = Annotated[
+    CatalogStoreSource | AgentPluginGithubReleaseSource,
+    Field(discriminator="type"),
+]
+
+
 class PluginCatalogDocumentEntry(_StrictModel):
     name: PluginName
     version: str = Field(min_length=1, max_length=256)
@@ -93,10 +137,9 @@ class PluginCatalogDocumentEntry(_StrictModel):
     keywords: list[str] = Field(max_length=20)
     languages: list[str] = Field(max_length=20)
     runtimes: list[Literal["openclaw", "hermes"]] = Field(max_length=2)
-    hasConfiguration: bool
     components: CatalogComponents
     icon: str | None = Field(default=None, min_length=1, max_length=1024)
-    path: str = Field(min_length=1, max_length=500)
+    source: CatalogSource
     digest: str = Field(pattern=r"^sha256-tree-v1:[0-9a-f]{64}$")
 
     @field_validator("version")
@@ -156,10 +199,15 @@ class PluginCatalogDocumentEntry(_StrictModel):
 
     @model_validator(mode="after")
     def _validate_paths(self) -> PluginCatalogDocumentEntry:
-        if self.path != f"./plugins/{self.name}":
-            raise ValueError("path must equal ./plugins/<name>")
+        if (
+            isinstance(self.source, CatalogStoreSource)
+            and self.source.path != f"./plugins/{self.name}"
+        ):
+            raise ValueError("store source path must equal ./plugins/<name>")
         if self.icon is not None:
-            prefix = f"{self.path}/"
+            if not isinstance(self.source, CatalogStoreSource):
+                raise ValueError("icon is supported only for in-Store packages")
+            prefix = f"{self.source.path}/"
             suffix = self.icon.removeprefix(prefix)
             if (
                 not self.icon.startswith(prefix)
@@ -172,7 +220,7 @@ class PluginCatalogDocumentEntry(_StrictModel):
 
 
 class PluginCatalogDocument(_StrictModel):
-    schemaVersion: Literal[1]
+    schemaVersion: Literal[2]
     plugins: list[PluginCatalogDocumentEntry] = Field(max_length=10_000)
 
     @model_validator(mode="after")
@@ -258,9 +306,20 @@ class AgentPluginDesiredStateDeleteResponse(_StrictModel):
     convergence: Literal["not_observed"] = "not_observed"
 
 
-def catalog_source_path(entry: PluginCatalogDocumentEntry) -> str:
-    """Resolve a generated v2 catalog-relative path to its repository path."""
-    return f"v2/{entry.path.removeprefix('./')}"
+def catalog_runtime_source(
+    entry: PluginCatalogDocumentEntry,
+    *,
+    revision: str,
+) -> dict[str, str]:
+    """Bind one catalog source to its immutable runtime wire identity."""
+    if isinstance(entry.source, CatalogStoreSource):
+        return {
+            "type": "github",
+            "url": TRUSTED_PLUGIN_REPOSITORY_URL,
+            "path": f"v2/{entry.source.path.removeprefix('./')}",
+            "commit": revision,
+        }
+    return entry.source.model_dump(mode="json")
 
 
 def parse_catalog_document(payload: bytes) -> PluginCatalogDocument:

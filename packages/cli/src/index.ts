@@ -181,6 +181,20 @@ program
 	});
 
 // ─────────────────────────────────────────────────────────────
+// wallet
+// ─────────────────────────────────────────────────────────────
+const walletCmd = program.command("wallet").description("Inspect Clawdi Wallet");
+
+walletCmd
+	.command("status")
+	.description("Show authenticated Wallet balance, binding, and USDC funding readiness")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { runWalletStatusCommand } = await import("./commands/wallet.js");
+		await runWalletStatusCommand(opts);
+	});
+
+// ─────────────────────────────────────────────────────────────
 // config
 // ─────────────────────────────────────────────────────────────
 const configCmd = program

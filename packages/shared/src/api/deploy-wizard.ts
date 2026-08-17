@@ -27,6 +27,7 @@ export type HostedDeployCheckoutSubscriptionSelection = NonNullable<
 export type HostedDeployOperation = Schemas["LongRunningOperation"];
 export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"];
 export type HostedDeployWallet = Schemas["V2WalletResponse"];
+export type HostedWalletBinding = Schemas["V2WalletBindingResponse"];
 
 export const HOSTED_DEPLOY_RUNTIMES = ["openclaw", "hermes"] as const;
 export const HOSTED_DEPLOY_COMPUTE_PLANS = ["compute_basic", "compute_performance"] as const;

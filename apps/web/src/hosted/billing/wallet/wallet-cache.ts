@@ -13,6 +13,9 @@ export function walletSnapshotForCache(wallet: WalletState): WalletCacheSnapshot
 	const snapshot: Omit<WalletCacheSnapshot, "auto_reload_action"> = {
 		balance_usd: wallet.balance_usd,
 		x402_enabled: wallet.x402_enabled,
+		x402_payment_authority: wallet.x402_payment_authority,
+		x402_payment_status: wallet.x402_payment_status,
+		x402_payment_attempt: wallet.x402_payment_attempt,
 		auto_reload_enabled: wallet.auto_reload_enabled,
 		auto_reload_has_payment_method: wallet.auto_reload_has_payment_method,
 		auto_reload_card: wallet.auto_reload_card,

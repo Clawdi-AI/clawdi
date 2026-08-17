@@ -20,6 +20,152 @@ afterEach(() => {
 	root = "";
 });
 
+test("repairs typed invalid config once before retrying the official workspace roster", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-config-repair-"));
+	const home = join(root, "home");
+	const workspaceRoot = join(home, "agent-workspace");
+	const command = join(home, ".local", "bin", "openclaw");
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const repairedConfigPath = join(root, "repaired-openclaw.json");
+	const commandLog = join(root, "commands.log");
+	const repairedConfig = {
+		meta: { lastTouchedVersion: "2026.8.1-beta.2" },
+		commands: { restart: true },
+		cron: { enabled: true },
+		gateway: {
+			mode: "local",
+			controlUi: { allowedOrigins: ["https://agent.example.test"] },
+		},
+	};
+	mkdirSync(dirname(command), { recursive: true });
+	mkdirSync(dirname(configPath), { recursive: true });
+	writeFileSync(
+		configPath,
+		`${JSON.stringify({
+			meta: { ...repairedConfig.meta, lastTouchedAt: "2026-08-15T00:00:00.000Z" },
+			commands: { ...repairedConfig.commands, ownerDisplay: "raw" },
+			cron: { ...repairedConfig.cron, maxConcurrentRuns: 2 },
+			gateway: {
+				...repairedConfig.gateway,
+				controlUi: {
+					...repairedConfig.gateway.controlUi,
+					allowInsecureAuth: false,
+				},
+			},
+		})}\n`,
+	);
+	writeFileSync(repairedConfigPath, `${JSON.stringify(repairedConfig)}\n`);
+	const validation = JSON.stringify({
+		valid: false,
+		path: configPath,
+		issues: [
+			{ path: "meta", message: "retired metadata field" },
+			{ path: "commands", message: "retired command field" },
+			{ path: "cron", message: "retired cron field" },
+			{ path: "gateway.controlUi", message: "retired control UI field" },
+		],
+	});
+	writeFileSync(
+		command,
+		`#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> '${commandLog}'
+case "$*" in
+  "agents list --json")
+    if grep -Eq 'lastTouchedAt|ownerDisplay|maxConcurrentRuns|allowInsecureAuth' '${configPath}'; then
+      exit 2
+    fi
+    printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]'
+    ;;
+  "config validate --json")
+    printf '%s\n' '${validation}'
+    exit 1
+    ;;
+  "doctor --fix --non-interactive")
+    cp '${repairedConfigPath}' '${configPath}'
+    ;;
+  *) exit 64 ;;
+esac
+`,
+	);
+	chmodSync(command, 0o755);
+
+	expect(hostedOpenClawSkillDriver.resolveWorkspace({ home, repairInvalidConfig: true })).toBe(
+		workspaceRoot,
+	);
+	expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
+		"agents list --json",
+		"config validate --json",
+		"doctor --fix --non-interactive",
+		"agents list --json",
+	]);
+	expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual(repairedConfig);
+});
+
+test("does not repair without opt-in or a definitive invalid-config validation", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-config-no-repair-"));
+	const scenarios = [
+		{
+			name: "default",
+			repairInvalidConfig: undefined,
+			validation:
+				'{"valid":false,"path":"/tmp/openclaw.json","issues":[{"path":"x","message":"x"}]}',
+			validationExit: 1,
+			expectedCommands: ["agents list --json"],
+		},
+		{
+			name: "valid-config",
+			repairInvalidConfig: true,
+			validation: '{"valid":true,"path":"/tmp/openclaw.json","warnings":[]}',
+			validationExit: 0,
+			expectedCommands: ["agents list --json", "config validate --json"],
+		},
+		{
+			name: "ambiguous-invalid-config",
+			repairInvalidConfig: true,
+			validation: '{"valid":false,"path":"/tmp/openclaw.json","issues":[]}',
+			validationExit: 1,
+			expectedCommands: ["agents list --json", "config validate --json"],
+		},
+		{
+			name: "malformed-validation",
+			repairInvalidConfig: true,
+			validation: "not-json",
+			validationExit: 1,
+			expectedCommands: ["agents list --json", "config validate --json"],
+		},
+	] as const;
+
+	for (const scenario of scenarios) {
+		const home = join(root, scenario.name, "home");
+		const command = join(home, ".local", "bin", "openclaw");
+		const commandLog = join(root, scenario.name, "commands.log");
+		mkdirSync(dirname(command), { recursive: true });
+		writeFileSync(
+			command,
+			`#!/bin/sh
+printf '%s\n' "$*" >> '${commandLog}'
+if test "$*" = "config validate --json"; then
+  printf '%s\n' '${scenario.validation}'
+  exit ${scenario.validationExit}
+fi
+exit 2
+`,
+		);
+		chmodSync(command, 0o755);
+
+		expect(() =>
+			hostedOpenClawSkillDriver.resolveWorkspace({
+				home,
+				repairInvalidConfig: scenario.repairInvalidConfig,
+			}),
+		).toThrow("official agent workspace roster is unavailable");
+		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
+			...scenario.expectedCommands,
+		]);
+	}
+});
+
 test("runs official install from home before its first workspace exists and guards cleanup", async () => {
 	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-driver-"));
 	const home = join(root, "home");

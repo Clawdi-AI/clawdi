@@ -160,7 +160,7 @@ function pluginFiles(
 function clawdiExtension(fields: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		schemaVersion: 1,
-		display: { name: "Acme Tools", category: "tools", tags: [], languages: [] },
+		display: { name: "Acme Tools", category: "tools", languages: [] },
 		...fields,
 	};
 }
@@ -213,6 +213,37 @@ describe("Hosted Agent Plugin package preparation", () => {
 		expect(fetches).toBe(1);
 	});
 
+	test("downloads a GitHub Release package only when its archive digest matches", async () => {
+		const runtimePaths = paths();
+		const files = pluginFiles();
+		const bytes = await archive(files, "");
+		const desired = manifest("openclaw", treeDigest(files), "");
+		const installation = desired.projection?.agentPlugins?.installations["acme.tools"];
+		if (!installation) throw new Error("missing Agent Plugin fixture");
+		installation.source = {
+			type: "github-release",
+			url: "https://github.com/acme/plugins/releases/download/agent-plugin-acme-v1.2.3/acme-1.2.3.tar.gz",
+			archiveDigest: `sha256:${sha256(bytes)}`,
+		};
+		const requested: string[] = [];
+		await expect(
+			prepareHostedAgentPluginPackages(desired, runtimePaths, {
+				fetcher: async (input) => {
+					requested.push(input.toString());
+					return archiveResponse(bytes);
+				},
+			}),
+		).resolves.toBeTruthy();
+		expect(requested).toEqual([installation.source.url]);
+
+		installation.source = { ...installation.source, archiveDigest: `sha256:${"f".repeat(64)}` };
+		await expect(
+			prepareHostedAgentPluginPackages(desired, runtimePaths, {
+				fetcher: async () => archiveResponse(bytes),
+			}),
+		).rejects.toThrow("release archive digest");
+	});
+
 	test("accepts the Hermes Skills and stdio MCP subset", async () => {
 		const runtimePaths = paths();
 		const files = pluginFiles(
@@ -256,7 +287,6 @@ describe("Hosted Agent Plugin package preparation", () => {
 						name: "Acme Tools",
 						icon: "./assets/icon.png",
 						category: "tools",
-						tags: ["review"],
 						languages: ["en"],
 					},
 					compatibility: { runtimes: ["hermes"], executables: ["node"] },
@@ -384,6 +414,23 @@ describe("Hosted Agent Plugin package preparation", () => {
 		expect(preparedSubpath?.desired.get("acme.tools")?.tree.map((file) => file.path)).toEqual(
 			Object.keys(subpathFiles).sort(),
 		);
+		expect(preparedSubpath?.desired.get("acme.tools")?.installation.ownershipIdentity).toBe(
+			createHash("sha256")
+				.update(
+					JSON.stringify([
+						"install_acme_tools",
+						"acme.tools",
+						"1.2.3",
+						AGENT_PLUGINS_SCHEMA_1_0_0,
+						"github",
+						"https://github.com/acme/agent-plugins",
+						"plugins/acme.tools",
+						"a".repeat(40),
+						treeDigest(subpathFiles),
+					]),
+				)
+				.digest("hex"),
+		);
 	});
 
 	test("rejects Python-casefold-equivalent paths before caching", async () => {
@@ -449,26 +496,12 @@ describe("Hosted Agent Plugin package preparation", () => {
 								name: "Acme Tools",
 								icon: "assets/icon.png",
 								category: "tools",
-								tags: [],
 								languages: [],
 							},
 						}),
 					}),
 					"assets/icon.png": Buffer.from("public icon"),
 				},
-			},
-			{
-				label: "Clawdi case-fold duplicate display tags",
-				files: pluginFiles(undefined, "1.2.3", {
-					"ai.clawdi": clawdiExtension({
-						display: {
-							name: "Acme Tools",
-							category: "tools",
-							tags: ["straße", "strasse"],
-							languages: [],
-						},
-					}),
-				}),
 			},
 			{
 				label: "Clawdi incompatible runtime",

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import {
 	existsSync,
 	mkdirSync,
@@ -10,9 +11,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { CollectSessionsResult } from "../adapters/base";
+import type { CollectSessionsResult, RawSession } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
+import { cacheKey, readSessionsLock } from "../lib/sessions-lock";
 import {
 	computeSkillFolderHash,
 	readSkillProjectionClaimsForAgent,
@@ -89,6 +91,119 @@ describe("stable session enqueue abort fence", () => {
 		expect(await running).toBe(0);
 		expect(queued).toEqual([]);
 		expect(inFlight.size).toBe(0);
+	});
+});
+
+describe("Session deletion convergence", () => {
+	it("caches server suppression without uploading and refreshes after local changes", async () => {
+		const root = mkdtempSync(join(tmpdir(), "session-suppression-"));
+		const originalHome = process.env.HOME;
+		const originalState = process.env.CLAWDI_STATE_DIR;
+		const originalFetch = globalThis.fetch;
+		const originalWrite = process.stderr.write;
+		const requests: string[] = [];
+		const logs: string[] = [];
+		let queue: RetryQueue | undefined;
+		try {
+			process.env.HOME = root;
+			process.env.CLAWDI_STATE_DIR = join(root, "serve");
+			const session: RawSession = {
+				localSessionId: "deleted-session",
+				projectPath: "/project",
+				startedAt: new Date(0),
+				endedAt: null,
+				messageCount: 1,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				model: null,
+				modelsUsed: [],
+				durationSeconds: null,
+				summary: null,
+				messages: [{ role: "user", content: "first" }],
+				rawFilePath: "/sessions/deleted-session.jsonl",
+			};
+			const adapter = adapterRegistry.hermes.create();
+			adapter.collectSessions = async () => ({ sessions: [session], dedupedCount: 0 });
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const request = input instanceof Request ? input : new Request(input, init);
+				const path = new URL(request.url).pathname;
+				requests.push(path);
+				if (path === "/v1/sessions/batch") {
+					return new Response(
+						JSON.stringify({
+							created: 0,
+							updated: 0,
+							unchanged: 0,
+							needs_content: [session.localSessionId],
+							rejected: [],
+							suppressed: [session.localSessionId],
+						}),
+						{ headers: { "content-type": "application/json" } },
+					);
+				}
+				return new Response("unexpected content upload", { status: 500 });
+			}) as typeof fetch;
+			process.stderr.write = ((chunk: string | Uint8Array) => {
+				logs.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+				return true;
+			}) as typeof process.stderr.write;
+
+			const retryQueue = new RetryQueue({ agentType: "hermes" });
+			queue = retryQueue;
+			const lastPushedSessionHash = new Map<string, string>();
+			const abortController = new AbortController();
+			const processCurrent = async () => {
+				const hash = createHash("sha256").update(JSON.stringify(session.messages)).digest("hex");
+				retryQueue.enqueue({
+					kind: "session_push",
+					local_session_id: session.localSessionId,
+					content_hash: hash,
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				});
+				const item = retryQueue.peek();
+				if (!item) throw new Error("expected queued Session");
+				const outcome = await processQueueItem(
+					{
+						environmentId: "agent-1",
+						adapter,
+						abort: abortController.signal,
+						abortController,
+					},
+					new ApiClient({ requireAuth: false }),
+					retryQueue,
+					item,
+					new Map(),
+					lastPushedSessionHash,
+					new Map(),
+					"project-1",
+				);
+				expect(outcome).toBe("applied");
+				expect(lastPushedSessionHash.get(session.localSessionId)).toBe(hash);
+				expect(readSessionsLock().sessions[cacheKey("hermes", session.localSessionId)]?.hash).toBe(
+					hash,
+				);
+			};
+
+			await processCurrent();
+			session.messages.push({ role: "assistant", content: "changed" });
+			session.messageCount = 2;
+			await processCurrent();
+
+			expect(requests).toEqual(["/v1/sessions/batch", "/v1/sessions/batch"]);
+			expect(logs.join("")).toContain('"event":"engine.session_sync_suppressed"');
+			expect(logs.join("")).not.toContain('"event":"engine.session_pushed"');
+		} finally {
+			await queue?.flushPersist();
+			globalThis.fetch = originalFetch;
+			process.stderr.write = originalWrite;
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
+			else process.env.CLAWDI_STATE_DIR = originalState;
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 

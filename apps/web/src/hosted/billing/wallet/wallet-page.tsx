@@ -329,7 +329,7 @@ export function WalletPage() {
 					<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
 				</div>
 
-				<X402Card />
+				<X402Card wallet={w} />
 
 				<TransactionsSection />
 			</div>

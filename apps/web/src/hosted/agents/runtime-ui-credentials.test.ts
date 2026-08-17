@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
+	forgetOpenClawBootstrapAttempt,
+	hasOpenClawBootstrapAttempt,
 	openSecureRuntimeWindow,
+	rememberOpenClawBootstrapAttempt,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
 } from "@/hosted/agents/runtime-ui-credentials";
@@ -11,14 +14,21 @@ describe("runtime UI credential targeting", () => {
 		const calls: unknown[][] = [];
 		const popup = {
 			close() {},
-			location: { replace() {} },
+			location: {
+				replace(url: string | URL) {
+					calls.push(["replace", url]);
+				},
+			},
 			opener: { unsafe: true },
 		};
 		const opened = openSecureRuntimeWindow((...args) => {
 			calls.push(args);
 			return popup;
-		});
-		expect(calls).toEqual([["about:blank", "_blank"]]);
+		}, "https://runtime.example/openclaw/");
+		expect(calls).toEqual([
+			["about:blank", "_blank"],
+			["replace", "https://runtime.example/openclaw/"],
+		]);
 		expect(opened?.opener).toBeNull();
 	});
 
@@ -53,7 +63,8 @@ describe("runtime UI credential targeting", () => {
 			url: "https://other.example/openclaw/",
 			deployment_resource_version: "rv-current",
 			token: "deployment-token",
-			handoff_url: "https://other.example/openclaw/#token=deployment-token",
+			handoff_url:
+				"https://other.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
 		};
 		expect(
 			resolveRuntimeUiCredentials(hermes, "https://runtime.example/hermes", "rv-current"),
@@ -63,14 +74,15 @@ describe("runtime UI credential targeting", () => {
 		).toBeNull();
 	});
 
-	test("preserves the exact official OpenClaw token fragment URL", () => {
+	test("preserves the exact official OpenClaw browser handoff URL", () => {
 		const credentials: RuntimeUiCredentials = {
 			runtime: "openclaw",
 			auth_mode: "openclaw_token",
 			url: "https://runtime.example/openclaw/",
 			deployment_resource_version: "rv-current",
 			token: "deployment-token",
-			handoff_url: "https://runtime.example/openclaw/#token=deployment-token",
+			handoff_url:
+				"https://runtime.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
 		};
 		expect(
 			resolveRuntimeUiCredentials(credentials, "https://runtime.example/openclaw/", "rv-current"),
@@ -79,22 +91,55 @@ describe("runtime UI credential targeting", () => {
 		expect(runtimeUiLaunchTarget(credentials)).not.toBe(credentials.url);
 	});
 
-	test("rejects a stale rollout or a handoff without the exact token fragment", () => {
+	test("opens the exact legacy fallback and rejects a stale rollout", () => {
 		const credentials: RuntimeUiCredentials = {
 			runtime: "openclaw",
 			auth_mode: "openclaw_token",
 			url: "https://runtime.example/openclaw/",
 			deployment_resource_version: "rv-current",
 			token: "deployment-token",
-			handoff_url: "https://runtime.example/openclaw/#token=wrong-token",
+			handoff_url: "https://runtime.example/openclaw/#token=deployment-token",
 		};
-		expect(resolveRuntimeUiCredentials(credentials, credentials.url, "rv-current")).toBeNull();
+		expect(resolveRuntimeUiCredentials(credentials, credentials.url, "rv-current")).toEqual(
+			credentials,
+		);
+		expect(runtimeUiLaunchTarget(credentials)).toBe(credentials.handoff_url);
 		expect(
 			resolveRuntimeUiCredentials(
-				{ ...credentials, handoff_url: `${credentials.url}#token=deployment-token` },
+				{
+					...credentials,
+					handoff_url: `${credentials.url}#bootstrapToken=one-time-token&bootstrapProfile=owner`,
+				},
 				credentials.url,
 				"rv-new",
 			),
 		).toBeNull();
+	});
+
+	test("remembers only that this browser attempted OpenClaw bootstrap", () => {
+		const values = new Map<string, string>();
+		const storage = {
+			getItem: (key: string) => values.get(key) ?? null,
+			setItem: (key: string, value: string) => values.set(key, value),
+			removeItem: (key: string) => values.delete(key),
+		};
+
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
+		).toBeFalse();
+		rememberOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/");
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
+		).toBeTrue();
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://moved.runtime.example/"),
+		).toBeFalse();
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_two", "https://one.runtime.example/"),
+		).toBeFalse();
+		forgetOpenClawBootstrapAttempt(storage, "hdep_one");
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
+		).toBeFalse();
 	});
 });

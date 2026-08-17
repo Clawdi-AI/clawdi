@@ -46,6 +46,19 @@ def test_agent_plugins_accepts_exact_immutable_package_contract() -> None:
         HostedAgentPlugins.model_validate(maximum_length).installations["acme.tools"].version
         == maximum_version
     )
+    release = deepcopy(desired)
+    cast(dict[str, Any], release["installations"])["acme.tools"] = {
+        **_installation(),
+        "source": {
+            "type": "github-release",
+            "url": "https://github.com/acme/plugins/releases/download/acme-v1.2.3/acme-1.2.3.tar.gz",
+            "archiveDigest": f"sha256:{'c' * 64}",
+        },
+    }
+    assert (
+        HostedAgentPlugins.model_validate(release).installations["acme.tools"].source.type
+        == "github-release"
+    )
 
 
 @pytest.mark.parametrize(

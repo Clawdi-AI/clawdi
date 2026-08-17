@@ -26,7 +26,7 @@ from app.schemas.plugin_catalog import (
     PluginCatalogDocumentEntry,
     PluginCatalogEntryResponse,
     PluginCatalogResponse,
-    catalog_source_path,
+    catalog_runtime_source,
     parse_catalog_document,
 )
 from app.schemas.runtime import AGENT_PLUGINS_SCHEMA_1_0_0
@@ -90,8 +90,6 @@ def _entry_response(entry: PluginCatalogEntry) -> PluginCatalogEntryResponse:
     installability_reason = None
     if entry.name in RESERVED_AGENT_PLUGIN_NAMES:
         installability_reason = "reserved_name"
-    elif entry.has_configuration:
-        installability_reason = "configuration_not_supported"
     elif not entry.compatible_runtimes:
         installability_reason = "no_supported_runtime"
     return PluginCatalogEntryResponse.model_validate(
@@ -376,10 +374,9 @@ class PluginCatalogSyncWorker:
                             name=entry.name,
                             version=entry.version,
                             agent_plugins_schema=AGENT_PLUGINS_SCHEMA_1_0_0,
-                            source_path=catalog_source_path(entry),
+                            source=catalog_runtime_source(entry, revision=revision),
                             content_digest=entry.digest,
                             public_metadata=_entry_metadata(entry),
-                            has_configuration=entry.hasConfiguration,
                             compatible_runtimes=entry.runtimes,
                         )
                         for entry in document.plugins

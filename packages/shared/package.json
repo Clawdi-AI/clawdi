@@ -7,6 +7,7 @@
 		".": "./src/index.ts",
 		"./consts": "./src/consts/index.ts",
 		"./sharing": "./src/sharing/agent-handoff.ts",
+		"./x402": "./src/x402/index.ts",
 		"./api": "./src/api/index.ts",
 		"./style/theme.css": "./src/style/theme.css"
 	},
@@ -14,6 +15,12 @@
 		"typecheck": "tsc --noEmit",
 		"test": "../../scripts/test.sh shared",
 		"test:internal": "bun test src"
+	},
+	"dependencies": {
+		"@x402/core": "2.22.0",
+		"@x402/evm": "2.22.0",
+		"@x402/fetch": "2.22.0",
+		"viem": "2.48.11"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.3.14",

@@ -59,6 +59,8 @@ export interface RuntimeManifestLoad {
 export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
 export const HOSTED_RUNTIME_CAPABILITIES_HEADER = "x-clawdi-runtime-capabilities";
 export const HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1";
+export const HOSTED_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY =
+	"agent-plugin-github-release-source-v1";
 
 const runtimeBundleTokenChannelBindingSchema = z
 	.object({
@@ -270,7 +272,10 @@ async function fetchRuntimeManifestPayload(
 			headers: {
 				accept: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 				authorization: `Bearer ${token}`,
-				[HOSTED_RUNTIME_CAPABILITIES_HEADER]: HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
+				[HOSTED_RUNTIME_CAPABILITIES_HEADER]: [
+					HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
+					HOSTED_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
+				].join(", "),
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},
 			signal: controller.signal,

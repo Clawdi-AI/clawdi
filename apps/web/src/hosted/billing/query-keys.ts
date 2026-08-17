@@ -5,6 +5,7 @@ const usageRoot = ["billing", "usage"] as const;
 export const billingKeys = {
 	managedModelCatalog: ["billing", "managed-model-catalog"] as const,
 	wallet: ["billing", "wallet"] as const,
+	walletBinding: ["billing", "wallet-binding"] as const,
 	transactions: transactionsRoot,
 	subscriptionCreateQuotes,
 	subscriptionCreateQuote: (planSlug: string, billingTermMonths: number, fundingSource: string) =>
