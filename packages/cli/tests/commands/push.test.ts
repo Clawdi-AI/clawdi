@@ -20,6 +20,7 @@ import {
 interface BatchSession {
 	environment_id: string;
 	local_session_id: string;
+	content_hash?: string | null;
 	input_tokens?: number;
 	cache_read_tokens?: number;
 	project_path?: string | null;
@@ -273,6 +274,45 @@ describe("push — Claude Code fixture", () => {
 		expect(sessions[0]?.input_tokens).toBe(30);
 		expect(sessions[0]?.output_tokens).toBe(8);
 		expect(sessions[0]?.project_path).toBe("/Users/fixture/project");
+	});
+
+	it("keeps a cloud-deleted Session deleted and caches the current hash", async () => {
+		setup("claude_code");
+		const localSessionId = "11111111-2222-3333-4444-555555555555";
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: "/v1/sessions/batch",
+				response: () =>
+					jsonResponse({
+						created: 0,
+						updated: 0,
+						unchanged: 0,
+						needs_content: [localSessionId],
+						rejected: [],
+						suppressed: [localSessionId],
+					}),
+			},
+		]);
+		try {
+			await push({ agent: "claude_code", modules: "sessions", all: true });
+			await push({ agent: "claude_code", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+
+		const batches = captured.filter((request) => request.path === "/v1/sessions/batch");
+		expect(batches).toHaveLength(1);
+		const submitted = batchSessions(batches[0]);
+		expect(submitted).toHaveLength(1);
+		expect(
+			captured.filter((request) => request.path.endsWith(`/${localSessionId}/upload`)),
+		).toHaveLength(0);
+		const lock = JSON.parse(
+			readFileSync(join(tmpHome, ".clawdi", "sessions-lock.json"), "utf-8"),
+		) as { sessions: Record<string, { hash: string }> };
+		expect(lock.sessions[`claude_code:${localSessionId}`]?.hash).toBe(submitted[0]?.content_hash);
 	});
 });
 
