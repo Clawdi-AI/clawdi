@@ -1347,7 +1347,7 @@ function RailSidebar({
 		<Sidebar
 			collapsible="none"
 			style={{ "--sidebar-width": "var(--clawdi-rail-width)" } as React.CSSProperties}
-			className="sticky top-0 hidden h-svh shrink-0 border-r bg-sidebar/95 md:flex"
+			className="sticky top-0 z-20 hidden h-svh shrink-0 border-r bg-sidebar/95 md:flex"
 			aria-label="Focus rail"
 			data-testid="app-sidebar-agent-rail"
 		>
