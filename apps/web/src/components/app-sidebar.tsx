@@ -698,7 +698,7 @@ function FocusNavigationPane({
 					activeAgentName={activeAgentName}
 				/>
 			</SidebarHeader>
-			<SidebarContent className="pb-[calc(var(--header-height)+0.75rem)]">
+			<SidebarContent className="pb-[calc(var(--header-height)+env(safe-area-inset-bottom)+0.75rem)]">
 				<SidebarMainNavigation
 					pathname={pathname}
 					showCloudFeatures={showCloudFeatures}
@@ -1088,7 +1088,7 @@ function FocusRailContent({
 
 			<SidebarSeparator className="mx-auto w-8" />
 
-			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-1.5 pt-2.5 pb-[calc(var(--header-height)+0.75rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-1.5 pt-2.5 pb-[calc(var(--header-height)+env(safe-area-inset-bottom)+0.75rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 				<SidebarMenu className="w-full items-center">
 					<RailTileButton
 						render={<Link to="/" onClick={onNavigate} />}
@@ -1613,10 +1613,10 @@ function SidebarGlobalControlsBar({
 			data-sidebar="global-controls"
 			data-testid="app-sidebar-global-controls"
 			className={cn(
-				"z-30 h-(--header-height) items-center border-border border-t bg-sidebar px-3 text-sidebar-foreground",
+				"z-30 items-center border-border border-t bg-sidebar px-3 text-sidebar-foreground",
 				mobile
-					? "absolute inset-x-0 bottom-0 flex"
-					: "fixed bottom-0 left-0 hidden w-[calc(var(--clawdi-rail-width)+var(--sidebar-width))] md:flex",
+					? "absolute inset-x-0 bottom-0 flex h-[calc(var(--header-height)+env(safe-area-inset-bottom))] pb-[env(safe-area-inset-bottom)]"
+					: "fixed bottom-0 left-0 hidden h-(--header-height) w-[calc(var(--clawdi-rail-width)+var(--sidebar-width))] md:flex",
 			)}
 		>
 			<GlobalControls
@@ -1789,14 +1789,9 @@ export function AppSidebar({
 				collapsible="offcanvas"
 				variant={variant}
 				data-testid="app-sidebar"
-				style={
-					{
-						...style,
-						"--sidebar-left-offset": "var(--clawdi-rail-width)",
-					} as React.CSSProperties
-				}
+				style={style}
 				className={cn(
-					"data-[side=left]:left-[var(--clawdi-rail-width)] data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--clawdi-rail-width)-var(--sidebar-width))]",
+					"data-[side=left]:left-[var(--clawdi-rail-width)] data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]",
 					className,
 				)}
 				{...props}
