@@ -64,7 +64,7 @@ describe("Agent Plugin model", () => {
 		expect(agentPluginStatusPresentation(desired("sui")).label).toBe("Installed");
 		expect(
 			agentPluginStatusPresentation(desired("sui", { convergence: "not_observed" })).label,
-		).toBe("Not observed");
+		).toBe("Pending");
 		expect(
 			agentPluginStatusPresentation(
 				desired("sui", {

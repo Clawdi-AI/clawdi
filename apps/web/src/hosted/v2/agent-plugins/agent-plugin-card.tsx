@@ -73,64 +73,72 @@ export function AgentPluginCard({
 					`v${pluginVersion(item)}`,
 					runtimeLabels,
 				]}
+				footerClassName="mt-0"
 				actions={
-					<>
-						<Button
-							variant="ghost"
-							size="icon-sm"
-							disabled={mutationsBlocked && pendingAction === null}
-							onClick={() => onOpen(item.name)}
-							aria-label={`View ${title} details`}
+					item.desired ? (
+						<ConfirmAction
+							title={`Remove ${title}?`}
+							description={
+								<p>The agent will remove the Skills and MCP servers from this plugin.</p>
+							}
+							confirmLabel="Remove plugin"
+							destructive
+							onConfirm={() => onRemove(item)}
 						>
-							<ChevronRight />
-						</Button>
-						{item.desired ? (
-							<ConfirmAction
-								title={`Remove ${title}?`}
-								description={<p>The agent will remove this plugin during reconciliation.</p>}
-								confirmLabel="Remove plugin"
-								destructive
-								onConfirm={() => onRemove(item)}
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								disabled={mutationsBlocked}
+								className="text-muted-foreground hover:text-destructive"
+								aria-label={`Remove ${title}`}
 							>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									disabled={mutationsBlocked}
-									className="text-muted-foreground hover:text-destructive"
-									aria-label={`Remove ${title}`}
-								>
-									{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
-								</Button>
-							</ConfirmAction>
-						) : null}
-					</>
+								{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
+							</Button>
+						</ConfirmAction>
+					) : null
 				}
 			>
 				<div className="mt-auto flex min-w-0 items-center justify-between gap-3">
 					<span className="min-w-0 text-xs text-muted-foreground">
 						{agentPluginComponentSummary(item.catalog)}
 					</span>
-					{canInstall ? (
+					<div className="flex shrink-0 items-center gap-1.5">
 						<Button
+							variant="ghost"
 							size="sm"
-							variant={hasUpdate ? "outline" : "default"}
-							disabled={mutationsBlocked}
-							onClick={() => void onInstall(item).catch(() => undefined)}
+							onClick={() => onOpen(item.name)}
+							aria-label={`View ${title} details`}
 						>
-							{pendingAction === "install" ? <Spinner /> : hasUpdate ? <RefreshCw /> : <Plus />}
-							{pendingAction === "install"
-								? hasUpdate
-									? "Updating…"
-									: "Installing…"
-								: hasUpdate
-									? "Update"
-									: "Install"}
+							Details
+							<ChevronRight />
 						</Button>
-					) : !item.desired && installability ? (
-						<Button size="sm" variant="outline" disabled title={installability.reason ?? undefined}>
-							{installability.label}
-						</Button>
-					) : null}
+						{canInstall ? (
+							<Button
+								size="sm"
+								variant={hasUpdate ? "outline" : "default"}
+								disabled={mutationsBlocked}
+								onClick={() => void onInstall(item).catch(() => undefined)}
+							>
+								{pendingAction === "install" ? <Spinner /> : hasUpdate ? <RefreshCw /> : <Plus />}
+								{pendingAction === "install"
+									? hasUpdate
+										? "Updating…"
+										: "Installing…"
+									: hasUpdate
+										? "Update"
+										: "Install"}
+							</Button>
+						) : !item.desired && installability ? (
+							<Button
+								size="sm"
+								variant="outline"
+								disabled
+								title={installability.reason ?? undefined}
+							>
+								{installability.label}
+							</Button>
+						) : null}
+					</div>
 				</div>
 			</HeroCard>
 		</div>

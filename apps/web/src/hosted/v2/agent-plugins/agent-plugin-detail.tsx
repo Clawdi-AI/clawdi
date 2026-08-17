@@ -96,21 +96,15 @@ export function AgentPluginDetail({
 					) : undefined
 				}
 				status={
-					<DetailMeta>
-						<span>v{pluginVersion(item)}</span>
-						{item.catalog?.publisher ? (
-							<>
-								<span>·</span>
-								<span>{item.catalog.publisher}</span>
-							</>
-						) : null}
-						{item.desired?.observed_at ? (
-							<>
-								<span>·</span>
+					item.catalog?.publisher || item.desired?.observed_at ? (
+						<DetailMeta>
+							{item.catalog?.publisher ? <span>{item.catalog.publisher}</span> : null}
+							{item.catalog?.publisher && item.desired?.observed_at ? <span>·</span> : null}
+							{item.desired?.observed_at ? (
 								<span>Observed {relativeTime(item.desired.observed_at)}</span>
-							</>
-						) : null}
-					</DetailMeta>
+							) : null}
+						</DetailMeta>
+					) : undefined
 				}
 				actions={
 					<PluginDetailActions
@@ -198,7 +192,7 @@ function PluginDetailActions({
 			{item.desired ? (
 				<ConfirmAction
 					title={`Remove ${pluginDisplayName(item)}?`}
-					description={<p>The agent will remove this plugin during reconciliation.</p>}
+					description={<p>The agent will remove the Skills and MCP servers from this plugin.</p>}
 					confirmLabel="Remove plugin"
 					destructive
 					onConfirm={() => onRemove(item)}
@@ -251,9 +245,7 @@ function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }
 			</div>
 			<dl className="grid gap-x-6 gap-y-4 border-t pt-4 text-sm sm:grid-cols-2">
 				<DetailValue label="Package" value={entry.name} mono />
-				<DetailValue label="Category" value={entry.category} />
 				<DetailValue label="Runtimes" value={entry.runtimes.map(runtimeDisplayName).join(", ")} />
-				<DetailValue label="Languages" value={entry.languages.join(", ") || "Not specified"} />
 			</dl>
 		</DetailPanel>
 	);
@@ -263,7 +255,7 @@ function PanelHeading() {
 	return (
 		<div className="flex items-center gap-2">
 			<Box className="size-4 text-muted-foreground" />
-			<h2 className="text-sm font-semibold">Components</h2>
+			<h2 className="text-sm font-semibold">Package contents</h2>
 		</div>
 	);
 }

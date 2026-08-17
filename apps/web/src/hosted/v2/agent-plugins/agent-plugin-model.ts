@@ -118,9 +118,9 @@ export function agentPluginStatusPresentation(desired: AgentPluginDesiredState):
 			};
 		case "not_observed":
 			return {
-				label: "Not observed",
+				label: "Pending",
 				tone: "warning",
-				description: "The agent has not confirmed this installation.",
+				description: "Waiting for the agent to confirm this installation.",
 			};
 	}
 }

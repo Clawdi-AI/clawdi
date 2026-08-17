@@ -93,5 +93,5 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();
 
 	await page.getByRole("button", { name: "Install", exact: true }).click();
-	await expect(page.getByText("Not observed", { exact: true })).toBeVisible();
+	await expect(page.getByText("Pending", { exact: true })).toBeVisible();
 });

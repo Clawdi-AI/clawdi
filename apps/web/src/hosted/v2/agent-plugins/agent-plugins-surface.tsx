@@ -44,6 +44,7 @@ export function AgentPluginsSurface({
 	const mutationLock = useRef(false);
 	const [pending, setPending] = useState<PendingPluginMutation>(null);
 	const [selectedName, setSelectedName] = useState<string | null>(null);
+	const [query, setQuery] = useState("");
 	const catalogQuery = api.useQuery("get", "/v1/plugin-catalog", {});
 	const desiredQuery = api.useQuery(
 		"get",
@@ -144,6 +145,7 @@ export function AgentPluginsSurface({
 				<>
 					<PageHeader
 						title="Plugins"
+						description="Install Skills and MCP servers from the Store for this agent."
 						icon={
 							<IconChip tint="bg-identity-7-bg text-identity-7-fg">
 								<Blocks />
@@ -164,6 +166,8 @@ export function AgentPluginsSurface({
 							runtime={runtime}
 							catalogError={catalogError}
 							pending={pending}
+							query={query}
+							onQueryChange={setQuery}
 							onOpen={setSelectedName}
 							onInstall={install}
 							onRemove={remove}
@@ -181,6 +185,8 @@ function AgentPluginCatalog({
 	runtime,
 	catalogError,
 	pending,
+	query,
+	onQueryChange,
 	onOpen,
 	onInstall,
 	onRemove,
@@ -190,12 +196,13 @@ function AgentPluginCatalog({
 	runtime: HostedRuntime;
 	catalogError: unknown | null;
 	pending: PendingPluginMutation;
+	query: string;
+	onQueryChange: (query: string) => void;
 	onOpen: (name: string) => void;
 	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRetryCatalog: () => void;
 }) {
-	const [query, setQuery] = useState("");
 	const installed = inventory.installed.filter((item) => agentPluginMatches(item, query));
 	const available = inventory.available.filter((item) => agentPluginMatches(item, query));
 	const total = inventory.installed.length + inventory.available.length;
@@ -219,7 +226,7 @@ function AgentPluginCatalog({
 				search={
 					<SearchInput
 						value={query}
-						onChange={setQuery}
+						onChange={onQueryChange}
 						placeholder="Search plugins…"
 						ariaLabel="Search plugins"
 					/>
@@ -263,7 +270,13 @@ function AgentPluginCatalog({
 					))}
 				</PluginSection>
 			) : null}
-			{noMatches ? <EmptyState variant="inset" title="No matches" /> : null}
+			{noMatches ? (
+				<EmptyState
+					variant="inset"
+					title="No plugins found"
+					description="Try a different search."
+				/>
+			) : null}
 		</div>
 	);
 }
