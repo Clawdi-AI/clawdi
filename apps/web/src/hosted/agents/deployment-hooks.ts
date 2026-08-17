@@ -40,6 +40,7 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 	restart: "restarting",
 	reset_runtime_ui_access: "restarting",
 	update: "updating",
+	migrate_runtime_context: "updating",
 	plan_change: "updating",
 	runtime_switch: "updating",
 	migrate_image: "updating",

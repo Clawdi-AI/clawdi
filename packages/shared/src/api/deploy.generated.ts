@@ -835,7 +835,7 @@ export interface components {
              * Verb
              * @enum {string}
              */
-            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "rename" | "delete" | "reset_runtime_ui_access" | "migrate_image" | "rollback_image";
+            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "migrate_runtime_context" | "rename" | "delete" | "reset_runtime_ui_access" | "migrate_image" | "rollback_image";
             /** Targetgeneration */
             targetGeneration: number;
             /** Manifestetag */
@@ -1238,6 +1238,11 @@ export interface components {
              * @default false
              */
             can_use_v2: boolean;
+            /**
+             * Can Use Agent Plugins Ui
+             * @default false
+             */
+            can_use_agent_plugins_ui: boolean;
         };
         /** V1UserResponse */
         V1UserResponse: {

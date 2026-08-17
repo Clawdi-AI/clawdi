@@ -1,7 +1,8 @@
-export interface HostedProductCapabilities {
-	can_use_v1?: boolean;
-	can_use_v2?: boolean;
-}
+import type { DeployComponents } from "@clawdi/shared/api";
+
+type HostedProductCapabilities = Partial<
+	DeployComponents["schemas"]["V1UserProductCapabilities"]
+>;
 
 export interface HostedProductAccessProfile {
 	capabilities?: HostedProductCapabilities | null;
@@ -14,6 +15,7 @@ export interface HostedProductAccess {
 	canUseLegacyHostedDashboard: boolean;
 	legacyHostedAccessStatus: LegacyHostedAccessStatus;
 	canCreateCloudAgents: boolean;
+	canUseAgentPluginsUI: boolean;
 	/**
 	 * Back-compat alias for the rollout flag. New code should choose the
 	 * narrower `canCreateCloudAgents` name so existing deployment management
@@ -62,5 +64,6 @@ export function hostedProductAccessFromProfile(
 		legacyHostedAccessStatus,
 		canCreateCloudAgents,
 		canUseCloudAgents: canCreateCloudAgents,
+		canUseAgentPluginsUI: capabilities?.can_use_agent_plugins_ui === true,
 	};
 }

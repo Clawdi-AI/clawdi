@@ -1,4 +1,5 @@
 import {
+	Blocks,
 	FolderOpen,
 	LayoutDashboard,
 	type LucideIcon,
@@ -29,6 +30,7 @@ export type AgentSectionId =
 	| "connectors"
 	| "ai"
 	| "channels"
+	| "plugins"
 	| "settings";
 
 export type AgentNavigationVariant = "connected" | "hosted";
@@ -373,6 +375,15 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		tooltip: "Channels linked to this agent",
 		variants: ["hosted"],
 	},
+	plugins: {
+		id: "plugins",
+		label: "Plugins",
+		icon: Blocks,
+		tint: "bg-identity-7-bg text-identity-7-fg",
+		description: "Install Skills and MCP servers for this agent.",
+		tooltip: "Install plugins for this agent",
+		variants: ["hosted"],
+	},
 	settings: {
 		id: "settings",
 		...CANONICAL_NAVIGATION_IDENTITIES.settings,
@@ -385,6 +396,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 
 export const AGENT_WORKSPACE_SECTION_IDS = [
 	"projects",
+	"plugins",
 ] as const satisfies readonly AgentSectionId[];
 
 export const AGENT_SHARED_SECTION_IDS = [
@@ -449,10 +461,14 @@ export const CONNECTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
 export const HOSTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
 	agentNavigationSectionIds("hosted");
 
-export function hostedAgentVisibleSectionIds(filesAvailable: boolean): AgentSectionId[] {
-	return filesAvailable
-		? [...HOSTED_AGENT_SECTION_IDS]
-		: HOSTED_AGENT_SECTION_IDS.filter((section) => section !== "files");
+export function hostedAgentVisibleSectionIds(
+	filesAvailable: boolean,
+	agentPluginsEnabled = false,
+): AgentSectionId[] {
+	return HOSTED_AGENT_SECTION_IDS.filter(
+		(section) =>
+			(filesAvailable || section !== "files") && (agentPluginsEnabled || section !== "plugins"),
+	);
 }
 
 export function agentNavigationGroups(
