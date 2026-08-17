@@ -136,6 +136,17 @@ class AgentEnvironment(Base, TimestampMixin):
     )
 
 
+class SessionSyncSuppression(Base):
+    __tablename__ = "session_sync_suppressions"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    local_session_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+
+
 class Session(Base, TimestampMixin):
     __tablename__ = "sessions"
     __table_args__ = (
