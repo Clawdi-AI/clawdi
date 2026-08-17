@@ -1140,6 +1140,16 @@ installed binary cannot issue that handoff, Hosted preserves the existing exact
 own device-auth policy. This fallback neither disables device auth nor approves
 pending devices, and Clawdi implements no parallel device-auth protocol.
 
+OpenClaw persists the issued device credential in its own browser origin and
+reuses it when that browser later opens the clean dashboard URL. Clawdi records
+only that a bootstrap was attempted for the deployment and published endpoint,
+so returning to Agent Interface and opening a new window do not request another
+single-use handoff. An endpoint change requires a new bootstrap.
+The embedding page cannot inspect OpenClaw's cross-origin storage or connection
+state, and an iframe load is not treated as authentication proof. `Reconnect`
+explicitly requests a fresh native handoff when the OpenClaw UI reports that its
+stored session is no longer usable.
+
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
 official Basic password/session environment secret references. Hosted derives

@@ -676,14 +676,16 @@ describe("hosted agent customer language", () => {
 		expect(detailSource).toContain('allow="clipboard-read; clipboard-write"');
 		expect(detailSource).toContain("Open in new window");
 		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Username"');
-		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Password"');
-		expect(detailSource).toContain(
-			'<RuntimeUiCredentialRow label="Token" value={renderedCredentials.token} secret />',
-		);
+		expect(detailSource).toContain('label="Password"');
+		expect(detailSource).not.toContain('<RuntimeUiCredentialRow label="Token"');
+		expect(detailSource).toContain("hasOpenClawBootstrapAttempt");
+		expect(detailSource).toContain("rememberOpenClawBootstrapAttempt");
+		expect(detailSource).toContain("Reconnect");
 		expect(detailSource).toContain("Sign in to Hermes");
 		expect(detailSource).toContain("Get your Hermes username and password from Access.");
 		expect(detailSource).toContain("clawdi.hermes-access-hint.dismissed");
-		expect(detailSource).toContain('runtime === "hermes" && accessHintOpen');
+		expect(detailSource).toContain('runtime === "hermes" ? (');
+		expect(detailSource).not.toContain("Open Access to retry");
 		expect(detailSource).not.toContain("reconciliationRequired");
 	});
 });

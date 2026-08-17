@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
-	loadRuntimeUiLaunchCredentials,
+	forgetOpenClawBootstrapAttempt,
+	hasOpenClawBootstrapAttempt,
 	openSecureRuntimeWindow,
+	rememberOpenClawBootstrapAttempt,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
 } from "@/hosted/agents/runtime-ui-credentials";
@@ -12,14 +14,21 @@ describe("runtime UI credential targeting", () => {
 		const calls: unknown[][] = [];
 		const popup = {
 			close() {},
-			location: { replace() {} },
+			location: {
+				replace(url: string | URL) {
+					calls.push(["replace", url]);
+				},
+			},
 			opener: { unsafe: true },
 		};
 		const opened = openSecureRuntimeWindow((...args) => {
 			calls.push(args);
 			return popup;
-		});
-		expect(calls).toEqual([["about:blank", "_blank"]]);
+		}, "https://runtime.example/openclaw/");
+		expect(calls).toEqual([
+			["about:blank", "_blank"],
+			["replace", "https://runtime.example/openclaw/"],
+		]);
 		expect(opened?.opener).toBeNull();
 	});
 
@@ -107,46 +116,30 @@ describe("runtime UI credential targeting", () => {
 		).toBeNull();
 	});
 
-	test("requests a fresh single-use handoff for every OpenClaw window", async () => {
-		const embedded: RuntimeUiCredentials = {
-			runtime: "openclaw",
-			auth_mode: "openclaw_token",
-			url: "https://runtime.example/openclaw/",
-			deployment_resource_version: "rv-current",
-			token: "deployment-token",
-			handoff_url:
-				"https://runtime.example/openclaw/#bootstrapToken=embedded-token&bootstrapProfile=owner",
-		};
-		const fresh: RuntimeUiCredentials = {
-			...embedded,
-			handoff_url:
-				"https://runtime.example/openclaw/#bootstrapToken=fresh-token&bootstrapProfile=owner",
-		};
-		let requests = 0;
-
-		const resolved = await loadRuntimeUiLaunchCredentials("openclaw", embedded, async () => {
-			requests += 1;
-			return fresh;
-		});
-
-		expect(requests).toBe(1);
-		expect(resolved).toBe(fresh);
-	});
-
-	test("reuses non-single-use Hermes credentials", async () => {
-		const current: RuntimeUiCredentials = {
-			runtime: "hermes",
-			auth_mode: "password",
-			url: "https://runtime.example/hermes",
-			deployment_resource_version: "rv-current",
-			username: "admin",
-			password: "deployment-password",
+	test("remembers only that this browser attempted OpenClaw bootstrap", () => {
+		const values = new Map<string, string>();
+		const storage = {
+			getItem: (key: string) => values.get(key) ?? null,
+			setItem: (key: string, value: string) => values.set(key, value),
+			removeItem: (key: string) => values.delete(key),
 		};
 
-		const resolved = await loadRuntimeUiLaunchCredentials("hermes", current, async () => {
-			throw new Error("Hermes credentials should not be requested again");
-		});
-
-		expect(resolved).toBe(current);
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
+		).toBeFalse();
+		rememberOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/");
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
+		).toBeTrue();
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://moved.runtime.example/"),
+		).toBeFalse();
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_two", "https://one.runtime.example/"),
+		).toBeFalse();
+		forgetOpenClawBootstrapAttempt(storage, "hdep_one");
+		expect(
+			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
+		).toBeFalse();
 	});
 });

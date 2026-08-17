@@ -11,12 +11,66 @@ type OpenRuntimeWindow = (
 	features?: string,
 ) => RuntimeWindow | null;
 
-export function openSecureRuntimeWindow(openWindow: OpenRuntimeWindow): RuntimeWindow | null {
-	// `noopener` may intentionally make window.open return null even when the
-	// browser opened the tab, which would leave an async token handoff unable
-	// to navigate it. Detach the synchronously opened placeholder immediately.
+type RuntimeUiBootstrapStorage = Pick<Storage, "getItem" | "removeItem" | "setItem">;
+
+const OPENCLAW_BOOTSTRAP_STORAGE_PREFIX = "clawdi.openclaw-bootstrap-attempted";
+
+function openClawBootstrapStorageKey(deploymentId: string): string {
+	return `${OPENCLAW_BOOTSTRAP_STORAGE_PREFIX}.${deploymentId}`;
+}
+
+export function hasOpenClawBootstrapAttempt(
+	storage: RuntimeUiBootstrapStorage,
+	deploymentId: string,
+	endpointUrl: string,
+): boolean {
+	try {
+		return storage.getItem(openClawBootstrapStorageKey(deploymentId)) === endpointUrl;
+	} catch {
+		return false;
+	}
+}
+
+export function rememberOpenClawBootstrapAttempt(
+	storage: RuntimeUiBootstrapStorage,
+	deploymentId: string,
+	endpointUrl: string,
+): void {
+	try {
+		storage.setItem(openClawBootstrapStorageKey(deploymentId), endpointUrl);
+	} catch {
+		// Browser storage is only an optimization; OpenClaw remains authoritative.
+	}
+}
+
+export function forgetOpenClawBootstrapAttempt(
+	storage: RuntimeUiBootstrapStorage,
+	deploymentId: string,
+): void {
+	try {
+		storage.removeItem(openClawBootstrapStorageKey(deploymentId));
+	} catch {
+		// A fresh handoff can still proceed when browser storage is unavailable.
+	}
+}
+
+export function openSecureRuntimeWindow(
+	openWindow: OpenRuntimeWindow,
+	url = "about:blank",
+): RuntimeWindow | null {
 	const popup = openWindow("about:blank", "_blank");
-	if (popup) popup.opener = null;
+	if (!popup) return null;
+	popup.opener = null;
+	try {
+		if (url !== "about:blank") popup.location.replace(url);
+	} catch {
+		try {
+			popup.close();
+		} catch {
+			// Browser isolation may have severed the WindowProxy.
+		}
+		return null;
+	}
 	return popup;
 }
 
@@ -61,15 +115,4 @@ export function resolveRuntimeUiCredentials(
 
 export function runtimeUiLaunchTarget(credentials: RuntimeUiCredentials): string {
 	return credentials.runtime === "openclaw" ? credentials.handoff_url : credentials.url;
-}
-
-export async function loadRuntimeUiLaunchCredentials(
-	runtime: RuntimeUiCredentials["runtime"],
-	currentCredentials: RuntimeUiCredentials | null,
-	requestCredentials: () => Promise<RuntimeUiCredentials>,
-): Promise<RuntimeUiCredentials> {
-	// OpenClaw handoffs are single-use. The embedded UI and each new window
-	// must receive different credentials.
-	if (runtime === "openclaw") return requestCredentials();
-	return currentCredentials?.runtime === "hermes" ? currentCredentials : requestCredentials();
 }
