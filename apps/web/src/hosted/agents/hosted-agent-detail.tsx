@@ -123,6 +123,7 @@ import {
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
 import {
+	loadRuntimeUiLaunchCredentials,
 	openSecureRuntimeWindow,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
@@ -1411,6 +1412,9 @@ function ConsoleTab({
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
 	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
+	const [credentialLoadState, setCredentialLoadState] = useState<"loading" | "ready" | "error">(
+		runtime === "openclaw" ? "loading" : "ready",
+	);
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1524,16 +1528,35 @@ function ConsoleTab({
 					runtime={runtime}
 					credentials={credentials}
 					onCredentialsChange={setCredentials}
+					onCredentialLoadStateChange={setCredentialLoadState}
 				/>
 			}
 		>
-			<iframe
-				key={`${runtime}:${iframeUrl}`}
-				src={iframeUrl}
-				title={browserUiLabel}
-				className="min-h-[420px] flex-1 border-0 bg-background"
-				allow="clipboard-read; clipboard-write"
-			/>
+			{runtime === "openclaw" && !credentials ? (
+				credentialLoadState === "error" ? (
+					<EmptyState
+						icon={AlertCircle}
+						title={`${browserUiLabel} could not be opened`}
+						description="Runtime UI access could not be loaded. Open Access to retry."
+					/>
+				) : (
+					<div role="status" className="flex min-h-[420px] flex-1">
+						<EmptyState
+							icon={<Spinner className="size-5" />}
+							title={`Opening ${browserUiLabel}…`}
+							description="Requesting secure access from your agent."
+						/>
+					</div>
+				)
+			) : (
+				<iframe
+					key={`${runtime}:${iframeUrl}`}
+					src={iframeUrl}
+					title={browserUiLabel}
+					className="min-h-[420px] flex-1 border-0 bg-background"
+					allow="clipboard-read; clipboard-write"
+				/>
+			)}
 		</LiveToolFrame>
 	);
 }
@@ -1664,12 +1687,14 @@ function RuntimeUiAccessDialog({
 	runtime,
 	credentials,
 	onCredentialsChange,
+	onCredentialLoadStateChange,
 }: {
 	deployment: HostedDeployment;
 	endpointUrl: string;
 	runtime: Runtime;
 	credentials: RuntimeUiCredentials | null;
 	onCredentialsChange: (credentials: RuntimeUiCredentials | null) => void;
+	onCredentialLoadStateChange: (state: "loading" | "ready" | "error") => void;
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
 	const requestCredentials = useRuntimeUiCredentialRequest(deployment, endpointUrl, runtime);
@@ -1677,6 +1702,8 @@ function RuntimeUiAccessDialog({
 	const [open, setOpen] = useState(false);
 	const [credentialError, setCredentialError] = useState<Error | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
+	const [isLaunching, setIsLaunching] = useState(false);
+	const launchingRef = useRef(false);
 	const requestVersionRef = useRef(0);
 	const loadedIdentityRef = useRef<string | null>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
@@ -1700,29 +1727,33 @@ function RuntimeUiAccessDialog({
 		onCredentialsChange(null);
 		setCredentialError(null);
 		setIsLoading(false);
-	}, [onCredentialsChange]);
+		onCredentialLoadStateChange(runtime === "openclaw" ? "loading" : "ready");
+	}, [onCredentialLoadStateChange, onCredentialsChange, runtime]);
 
 	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
 		const requestVersion = requestVersionRef.current + 1;
 		requestVersionRef.current = requestVersion;
 		setIsLoading(true);
 		setCredentialError(null);
+		onCredentialLoadStateChange("loading");
 		try {
 			const resolved = await requestCredentials();
 			if (requestVersionRef.current !== requestVersion) return null;
 			onCredentialsChange(resolved);
+			onCredentialLoadStateChange("ready");
 			return resolved;
 		} catch (error) {
 			if (requestVersionRef.current === requestVersion) {
 				setCredentialError(
 					error instanceof Error ? error : new Error("Runtime UI credential request failed"),
 				);
+				onCredentialLoadStateChange("error");
 			}
 			return null;
 		} finally {
 			if (requestVersionRef.current === requestVersion) setIsLoading(false);
 		}
-	}, [onCredentialsChange, requestCredentials]);
+	}, [onCredentialLoadStateChange, onCredentialsChange, requestCredentials]);
 
 	useEffect(() => {
 		if (loadedIdentityRef.current === identity) return;
@@ -1765,6 +1796,7 @@ function RuntimeUiAccessDialog({
 	);
 
 	const openRuntime = useCallback(async () => {
+		if (launchingRef.current) return;
 		const popup = openSecureRuntimeWindow(window.open.bind(window));
 		if (!popup) {
 			toast.error(`Couldn't open ${label}`, {
@@ -1774,36 +1806,49 @@ function RuntimeUiAccessDialog({
 			});
 			return;
 		}
-
-		const launchCredentials = credentials ?? (await loadCredentials());
-		if (!launchCredentials) {
-			try {
-				popup.close();
-			} catch {
-				// Browser isolation may have severed the WindowProxy.
-			}
-			toast.error(`Couldn't open ${label}`, {
-				id: RUNTIME_UI_LAUNCH_TOAST_ID,
-				description: "Runtime UI access couldn't be loaded. Open Access to retry.",
-			});
-			return;
-		}
+		launchingRef.current = true;
+		setIsLaunching(true);
 
 		try {
-			popup.location.replace(runtimeUiLaunchTarget(launchCredentials));
-			trackRuntimeWindow(deployment.resource.id, popup);
-		} catch {
+			let launchCredentials: RuntimeUiCredentials;
 			try {
-				popup.close();
+				launchCredentials = await loadRuntimeUiLaunchCredentials(
+					runtime,
+					credentials,
+					requestCredentials,
+				);
 			} catch {
-				// Browser isolation may have severed the WindowProxy.
+				try {
+					popup.close();
+				} catch {
+					// Browser isolation may have severed the WindowProxy.
+				}
+				toast.error(`Couldn't open ${label}`, {
+					id: RUNTIME_UI_LAUNCH_TOAST_ID,
+					description: "Runtime UI access couldn't be loaded. Open Access to retry.",
+				});
+				return;
 			}
-			toast.error(`Couldn't open ${label}`, {
-				id: RUNTIME_UI_LAUNCH_TOAST_ID,
-				description: "The new window couldn't be connected. Try again.",
-			});
+
+			try {
+				popup.location.replace(runtimeUiLaunchTarget(launchCredentials));
+				trackRuntimeWindow(deployment.resource.id, popup);
+			} catch {
+				try {
+					popup.close();
+				} catch {
+					// Browser isolation may have severed the WindowProxy.
+				}
+				toast.error(`Couldn't open ${label}`, {
+					id: RUNTIME_UI_LAUNCH_TOAST_ID,
+					description: "The new window couldn't be connected. Try again.",
+				});
+			}
+		} finally {
+			launchingRef.current = false;
+			setIsLaunching(false);
 		}
-	}, [credentials, deployment.resource.id, label, loadCredentials]);
+	}, [credentials, deployment.resource.id, label, requestCredentials, runtime]);
 
 	const acceptReset = useCallback(async () => {
 		await reset.mutateAsync({ id: deployment.resource.id });
@@ -1865,17 +1910,15 @@ function RuntimeUiAccessDialog({
 					type="button"
 					variant="outline"
 					size="sm"
-					disabled={isLoading}
+					disabled={isLaunching}
 					onClick={() => void openRuntime()}
 					aria-label={`Open ${label} in new window`}
 				>
-					{isLoading && !renderedCredentials ? (
-						<Spinner className="size-3.5" />
-					) : (
-						<ExternalLink className="size-3.5" />
-					)}
-					<span className="hidden sm:inline">Open in new window</span>
-					<span className="sm:hidden">Open</span>
+					{isLaunching ? <Spinner className="size-3.5" /> : <ExternalLink className="size-3.5" />}
+					<span className="hidden sm:inline">
+						{isLaunching ? "Opening…" : "Open in new window"}
+					</span>
+					<span className="sm:hidden">{isLaunching ? "Opening…" : "Open"}</span>
 				</Button>
 			</div>
 			<DialogContent
@@ -1945,11 +1988,11 @@ function RuntimeUiAccessDialog({
 					</ConfirmAction>
 					<Button
 						type="button"
-						disabled={!credentials || isLoading}
+						disabled={isLaunching || reset.isPending}
 						onClick={() => void openRuntime()}
 					>
-						Open in new window
-						<ExternalLink className="size-3.5" />
+						{isLaunching ? <Spinner className="size-3.5" /> : <ExternalLink className="size-3.5" />}
+						{isLaunching ? "Opening…" : "Open in new window"}
 					</Button>
 				</div>
 			</DialogContent>
