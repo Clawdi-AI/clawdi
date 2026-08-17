@@ -641,12 +641,14 @@ materialized under `terminalTooling.codex` from the same repeatable-read batch a
 runtime providers. When both consumers use the same provider, Cloud resolves
 and decrypts that provider auth payload once. The CLI uses the terminal-tool
 reference to own exactly one Hosted Codex default configuration at
-`$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) and a managed command
-shim. The shim exports the process-scoped egress placeholder and executes the
-real Codex with the original arguments; it never adds `--profile`. Managed,
-BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the same
-terminal Codex default. Unmanaged OpenClaw or Hermes units receive no provider
-environment.
+`$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). When Codex is absent
+or damaged, the CLI bootstraps the audited package into the tenant's standard
+`~/.local` npm prefix. It does not wrap, pin, or roll back a healthy user-owned
+Codex install. The Hosted instance environment supplies the public egress
+placeholder, standard CA trust variables, and npm prefix to terminal commands.
+Managed, BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the
+same terminal Codex default. Unmanaged OpenClaw or Hermes units receive no
+provider environment.
 
 For a Clawdi-managed provider, the CLI gives OpenClaw, Hermes, and terminal
 Codex the same reserved local placeholder name: `CLAWDI_AI_API_KEY`. Each
@@ -660,8 +662,8 @@ custom provider selection, endpoint, canonical env key, and Responses transport.
 On the normal Clawdi-provisioned path, the plain `env_key`, fresh managed home,
 and absence of command or Codex-backend auth leave remote refresh disabled, so
 Codex selects its own default from its bundled catalog (`gpt-5.6-sol` in the
-locked `0.146.0` catalog). A manually written or stale ChatGPT backend auth file
-can satisfy Codex's upstream refresh gate. Codex has no native discovery-off
+bootstrap `0.146.0` catalog). A manually written or stale ChatGPT backend auth
+file can satisfy Codex's upstream refresh gate. Codex has no native discovery-off
 setting analogous to OpenClaw or Hermes, and Clawdi does not invent one or
 encode a model choice. Manifest v1 `primary_model` remains required only
 because strict parsing precedes a `clawdiCli.packageSpec` self-upgrade; the new
@@ -1028,9 +1030,10 @@ Clawdi CLI above, Hosted Codex is user-version-owned: Clawdi bootstraps Codex
 into the standard tenant-owned `~/.local` npm prefix only when its package
 metadata or executable is missing or damaged. A healthy installed Codex version
 is owned by the user and is never rolled back by Clawdi. The hosted execution
-environment provides the public egress placeholder, Codex CA, and user npm
-prefix without exposing the real provider credential; the shared npm prefix
-remains outside Clawdi snapshot, ownership, and rollback targets.
+environment provides the public egress placeholder, standard per-tool CA trust
+variables, and user npm prefix without exposing the real provider credential;
+the shared npm prefix remains outside Clawdi snapshot, ownership, and rollback
+targets.
 
 The hosted image's bootstrap package may expose
 `/usr/local/bin/clawdi -> ../lib/node_modules/clawdi/bin/clawdi.mjs` while root
