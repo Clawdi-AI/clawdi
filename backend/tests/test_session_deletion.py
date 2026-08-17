@@ -11,7 +11,9 @@ from fastapi import Request
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.auth import AuthContext
+from app.core.auth import AuthContext, get_auth
+from app.main import app
+from app.models.api_key import ApiKey
 from app.models.memory import Memory
 from app.models.session import Session, SessionSyncSuppression
 from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
@@ -148,6 +150,17 @@ async def test_delete_session_is_durable_and_preserves_memories(
     permission_id = permission.id
     memory_id = memory.id
     assert (await anon_client.get(f"/v1/public/sessions/{session_id}")).status_code == 200
+
+    dashboard_auth = app.dependency_overrides[get_auth]
+
+    async def cli_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=ApiKey(user_id=seed_user.id))
+
+    app.dependency_overrides[get_auth] = cli_auth
+    try:
+        assert (await client.delete(f"/v1/sessions/{session_id}")).status_code == 403
+    finally:
+        app.dependency_overrides[get_auth] = dashboard_auth
 
     response = await client.delete(f"/v1/sessions/{session_id}")
 

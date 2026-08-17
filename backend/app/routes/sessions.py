@@ -2141,7 +2141,9 @@ async def batch_create_sessions(
     # env-A), and the upsert's ON CONFLICT path then overwrites
     # environment_id from B to A. Bound key effectively steals the row.
     #
-    # `with_for_update()` closes the TOCTOU between the env-binding
+    # Lock in deterministic id order so concurrent batches do not deadlock.
+    # `with_for_update()` also serializes this read with Session upload/delete
+    # and closes the TOCTOU between the env-binding
     # check below and the upsert that follows. Without the row lock,
     # a concurrent JWT (dashboard) write could rebind environment_id
     # in the gap; the bound-key check would pass on the stale read,
