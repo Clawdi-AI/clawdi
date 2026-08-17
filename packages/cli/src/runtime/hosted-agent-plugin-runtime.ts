@@ -8,6 +8,7 @@ import {
 	type HostedAgentPluginReceipt,
 	type HostedAgentPluginRuntime,
 	hostedAgentPluginDirectoryDigest,
+	hostedAgentPluginTreeDigest,
 	type PreparedHostedAgentPlugin,
 	type PreparedHostedAgentPlugins,
 	withPreparedAgentPluginDirectory,
@@ -100,6 +101,7 @@ class OpenClawAgentPluginNotObservedError extends Error {}
 
 const OPENCLAW_AGENT_PLUGIN_STANDARD_UNSUPPORTED_ERROR =
 	"OpenClaw installed the package but did not report it as an Agent Plugins 1.0.0 bundle; standards-native installation is unsupported";
+const AGENT_PLUGIN_CAPABILITY_CANARY_NAME = "clawdi-capability-canary";
 
 export type HermesRemoteCapabilityProbe = (input: {
 	command: string;
@@ -150,12 +152,32 @@ interface NativePluginObservation {
 	contentDigest: string | null;
 }
 
+interface NativeAgentPluginPackage {
+	name: string;
+	version: string;
+	contentDigest: string;
+	mcpServerNames: readonly string[];
+	hasStreamableHttpMcp: boolean;
+	tree: PreparedHostedAgentPlugin["tree"];
+}
+
+function nativePackage(prepared: PreparedHostedAgentPlugin): NativeAgentPluginPackage {
+	return {
+		name: prepared.name,
+		version: prepared.installation.version,
+		contentDigest: prepared.installation.contentDigest,
+		mcpServerNames: prepared.mcpServerNames,
+		hasStreamableHttpMcp: prepared.hasStreamableHttpMcp,
+		tree: prepared.tree,
+	};
+}
+
 interface NativeAgentPluginDriver {
 	runtime: HostedAgentPluginRuntime;
 	installTarget(nativeId: string): string;
 	mutationStateTargets(): readonly string[];
 	observe(name: string, nativeId?: string): NativePluginObservation | null;
-	install(prepared: PreparedHostedAgentPlugin): NativePluginObservation;
+	install(prepared: NativeAgentPluginPackage): NativePluginObservation;
 	setEnabled(observation: NativePluginObservation, enabled: boolean): void;
 	remove(observation: NativePluginObservation): void;
 }
@@ -505,7 +527,7 @@ const defaultHermesRemoteCapabilityProbe: HermesRemoteCapabilityProbe = (input) 
 			}),
 		withEnabledCanary: (canary, prove) => {
 			const driver = createHermesDriver(input);
-			const installed = driver.install(canary);
+			const installed = driver.install(nativePackage(canary));
 			try {
 				driver.setEnabled(installed, true);
 				prove();
@@ -525,6 +547,45 @@ const defaultHermesRemoteCapabilityProbe: HermesRemoteCapabilityProbe = (input) 
 interface CapabilityProbePackage {
 	runtime: HostedAgentPluginRuntime;
 	prepared: PreparedHostedAgentPlugin;
+}
+
+function capabilityCanaryPackage(): NativeAgentPluginPackage {
+	const tree: PreparedHostedAgentPlugin["tree"] = [
+		{
+			path: "plugin.json",
+			mode: 0o100644,
+			bytes: Buffer.from(
+				JSON.stringify({
+					$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+					name: AGENT_PLUGIN_CAPABILITY_CANARY_NAME,
+					version: "1.0.0",
+				}),
+			),
+		},
+		{
+			path: "skills/clawdi-capability/SKILL.md",
+			mode: 0o100644,
+			bytes: Buffer.from(
+				[
+					"---",
+					"name: clawdi-capability",
+					"description: Verify standards-native Agent Plugin lifecycle support.",
+					"---",
+					"",
+					"# Clawdi capability canary",
+					"",
+				].join("\n"),
+			),
+		},
+	];
+	return {
+		name: AGENT_PLUGIN_CAPABILITY_CANARY_NAME,
+		version: "1.0.0",
+		contentDigest: hostedAgentPluginTreeDigest(tree),
+		mcpServerNames: [],
+		hasStreamableHttpMcp: false,
+		tree,
+	};
 }
 
 function capabilityProbePackages(prepared: PreparedHostedAgentPlugins): CapabilityProbePackage[] {
@@ -597,25 +658,25 @@ function observationUnchanged(
 	);
 }
 
-type NativeCapabilityProbeResult =
+type NativePackageProbeResult =
 	| { kind: "supported"; nativeId: string }
 	| { kind: "unsupported"; message?: string };
 
 function probeObservationCapability(
 	observation: NativePluginObservation,
-	prepared: PreparedHostedAgentPlugin,
+	prepared: NativeAgentPluginPackage,
 	expectedNativeId?: string,
 ): "supported" | "unsupported" {
 	if (
 		observation.name !== prepared.name ||
-		observation.version !== prepared.installation.version ||
+		observation.version !== prepared.version ||
 		(expectedNativeId !== undefined && observation.nativeId !== expectedNativeId)
 	) {
 		throw new Error("native Agent Plugin probe observed an unexpected package identity");
 	}
 	if (!observation.compatible)
 		throw new Error("native Agent Plugin probe observed an unexpected package source");
-	if (observation.contentDigest !== prepared.installation.contentDigest) {
+	if (observation.contentDigest !== prepared.contentDigest) {
 		throw new Error("native Agent Plugin probe observed unexpected package bytes");
 	}
 	if (observation.runtime === "openclaw") {
@@ -631,13 +692,13 @@ function probeObservationCapability(
 	return "supported";
 }
 
-function probeNativeCapability(input: {
+function probeNativePackage(input: {
 	runtime: HostedAgentPluginRuntime;
 	command: string;
-	prepared: PreparedHostedAgentPlugin;
+	prepared: NativeAgentPluginPackage;
 	runner: HostedAgentPluginCommandRunner;
 	hermesRemoteCapabilityProbe: HermesRemoteCapabilityProbe;
-}): NativeCapabilityProbeResult {
+}): NativePackageProbeResult {
 	if (!isAbsolute(input.command)) {
 		throw new Error("Agent Plugin capability probe requires an absolute runtime command");
 	}
@@ -721,12 +782,26 @@ export function proveHostedAgentPluginCapabilities(input: {
 	const runner = input.runner ?? defaultCommandRunner;
 	const packages = new Map<string, HostedAgentPluginPackageProof>();
 	let hermesRemoteProven = false;
-	for (const item of capabilityProbePackages(input.prepared)) {
+	const probePackages = capabilityProbePackages(input.prepared);
+	const runtimes = [...new Set(probePackages.map((item) => item.runtime))].sort();
+	for (const runtime of runtimes) {
+		const probe = probeNativePackage({
+			runtime,
+			command: input.commands[runtime],
+			prepared: capabilityCanaryPackage(),
+			runner,
+			hermesRemoteCapabilityProbe: () => undefined,
+		});
+		if (probe.kind === "unsupported") {
+			throw new HostedAgentPluginCapabilityUnsupportedError(probe.message);
+		}
+	}
+	for (const item of probePackages) {
 		const command = input.commands[item.runtime];
-		const probe = probeNativeCapability({
+		const probe = probeNativePackage({
 			runtime: item.runtime,
 			command,
-			prepared: item.prepared,
+			prepared: nativePackage(item.prepared),
 			runner,
 			hermesRemoteCapabilityProbe: (probeInput) => {
 				if (hermesRemoteProven) return;
@@ -735,7 +810,7 @@ export function proveHostedAgentPluginCapabilities(input: {
 			},
 		});
 		if (probe.kind === "unsupported") {
-			throw new HostedAgentPluginCapabilityUnsupportedError(probe.message);
+			throw new Error("Agent Plugin package is not supported by the selected native runtime");
 		}
 		const proof = {
 			runtime: item.runtime,
@@ -958,7 +1033,7 @@ export function prepareHostedAgentPluginTransaction(input: {
 				}
 				if (mutation.action === "install" || mutation.action === "replace") {
 					if (!mutation.desired) throw new Error("Agent Plugin mutation plan is invalid");
-					const installed = mutation.driver.install(mutation.desired);
+					const installed = mutation.driver.install(nativePackage(mutation.desired));
 					if (!observationMatches(installed, mutation.desired, mutation.nativeId)) {
 						throw new Error("native Agent Plugin installed an unexpected identity or package");
 					}
@@ -1003,7 +1078,7 @@ export function prepareHostedAgentPluginTransaction(input: {
 							}
 							mutation.driver.remove(current);
 						}
-						const restored = mutation.driver.install(mutation.previous);
+						const restored = mutation.driver.install(nativePackage(mutation.previous));
 						if (!observationMatches(restored, mutation.previous, mutation.nativeId)) {
 							throw new Error("native Agent Plugin rollback restored an unexpected package");
 						}

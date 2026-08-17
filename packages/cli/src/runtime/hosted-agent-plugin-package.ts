@@ -96,6 +96,19 @@ export interface PreparedAgentPluginTreeFile {
 	bytes: Buffer;
 }
 
+export function hostedAgentPluginTreeDigest(tree: readonly PreparedAgentPluginTreeFile[]): string {
+	const digest = createHash("sha256");
+	for (const file of [...tree].sort((left, right) =>
+		Buffer.compare(Buffer.from(left.path, "utf8"), Buffer.from(right.path, "utf8")),
+	)) {
+		digest.update(
+			`${file.mode.toString(8)}\0${file.path}\0${file.bytes.length}\0${sha256(file.bytes)}\n`,
+			"utf8",
+		);
+	}
+	return `sha256-tree-v1:${digest.digest("hex")}`;
+}
+
 export interface PreparedHostedAgentPlugin {
 	name: string;
 	installation: PreparedHostedAgentPluginInstallation;
@@ -673,14 +686,7 @@ function collectPackageTree(
 	tree.sort((left, right) =>
 		Buffer.compare(Buffer.from(left.path, "utf8"), Buffer.from(right.path, "utf8")),
 	);
-	const digest = createHash("sha256");
-	for (const file of tree) {
-		digest.update(
-			`${file.mode.toString(8)}\0${file.path}\0${file.bytes.length}\0${sha256(file.bytes)}\n`,
-			"utf8",
-		);
-	}
-	return { digest: `sha256-tree-v1:${digest.digest("hex")}`, tree };
+	return { digest: hostedAgentPluginTreeDigest(tree), tree };
 }
 
 export function hostedAgentPluginDirectoryDigest(
@@ -1228,7 +1234,7 @@ export async function prepareHostedAgentPluginPackages(
 }
 
 export function withPreparedAgentPluginDirectory<T>(
-	prepared: PreparedHostedAgentPlugin,
+	prepared: Pick<PreparedHostedAgentPlugin, "tree">,
 	operation: (sourceDir: string) => T,
 ): T {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-agent-plugin-stage-"));

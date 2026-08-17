@@ -769,7 +769,8 @@ describe("declarative deployment mutations", () => {
 				url: "https://runtime.example/openclaw/",
 				deployment_resource_version: "rv-runtime-ui",
 				token: "gateway-token",
-				handoff_url: "https://runtime.example/openclaw/#token=gateway-token",
+				handoff_url:
+					"https://runtime.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
 			});
 		});
 

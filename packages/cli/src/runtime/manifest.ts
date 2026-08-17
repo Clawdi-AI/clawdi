@@ -3183,9 +3183,8 @@ function openClawGatewayHostedPatch(
 											? {
 													basePath: openClawControlUiBasePath(manifest),
 													dangerouslyAllowHostHeaderOriginFallback: false,
-													dangerouslyDisableDeviceAuth: true,
 												}
-											: { dangerouslyDisableDeviceAuth: true }),
+											: {}),
 									},
 								}
 							: {}),

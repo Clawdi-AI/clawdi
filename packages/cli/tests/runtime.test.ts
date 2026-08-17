@@ -3800,7 +3800,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				},
 				controlUi: {
 					allowedOrigins: ["https://app-v2-18789.k3s.example.test"],
-					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});
@@ -4956,7 +4955,6 @@ exit 0
 					basePath: "/",
 					allowedOrigins: ["https://app-v2-18789.k3s.example.test"],
 					dangerouslyAllowHostHeaderOriginFallback: false,
-					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});

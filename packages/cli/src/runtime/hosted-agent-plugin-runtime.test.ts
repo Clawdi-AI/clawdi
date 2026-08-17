@@ -48,6 +48,7 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 	openClawDiagnostics: Array<{ level: "warn" | "error"; message: string }> = [];
 	omitOpenClawComponentObservation = false;
 	openClawInstallSource: "path" | "npm" = "path";
+	openClawFaultPackageName = "acme.tools";
 	omitOpenClawInstalledPluginObservation: "probe" | "live" | null = null;
 	retainProbeRemoval = false;
 	readonly liveHome: string;
@@ -196,6 +197,7 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 				.map(([, value]) => value)
 				.find((value) => value.nativeId === args[2]);
 			if (!plugin) return { status: 1, stdout: "", stderr: "" };
+			const applyPackageFaults = plugin.name === this.openClawFaultPackageName;
 			return {
 				status: 0,
 				stdout: JSON.stringify({
@@ -211,20 +213,20 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 						bundleFormat: plugin.compatible ? "agent" : undefined,
 					},
 					install: {
-						source: this.openClawInstallSource,
+						source: applyPackageFaults ? this.openClawInstallSource : "path",
 						version: plugin.version,
 						installPath: this.installPath(input.home, runtime, plugin.nativeId),
 					},
-					...(this.omitOpenClawComponentObservation
+					...(applyPackageFaults && this.omitOpenClawComponentObservation
 						? {}
 						: {
 								mcpServers:
-									this.openClawMcpServersOverride ??
+									(applyPackageFaults ? this.openClawMcpServersOverride : null) ??
 									(plugin.mcpServerNames ?? []).map((name) => ({
 										name,
 										hasStdioTransport: true,
 									})),
-								diagnostics: this.openClawDiagnostics,
+								diagnostics: applyPackageFaults ? this.openClawDiagnostics : [],
 							}),
 				}),
 				stderr: "",
@@ -469,7 +471,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		expect(runner.liveMutations()).toHaveLength(liveMutations);
 	});
 
-	test("classifies only explicit OpenClaw capability absence as unsupported", () => {
+	test("separates OpenClaw capability absence from package incompatibility", () => {
 		const desired = plugin("acme.tools", "1.2.3", "f".repeat(64), ["alpha", "zeta"]);
 		const prepared = desiredState("openclaw", desired);
 		expect(() =>
@@ -485,9 +487,18 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			{ name: "alpha", hasStdioTransport: true },
 			{ name: "zeta", hasStdioTransport: false, unsupported: true },
 		];
-		expect(() =>
-			proveHostedAgentPluginCapabilities({ prepared, commands, runner: unsupportedRunner }),
-		).toThrow(HostedAgentPluginCapabilityUnsupportedError);
+		let packageError: unknown;
+		try {
+			proveHostedAgentPluginCapabilities({ prepared, commands, runner: unsupportedRunner });
+		} catch (error) {
+			packageError = error;
+		}
+		expect(packageError).toBeInstanceOf(Error);
+		expect(packageError).not.toBeInstanceOf(HostedAgentPluginCapabilityUnsupportedError);
+		expect(packageError).toHaveProperty(
+			"message",
+			"Agent Plugin package is not supported by the selected native runtime",
+		);
 
 		const oldOpenClawRunner = new FakeNativeRunner();
 		oldOpenClawRunner.omitOpenClawInstalledPluginObservation = "probe";
