@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import type { AgentPluginCatalogEntry, AgentPluginDesiredState } from "./agent-plugin-model";
 import {
 	agentPluginInstallability,
-	agentPluginMatches,
 	agentPluginStatusPresentation,
 	buildAgentPluginInventory,
 	pluginHasUpdate,
@@ -18,8 +17,8 @@ function catalogEntry(
 		display_name: name,
 		description: `${name} description`,
 		publisher: "Example",
-		category: "productivity",
-		keywords: ["automation"],
+		category: "developer-tools",
+		keywords: [],
 		languages: ["en"],
 		runtimes: ["openclaw", "hermes"],
 		components: { skills: [`${name}-skill`], mcpServers: {} },
@@ -30,7 +29,7 @@ function catalogEntry(
 
 function desired(
 	name: string,
-	convergence: AgentPluginDesiredState["convergence"] = "installed",
+	overrides: Partial<AgentPluginDesiredState> = {},
 ): AgentPluginDesiredState {
 	return {
 		installation_id: `installation-${name}`,
@@ -39,48 +38,50 @@ function desired(
 		version: "1.0.0",
 		catalog_revision: "a".repeat(40),
 		desired_state: "present",
-		convergence,
+		convergence: "installed",
 		observation_error_code: null,
 		observed_at: null,
 		created_at: "2026-08-16T00:00:00Z",
 		updated_at: "2026-08-16T00:00:00Z",
+		...overrides,
 	};
 }
 
-describe("Agent Plugin inventory", () => {
-	test("keeps installed packages once and preserves entries no longer in the catalog", () => {
+describe("Agent Plugin model", () => {
+	test("merges Store and desired state without dropping historical installations", () => {
 		const inventory = buildAgentPluginInventory(
-			[catalogEntry("alpha"), catalogEntry("beta")],
-			[desired("alpha"), desired("legacy")],
+			[catalogEntry("sui"), catalogEntry("cetus")],
+			[desired("sui"), desired("legacy")],
 		);
-		expect(inventory.installed.map((item) => item.name)).toEqual(["alpha", "legacy"]);
-		expect(inventory.available.map((item) => item.name)).toEqual(["beta"]);
-		expect(inventory.installed[1]?.catalog).toBeNull();
-		expect(pluginHasUpdate(inventory.installed[0])).toBe(true);
+
+		expect(inventory.installed.map((item) => item.name)).toEqual(["legacy", "sui"]);
+		expect(inventory.available.map((item) => item.name)).toEqual(["cetus"]);
+		expect(inventory.installed[0]?.catalog).toBeNull();
+		expect(pluginHasUpdate(inventory.installed[1])).toBe(true);
 	});
 
-	test("orders failures before pending and installed packages", () => {
-		const inventory = buildAgentPluginInventory(
-			[],
-			[
-				desired("ready", "installed"),
-				desired("pending", "not_observed"),
-				desired("broken", "failed"),
-			],
-		);
-		expect(inventory.installed.map((item) => item.name)).toEqual(["broken", "pending", "ready"]);
-		const failed = inventory.installed[0]?.desired;
-		if (!failed) throw new Error("expected failed desired state");
-		expect(agentPluginStatusPresentation(failed).label).toBe("Needs attention");
-	});
-
-	test("combines Store installability with the selected runtime", () => {
-		expect(agentPluginInstallability(catalogEntry("portable"), "hermes").installable).toBe(true);
+	test("maps the three observed convergence states without mutation-only states", () => {
+		expect(agentPluginStatusPresentation(desired("sui")).label).toBe("Installed");
 		expect(
-			agentPluginInstallability(
-				catalogEntry("openclaw-only", { runtimes: ["openclaw"] }),
-				"hermes",
+			agentPluginStatusPresentation(desired("sui", { convergence: "not_observed" })).label,
+		).toBe("Not observed");
+		expect(
+			agentPluginStatusPresentation(
+				desired("sui", {
+					convergence: "failed",
+					observation_error_code: "receipt_mismatch",
+				}),
 			),
+		).toMatchObject({
+			label: "Failed",
+			description: "The installed package does not match the requested plugin.",
+		});
+	});
+
+	test("combines catalog installability with the selected hosted runtime", () => {
+		expect(agentPluginInstallability(catalogEntry("sui"), "hermes").installable).toBe(true);
+		expect(
+			agentPluginInstallability(catalogEntry("cetus", { runtimes: ["openclaw"] }), "hermes"),
 		).toEqual({
 			installable: false,
 			label: "Incompatible",
@@ -88,30 +89,12 @@ describe("Agent Plugin inventory", () => {
 		});
 		expect(
 			agentPluginInstallability(
-				catalogEntry("configured", {
+				catalogEntry("reserved", {
 					installable: false,
-					installability_reason: "configuration_not_supported",
+					installability_reason: "reserved_name",
 				}),
 				"openclaw",
-			).reason,
-		).toContain("requires configuration");
-	});
-
-	test("searches catalog identity, metadata, and component names", () => {
-		const item = buildAgentPluginInventory(
-			[
-				catalogEntry("browser-tools", {
-					display_name: "Browser Tools",
-					components: {
-						skills: ["web-research"],
-						mcpServers: { browser: "streamable-http" },
-					},
-				}),
-			],
-			[],
-		).available[0];
-		expect(agentPluginMatches(item, "research")).toBe(true);
-		expect(agentPluginMatches(item, "browser")).toBe(true);
-		expect(agentPluginMatches(item, "unrelated")).toBe(false);
+			).label,
+		).toBe("Reserved");
 	});
 });

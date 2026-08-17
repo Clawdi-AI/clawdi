@@ -2,7 +2,6 @@ import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import {
 	agentConnectorDetailLink,
 	agentMemoryDetailLink,
-	agentPluginDetailLink,
 	agentProjectDetailLink,
 	agentProjectResourceLink,
 	agentRouteIdsEqual,
@@ -76,12 +75,6 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 			if (currentRoute?.connectorName) {
 				throw redirect({
 					...agentConnectorDetailLink(params.id, currentRoute.connectorName, legacy.search),
-					replace: true,
-				});
-			}
-			if (currentRoute?.pluginName) {
-				throw redirect({
-					...agentPluginDetailLink(params.id, currentRoute.pluginName, legacy.search),
 					replace: true,
 				});
 			}

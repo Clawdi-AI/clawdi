@@ -6,8 +6,6 @@ import {
 	agentDeploymentSelector,
 	agentMemoryDetailHref,
 	agentMemoryDetailLink,
-	agentPluginDetailHref,
-	agentPluginDetailLink,
 	agentProjectDetailHref,
 	agentProjectDetailLink,
 	agentProjectResourceHref,
@@ -44,7 +42,6 @@ describe("agent routes", () => {
 		expect(agentSectionHref("agent 1", "ai")).toBe("/agents/agent%201/model-provider");
 		expect(agentSectionHref("agent 1", "channels")).toBe("/agents/agent%201/channel-links");
 		expect(agentSectionHref("agent 1", "files")).toBe("/agents/agent%201/files");
-		expect(agentSectionHref("agent 1", "plugins")).toBe("/agents/agent%201/plugins");
 		expect(agentSectionHref("agent 1", "settings")).toBe("/agents/agent%201/settings");
 		expect(agentSessionDetailHref("agent 1", "session 1")).toBe(
 			"/agents/agent%201/sessions/session%201",
@@ -59,9 +56,6 @@ describe("agent routes", () => {
 			"/agents/agent%201/skills/team/foo?project=proj%201",
 		);
 		expect(agentSkillDetailHref("agent 1", "team/foo")).toBe("/agents/agent%201/skills/team/foo");
-		expect(agentPluginDetailHref("agent 1", "browser tools")).toBe(
-			"/agents/agent%201/plugins/browser%20tools",
-		);
 		expect(agentProjectDetailHref("agent 1", "project 1")).toBe(
 			"/agents/agent%201/project-access/project%201",
 		);
@@ -126,9 +120,6 @@ describe("agent routes", () => {
 		expect(agentConnectorDetailHref("agent 1", "google drive", query)).toBe(
 			"/agents/agent%201/connectors/google%20drive?source=on-clawdi&d=hdep_selected",
 		);
-		expect(agentPluginDetailHref("agent 1", "browser-tools", query)).toBe(
-			"/agents/agent%201/plugins/browser-tools?source=on-clawdi&d=hdep_selected",
-		);
 		expect(agentSkillDetailHref("agent 1", "team/foo", "proj 1", query)).toBe(
 			"/agents/agent%201/skills/team/foo?source=on-clawdi&d=hdep_selected&project=proj%201",
 		);
@@ -172,11 +163,6 @@ describe("agent routes", () => {
 			params: { id: "agent 1", name: "google drive" },
 			search: { source: "on-clawdi", d: "hdep_selected" },
 		});
-		expect(agentPluginDetailLink("agent 1", "browser-tools", query)).toEqual({
-			to: "/agents/$id/plugins/$pluginName",
-			params: { id: "agent 1", pluginName: "browser-tools" },
-			search: { source: "on-clawdi", d: "hdep_selected" },
-		});
 	});
 
 	it("lets only the complete current section route own canonicalization", () => {
@@ -198,9 +184,6 @@ describe("agent routes", () => {
 		expect(
 			agentRouteOwnsSection("/agents/agent-1/connectors/github", "agent-1", "connectors"),
 		).toBe(false);
-		expect(agentRouteOwnsSection("/agents/agent-1/plugins/browser", "agent-1", "plugins")).toBe(
-			false,
-		);
 		expect(agentRouteOwnsSection("/agents/agent-1/skills", "agent-1", "overview")).toBe(false);
 	});
 
@@ -239,7 +222,6 @@ describe("agent routes", () => {
 		expect(parseAgentSectionSegment("model-provider")).toBe("ai");
 		expect(parseAgentSectionSegment("channel-links")).toBe("channels");
 		expect(parseAgentSectionSegment("files")).toBe("files");
-		expect(parseAgentSectionSegment("plugins")).toBe("plugins");
 		expect(parseAgentSectionSegment("settings")).toBe("settings");
 		expect(parseAgentSectionSegment("projects")).toBeNull();
 		expect(parseAgentSectionSegment("ai")).toBeNull();
@@ -259,7 +241,6 @@ describe("agent routes", () => {
 			"console",
 			"files",
 			"terminal",
-			"plugins",
 			"connectors",
 			"ai",
 			"channels",
@@ -277,7 +258,6 @@ describe("agent routes", () => {
 			console: "console",
 			files: "files",
 			terminal: "terminal",
-			plugins: "plugins",
 			connectors: "connectors",
 			ai: "model-provider",
 			channels: "channel-links",
@@ -290,7 +270,6 @@ describe("agent routes", () => {
 		expect(agentSectionLabel("memories")).toBe("Memories");
 		expect(agentSectionLabel("console")).toBe("Agent Interface");
 		expect(agentSectionLabel("files")).toBe("Files");
-		expect(agentSectionLabel("plugins")).toBe("Plugins");
 		expect(agentSectionLabel("channels")).toBe("Channels");
 		expect(agentSectionLabel("connectors")).toBe("Connectors");
 		expect(agentSectionLabel("vaults")).toBe("Vaults");
@@ -298,7 +277,6 @@ describe("agent routes", () => {
 		expect(agentSectionLabelFromSegment("memories")).toBe("Memories");
 		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
 		expect(agentSectionLabelFromSegment("files")).toBe("Files");
-		expect(agentSectionLabelFromSegment("plugins")).toBe("Plugins");
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI Providers");
 		expect(agentSectionLabelFromSegment("connectors")).toBe("Connectors");
 		expect(agentSectionLabelFromSegment("vaults")).toBe("Vaults");
@@ -318,8 +296,6 @@ describe("agent routes", () => {
 		}
 		expect(CONNECTED_AGENT_SECTION_IDS).not.toContain("mcp");
 		expect(HOSTED_AGENT_SECTION_IDS).not.toContain("mcp");
-		expect(HOSTED_AGENT_SECTION_IDS).toContain("plugins");
-		expect(CONNECTED_AGENT_SECTION_IDS).not.toContain("plugins");
 	});
 
 	it("detects and removes tab params without changing the canonical section", () => {
@@ -396,13 +372,6 @@ describe("agent routes", () => {
 			skillKey: undefined,
 			connectorName: "google drive",
 		});
-		expect(parseAgentPathname("/agents/agent%201/plugins/browser%20tools")).toEqual({
-			agentId: "agent 1",
-			section: "plugins",
-			sessionId: undefined,
-			skillKey: undefined,
-			pluginName: "browser tools",
-		});
 		expect(parseAgentPathname("/agents/agent%201/vaults")).toEqual({
 			agentId: "agent 1",
 			section: "vaults",
@@ -463,7 +432,6 @@ describe("agent routes", () => {
 		expect(parseAgentPathname("/agents/agent%201/vaults/prod/extra")).toBeNull();
 		expect(parseAgentPathname("/agents/agent%201/memories/memory/extra")).toBeNull();
 		expect(parseAgentPathname("/agents/agent%201/connectors/github/extra")).toBeNull();
-		expect(parseAgentPathname("/agents/agent%201/plugins/browser/extra")).toBeNull();
 		expect(parseAgentPathname("/agents/agent%201/compute")).toBeNull();
 		expect(parseAgentPathname("/AGENTS/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/SKILLS")).toEqual({
 			agentId: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",

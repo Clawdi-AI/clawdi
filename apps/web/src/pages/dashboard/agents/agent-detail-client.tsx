@@ -21,22 +21,15 @@ export function AgentDetailClient({
 	environmentId,
 	section,
 	routeSearch,
-	pluginName,
 }: {
 	environmentId: string;
 	section: AgentSectionId;
 	routeSearch: AgentRouteSearch;
-	pluginName?: string;
 }) {
 	if (AgentHome) {
 		return (
 			<Suspense fallback={<ConnectedAgentDetailSkeleton hosted section={section} />}>
-				<AgentHome
-					environmentId={environmentId}
-					section={section}
-					routeSearch={routeSearch}
-					pluginName={pluginName}
-				/>
+				<AgentHome environmentId={environmentId} section={section} routeSearch={routeSearch} />
 			</Suspense>
 		);
 	}

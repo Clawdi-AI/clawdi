@@ -1,17 +1,14 @@
 "use client";
 
-import { Blocks, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Blocks, ChevronRight, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { HostedRuntime } from "@/hosted/runtimes";
 import { runtimeDisplayName } from "@/hosted/runtimes";
-import type { AgentRouteQuery } from "@/lib/agent-routes";
-import { agentPluginDetailLink } from "@/lib/agent-routes";
 import { identityFor } from "@/lib/identity";
 import {
 	type AgentPluginInventoryItem,
@@ -23,31 +20,29 @@ import {
 	pluginVersion,
 } from "./agent-plugin-model";
 
+export type AgentPluginPendingAction = "install" | "remove" | null;
+
 export function AgentPluginCard({
 	item,
-	agentId,
 	runtime,
-	routeSearch,
 	pendingAction,
 	mutationsBlocked,
+	onOpen,
 	onInstall,
 	onRemove,
 }: {
 	item: AgentPluginInventoryItem;
-	agentId: string;
 	runtime: HostedRuntime;
-	routeSearch?: AgentRouteQuery;
-	pendingAction: "install" | "remove" | null;
+	pendingAction: AgentPluginPendingAction;
 	mutationsBlocked: boolean;
+	onOpen: (name: string) => void;
 	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
 }) {
 	const title = pluginDisplayName(item);
-	const identity = identityFor(item.name);
 	const status = item.desired ? agentPluginStatusPresentation(item.desired) : null;
 	const installability = item.catalog ? agentPluginInstallability(item.catalog, runtime) : null;
 	const hasUpdate = pluginHasUpdate(item);
-	const installLabel = hasUpdate ? "Update" : "Install";
 	const canInstall = Boolean(
 		item.catalog && installability?.installable && (!item.desired || hasUpdate),
 	);
@@ -56,55 +51,62 @@ export function AgentPluginCard({
 	return (
 		<div data-hosted="true" data-v2="true" className="contents">
 			<HeroCard
-				className="min-h-40 gap-3"
+				className="min-h-36"
 				icon={
-					<IconChip size="sm" tint={identity.colorClasses} className="rounded-lg">
+					<IconChip size="sm" tint={identityFor(item.name).colorClasses} className="rounded-lg">
 						<Blocks />
 					</IconChip>
 				}
 				title={title}
 				badges={
+					status ? (
+						<StatusBadge status={status.tone} withDot>
+							{status.label}
+						</StatusBadge>
+					) : undefined
+				}
+				description={
+					item.catalog?.description ?? "This installed version is no longer listed in the Store."
+				}
+				footer={[
+					item.catalog?.publisher ?? (item.desired ? "Historical install" : null),
+					`v${pluginVersion(item)}`,
+					runtimeLabels,
+				]}
+				actions={
 					<>
-						<Badge variant="outline">v{pluginVersion(item)}</Badge>
-						{status ? (
-							<StatusBadge status={status.tone} withDot>
-								{status.label}
-							</StatusBadge>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							disabled={mutationsBlocked && pendingAction === null}
+							onClick={() => onOpen(item.name)}
+							aria-label={`View ${title} details`}
+						>
+							<ChevronRight />
+						</Button>
+						{item.desired ? (
+							<ConfirmAction
+								title={`Remove ${title}?`}
+								description={<p>The agent will remove this plugin during reconciliation.</p>}
+								confirmLabel="Remove plugin"
+								destructive
+								onConfirm={() => onRemove(item)}
+							>
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									disabled={mutationsBlocked}
+									className="text-muted-foreground hover:text-destructive"
+									aria-label={`Remove ${title}`}
+								>
+									{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
+								</Button>
+							</ConfirmAction>
 						) : null}
 					</>
 				}
-				description={
-					item.catalog?.description ??
-					"This installed version is no longer listed in the current Store catalog."
-				}
-				footer={[item.catalog?.publisher ?? null, runtimeLabels ?? null]}
-				actions={
-					item.desired ? (
-						<ConfirmAction
-							title={`Remove ${title}?`}
-							description={
-								<p>The agent will remove this plugin the next time it reconciles desired state.</p>
-							}
-							confirmLabel="Remove plugin"
-							destructive
-							onConfirm={() => onRemove(item)}
-						>
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								disabled={mutationsBlocked}
-								className="text-muted-foreground hover:text-destructive"
-								aria-label={`Remove ${title}`}
-							>
-								{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
-							</Button>
-						</ConfirmAction>
-					) : undefined
-				}
-				link={agentPluginDetailLink(agentId, item.name, routeSearch)}
-				ariaLabel={`Open ${title}`}
 			>
-				<div className="relative z-10 mt-auto flex min-w-0 items-center justify-between gap-3">
+				<div className="mt-auto flex min-w-0 items-center justify-between gap-3">
 					<span className="min-w-0 text-xs text-muted-foreground">
 						{agentPluginComponentSummary(item.catalog)}
 					</span>
@@ -116,7 +118,13 @@ export function AgentPluginCard({
 							onClick={() => void onInstall(item).catch(() => undefined)}
 						>
 							{pendingAction === "install" ? <Spinner /> : hasUpdate ? <RefreshCw /> : <Plus />}
-							{installLabel}
+							{pendingAction === "install"
+								? hasUpdate
+									? "Updating…"
+									: "Installing…"
+								: hasUpdate
+									? "Update"
+									: "Install"}
 						</Button>
 					) : !item.desired && installability ? (
 						<Button size="sm" variant="outline" disabled title={installability.reason ?? undefined}>
