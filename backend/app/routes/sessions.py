@@ -39,7 +39,7 @@ from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.memory import Memory
-from app.models.session import AgentEnvironment, Session
+from app.models.session import AgentEnvironment, Session, SessionSyncSuppression
 from app.models.session_permission import (
     PERMISSION_KIND_LINK,
     PERMISSION_KINDS,
@@ -132,7 +132,6 @@ _MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024
 _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _SESSION_LOCAL_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"
-_SESSION_LOCAL_ID_RE = re.compile(_SESSION_LOCAL_ID_PATTERN)
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
 _AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected"
@@ -1337,36 +1336,8 @@ async def _delete_managed_avatar_key_best_effort(key: str | None) -> None:
         log.warning("agent_avatar_delete_failed key=%s", key, exc_info=True)
 
 
-async def _delete_session_content_best_effort(key: str | None) -> None:
-    if not key:
-        return
-    try:
-        await file_store.delete(key)
-    except Exception:
-        log.warning("session_content_delete_failed file_key=%s", key, exc_info=True)
-
-
-def _session_generation_file_key(session: Session) -> str:
-    return f"sessions/{session.user_id}/{session.id}.json"
-
-
-def _session_content_cleanup_keys(session: Session) -> set[str]:
-    """Return only exact object keys owned by this Session generation."""
-    keys = {_session_generation_file_key(session)}
-    if _SESSION_LOCAL_ID_RE.fullmatch(session.local_session_id):
-        keys.add(f"sessions/{session.user_id}/{session.local_session_id}.json")
-    if session.file_key and session.file_key not in keys:
-        log.warning(
-            "session_content_cleanup_skipped_unrecognized file_key=%s session_id=%s",
-            session.file_key,
-            session.id,
-        )
-    return keys
-
-
-async def _delete_session_content_keys_best_effort(keys: set[str]) -> None:
-    for key in sorted(keys):
-        await _delete_session_content_best_effort(key)
+def _session_content_key(session: Session) -> str:
+    return f"sessions/{session.user_id}/{session.local_session_id}.json"
 
 
 async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
@@ -2078,7 +2049,12 @@ async def batch_create_sessions(
     """
     if not body.sessions:
         return SessionBatchResponse(
-            created=0, updated=0, unchanged=0, needs_content=[], rejected=[]
+            created=0,
+            updated=0,
+            unchanged=0,
+            needs_content=[],
+            rejected=[],
+            suppressed=[],
         )
 
     clamped_duration_ids = [
@@ -2172,7 +2148,7 @@ async def batch_create_sessions(
     # then the upsert overwrites again. Locking the rows for the rest
     # of this transaction makes the (read, check, write) sequence
     # atomic from the perspective of any other writer.
-    incoming_ids = [s.local_session_id for s in body.sessions]
+    incoming_ids = list(dict.fromkeys(s.local_session_id for s in body.sessions))
     existing_rows = (
         await db.execute(
             select(
@@ -2185,10 +2161,39 @@ async def batch_create_sessions(
                 Session.user_id == auth.user_id,
                 Session.local_session_id.in_(incoming_ids),
             )
+            .order_by(Session.local_session_id)
             .with_for_update()
         )
     ).all()
-    existing_by_id = {row.local_session_id: row for row in existing_rows}
+    suppressed_ids = set(
+        (
+            await db.execute(
+                select(SessionSyncSuppression.local_session_id).where(
+                    SessionSyncSuppression.user_id == auth.user_id,
+                    SessionSyncSuppression.local_session_id.in_(incoming_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    suppressed = [local_id for local_id in incoming_ids if local_id in suppressed_ids]
+    active_sessions = [s for s in body.sessions if s.local_session_id not in suppressed_ids]
+    active_existing_rows = [
+        row for row in existing_rows if row.local_session_id not in suppressed_ids
+    ]
+    if not active_sessions:
+        await db.commit()
+        return SessionBatchResponse(
+            created=0,
+            updated=0,
+            unchanged=0,
+            needs_content=[],
+            rejected=[],
+            suppressed=suppressed,
+        )
+
+    existing_by_id = {row.local_session_id: row for row in active_existing_rows}
 
     # Bound-key cross-env steal guard. Reject if any pre-existing row
     # belongs to an env other than the one the caller is bound to.
@@ -2196,7 +2201,7 @@ async def batch_create_sessions(
         bound = auth.api_key.environment_id
         stolen = [
             row.local_session_id
-            for row in existing_rows
+            for row in active_existing_rows
             if row.environment_id is not None and row.environment_id != bound
         ]
         if stolen:
@@ -2225,10 +2230,10 @@ async def batch_create_sessions(
     # to `/v1/sessions/{local_session_id}/upload`, which resolves
     # the row by `local_session_id` alone and stamps the new bytes
     # onto the OTHER env's row. Cross-env data corruption.
-    incoming_env_by_id = {s.local_session_id: s.environment_id for s in body.sessions}
+    incoming_env_by_id = {s.local_session_id: s.environment_id for s in active_sessions}
     mismatched = [
         row.local_session_id
-        for row in existing_rows
+        for row in active_existing_rows
         if (
             row.environment_id is not None
             and incoming_env_by_id.get(row.local_session_id) is not None
@@ -2272,7 +2277,7 @@ async def batch_create_sessions(
             "status": s.status,
             "content_hash": s.content_hash,
         }
-        for s in body.sessions
+        for s in active_sessions
     ]
 
     insert_stmt = pg_insert(Session).values(rows)
@@ -2410,7 +2415,7 @@ async def batch_create_sessions(
     needs_content: list[str] = []
     rejected: list[str] = []
     upserted_ids = {row[0] for row in upserted_id_rows}
-    for s in body.sessions:
+    for s in active_sessions:
         if s.local_session_id not in upserted_ids:
             # Upsert filtered this row out at the conflict-WHERE
             # step (cross-env race window: pre-fetch saw no row,
@@ -2446,6 +2451,7 @@ async def batch_create_sessions(
         unchanged=unchanged,
         needs_content=needs_content,
         rejected=rejected,
+        suppressed=suppressed,
     )
 
 
@@ -2776,26 +2782,41 @@ async def delete_session(
     if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
-    content_keys = _session_content_cleanup_keys(session)
-    await db.execute(
-        update(Memory)
-        .where(
-            Memory.user_id == auth.user_id,
-            Memory.source_session_id == session.id,
-        )
-        .values(source_session_id=None)
-    )
-    await db.delete(session)
-    await db.commit()
+    try:
+        await file_store.delete(_session_content_key(session))
+    except Exception:
+        log.exception("session_content_delete_failed session_id=%s", session.id)
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
 
-    await _delete_session_content_keys_best_effort(content_keys)
+    try:
+        suppression = pg_insert(SessionSyncSuppression).values(
+            user_id=auth.user_id,
+            local_session_id=session.local_session_id,
+        )
+        await db.execute(suppression.on_conflict_do_nothing())
+        await db.execute(
+            update(Memory)
+            .where(
+                Memory.user_id == auth.user_id,
+                Memory.source_session_id == session.id,
+            )
+            .values(source_session_id=None)
+        )
+        await db.delete(session)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.post("/sessions/{local_session_id}/upload")
 async def upload_session_content(
-    # Constrained to the legacy object-name alphabet. Session.id owns new
-    # object keys; local_session_id remains a lookup key and a safely derived
-    # legacy cleanup candidate.
+    # Constrained to safe filename chars so the legacy object key remains
+    # inside the user's Session prefix.
     local_session_id: str = Path(..., pattern=_SESSION_LOCAL_ID_PATTERN),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(require_scope("sessions:write")),
@@ -2848,12 +2869,7 @@ async def upload_session_content(
     # hash on disk matches the hash in the row.
     content_hash = hashlib.sha256(data).hexdigest()
 
-    # The row id is the storage generation. Recreating the same local_session_id
-    # gets a new row id, so delayed cleanup from dashboard deletion cannot touch
-    # the recreated session's content.
-    fk = _session_generation_file_key(session)
-    old_file_key = session.file_key
-    old_cleanup_keys = _session_content_cleanup_keys(session) - {fk}
+    fk = _session_content_key(session)
     await file_store.put(fk, data)
 
     session.file_key = fk
@@ -2878,14 +2894,7 @@ async def upload_session_content(
             local_session_id,
         )
 
-    try:
-        await db.commit()
-    except Exception:
-        if old_file_key != fk:
-            await _delete_session_content_best_effort(fk)
-        raise
-
-    await _delete_session_content_keys_best_effort(old_cleanup_keys)
+    await db.commit()
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
 

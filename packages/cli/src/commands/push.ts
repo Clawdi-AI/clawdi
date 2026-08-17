@@ -52,6 +52,7 @@ interface AgentUploadResult {
 	sessionsCreated: number;
 	sessionsUpdated: number;
 	sessionsUnchanged: number;
+	sessionsSuppressed: number;
 	contentUploaded: number;
 	skillsPushed: number;
 }
@@ -206,6 +207,7 @@ export async function push(opts: PushOpts) {
 		created: 0,
 		updated: 0,
 		unchanged: 0,
+		suppressed: 0,
 		content: 0,
 		skillsCacheSkipped: 0,
 		skills: 0,
@@ -230,6 +232,7 @@ export async function push(opts: PushOpts) {
 		totals.created += result.sessionsCreated;
 		totals.updated += result.sessionsUpdated;
 		totals.unchanged += result.sessionsUnchanged;
+		totals.suppressed += result.sessionsSuppressed;
 		totals.content += result.contentUploaded;
 		totals.skills += result.skillsPushed;
 	}
@@ -254,6 +257,11 @@ export async function push(opts: PushOpts) {
 		// internal perf metric and only confuses non-technical users.
 		const unchangedTotal = totals.cacheSkipped + totals.unchanged;
 		parts.push(`${totals.created} new, ${totals.updated} updated, ${unchangedTotal} unchanged`);
+		if (totals.suppressed > 0) {
+			parts.push(
+				`${totals.suppressed} cloud Session${totals.suppressed === 1 ? "" : "s"} kept deleted`,
+			);
+		}
 		parts.push(`${totals.content} content upload${totals.content === 1 ? "" : "s"}`);
 	}
 	if (modules.includes("skills")) {
@@ -478,6 +486,7 @@ async function uploadOneAgent(
 	let sessionsCreated = 0;
 	let sessionsUpdated = 0;
 	let sessionsUnchanged = 0;
+	let sessionsSuppressed = 0;
 	let contentUploaded = 0;
 	let skillsPushed = 0;
 
@@ -488,6 +497,7 @@ async function uploadOneAgent(
 		);
 		const needsContent: Set<string> = new Set();
 		const rejectedIds: Set<string> = new Set();
+		const suppressedIds: Set<string> = new Set();
 		// Chunk sessions into batches that fit under PostgreSQL's
 		// 32767 bound-parameters-per-query limit. The server upsert
 		// builds a single multi-VALUES INSERT with ~17 columns per
@@ -526,9 +536,11 @@ async function uploadOneAgent(
 					}),
 				);
 				for (const id of result.needs_content) needsContent.add(id);
+				for (const id of result.suppressed ?? []) suppressedIds.add(id);
 				sessionsCreated += result.created;
 				sessionsUpdated += result.updated;
 				sessionsUnchanged += result.unchanged;
+				sessionsSuppressed += result.suppressed?.length ?? 0;
 				// Server flagged these ids as cross-env race casualties
 				// (see SessionBatchResponse.rejected). They are NOT
 				// synced; the caller must skip the lock-write step
@@ -537,13 +549,16 @@ async function uploadOneAgent(
 				// wrote a stale lock.
 				for (const id of result.rejected ?? []) rejectedIds.add(id);
 			}
+			for (const id of suppressedIds) needsContent.delete(id);
 			if (rejectedIds.size > 0) {
 				p.log.warn(
 					`${rejectedIds.size} session${rejectedIds.size === 1 ? "" : "s"} rejected by server (cross-env race) — will retry on next push`,
 				);
 			}
+			const suppressedSummary =
+				sessionsSuppressed > 0 ? `, ${sessionsSuppressed} kept deleted` : "";
 			sessionSpinner.stop(
-				`Metadata: ${sessionsCreated} new, ${sessionsUpdated} updated, ${sessionsUnchanged} unchanged`,
+				`Metadata: ${sessionsCreated} new, ${sessionsUpdated} updated, ${sessionsUnchanged} unchanged${suppressedSummary}`,
 			);
 		} catch (e) {
 			sessionSpinner.stop("Session metadata upload failed.");
@@ -600,6 +615,10 @@ async function uploadOneAgent(
 			if (!s.contentHash) continue;
 			const id = s.localSessionId;
 			if (rejectedIds.has(id)) continue;
+			if (suppressedIds.has(id)) {
+				sessionsLock.sessions[cacheKey(agentType, id)] = { hash: s.contentHash };
+				continue;
+			}
 			if (needsContent.has(id) && !uploadedIds.has(id)) continue;
 			sessionsLock.sessions[cacheKey(agentType, id)] = { hash: s.contentHash };
 		}
@@ -700,6 +719,7 @@ async function uploadOneAgent(
 		sessionsCreated,
 		sessionsUpdated,
 		sessionsUnchanged,
+		sessionsSuppressed,
 		contentUploaded,
 		skillsPushed,
 	};

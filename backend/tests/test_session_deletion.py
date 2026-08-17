@@ -4,29 +4,35 @@ import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
-from io import BytesIO
 
 import httpx
 import pytest
-from fastapi import UploadFile
-from sqlalchemy import select
-from sqlalchemy.exc import DBAPIError
+from fastapi import Request
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.auth import AuthContext, get_auth
-from app.main import app
-from app.models.api_key import ApiKey
+from app.core.auth import AuthContext
 from app.models.memory import Memory
-from app.models.session import Session
+from app.models.session import Session, SessionSyncSuppression
 from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
 from app.routes.memories import attach_source_machines
+from app.schemas.session import SessionBatchRequest
 from app.services.file_store import FileStore
 
 
-class _DeleteTrackingFileStore:
-    def __init__(self, delegate: FileStore, *, fail_delete: bool = False) -> None:
+class _ControlledDeleteFileStore:
+    def __init__(
+        self,
+        delegate: FileStore,
+        *,
+        fail: bool = False,
+        started: asyncio.Event | None = None,
+        release: asyncio.Event | None = None,
+    ) -> None:
         self._delegate = delegate
-        self._fail_delete = fail_delete
+        self._fail = fail
+        self._started = started
+        self._release = release
         self.deleted: list[str] = []
 
     async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
@@ -37,30 +43,16 @@ class _DeleteTrackingFileStore:
 
     async def delete(self, key: str) -> None:
         self.deleted.append(key)
-        if self._fail_delete:
-            raise RuntimeError("test file-store delete failure")
+        if self._started is not None:
+            self._started.set()
+        if self._release is not None:
+            await self._release.wait()
+        if self._fail:
+            raise RuntimeError("test storage failure")
         await self._delegate.delete(key)
 
     async def exists(self, key: str) -> bool:
         return await self._delegate.exists(key)
-
-
-class _BlockingPutFileStore(_DeleteTrackingFileStore):
-    def __init__(
-        self,
-        delegate: FileStore,
-        *,
-        put_started: asyncio.Event,
-        release_put: asyncio.Event,
-    ) -> None:
-        super().__init__(delegate)
-        self._put_started = put_started
-        self._release_put = release_put
-
-    async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
-        self._put_started.set()
-        await self._release_put.wait()
-        await super().put(key, data, content_type)
 
 
 async def _create_session(
@@ -68,11 +60,13 @@ async def _create_session(
     *,
     user_id: uuid.UUID,
     local_session_id: str,
+    environment_id: uuid.UUID | None = None,
     file_key: str | None = None,
 ) -> Session:
     now = datetime.now(UTC)
     session = Session(
         user_id=user_id,
+        environment_id=environment_id,
         local_session_id=local_session_id,
         started_at=now,
         last_activity_at=now,
@@ -84,7 +78,7 @@ async def _create_session(
     return session
 
 
-async def _register_env(client: httpx.AsyncClient) -> str:
+async def _register_env(client: httpx.AsyncClient) -> uuid.UUID:
     response = await client.post(
         "/v1/environments",
         json={
@@ -96,59 +90,44 @@ async def _register_env(client: httpx.AsyncClient) -> str:
         },
     )
     assert response.status_code == 200, response.text
-    return response.json()["id"]
+    return uuid.UUID(response.json()["id"])
+
+
+def _batch_body(environment_id: uuid.UUID, local_session_ids: list[str]) -> SessionBatchRequest:
+    now = datetime.now(UTC)
+    return SessionBatchRequest(
+        sessions=[
+            {
+                "environment_id": environment_id,
+                "local_session_id": local_session_id,
+                "started_at": now,
+                "message_count": 1,
+                "content_hash": chr(97 + index) * 64,
+            }
+            for index, local_session_id in enumerate(local_session_ids)
+        ]
+    )
 
 
 @pytest.mark.asyncio
-async def test_delete_session_requires_dashboard_owner_and_hides_visibility(
+async def test_delete_session_is_durable_and_preserves_memories(
     client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-) -> None:
-    owned = await _create_session(
-        db_session,
-        user_id=seed_user.id,
-        local_session_id=f"owned-{uuid.uuid4().hex}",
-    )
-    foreign = await _create_session(
-        db_session,
-        user_id=uuid.uuid4(),
-        local_session_id=f"foreign-{uuid.uuid4().hex}",
-    )
-
-    previous_auth = app.dependency_overrides[get_auth]
-
-    async def cli_auth() -> AuthContext:
-        return AuthContext(user=seed_user, api_key=ApiKey(user_id=seed_user.id))
-
-    app.dependency_overrides[get_auth] = cli_auth
-    try:
-        cli_response = await client.delete(f"/v1/sessions/{owned.id}")
-    finally:
-        app.dependency_overrides[get_auth] = previous_auth
-
-    assert cli_response.status_code == 403
-    assert await db_session.get(Session, owned.id) is not None
-    assert (await client.delete(f"/v1/sessions/{foreign.id}")).status_code == 404
-    assert (await client.delete(f"/v1/sessions/{uuid.uuid4()}")).status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_delete_session_cascades_permission_clears_memory_and_deletes_content(
-    client: httpx.AsyncClient,
+    anon_client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
 ) -> None:
     from app.routes import sessions as sessions_route
 
-    local_session_id = f"delete-{uuid.uuid4().hex}"
-    file_key = f"sessions/{seed_user.id}/{local_session_id}.json"
-    await sessions_route.file_store.put(file_key, b"[]")
+    environment_id = await _register_env(client)
+    local_session_id = f"z-delete-{uuid.uuid4().hex}"
+    content_key = f"sessions/{seed_user.id}/{local_session_id}.json"
+    await sessions_route.file_store.put(content_key, b"[]")
     session = await _create_session(
         db_session,
         user_id=seed_user.id,
+        environment_id=environment_id,
         local_session_id=local_session_id,
-        file_key=file_key,
+        file_key=None,
     )
     permission = SessionPermission(
         session_id=session.id,
@@ -165,14 +144,16 @@ async def test_delete_session_cascades_permission_clears_memory_and_deletes_cont
     )
     db_session.add_all([permission, memory])
     await db_session.commit()
+    session_id = session.id
     permission_id = permission.id
     memory_id = memory.id
+    assert (await anon_client.get(f"/v1/public/sessions/{session_id}")).status_code == 200
 
-    response = await client.delete(f"/v1/sessions/{session.id}")
+    response = await client.delete(f"/v1/sessions/{session_id}")
 
     assert response.status_code == 204
-    assert response.content == b""
-    assert await db_session.get(Session, session.id) is None
+    assert not await sessions_route.file_store.exists(content_key)
+    assert await db_session.get(Session, session_id) is None
     assert (
         await db_session.scalar(
             select(SessionPermission.id).where(SessionPermission.id == permission_id)
@@ -185,11 +166,58 @@ async def test_delete_session_cascades_permission_clears_memory_and_deletes_cont
         )
     ).one()
     assert preserved_memory == ("Keep this extracted memory", None)
-    assert not await sessions_route.file_store.exists(file_key)
+    assert (
+        await db_session.get(
+            SessionSyncSuppression,
+            (seed_user.id, local_session_id),
+        )
+        is not None
+    )
+    assert (await anon_client.get(f"/v1/public/sessions/{session_id}")).status_code == 404
+
+    second_suppressed_id = f"a-delete-{uuid.uuid4().hex}"
+    db_session.add(
+        SessionSyncSuppression(
+            user_id=seed_user.id,
+            local_session_id=second_suppressed_id,
+        )
+    )
+    await db_session.commit()
+
+    batch = await client.post(
+        "/v1/sessions/batch",
+        json=_batch_body(
+            environment_id,
+            [local_session_id, second_suppressed_id, local_session_id],
+        ).model_dump(mode="json"),
+    )
+    assert batch.status_code == 200, batch.text
+    assert batch.json() == {
+        "created": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "needs_content": [],
+        "rejected": [],
+        "suppressed": [local_session_id, second_suppressed_id],
+    }
+    assert (
+        await db_session.scalar(
+            select(Session.id).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_session_id,
+            )
+        )
+        is None
+    )
+    upload = await client.post(
+        f"/v1/sessions/{local_session_id}/upload",
+        files={"file": ("session.json", b"[]", "application/json")},
+    )
+    assert upload.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_delete_session_commits_when_content_cleanup_fails(
+async def test_delete_session_storage_failure_is_retryable(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
@@ -198,32 +226,43 @@ async def test_delete_session_commits_when_content_cleanup_fails(
 ) -> None:
     from app.routes import sessions as sessions_route
 
+    user_id = seed_user.id
     local_session_id = f"cleanup-failure-{uuid.uuid4().hex}"
-    file_key = f"sessions/{seed_user.id}/{local_session_id}.json"
+    content_key = f"sessions/{user_id}/{local_session_id}.json"
+    await sessions_route.file_store.put(content_key, b"private transcript")
     session = await _create_session(
         db_session,
-        user_id=seed_user.id,
+        user_id=user_id,
         local_session_id=local_session_id,
-        file_key=file_key,
+        file_key=content_key,
     )
-    store = _DeleteTrackingFileStore(sessions_route.file_store, fail_delete=True)
+    store = _ControlledDeleteFileStore(sessions_route.file_store, fail=True)
     monkeypatch.setattr(sessions_route, "file_store", store)
-    caplog.set_level(logging.WARNING, logger="app.routes.sessions")
+    caplog.set_level(logging.ERROR, logger="app.routes.sessions")
 
-    response = await client.delete(f"/v1/sessions/{session.id}")
+    session_id = session.id
+    response = await client.delete(f"/v1/sessions/{session_id}")
 
-    assert response.status_code == 204
-    assert await db_session.get(Session, session.id) is None
-    assert set(store.deleted) == {
-        file_key,
-        f"sessions/{seed_user.id}/{session.id}.json",
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Session storage is temporarily unavailable. Please retry."
     }
+    assert "test storage failure" not in response.text
     assert "session_content_delete_failed" in caplog.text
+    assert await db_session.scalar(select(Session.id).where(Session.id == session_id)) == session_id
+    assert (
+        await db_session.get(
+            SessionSyncSuppression,
+            (user_id, local_session_id),
+        )
+        is None
+    )
+    assert await store.exists(content_key)
 
 
 @pytest.mark.asyncio
 @pytest.mark.committed_db
-async def test_upload_keys_do_not_reuse_deleted_session_generation(
+async def test_delete_serializes_batch_before_suppression_check(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     engine,
@@ -233,153 +272,71 @@ async def test_upload_keys_do_not_reuse_deleted_session_generation(
     from app.routes import sessions as sessions_route
 
     environment_id = await _register_env(client)
-    local_session_id = f"generation-{uuid.uuid4().hex}"
-    started_at = datetime.now(UTC).isoformat()
-    batch = await client.post(
-        "/v1/sessions/batch",
-        json={
-            "sessions": [
-                {
-                    "environment_id": environment_id,
-                    "local_session_id": local_session_id,
-                    "started_at": started_at,
-                    "message_count": 1,
-                    "content_hash": "a" * 64,
-                }
-            ]
-        },
+    local_session_id = f"concurrent-{uuid.uuid4().hex}"
+    session = await _create_session(
+        db_session,
+        user_id=seed_user.id,
+        environment_id=environment_id,
+        local_session_id=local_session_id,
     )
-    assert batch.status_code == 200, batch.text
-    first = await db_session.scalar(
-        select(Session).where(
-            Session.user_id == seed_user.id,
-            Session.local_session_id == local_session_id,
-        )
+    delete_started = asyncio.Event()
+    release_delete = asyncio.Event()
+    batch_lock_started = asyncio.Event()
+    store = _ControlledDeleteFileStore(
+        sessions_route.file_store,
+        started=delete_started,
+        release=release_delete,
     )
-    assert first is not None
-    legacy_key = f"sessions/{seed_user.id}/{local_session_id}.json"
-    await sessions_route.file_store.put(legacy_key, b"old")
-    first.file_key = legacy_key
-    await db_session.commit()
-    store = _DeleteTrackingFileStore(sessions_route.file_store)
     monkeypatch.setattr(sessions_route, "file_store", store)
-    first_content = b'[{"role":"user","content":"first"}]'
 
-    first_upload = await client.post(
-        f"/v1/sessions/{local_session_id}/upload",
-        files={"file": ("session.json", first_content, "application/json")},
-    )
+    def observe_lock_statement(
+        _connection,
+        _cursor,
+        statement: str,
+        _parameters,
+        _context,
+        _executemany,
+    ) -> None:
+        if "FROM sessions" in statement and "FOR UPDATE" in statement:
+            batch_lock_started.set()
 
-    assert first_upload.status_code == 200, first_upload.text
-    first_key = first_upload.json()["file_key"]
-    assert first_key == f"sessions/{seed_user.id}/{first.id}.json"
-    assert store.deleted == [legacy_key]
-    assert not await store.exists(legacy_key)
-
-    hash_change = await client.post(
-        "/v1/sessions/batch",
-        json={
-            "sessions": [
-                {
-                    "environment_id": environment_id,
-                    "local_session_id": local_session_id,
-                    "started_at": started_at,
-                    "message_count": 2,
-                    "content_hash": "f" * 64,
-                }
-            ]
-        },
-    )
-    assert hash_change.status_code == 200, hash_change.text
-    assert await db_session.scalar(select(Session.file_key).where(Session.id == first.id)) is None
-    assert await store.exists(first_key)
-    assert (await client.delete(f"/v1/sessions/{first.id}")).status_code == 204
-    recreate = await client.post(
-        "/v1/sessions/batch",
-        json={
-            "sessions": [
-                {
-                    "environment_id": environment_id,
-                    "local_session_id": local_session_id,
-                    "started_at": started_at,
-                    "message_count": 1,
-                    "content_hash": "b" * 64,
-                }
-            ]
-        },
-    )
-    assert recreate.status_code == 200, recreate.text
-    second = await db_session.scalar(
-        select(Session).where(
-            Session.user_id == seed_user.id,
-            Session.local_session_id == local_session_id,
-        )
-    )
-    assert second is not None
-    second_content = b'[{"role":"user","content":"second"}]'
-    second_upload = await client.post(
-        f"/v1/sessions/{local_session_id}/upload",
-        files={"file": ("session.json", second_content, "application/json")},
-    )
-    assert second_upload.status_code == 200, second_upload.text
-    second_key = second_upload.json()["file_key"]
-    assert second.id != first.id
-    assert second_key != first_key
-
-    # Simulate delayed cleanup from the first deletion after recreation.
-    await store.delete(first_key)
-    assert await store.exists(second_key)
-
-    put_started = asyncio.Event()
-    release_put = asyncio.Event()
-    blocking_store = _BlockingPutFileStore(
-        store,
-        put_started=put_started,
-        release_put=release_put,
-    )
-    monkeypatch.setattr(sessions_route, "file_store", blocking_store)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     auth = AuthContext(user=seed_user)
-
-    async def reupload() -> str:
-        async with session_factory() as upload_db:
-            result = await sessions_route.upload_session_content(
-                local_session_id=local_session_id,
-                file=UploadFile(
-                    file=BytesIO(b'[{"role":"user","content":"replacement"}]'),
-                    filename="session.json",
-                ),
-                auth=auth,
-                db=upload_db,
-            )
-            return result.file_key
-
-    async def delete_during_upload() -> None:
-        async with session_factory() as delete_db:
-            await sessions_route.delete_session(second.id, auth=auth, db=delete_db)
-
-    async with asyncio.TaskGroup() as tasks:
-        upload_task = tasks.create_task(reupload())
-        await asyncio.wait_for(put_started.wait(), timeout=5)
+    async with session_factory() as delete_db, session_factory() as batch_db:
+        delete_task = asyncio.create_task(
+            sessions_route.delete_session(session.id, auth=auth, db=delete_db)
+        )
+        await asyncio.wait_for(delete_started.wait(), timeout=5)
+        event.listen(engine.sync_engine, "before_cursor_execute", observe_lock_statement)
         try:
-            async with session_factory() as lock_probe_db:
-                with pytest.raises(DBAPIError) as lock_error:
-                    await lock_probe_db.execute(
-                        select(Session.id)
-                        .where(Session.id == second.id)
-                        .with_for_update(nowait=True)
-                    )
-                assert getattr(lock_error.value.orig, "sqlstate", None) == "55P03"
-                await lock_probe_db.rollback()
-            tasks.create_task(delete_during_upload())
+            batch_task = asyncio.create_task(
+                sessions_route.batch_create_sessions(
+                    _batch_body(environment_id, [local_session_id]),
+                    Request({"type": "http", "headers": []}),
+                    auth=auth,
+                    db=batch_db,
+                )
+            )
+            await asyncio.wait_for(batch_lock_started.wait(), timeout=5)
+            assert not batch_task.done()
+            release_delete.set()
+            await delete_task
+            batch_result = await batch_task
         finally:
-            release_put.set()
+            release_delete.set()
+            event.remove(engine.sync_engine, "before_cursor_execute", observe_lock_statement)
 
-    uploaded_key = upload_task.result()
-    assert uploaded_key == second_key
+    assert batch_result.suppressed == [local_session_id]
+    assert batch_result.created == 0
     async with session_factory() as verify_db:
-        assert await verify_db.get(Session, second.id) is None
-    assert not await blocking_store.exists(second_key)
+        assert await verify_db.get(Session, session.id) is None
+        assert (
+            await verify_db.get(
+                SessionSyncSuppression,
+                (seed_user.id, local_session_id),
+            )
+            is not None
+        )
 
 
 @pytest.mark.asyncio

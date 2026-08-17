@@ -445,6 +445,9 @@ class SessionBatchResponse(BaseModel):
     # client treated "id not in needs_content" as success and
     # wrote a stale lock — the loser never retried.
     rejected: list[str] = []
+    # Durable dashboard deletions. Callers must not upload content for
+    # these ids, but should cache the current local hash as converged.
+    suppressed: list[str] = []
 
 
 class SessionListItemResponse(BaseModel):

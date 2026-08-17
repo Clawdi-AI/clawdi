@@ -76,8 +76,8 @@ export function SessionDetailContent({
 		: "/sessions";
 	const deleteSession = $api.useMutation("delete", "/v1/sessions/{session_id}", {
 		onSuccess: () => {
-			toast.success("Session deleted", {
-				description: "The cloud copy and share link were removed.",
+			toast.success("Cloud Session permanently deleted", {
+				description: "Local data and extracted Memories remain. This Session will not sync again.",
 			});
 			void queryClient.invalidateQueries({
 				queryKey: ["get", "/v1/sessions"],
@@ -370,18 +370,20 @@ export function SessionDetailContent({
 					<div className="flex items-center gap-2">
 						<SessionShareControls sessionId={session.id} isShared={session.is_shared ?? false} />
 						<ConfirmAction
-							title="Delete this synced session?"
+							title="Permanently delete this cloud Session?"
 							description={
 								<>
-									<p>This removes the cloud copy and its share link.</p>
-									<p>Memories extracted from this session will remain.</p>
 									<p>
-										If the session still exists locally, <code>clawdi push</code> can sync it again
-										later.
+										This permanently deletes the cloud Session, its history, and all sharing access.
+									</p>
+									<p>Local agent files remain untouched, but this Session will never sync again.</p>
+									<p>
+										Extracted account-level Memories remain, with this Session&apos;s provenance
+										removed.
 									</p>
 								</>
 							}
-							confirmLabel="Delete session"
+							confirmLabel="Permanently delete"
 							destructive
 							onConfirm={onDelete}
 						>

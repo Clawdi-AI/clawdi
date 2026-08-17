@@ -7201,6 +7201,11 @@ export interface components {
              * @default []
              */
             rejected: string[];
+            /**
+             * Suppressed
+             * @default []
+             */
+            suppressed: string[];
         };
         /** SessionCreate */
         SessionCreate: {
