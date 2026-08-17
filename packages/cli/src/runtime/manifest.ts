@@ -70,6 +70,7 @@ import {
 	writeOAuthCredentialLedger,
 } from "../lib/oauth-credential-ledger";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { isValidSemver } from "../lib/semver";
 import {
 	type RuntimeUserProcessRevisionAliases,
 	readRuntimeAppliedState,
@@ -1734,8 +1735,8 @@ interface HostedAiProviderProjectionResult {
 
 const CODEX_MANAGED_PROVIDER_ID = "clawdi";
 const CODEX_MANAGED_PROVIDER_CONFIG_FILE = "config.toml";
-const CODEX_NPM_PACKAGE_VERSION = "0.146.0";
-const CODEX_NPM_PACKAGE_SPEC = `@openai/codex@${CODEX_NPM_PACKAGE_VERSION}`;
+const CODEX_BOOTSTRAP_PACKAGE_VERSION = "0.146.0";
+const CODEX_BOOTSTRAP_PACKAGE_SPEC = `@openai/codex@${CODEX_BOOTSTRAP_PACKAGE_VERSION}`;
 
 interface HostedCodexManagedProvider {
 	baseUrl: string;
@@ -2707,31 +2708,33 @@ function hostedCodexManagedConfigToml(provider: HostedCodexManagedProvider): str
 
 function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | null {
 	if (process.env.CLAWDI_CODEX_INSTALL_DISABLED === "1") return null;
-	// Keep the exact managed package separate from the tenant's global npm tree:
-	// ~/.local/bin/codex is the transparent-egress wrapper, while this XDG data
-	// location holds the executable that the wrapper delegates to.
-	const npmPrefix = paths.codexInstallRoot;
+	const npmPrefix = paths.userNpmPrefix;
 	const realBin = join(npmPrefix, "bin", "codex");
-	const commandPath = paths.codexCommand;
 	let installedVersion = hostedCodexInstalledVersion(npmPrefix);
-	if (installedVersion !== CODEX_NPM_PACKAGE_VERSION || !executableExists(realBin)) {
-		installHostedCodexCli(CODEX_NPM_PACKAGE_SPEC, npmPrefix, paths);
-		installedVersion = hostedCodexInstalledVersion(npmPrefix);
-	}
-	if (installedVersion !== CODEX_NPM_PACKAGE_VERSION) {
-		throw new Error(
-			`Codex npm install produced version ${installedVersion ?? "unknown"}; expected ${CODEX_NPM_PACKAGE_VERSION}`,
+	const bootstrapRequired = installedVersion === null || !executableExists(realBin);
+	if (bootstrapRequired) {
+		installHostedCodexBootstrap(
+			CODEX_BOOTSTRAP_PACKAGE_SPEC,
+			npmPrefix,
+			paths,
+			isLegacyHostedCodexCommandShim(realBin, paths.userHome),
 		);
+		installedVersion = hostedCodexInstalledVersion(npmPrefix);
+		if (installedVersion !== CODEX_BOOTSTRAP_PACKAGE_VERSION) {
+			throw new Error(
+				`Codex bootstrap installed version ${installedVersion ?? "unknown"}; expected ${CODEX_BOOTSTRAP_PACKAGE_VERSION}`,
+			);
+		}
+		if (!executableExists(realBin)) {
+			throw new Error(`Codex bootstrap did not create ${realBin}`);
+		}
 	}
-	if (!executableExists(realBin)) {
-		throw new Error(`Codex npm install did not create ${realBin}`);
-	}
-	withRuntimeUserFileAccess(() => writeHostedCodexCommandShim(commandPath, realBin));
+	if (installedVersion === null) throw new Error("Codex package metadata is unavailable");
 	return {
-		commandPath,
+		commandPath: realBin,
 		npmPrefix,
-		packageSpec: CODEX_NPM_PACKAGE_SPEC,
-		packageVersion: installedVersion,
+		bootstrapPackageSpec: CODEX_BOOTSTRAP_PACKAGE_SPEC,
+		installedVersion,
 		realBin,
 	};
 }
@@ -2748,15 +2751,22 @@ function hostedCodexInstalledVersion(npmPrefix: string): string | null {
 	try {
 		const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as unknown;
 		if (!parsed || typeof parsed !== "object" || !("version" in parsed)) return null;
-		return typeof parsed.version === "string" ? parsed.version : null;
+		return typeof parsed.version === "string" && isValidSemver(parsed.version)
+			? parsed.version
+			: null;
 	} catch {
 		return null;
 	}
 }
 
-function installHostedCodexCli(packageSpec: string, npmPrefix: string, paths: RuntimePaths): void {
+function installHostedCodexBootstrap(
+	packageSpec: string,
+	npmPrefix: string,
+	paths: RuntimePaths,
+	replaceLegacyShim: boolean,
+): void {
 	if (!commandExists("npm")) {
-		throw new Error("Codex runtime add-on install requires npm on PATH");
+		throw new Error("Codex bootstrap requires npm on PATH");
 	}
 	withRuntimeUserFileAccess(() => mkdirSync(npmPrefix, { recursive: true }));
 	const result = spawnRuntimeUserCommand(
@@ -2766,6 +2776,7 @@ function installHostedCodexCli(packageSpec: string, npmPrefix: string, paths: Ru
 			"-g",
 			"--prefix",
 			npmPrefix,
+			...(replaceLegacyShim ? ["--force"] : []),
 			"--ignore-scripts",
 			"--fetch-retries",
 			"2",
@@ -2787,31 +2798,27 @@ function installHostedCodexCli(packageSpec: string, npmPrefix: string, paths: Ru
 	);
 	if (result.status !== 0) {
 		throw new Error(
-			`Codex runtime add-on install failed: ${tail(result.stderr?.toString()) ?? tail(result.stdout?.toString()) ?? "npm failed"}`,
+			`Codex bootstrap failed: ${tail(result.stderr?.toString()) ?? tail(result.stdout?.toString()) ?? "npm failed"}`,
 		);
 	}
 }
 
-function writeHostedCodexCommandShim(commandPath: string, realBin: string): void {
-	const binDir = dirname(commandPath);
-	mkdirSync(binDir, { recursive: true });
-	writePrivateFileAtomic(
-		commandPath,
-		[
-			"#!/usr/bin/env sh",
-			`export ${MANAGED_AI_PROVIDER_RUNTIME_ENV}=${shellQuote(MANAGED_EGRESS_PLACEHOLDER_VALUE)}`,
-			`exec ${shellQuote(realBin)} "$@"`,
-			"",
-		].join("\n"),
-		{
-			mode: 0o755,
-			dirMode: 0o755,
-		},
-	);
-}
-
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/g, "'\\''")}'`;
+function isLegacyHostedCodexCommandShim(commandPath: string, home: string): boolean {
+	try {
+		const content = readFileSync(commandPath, "utf8");
+		const legacyRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
+		return (
+			content ===
+			[
+				"#!/usr/bin/env sh",
+				`export ${MANAGED_AI_PROVIDER_RUNTIME_ENV}='${MANAGED_EGRESS_PLACEHOLDER_VALUE}'`,
+				`exec '${legacyRealBin}' "$@"`,
+				"",
+			].join("\n")
+		);
+	} catch {
+		return false;
+	}
 }
 
 function applyHostedHermesAiProviderProjection(
@@ -5437,13 +5444,6 @@ export function runtimeUserMutationTargets(
 		...channelPluginTargets,
 	]);
 	if (openClawWorkspaceRoot) targets.add(join(openClawWorkspaceRoot, "SOUL.md"));
-	if (
-		hostedCodexManagedProvider(manifest) ||
-		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
-	) {
-		targets.add(paths.codexInstallRoot);
-		targets.add(paths.codexCommand);
-	}
 	for (const name of HOSTED_RUNTIME_TARGETS) {
 		if (manifest.runtimes[name]?.enabled !== true) continue;
 		const commandPath = runtimeCommandPath(name, home);
@@ -6083,9 +6083,7 @@ export function convergeRuntimeManifest(
 				codexCli = ensureHostedCodexCli(paths);
 			} catch (error) {
 				installErrors.push(
-					`runtime codex add-on install failed: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
+					`runtime codex setup failed: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
 		}

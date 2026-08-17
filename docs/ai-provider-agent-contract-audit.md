@@ -47,7 +47,9 @@ also accepts legacy terminal-Codex `OPENAI_API_KEY` and provider `models` on
 read, strips the latter, and always writes `CLAWDI_AI_API_KEY` locally. Runtime
 provider and BYOK schemas do not receive this compatibility allowance.
 
-The dedicated Hosted install pins `@openai/codex` `0.146.0`. In that version,
+The Hosted bootstrap uses audited `@openai/codex` `0.146.0` only when Codex is
+missing or damaged. A healthy tenant-owned install is not pinned or rolled
+back. In the bootstrap version,
 [`ModelProviderInfo`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/model-provider-info/src/lib.rs#L86-L144)
 defaults `name` to the empty display value and `wire_api` to `responses`, but
 [`validate_model_providers`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/config/src/config_toml.rs#L924-L946)
@@ -73,7 +75,7 @@ A manually written or stale ChatGPT backend auth file can therefore satisfy the
 endpoint's
 [`uses_codex_backend`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/model-provider/src/models_endpoint.rs#L68-L72)
 gate. Codex exposes no OpenClaw/Hermes-style discovery-off setting, and Clawdi
-does not invent one. In the locked catalog,
+does not invent one. In the bootstrap catalog,
 [`gpt-5.6-sol`](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/models-manager/models.json#L3-L11)
 is the first picker-visible model after
 [`priority` sorting](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/models-manager/src/manager.rs#L122-L134),
