@@ -1628,7 +1628,12 @@ async function uploadSessionFromQueue(
 		return { outcome: "not_applied" };
 	}
 
-	if (result.needs_content.includes(session.localSessionId) && session.messages.length > 0) {
+	const suppressed = result.suppressed?.includes(session.localSessionId) ?? false;
+	if (
+		!suppressed &&
+		result.needs_content.includes(session.localSessionId) &&
+		session.messages.length > 0
+	) {
 		const contentBuf = Buffer.from(JSON.stringify(session.messages), "utf-8");
 		await api.uploadSessionContent(
 			session.localSessionId,
@@ -1651,11 +1656,18 @@ async function uploadSessionFromQueue(
 	};
 	writeSessionsLock(lock);
 
-	log.info("engine.session_pushed", {
-		local_session_id: session.localSessionId,
-		message_count: session.messageCount,
-		uploaded_content: result.needs_content.includes(session.localSessionId),
-	});
+	if (suppressed) {
+		log.info("engine.session_sync_suppressed", {
+			local_session_id: session.localSessionId,
+			desired_state: "cloud_deleted",
+		});
+	} else {
+		log.info("engine.session_pushed", {
+			local_session_id: session.localSessionId,
+			message_count: session.messageCount,
+			uploaded_content: result.needs_content.includes(session.localSessionId),
+		});
+	}
 	return { outcome: "applied", actualHash };
 }
 
