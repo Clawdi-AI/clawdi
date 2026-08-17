@@ -123,8 +123,10 @@ import {
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
 import {
-	loadRuntimeUiLaunchCredentials,
+	forgetOpenClawBootstrapAttempt,
+	hasOpenClawBootstrapAttempt,
 	openSecureRuntimeWindow,
+	rememberOpenClawBootstrapAttempt,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
 } from "@/hosted/agents/runtime-ui-credentials";
@@ -1372,13 +1374,14 @@ function hermesAccessHintStorageKey(deploymentId: string): string {
 
 function useRuntimeUiCredentialRequest(
 	deployment: HostedDeployment,
-	endpointUrl: string,
+	endpointUrl: string | null,
 	runtime: Runtime,
 ): () => Promise<RuntimeUiCredentials> {
 	const client = useBillingClient();
 	const deploymentId = deployment.resource.id;
 	const resourceVersion = deployment.resource.metadata.resourceVersion;
 	return useCallback(async () => {
+		if (!endpointUrl) throw new Error("Runtime UI endpoint is unavailable");
 		const credentials = await client.getRuntimeUiCredentials(deploymentId, resourceVersion);
 		const resolved = resolveRuntimeUiCredentials(credentials, endpointUrl, resourceVersion);
 		if (!resolved || resolved.runtime !== runtime) {
@@ -1412,9 +1415,83 @@ function ConsoleTab({
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
 	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
+	const [credentialError, setCredentialError] = useState<Error | null>(null);
+	const [isCredentialLoading, setIsCredentialLoading] = useState(false);
+	const [isOpenClawBootstrapPending, setIsOpenClawBootstrapPending] = useState(false);
 	const [credentialLoadState, setCredentialLoadState] = useState<"loading" | "ready" | "error">(
 		runtime === "openclaw" ? "loading" : "ready",
 	);
+	const requestCredentials = useRuntimeUiCredentialRequest(deployment, url, runtime);
+	const requestVersionRef = useRef(0);
+	const loadedCredentialIdentityRef = useRef<string | null>(null);
+	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${isRunning}`;
+
+	const loadCredentials = useCallback(
+		async ({ allowDirectOpenOnFailure = false } = {}): Promise<RuntimeUiCredentials | null> => {
+			const requestVersion = requestVersionRef.current + 1;
+			requestVersionRef.current = requestVersion;
+			setIsCredentialLoading(true);
+			setCredentialError(null);
+			setCredentialLoadState("loading");
+			try {
+				const resolved = await requestCredentials();
+				if (requestVersionRef.current !== requestVersion) return null;
+				setCredentials(resolved);
+				setCredentialLoadState("ready");
+				return resolved;
+			} catch (error) {
+				if (requestVersionRef.current === requestVersion) {
+					setCredentialError(
+						error instanceof Error ? error : new Error("Runtime UI credential request failed"),
+					);
+					setCredentialLoadState(
+						runtime === "openclaw" && allowDirectOpenOnFailure ? "ready" : "error",
+					);
+					if (!allowDirectOpenOnFailure) setIsOpenClawBootstrapPending(false);
+				}
+				return null;
+			} finally {
+				if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
+			}
+		},
+		[requestCredentials, runtime],
+	);
+
+	const clearCredentials = useCallback(() => {
+		requestVersionRef.current += 1;
+		setCredentials(null);
+		setCredentialError(null);
+		setIsCredentialLoading(false);
+		setIsOpenClawBootstrapPending(false);
+		setCredentialLoadState(runtime === "openclaw" ? "loading" : "ready");
+	}, [runtime]);
+
+	const reconnectOpenClaw = useCallback(() => {
+		forgetOpenClawBootstrapAttempt(window.localStorage, deployment.resource.id);
+		setIsOpenClawBootstrapPending(true);
+		return loadCredentials();
+	}, [deployment.resource.id, loadCredentials]);
+
+	useEffect(() => {
+		if (loadedCredentialIdentityRef.current === credentialIdentity) return;
+		loadedCredentialIdentityRef.current = credentialIdentity;
+		clearCredentials();
+		if (runtime !== "openclaw" || !isRunning || !url) return;
+		if (hasOpenClawBootstrapAttempt(window.localStorage, deployment.resource.id, url)) {
+			setCredentialLoadState("ready");
+			return;
+		}
+		setIsOpenClawBootstrapPending(true);
+		void loadCredentials({ allowDirectOpenOnFailure: true });
+	}, [
+		clearCredentials,
+		credentialIdentity,
+		deployment.resource.id,
+		isRunning,
+		loadCredentials,
+		runtime,
+		url,
+	]);
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1514,7 +1591,9 @@ function ConsoleTab({
 		runtime === "openclaw"
 			? credentials?.runtime === "openclaw"
 				? runtimeUiLaunchTarget(credentials)
-				: "about:blank"
+				: credentialLoadState === "ready"
+					? url
+					: "about:blank"
 			: url;
 
 	return (
@@ -1527,17 +1606,37 @@ function ConsoleTab({
 					endpointUrl={url}
 					runtime={runtime}
 					credentials={credentials}
-					onCredentialsChange={setCredentials}
-					onCredentialLoadStateChange={setCredentialLoadState}
+					credentialError={credentialError}
+					isCredentialLoading={isCredentialLoading}
+					isOpenClawBootstrapPending={isOpenClawBootstrapPending}
+					onLoadCredentials={loadCredentials}
+					onClearCredentials={clearCredentials}
+					onReconnectOpenClaw={reconnectOpenClaw}
 				/>
 			}
 		>
-			{runtime === "openclaw" && !credentials ? (
+			{runtime === "openclaw" && credentialLoadState !== "ready" ? (
 				credentialLoadState === "error" ? (
 					<EmptyState
 						icon={AlertCircle}
 						title={`${browserUiLabel} could not be opened`}
-						description="Runtime UI access could not be loaded. Open Access to retry."
+						description="Clawdi couldn't establish this browser session."
+						action={
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={isCredentialLoading}
+								onClick={() => void reconnectOpenClaw()}
+							>
+								{isCredentialLoading ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<RefreshCw className="size-3.5" />
+								)}
+								Retry
+							</Button>
+						}
 					/>
 				) : (
 					<div role="status" className="flex min-h-[420px] flex-1">
@@ -1555,6 +1654,18 @@ function ConsoleTab({
 					title={browserUiLabel}
 					className="min-h-[420px] flex-1 border-0 bg-background"
 					allow="clipboard-read; clipboard-write"
+					onLoad={
+						runtime === "openclaw"
+							? () => {
+									rememberOpenClawBootstrapAttempt(
+										window.localStorage,
+										deployment.resource.id,
+										url,
+									);
+									setIsOpenClawBootstrapPending(false);
+								}
+							: undefined
+					}
 				/>
 			)}
 		</LiveToolFrame>
@@ -1686,25 +1797,27 @@ function RuntimeUiAccessDialog({
 	endpointUrl,
 	runtime,
 	credentials,
-	onCredentialsChange,
-	onCredentialLoadStateChange,
+	credentialError,
+	isCredentialLoading,
+	isOpenClawBootstrapPending,
+	onLoadCredentials,
+	onClearCredentials,
+	onReconnectOpenClaw,
 }: {
 	deployment: HostedDeployment;
 	endpointUrl: string;
 	runtime: Runtime;
 	credentials: RuntimeUiCredentials | null;
-	onCredentialsChange: (credentials: RuntimeUiCredentials | null) => void;
-	onCredentialLoadStateChange: (state: "loading" | "ready" | "error") => void;
+	credentialError: Error | null;
+	isCredentialLoading: boolean;
+	isOpenClawBootstrapPending: boolean;
+	onLoadCredentials: () => Promise<RuntimeUiCredentials | null>;
+	onClearCredentials: () => void;
+	onReconnectOpenClaw: () => Promise<RuntimeUiCredentials | null>;
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
-	const requestCredentials = useRuntimeUiCredentialRequest(deployment, endpointUrl, runtime);
 	const reset = useResetRuntimeUiAccess();
 	const [open, setOpen] = useState(false);
-	const [credentialError, setCredentialError] = useState<Error | null>(null);
-	const [isLoading, setIsLoading] = useState(false);
-	const [isLaunching, setIsLaunching] = useState(false);
-	const launchingRef = useRef(false);
-	const requestVersionRef = useRef(0);
 	const loadedIdentityRef = useRef<string | null>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const [accessHintOpen, setAccessHintOpen] = useState(false);
@@ -1712,6 +1825,7 @@ function RuntimeUiAccessDialog({
 	const renderedCredentials = credentialExit.renderedValue;
 	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
 	const accessHintStorageKey = hermesAccessHintStorageKey(deployment.resource.id);
+	const isOpenClawOpening = runtime === "openclaw" && isOpenClawBootstrapPending;
 
 	const dismissAccessHint = useCallback(() => {
 		setAccessHintOpen(false);
@@ -1722,47 +1836,12 @@ function RuntimeUiAccessDialog({
 		}
 	}, [accessHintStorageKey]);
 
-	const clearSensitiveState = useCallback(() => {
-		requestVersionRef.current += 1;
-		onCredentialsChange(null);
-		setCredentialError(null);
-		setIsLoading(false);
-		onCredentialLoadStateChange(runtime === "openclaw" ? "loading" : "ready");
-	}, [onCredentialLoadStateChange, onCredentialsChange, runtime]);
-
-	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
-		const requestVersion = requestVersionRef.current + 1;
-		requestVersionRef.current = requestVersion;
-		setIsLoading(true);
-		setCredentialError(null);
-		onCredentialLoadStateChange("loading");
-		try {
-			const resolved = await requestCredentials();
-			if (requestVersionRef.current !== requestVersion) return null;
-			onCredentialsChange(resolved);
-			onCredentialLoadStateChange("ready");
-			return resolved;
-		} catch (error) {
-			if (requestVersionRef.current === requestVersion) {
-				setCredentialError(
-					error instanceof Error ? error : new Error("Runtime UI credential request failed"),
-				);
-				onCredentialLoadStateChange("error");
-			}
-			return null;
-		} finally {
-			if (requestVersionRef.current === requestVersion) setIsLoading(false);
-		}
-	}, [onCredentialLoadStateChange, onCredentialsChange, requestCredentials]);
-
 	useEffect(() => {
 		if (loadedIdentityRef.current === identity) return;
 		loadedIdentityRef.current = identity;
 		if (open) credentialExit.beginClose();
-		clearSensitiveState();
 		setOpen(false);
-		if (runtime === "openclaw") void loadCredentials();
-	}, [clearSensitiveState, credentialExit.beginClose, identity, loadCredentials, open, runtime]);
+	}, [credentialExit.beginClose, identity, open]);
 
 	useEffect(() => {
 		if (runtime !== "hermes") {
@@ -1781,23 +1860,21 @@ function RuntimeUiAccessDialog({
 			if (nextOpen) credentialExit.beginOpen();
 			else credentialExit.beginClose();
 			setOpen(nextOpen);
-			if (nextOpen && runtime === "hermes") dismissAccessHint();
-			if (nextOpen && !credentials && !isLoading) void loadCredentials();
+			if (nextOpen) dismissAccessHint();
+			if (nextOpen && !credentials && !isCredentialLoading) void onLoadCredentials();
 		},
 		[
 			credentialExit.beginClose,
 			credentialExit.beginOpen,
 			credentials,
 			dismissAccessHint,
-			isLoading,
-			loadCredentials,
-			runtime,
+			isCredentialLoading,
+			onLoadCredentials,
 		],
 	);
 
-	const openRuntime = useCallback(async () => {
-		if (launchingRef.current) return;
-		const popup = openSecureRuntimeWindow(window.open.bind(window));
+	const openRuntime = useCallback(() => {
+		const popup = openSecureRuntimeWindow(window.open.bind(window), endpointUrl);
 		if (!popup) {
 			toast.error(`Couldn't open ${label}`, {
 				id: RUNTIME_UI_LAUNCH_TOAST_ID,
@@ -1806,196 +1883,176 @@ function RuntimeUiAccessDialog({
 			});
 			return;
 		}
-		launchingRef.current = true;
-		setIsLaunching(true);
-
-		try {
-			let launchCredentials: RuntimeUiCredentials;
-			try {
-				launchCredentials = await loadRuntimeUiLaunchCredentials(
-					runtime,
-					credentials,
-					requestCredentials,
-				);
-			} catch {
-				try {
-					popup.close();
-				} catch {
-					// Browser isolation may have severed the WindowProxy.
-				}
-				toast.error(`Couldn't open ${label}`, {
-					id: RUNTIME_UI_LAUNCH_TOAST_ID,
-					description: "Runtime UI access couldn't be loaded. Open Access to retry.",
-				});
-				return;
-			}
-
-			try {
-				popup.location.replace(runtimeUiLaunchTarget(launchCredentials));
-				trackRuntimeWindow(deployment.resource.id, popup);
-			} catch {
-				try {
-					popup.close();
-				} catch {
-					// Browser isolation may have severed the WindowProxy.
-				}
-				toast.error(`Couldn't open ${label}`, {
-					id: RUNTIME_UI_LAUNCH_TOAST_ID,
-					description: "The new window couldn't be connected. Try again.",
-				});
-			}
-		} finally {
-			launchingRef.current = false;
-			setIsLaunching(false);
-		}
-	}, [credentials, deployment.resource.id, label, requestCredentials, runtime]);
+		trackRuntimeWindow(deployment.resource.id, popup);
+	}, [deployment.resource.id, endpointUrl, label]);
 
 	const acceptReset = useCallback(async () => {
 		await reset.mutateAsync({ id: deployment.resource.id });
 		credentialExit.beginClose();
-		clearSensitiveState();
+		onClearCredentials();
 		setOpen(false);
-	}, [clearSensitiveState, credentialExit.beginClose, deployment.resource.id, reset]);
+	}, [credentialExit.beginClose, deployment.resource.id, onClearCredentials, reset]);
 
 	return (
 		<Dialog
-			open={open}
+			open={runtime === "hermes" && open}
 			onOpenChange={handleOpenChange}
 			onOpenChangeComplete={(nextOpen) => {
 				if (!nextOpen) credentialExit.completeClose();
 			}}
 		>
 			<div className="flex items-center gap-1.5">
-				<Popover
-					open={runtime === "hermes" && accessHintOpen}
-					onOpenChange={(nextOpen) => {
-						if (!nextOpen) dismissAccessHint();
-					}}
-				>
-					<PopoverTrigger
-						render={
-							<Button
-								ref={triggerRef}
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={() => handleOpenChange(true)}
-								aria-label={`Access ${label}`}
-							/>
-						}
+				{runtime === "hermes" ? (
+					<Popover
+						open={accessHintOpen}
+						onOpenChange={(nextOpen) => {
+							if (!nextOpen) dismissAccessHint();
+						}}
 					>
-						Access
-					</PopoverTrigger>
-					<PopoverContent side="bottom" align="end" className="w-72 gap-2">
-						<div className="flex items-start justify-between gap-3">
-							<PopoverHeader>
-								<PopoverTitle>Sign in to Hermes</PopoverTitle>
-								<PopoverDescription>
-									Get your Hermes username and password from Access.
-								</PopoverDescription>
-							</PopoverHeader>
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon-xs"
-								onClick={dismissAccessHint}
-								aria-label="Dismiss Hermes sign-in hint"
-							>
-								<X />
-							</Button>
-						</div>
-					</PopoverContent>
-				</Popover>
+						<PopoverTrigger
+							render={
+								<Button
+									ref={triggerRef}
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={() => handleOpenChange(true)}
+									aria-label={`Access ${label}`}
+								/>
+							}
+						>
+							Access
+						</PopoverTrigger>
+						<PopoverContent side="bottom" align="end" className="w-72 gap-2">
+							<div className="flex items-start justify-between gap-3">
+								<PopoverHeader>
+									<PopoverTitle>Sign in to Hermes</PopoverTitle>
+									<PopoverDescription>
+										Get your Hermes username and password from Access.
+									</PopoverDescription>
+								</PopoverHeader>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-xs"
+									onClick={dismissAccessHint}
+									aria-label="Dismiss Hermes sign-in hint"
+								>
+									<X />
+								</Button>
+							</div>
+						</PopoverContent>
+					</Popover>
+				) : (
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						disabled={isCredentialLoading || isOpenClawOpening}
+						onClick={() => void onReconnectOpenClaw()}
+					>
+						{isCredentialLoading || isOpenClawOpening ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<RefreshCw className="size-3.5" />
+						)}
+						Reconnect
+					</Button>
+				)}
 				<Button
 					type="button"
 					variant="outline"
 					size="sm"
-					disabled={isLaunching}
-					onClick={() => void openRuntime()}
+					disabled={isOpenClawOpening}
+					onClick={openRuntime}
 					aria-label={`Open ${label} in new window`}
 				>
-					{isLaunching ? <Spinner className="size-3.5" /> : <ExternalLink className="size-3.5" />}
+					{isOpenClawOpening ? (
+						<Spinner className="size-3.5" />
+					) : (
+						<ExternalLink className="size-3.5" />
+					)}
 					<span className="hidden sm:inline">
-						{isLaunching ? "Opening…" : "Open in new window"}
+						{isOpenClawOpening ? "Opening…" : "Open in new window"}
 					</span>
-					<span className="sm:hidden">{isLaunching ? "Opening…" : "Open"}</span>
+					<span className="sm:hidden">{isOpenClawOpening ? "Opening…" : "Open"}</span>
 				</Button>
 			</div>
-			<DialogContent
-				data-hosted="true"
-				data-v2="true"
-				className="sm:max-w-md"
-				finalFocus={triggerRef}
-			>
-				<DialogHeader>
-					<DialogTitle>Runtime UI access</DialogTitle>
-					<DialogDescription>
-						View or copy the current {label} access details. Reset rotates the same access material
-						through the normal agent rollout.
-					</DialogDescription>
-				</DialogHeader>
+			{runtime === "hermes" ? (
+				<DialogContent
+					data-hosted="true"
+					data-v2="true"
+					className="sm:max-w-md"
+					finalFocus={triggerRef}
+				>
+					<DialogHeader>
+						<DialogTitle>Runtime UI access</DialogTitle>
+						<DialogDescription>
+							View or copy the current {label} access details. Reset rotates the same access
+							material through the normal agent rollout.
+						</DialogDescription>
+					</DialogHeader>
 
-				{isLoading ? (
-					<div
-						role="status"
-						className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"
-					>
-						<Spinner className="size-4" />
-						Loading Runtime UI access…
-					</div>
-				) : null}
+					{isCredentialLoading ? (
+						<div
+							role="status"
+							className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"
+						>
+							<Spinner className="size-4" />
+							Loading Runtime UI access…
+						</div>
+					) : null}
 
-				{credentialError ? (
-					<ApiErrorPanel
-						error={credentialError}
-						onRetry={() => void loadCredentials()}
-						normalizer={billingErrorNormalizer}
-						title={`Couldn't load ${label} access`}
-					/>
-				) : null}
+					{credentialError ? (
+						<ApiErrorPanel
+							error={credentialError}
+							onRetry={() => void onLoadCredentials()}
+							normalizer={billingErrorNormalizer}
+							title={`Couldn't load ${label} access`}
+						/>
+					) : null}
 
-				{renderedCredentials?.runtime === "hermes" ? (
-					<div className="overflow-hidden rounded-lg border bg-card/60">
-						<RuntimeUiCredentialRow label="Username" value={renderedCredentials.username} />
-						<Separator />
-						<RuntimeUiCredentialRow label="Password" value={renderedCredentials.password} secret />
-					</div>
-				) : null}
+					{renderedCredentials?.runtime === "hermes" ? (
+						<div className="overflow-hidden rounded-lg border bg-card/60">
+							<RuntimeUiCredentialRow label="Username" value={renderedCredentials.username} />
+							<Separator />
+							<RuntimeUiCredentialRow
+								label="Password"
+								value={renderedCredentials.password}
+								secret
+							/>
+						</div>
+					) : null}
 
-				{renderedCredentials?.runtime === "openclaw" ? (
-					<div className="overflow-hidden rounded-lg border bg-card/60">
-						<RuntimeUiCredentialRow label="Token" value={renderedCredentials.token} secret />
-					</div>
-				) : null}
-
-				<div className="flex flex-wrap justify-end gap-2">
-					<ConfirmAction
-						title="Reset Runtime UI access?"
-						description={
-							<p>
-								This rotates the {runtime === "hermes" ? "Hermes credentials" : "OpenClaw token"}
-								and restarts the agent through its normal rollout.
-							</p>
-						}
-						confirmLabel="Reset access"
-						destructive
-						onConfirm={acceptReset}
-					>
-						<Button type="button" variant="outline" disabled={isLoading || reset.isPending}>
-							{reset.isPending ? <Spinner className="size-3.5" /> : null}
-							Reset access
+					<div className="flex flex-wrap justify-end gap-2">
+						<ConfirmAction
+							title="Reset Runtime UI access?"
+							description={
+								<p>
+									This rotates the Hermes credentials and restarts the agent through its normal
+									rollout.
+								</p>
+							}
+							confirmLabel="Reset access"
+							destructive
+							onConfirm={acceptReset}
+						>
+							<Button
+								type="button"
+								variant="outline"
+								disabled={isCredentialLoading || reset.isPending}
+							>
+								{reset.isPending ? <Spinner className="size-3.5" /> : null}
+								Reset access
+							</Button>
+						</ConfirmAction>
+						<Button type="button" disabled={reset.isPending} onClick={openRuntime}>
+							<ExternalLink className="size-3.5" />
+							Open in new window
 						</Button>
-					</ConfirmAction>
-					<Button
-						type="button"
-						disabled={isLaunching || reset.isPending}
-						onClick={() => void openRuntime()}
-					>
-						{isLaunching ? <Spinner className="size-3.5" /> : <ExternalLink className="size-3.5" />}
-						{isLaunching ? "Opening…" : "Open in new window"}
-					</Button>
-				</div>
-			</DialogContent>
+					</div>
+				</DialogContent>
+			) : null}
 		</Dialog>
 	);
 }
