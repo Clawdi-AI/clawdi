@@ -37,6 +37,7 @@ const AGENT_SECTION_SEGMENTS = {
 	connectors: "connectors",
 	ai: "model-provider",
 	channels: "channel-links",
+	plugins: "plugins",
 	settings: "settings",
 } as const satisfies Record<AgentSectionId, string>;
 

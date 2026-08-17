@@ -108,6 +108,7 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 		case "reset_runtime_ui_access":
 			return "Runtime UI access reset";
 		case "update":
+		case "migrate_runtime_context":
 			return "Agent update";
 		case "runtime_switch":
 			return "Agent software change";
@@ -224,6 +225,7 @@ export function deploymentFailurePresentation(
 			};
 		case "stop":
 		case "update":
+		case "migrate_runtime_context":
 		case "reset_runtime_ui_access":
 		case "runtime_switch":
 		case "migrate_image":

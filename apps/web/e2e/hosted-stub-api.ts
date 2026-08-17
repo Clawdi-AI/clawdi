@@ -266,11 +266,12 @@ export function readDeploymentFixture(value: unknown): unknown {
 // own modules live under /src/hosted/v2/... and a path glob would intercept
 // them and break module loading.
 
-function hostedUser(canUsePlanCBilling = true) {
+function hostedUser(canUsePlanCBilling = true, canUseAgentPluginsUI = false) {
 	return {
 		capabilities: {
 			can_use_v1: false,
 			can_use_v2: true,
+			can_use_agent_plugins_ui: canUseAgentPluginsUI,
 			can_use_plan_c_billing: canUsePlanCBilling,
 		},
 	};
@@ -760,6 +761,7 @@ export type HostedApiStubOptions = {
 	autoReloadRequests?: string[];
 	autoReloadResponses?: StubResponse[];
 	canUsePlanCBilling?: boolean;
+	canUseAgentPluginsUI?: boolean;
 	planBillingCapability?: { enabled: boolean };
 	productAccessRequests?: string[];
 	cancelRequests?: string[];
@@ -823,7 +825,10 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
 			return fulfillJson(
 				r,
-				hostedUser(options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true),
+				hostedUser(
+					options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true,
+					options.canUseAgentPluginsUI,
+				),
 			);
 		}
 		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
@@ -1092,7 +1097,10 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			options.productAccessRequests?.push(`CLOUD ${p}`);
 			return fulfillJson(
 				r,
-				hostedUser(options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true),
+				hostedUser(
+					options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true,
+					options.canUseAgentPluginsUI,
+				),
 			);
 		}
 		if (p === "/v1/agents") {
