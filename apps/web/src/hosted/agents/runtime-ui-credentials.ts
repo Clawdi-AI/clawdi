@@ -62,3 +62,14 @@ export function resolveRuntimeUiCredentials(
 export function runtimeUiLaunchTarget(credentials: RuntimeUiCredentials): string {
 	return credentials.runtime === "openclaw" ? credentials.handoff_url : credentials.url;
 }
+
+export async function loadRuntimeUiLaunchCredentials(
+	runtime: RuntimeUiCredentials["runtime"],
+	currentCredentials: RuntimeUiCredentials | null,
+	requestCredentials: () => Promise<RuntimeUiCredentials>,
+): Promise<RuntimeUiCredentials> {
+	// OpenClaw handoffs are single-use. The embedded UI and each new window
+	// must receive different credentials.
+	if (runtime === "openclaw") return requestCredentials();
+	return currentCredentials?.runtime === "hermes" ? currentCredentials : requestCredentials();
+}
