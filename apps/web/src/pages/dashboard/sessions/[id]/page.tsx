@@ -1,6 +1,7 @@
 "use client";
 
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import {
 	ArrowDown,
 	ArrowDownNarrowWide,
@@ -8,9 +9,11 @@ import {
 	Clock,
 	Hash,
 	MessageSquare,
+	Trash2,
 	Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline } from "@/components/dashboard/agent-label";
@@ -27,11 +30,12 @@ import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { SessionShareControls } from "@/components/sessions/share-controls";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentDeploymentRouteQuery, agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
-import { isApiNotFoundError } from "@/lib/api-errors";
+import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
@@ -41,6 +45,7 @@ import {
 	SESSION_DETAIL_STALE_MS,
 	SESSION_MESSAGES_GC_MS,
 	SESSION_MESSAGES_STALE_MS,
+	sessionDetailQueryKey,
 } from "@/lib/session-queries";
 import { useCommittedLocation } from "@/lib/use-committed-location";
 import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
@@ -59,6 +64,8 @@ export function SessionDetailContent({
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
+	const queryClient = useQueryClient();
+	const router = useRouter();
 	const { user } = useCurrentUser();
 	// Committed-match search, not the pending target: this page stays mounted
 	// while an outgoing navigation loads, and its links must keep pointing at
@@ -67,6 +74,30 @@ export function SessionDetailContent({
 	const sessionsHref = agentId
 		? agentSectionHref(agentId, "sessions", agentDeploymentRouteQuery(routeSearch))
 		: "/sessions";
+	const deleteSession = $api.useMutation("delete", "/v1/sessions/{session_id}", {
+		onSuccess: () => {
+			toast.success("Session deleted", {
+				description: "The cloud copy and share link were removed.",
+			});
+			void queryClient.invalidateQueries({
+				queryKey: ["get", "/v1/sessions"],
+				refetchType: "none",
+			});
+			void queryClient.invalidateQueries({
+				queryKey: ["get", "/v1/dashboard/stats"],
+				refetchType: "none",
+			});
+			queryClient.removeQueries({ queryKey: sessionDetailQueryKey(sessionId), exact: true });
+			queryClient.removeQueries({ queryKey: ["session-messages", sessionId] });
+			queryClient.removeQueries({ queryKey: ["session-permissions", sessionId] });
+			void router.navigate({ href: sessionsHref });
+		},
+		onError: (error) => {
+			toast.error("Couldn't delete session", { description: normalizeApiError(error) });
+		},
+	});
+	const onDelete = () =>
+		deleteSession.mutateAsync({ params: { path: { session_id: sessionId } } });
 
 	const {
 		data: session,
@@ -337,7 +368,38 @@ export function SessionDetailContent({
 					</DetailMeta>
 				}
 				actions={
-					<SessionShareControls sessionId={session.id} isShared={session.is_shared ?? false} />
+					<div className="flex items-center gap-2">
+						<SessionShareControls
+							sessionId={session.id}
+							isShared={session.is_shared ?? false}
+						/>
+						<ConfirmAction
+								title="Delete this synced session?"
+								description={
+									<>
+										<p>This removes the cloud copy and its share link.</p>
+										<p>Memories extracted from this session will remain.</p>
+										<p>
+											If the session still exists locally, a future local <code>clawdi push</code> can
+											sync it again.
+										</p>
+									</>
+								}
+								confirmLabel="Delete session"
+								destructive
+								onConfirm={onDelete}
+							>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={deleteSession.isPending}
+									className="w-fit shrink-0 text-destructive hover:text-destructive"
+								>
+									<Trash2 />
+									Delete
+								</Button>
+						</ConfirmAction>
+					</div>
 				}
 			/>
 

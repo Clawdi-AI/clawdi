@@ -20,7 +20,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
-from sqlalchemy import case, func, or_, select, text
+from sqlalchemy import case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +38,7 @@ from app.core.database import get_session, runtime_snapshot_session
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.memory import Memory
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
     PERMISSION_KIND_LINK,
@@ -130,6 +131,8 @@ _MAX_RUNTIME_OBSERVED_BYTES = 64 * 1024
 _MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024
 _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
+_SESSION_LOCAL_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"
+_SESSION_LOCAL_ID_RE = re.compile(_SESSION_LOCAL_ID_PATTERN)
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
 _AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected"
@@ -1332,6 +1335,38 @@ async def _delete_managed_avatar_key_best_effort(key: str | None) -> None:
         await file_store.delete(key)
     except Exception:
         log.warning("agent_avatar_delete_failed key=%s", key, exc_info=True)
+
+
+async def _delete_session_content_best_effort(key: str | None) -> None:
+    if not key:
+        return
+    try:
+        await file_store.delete(key)
+    except Exception:
+        log.warning("session_content_delete_failed file_key=%s", key, exc_info=True)
+
+
+def _session_generation_file_key(session: Session) -> str:
+    return f"sessions/{session.user_id}/{session.id}.json"
+
+
+def _session_content_cleanup_keys(session: Session) -> set[str]:
+    """Return only exact object keys owned by this Session generation."""
+    keys = {_session_generation_file_key(session)}
+    if _SESSION_LOCAL_ID_RE.fullmatch(session.local_session_id):
+        keys.add(f"sessions/{session.user_id}/{session.local_session_id}.json")
+    if session.file_key and session.file_key not in keys:
+        log.warning(
+            "session_content_cleanup_skipped_unrecognized file_key=%s session_id=%s",
+            session.file_key,
+            session.id,
+        )
+    return keys
+
+
+async def _delete_session_content_keys_best_effort(keys: set[str]) -> None:
+    for key in sorted(keys):
+        await _delete_session_content_best_effort(key)
 
 
 async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
@@ -2722,11 +2757,46 @@ async def get_session_detail(
     )
 
 
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    session_id: UUID,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    session = (
+        await db.execute(
+            select(Session)
+            .where(
+                Session.id == session_id,
+                Session.user_id == auth.user_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+
+    content_keys = _session_content_cleanup_keys(session)
+    await db.execute(
+        update(Memory)
+        .where(
+            Memory.user_id == auth.user_id,
+            Memory.source_session_id == session.id,
+        )
+        .values(source_session_id=None)
+    )
+    await db.delete(session)
+    await db.commit()
+
+    await _delete_session_content_keys_best_effort(content_keys)
+
+
 @router.post("/sessions/{local_session_id}/upload")
 async def upload_session_content(
-    # Constrained to safe filename chars so it cannot escape the
-    # `sessions/{user_id}/` prefix in the file-store key below.
-    local_session_id: str = Path(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"),
+    # Constrained to the legacy object-name alphabet. Session.id owns new
+    # object keys; local_session_id remains a lookup key and a safely derived
+    # legacy cleanup candidate.
+    local_session_id: str = Path(..., pattern=_SESSION_LOCAL_ID_PATTERN),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(require_scope("sessions:write")),
     db: AsyncSession = Depends(get_session),
@@ -2743,7 +2813,7 @@ async def upload_session_content(
         # treated as "not yours" — without this an orphaned
         # session would be a silent shared write target.
         stmt = stmt.where(Session.environment_id == bound_env)
-    result = await db.execute(stmt)
+    result = await db.execute(stmt.with_for_update())
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
@@ -2778,7 +2848,12 @@ async def upload_session_content(
     # hash on disk matches the hash in the row.
     content_hash = hashlib.sha256(data).hexdigest()
 
-    fk = f"sessions/{auth.user_id}/{local_session_id}.json"
+    # The row id is the storage generation. Recreating the same local_session_id
+    # gets a new row id, so delayed cleanup from dashboard deletion cannot touch
+    # the recreated session's content.
+    fk = _session_generation_file_key(session)
+    old_file_key = session.file_key
+    old_cleanup_keys = _session_content_cleanup_keys(session) - {fk}
     await file_store.put(fk, data)
 
     session.file_key = fk
@@ -2803,7 +2878,14 @@ async def upload_session_content(
             local_session_id,
         )
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        if old_file_key != fk:
+            await _delete_session_content_best_effort(fk)
+        raise
+
+    await _delete_session_content_keys_best_effort(old_cleanup_keys)
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
 
