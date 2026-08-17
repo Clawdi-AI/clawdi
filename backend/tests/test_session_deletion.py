@@ -17,6 +17,7 @@ from app.models.api_key import ApiKey
 from app.models.memory import Memory
 from app.models.session import Session, SessionSyncSuppression
 from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
+from app.models.user import User
 from app.routes.memories import attach_source_machines
 from app.schemas.session import SessionBatchRequest
 from app.services.file_store import FileStore
@@ -146,11 +147,23 @@ async def test_delete_session_is_durable_and_preserves_memories(
 
     dashboard_auth = app.dependency_overrides[get_auth]
 
+    other_user = User(
+        id=uuid.uuid4(),
+        clerk_id=f"session-delete-other-{uuid.uuid4().hex}",
+        email="session-delete-other@example.test",
+        name="Other Session User",
+    )
+
+    async def other_user_auth() -> AuthContext:
+        return AuthContext(user=other_user)
+
     async def cli_auth() -> AuthContext:
         return AuthContext(user=seed_user, api_key=ApiKey(user_id=seed_user.id))
 
-    app.dependency_overrides[get_auth] = cli_auth
     try:
+        app.dependency_overrides[get_auth] = other_user_auth
+        assert (await client.delete(f"/v1/sessions/{session_id}")).status_code == 404
+        app.dependency_overrides[get_auth] = cli_auth
         assert (await client.delete(f"/v1/sessions/{session_id}")).status_code == 403
     finally:
         app.dependency_overrides[get_auth] = dashboard_auth
@@ -277,28 +290,27 @@ async def test_delete_serializes_batch_before_suppression_check(
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     auth = AuthContext(user=seed_user)
     async with session_factory() as delete_db, session_factory() as batch_db:
-        delete_task = asyncio.create_task(
-            sessions_route.delete_session(session.id, auth=auth, db=delete_db)
-        )
-        await asyncio.wait_for(delete_started.wait(), timeout=5)
-        event.listen(engine.sync_engine, "before_cursor_execute", observe_lock_statement)
-        try:
-            batch_task = asyncio.create_task(
-                sessions_route.batch_create_sessions(
-                    _batch_body(environment_id, [local_session_id]),
-                    Request({"type": "http", "headers": []}),
-                    auth=auth,
-                    db=batch_db,
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(sessions_route.delete_session(session.id, auth=auth, db=delete_db))
+            await asyncio.wait_for(delete_started.wait(), timeout=5)
+            event.listen(engine.sync_engine, "before_cursor_execute", observe_lock_statement)
+            try:
+                batch_task = tasks.create_task(
+                    sessions_route.batch_create_sessions(
+                        _batch_body(environment_id, [local_session_id]),
+                        Request({"type": "http", "headers": []}),
+                        auth=auth,
+                        db=batch_db,
+                    )
                 )
-            )
-            await asyncio.wait_for(batch_lock_started.wait(), timeout=5)
-            assert not batch_task.done()
-            release_delete.set()
-            await delete_task
-            batch_result = await batch_task
-        finally:
-            release_delete.set()
-            event.remove(engine.sync_engine, "before_cursor_execute", observe_lock_statement)
+                await asyncio.wait_for(batch_lock_started.wait(), timeout=5)
+                assert not batch_task.done()
+                release_delete.set()
+            finally:
+                release_delete.set()
+                event.remove(engine.sync_engine, "before_cursor_execute", observe_lock_statement)
+
+        batch_result = batch_task.result()
 
     assert batch_result.suppressed == [local_session_id]
     assert batch_result.created == 0

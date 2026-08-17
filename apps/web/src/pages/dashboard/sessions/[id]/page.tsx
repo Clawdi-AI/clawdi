@@ -80,6 +80,14 @@ export function SessionDetailContent({
 				description: "Local data and extracted Memories remain. This Session will not sync again.",
 			});
 			void queryClient.invalidateQueries({
+				queryKey: ["get", "/v1/memories"],
+				refetchType: "none",
+			});
+			void queryClient.invalidateQueries({
+				queryKey: ["get", "/v1/memories/{memory_id}"],
+				refetchType: "none",
+			});
+			void queryClient.invalidateQueries({
 				queryKey: ["get", "/v1/sessions"],
 				refetchType: "none",
 			});
