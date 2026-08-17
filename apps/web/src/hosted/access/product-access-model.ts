@@ -1,8 +1,6 @@
 import type { DeployComponents } from "@clawdi/shared/api";
 
-type HostedProductCapabilities = Partial<
-	DeployComponents["schemas"]["V1UserProductCapabilities"]
->;
+type HostedProductCapabilities = Partial<DeployComponents["schemas"]["V1UserProductCapabilities"]>;
 
 export interface HostedProductAccessProfile {
 	capabilities?: HostedProductCapabilities | null;
