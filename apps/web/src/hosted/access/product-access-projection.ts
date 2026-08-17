@@ -7,6 +7,7 @@ function sameProductAccess(left: ProductAccess, right: ProductAccess): boolean {
 		left.legacyDashboardUrl === right.legacyDashboardUrl &&
 		left.canCreateCloudAgents === right.canCreateCloudAgents &&
 		left.canUseCloudAgents === right.canUseCloudAgents &&
+		left.canUseAgentPluginsUI === right.canUseAgentPluginsUI &&
 		left.status === right.status &&
 		left.isLoading === right.isLoading &&
 		left.isError === right.isError &&

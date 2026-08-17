@@ -45,6 +45,7 @@ import {
 } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { hostedAgentVisibleSectionIds } from "@/lib/navigation-model";
+import { useProductAccess } from "@/lib/product-access";
 import { cn } from "@/lib/utils";
 
 const UNRESOLVED_HOSTED_AGENT_REFETCH_INTERVAL_MS = 5_000;
@@ -79,6 +80,7 @@ export function AgentHome({
 	routeSearch: AgentRouteSearch;
 }) {
 	const router = useRouter();
+	const { canUseAgentPluginsUI, isLoading: productAccessLoading } = useProductAccess();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const deploymentSelector = agentDeploymentSelector(routeSearch);
 	const {
@@ -111,9 +113,11 @@ export function AgentHome({
 	const [manualChecking, setManualChecking] = useState(false);
 	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
 	const hostedSectionIds = deployment
-		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null)
+		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null, canUseAgentPluginsUI)
 		: HOSTED_AGENT_SECTION_IDS;
-	const hostedSection = hostedSectionIds.some((candidate) => candidate === section);
+	const agentPluginsAccessPending = section === "plugins" && productAccessLoading;
+	const hostedSection =
+		agentPluginsAccessPending || hostedSectionIds.some((candidate) => candidate === section);
 	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 
 	// Hosted membership is asynchronous, so it cannot be resolved in beforeLoad.
@@ -271,6 +275,9 @@ export function AgentHome({
 	}
 
 	if (deployment) {
+		if (agentPluginsAccessPending) {
+			return <ConnectedAgentDetailSkeleton hosted section={section} />;
+		}
 		// Scope the detail to a single runtime. Prefer the env's matched runtime;
 		// fall back to the deployment default when the route used a deployment id.
 		const runtime =

@@ -41,6 +41,7 @@ describe("agent routes", () => {
 		expect(agentSectionHref("agent 1", "connectors")).toBe("/agents/agent%201/connectors");
 		expect(agentSectionHref("agent 1", "ai")).toBe("/agents/agent%201/model-provider");
 		expect(agentSectionHref("agent 1", "channels")).toBe("/agents/agent%201/channel-links");
+		expect(agentSectionHref("agent 1", "plugins")).toBe("/agents/agent%201/plugins");
 		expect(agentSectionHref("agent 1", "files")).toBe("/agents/agent%201/files");
 		expect(agentSectionHref("agent 1", "settings")).toBe("/agents/agent%201/settings");
 		expect(agentSessionDetailHref("agent 1", "session 1")).toBe(

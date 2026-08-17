@@ -153,7 +153,10 @@ describe("sidebar navigation model", () => {
 				id: "workspace",
 				label: "Workspace",
 				separated: false,
-				items: [{ id: "projects", label: "Projects" }],
+				items: [
+					{ id: "projects", label: "Projects" },
+					{ id: "plugins", label: "Plugins" },
+				],
 			},
 			{
 				id: "shared",
@@ -197,6 +200,7 @@ describe("sidebar navigation model", () => {
 			"overview",
 			"sessions",
 			"projects",
+			"plugins",
 			"memories",
 			"connectors",
 			"console",
@@ -208,6 +212,8 @@ describe("sidebar navigation model", () => {
 		]);
 		expect(hostedAgentVisibleSectionIds(false)).not.toContain("files");
 		expect(hostedAgentVisibleSectionIds(true)).toContain("files");
+		expect(hostedAgentVisibleSectionIds(true)).not.toContain("plugins");
+		expect(hostedAgentVisibleSectionIds(true, true)).toContain("plugins");
 
 		expect(groupShape(agentNavigationGroups("hosted", ["overview"]))).toEqual([
 			{

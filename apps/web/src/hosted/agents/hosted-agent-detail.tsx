@@ -219,6 +219,7 @@ import {
 	runtimeConsoleUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
+import { AgentPluginsSurface } from "@/hosted/v2/agent-plugins/agent-plugins-surface";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
 	aiBindingBuildErrorCopy,
@@ -318,6 +319,7 @@ type HostedAgentTab =
 	| "projects"
 	| "ai"
 	| "channels"
+	| "plugins"
 	| "settings";
 function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgentTab | null {
 	if (!value) return null;
@@ -448,6 +450,7 @@ export function HostedAgentDetail({
 	onCheckDeploymentAgain: () => void;
 }) {
 	const $api = useOpenApi();
+	const { canUseAgentPluginsUI } = useProductAccess();
 	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
@@ -490,7 +493,8 @@ export function HostedAgentDetail({
 	const availableAgentTitle = agent
 		? agentDisplayName(agent)
 		: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
-	const requestedTab = parseHostedAgentTab(section) ?? "overview";
+	const parsedTab = parseHostedAgentTab(section) ?? "overview";
+	const requestedTab = parsedTab === "plugins" && !canUseAgentPluginsUI ? "overview" : parsedTab;
 	const filesUrl = deploymentFilesUrl(deployment);
 	const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;
 	useSetBreadcrumbTitle(
@@ -534,7 +538,9 @@ export function HostedAgentDetail({
 		>
 			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
 			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-6"}>
-				{isLiveToolTab || (activeTab === "projects" && projection.status === "resolved") ? null : (
+				{isLiveToolTab ||
+				activeTab === "plugins" ||
+				(activeTab === "projects" && projection.status === "resolved") ? null : (
 					<PageHeader
 						title={activeTab === "overview" ? availableAgentTitle : activeTabLabel}
 						titleAdornment={
@@ -644,6 +650,9 @@ export function HostedAgentDetail({
 						) : (
 							<ProjectionDependentUnavailable label="Projects" />
 						)
+					) : null}
+					{activeTab === "plugins" ? (
+						<AgentPluginsSurface agentId={environmentId} runtime={runtime} />
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
 						<AiProviderTab

@@ -11,6 +11,7 @@ describe("hostedProductAccessFromProfile", () => {
 			legacyHostedAccessStatus: "unresolved",
 			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
+			canUseAgentPluginsUI: false,
 		});
 	});
 
@@ -24,6 +25,7 @@ describe("hostedProductAccessFromProfile", () => {
 			legacyHostedAccessStatus: "disabled",
 			canCreateCloudAgents: true,
 			canUseCloudAgents: true,
+			canUseAgentPluginsUI: false,
 		});
 	});
 
@@ -37,6 +39,7 @@ describe("hostedProductAccessFromProfile", () => {
 			legacyHostedAccessStatus: "enabled",
 			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
+			canUseAgentPluginsUI: false,
 		});
 	});
 
@@ -46,6 +49,7 @@ describe("hostedProductAccessFromProfile", () => {
 				capabilities: {
 					can_use_v1: false,
 					can_use_v2: false,
+					can_use_agent_plugins_ui: true,
 				},
 			}),
 		).toEqual({
@@ -53,6 +57,7 @@ describe("hostedProductAccessFromProfile", () => {
 			legacyHostedAccessStatus: "disabled",
 			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
+			canUseAgentPluginsUI: true,
 		});
 	});
 });
