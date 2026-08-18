@@ -3,6 +3,7 @@ import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
 	forgetOpenClawBootstrapAttempt,
 	hasOpenClawBootstrapAttempt,
+	loadRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
 	rememberOpenClawBootstrapAttempt,
 	resolveRuntimeUiCredentials,
@@ -114,6 +115,47 @@ describe("runtime UI credential targeting", () => {
 				"rv-new",
 			),
 		).toBeNull();
+	});
+
+	test("requests a fresh single-use handoff for every OpenClaw window", async () => {
+		const embedded: RuntimeUiCredentials = {
+			runtime: "openclaw",
+			auth_mode: "openclaw_token",
+			url: "https://runtime.example/openclaw/",
+			deployment_resource_version: "rv-current",
+			token: "deployment-token",
+			handoff_url:
+				"https://runtime.example/openclaw/#bootstrapToken=embedded-token&bootstrapProfile=owner",
+		};
+		let requests = 0;
+		const requestCredentials = async () => {
+			requests += 1;
+			return {
+				...embedded,
+				handoff_url: `https://runtime.example/openclaw/#bootstrapToken=fresh-${requests}&bootstrapProfile=owner`,
+			};
+		};
+
+		const endpointUrl = "https://runtime.example/openclaw/";
+		const first = await loadRuntimeUiWindowTarget("openclaw", endpointUrl, requestCredentials);
+		const second = await loadRuntimeUiWindowTarget("openclaw", endpointUrl, requestCredentials);
+
+		expect(requests).toBe(2);
+		expect(first).toBe(
+			"https://runtime.example/openclaw/#bootstrapToken=fresh-1&bootstrapProfile=owner",
+		);
+		expect(second).toBe(
+			"https://runtime.example/openclaw/#bootstrapToken=fresh-2&bootstrapProfile=owner",
+		);
+	});
+
+	test("returns the Hermes endpoint without requesting credentials", async () => {
+		const endpointUrl = "https://runtime.example/hermes";
+		const target = await loadRuntimeUiWindowTarget("hermes", endpointUrl, async () => {
+			throw new Error("Hermes credentials should not be requested again");
+		});
+
+		expect(target).toBe(endpointUrl);
 	});
 
 	test("remembers only that this browser attempted OpenClaw bootstrap", () => {

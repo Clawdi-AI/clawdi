@@ -116,3 +116,12 @@ export function resolveRuntimeUiCredentials(
 export function runtimeUiLaunchTarget(credentials: RuntimeUiCredentials): string {
 	return credentials.runtime === "openclaw" ? credentials.handoff_url : credentials.url;
 }
+
+export async function loadRuntimeUiWindowTarget(
+	runtime: RuntimeUiCredentials["runtime"],
+	endpointUrl: string,
+	requestCredentials: () => Promise<RuntimeUiCredentials>,
+): Promise<string> {
+	if (runtime === "hermes") return endpointUrl;
+	return runtimeUiLaunchTarget(await requestCredentials());
+}

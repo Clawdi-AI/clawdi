@@ -1143,22 +1143,23 @@ in the currently receipted runtime instance. When supported, it returns the
 single-use, ten-minute `browserUrl` after binding it to the deployment's clean
 HTTPS endpoint. The browser consumes the official `bootstrapToken` and
 `bootstrapProfile=owner` fragment, creates its signed device identity, and
-receives the durable owner credential without a manual pairing step. If the
-installed binary explicitly lacks `dashboard --json`, or returns the validated
-legacy JSON shape, Hosted preserves the exact `#token=` launch while the CLI's
-legacy patch disables device authentication. Other command, JSON, and handoff
-errors fail closed with no bare-URL fallback. Clawdi implements no parallel
-device-auth or device-approval protocol.
+receives the durable owner credential without a manual pairing step. OpenClaw
+removes the handoff fragment before authentication, so the visible address
+remains the clean endpoint. If the installed binary explicitly lacks
+`dashboard --json`, or returns the validated legacy JSON shape, Hosted preserves
+the exact `#token=` launch while the CLI's legacy patch disables device
+authentication. Other command, JSON, and handoff errors fail closed with no
+bare-URL fallback. Clawdi implements no parallel device-auth or device-approval
+protocol.
 
 OpenClaw persists the issued device credential in its own browser origin and
-reuses it when that browser later opens the clean dashboard URL. Clawdi records
-only that a bootstrap was attempted for the deployment and published endpoint,
-so returning to Agent Interface and opening a new window do not request another
-single-use handoff. An endpoint change requires a new bootstrap.
-The embedding page cannot inspect OpenClaw's cross-origin storage or connection
-state, and an iframe load is not treated as authentication proof. `Reconnect`
-explicitly requests a fresh native handoff when the OpenClaw UI reports that its
-stored session is no longer usable.
+may reuse it when the embedded UI revisits the clean dashboard URL. Clawdi
+records only that a bootstrap was attempted for the deployment and published
+endpoint. Every explicit new-window launch requests a fresh official handoff
+because iframe and top-level storage may be partitioned; `Reconnect` also
+requests a fresh handoff. The embedding page cannot inspect OpenClaw's
+cross-origin storage or connection state, and an iframe load is not treated as
+authentication proof.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
