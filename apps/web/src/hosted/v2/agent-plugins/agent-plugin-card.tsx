@@ -64,7 +64,7 @@ export function AgentPluginCard({
 					) : undefined
 				}
 				description={
-					item.catalog?.description ?? "This installed version is no longer listed in the Store."
+					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
 				footer={[item.catalog?.publisher, `v${pluginVersion(item)}`]}
 				footerClassName="mt-0"

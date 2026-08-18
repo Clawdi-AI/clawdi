@@ -31,11 +31,7 @@ export function buildAgentPluginInventory(
 			catalog: catalogByName.get(name) ?? null,
 			desired: desiredByName.get(name) ?? null,
 		}))
-		.sort((left, right) =>
-			pluginDisplayName(left).localeCompare(pluginDisplayName(right), undefined, {
-				sensitivity: "base",
-			}),
-		);
+		.sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export function pluginDisplayName(item: AgentPluginInventoryItem): string {

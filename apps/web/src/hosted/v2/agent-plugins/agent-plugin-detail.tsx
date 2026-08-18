@@ -83,10 +83,10 @@ export function AgentPluginDetail({
 					</IconChip>
 				}
 				description={
-					item.catalog?.description ?? "This installed version is no longer listed in the Store."
+					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
 				titleAdornment={
-					status ? (
+					status && item.desired?.convergence === "installed" ? (
 						<StatusBadge status={status.tone} withDot>
 							{status.label}
 						</StatusBadge>
@@ -207,7 +207,7 @@ function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }
 			<DetailPanel className="space-y-3">
 				<PanelHeading />
 				<p className="text-sm text-muted-foreground">
-					Component details are unavailable for this historical installation.
+					Details are no longer available for this plugin.
 				</p>
 			</DetailPanel>
 		);
@@ -234,7 +234,7 @@ function PanelHeading() {
 	return (
 		<div className="flex items-center gap-2">
 			<Box className="size-4 text-muted-foreground" />
-			<h2 className="text-sm font-semibold">Package contents</h2>
+			<h2 className="text-sm font-semibold">Includes</h2>
 		</div>
 	);
 }
