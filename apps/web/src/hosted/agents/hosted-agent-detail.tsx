@@ -1435,34 +1435,31 @@ function ConsoleTab({
 	const loadedCredentialIdentityRef = useRef<string | null>(null);
 	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${isRunning}`;
 
-	const loadCredentials = useCallback(
-		async (): Promise<RuntimeUiCredentials | null> => {
-			const requestVersion = requestVersionRef.current + 1;
-			requestVersionRef.current = requestVersion;
-			setIsCredentialLoading(true);
-			setCredentialError(null);
-			setCredentialLoadState("loading");
-			try {
-				const resolved = await requestCredentials();
-				if (requestVersionRef.current !== requestVersion) return null;
-				setCredentials(resolved);
-				setCredentialLoadState("ready");
-				return resolved;
-			} catch (error) {
-				if (requestVersionRef.current === requestVersion) {
-					setCredentialError(
-						error instanceof Error ? error : new Error("Runtime UI credential request failed"),
-					);
-					setCredentialLoadState("error");
-					setIsOpenClawBootstrapPending(false);
-				}
-				return null;
-			} finally {
-				if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
+	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
+		const requestVersion = requestVersionRef.current + 1;
+		requestVersionRef.current = requestVersion;
+		setIsCredentialLoading(true);
+		setCredentialError(null);
+		setCredentialLoadState("loading");
+		try {
+			const resolved = await requestCredentials();
+			if (requestVersionRef.current !== requestVersion) return null;
+			setCredentials(resolved);
+			setCredentialLoadState("ready");
+			return resolved;
+		} catch (error) {
+			if (requestVersionRef.current === requestVersion) {
+				setCredentialError(
+					error instanceof Error ? error : new Error("Runtime UI credential request failed"),
+				);
+				setCredentialLoadState("error");
+				setIsOpenClawBootstrapPending(false);
 			}
-		},
-		[requestCredentials],
-	);
+			return null;
+		} finally {
+			if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
+		}
+	}, [requestCredentials]);
 
 	const clearCredentials = useCallback(() => {
 		requestVersionRef.current += 1;
