@@ -5,7 +5,7 @@ import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_CARD_GRID_CLASS, entityCardChassisClass } from "@/components/entity-card";
+import { entityCardChassisClass } from "@/components/entity-card";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -318,9 +318,11 @@ export function reusableInventoryState(
 	return data === undefined ? "loading" : "ready";
 }
 
+const SUBSCRIPTION_CARD_GRID_CLASS = "grid gap-3 lg:grid-cols-2";
+
 function SubscriptionListSkeleton({ label = "Loading subscriptions" }: { label?: string }) {
 	return (
-		<div className={ENTITY_CARD_GRID_CLASS.compact} role="status">
+		<div className={SUBSCRIPTION_CARD_GRID_CLASS} role="status">
 			<span className="sr-only">{label}</span>
 			{Array.from({ length: 3 }, (_, index) => `subscription-skeleton-${index}`).map((key) => (
 				<div key={key} className={entityCardChassisClass({ variant: "compact" })}>
@@ -456,7 +458,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 							</div>
 						) : null}
 						{visibleRows.length ? (
-							<ul className={ENTITY_CARD_GRID_CLASS.compact}>
+							<ul className={SUBSCRIPTION_CARD_GRID_CLASS}>
 								{visibleRows.map((subscription) => {
 									const deployment = subscription.deployment_id
 										? deploymentsById.get(subscription.deployment_id.toLowerCase())
