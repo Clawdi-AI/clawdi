@@ -189,13 +189,22 @@ describe("subscription creation adapter", () => {
 		};
 		expect(subscriptionCreateOutcome(activation)).toEqual({
 			flowType: "subscription_activation",
-			deploymentId: "hdep_created",
-			deployRequestId: "subscription-create-test",
+			target: { kind: "deployment", deploymentId: "hdep_created" },
 			currentPeriodEnd: "2027-07-15T00:00:00Z",
 			entitledUntil: "2027-07-16T00:00:00Z",
 		});
-		expect(() => subscriptionCreateOutcome({ ...activation, deployment_id: null })).toThrow(
-			"Wallet activation did not return an agent.",
-		);
+		expect(subscriptionCreateOutcome({ ...activation, deployment_id: null })).toEqual({
+			flowType: "subscription_activation",
+			target: { kind: "deploy_request", deployRequestId: "subscription-create-test" },
+			currentPeriodEnd: "2027-07-15T00:00:00Z",
+			entitledUntil: "2027-07-16T00:00:00Z",
+		});
+		expect(() =>
+			subscriptionCreateOutcome({
+				...activation,
+				deployment_id: null,
+				deploy_request_id: null,
+			}),
+		).toThrow("Activation did not return an agent request.");
 	});
 });

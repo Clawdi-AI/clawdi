@@ -1422,36 +1422,31 @@ function ConsoleTab({
 	const loadedCredentialIdentityRef = useRef<string | null>(null);
 	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${isRunning}`;
 
-	const loadCredentials = useCallback(
-		async ({ allowDirectOpenOnFailure = false } = {}): Promise<RuntimeUiCredentials | null> => {
-			const requestVersion = requestVersionRef.current + 1;
-			requestVersionRef.current = requestVersion;
-			setIsCredentialLoading(true);
-			setCredentialError(null);
-			setCredentialLoadState("loading");
-			try {
-				const resolved = await requestCredentials();
-				if (requestVersionRef.current !== requestVersion) return null;
-				setCredentials(resolved);
-				setCredentialLoadState("ready");
-				return resolved;
-			} catch (error) {
-				if (requestVersionRef.current === requestVersion) {
-					setCredentialError(
-						error instanceof Error ? error : new Error("Runtime UI credential request failed"),
-					);
-					setCredentialLoadState(
-						runtime === "openclaw" && allowDirectOpenOnFailure ? "ready" : "error",
-					);
-					if (!allowDirectOpenOnFailure) setIsOpenClawBootstrapPending(false);
-				}
-				return null;
-			} finally {
-				if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
+	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
+		const requestVersion = requestVersionRef.current + 1;
+		requestVersionRef.current = requestVersion;
+		setIsCredentialLoading(true);
+		setCredentialError(null);
+		setCredentialLoadState("loading");
+		try {
+			const resolved = await requestCredentials();
+			if (requestVersionRef.current !== requestVersion) return null;
+			setCredentials(resolved);
+			setCredentialLoadState("ready");
+			return resolved;
+		} catch (error) {
+			if (requestVersionRef.current === requestVersion) {
+				setCredentialError(
+					error instanceof Error ? error : new Error("Runtime UI credential request failed"),
+				);
+				setCredentialLoadState("error");
+				setIsOpenClawBootstrapPending(false);
 			}
-		},
-		[requestCredentials, runtime],
-	);
+			return null;
+		} finally {
+			if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
+		}
+	}, [requestCredentials]);
 
 	const clearCredentials = useCallback(() => {
 		requestVersionRef.current += 1;
@@ -1478,7 +1473,7 @@ function ConsoleTab({
 			return;
 		}
 		setIsOpenClawBootstrapPending(true);
-		void loadCredentials({ allowDirectOpenOnFailure: true });
+		void loadCredentials();
 	}, [
 		clearCredentials,
 		credentialIdentity,
@@ -1510,11 +1505,11 @@ function ConsoleTab({
 				}
 				description={
 					deploymentTransitionEscalated
-						? "The latest status still shows this change in progress after fifteen minutes. We’ll keep checking automatically once a minute while you’re here, or you can cancel the change and try again."
+						? "This change is still in progress. You can cancel it and try again."
 						: deploymentTransitionTimedOut
-							? "The latest status still shows this change in progress after five minutes. It may still finish. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
+							? "This change is still in progress. Check again now or keep waiting."
 							: isStarting
-								? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
+								? `${browserUiLabel} will open here when ready.`
 								: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={
@@ -1822,6 +1817,7 @@ function RuntimeUiAccessDialog({
 	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
 	const accessHintStorageKey = hermesAccessHintStorageKey(deployment.resource.id);
 	const isOpenClawOpening = runtime === "openclaw" && isOpenClawBootstrapPending;
+	const isOpenClawUnavailable = runtime === "openclaw" && credentialError !== null;
 
 	const dismissAccessHint = useCallback(() => {
 		setAccessHintOpen(false);
@@ -1959,7 +1955,7 @@ function RuntimeUiAccessDialog({
 					type="button"
 					variant="outline"
 					size="sm"
-					disabled={isOpenClawOpening}
+					disabled={isOpenClawOpening || isOpenClawUnavailable}
 					onClick={openRuntime}
 					aria-label={`Open ${label} in new window`}
 				>

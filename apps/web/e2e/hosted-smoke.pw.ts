@@ -4023,7 +4023,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	});
 	await page.goto("/deploy");
 
-	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await expect.poll(() => checkoutRequests.length).toBe(1);
 	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({ ui_mode: "custom" });
 	const checkoutDialog = page.getByRole("dialog", { name: /Complete .* checkout/ });

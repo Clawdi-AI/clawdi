@@ -4976,6 +4976,7 @@ exit 0
 					basePath: "/",
 					allowedOrigins: ["https://app-v2-18789.k3s.example.test"],
 					dangerouslyAllowHostHeaderOriginFallback: false,
+					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});
