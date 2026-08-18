@@ -180,7 +180,9 @@ export function AgentPluginsSurface({
 	const catalogError = shouldBlockQueryError(catalogQuery.error, catalogQuery.data)
 		? catalogQuery.error
 		: null;
-	const desiredError = desiredQuery.error ?? null;
+	const desiredError = shouldBlockQueryError(desiredQuery.error, desiredQuery.data)
+		? desiredQuery.error
+		: null;
 	const inventory = useMemo(
 		() =>
 			buildAgentPluginInventory(
