@@ -2710,15 +2710,11 @@ function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | nul
 	if (process.env.CLAWDI_CODEX_INSTALL_DISABLED === "1") return null;
 	const npmPrefix = paths.userNpmPrefix;
 	const realBin = join(npmPrefix, "bin", "codex");
+	removeLegacyHostedCodexCommandShim(realBin, paths.userHome);
 	let installedVersion = hostedCodexInstalledVersion(npmPrefix);
 	const bootstrapRequired = installedVersion === null || !executableExists(realBin);
 	if (bootstrapRequired) {
-		installHostedCodexBootstrap(
-			CODEX_BOOTSTRAP_PACKAGE_SPEC,
-			npmPrefix,
-			paths,
-			isLegacyHostedCodexCommandShim(realBin, paths.userHome),
-		);
+		installHostedCodexBootstrap(CODEX_BOOTSTRAP_PACKAGE_SPEC, npmPrefix, paths);
 		installedVersion = hostedCodexInstalledVersion(npmPrefix);
 		if (installedVersion !== CODEX_BOOTSTRAP_PACKAGE_VERSION) {
 			throw new Error(
@@ -2763,7 +2759,6 @@ function installHostedCodexBootstrap(
 	packageSpec: string,
 	npmPrefix: string,
 	paths: RuntimePaths,
-	replaceLegacyShim: boolean,
 ): void {
 	if (!commandExists("npm")) {
 		throw new Error("Codex bootstrap requires npm on PATH");
@@ -2776,7 +2771,6 @@ function installHostedCodexBootstrap(
 			"-g",
 			"--prefix",
 			npmPrefix,
-			...(replaceLegacyShim ? ["--force"] : []),
 			"--ignore-scripts",
 			"--fetch-retries",
 			"2",
@@ -2803,21 +2797,23 @@ function installHostedCodexBootstrap(
 	}
 }
 
-function isLegacyHostedCodexCommandShim(commandPath: string, home: string): boolean {
+function removeLegacyHostedCodexCommandShim(commandPath: string, home: string): void {
+	let content: string;
 	try {
-		const content = readFileSync(commandPath, "utf8");
-		const legacyRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
-		return (
-			content ===
-			[
-				"#!/usr/bin/env sh",
-				`export ${MANAGED_AI_PROVIDER_RUNTIME_ENV}='${MANAGED_EGRESS_PLACEHOLDER_VALUE}'`,
-				`exec '${legacyRealBin}' "$@"`,
-				"",
-			].join("\n")
-		);
+		content = readFileSync(commandPath, "utf8");
 	} catch {
-		return false;
+		// A missing or unreadable command is handled by the normal bootstrap check.
+		return;
+	}
+	const legacyRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
+	const expected = [
+		"#!/usr/bin/env sh",
+		`export ${MANAGED_AI_PROVIDER_RUNTIME_ENV}='${MANAGED_EGRESS_PLACEHOLDER_VALUE}'`,
+		`exec '${legacyRealBin}' "$@"`,
+		"",
+	].join("\n");
+	if (content === expected) {
+		withRuntimeUserFileAccess(() => rmSync(commandPath));
 	}
 }
 
