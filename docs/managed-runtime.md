@@ -1154,12 +1154,13 @@ protocol.
 
 OpenClaw persists the issued device credential in its own browser origin and
 may reuse it when the embedded UI revisits the clean dashboard URL. Clawdi
-records only that a bootstrap was attempted for the deployment and published
-endpoint. Every explicit new-window launch requests a fresh official handoff
-because iframe and top-level storage may be partitioned; `Reconnect` also
-requests a fresh handoff. The embedding page cannot inspect OpenClaw's
-cross-origin storage or connection state, and an iframe load is not treated as
-authentication proof.
+records a versioned, non-secret native-ready marker only after the native
+handoff iframe loads, allowing later Console mounts to use the clean endpoint.
+New-window access stays disabled until the current iframe loads; it then opens
+the clean endpoint for native access or the exact reusable legacy `#token=` URL.
+It never requests another handoff. `Reconnect` clears the marker and requests a
+fresh iframe handoff. The load event is only a browser boundary; Clawdi cannot
+inspect OpenClaw's cross-origin authentication state.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
