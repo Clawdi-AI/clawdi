@@ -48,6 +48,7 @@ import {
 	type OpenClawProviderAuthAction,
 	oauthCredentialFingerprint,
 	resolveOpenClawConfigMutationSdkExport,
+	resolveOpenClawDeviceBootstrapSdkExport,
 	resolveOpenClawProviderAuthSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
@@ -2014,6 +2015,54 @@ function openClawProviderAuthSdkPath(
 	return resolved;
 }
 
+function openClawDeviceBootstrapSdkPath(
+	observation: RuntimeInstallObservation,
+	home: string,
+): string | null {
+	return resolveOpenClawDeviceBootstrapSdkExport(home, [
+		observation.commandPath,
+		observation.appRoot,
+		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
+		join(home, ".openclaw", "node_modules", "openclaw"),
+		join(home, ".local", "lib", "node_modules", "openclaw"),
+	]);
+}
+
+const OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE = `
+import { pathToFileURL } from "node:url";
+const sdk = await import(pathToFileURL(process.argv[1]).href);
+const normalized = typeof sdk.normalizeDeviceBootstrapProfile === "function"
+  ? sdk.normalizeDeviceBootstrapProfile({ purpose: "control-ui-owner" })
+  : null;
+process.stdout.write(normalized?.purpose === "control-ui-owner" ? "supported" : "unsupported");
+`;
+
+function openClawSupportsOwnerBrowserBootstrap(
+	observation: RuntimeInstallObservation,
+	home: string,
+): boolean {
+	const sdkPath = openClawDeviceBootstrapSdkPath(observation, home);
+	if (!sdkPath) return false;
+	ensureRuntimeUserHome(home);
+	const result = spawnRuntimeUserCommand(
+		"node",
+		["--input-type=module", "--eval", OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE, sdkPath],
+		home,
+		home,
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			`installed OpenClaw device-bootstrap capability probe failed: ${
+				tail(String(result.stderr ?? "")) ?? "unknown"
+			}`,
+		);
+	}
+	const outcome = String(result.stdout ?? "").trim();
+	if (outcome === "supported") return true;
+	if (outcome === "unsupported") return false;
+	throw new Error("installed OpenClaw device-bootstrap capability probe returned invalid output");
+}
+
 const OPENCLAW_PROVIDER_AUTH_CAPABILITY_PROBE = `
 import { pathToFileURL } from "node:url";
 const sdk = await import(pathToFileURL(process.argv[1]).href);
@@ -2496,6 +2545,7 @@ function applyHostedAiProviderProjection(
 	home: string,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
+	openClawOwnerBrowserBootstrapSupported: boolean,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
@@ -2510,6 +2560,7 @@ function applyHostedAiProviderProjection(
 				secretValues,
 				home,
 				workspaceRoot,
+				openClawOwnerBrowserBootstrapSupported,
 			);
 		}
 		return { path: null, revision: null, providerIds: [...previousProviderIds] };
@@ -2531,6 +2582,7 @@ function applyHostedAiProviderProjection(
 			secretValues,
 			home,
 			workspaceRoot,
+			openClawOwnerBrowserBootstrapSupported,
 		);
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (providerPatch.apply) {
@@ -3141,6 +3193,7 @@ function staleProviderIds(
 function openClawGatewayHostedPatch(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	ownerBrowserBootstrapSupported: boolean,
 ): Record<string, unknown> | null {
 	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
 	const gatewayToken = manifest.openclawGatewayAuth
@@ -3186,6 +3239,9 @@ function openClawGatewayHostedPatch(
 											? {
 													basePath: openClawControlUiBasePath(manifest),
 													dangerouslyAllowHostHeaderOriginFallback: false,
+													dangerouslyDisableDeviceAuth: ownerBrowserBootstrapSupported
+														? null
+														: true,
 												}
 											: {}),
 									},
@@ -3233,8 +3289,9 @@ function applyOpenClawGatewayHostedProjection(
 	secretValues: Record<string, string> | undefined,
 	home: string,
 	workspaceRoot: string,
+	ownerBrowserBootstrapSupported: boolean,
 ): void {
-	const patch = openClawGatewayHostedPatch(manifest, secretValues);
+	const patch = openClawGatewayHostedPatch(manifest, secretValues, ownerBrowserBootstrapSupported);
 	if (!patch || openClawGatewayHostedPatchIsApplied(home, patch)) return;
 	runRuntimeUserCommand(
 		command,
@@ -4811,6 +4868,7 @@ function runtimeProgramRevisionForManifest(
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevision: string | null,
 	hermesWhatsAppAuthDir: string | null,
+	openClawOwnerBrowserBootstrapSupported: boolean,
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
 	const runtimeSecretRefs = desiredRuntime
@@ -4842,7 +4900,14 @@ function runtimeProgramRevisionForManifest(
 	return runtimeProgramRevision({
 		renderedProjection: {
 			channels: channelProjection,
-			gateway: runtime === "openclaw" ? openClawGatewayHostedPatch(manifest, secretValues) : null,
+			gateway:
+				runtime === "openclaw"
+					? openClawGatewayHostedPatch(
+							manifest,
+							secretValues,
+							openClawOwnerBrowserBootstrapSupported,
+						)
+					: null,
 			locale:
 				manifest.locale && hostedTarget
 					? managedLocaleBlock(manifest.locale)
@@ -5128,6 +5193,7 @@ function validateRuntimeProjectionPlan(input: {
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
 	hermesWhatsAppAuthDir: string | null;
+	openClawOwnerBrowserBootstrapSupported: boolean;
 }): void {
 	const {
 		manifest,
@@ -5137,6 +5203,7 @@ function validateRuntimeProjectionPlan(input: {
 		observations,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		openClawOwnerBrowserBootstrapSupported,
 	} = input;
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
@@ -5207,7 +5274,9 @@ function validateRuntimeProjectionPlan(input: {
 			} else if (!configuredProjectionUnavailable) {
 				buildOpenClawHostedProviderPatch(null, previousProjectedProviderIds.openclaw ?? []);
 			}
-			JSON.stringify(openClawGatewayHostedPatch(manifest, secretValues));
+			JSON.stringify(
+				openClawGatewayHostedPatch(manifest, secretValues, openClawOwnerBrowserBootstrapSupported),
+			);
 		}
 		if (name === "hermes") {
 			if (projectionInput) {
@@ -5786,6 +5855,7 @@ export function convergeRuntimeManifest(
 	const projectedProviderIds: Record<string, string[]> = {};
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
 	const observations = new Map<string, RuntimeInstallObservation>();
+	let openClawOwnerBrowserBootstrapSupported = false;
 
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const hermesSkillNativeReconciler =
@@ -5848,6 +5918,12 @@ export function convergeRuntimeManifest(
 			);
 			observations.set(name, observation);
 			if (observation.error) installErrors.push(observation.error);
+			if (name === "openclaw" && observation.enabled && observation.commandPath) {
+				openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
+					observation,
+					projectionHome,
+				);
+			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 	} catch (error) {
@@ -5927,6 +6003,7 @@ export function convergeRuntimeManifest(
 			observations,
 			previousProjectedProviderIds,
 			hermesWhatsAppAuthDir,
+			openClawOwnerBrowserBootstrapSupported,
 		});
 		plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
 			manifest,
@@ -6020,15 +6097,19 @@ export function convergeRuntimeManifest(
 		const openClawObservation = observations.get("openclaw");
 		if (openClawObservation) {
 			try {
-				observations.set(
-					"openclaw",
-					ensureHostedOpenClawProviderAuthCapability({
-						manifest,
-						secretValues,
-						observation: openClawObservation,
-						home: projectionHome,
-					}),
-				);
+				const capableObservation = ensureHostedOpenClawProviderAuthCapability({
+					manifest,
+					secretValues,
+					observation: openClawObservation,
+					home: projectionHome,
+				});
+				observations.set("openclaw", capableObservation);
+				if (capableObservation !== openClawObservation) {
+					openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
+						capableObservation,
+						projectionHome,
+					);
+				}
 			} catch (error) {
 				installErrors.push(
 					`runtime openclaw OAuth capability check failed: ${
@@ -6339,6 +6420,7 @@ export function convergeRuntimeManifest(
 			observations,
 			previousProjectedProviderIds,
 			hermesWhatsAppAuthDir,
+			openClawOwnerBrowserBootstrapSupported,
 		});
 		const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
 		for (const [name] of runtimeEntries) {
@@ -6528,6 +6610,7 @@ export function convergeRuntimeManifest(
 					projectionHome,
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
+					openClawOwnerBrowserBootstrapSupported,
 				);
 				projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {
@@ -6611,6 +6694,7 @@ export function convergeRuntimeManifest(
 					secrets,
 					providerRevision,
 					hermesWhatsAppAuthDir,
+					openClawOwnerBrowserBootstrapSupported,
 				),
 			commonEnvironment: commonSystemdEnvironment,
 		});

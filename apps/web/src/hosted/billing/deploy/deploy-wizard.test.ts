@@ -387,9 +387,13 @@ describe("deploy acceptance", () => {
 
 	test("shows a scoped honest busy state and reports failures only through actionable toasts", () => {
 		expect(wizardSource).toContain("setSubmitBusyLabel(");
-		expect(wizardSource).toContain('"Confirming payment & creating agent…"');
-		expect(wizardSource).toContain('"Opening secure checkout…"');
-		expect(wizardSource).toContain('"Creating agent…"');
+		expect(wizardSource).toContain('"Deploying…"');
+		expect(wizardSource).toContain('"Opening…"');
+		expect(wizardSource).not.toContain("Loading agent details");
+		expect(wizardSource).toContain('"Payment is processing."');
+		expect(wizardSource).toContain('"Waiting for your agent."');
+		expect(wizardSource).not.toContain("Keep this page open");
+		expect(wizardSource).not.toContain("Payment and agent creation are still being confirmed.");
 		expect(wizardSource).toContain('<Spinner data-icon="inline-start" />');
 		expect(wizardSource).toContain('id: "deploy-submit-error"');
 		expect(wizardSource).toContain('label: "Retry"');
