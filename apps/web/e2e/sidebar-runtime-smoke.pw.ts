@@ -1551,7 +1551,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		.getByRole("link", { name: "Skills", exact: true });
 	await expect(agentSkillsLink).toHaveAttribute(
 		"href",
-		`/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/skills?${routeQuery}`,
+		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/skills",
 	);
 	expect(
 		skillDetailRequests.some(
@@ -1590,7 +1590,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		return (
 			url.pathname === "/agents/11111111-1111-4111-8111-111111111111/skills/context-only" &&
 			url.searchParams.get("project") === "project-smoke" &&
-			url.searchParams.get("keep") === "state" &&
+			!url.searchParams.has("keep") &&
 			!url.searchParams.has("source") &&
 			!url.searchParams.has("d")
 		);
@@ -1629,7 +1629,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 				.getByRole("link", { name: "Skills", exact: true }),
 		).toHaveAttribute(
 			"href",
-			`/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/skills?${routeQuery}`,
+			"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/skills",
 		);
 		expect(errorSkillDetailRequests).toEqual([]);
 	} finally {
