@@ -1031,10 +1031,8 @@ test("terminal fallback selects reusable subscriptions and keeps the long dialog
 			.getByRole("button", { name: "Choose a subscription" })
 			.click();
 		await expect(sourceDialog).toBeVisible();
-		await expect(sourceDialog.getByRole("button", { name: /Basic subscription/ })).toBeVisible();
-		await expect(
-			sourceDialog.getByRole("button", { name: /Performance subscription/ }),
-		).toBeVisible();
+		await expect(sourceDialog.getByRole("button", { name: /^Basic\b/ })).toBeVisible();
+		await expect(sourceDialog.getByRole("button", { name: /^Performance\b/ })).toBeVisible();
 		return sourceDialog;
 	};
 	const closeSourceDialog = async () => {
@@ -1059,8 +1057,8 @@ test("terminal fallback selects reusable subscriptions and keeps the long dialog
 	dialog = await openSourceDialog(mobile320);
 	await expectSourceDialogGeometry(dialog, mobile320, true);
 
-	const active = dialog.getByRole("button", { name: /Basic subscription/ });
-	const canceling = dialog.getByRole("button", { name: /Performance subscription/ });
+	const active = dialog.getByRole("button", { name: /^Basic\b/ });
+	const canceling = dialog.getByRole("button", { name: /^Performance\b/ });
 	await active.click();
 	await expect(active).toHaveAttribute("aria-pressed", "true");
 	await canceling.click();

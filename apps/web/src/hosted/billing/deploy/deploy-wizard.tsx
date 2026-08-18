@@ -76,6 +76,10 @@ import {
 	DEFAULT_DEPLOY_RUNTIME,
 	deployAgentNameAfterRuntimeChange,
 } from "@/hosted/billing/deploy/deploy-defaults";
+import {
+	type DeployWizardDirtyState,
+	deployWizardDraftIsDirty,
+} from "@/hosted/billing/deploy/deploy-dirty-state";
 import { usesActiveIncludedBasicSlot } from "@/hosted/billing/deploy/deploy-model";
 import {
 	type ComputePricePresentation,
@@ -162,6 +166,7 @@ import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks"
 import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
+	firstModelForProvider,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
 	MANAGED_PROVIDER_LABEL,
@@ -333,6 +338,7 @@ export function DeployWizard() {
 	}, []);
 	const [acceptedDeploymentRecovery, setAcceptedDeploymentRecovery] =
 		useState<AcceptedDeploymentRecovery | null>(null);
+	const [deploymentCommitted, setDeploymentCommitted] = useState(false);
 	const acceptanceNavigatingRef = useRef(false);
 	const acceptDeployment = useCallback(
 		async (
@@ -341,6 +347,7 @@ export function DeployWizard() {
 			requestProgress: DeploymentRequestProgress = DEFAULT_DEPLOYMENT_REQUEST_PROGRESS,
 		): Promise<boolean> => {
 			setAcceptedDeploymentRecovery(null);
+			if (target.kind === "deployment") setDeploymentCommitted(true);
 			setSubmitBusyLabel(target.kind === "deploy_request" ? requestProgress.busyLabel : "Opening…");
 			setSubmitTakingLongCopy(
 				target.kind === "deploy_request" ? requestProgress.takingLongCopy : null,
@@ -360,6 +367,7 @@ export function DeployWizard() {
 						...navigation,
 						deployRequestId: target.deployRequestId,
 						onAccepted: () => {
+							setDeploymentCommitted(true);
 							clearCheckoutAttempt(target.deployRequestId);
 							setSubmitBusyLabel("Opening…");
 							setSubmitTakingLongCopy(null);
@@ -441,6 +449,15 @@ export function DeployWizard() {
 	const reusableSubscriptions = useReusableSubscriptions(billingClient);
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
+	const blockingReusableSubscriptionsError = shouldBlockQueryError(
+		reusableSubscriptions.error,
+		reusableSubscriptions.data,
+	)
+		? reusableSubscriptions.error
+		: null;
+	const reusableSubscriptionInventory = blockingReusableSubscriptionsError
+		? undefined
+		: reusableSubscriptions.data;
 	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
@@ -451,6 +468,7 @@ export function DeployWizard() {
 	const [compute, setCompute] = useState<Compute>("basic");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
+	const [personaDefaults, setPersonaDefaults] = useState({ language: "", timezone: "" });
 	const [timezoneOptions, setTimezoneOptions] = useState(fallbackTimezones);
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
@@ -485,9 +503,11 @@ export function DeployWizard() {
 	// then adopt runtime IANA data and best-effort browser defaults after mount.
 	useEffect(() => {
 		const browserTimezoneValue = browserTimezone();
+		const browserLanguageValue = browserLanguage();
 		setTimezone((current) => current || browserTimezoneValue);
 		setTimezoneOptions(supportedTimezones(browserTimezoneValue ? [browserTimezoneValue] : []));
-		setLanguage((lang) => lang || browserLanguage());
+		setLanguage((current) => current || browserLanguageValue);
+		setPersonaDefaults({ language: browserLanguageValue, timezone: browserTimezoneValue });
 	}, []);
 	useEffect(() => {
 		if (!submitting) return;
@@ -520,8 +540,15 @@ export function DeployWizard() {
 			includedBasicAvailability === "unknown"
 				? undefined
 				: includedBasicAvailability === "available",
-		reusableSubscriptions:
-			reusableSubscriptions.error == null ? reusableSubscriptions.data : undefined,
+		reusableSubscriptions: reusableSubscriptionInventory,
+	});
+	const defaultSubscriptionSource = resolveSubscriptionSource({
+		selected: null,
+		includedAvailable:
+			includedBasicAvailability === "unknown"
+				? undefined
+				: includedBasicAvailability === "available",
+		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const perfOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
@@ -575,7 +602,7 @@ export function DeployWizard() {
 			: null;
 	const selectedReusableSubscription =
 		subscriptionSource?.mode === "existing"
-			? (reusableSubscriptions.data?.find(
+			? (reusableSubscriptionInventory?.find(
 					(subscription) => subscription.subscription_id === subscriptionSource.subscriptionId,
 				) ?? null)
 			: null;
@@ -665,7 +692,7 @@ export function DeployWizard() {
 			if (includedBasicAvailability !== "available") return "Free compute is unavailable.";
 		} else {
 			if (reusableSubscriptions.isFetching) return "Checking reusable subscriptions.";
-			if (reusableSubscriptions.error != null || reusableSubscriptions.data === undefined) {
+			if (blockingReusableSubscriptionsError || reusableSubscriptionInventory === undefined) {
 				return "Retry loading reusable subscriptions above.";
 			}
 			if (subscriptionSource.mode === "existing" && !selectedReusableSubscription) {
@@ -1149,15 +1176,47 @@ export function DeployWizard() {
 			? new Error("The billing service returned no compute plans. Try loading plans again.")
 			: null);
 
-	const deployDirty =
-		runtime !== DEFAULT_DEPLOY_RUNTIME ||
-		agentName !== runtimeDisplayName(runtime) ||
-		compute !== "basic" ||
-		language !== "" ||
-		timezone !== "" ||
-		term !== 1 ||
-		selectedSubscriptionSource !== null ||
-		checkoutSession !== null;
+	const defaultPrimaryModel =
+		DEFAULT_DEPLOY_PRIMARY_MODEL ||
+		firstModelForProvider(DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE, providerList, managedModels);
+	const defaultBillingTerm = basicPlan
+		? (selectExplicitOfferForTerm(basicPlan, 1)?.billingTermMonths ?? 1)
+		: 1;
+	const effectiveBillingTerm =
+		(compute === "performance" ? perfOfferSelection : basicOfferSelection)?.billingTermMonths ??
+		term;
+	const deployBaseline: DeployWizardDirtyState = {
+		runtime: DEFAULT_DEPLOY_RUNTIME,
+		agentName: runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME),
+		compute: "basic",
+		language: personaDefaults.language,
+		timezone: personaDefaults.timezone,
+		term: defaultBillingTerm,
+		paymentMethod: "card",
+		subscriptionSource: defaultSubscriptionSource,
+		aiBindingDraft: {
+			bindingMode: DEFAULT_DEPLOY_AI_ACCESS_MODE,
+			primaryProviderChoice: DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
+			primaryModel: defaultPrimaryModel,
+		},
+		checkoutOpen: false,
+	};
+	const deployDirty = deployWizardDraftIsDirty(
+		{
+			runtime,
+			agentName,
+			compute,
+			language,
+			timezone,
+			term: effectiveBillingTerm,
+			paymentMethod,
+			subscriptionSource,
+			aiBindingDraft,
+			checkoutOpen: checkoutSession !== null,
+		},
+		deployBaseline,
+		deploymentCommitted,
+	);
 
 	return (
 		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
@@ -1293,9 +1352,9 @@ export function DeployWizard() {
 							value={subscriptionSource}
 							onChange={setSubscriptionSource}
 							showIncluded={includedBasicAvailability === "available"}
-							reusableSubscriptions={reusableSubscriptions.data ?? []}
+							reusableSubscriptions={reusableSubscriptionInventory ?? []}
 							isLoading={reusableSubscriptions.isFetching}
-							error={reusableSubscriptions.error}
+							error={blockingReusableSubscriptionsError}
 							onRetry={() => void reusableSubscriptions.refetch()}
 							disabled={submitting}
 						/>

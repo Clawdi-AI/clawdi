@@ -10,6 +10,7 @@ import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useBillingClient } from "@/hosted/billing/billing-client";
 import type { ComputeSubscriptionListItem, HostedDeployment } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useHostedDeployments, usePlans, useSubscriptions } from "@/hosted/billing/hooks";
@@ -17,6 +18,7 @@ import { ComputeSubscriptionActionList } from "@/hosted/billing/subscription/com
 import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
 import {
 	ComputeSubscriptionCard,
+	type ComputeSubscriptionIdentity,
 	computeSubscriptionCardView,
 	computeSubscriptionPlanLabel,
 } from "@/hosted/billing/subscription/compute-subscription-card";
@@ -26,6 +28,7 @@ import {
 } from "@/hosted/billing/subscription/compute-subscription-management";
 import { computeSubscriptionRecoveryPresentation } from "@/hosted/billing/subscription/compute-subscription-recovery";
 import { PlanChangeController } from "@/hosted/billing/subscription/plan-change-controller";
+import { useReusableSubscriptions } from "@/hosted/billing/subscription/reusable-subscriptions-query";
 import {
 	computeFundingSource,
 	computeSubscriptionLifecycle,
@@ -90,6 +93,17 @@ function subscriptionManagement(
 	});
 }
 
+export function computeSubscriptionAssignment(
+	subscription: Pick<
+		ComputeSubscriptionListItem,
+		"deployment_id" | "is_orphan" | "subscription_id"
+	>,
+	reusableSubscriptionIds: ReadonlySet<string>,
+): "available" | "assigned" | "unavailable" {
+	if (reusableSubscriptionIds.has(subscription.subscription_id)) return "available";
+	return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
+}
+
 export function SubscriptionLoadMore({
 	isLoading,
 	onLoadMore,
@@ -111,11 +125,13 @@ function SubscriptionRow({
 	agentTile,
 	management,
 	onPlanChange,
+	reusableSubscriptionIds,
 }: {
 	subscription: ComputeSubscriptionListItem;
 	agentTile?: AgentTile;
 	management: ComputeSubscriptionManagementResult;
 	onPlanChange: (subscription: ComputeSubscriptionListItem) => void;
+	reusableSubscriptionIds: ReadonlySet<string>;
 }) {
 	const lifecycle = computeSubscriptionLifecycle(subscription);
 	const recovery = computeSubscriptionRecoveryPresentation(subscription, {
@@ -184,24 +200,31 @@ function SubscriptionRow({
 		scheduleFallback: recovery.schedule?.fallback ?? undefined,
 		includeSchedule: !isHistoricalAccountSubscription(subscription),
 	});
+	const assignment = computeSubscriptionAssignment(subscription, reusableSubscriptionIds);
+	const identity: ComputeSubscriptionIdentity =
+		assignment === "available"
+			? { kind: "available", label: "Available for a new agent" }
+			: assignment === "assigned" && agentHref
+				? {
+						kind: "agent",
+						name: agentTile?.name ?? subscription.agent_name ?? "Agent",
+						agentType: agentTile?.agentType ?? null,
+						avatarUrl: agentTile?.avatarUrl,
+						href: agentHref,
+					}
+				: { kind: "unavailable", label: "Deleted agent" };
 
 	return (
 		<li className="min-w-0">
 			<ComputeSubscriptionCard
 				headingLevel={4}
 				view={view}
-				identity={
-					agentHref
-						? {
-								kind: "agent",
-								name: agentTile?.name ?? subscription.agent_name ?? "Agent",
-								agentType: agentTile?.agentType ?? null,
-								avatarUrl: agentTile?.avatarUrl,
-								href: agentHref,
-							}
-						: { kind: "unavailable", label: "Deleted agent" }
+				identity={identity}
+				badges={
+					assignment === "unavailable" && subscription.is_orphan ? (
+						<Badge variant="outline">Orphaned</Badge>
+					) : null
 				}
-				badges={subscription.is_orphan ? <Badge variant="outline">Orphaned</Badge> : null}
 				notice={
 					recoveryNotice || pendingPlanCopy || managementReason ? (
 						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
@@ -282,10 +305,18 @@ export function sortLoadedSubscriptions(
 		.map(({ subscription }) => subscription);
 }
 
-function SubscriptionListSkeleton() {
+export function reusableInventoryState(
+	error: unknown,
+	data: readonly unknown[] | undefined,
+): "loading" | "error" | "ready" {
+	if (shouldBlockQueryError(error, data)) return "error";
+	return data === undefined ? "loading" : "ready";
+}
+
+function SubscriptionListSkeleton({ label = "Loading subscriptions" }: { label?: string }) {
 	return (
 		<div className="grid gap-3 lg:grid-cols-2" role="status">
-			<span className="sr-only">Loading subscriptions</span>
+			<span className="sr-only">{label}</span>
 			{Array.from({ length: 3 }, (_, index) => `subscription-skeleton-${index}`).map((key) => (
 				<div key={key} className={entityCardChassisClass({ variant: "compact" })}>
 					<div className="flex items-start justify-between gap-3">
@@ -309,7 +340,9 @@ function SubscriptionListSkeleton() {
 }
 
 export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly AgentTile[] }) {
+	const billingClient = useBillingClient();
 	const subscriptions = useSubscriptions();
+	const reusableSubscriptions = useReusableSubscriptions(billingClient);
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
 	const hostedAccess = useProductAccess();
@@ -318,11 +351,18 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 		useState<ComputeSubscriptionListItem | null>(null);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
 	const rows = subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [];
+	const availabilityState = reusableInventoryState(
+		reusableSubscriptions.error,
+		reusableSubscriptions.data,
+	);
 	const orderedRows = sortLoadedSubscriptions(rows);
 	const agentTilesByDeploymentId = new Map(
 		agentTiles
 			.filter((tile) => tile.source === "on-clawdi")
 			.map((tile) => [tile.id.toLowerCase(), tile] as const),
+	);
+	const reusableSubscriptionIds = new Set(
+		(reusableSubscriptions.data ?? []).map((subscription) => subscription.subscription_id),
 	);
 	const endedRows = rows.filter(isHistoricalAccountSubscription);
 	const visibleRows = showHistory
@@ -383,6 +423,15 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 						onRetry={() => void subscriptions.refetch()}
 						title="Couldn't load subscriptions"
 					/>
+				) : availabilityState === "loading" ? (
+					<SubscriptionListSkeleton label="Loading subscription availability" />
+				) : availabilityState === "error" ? (
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={reusableSubscriptions.error}
+						onRetry={() => void reusableSubscriptions.refetch()}
+						title="Couldn't load subscription availability"
+					/>
 				) : rows.length || subscriptions.hasNextPage ? (
 					<>
 						{historyControlVisible ? (
@@ -420,6 +469,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 											managementOptions,
 										)}
 										onPlanChange={openPlanChange}
+										reusableSubscriptionIds={reusableSubscriptionIds}
 									/>
 								))}
 							</ul>
