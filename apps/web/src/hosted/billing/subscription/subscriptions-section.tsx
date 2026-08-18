@@ -18,9 +18,9 @@ import { ComputeSubscriptionActionList } from "@/hosted/billing/subscription/com
 import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
 import {
 	ComputeSubscriptionCard,
+	type ComputeSubscriptionIdentity,
 	computeSubscriptionCardView,
 	computeSubscriptionPlanLabel,
-	type ComputeSubscriptionIdentity,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	type ComputeSubscriptionManagementResult,
@@ -94,7 +94,10 @@ function subscriptionManagement(
 }
 
 export function computeSubscriptionAssignment(
-	subscription: Pick<ComputeSubscriptionListItem, "deployment_id" | "is_orphan" | "subscription_id">,
+	subscription: Pick<
+		ComputeSubscriptionListItem,
+		"deployment_id" | "is_orphan" | "subscription_id"
+	>,
 	reusableSubscriptionIds: ReadonlySet<string>,
 ): "available" | "assigned" | "unavailable" {
 	if (reusableSubscriptionIds.has(subscription.subscription_id)) return "available";

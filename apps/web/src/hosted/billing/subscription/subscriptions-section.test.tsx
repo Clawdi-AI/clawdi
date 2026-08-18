@@ -5,8 +5,9 @@ type SubscriptionsSectionModule =
 	typeof import("@/hosted/billing/subscription/subscriptions-section");
 
 let sortLoadedSubscriptions: SubscriptionsSectionModule["sortLoadedSubscriptions"] | null = null;
-let computeSubscriptionAssignment: SubscriptionsSectionModule["computeSubscriptionAssignment"] | null =
-	null;
+let computeSubscriptionAssignment:
+	| SubscriptionsSectionModule["computeSubscriptionAssignment"]
+	| null = null;
 let reusableInventoryState: SubscriptionsSectionModule["reusableInventoryState"] | null = null;
 
 beforeAll(async () => {
@@ -65,9 +66,9 @@ describe("SubscriptionsSection", () => {
 		expect(
 			computeSubscriptionAssignment(staleAssigned, new Set([staleAssigned.subscription_id])),
 		).toBe("available");
-		expect(
-			computeSubscriptionAssignment(staleOrphan, new Set([staleOrphan.subscription_id])),
-		).toBe("available");
+		expect(computeSubscriptionAssignment(staleOrphan, new Set([staleOrphan.subscription_id]))).toBe(
+			"available",
+		);
 		expect(computeSubscriptionAssignment(staleAssigned, new Set())).toBe("assigned");
 		expect(computeSubscriptionAssignment(staleOrphan, new Set())).toBe("unavailable");
 	});

@@ -77,8 +77,8 @@ import {
 	deployAgentNameAfterRuntimeChange,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
-	deployWizardDraftIsDirty,
 	type DeployWizardDirtyState,
+	deployWizardDraftIsDirty,
 } from "@/hosted/billing/deploy/deploy-dirty-state";
 import { usesActiveIncludedBasicSlot } from "@/hosted/billing/deploy/deploy-model";
 import {
@@ -166,10 +166,10 @@ import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks"
 import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
+	firstModelForProvider,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
 	MANAGED_PROVIDER_LABEL,
-	firstModelForProvider,
 	modelDisplayName,
 	modelOptionsForProvider,
 	providerAvailabilityIssue,
@@ -1194,11 +1194,7 @@ export function DeployWizard() {
 
 	const defaultPrimaryModel =
 		DEFAULT_DEPLOY_PRIMARY_MODEL ||
-		firstModelForProvider(
-			DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
-			providerList,
-			managedModels,
-		);
+		firstModelForProvider(DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE, providerList, managedModels);
 	const defaultBillingTerm = basicPlan
 		? (selectExplicitOfferForTerm(basicPlan, 1)?.billingTermMonths ?? 1)
 		: 1;

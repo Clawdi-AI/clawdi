@@ -5,8 +5,8 @@ import {
 	DEFAULT_DEPLOY_RUNTIME,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
-	deployWizardDraftIsDirty,
 	type DeployWizardDirtyState,
+	deployWizardDraftIsDirty,
 } from "@/hosted/billing/deploy/deploy-dirty-state";
 import { runtimeDisplayName } from "@/hosted/runtimes";
 

@@ -42,10 +42,7 @@ export function SubscriptionSourcePicker({
 
 	const paidDisabled = disabled || error != null || isLoading;
 	return (
-		<div
-			data-hosted="true"
-			className="@container/subscription-source flex min-w-0 flex-col gap-3"
-		>
+		<div data-hosted="true" className="@container/subscription-source flex min-w-0 flex-col gap-3">
 			<div className="grid min-w-0 items-start gap-2 @3xl/subscription-source:grid-cols-2">
 				{showIncluded ? (
 					<EntityChoiceCard
