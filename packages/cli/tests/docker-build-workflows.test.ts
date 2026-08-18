@@ -79,6 +79,7 @@ describe("Docker build workflow contract", () => {
 
 		expect(bakeSteps).toHaveLength(1);
 		expect(bakeSteps[0]?.with).toMatchObject({
+			source: ".",
 			files: "packages/cli/tests/fixtures/managed-whatsapp-native-e2e/docker-bake.hcl",
 			load: true,
 			targets: "openclaw,hermes",

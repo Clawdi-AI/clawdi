@@ -264,6 +264,7 @@ jobs:
         env:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
         with:
+          source: .
           files: packages/cli/tests/fixtures/managed-whatsapp-native-e2e/docker-bake.hcl
           targets: openclaw,hermes
           load: true
