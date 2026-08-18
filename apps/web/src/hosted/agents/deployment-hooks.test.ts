@@ -673,12 +673,9 @@ describe("hosted agent customer language", () => {
 		expect(detailSource).toContain("Runtime UI access");
 		expect(detailSource).toContain("<iframe");
 		expect(detailSource).toContain('allow="clipboard-read; clipboard-write"');
-		expect(detailSource).toContain("loadRuntimeUiWindowTarget");
 		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Username"');
 		expect(detailSource).toContain('label="Password"');
 		expect(detailSource).not.toContain('<RuntimeUiCredentialRow label="Token"');
-		expect(detailSource).toContain("hasOpenClawBootstrapAttempt");
-		expect(detailSource).toContain("rememberOpenClawBootstrapAttempt");
 		expect(detailSource).toContain("Reconnect");
 		expect(detailSource).toContain("Sign in to Hermes");
 		expect(detailSource).toContain("Get your Hermes username and password from Access.");

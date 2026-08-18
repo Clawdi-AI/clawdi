@@ -1,5 +1,12 @@
 import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
-import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
+import {
+	type BrowserContext,
+	expect,
+	type Locator,
+	type Page,
+	type Route,
+	test,
+} from "@playwright/test";
 import type { ManagedModelCatalogItem, WalletState } from "../src/hosted/billing/contracts";
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
 import {
@@ -709,7 +716,7 @@ const paidBasicDeployment: DeploymentMutationFixture = {
 	},
 };
 
-const _openClawIncludedDeployment: DeploymentMutationFixture = {
+const openClawIncludedDeployment: DeploymentMutationFixture = {
 	...includedBasicDeployment,
 	id: "hdep_openclaw_included",
 	name: "OpenClaw included Basic",
@@ -2909,6 +2916,82 @@ async function gotoHostedAgentSettings(
 	}
 }
 
+const openClawRuntimeEndpoint = "https://runtime.example/openclaw/";
+const openClawRuntimeToken = "test-deployment-token";
+
+async function stubOpenClawRuntime(page: Page, context: BrowserContext, handoffUrl: string) {
+	type FrameGate = { signalStarted: () => void; released: Promise<void> };
+	let nextFrameGate: FrameGate | null = null;
+	const pauseNextIframe = () => {
+		if (nextFrameGate) throw new Error("An OpenClaw iframe gate is already pending.");
+		let started = false;
+		let release: () => void = () => undefined;
+		const released = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		nextFrameGate = {
+			signalStarted: () => {
+				started = true;
+			},
+			released,
+		};
+		return { isStarted: () => started, release };
+	};
+
+	await context.route("https://runtime.example/**", async (route) => {
+		if (route.request().frame().parentFrame()) {
+			const gate = nextFrameGate;
+			nextFrameGate = null;
+			if (gate) {
+				gate.signalStarted();
+				await gate.released;
+			}
+		}
+		await route.fulfill({
+			status: 200,
+			contentType: "text/html",
+			body: "<!doctype html><title>Mock OpenClaw</title><main>Mock OpenClaw</main>",
+		});
+	});
+
+	const credentialRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [openClawIncludedDeployment],
+		runtimeUiRedemptionRequests: credentialRequests,
+		runtimeUiRedemptionResponses: [
+			{
+				status: 200,
+				body: {
+					runtime: "openclaw",
+					auth_mode: "openclaw_token",
+					url: openClawRuntimeEndpoint,
+					deployment_resource_version: `rv_${openClawIncludedDeployment.id}`,
+					token: openClawRuntimeToken,
+					handoff_url: handoffUrl,
+				},
+			},
+		],
+	});
+
+	return {
+		agentId: fixtureAgentId(openClawIncludedDeployment),
+		credentialRequests,
+		pauseNextIframe,
+	};
+}
+
+async function expectOpenClawWindow(
+	context: BrowserContext,
+	openButton: Locator,
+	expectedUrl: string,
+) {
+	const popupPromise = context.waitForEvent("page");
+	await openButton.click();
+	const popup = await popupPromise;
+	await expect(popup).toHaveURL(expectedUrl);
+	await popup.close();
+}
+
 async function _gotoHostedSettingsDialog(page: Page, section: string) {
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		await page.goto(`/channels?settings=${section}`);
@@ -3496,6 +3579,68 @@ test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ p
 	} finally {
 		releaseDeploymentList?.();
 	}
+});
+
+test("native OpenClaw windows wait for the handoff iframe load and reuse the clean endpoint", async ({
+	page,
+	context,
+}) => {
+	const nativeHandoff = `${openClawRuntimeEndpoint}#bootstrapToken=one-time-token&bootstrapProfile=owner`;
+	const runtime = await stubOpenClawRuntime(page, context, nativeHandoff);
+	const initialFrame = runtime.pauseNextIframe();
+
+	await page.goto(`/agents/${runtime.agentId}/console`, { waitUntil: "domcontentloaded" });
+	await expect.poll(() => runtime.credentialRequests.length).toBe(1);
+	await expect.poll(initialFrame.isStarted).toBe(true);
+	const openButton = page.getByRole("button", {
+		name: "Open OpenClaw Control UI in new window",
+	});
+	const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
+	await expect(openButton).toBeDisabled();
+	await expect(openButton).toContainText("Open in new window");
+	await expect(page.getByRole("button", { name: "Reconnect" })).toBeEnabled();
+	await expect(iframe).toHaveAttribute("src", nativeHandoff);
+	expect(runtime.credentialRequests).toHaveLength(1);
+
+	initialFrame.release();
+	await expect(openButton).toBeEnabled();
+	await expectOpenClawWindow(context, openButton, openClawRuntimeEndpoint);
+	expect(runtime.credentialRequests).toHaveLength(1);
+
+	const remountedFrame = runtime.pauseNextIframe();
+	await page.reload({ waitUntil: "domcontentloaded" });
+	await expect.poll(remountedFrame.isStarted).toBe(true);
+	await expect(openButton).toBeDisabled();
+	await expect(iframe).toHaveAttribute("src", openClawRuntimeEndpoint);
+	expect(runtime.credentialRequests).toHaveLength(1);
+
+	remountedFrame.release();
+	await expect(openButton).toBeEnabled();
+	await expectOpenClawWindow(context, openButton, openClawRuntimeEndpoint);
+	expect(runtime.credentialRequests).toHaveLength(1);
+});
+
+test("legacy OpenClaw windows reuse the exact token handoff", async ({ page, context }) => {
+	const legacyHandoff = `${openClawRuntimeEndpoint}#token=${openClawRuntimeToken}`;
+	const runtime = await stubOpenClawRuntime(page, context, legacyHandoff);
+	const frame = runtime.pauseNextIframe();
+
+	await page.goto(`/agents/${runtime.agentId}/console`, { waitUntil: "domcontentloaded" });
+	await expect.poll(() => runtime.credentialRequests.length).toBe(1);
+	const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
+	await expect(iframe).toHaveAttribute("src", legacyHandoff);
+	await expect.poll(frame.isStarted).toBe(true);
+	const openButton = page.getByRole("button", {
+		name: "Open OpenClaw Control UI in new window",
+	});
+	await expect(openButton).toBeDisabled();
+	await expect(openButton).toContainText("Open in new window");
+	expect(runtime.credentialRequests).toHaveLength(1);
+
+	frame.release();
+	await expect(openButton).toBeEnabled();
+	await expectOpenClawWindow(context, openButton, legacyHandoff);
+	expect(runtime.credentialRequests).toHaveLength(1);
 });
 
 test("agent rail keeps New agent after agents and retains cache after list failure", async ({

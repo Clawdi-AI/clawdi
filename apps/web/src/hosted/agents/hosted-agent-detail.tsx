@@ -122,13 +122,14 @@ import {
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
 import {
-	forgetOpenClawBootstrapAttempt,
-	hasOpenClawBootstrapAttempt,
-	loadRuntimeUiWindowTarget,
+	forgetOpenClawNativeHandoffLoaded,
+	hasOpenClawNativeHandoffLoaded,
+	markOpenClawNativeHandoffLoaded,
+	openClawRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
-	rememberOpenClawBootstrapAttempt,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
+	runtimeUiLocalStorage,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import {
@@ -1417,6 +1418,8 @@ function ConsoleTab({
 	const [credentialLoadState, setCredentialLoadState] = useState<"loading" | "ready" | "error">(
 		runtime === "openclaw" ? "loading" : "ready",
 	);
+	const [openClawNativeHandoffLoaded, setOpenClawNativeHandoffLoaded] = useState(false);
+	const [openClawFrameLoaded, setOpenClawFrameLoaded] = useState(false);
 	const requestCredentials = useRuntimeUiCredentialRequest(deployment, url, runtime);
 	const requestVersionRef = useRef(0);
 	const loadedCredentialIdentityRef = useRef<string | null>(null);
@@ -1428,6 +1431,11 @@ function ConsoleTab({
 		setIsCredentialLoading(true);
 		setCredentialError(null);
 		setCredentialLoadState("loading");
+		if (runtime === "openclaw") {
+			setCredentials(null);
+			setOpenClawNativeHandoffLoaded(false);
+			setOpenClawFrameLoaded(false);
+		}
 		try {
 			const resolved = await requestCredentials();
 			if (requestVersionRef.current !== requestVersion) return null;
@@ -1445,7 +1453,7 @@ function ConsoleTab({
 		} finally {
 			if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
 		}
-	}, [requestCredentials]);
+	}, [requestCredentials, runtime]);
 
 	const clearCredentials = useCallback(() => {
 		requestVersionRef.current += 1;
@@ -1453,10 +1461,12 @@ function ConsoleTab({
 		setCredentialError(null);
 		setIsCredentialLoading(false);
 		setCredentialLoadState(runtime === "openclaw" ? "loading" : "ready");
+		setOpenClawNativeHandoffLoaded(false);
+		setOpenClawFrameLoaded(false);
 	}, [runtime]);
 
 	const reconnectOpenClaw = useCallback(() => {
-		forgetOpenClawBootstrapAttempt(window.localStorage, deployment.resource.id);
+		forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), deployment.resource.id);
 		return loadCredentials();
 	}, [deployment.resource.id, loadCredentials]);
 
@@ -1465,7 +1475,8 @@ function ConsoleTab({
 		loadedCredentialIdentityRef.current = credentialIdentity;
 		clearCredentials();
 		if (runtime !== "openclaw" || !isRunning || !url) return;
-		if (hasOpenClawBootstrapAttempt(window.localStorage, deployment.resource.id, url)) {
+		if (hasOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), deployment.resource.id, url)) {
+			setOpenClawNativeHandoffLoaded(true);
 			setCredentialLoadState("ready");
 			return;
 		}
@@ -1574,13 +1585,30 @@ function ConsoleTab({
 			/>
 		);
 	}
+	const currentCredentials = credentials
+		? resolveRuntimeUiCredentials(credentials, url, deployment.resource.metadata.resourceVersion)
+		: null;
+	const openClawCredentials =
+		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
+	const openClawFrameCanLoad =
+		credentialLoadState === "ready" &&
+		(openClawCredentials !== null || openClawNativeHandoffLoaded);
 	const iframeUrl =
 		runtime === "openclaw"
-			? credentials?.runtime === "openclaw"
-				? runtimeUiLaunchTarget(credentials)
-				: credentialLoadState === "ready"
+			? openClawCredentials
+				? runtimeUiLaunchTarget(openClawCredentials)
+				: openClawNativeHandoffLoaded
 					? url
 					: "about:blank"
+			: url;
+	const windowTarget =
+		runtime === "openclaw"
+			? openClawRuntimeUiWindowTarget(
+					openClawCredentials,
+					url,
+					openClawNativeHandoffLoaded,
+					openClawFrameLoaded,
+				)
 			: url;
 
 	return (
@@ -1591,18 +1619,18 @@ function ConsoleTab({
 				<RuntimeUiAccessDialog
 					deployment={deployment}
 					endpointUrl={url}
+					windowTarget={windowTarget}
 					runtime={runtime}
-					credentials={credentials}
+					credentials={currentCredentials}
 					credentialError={credentialError}
 					isCredentialLoading={isCredentialLoading}
 					onLoadCredentials={loadCredentials}
-					onRequestCredentials={requestCredentials}
 					onClearCredentials={clearCredentials}
 					onReconnectOpenClaw={reconnectOpenClaw}
 				/>
 			}
 		>
-			{runtime === "openclaw" && credentialLoadState !== "ready" ? (
+			{runtime === "openclaw" && !openClawFrameCanLoad ? (
 				credentialLoadState === "error" ? (
 					<EmptyState
 						icon={AlertCircle}
@@ -1644,11 +1672,17 @@ function ConsoleTab({
 					onLoad={
 						runtime === "openclaw"
 							? () => {
-									rememberOpenClawBootstrapAttempt(
-										window.localStorage,
-										deployment.resource.id,
-										url,
-									);
+									if (
+										markOpenClawNativeHandoffLoaded(
+											runtimeUiLocalStorage(),
+											deployment.resource.id,
+											url,
+											openClawCredentials,
+										)
+									) {
+										setOpenClawNativeHandoffLoaded(true);
+									}
+									setOpenClawFrameLoaded(true);
 								}
 							: undefined
 					}
@@ -1781,31 +1815,29 @@ function RuntimeUiCredentialRow({
 function RuntimeUiAccessDialog({
 	deployment,
 	endpointUrl,
+	windowTarget,
 	runtime,
 	credentials,
 	credentialError,
 	isCredentialLoading,
 	onLoadCredentials,
-	onRequestCredentials,
 	onClearCredentials,
 	onReconnectOpenClaw,
 }: {
 	deployment: HostedDeployment;
 	endpointUrl: string;
+	windowTarget: string | null;
 	runtime: Runtime;
 	credentials: RuntimeUiCredentials | null;
 	credentialError: Error | null;
 	isCredentialLoading: boolean;
 	onLoadCredentials: () => Promise<RuntimeUiCredentials | null>;
-	onRequestCredentials: () => Promise<RuntimeUiCredentials>;
 	onClearCredentials: () => void;
 	onReconnectOpenClaw: () => Promise<RuntimeUiCredentials | null>;
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
 	const reset = useResetRuntimeUiAccess();
 	const [open, setOpen] = useState(false);
-	const [isWindowOpening, setIsWindowOpening] = useState(false);
-	const windowOpeningRef = useRef(false);
 	const loadedIdentityRef = useRef<string | null>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const [accessHintOpen, setAccessHintOpen] = useState(false);
@@ -1860,9 +1892,9 @@ function RuntimeUiAccessDialog({
 		],
 	);
 
-	const openRuntime = useCallback(async () => {
-		if (windowOpeningRef.current) return;
-		const popup = openSecureRuntimeWindow(window.open.bind(window));
+	const openRuntime = useCallback(() => {
+		if (!windowTarget) return;
+		const popup = openSecureRuntimeWindow(window.open.bind(window), windowTarget);
 		if (!popup) {
 			toast.error(`Couldn't open ${label}`, {
 				id: RUNTIME_UI_LAUNCH_TOAST_ID,
@@ -1870,28 +1902,8 @@ function RuntimeUiAccessDialog({
 			});
 			return;
 		}
-
-		windowOpeningRef.current = true;
-		setIsWindowOpening(true);
-		try {
-			const target = await loadRuntimeUiWindowTarget(runtime, endpointUrl, onRequestCredentials);
-			popup.location.replace(target);
-			trackRuntimeWindow(deployment.resource.id, popup);
-		} catch {
-			try {
-				popup.close();
-			} catch {
-				// Browser isolation may have severed the WindowProxy.
-			}
-			toast.error(`Couldn't open ${label}`, {
-				id: RUNTIME_UI_LAUNCH_TOAST_ID,
-				description: "Access failed. Try again.",
-			});
-		} finally {
-			windowOpeningRef.current = false;
-			setIsWindowOpening(false);
-		}
-	}, [deployment.resource.id, endpointUrl, label, onRequestCredentials, runtime]);
+		trackRuntimeWindow(deployment.resource.id, popup);
+	}, [deployment.resource.id, label, windowTarget]);
 
 	const acceptReset = useCallback(async () => {
 		await reset.mutateAsync({ id: deployment.resource.id });
@@ -1970,16 +1982,12 @@ function RuntimeUiAccessDialog({
 					type="button"
 					variant="outline"
 					size="sm"
-					disabled={isWindowOpening}
-					onClick={() => void openRuntime()}
+					disabled={!windowTarget}
+					onClick={openRuntime}
 					aria-label={`Open ${label} in new window`}
 				>
-					{isWindowOpening ? (
-						<Spinner className="size-3.5" />
-					) : (
-						<ExternalLink className="size-3.5" />
-					)}
-					{isWindowOpening ? "Opening…" : "Open"}
+					<ExternalLink className="size-3.5" />
+					<span className="hidden sm:inline">Open in new window</span>
 				</Button>
 			</div>
 			{runtime === "hermes" ? (
@@ -2052,16 +2060,12 @@ function RuntimeUiAccessDialog({
 						</ConfirmAction>
 						<Button
 							type="button"
-							disabled={isWindowOpening || reset.isPending}
-							onClick={() => void openRuntime()}
+							disabled={!windowTarget || reset.isPending}
+							onClick={openRuntime}
 							aria-label={`Open ${label} in new window`}
 						>
-							{isWindowOpening ? (
-								<Spinner className="size-3.5" />
-							) : (
-								<ExternalLink className="size-3.5" />
-							)}
-							{isWindowOpening ? "Opening…" : "Open"}
+							<ExternalLink className="size-3.5" />
+							<span className="hidden sm:inline">Open in new window</span>
 						</Button>
 					</div>
 				</DialogContent>

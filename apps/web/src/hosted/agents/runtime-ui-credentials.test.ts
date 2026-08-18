@@ -1,18 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
-	forgetOpenClawBootstrapAttempt,
-	hasOpenClawBootstrapAttempt,
-	loadRuntimeUiWindowTarget,
+	forgetOpenClawNativeHandoffLoaded,
+	hasOpenClawNativeHandoffLoaded,
+	markOpenClawNativeHandoffLoaded,
+	openClawRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
-	rememberOpenClawBootstrapAttempt,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
+	runtimeUiLocalStorage,
 } from "@/hosted/agents/runtime-ui-credentials";
 
 describe("runtime UI credential targeting", () => {
-	test("opens top-level runtime UIs without an opener", () => {
+	test("opens the selected runtime target synchronously without an opener", () => {
 		const calls: unknown[][] = [];
+		const target = "https://runtime.example/openclaw/#token=deployment-token";
 		const popup = {
 			close() {},
 			location: {
@@ -25,12 +27,49 @@ describe("runtime UI credential targeting", () => {
 		const opened = openSecureRuntimeWindow((...args) => {
 			calls.push(args);
 			return popup;
-		}, "https://runtime.example/openclaw/");
+		}, target);
 		expect(calls).toEqual([
 			["about:blank", "_blank"],
-			["replace", "https://runtime.example/openclaw/"],
+			["replace", target],
 		]);
 		expect(opened?.opener).toBeNull();
+	});
+
+	test("closes the placeholder when target navigation cannot start", () => {
+		let closed = false;
+		const popup = {
+			close() {
+				closed = true;
+			},
+			location: {
+				replace() {
+					throw new Error("navigation denied");
+				},
+			},
+			opener: { unsafe: true },
+		};
+
+		expect(openSecureRuntimeWindow(() => popup, "https://runtime.example/openclaw/")).toBeNull();
+		expect(closed).toBeTrue();
+	});
+
+	test("closes the placeholder when the browser refuses opener isolation", () => {
+		let closed = false;
+		const popup = {
+			close() {
+				closed = true;
+			},
+			location: { replace() {} },
+			get opener() {
+				return null;
+			},
+			set opener(_value: unknown) {
+				throw new Error("opener isolation denied");
+			},
+		};
+
+		expect(openSecureRuntimeWindow(() => popup, "https://runtime.example/openclaw/")).toBeNull();
+		expect(closed).toBeTrue();
 	});
 
 	test("keeps Hermes credentials separate from its secret-free URL", () => {
@@ -117,71 +156,74 @@ describe("runtime UI credential targeting", () => {
 		).toBeNull();
 	});
 
-	test("requests a fresh single-use handoff for every OpenClaw window", async () => {
-		const embedded: RuntimeUiCredentials = {
+	test("enables new-window launch after the current iframe load boundary", () => {
+		const native: RuntimeUiCredentials = {
 			runtime: "openclaw",
 			auth_mode: "openclaw_token",
 			url: "https://runtime.example/openclaw/",
 			deployment_resource_version: "rv-current",
 			token: "deployment-token",
 			handoff_url:
-				"https://runtime.example/openclaw/#bootstrapToken=embedded-token&bootstrapProfile=owner",
+				"https://runtime.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
 		};
-		let requests = 0;
-		const requestCredentials = async () => {
-			requests += 1;
-			return {
-				...embedded,
-				handoff_url: `https://runtime.example/openclaw/#bootstrapToken=fresh-${requests}&bootstrapProfile=owner`,
-			};
+		const legacy: RuntimeUiCredentials = {
+			...native,
+			handoff_url: "https://runtime.example/openclaw/#token=deployment-token",
 		};
 
-		const endpointUrl = "https://runtime.example/openclaw/";
-		const first = await loadRuntimeUiWindowTarget("openclaw", endpointUrl, requestCredentials);
-		const second = await loadRuntimeUiWindowTarget("openclaw", endpointUrl, requestCredentials);
-
-		expect(requests).toBe(2);
-		expect(first).toBe(
-			"https://runtime.example/openclaw/#bootstrapToken=fresh-1&bootstrapProfile=owner",
-		);
-		expect(second).toBe(
-			"https://runtime.example/openclaw/#bootstrapToken=fresh-2&bootstrapProfile=owner",
-		);
+		expect(openClawRuntimeUiWindowTarget(native, native.url, false, false)).toBeNull();
+		expect(openClawRuntimeUiWindowTarget(native, native.url, false, true)).toBe(native.url);
+		expect(openClawRuntimeUiWindowTarget(legacy, legacy.url, false, false)).toBeNull();
+		expect(openClawRuntimeUiWindowTarget(legacy, legacy.url, false, true)).toBe(legacy.handoff_url);
+		expect(openClawRuntimeUiWindowTarget(null, native.url, true, false)).toBeNull();
+		expect(openClawRuntimeUiWindowTarget(null, native.url, true, true)).toBe(native.url);
 	});
 
-	test("returns the Hermes endpoint without requesting credentials", async () => {
-		const endpointUrl = "https://runtime.example/hermes";
-		const target = await loadRuntimeUiWindowTarget("hermes", endpointUrl, async () => {
-			throw new Error("Hermes credentials should not be requested again");
-		});
-
-		expect(target).toBe(endpointUrl);
-	});
-
-	test("remembers only that this browser attempted OpenClaw bootstrap", () => {
+	test("marks native handoff loads with a best-effort non-secret marker", () => {
 		const values = new Map<string, string>();
 		const storage = {
 			getItem: (key: string) => values.get(key) ?? null,
 			setItem: (key: string, value: string) => values.set(key, value),
 			removeItem: (key: string) => values.delete(key),
 		};
+		const endpointUrl = "https://one.runtime.example/";
+		const native: RuntimeUiCredentials = {
+			runtime: "openclaw",
+			auth_mode: "openclaw_token",
+			url: endpointUrl,
+			deployment_resource_version: "rv-current",
+			token: "deployment-token",
+			handoff_url: `${endpointUrl}#bootstrapToken=one-time-token&bootstrapProfile=owner`,
+		};
+		const legacy: RuntimeUiCredentials = {
+			...native,
+			handoff_url: `${endpointUrl}#token=deployment-token`,
+		};
+		values.set("clawdi.openclaw-bootstrap-attempted.hdep_one", endpointUrl);
 
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
+		expect(values.has("clawdi.openclaw-bootstrap-attempted.hdep_one")).toBeFalse();
+		expect(markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, legacy)).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
+		expect(markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, native)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeTrue();
+		expect(markOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl, native)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl)).toBeFalse();
 		expect(
-			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
+			hasOpenClawNativeHandoffLoaded(storage, "hdep_one", "https://moved.runtime.example/"),
 		).toBeFalse();
-		rememberOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/");
-		expect(
-			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
-		).toBeTrue();
-		expect(
-			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://moved.runtime.example/"),
-		).toBeFalse();
-		expect(
-			hasOpenClawBootstrapAttempt(storage, "hdep_two", "https://one.runtime.example/"),
-		).toBeFalse();
-		forgetOpenClawBootstrapAttempt(storage, "hdep_one");
-		expect(
-			hasOpenClawBootstrapAttempt(storage, "hdep_one", "https://one.runtime.example/"),
-		).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_two", endpointUrl)).toBeFalse();
+		forgetOpenClawNativeHandoffLoaded(storage, "hdep_one");
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
+	});
+
+	test("treats an unavailable localStorage getter as missing storage", () => {
+		const browserWindow = {
+			get localStorage(): Storage {
+				throw new Error("Storage is unavailable");
+			},
+		};
+
+		expect(runtimeUiLocalStorage(browserWindow)).toBeNull();
 	});
 });
