@@ -38,7 +38,11 @@ describe("client workflow contract", () => {
 	test("uses truthful change routing and verifies every client package in one job", () => {
 		const changesJob = section(clientWorkflow, "  changes:\n", "  # Lint");
 		const verifyJob = section(clientWorkflow, "  verify:\n", "  deploy-contract-drift:\n");
-		const webE2eFilter = section(changesJob, "            web_e2e:\n", "            deploy_contract:\n");
+		const webE2eFilter = section(
+			changesJob,
+			"            web_e2e:\n",
+			"            deploy_contract:\n",
+		);
 		const webE2eJob = section(clientWorkflow, "  web-e2e:\n", "  whatsapp-native-e2e:\n");
 
 		expect(changesJob).toContain(`client: \${{ steps.filter.outputs.client }}`);
@@ -69,7 +73,7 @@ describe("client workflow contract", () => {
 		expect(clientWorkflow).not.toContain("actions/upload-artifact");
 		expect(clientWorkflow).not.toContain("actions/download-artifact");
 		expect(clientWorkflow).toContain(
-			"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+			`cancel-in-progress: \${{ github.event_name == 'pull_request' }}`,
 		);
 
 		const typecheckTask = section(turboConfig, '\t\t"typecheck": {\n', '\t\t"lint": {\n');
@@ -189,7 +193,7 @@ describe("clean runner suite contract", () => {
 
 	test("runs focused CI routinely and exposes full all as a manual gate", () => {
 		expect(cleanRunnerWorkflow).toContain(
-			"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+			`cancel-in-progress: \${{ github.event_name == 'pull_request' }}`,
 		);
 		expect(cleanRunnerWorkflow).toContain('description: "Clean runner suite to execute"');
 		expect(cleanRunnerWorkflow).toContain("default: ci");

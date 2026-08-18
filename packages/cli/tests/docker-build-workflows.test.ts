@@ -22,10 +22,7 @@ const backendWorkflow = parse(
 	readFileSync(resolve(workflowsDirectory, "backend-ci.yml"), "utf8"),
 ) as WorkflowDocument;
 const nativeE2eBake = readFileSync(
-	resolve(
-		import.meta.dir,
-		"fixtures/managed-whatsapp-native-e2e/docker-bake.hcl",
-	),
+	resolve(import.meta.dir, "fixtures/managed-whatsapp-native-e2e/docker-bake.hcl"),
 	"utf8",
 );
 const nativeE2eScript = readFileSync(
@@ -51,9 +48,7 @@ describe("Docker build workflow contract", () => {
 				) as WorkflowDocument,
 			}))
 			.filter(({ workflow }) =>
-				Object.values(workflow.jobs ?? {}).some((job) =>
-					job.steps?.some(isDockerBuildAction),
-				),
+				Object.values(workflow.jobs ?? {}).some((job) => job.steps?.some(isDockerBuildAction)),
 			);
 
 		expect(buildWorkflows.length).toBeGreaterThan(0);
@@ -102,7 +97,7 @@ describe("Docker build workflow contract", () => {
 		expect(nativeE2eBake).toContain('group "default" {\n  targets = ["openclaw", "hermes"]');
 		expect(nativeE2eBake).toContain('target "_common" {');
 		expect(nativeE2eScript).toContain(
-			'docker buildx bake --file "${FIXTURE_ROOT}/docker-bake.hcl" --load',
+			`docker buildx bake --file "\${FIXTURE_ROOT}/docker-bake.hcl" --load`,
 		);
 		expect(nativeE2eScript).not.toContain("docker buildx build");
 	});

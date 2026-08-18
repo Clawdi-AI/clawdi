@@ -92,10 +92,7 @@ describe("backend image release workflow contract", () => {
 	test("keeps Python governance out of sidecar-only changes", () => {
 		const filterStep = backendCi.jobs.changes?.steps?.find((step) => step.id === "filter");
 		const filters = String(filterStep?.with?.filters);
-		const backendFilter = filters.slice(
-			filters.indexOf("backend:\n"),
-			filters.indexOf("test:\n"),
-		);
+		const backendFilter = filters.slice(filters.indexOf("backend:\n"), filters.indexOf("test:\n"));
 
 		expect(backendCi.jobs["lint-and-typecheck"]?.if).toBe(
 			"needs.changes.outputs.backend == 'true'",
@@ -136,7 +133,7 @@ describe("backend image release workflow contract", () => {
 		expect(backendCi.on?.push?.paths).not.toContain("**");
 		expect(backendCi.on?.push?.paths).not.toContain("apps/web/src/**");
 		expect(backendCi.concurrency?.["cancel-in-progress"]).toBe(
-			"${{ github.event_name == 'pull_request' }}",
+			`\${{ github.event_name == 'pull_request' }}`,
 		);
 	});
 
