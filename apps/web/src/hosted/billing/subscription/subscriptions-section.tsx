@@ -7,7 +7,6 @@ import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_GRID_CLASS, entityCardChassisClass } from "@/components/entity-card";
 import { SettingsSection } from "@/components/settings-section";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBillingClient } from "@/hosted/billing/billing-client";
@@ -231,11 +230,6 @@ function SubscriptionRow({
 				headingLevel={4}
 				view={view}
 				identity={identity}
-				badges={
-					assignment === "unavailable" && subscription.is_orphan ? (
-						<Badge variant="outline">Orphaned</Badge>
-					) : null
-				}
 				notice={
 					recoveryNotice || pendingPlanCopy || managementReason ? (
 						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">

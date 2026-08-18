@@ -31,6 +31,7 @@ const cancelingEnvironmentId = "22222222-2222-4222-8222-222222222222";
 const paidEnvironmentId = "33333333-3333-4333-8333-333333333333";
 const pastDueEnvironmentId = "44444444-4444-4444-8444-444444444444";
 const includedEnvironmentId = "55555555-5555-4555-8555-555555555555";
+const endedEnvironmentId = "66666666-6666-4666-8666-666666666666";
 const accountActiveDeployment = {
 	...paidBasicDeployment,
 	id: "hdep_active",
@@ -68,6 +69,12 @@ const accountIncludedDeployment = {
 		...includedBasicDeployment.config_info,
 		clawdi_cloud_environments: { hermes: includedEnvironmentId },
 	},
+};
+const accountEndedDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_ended_second",
+	agent_id: endedEnvironmentId,
+	name: "Ended subscription agent",
 };
 const ineligibleIncludedDeployment = {
 	...includedBasicDeployment,
@@ -246,6 +253,12 @@ async function expectNoHorizontalOverflow(page: Page) {
 	expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
 }
 
+async function gotoSubscriptionAction(page: Page, action: "start_new") {
+	const url = new URL(page.url());
+	url.searchParams.set("subscription_action", action);
+	await page.goto(url.toString());
+}
+
 async function expectSubscriptionCardRowAligned(left: Locator, right: Locator) {
 	const [leftLayout, rightLayout] = await Promise.all(
 		[left, right].map((card) =>
@@ -384,6 +397,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 			accountIncludedDeployment,
 			accountPastDueDeployment,
 			accountCancelingDeployment,
+			accountEndedDeployment,
 		],
 		cloudAgents: accountCloudAgents,
 		plans: [basicPlan, performancePlan],
@@ -606,19 +620,25 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 		"ended",
 		"ended",
 	]);
-	const orphanCard = dialog
-		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Ended" })
-		.filter({ hasText: "Deleted agent" });
+	const endedCards = dialog.locator('[data-subscription-status="ended"]');
+	const orphanCard = endedCards.filter({ hasText: "Ended" }).filter({ hasText: "Deleted agent" });
+	const linkedEndedCard = endedCards.filter({ hasText: "Ended subscription agent" });
 	await expect(orphanCard).toBeVisible();
-	await expect(orphanCard.getByText("Orphaned", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Orphaned", { exact: true })).toHaveCount(0);
 	await expect(orphanCard.getByText("Former deleted agent", { exact: true })).toHaveCount(0);
 	await expect(orphanCard.getByText("Unknown", { exact: true })).toHaveCount(0);
 	await expect(orphanCard.getByText("No linked agent", { exact: true })).toHaveCount(0);
-	await expect(dialog.getByText("ended_second", { exact: true })).toBeVisible();
+	await expect(
+		linkedEndedCard.getByText("Ended subscription agent", { exact: true }),
+	).toBeVisible();
+	await expect(
+		linkedEndedCard.locator('[data-slot="compute-subscription-identity"] a'),
+	).toHaveAttribute(
+		"href",
+		new RegExp(`/agents/${endedEnvironmentId}/settings\\?.*settings=billing-plan`),
+	);
 	await expect(orphanCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
 	await expect(orphanCard.locator('[data-slot="compute-subscription-notice"]')).toHaveCount(0);
-	const endedCards = dialog.locator('[data-subscription-status="ended"]');
 	await expect(endedCards.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
 	await expect(endedCards.getByText("Schedule", { exact: true })).toHaveCount(0);
 	await expect(endedCards.getByText(/(Aug 12, 2025|Sep 11, 2099)/)).toHaveCount(0);
@@ -830,7 +850,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	});
 
 	await gotoHostedAgentSettings(page, paidEnvironmentId, "Basic");
-	await page.goto(`${page.url()}&subscription_action=start_new`);
+	await gotoSubscriptionAction(page, "start_new");
 	await expect(page.getByRole("dialog", { name: "Choose a paid subscription" })).toHaveCount(0);
 	await expect.poll(() => new URL(page.url()).searchParams.has("subscription_action")).toBe(false);
 	const activeCard = page
@@ -976,7 +996,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, fixtureAgentId(terminalFallbackDeployment), "Basic");
-	await page.goto(`${page.url()}&subscription_action=start_new`);
+	await gotoSubscriptionAction(page, "start_new");
 	const routedCreateDialog = page.getByRole("dialog", { name: "Choose a paid subscription" });
 	await expect(routedCreateDialog).toBeVisible();
 	await expect.poll(() => new URL(page.url()).searchParams.has("subscription_action")).toBe(false);
