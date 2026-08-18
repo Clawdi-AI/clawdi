@@ -11,6 +11,8 @@ export type AgentPluginInventoryItem = {
 	desired: AgentPluginDesiredState | null;
 };
 
+export type AgentPluginGroup = "installed" | "available";
+
 export type AgentPluginInstallability = {
 	installable: boolean;
 	label: string;
@@ -32,6 +34,19 @@ export function buildAgentPluginInventory(
 			desired: desiredByName.get(name) ?? null,
 		}))
 		.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function assignAgentPluginGroups(
+	previous: ReadonlyMap<string, AgentPluginGroup>,
+	inventory: readonly AgentPluginInventoryItem[],
+): Map<string, AgentPluginGroup> {
+	const next = new Map(previous);
+	for (const item of inventory) {
+		if (!next.has(item.name)) {
+			next.set(item.name, item.desired ? "installed" : "available");
+		}
+	}
+	return next;
 }
 
 export function pluginDisplayName(item: AgentPluginInventoryItem): string {

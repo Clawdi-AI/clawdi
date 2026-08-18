@@ -253,11 +253,13 @@ describe("agent routes", () => {
 				tab: "sessions",
 				project: "project 1",
 				vault: 42,
+				plugin: "sui",
 				future: "kept",
 			}),
 		).toEqual({
 			tab: "sessions",
 			project: "project 1",
+			plugin: "sui",
 			future: "kept",
 		});
 	});

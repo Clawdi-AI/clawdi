@@ -9,6 +9,7 @@ export type AgentRouteSearch = Record<string, unknown> & {
 	tab?: string;
 	project?: string;
 	vault?: string;
+	plugin?: string;
 	subscription_action?: "start_new";
 };
 
@@ -161,7 +162,7 @@ function subscriptionAction(value: unknown): AgentRouteSearch["subscription_acti
 /** Validate the shared agent-route search boundary while retaining additive query state. */
 export function validateAgentRouteSearch(search: Record<string, unknown>): AgentRouteSearch {
 	const validated: AgentRouteSearch = { ...search };
-	for (const key of ["tab", "project", "vault"] as const) {
+	for (const key of ["tab", "project", "vault", "plugin"] as const) {
 		const value = optionalSearchString(search[key]);
 		if (value === undefined) delete validated[key];
 		else validated[key] = value;

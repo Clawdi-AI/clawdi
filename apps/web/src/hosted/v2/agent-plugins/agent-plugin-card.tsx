@@ -19,7 +19,7 @@ import {
 	pluginVersion,
 } from "./agent-plugin-model";
 
-export type AgentPluginPendingAction = "install" | "remove" | null;
+export type AgentPluginPendingAction = "install" | "remove" | "retry" | null;
 
 export function AgentPluginCard({
 	item,
@@ -29,6 +29,7 @@ export function AgentPluginCard({
 	onOpen,
 	onInstall,
 	onRemove,
+	onRetry,
 }: {
 	item: AgentPluginInventoryItem;
 	runtime: HostedRuntime;
@@ -37,14 +38,21 @@ export function AgentPluginCard({
 	onOpen: (name: string) => void;
 	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
+	onRetry: (item: AgentPluginInventoryItem) => Promise<unknown>;
 }) {
 	const title = pluginDisplayName(item);
 	const status = item.desired ? agentPluginStatusPresentation(item.desired) : null;
 	const installability = item.catalog ? agentPluginInstallability(item.catalog, runtime) : null;
 	const hasUpdate = pluginHasUpdate(item);
+	const installFailed = item.desired?.convergence === "failed";
+	const canRetry = Boolean(installFailed && item.catalog && installability?.installable);
 	const canInstall = Boolean(
-		item.catalog && installability?.installable && (!item.desired || hasUpdate),
+		item.catalog && installability?.installable && !installFailed && (!item.desired || hasUpdate),
 	);
+	const version =
+		hasUpdate && item.desired && item.catalog
+			? `v${item.desired.version} → v${item.catalog.version}`
+			: `v${pluginVersion(item)}`;
 
 	return (
 		<div data-hosted="true" data-v2="true" className="contents">
@@ -59,16 +67,21 @@ export function AgentPluginCard({
 				}
 				title={title}
 				badges={
-					status ? (
-						<StatusBadge status={status.tone} withDot>
-							{status.label}
-						</StatusBadge>
+					status || hasUpdate ? (
+						<>
+							{status ? (
+								<StatusBadge status={status.tone} withDot>
+									{status.label}
+								</StatusBadge>
+							) : null}
+							{hasUpdate ? <StatusBadge status="info">Update available</StatusBadge> : null}
+						</>
 					) : undefined
 				}
 				description={
 					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
-				footer={[item.catalog?.publisher, `v${pluginVersion(item)}`]}
+				footer={[item.catalog?.publisher, version]}
 				footerClassName="mt-0"
 			>
 				<div className="mt-auto flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
@@ -119,6 +132,16 @@ export function AgentPluginCard({
 								title={installability.reason ?? undefined}
 							>
 								{installability.label}
+							</Button>
+						) : null}
+						{canRetry ? (
+							<Button
+								size="sm"
+								disabled={mutationsBlocked}
+								onClick={() => void onRetry(item).catch(() => undefined)}
+							>
+								{pendingAction === "retry" ? <Spinner /> : <RefreshCw />}
+								{pendingAction === "retry" ? "Retrying…" : "Retry"}
 							</Button>
 						) : null}
 					</div>
