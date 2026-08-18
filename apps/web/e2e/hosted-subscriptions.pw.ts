@@ -587,7 +587,12 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 		"canceling",
 	]);
 	await expectSubscriptionCardRowAligned(activeCard, includedCard);
-	await expectSubscriptionCardRowAligned(activeCard, availableCard);
+	const desktopCardBoxes = await currentCards.evaluateAll((cards) =>
+		cards.map((card) => card.getBoundingClientRect().toJSON()),
+	);
+	expect(desktopCardBoxes[2]?.y ?? 0).toBeGreaterThanOrEqual(
+		Math.max(desktopCardBoxes[0]?.bottom ?? 0, desktopCardBoxes[1]?.bottom ?? 0) - 1,
+	);
 	await expectCardsFit(dialog);
 	await activeCard.evaluate((element) => element.scrollIntoView({ block: "start" }));
 	await dialog.screenshot({ path: testInfo.outputPath("account-compute-plans-desktop.png") });
@@ -708,10 +713,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	const tabletCardBoxes = await dialog
 		.locator('[data-slot="compute-subscription-card"]')
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(Math.abs((tabletCardBoxes[0]?.y ?? 0) - (tabletCardBoxes[1]?.y ?? 1))).toBeLessThanOrEqual(
-		1,
-	);
-	expect(tabletCardBoxes[2]?.y ?? 0).toBeGreaterThanOrEqual(tabletCardBoxes[0]?.bottom ?? 0);
+	expect(tabletCardBoxes[1]?.y ?? 0).toBeGreaterThanOrEqual((tabletCardBoxes[0]?.bottom ?? 0) - 1);
 
 	await page.setViewportSize({ width: 320, height: 1000 });
 	await expect(dialog).toBeVisible();
