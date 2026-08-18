@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowUp, Settings, UserRoundX } from "lucide-react";
+import { ArrowUp, CircleCheck, Settings, UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { entityCardChassisClass } from "@/components/entity-card";
@@ -18,6 +18,7 @@ export type ComputeSubscriptionIdentity =
 			avatarUrl?: string | null;
 			href?: string;
 	  }
+	| { kind: "available"; label: string }
 	| { kind: "unavailable"; label: string };
 
 export type ComputeSubscriptionCardView = {
@@ -91,6 +92,18 @@ export function computeSubscriptionCardView({
 }
 
 function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdentity }) {
+	if (identity.kind === "available") {
+		return (
+			<div className="flex min-w-0 items-center gap-3 text-success-muted-foreground">
+				<span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-success-muted">
+					<CircleCheck className="size-3.5" aria-hidden />
+				</span>
+				<span className="truncate text-sm font-medium" title={identity.label}>
+					{identity.label}
+				</span>
+			</div>
+		);
+	}
 	if (identity.kind === "unavailable") {
 		return (
 			<div className="flex min-w-0 items-center gap-3 text-muted-foreground">
@@ -213,7 +226,9 @@ export function ComputeSubscriptionCard({
 						data-slot="compute-subscription-identity"
 						className="flex min-w-0 items-center gap-3"
 					>
-						<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
+						{identity.kind === "agent" ? (
+							<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
+						) : null}
 						<div className="min-w-0 flex-1">
 							<SubscriptionIdentity identity={identity} />
 						</div>

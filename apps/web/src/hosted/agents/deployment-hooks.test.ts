@@ -748,10 +748,11 @@ function successfulOperation(
 }
 
 describe("deployment mutation settlement", () => {
-	test("keeps reusable subscriptions scoped to delete snapshot invalidation", () => {
+	test("keeps subscription assignment inventories scoped to delete snapshot invalidation", () => {
 		const queryClient = new QueryClient();
 		queryClient.setQueryData(billingKeys.deployments, []);
 		queryClient.setQueryData(["get", "/v1/agents"], []);
+		queryClient.setQueryData(billingKeys.subscriptions, []);
 		queryClient.setQueryData(billingKeys.reusableSubscriptions, []);
 
 		if (!invalidateSnapshots || !invalidateDeleteSnapshots) {
@@ -761,9 +762,11 @@ describe("deployment mutation settlement", () => {
 
 		expect(queryClient.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(queryClient.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
+		expect(queryClient.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(false);
 		expect(queryClient.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(false);
 
 		invalidateDeleteSnapshots(queryClient);
+		expect(queryClient.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(true);
 		expect(queryClient.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(true);
 	});
 
