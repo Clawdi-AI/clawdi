@@ -3849,6 +3849,7 @@ async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logo
     admin_client, db_session, seed_user, channel_agent, monkeypatch
 ):
     import app.routes.admin as admin_routes
+    import app.services.whatsapp_device_onboarding as whatsapp_onboarding
     from app.models.channel import (
         ChannelAccount,
         ChannelBotAgentLink,
@@ -3921,10 +3922,12 @@ async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logo
             frozenset(),
             environment_id=channel_agent.id,
         )
+        monkeypatch.setattr(whatsapp_onboarding, "_LOGOUT_RECOVERY_TTL_SECONDS", 0.01)
         fake.logout_fails = True
         assert (
             await admin_client.delete(f"/v1/admin/channels/{account_id}", headers=_AUTH)
         ).status_code == 503
+        assert fake.logout_calls == 1
         await db_session.refresh(account)
         assert account.archived_at is None
         assert queue.empty()
