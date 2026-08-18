@@ -189,7 +189,7 @@ describe("hosted agent sessions refresh", () => {
 		expect(sessionsQuerySource).not.toContain("deploymentStatus");
 		expect(sessionsQuerySource).not.toContain("projection.status");
 		expect(initialPageSource).toContain("shouldShowInitialDeploymentProgress(");
-		expect(initialPageSource).not.toContain("cloudEnvironmentId");
+		expect(initialPageSource).not.toContain("cloudAgentId");
 		expect(initialPageSource).not.toContain('projection.status !== "resolved"');
 		expect(recentSessionsStart).toBeGreaterThan(overviewStart);
 		expect(recentSessionsEnd).toBeGreaterThan(recentSessionsStart);

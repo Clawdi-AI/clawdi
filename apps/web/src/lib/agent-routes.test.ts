@@ -2,8 +2,6 @@ import { describe, expect, it } from "bun:test";
 import {
 	agentConnectorDetailHref,
 	agentConnectorDetailLink,
-	agentDeploymentRouteQuery,
-	agentDeploymentSelector,
 	agentMemoryDetailHref,
 	agentMemoryDetailLink,
 	agentProjectDetailHref,
@@ -12,6 +10,7 @@ import {
 	agentProjectResourceLink,
 	agentRouteOwnsSection,
 	agentRouteQueryString,
+	agentRouteSearch,
 	agentSectionHref,
 	agentSectionLabel,
 	agentSectionLabelFromSegment,
@@ -23,13 +22,15 @@ import {
 	agentSkillDetailLink,
 	agentVaultDetailHref,
 	agentVaultDetailLink,
-	bindAgentDeploymentSearch,
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
+	isAgentRouteId,
 	legacyAgentRoute,
 	parseAgentPathname,
 	parseAgentSectionSegment,
 } from "./agent-routes";
+
+const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("agent routes", () => {
 	it("builds canonical segment routes for agent sections", () => {
@@ -96,74 +97,48 @@ describe("agent routes", () => {
 		);
 	});
 
-	it("preserves only deployment identity while navigating agent sections", () => {
-		const query = "source=on-clawdi&d=dep_older&checkout=success";
+	it("keeps every Agent route producer UUID-based and strips obsolete identity state", () => {
+		const legacySearch = "source=on-clawdi&d=hdep_selected&tab=settings&keep=value";
+		const hrefs = [
+			agentSectionHref(AGENT_ID, "overview", legacySearch),
+			agentSessionDetailHref(AGENT_ID, "session 1", legacySearch),
+			agentSkillDetailHref(AGENT_ID, "team/foo", "project 1", legacySearch),
+			agentProjectDetailHref(AGENT_ID, "project 1", legacySearch),
+			agentProjectResourceHref(AGENT_ID, "project 1", "skills", legacySearch),
+			agentProjectResourceHref(AGENT_ID, "project 1", "vaults", legacySearch),
+			agentVaultDetailHref(AGENT_ID, "prod keys", "vault/1", legacySearch),
+			agentMemoryDetailHref(AGENT_ID, "memory 1", legacySearch),
+			agentConnectorDetailHref(AGENT_ID, "google drive", legacySearch),
+		];
+		const links = [
+			agentSectionLink(AGENT_ID, "overview", legacySearch),
+			agentSessionDetailLink(AGENT_ID, "session 1", legacySearch),
+			agentSkillDetailLink(AGENT_ID, "team/foo", "project 1", legacySearch),
+			agentProjectDetailLink(AGENT_ID, "project 1", legacySearch),
+			agentProjectResourceLink(AGENT_ID, "project 1", "skills", legacySearch),
+			agentProjectResourceLink(AGENT_ID, "project 1", "vaults", legacySearch),
+			agentVaultDetailLink(AGENT_ID, "prod keys", "vault/1", legacySearch),
+			agentMemoryDetailLink(AGENT_ID, "memory 1", legacySearch),
+			agentConnectorDetailLink(AGENT_ID, "google drive", legacySearch),
+		];
 
-		expect(agentDeploymentSelector(query)).toBe("dep_older");
-		expect(agentDeploymentRouteQuery(query)).toEqual({
-			source: "on-clawdi",
-			d: "dep_older",
-		});
-		expect(agentSectionHref("agent 1", "settings", agentDeploymentRouteQuery(query))).toBe(
-			"/agents/agent%201/settings?source=on-clawdi&d=dep_older",
-		);
-	});
-
-	it("preserves deployment identity on every nested Agent detail link", () => {
-		const query = "source=on-clawdi&d=hdep_selected";
-
-		expect(agentSessionDetailHref("agent 1", "session 1", query)).toBe(
-			"/agents/agent%201/sessions/session%201?source=on-clawdi&d=hdep_selected",
-		);
-		expect(agentMemoryDetailHref("agent 1", "memory 1", query)).toBe(
-			"/agents/agent%201/memories/memory%201?source=on-clawdi&d=hdep_selected",
-		);
-		expect(agentConnectorDetailHref("agent 1", "google drive", query)).toBe(
-			"/agents/agent%201/connectors/google%20drive?source=on-clawdi&d=hdep_selected",
-		);
-		expect(agentSkillDetailHref("agent 1", "team/foo", "proj 1", query)).toBe(
-			"/agents/agent%201/skills/team/foo?source=on-clawdi&d=hdep_selected&project=proj%201",
-		);
-		expect(agentSessionDetailLink("agent 1", "session 1", query)).toEqual({
-			to: "/agents/$id/sessions/$sessionId",
-			params: { id: "agent 1", sessionId: "session 1" },
-			search: { source: "on-clawdi", d: "hdep_selected" },
-		});
-		expect(agentSkillDetailLink("agent 1", "team/foo", "proj 1", query)).toEqual({
-			to: "/agents/$id/skills/$",
-			params: { id: "agent 1", _splat: "team/foo" },
-			search: { source: "on-clawdi", d: "hdep_selected", project: "proj 1" },
-		});
-		expect(agentProjectDetailLink("agent 1", "project 1", query)).toEqual({
-			to: "/agents/$id/project-access/$projectId",
-			params: { id: "agent 1", projectId: "project 1" },
-			search: { source: "on-clawdi", d: "hdep_selected" },
-		});
-		expect(agentProjectResourceLink("agent 1", "project 1", "skills", query)).toEqual({
-			to: "/agents/$id/project-access/$projectId/skills",
-			params: { id: "agent 1", projectId: "project 1" },
-			search: { source: "on-clawdi", d: "hdep_selected" },
-		});
-		expect(agentProjectResourceLink("agent 1", "project 1", "vaults", query)).toEqual({
-			to: "/agents/$id/project-access/$projectId/vaults",
-			params: { id: "agent 1", projectId: "project 1" },
-			search: { source: "on-clawdi", d: "hdep_selected" },
-		});
-		expect(agentVaultDetailLink("agent 1", "prod keys", "vault/1", query)).toEqual({
-			to: "/agents/$id/vaults/$slug",
-			params: { id: "agent 1", slug: "prod keys" },
-			search: { source: "on-clawdi", d: "hdep_selected", vault: "vault/1" },
-		});
-		expect(agentMemoryDetailLink("agent 1", "memory 1", query)).toEqual({
-			to: "/agents/$id/memories/$memoryId",
-			params: { id: "agent 1", memoryId: "memory 1" },
-			search: { source: "on-clawdi", d: "hdep_selected" },
-		});
-		expect(agentConnectorDetailLink("agent 1", "google drive", query)).toEqual({
-			to: "/agents/$id/connectors/$name",
-			params: { id: "agent 1", name: "google drive" },
-			search: { source: "on-clawdi", d: "hdep_selected" },
-		});
+		for (const href of hrefs) {
+			expect(href.startsWith(`/agents/${AGENT_ID}`)).toBe(true);
+			expect(href).not.toContain("source=");
+			expect(href).not.toContain("d=");
+			expect(href).not.toContain("tab=");
+			expect(href).toContain("keep=value");
+		}
+		for (const link of links) {
+			expect(link.params.id).toBe(AGENT_ID);
+			expect(link.search).toMatchObject({ keep: "value" });
+			expect(link.search).not.toHaveProperty("source");
+			expect(link.search).not.toHaveProperty("d");
+			expect(link.search).not.toHaveProperty("tab");
+		}
+		expect(agentRouteSearch(legacySearch)).toEqual({ keep: "value" });
+		expect(isAgentRouteId(AGENT_ID)).toBe(true);
+		expect(isAgentRouteId("hdep_selected")).toBe(false);
 	});
 
 	it("lets only the complete current section route own canonicalization", () => {
@@ -188,30 +163,21 @@ describe("agent routes", () => {
 		expect(agentRouteOwnsSection("/agents/agent-1/skills", "agent-1", "overview")).toBe(false);
 	});
 
-	it("augments the current location when binding a deployment", () => {
-		expect(
-			bindAgentDeploymentSearch(
-				{ project: "proj-1", source: "on-clawdi", d: "hdep_stale" },
-				"hdep_current",
-			),
-		).toEqual({ project: "proj-1", source: "on-clawdi", d: "hdep_current" });
-	});
-
 	it("owns canonical section navigation with typed Router options", () => {
-		expect(agentSectionLink("agent 1", "overview", { d: "hdep_1" })).toEqual({
+		expect(agentSectionLink("agent 1", "overview", { keep: "value" })).toEqual({
 			to: "/agents/$id",
 			params: { id: "agent 1" },
-			search: { d: "hdep_1" },
+			search: { keep: "value" },
 		});
-		expect(agentSectionLink("agent 1", "skills", { d: "hdep_1" })).toEqual({
+		expect(agentSectionLink("agent 1", "skills", { keep: "value" })).toEqual({
 			to: "/agents/$id/skills",
 			params: { id: "agent 1" },
-			search: { d: "hdep_1" },
+			search: { keep: "value" },
 		});
-		expect(agentSectionLink("agent 1", "channels", { d: "hdep_1" })).toEqual({
+		expect(agentSectionLink("agent 1", "channels", { keep: "value" })).toEqual({
 			to: "/agents/$id/$section",
 			params: { id: "agent 1", section: "channel-links" },
-			search: { d: "hdep_1" },
+			search: { keep: "value" },
 		});
 	});
 

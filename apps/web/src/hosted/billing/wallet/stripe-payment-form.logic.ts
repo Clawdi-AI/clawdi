@@ -1,4 +1,5 @@
 import { cleanWalletStripeReturnUrl } from "@/hosted/billing/wallet/stripe-return";
+import { agentRouteQueryString } from "@/lib/agent-routes";
 
 export type PaymentOutcome = "succeeded" | "processing";
 
@@ -21,6 +22,9 @@ export function buildSubscriptionPaymentReturnUrl(
 		"upgrade_deployment_id",
 	]) {
 		url.searchParams.delete(key);
+	}
+	if (url.pathname.startsWith("/agents/")) {
+		url.search = agentRouteQueryString(url.search);
 	}
 	url.searchParams.set("deployment_id", deploymentId);
 	return url.toString();

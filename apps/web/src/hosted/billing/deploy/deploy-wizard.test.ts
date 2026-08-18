@@ -222,10 +222,10 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
 	});
 
-	test("routes accepted creates directly by canonical deployment selector", () => {
-		expect(acceptedNavigationSource).toContain(
-			'agentSectionHref(deploymentId, "overview", "source=on-clawdi")',
-		);
+	test("hydrates authoritative Agent identity before accepted-create navigation", () => {
+		expect(acceptedNavigationSource).toContain("getDeployment(deploymentId)");
+		expect(acceptedNavigationSource).toContain("agentSectionHref(authoritative.agent_id)");
+		expect(acceptedNavigationSource).not.toContain("source=on-clawdi");
 		expect(wizardSource).not.toContain("setup=accepted");
 		expect(wizardSource).not.toContain("waitForRuntime");
 		expect(wizardSource).not.toContain("Agent deployment started");

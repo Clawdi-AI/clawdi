@@ -4,6 +4,7 @@ import type { ManagedModelCatalogItem, WalletState } from "../src/hosted/billing
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
 import {
 	type DeploymentMutationFixture,
+	fixtureAgentId,
 	isDeploymentMutationFixture,
 	isRecord,
 	mutationDeploymentReadFixture,
@@ -758,6 +759,7 @@ const missingProjectionFailureReason =
 const failedMissingProjectionDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_failed_projection",
+	agent_id: missingProjectionEnvironmentId,
 	name: "Failed projection agent",
 	status: "failed",
 	failure_reason: missingProjectionFailureReason,
@@ -770,6 +772,7 @@ const failedMissingProjectionDeployment = {
 const runningMissingProjectionDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_running_projection",
+	agent_id: missingProjectionEnvironmentId,
 	name: "Running projection agent",
 	hermes_control_ui_url: "https://runtime.example/hermes",
 	config_info: {
@@ -784,6 +787,7 @@ const retainedProjectionFailureReason =
 const _failedRetainedProjectionDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_failed_retained_projection",
+	agent_id: retainedProjectionEnvironmentId,
 	name: "Failed retained projection agent",
 	status: "failed",
 	failure_reason: retainedProjectionFailureReason,
@@ -838,6 +842,7 @@ const railConnectedEnvironmentId = "99999999-9999-4999-8999-999999999999";
 const railHostedDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_rail_cloud",
+	agent_id: railHostedEnvironmentId,
 	name: "e2e-2",
 	config_info: {
 		...includedBasicDeployment.config_info,
@@ -2886,12 +2891,12 @@ async function expectPointerCursor(locator: ReturnType<Page["locator"]>, label: 
 
 async function gotoHostedAgentSettings(
 	page: Page,
-	deploymentId: string,
+	agentId: string,
 	tier: "Basic" | "Performance",
 	search = "",
 ) {
 	for (let attempt = 0; attempt < 2; attempt += 1) {
-		await page.goto(`/agents/${deploymentId}/settings${search}`);
+		await page.goto(`/agents/${agentId}/settings${search}`);
 		try {
 			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
 			// Do not open a modal while React is still hydrating the sidebar; Base UI's
@@ -3017,9 +3022,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			},
 		],
 	});
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await page.goto(`/agents/${railHostedEnvironmentId}`);
 	await expect.poll(() => sessionRequests.length).toBe(1);
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
@@ -3091,8 +3094,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const viewAllHref = await viewAllSessions.getAttribute("href");
 	const viewAllUrl = new URL(viewAllHref ?? "", page.url());
 	expect(viewAllUrl.pathname).toBe(`/agents/${railHostedEnvironmentId}/sessions`);
-	expect(viewAllUrl.searchParams.get("source")).toBe("on-clawdi");
-	expect(viewAllUrl.searchParams.get("d")).toBe(railHostedDeployment.id);
+	expect(viewAllUrl.search).toBe("");
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
 	await expect(recentSessions.locator("article")).toHaveCount(3);
 	await expect(recentSessions).not.toContainText("Review risks");
@@ -3206,13 +3208,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		overview.locator('[data-overview-module="skills"]').getByRole("link", { name: "Skills" }),
 	).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills?source=on-clawdi&d=${railHostedDeployment.id}`,
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills`,
 	);
 	await expect(
 		overview.locator('[data-overview-module="vaults"]').getByRole("link", { name: "Vaults" }),
 	).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults`,
 	);
 	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
 	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText(
@@ -3234,25 +3236,15 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const skillsLink = projectGroup.getByRole("link", { name: "Skills", exact: true });
 	const vaultsLink = projectGroup.getByRole("link", { name: "Vaults", exact: true });
 	const expectedProjectHub = `/agents/${railHostedEnvironmentId}/project-access/project-hosted`;
-	await expect(skillsLink).toHaveAttribute(
-		"href",
-		`${expectedProjectHub}/skills?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
-	await expect(vaultsLink).toHaveAttribute(
-		"href",
-		`${expectedProjectHub}/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await expect(skillsLink).toHaveAttribute("href", `${expectedProjectHub}/skills`);
+	await expect(vaultsLink).toHaveAttribute("href", `${expectedProjectHub}/vaults`);
 	await vaultsLink.focus();
 	await expect(vaultsLink).toBeFocused();
 	await vaultsLink.click();
-	await expect(page).toHaveURL(
-		`${expectedProjectHub}/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await expect(page).toHaveURL(`${expectedProjectHub}/vaults`);
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await page.goto(`/agents/${railHostedEnvironmentId}`);
 	await expect(overview.locator("[data-overview-module]")).toHaveCount(7);
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
@@ -3359,9 +3351,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		fullPage: true,
 	});
 	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}/sessions?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await page.goto(`/agents/${railHostedEnvironmentId}/sessions`);
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
 	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
@@ -3393,9 +3383,7 @@ for (const projectionFailure of [
 						}
 					: undefined,
 		});
-		await page.goto(
-			`/agents/${missingProjectionEnvironmentId}?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
-		);
+		await page.goto(`/agents/${missingProjectionEnvironmentId}`);
 		const main = page.locator("main");
 		await expect(main.getByRole("heading", { level: 1 })).toBeVisible();
 		await expect(main.getByText("Unavailable right now", { exact: true }).first()).toBeVisible();
@@ -3427,7 +3415,7 @@ test("agent provider creation stays in context and updates only after Save chang
 		],
 		updateDeploymentRequests,
 	});
-	const agentPath = `/agents/${railHostedEnvironmentId}/model-provider?source=on-clawdi&d=${railHostedDeployment.id}`;
+	const agentPath = `/agents/${railHostedEnvironmentId}/model-provider`;
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		await page.goto(agentPath);
 		try {
@@ -3490,9 +3478,7 @@ test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ p
 	});
 
 	try {
-		await page.goto(
-			`/agents/${railHostedEnvironmentId}/console?source=on-clawdi&d=${railHostedDeployment.id}`,
-		);
+		await page.goto(`/agents/${railHostedEnvironmentId}/console`);
 		const loadingShell = page.getByTestId("agent-live-tool-loading-shell");
 		await expect(loadingShell).toBeVisible();
 		await expect(page.getByTestId("overview-status-card-skeleton")).toHaveCount(0);
@@ -3732,9 +3718,7 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	await consoleLink.click();
 	await expect(page).toHaveURL("/");
 	await cloudButton.click();
-	await expect(page).toHaveURL(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-	);
+	await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}`);
 	await connectedButton.click();
 	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
 	await consoleLink.click();
@@ -3779,7 +3763,7 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 	});
-	const query = `?source=on-clawdi&d=${railHostedDeployment.id}`;
+	const query = "";
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto(`/agents/${railHostedEnvironmentId}/memories${query}`);
 
@@ -4046,7 +4030,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await expect(checkoutDialog.getByText("Mock secure payment form", { exact: true })).toBeVisible();
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
 
-	await expect(page).toHaveURL(/\/agents\/hdep_created/);
+	await expect(page).toHaveURL(`/agents/${fixtureAgentId(startingDeployment)}`);
 	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("Setup usually takes about 7–10 minutes.", { exact: false }),
@@ -4070,7 +4054,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		deleteRequests,
 		deploymentListRequests,
 	});
-	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(includedBasicDeployment), "Basic");
 	const historyLengthBeforeDelete = await page.evaluate(() => window.history.length);
 	await page.evaluate(() => {
 		document.documentElement.dataset.deleteNotFoundFlash = "false";
@@ -4124,7 +4108,7 @@ test("hosted locale settings submit canonical deployment PATCH", async ({ page }
 		plans: [basicPlan],
 		updateDeploymentRequests,
 	});
-	await gotoHostedAgentSettings(page, "hdep_rail_cloud", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(railHostedDeployment), "Basic");
 
 	const displayName = page.getByRole("textbox", { name: "Agent name" });
 	await displayName.fill("Unsaved Cloud name");
@@ -4170,9 +4154,9 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 		deleteRequests,
 	});
 
-	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
+	await page.goto(`/agents/${missingProjectionEnvironmentId}`);
 	const main = page.locator("main");
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe("hdep_failed_projection");
+	await expect.poll(() => new URL(page.url()).search).toBe("");
 	// The overview renders from deployment authority even while the agent
 	// projection 404s; internal failure details never reach the page.
 	await expect(main.getByText("Recent sessions", { exact: true })).toBeVisible();
@@ -4282,7 +4266,7 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 		],
 		plans: [basicPlan, performancePlan],
 	});
-	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(paidBasicDeployment), "Basic");
 
 	await page
 		.locator('[data-slot="compute-subscription-card"]')
@@ -4362,7 +4346,7 @@ test("paid card subscription switches future renewals to Wallet", async ({ page 
 		],
 		plans: [basicPlan, performancePlan],
 	});
-	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(paidBasicDeployment), "Basic");
 
 	await page
 		.locator('[data-slot="compute-subscription-card"]')
@@ -4436,7 +4420,7 @@ test("accepted plan change recovers from the deployment projection after refresh
 		planChangeOperationResponses: [{ body: terminalDeployment.accepted_operation, status: 200 }],
 		plans: [basicPlan, performancePlan],
 	});
-	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(terminalFallbackDeployment), "Basic");
 	await page.reload();
 
 	await page.getByRole("button", { name: "Check subscription change status" }).click();
@@ -4537,9 +4521,7 @@ for (const firstTimeViewport of [
 			],
 		});
 
-		await page.goto(
-			`/agents/${missingProjectionEnvironmentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
-		);
+		await page.goto(`/agents/${missingProjectionEnvironmentId}/channel-links`);
 		const clawdiSection = page.locator('[data-agent-channel-section="clawdi"]');
 		const customSection = page.locator('[data-agent-channel-section="custom"]');
 		const unavailableHeading = page.getByRole("heading", { name: "Page Unavailable" });
@@ -4586,7 +4568,7 @@ for (const firstTimeViewport of [
 		);
 		await expect(agentInterfaceHint.getByRole("link", { name: "Agent Interface" })).toHaveAttribute(
 			"href",
-			`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+			`/agents/${missingProjectionEnvironmentId}/console`,
 		);
 		await expect(agentInterfaceHint.locator('[data-slot="alert"]')).toHaveCount(0);
 		await expect(connectDialog.locator("[data-agent-link-warning]")).toHaveCount(0);

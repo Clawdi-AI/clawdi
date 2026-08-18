@@ -8,12 +8,12 @@ import type { FullConfig } from "@playwright/test";
  */
 const ROUTES = [
 	"/",
-	"/agents/agent-smoke-1",
-	"/agents/agent-smoke-1/sessions",
-	"/agents/agent-smoke-1/memories",
-	"/agents/agent-smoke-1/connectors",
-	"/agents/agent-smoke-1/settings",
-	"/agents/agent-smoke-1/project-access/project-smoke/skills",
+	"/agents/11111111-1111-4111-8111-111111111111",
+	"/agents/11111111-1111-4111-8111-111111111111/sessions",
+	"/agents/11111111-1111-4111-8111-111111111111/memories",
+	"/agents/11111111-1111-4111-8111-111111111111/connectors",
+	"/agents/11111111-1111-4111-8111-111111111111/settings",
+	"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/skills",
 	"/projects",
 	"/projects/project-smoke",
 	"/sessions",

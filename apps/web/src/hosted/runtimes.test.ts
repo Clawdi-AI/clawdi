@@ -3,9 +3,9 @@ import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture
 import {
 	deploymentFilesUrl,
 	deploymentRuntime,
+	observedCloudProjectionId,
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
-	runtimeEnvironmentId,
 } from "@/hosted/runtimes";
 
 describe("deploymentFilesUrl", () => {
@@ -96,18 +96,18 @@ describe("runtimeAiProviderAuthKind", () => {
 	});
 });
 
-describe("runtimeEnvironmentId", () => {
-	test("reads the stored environment id from the top-level read projection", () => {
+describe("observedCloudProjectionId", () => {
+	test("reads the observed Cloud projection without treating it as Agent identity", () => {
 		const deployment = hostedDeploymentFixture({
 			runtime: "hermes",
 			cloudEnvironments: { hermes: "env-hermes" },
 		});
 
-		expect(runtimeEnvironmentId(deployment)).toBe("env-hermes");
-		expect(runtimeEnvironmentId(deployment, "openclaw")).toBeUndefined();
+		expect(observedCloudProjectionId(deployment)).toBe("env-hermes");
+		expect(observedCloudProjectionId(deployment, "openclaw")).toBeUndefined();
 	});
 
 	test("returns undefined when the backend has not projected an environment id", () => {
-		expect(runtimeEnvironmentId(hostedDeploymentFixture())).toBeUndefined();
+		expect(observedCloudProjectionId(hostedDeploymentFixture())).toBeUndefined();
 	});
 });

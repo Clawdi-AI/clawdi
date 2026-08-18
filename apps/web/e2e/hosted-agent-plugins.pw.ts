@@ -7,6 +7,7 @@ const DEPLOYMENT_ID = "hdep_agent_plugins_closed";
 const deployment = {
 	...includedBasicDeployment,
 	id: DEPLOYMENT_ID,
+	agent_id: AGENT_ID,
 	config_info: {
 		...includedBasicDeployment.config_info,
 		clawdi_cloud_environments: { hermes: AGENT_ID },
@@ -18,11 +19,11 @@ test("Agent Plugins stays closed without the per-user capability", async ({ page
 		deployments: [deployment],
 	});
 
-	await page.goto(`/agents/${AGENT_ID}?source=on-clawdi&d=${DEPLOYMENT_ID}`);
+	await page.goto(`/agents/${AGENT_ID}`);
 	await expect(page.getByRole("link", { name: "Plugins", exact: true })).toHaveCount(0);
 
-	await page.goto(`/agents/${AGENT_ID}/plugins?source=on-clawdi&d=${DEPLOYMENT_ID}`);
-	await expect(page).toHaveURL(new RegExp(`/agents/${AGENT_ID}\\?`));
+	await page.goto(`/agents/${AGENT_ID}/plugins`);
+	await expect(page).toHaveURL(new RegExp(`/agents/${AGENT_ID}$`));
 	await expect(page.getByRole("link", { name: "Plugins", exact: true })).toHaveCount(0);
 });
 
@@ -87,7 +88,7 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 		},
 	);
 
-	await page.goto(`/agents/${AGENT_ID}?source=on-clawdi&d=${DEPLOYMENT_ID}`);
+	await page.goto(`/agents/${AGENT_ID}`);
 	await page.getByRole("link", { name: "Plugins", exact: true }).click();
 	await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
 	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();

@@ -9,7 +9,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	type AgentRouteSearch,
-	agentDeploymentRouteQuery,
+	agentRouteSearch,
 	agentSectionHref,
 	agentSkillDetailHref,
 } from "@/lib/agent-routes";
@@ -31,7 +31,7 @@ function AgentSkillDetailRoute() {
 	const skillKey = (_splat ?? "").split("/").map(decodeResourceRouteParam).join("/");
 	const projectId =
 		typeof search.project === "string" && search.project.trim() ? search.project.trim() : null;
-	const returnHref = agentSectionHref(id, "projects", agentDeploymentRouteQuery(search));
+	const returnHref = agentSectionHref(id, "projects", agentRouteSearch(search));
 
 	if (!projectId) {
 		return (
@@ -72,9 +72,9 @@ function LegacyAgentSkillProjectCanonicalizer({
 	const blockingError = shouldBlockQueryError(bindings.error, bindings.data)
 		? bindings.error
 		: null;
-	const projectsHref = agentSectionHref(agentId, "projects", agentDeploymentRouteQuery(search));
+	const projectsHref = agentSectionHref(agentId, "projects", agentRouteSearch(search));
 	const targetHref = projectId
-		? agentSkillDetailHref(agentId, skillKey, projectId, agentDeploymentRouteQuery(search))
+		? agentSkillDetailHref(agentId, skillKey, projectId, agentRouteSearch(search))
 		: projectsHref;
 	const isLatestTarget = useCommittedRouteIsLatestTarget();
 

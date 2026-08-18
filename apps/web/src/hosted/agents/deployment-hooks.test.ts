@@ -484,7 +484,6 @@ describe("deployment transition timeout rendering", () => {
 		expect(manualHandler).not.toContain("isFetchingRef");
 		expect(manualHandler).not.toContain("mutate");
 		expect(manualHandler).not.toContain("restart");
-		expect(source).toContain("isChecking={manualChecking}");
 		expect(source).toContain("isCheckingDeployment={manualChecking}");
 		expect(source).toContain("onCheckDeploymentAgain={() => void handleCheckAgain()}");
 		const detailSource = readFileSync(

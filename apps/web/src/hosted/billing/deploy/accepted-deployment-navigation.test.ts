@@ -30,6 +30,7 @@ describe("accepted deployment navigation", () => {
 		});
 		const authoritative = hostedDeploymentFixture({
 			id: "hdep_created",
+			agentId: "22222222-2222-4222-8222-222222222222",
 			name: "Committed agent",
 			status: "starting",
 		});
@@ -79,7 +80,9 @@ describe("accepted deployment navigation", () => {
 			existing,
 			authoritative,
 		]);
-		expect(navigations).toEqual([{ href: "/agents/hdep_created?source=on-clawdi", replace: true }]);
+		expect(navigations).toEqual([
+			{ href: "/agents/22222222-2222-4222-8222-222222222222", replace: true },
+		]);
 		expect(queryClient.getQueryData<typeof agentsProjection>(["get", "/v1/agents"])).toBe(
 			agentsProjection,
 		);
@@ -88,6 +91,27 @@ describe("accepted deployment navigation", () => {
 			1,
 		);
 
+		queryClient.clear();
+	});
+
+	test("rejects a deployment response without a canonical Agent UUID", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const authoritative = hostedDeploymentFixture({
+			id: "hdep_invalid_identity",
+			agentId: "hdep_invalid_identity",
+		});
+
+		await expect(
+			navigateToAcceptedDeployment({
+				deploymentId: authoritative.resource.id,
+				getDeployment: async () => authoritative,
+				navigate: () => {
+					throw new Error("navigation must not run");
+				},
+				queryClient,
+			}),
+		).rejects.toThrow("invalid Agent identity");
+		expect(queryClient.getQueryData(billingKeys.deployments)).toBeUndefined();
 		queryClient.clear();
 	});
 

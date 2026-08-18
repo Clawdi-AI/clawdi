@@ -3,12 +3,12 @@ import {
 	type AgentRouteQuery,
 	agentConnectorDetailHref,
 	agentConnectorDetailLink,
-	agentDeploymentRouteQuery,
 	agentMemoryDetailHref,
 	agentMemoryDetailLink,
 	agentProjectDetailHref,
 	agentProjectDetailLink,
 	agentProjectResourceHref,
+	agentRouteSearch,
 	agentSectionHref,
 	agentVaultDetailHref,
 	agentVaultDetailLink,
@@ -68,21 +68,17 @@ export function resourceCollectionTarget(
 						scope.agentId,
 						scope.projectId,
 						"vaults",
-						agentDeploymentRouteQuery(scope.agentQuery),
+						agentRouteSearch(scope.agentQuery),
 					),
 					label: "Vaults",
 				}
 			: {
-					href: agentSectionHref(
-						scope.agentId,
-						"projects",
-						agentDeploymentRouteQuery(scope.agentQuery),
-					),
+					href: agentSectionHref(scope.agentId, "projects", agentRouteSearch(scope.agentQuery)),
 					label: "Projects",
 				};
 	}
 	return {
-		href: agentSectionHref(scope.agentId, resource, agentDeploymentRouteQuery(scope.agentQuery)),
+		href: agentSectionHref(scope.agentId, resource, agentRouteSearch(scope.agentQuery)),
 		label: resource === "projects" ? "Projects" : getResourceCollectionLabel(resource),
 	};
 }
@@ -105,13 +101,13 @@ export function projectDetailHrefForScope(
 	projectId: string,
 ): string {
 	return scope.kind === "agent"
-		? agentProjectDetailHref(scope.agentId, projectId, agentDeploymentRouteQuery(scope.agentQuery))
+		? agentProjectDetailHref(scope.agentId, projectId, agentRouteSearch(scope.agentQuery))
 		: projectDetailHref(projectId);
 }
 
 export function projectDetailLink(scope: ResourceNavigationScope, projectId: string) {
 	return scope.kind === "agent"
-		? agentProjectDetailLink(scope.agentId, projectId, agentDeploymentRouteQuery(scope.agentQuery))
+		? agentProjectDetailLink(scope.agentId, projectId, agentRouteSearch(scope.agentQuery))
 		: linkOptions({ to: "/projects/$id", params: { id: projectId } });
 }
 
@@ -143,20 +139,20 @@ function agentProjectResourceQuery(
 	scope: Extract<ResourceNavigationScope, { kind: "agent" }>,
 ): AgentRouteQuery {
 	return {
-		...agentDeploymentRouteQuery(scope.agentQuery),
+		...agentRouteSearch(scope.agentQuery),
 		project: scope.projectId,
 	};
 }
 
 export function memoryDetailHrefForScope(scope: ResourceNavigationScope, memoryId: string): string {
 	return scope.kind === "agent"
-		? agentMemoryDetailHref(scope.agentId, memoryId, agentDeploymentRouteQuery(scope.agentQuery))
+		? agentMemoryDetailHref(scope.agentId, memoryId, agentRouteSearch(scope.agentQuery))
 		: memoryDetailHref(memoryId);
 }
 
 export function memoryDetailLink(scope: ResourceNavigationScope, memoryId: string) {
 	return scope.kind === "agent"
-		? agentMemoryDetailLink(scope.agentId, memoryId, agentDeploymentRouteQuery(scope.agentQuery))
+		? agentMemoryDetailLink(scope.agentId, memoryId, agentRouteSearch(scope.agentQuery))
 		: linkOptions({ to: "/memories/$id", params: { id: memoryId } });
 }
 
@@ -165,21 +161,13 @@ export function connectorDetailHrefForScope(
 	connectorName: string,
 ): string {
 	return scope.kind === "agent"
-		? agentConnectorDetailHref(
-				scope.agentId,
-				connectorName,
-				agentDeploymentRouteQuery(scope.agentQuery),
-			)
+		? agentConnectorDetailHref(scope.agentId, connectorName, agentRouteSearch(scope.agentQuery))
 		: connectorDetailHref(connectorName);
 }
 
 export function connectorDetailLink(scope: ResourceNavigationScope, connectorName: string) {
 	return scope.kind === "agent"
-		? agentConnectorDetailLink(
-				scope.agentId,
-				connectorName,
-				agentDeploymentRouteQuery(scope.agentQuery),
-			)
+		? agentConnectorDetailLink(scope.agentId, connectorName, agentRouteSearch(scope.agentQuery))
 		: linkOptions({ to: "/connectors/$name", params: { name: connectorName } });
 }
 
@@ -223,12 +211,9 @@ export function legacyAgentResourceScope(
 	if (queryValue(query, "from") !== expectedOrigin) return null;
 	const agentId = queryValue(query, "agent");
 	if (!agentId) return null;
-	const source = queryValue(query, "agentSource");
-	const deployment = queryValue(query, "agentDeployment");
 	return {
 		kind: "agent",
 		agentId,
-		agentQuery: source || deployment ? { source, d: deployment } : undefined,
 	};
 }
 
@@ -240,8 +225,6 @@ export type ResourceDetailSearch = Record<string, unknown> & {
 	joined?: string;
 	from?: string;
 	agent?: string;
-	agentSource?: string;
-	agentDeployment?: string;
 };
 
 export function validateResourceDetailSearch(
@@ -257,8 +240,6 @@ export function validateResourceDetailSearch(
 		"joined",
 		"from",
 		"agent",
-		"agentSource",
-		"agentDeployment",
 	] as const) {
 		const value = optionalString(search[key]);
 		if (value === undefined) delete validated[key];

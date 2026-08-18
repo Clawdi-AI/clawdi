@@ -1,9 +1,9 @@
 import type { BreadcrumbSegmentTitles } from "@/components/breadcrumb-title";
 import {
 	type AgentRouteSearch,
-	agentDeploymentRouteQuery,
 	agentProjectDetailHref,
 	agentProjectResourceHref,
+	agentRouteSearch,
 	agentSectionHref,
 	agentSectionLabel,
 	parseAgentPathname,
@@ -66,8 +66,8 @@ function buildAgentBreadcrumbTrail(
 	overrideTitle: string | null,
 	segmentTitles: BreadcrumbSegmentTitles,
 ): AppBreadcrumbTrailItem[] {
-	const deploymentQuery = agentDeploymentRouteQuery(search);
-	const agentHref = agentSectionHref(route.agentId, "overview", deploymentQuery);
+	const routeQuery = agentRouteSearch(search);
+	const agentHref = agentSectionHref(route.agentId, "overview", routeQuery);
 	const agentTitle = segmentTitle(segmentTitles, agentHref);
 	const trail: AppBreadcrumbTrailItem[] = [{ key: "agent", label: agentTitle, href: agentHref }];
 
@@ -79,8 +79,8 @@ function buildAgentBreadcrumbTrail(
 		if (!route.projectId) {
 			return finishTrail(trail, agentSectionLabel("projects"));
 		}
-		const context = projectContext(route.agentId, route.projectId, deploymentQuery, segmentTitles);
-		appendProjectContext(trail, route.agentId, context, deploymentQuery);
+		const context = projectContext(route.agentId, route.projectId, routeQuery, segmentTitles);
+		appendProjectContext(trail, route.agentId, context, routeQuery);
 		if (route.projectResource) {
 			return finishTrail(trail, overrideTitle ?? agentSectionLabel(route.projectResource));
 		}
@@ -93,13 +93,13 @@ function buildAgentBreadcrumbTrail(
 	if (route.section === "skills" || route.section === "vaults") {
 		const projectId = typeof search.project === "string" ? search.project.trim() : "";
 		if (projectId) {
-			const context = projectContext(route.agentId, projectId, deploymentQuery, segmentTitles);
-			appendProjectContext(trail, route.agentId, context, deploymentQuery);
+			const context = projectContext(route.agentId, projectId, routeQuery, segmentTitles);
+			appendProjectContext(trail, route.agentId, context, routeQuery);
 			const resourceHref = agentProjectResourceHref(
 				route.agentId,
 				projectId,
 				route.section,
-				deploymentQuery,
+				routeQuery,
 			);
 			trail.push({
 				key: route.section,
@@ -110,7 +110,7 @@ function buildAgentBreadcrumbTrail(
 			trail.push({
 				key: "projects",
 				label: agentSectionLabel("projects"),
-				href: agentSectionHref(route.agentId, "projects", deploymentQuery),
+				href: agentSectionHref(route.agentId, "projects", routeQuery),
 			});
 		}
 		const hasDetail =
@@ -121,7 +121,7 @@ function buildAgentBreadcrumbTrail(
 	}
 
 	const sectionLabel = agentSectionLabel(route.section);
-	const sectionHref = agentSectionHref(route.agentId, route.section, deploymentQuery);
+	const sectionHref = agentSectionHref(route.agentId, route.section, routeQuery);
 	const detailTitle =
 		route.sessionId || route.memoryId || route.connectorName ? overrideTitle : null;
 	if (route.sessionId || route.memoryId || route.connectorName) {
@@ -134,7 +134,7 @@ function buildAgentBreadcrumbTrail(
 function projectContext(
 	agentId: string,
 	projectId: string,
-	query: ReturnType<typeof agentDeploymentRouteQuery>,
+	query: ReturnType<typeof agentRouteSearch>,
 	segmentTitles: BreadcrumbSegmentTitles,
 ) {
 	const href = agentProjectDetailHref(agentId, projectId, query);
@@ -152,7 +152,7 @@ function appendProjectContext(
 	trail: AppBreadcrumbTrailItem[],
 	agentId: string,
 	context: ReturnType<typeof projectContext>,
-	query: ReturnType<typeof agentDeploymentRouteQuery>,
+	query: ReturnType<typeof agentRouteSearch>,
 ) {
 	if (context.kind !== "project") return;
 	trail.push({

@@ -29,7 +29,6 @@ import {
 } from "@/hosted/deployment-failure";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
-import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 
 const SETTLING_REFRESH_DELAYS_MS = [2_000, 10_000, 20_000, 30_000] as const;
@@ -149,20 +148,15 @@ function toastDeploymentConflict(error: unknown): boolean {
 	return true;
 }
 
-/**
- * Resolve the hosted deployment that backs a cloud-api environment using the
- * stored environment id projected by the deploy API. An explicit deployment
- * selector disambiguates duplicate inventory rows.
- */
-export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
+/** Resolve the Hosted deployment bound to the canonical Agent UUID. */
+export function useAgentDeployment(agentId: string) {
 	const inventory = useHostedDeploymentInventory({
-		pollBillingRecoveryFor: deploymentSelector ?? environmentId,
+		pollBillingRecoveryFor: agentId,
 	});
-	const resolution = useMemo(
-		() => resolveAgentDeployment(inventory.deployments ?? [], environmentId, deploymentSelector),
-		[inventory.deployments, environmentId, deploymentSelector],
+	const match = useMemo(
+		() => resolveAgentDeployment(inventory.deployments ?? [], agentId),
+		[inventory.deployments, agentId],
 	);
-	const match = resolution.match;
 	const deploymentId = match?.deployment.resource.id;
 	const deploymentTransition = deploymentId
 		? (inventory.deploymentTransitions.get(deploymentId) ?? null)
@@ -171,22 +165,11 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		? (inventory.deploymentFailures.get(deploymentId) ?? null)
 		: null;
 
-	// The env id to drive per-env queries (sessions, channel links). For an
-	// env-id route it's the route param itself; for a deployment-id route
-	// (post-deploy redirect) resolve to the stored cloud-api env id, falling back
-	// to the route param while deployment creation has not projected an env id yet.
-	const resolvedEnvId = useMemo(() => {
-		if (!match || match.runtime) return environmentId;
-		const runtime = deploymentRuntime(match.deployment);
-		return runtimeEnvironmentId(match.deployment, runtime) || environmentId;
-	}, [match, environmentId]);
-
 	return {
 		deployment: match?.deployment ?? null,
 		inventoryDeployments: inventory.deployments,
 		matchedRuntime: match?.runtime ?? null,
-		ambiguousMatches: resolution.ambiguousMatches,
-		environmentId: resolvedEnvId,
+		environmentId: match?.deployment.agent_id ?? agentId,
 		inventoryStatus: inventory.status,
 		membershipResolved: inventory.status === "resolved",
 		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
@@ -201,10 +184,7 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 	};
 }
 
-export type {
-	AgentDeploymentMatch,
-	AgentDeploymentResolution,
-} from "@/hosted/hosted-agent-resolution";
+export type { AgentDeploymentMatch } from "@/hosted/hosted-agent-resolution";
 export { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 
 export function useDeploymentLifecycle() {

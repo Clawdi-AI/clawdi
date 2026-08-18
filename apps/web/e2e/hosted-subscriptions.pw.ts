@@ -5,6 +5,7 @@ import {
 	cancelPendingBasicDeployment,
 	cardPastDueDeployment,
 	collectBrowserErrors,
+	fixtureAgentId,
 	gotoHostedAgentSettings,
 	gotoHostedSettingsDialog,
 	includedBasicDeployment,
@@ -33,6 +34,7 @@ const includedEnvironmentId = "55555555-5555-4555-8555-555555555555";
 const accountActiveDeployment = {
 	...paidBasicDeployment,
 	id: "hdep_active",
+	agent_id: activeEnvironmentId,
 	name: "Account active deployment",
 	config_info: {
 		...paidBasicDeployment.config_info,
@@ -42,6 +44,7 @@ const accountActiveDeployment = {
 const accountCancelingDeployment = {
 	...cancelPendingBasicDeployment,
 	id: "hdep_canceling",
+	agent_id: cancelingEnvironmentId,
 	name: "Account canceling deployment",
 	config_info: {
 		...cancelPendingBasicDeployment.config_info,
@@ -51,6 +54,7 @@ const accountCancelingDeployment = {
 const accountPastDueDeployment = {
 	...walletActiveDeployment,
 	id: "hdep_past_due",
+	agent_id: pastDueEnvironmentId,
 	name: "Account past due deployment",
 	config_info: {
 		...walletActiveDeployment.config_info,
@@ -59,6 +63,7 @@ const accountPastDueDeployment = {
 };
 const accountIncludedDeployment = {
 	...includedBasicDeployment,
+	agent_id: includedEnvironmentId,
 	config_info: {
 		...includedBasicDeployment.config_info,
 		clawdi_cloud_environments: { hermes: includedEnvironmentId },
@@ -416,7 +421,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(activeCard.locator("img")).toHaveCount(1);
 	await expect(activeCard.locator('[data-slot="compute-subscription-identity"] a')).toHaveAttribute(
 		"href",
-		/\/agents\/hdep_active\/settings\?.*settings=billing-plan/,
+		new RegExp(`/agents/${activeEnvironmentId}/settings\\?.*settings=billing-plan`),
 	);
 	await expect(activeCard.getByText("Card", { exact: true })).toBeVisible();
 	await expect(activeCard.getByText("$190.00/yr", { exact: true })).toBeVisible();
@@ -637,6 +642,7 @@ test("agent settings uses compact canonical subscription management", async ({
 		deployments: [
 			{
 				...paidBasicDeployment,
+				agent_id: paidEnvironmentId,
 				config_info: {
 					...paidBasicDeployment.config_info,
 					clawdi_cloud_environments: { hermes: paidEnvironmentId },
@@ -727,7 +733,7 @@ test("agent settings uses compact canonical subscription management", async ({
 		],
 	});
 
-	await gotoHostedAgentSettings(page, paidEnvironmentId, "Basic", "?source=on-clawdi&d=hdep_paid");
+	await gotoHostedAgentSettings(page, paidEnvironmentId, "Basic");
 	await page.goto(`${page.url()}&subscription_action=start_new`);
 	await expect(page.getByRole("dialog", { name: "Choose a paid subscription" })).toHaveCount(0);
 	await expect.poll(() => new URL(page.url()).searchParams.has("subscription_action")).toBe(false);
@@ -759,7 +765,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(activeCard.getByRole("button", { name: "Manage", exact: true })).toBeVisible();
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
 
-	await gotoHostedAgentSettings(page, "hdep_cancel_pending", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(cancelPendingBasicDeployment), "Basic");
 	const cancelingCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
@@ -771,7 +777,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(cancelingCard.getByRole("button", { name: "Resume subscription" })).toBeEnabled();
 	await expectCardsFit(page.locator("body"));
 
-	await gotoHostedAgentSettings(page, "hdep_card_due", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(cardPastDueDeployment), "Basic");
 	const pastDueCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
@@ -796,7 +802,11 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(pastDueManagementDialog).toBeHidden();
 	await expectCardsFit(page.locator("body"));
 
-	await gotoHostedAgentSettings(page, "hdep_scheduled_downgrade", "Performance");
+	await gotoHostedAgentSettings(
+		page,
+		fixtureAgentId({ ...paidBasicDeployment, id: "hdep_scheduled_downgrade" }),
+		"Performance",
+	);
 	const scheduledDowngradeCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Performance compute" });
@@ -813,7 +823,11 @@ test("agent settings uses compact canonical subscription management", async ({
 	).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 
-	await gotoHostedAgentSettings(page, "hdep_card_action_required", "Basic");
+	await gotoHostedAgentSettings(
+		page,
+		fixtureAgentId({ ...paidBasicDeployment, id: "hdep_card_action_required" }),
+		"Basic",
+	);
 	const actionRequiredCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
@@ -845,7 +859,11 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(actionRequiredManagementDialog).toBeHidden();
 	await expectCardsFit(page.locator("body"));
 
-	await gotoHostedAgentSettings(page, "hdep_plan_change_pending", "Basic");
+	await gotoHostedAgentSettings(
+		page,
+		fixtureAgentId({ ...paidBasicDeployment, id: "hdep_plan_change_pending" }),
+		"Basic",
+	);
 	const pendingChangeCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
@@ -861,7 +879,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	await page.keyboard.press("Escape");
 	await expectCardsFit(page.locator("body"));
 
-	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(terminalFallbackDeployment), "Basic");
 	await page.goto(`${page.url()}&subscription_action=start_new`);
 	const routedCreateDialog = page.getByRole("dialog", { name: "Choose a paid subscription" });
 	await expect(routedCreateDialog).toBeVisible();
@@ -879,7 +897,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(fallbackCard.getByRole("button", { name: "Choose a subscription" })).toBeVisible();
 
 	await page.setViewportSize({ width: 1440, height: 900 });
-	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(includedBasicDeployment), "Basic");
 	const includedCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
@@ -913,7 +931,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	expect(mobileIncludedBox.height).toBeLessThan(200);
 	await includedCard.screenshot({ path: testInfo.outputPath("agent-compute-plan-mobile-320.png") });
 
-	await gotoHostedAgentSettings(page, "hdep_included_ineligible", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(ineligibleIncludedDeployment), "Basic");
 	const unavailableCard = page
 		.locator('[data-slot="compute-subscription-card"]')
 		.filter({ hasText: "Basic compute" });
@@ -1042,7 +1060,7 @@ test("terminal fallback selects reusable subscriptions and keeps the long dialog
 		await expect(sourceDialog).toBeHidden();
 	};
 	await page.setViewportSize(desktop);
-	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(terminalFallbackDeployment), "Basic");
 	let dialog = await openSourceDialog(desktop);
 	await expect(dialog.getByText("Active", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Canceling", { exact: true })).toBeVisible();

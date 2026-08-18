@@ -28,13 +28,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { agentRouteTargetsHostedDeployment } from "@/hosted/agent-route";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import type { AgentRouteQuery } from "@/lib/agent-routes";
-import { agentRouteSource, agentSkillDetailLink } from "@/lib/agent-routes";
+import { agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
@@ -46,7 +45,6 @@ type HostedWorkspaceSkillsPanelProps = {
 	agentId: string;
 	projectId: string;
 	routeSearch?: AgentRouteQuery;
-	deploymentSelector?: string | null;
 	pageHeader?: Omit<PageHeaderProps, "actions">;
 };
 
@@ -62,7 +60,6 @@ function HostedWorkspaceSkillsPanelContent({
 	agentId,
 	projectId,
 	routeSearch,
-	deploymentSelector,
 	pageHeader,
 }: HostedWorkspaceSkillsPanelProps) {
 	const api = useApi();
@@ -73,19 +70,10 @@ function HostedWorkspaceSkillsPanelContent({
 	const [installOpen, setInstallOpen] = useState(false);
 	const [repoInput, setRepoInput] = useState("");
 	const [installError, setInstallError] = useState<string | null>(null);
-	const deploymentResolution = useAgentDeployment(agentId, deploymentSelector);
+	const deploymentResolution = useAgentDeployment(agentId);
 	const deployment = deploymentResolution.deployment;
 	const deploymentId = deployment?.resource.id ?? null;
-	const requestedHostedAgent = agentRouteTargetsHostedDeployment(
-		agentId,
-		agentRouteSource(routeSearch),
-		deploymentSelector,
-	);
-	const isConnectedAgent =
-		deploymentResolution.membershipResolved &&
-		!deployment &&
-		deploymentResolution.ambiguousMatches.length === 0 &&
-		!requestedHostedAgent;
+	const isConnectedAgent = deploymentResolution.membershipResolved && !deployment;
 	const statusKey = ["hosted", "deployments", deploymentId, "skills"] as const;
 	const connectedAgent = $api.useQuery(
 		"get",

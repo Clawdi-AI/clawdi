@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { buildAppBreadcrumbTrail } from "@/components/app-breadcrumb-model";
 import type { BreadcrumbSegmentTitles } from "@/components/breadcrumb-title";
 
-const agentId = "agent-1";
+const agentId = "11111111-1111-4111-8111-111111111111";
 const workspaceId = "workspace-1";
 const projectId = "project-1";
-const deploymentSearch = { source: "on-clawdi", d: "deployment-1" };
+const obsoleteIdentitySearch = { source: "on-clawdi", d: "deployment-1" };
 
 function labels(
 	pathname: string,
@@ -77,14 +77,14 @@ describe("AppBreadcrumb semantic trail", () => {
 		};
 		expect(
 			labels(`/agents/${agentId}/skills/github%2Fissues`, {
-				search: { ...deploymentSearch, project: workspaceId },
+				search: { ...obsoleteIdentitySearch, project: workspaceId },
 				title: "GitHub Issues",
 				segmentTitles,
 			}),
 		).toEqual(["e2e-2", "Skills", "GitHub Issues"]);
 		expect(
 			labels(`/agents/${agentId}/vaults/production`, {
-				search: { ...deploymentSearch, project: workspaceId },
+				search: { ...obsoleteIdentitySearch, project: workspaceId },
 				title: "Production Keys",
 				segmentTitles,
 			}),
@@ -107,10 +107,10 @@ describe("AppBreadcrumb semantic trail", () => {
 		]);
 	});
 
-	test("preserves Hosted deployment context in every Agent parent link", () => {
+	test("removes obsolete Hosted identity state from every Agent parent link", () => {
 		const trail = buildAppBreadcrumbTrail({
 			pathname: `/agents/${agentId}/skills/github%2Fissues`,
-			search: { ...deploymentSearch, project: workspaceId },
+			search: { ...obsoleteIdentitySearch, project: workspaceId },
 			overrideTitle: "GitHub Issues",
 			segmentTitles: {
 				[`/agents/${agentId}`]: { title: "e2e-2" },
@@ -121,8 +121,8 @@ describe("AppBreadcrumb semantic trail", () => {
 			},
 		});
 		expect(trail.filter((item) => item.href).map((item) => item.href)).toEqual([
-			`/agents/${agentId}?source=on-clawdi&d=deployment-1`,
-			`/agents/${agentId}/project-access/${workspaceId}/skills?source=on-clawdi&d=deployment-1`,
+			`/agents/${agentId}?project=${workspaceId}`,
+			`/agents/${agentId}/project-access/${workspaceId}/skills?project=${workspaceId}`,
 		]);
 	});
 

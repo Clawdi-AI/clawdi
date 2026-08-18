@@ -97,10 +97,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import {
-	agentDeploymentRouteQuery,
-	agentDeploymentSelector,
 	agentProjectDetailHref,
 	agentProjectResourceHref,
+	agentRouteSearch,
 	agentSectionHref,
 	agentSectionLabel,
 	agentSectionLink,
@@ -239,13 +238,13 @@ export default function ProjectDetailPage({
 						scope.agentId,
 						projectId,
 						"skills",
-						agentDeploymentRouteQuery(scope.agentQuery),
+						agentRouteSearch(scope.agentQuery),
 					),
 					vaults: agentProjectResourceHref(
 						scope.agentId,
 						projectId,
 						"vaults",
-						agentDeploymentRouteQuery(scope.agentQuery),
+						agentRouteSearch(scope.agentQuery),
 					),
 				}
 			: {
@@ -272,8 +271,6 @@ export default function ProjectDetailPage({
 	const isWorkspace = isAgentScope && scopedBinding?.binding_type === "primary";
 	const isWorkspaceContext = isWorkspace || project?.kind === "environment";
 	const canManageProjectSkills = canManageSkills && !isWorkspace;
-	const deploymentSelector =
-		scope.kind === "agent" ? agentDeploymentSelector(scope.agentQuery) : null;
 	const pageReturnTarget: ResourceNavigationTarget =
 		focus && scope.kind === "agent"
 			? isWorkspace
@@ -896,7 +893,6 @@ export default function ProjectDetailPage({
 								agentId={scope.agentId}
 								projectId={project.id}
 								routeSearch={scope.agentQuery}
-								deploymentSelector={deploymentSelector}
 								pageHeader={focusedWorkspaceSkillsPageHeaderProps}
 							/>
 						</Suspense>

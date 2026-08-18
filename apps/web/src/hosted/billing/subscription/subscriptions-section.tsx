@@ -39,18 +39,22 @@ import { formatShortDate } from "@/lib/format";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-function subscriptionAgentHref(subscription: ComputeSubscriptionListItem): string | null {
-	if (subscription.is_orphan || !subscription.deployment_id) return null;
-	return agentSectionHref(subscription.deployment_id, "settings", {
-		source: "on-clawdi",
+function subscriptionAgentHref(
+	subscription: ComputeSubscriptionListItem,
+	deployment: HostedDeployment | undefined,
+): string | null {
+	if (subscription.is_orphan || !deployment) return null;
+	return agentSectionHref(deployment.agent_id, "settings", {
 		settings: "billing-plan",
 	});
 }
 
-function subscriptionStartNewHref(subscription: ComputeSubscriptionListItem): string | null {
-	if (subscription.is_orphan || !subscription.deployment_id) return null;
-	return agentSectionHref(subscription.deployment_id, "settings", {
-		source: "on-clawdi",
+function subscriptionStartNewHref(
+	subscription: ComputeSubscriptionListItem,
+	deployment: HostedDeployment | undefined,
+): string | null {
+	if (subscription.is_orphan || !deployment) return null;
+	return agentSectionHref(deployment.agent_id, "settings", {
 		settings: "billing-plan",
 		subscription_action: "start_new",
 	});
@@ -108,11 +112,13 @@ export function SubscriptionLoadMore({
 
 function SubscriptionRow({
 	subscription,
+	deployment,
 	agentTile,
 	management,
 	onPlanChange,
 }: {
 	subscription: ComputeSubscriptionListItem;
+	deployment?: HostedDeployment;
 	agentTile?: AgentTile;
 	management: ComputeSubscriptionManagementResult;
 	onPlanChange: (subscription: ComputeSubscriptionListItem) => void;
@@ -122,8 +128,8 @@ function SubscriptionRow({
 		label: lifecycle.badgeLabel,
 		tone: lifecycle.badgeTone,
 	});
-	const agentHref = subscriptionAgentHref(subscription);
-	const startNewHref = subscriptionStartNewHref(subscription);
+	const agentHref = subscriptionAgentHref(subscription, deployment);
+	const startNewHref = subscriptionStartNewHref(subscription, deployment);
 	const pendingPlanSlug = pendingComputePlanSlug(subscription);
 	const actions = resolveComputeSubscriptionActions({
 		entitlement: {
@@ -319,7 +325,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
 	const rows = subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [];
 	const orderedRows = sortLoadedSubscriptions(rows);
-	const agentTilesByDeploymentId = new Map(
+	const agentTilesByAgentId = new Map(
 		agentTiles
 			.filter((tile) => tile.source === "on-clawdi")
 			.map((tile) => [tile.id.toLowerCase(), tile] as const),
@@ -403,25 +409,29 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 						) : null}
 						{visibleRows.length ? (
 							<ul className="grid gap-3 lg:grid-cols-2">
-								{visibleRows.map((subscription) => (
-									<SubscriptionRow
-										key={subscription.subscription_id}
-										subscription={subscription}
-										agentTile={
-											subscription.deployment_id
-												? agentTilesByDeploymentId.get(subscription.deployment_id.toLowerCase())
-												: undefined
-										}
-										management={subscriptionManagement(
-											subscription,
-											subscription.deployment_id
-												? deploymentsById.get(subscription.deployment_id.toLowerCase())
-												: undefined,
-											managementOptions,
-										)}
-										onPlanChange={openPlanChange}
-									/>
-								))}
+								{visibleRows.map((subscription) => {
+									const deployment = subscription.deployment_id
+										? deploymentsById.get(subscription.deployment_id.toLowerCase())
+										: undefined;
+									return (
+										<SubscriptionRow
+											key={subscription.subscription_id}
+											subscription={subscription}
+											deployment={deployment}
+											agentTile={
+												deployment
+													? agentTilesByAgentId.get(deployment.agent_id.toLowerCase())
+													: undefined
+											}
+											management={subscriptionManagement(
+												subscription,
+												deployment,
+												managementOptions,
+											)}
+											onPlanChange={openPlanChange}
+										/>
+									);
+								})}
 							</ul>
 						) : (
 							<EmptyState

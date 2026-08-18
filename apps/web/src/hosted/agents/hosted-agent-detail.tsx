@@ -105,7 +105,6 @@ import {
 	useUnsavedNavigationState,
 } from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { isCloudEnvId } from "@/hosted/agent-route";
 import { DeploymentCancelAction } from "@/hosted/agents/deployment-cancel-action";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
@@ -295,6 +294,7 @@ import {
 	agentSectionLink,
 	agentSessionDetailLink,
 	HOSTED_AGENT_SECTION_IDS,
+	isAgentRouteId,
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
@@ -455,7 +455,7 @@ export function HostedAgentDetail({
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
-	const cloudEnvironmentId = isCloudEnvId(environmentId);
+	const cloudAgentId = isAgentRouteId(environmentId);
 	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
 	const agentQuery = $api.useQuery(
 		"get",
@@ -464,7 +464,7 @@ export function HostedAgentDetail({
 			params: { path: { agent_id: environmentId } },
 		},
 		{
-			enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+			enabled: cloudAgentId && deploymentProjectionQueryable,
 			refetchInterval: (query) =>
 				missingProjectionRefetchInterval(
 					query.state.error,
@@ -475,7 +475,7 @@ export function HostedAgentDetail({
 		},
 	);
 	const projection = resolveHostedAgentProjection({
-		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+		enabled: cloudAgentId && deploymentProjectionQueryable,
 		data: agentQuery.data,
 		error: agentQuery.error,
 		isPending: agentQuery.isPending,
@@ -601,7 +601,7 @@ export function HostedAgentDetail({
 							agentId={environmentId}
 							routeSearch={routeSearch}
 							deployment={deployment}
-							agent={isCloudEnvId(environmentId) ? agent : null}
+							agent={isAgentRouteId(environmentId) ? agent : null}
 							projectionStatus={projection.status}
 							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
@@ -676,7 +676,7 @@ export function HostedAgentDetail({
 								isChecking={isCheckingDeployment || isCheckingProjection}
 								onCheckAgain={() => {
 									onCheckDeploymentAgain();
-									if (cloudEnvironmentId) void checkProjectionAgain();
+									if (cloudAgentId) void checkProjectionAgain();
 								}}
 							/>
 						)
@@ -2626,7 +2626,7 @@ function ChannelsTab({
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId), true);
+	const linked = useAgentChannelLinks(environmentId, isAgentRouteId(environmentId), true);
 	const agentLinksQueryKey = agentChannelLinksQueryOptions(openApi, environmentId).queryKey;
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const deleteChannel = useDeleteChannel();

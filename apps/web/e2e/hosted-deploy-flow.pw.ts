@@ -76,7 +76,9 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 	const createBody = (await createdResponse).request().postDataJSON() as { runtime?: string };
 	expect(createBody.runtime).toBe("openclaw");
 
-	await expect(page).toHaveURL(/\/agents\/hdep_dev_/);
+	await expect(page).toHaveURL(
+		/\/agents\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+	);
 	await expect(page.getByText("Starting").first()).toBeVisible();
 
 	await page.goto("/deploy");

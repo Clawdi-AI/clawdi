@@ -9,7 +9,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	type AgentRouteSearch,
-	agentDeploymentRouteQuery,
+	agentRouteSearch,
 	agentSectionHref,
 	agentVaultDetailHref,
 } from "@/lib/agent-routes";
@@ -30,7 +30,7 @@ function AgentVaultDetailRoute() {
 	const search = Route.useSearch();
 	const projectId =
 		typeof search.project === "string" && search.project.trim() ? search.project.trim() : null;
-	const returnHref = agentSectionHref(id, "projects", agentDeploymentRouteQuery(search));
+	const returnHref = agentSectionHref(id, "projects", agentRouteSearch(search));
 
 	if (!projectId) {
 		return (
@@ -71,10 +71,10 @@ function LegacyAgentVaultProjectCanonicalizer({
 	const blockingError = shouldBlockQueryError(bindings.error, bindings.data)
 		? bindings.error
 		: null;
-	const projectsHref = agentSectionHref(agentId, "projects", agentDeploymentRouteQuery(search));
+	const projectsHref = agentSectionHref(agentId, "projects", agentRouteSearch(search));
 	const targetHref = projectId
 		? agentVaultDetailHref(agentId, slug, search.vault, {
-				...agentDeploymentRouteQuery(search),
+				...agentRouteSearch(search),
 				project: projectId,
 			})
 		: projectsHref;

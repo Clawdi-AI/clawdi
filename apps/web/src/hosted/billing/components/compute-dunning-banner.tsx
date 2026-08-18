@@ -40,14 +40,12 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	const transactionsLink = (
 		<Link to="." search={{ ...routeSearch, settings: "billing-wallet" }} hash="transactions" />
 	);
-	const startNewHref = agentSectionHref(deployment.resource.id, "settings", {
+	const startNewHref = agentSectionHref(deployment.agent_id, "settings", {
 		...routeSearch,
-		source: "on-clawdi",
 		subscription_action: "start_new",
 	});
-	const checkChangeHref = agentSectionHref(deployment.resource.id, "settings", {
+	const checkChangeHref = agentSectionHref(deployment.agent_id, "settings", {
 		...routeSearch,
-		source: "on-clawdi",
 		settings: "billing-plan",
 		subscription_action: undefined,
 	});

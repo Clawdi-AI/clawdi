@@ -74,7 +74,7 @@ describe("selectUnifiedAgentList", () => {
 		const legacy = env("22222222-2222-4222-8222-222222222222", "legacy-env");
 		const connected = env("33333333-3333-4333-8333-333333333333", "connected-env");
 		const hostedTile: AgentTile = {
-			id: "dep_failed",
+			id: claimed.id,
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
@@ -92,18 +92,18 @@ describe("selectUnifiedAgentList", () => {
 		});
 
 		expect(selection.tiles.map((tile) => [tile.id, tile.source])).toEqual([
-			["dep_failed", "on-clawdi"],
+			[claimed.id, "on-clawdi"],
 			[legacy.id, "legacy-hosted"],
 			[connected.id, "self-managed"],
 		]);
-		expect(selection.tiles.some((tile) => tile.id === claimed.id)).toBe(false);
+		expect(selection.tiles.filter((tile) => tile.id === claimed.id)).toHaveLength(1);
 	});
 
 	test("keeps known hosted membership but withholds connected classification while ownership is unresolved", () => {
 		const claimed = env("11111111-1111-4111-8111-111111111111", "claimed-cloud-env");
 		const connected = env("33333333-3333-4333-8333-333333333333", "connected-env");
 		const hostedTile: AgentTile = {
-			id: "dep_starting",
+			id: claimed.id,
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
@@ -120,7 +120,7 @@ describe("selectUnifiedAgentList", () => {
 			showLegacyAgents: true,
 		});
 
-		expect(selection.tiles.map((tile) => tile.id)).toEqual(["dep_starting"]);
+		expect(selection.tiles.map((tile) => tile.id)).toEqual([claimed.id]);
 		expect(selection.connectedTiles).toEqual([]);
 		expect(selection.membershipResolved).toBe(false);
 	});
@@ -179,11 +179,11 @@ describe("selectUnifiedAgentList", () => {
 		const claimed = env("11111111-1111-4111-8111-111111111111", "claimed-cloud-env");
 		const unknown = env("33333333-3333-4333-8333-333333333333", "unknown-projection");
 		const hostedTile: AgentTile = {
-			id: "dep_running",
+			id: claimed.id,
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
-			href: `/agents/${claimed.id}?source=on-clawdi&d=dep_running`,
+			href: `/agents/${claimed.id}`,
 			env: claimed,
 		};
 		const selection = selectUnifiedAgentList({
@@ -196,7 +196,7 @@ describe("selectUnifiedAgentList", () => {
 		});
 
 		expect(selection.tiles.map((tile) => [tile.id, tile.source])).toEqual([
-			["dep_running", "on-clawdi"],
+			[claimed.id, "on-clawdi"],
 		]);
 		expect(selection.connectedTiles).toEqual([]);
 		expect(selection.membershipResolved).toBe(false);
@@ -223,6 +223,7 @@ describe("selectUnifiedAgentList", () => {
 		const projected = env("44444444-4444-4444-8444-444444444444", "deleted-hosted-env");
 		const deleted = hostedDeploymentFixture({
 			id: "dep_deleted",
+			agentId: projected.id,
 			status: "deleted",
 			cloudEnvironments: { openclaw: projected.id },
 		});

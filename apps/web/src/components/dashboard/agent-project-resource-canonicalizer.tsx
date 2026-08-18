@@ -12,8 +12,8 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	type AgentRouteSearch,
-	agentDeploymentRouteQuery,
 	agentProjectResourceHref,
+	agentRouteSearch,
 	agentSectionHref,
 } from "@/lib/agent-routes";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -31,11 +31,7 @@ export function AgentProjectResourceCanonicalizer({
 	resource: ProjectResourceSection;
 	routeSearch: AgentRouteSearch;
 }) {
-	const projectsHref = agentSectionHref(
-		agentId,
-		"projects",
-		agentDeploymentRouteQuery(routeSearch),
-	);
+	const projectsHref = agentSectionHref(agentId, "projects", agentRouteSearch(routeSearch));
 	return (
 		<AgentResourceRouteGate agentId={agentId} returnHref={projectsHref} returnLabel="Projects">
 			<CanonicalizeProjectResource
@@ -74,12 +70,7 @@ function CanonicalizeProjectResource({
 		? bindings.error
 		: null;
 	const targetHref = resolvedProjectId
-		? agentProjectResourceHref(
-				agentId,
-				resolvedProjectId,
-				resource,
-				agentDeploymentRouteQuery(routeSearch),
-			)
+		? agentProjectResourceHref(agentId, resolvedProjectId, resource, agentRouteSearch(routeSearch))
 		: projectsHref;
 	const canCanonicalize = bindings.data !== undefined;
 	const isLatestTarget = useCommittedRouteIsLatestTarget();

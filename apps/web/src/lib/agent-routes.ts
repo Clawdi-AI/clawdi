@@ -7,8 +7,6 @@ export { CONNECTED_AGENT_SECTION_IDS, HOSTED_AGENT_SECTION_IDS } from "@/lib/nav
 
 export type RouteSearchParamsRecord = Record<string, string | string[] | undefined>;
 export type AgentRouteSearch = Record<string, unknown> & {
-	source?: string;
-	d?: string;
 	tab?: string;
 	project?: string;
 	vault?: string;
@@ -21,8 +19,6 @@ export type AgentRouteQuery =
 	| AgentRouteSearch
 	| null
 	| undefined;
-
-export const AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY = "d";
 
 const AGENT_SECTION_SEGMENTS = {
 	overview: "",
@@ -181,14 +177,19 @@ function agentRouteSearchParams(query?: AgentRouteQuery): URLSearchParams {
 	return params;
 }
 
-function agentRouteSearch(query?: AgentRouteQuery): AgentRouteSearch | undefined {
+/** Retain page state while excluding obsolete Hosted identity query keys. */
+export function agentRouteSearch(query?: AgentRouteQuery): AgentRouteSearch | undefined {
 	if (query && typeof query === "object" && !(query instanceof URLSearchParams)) {
 		const search = { ...query };
 		delete search.tab;
+		delete search.source;
+		delete search.d;
 		return Object.keys(search).length > 0 ? search : undefined;
 	}
 	const params = agentRouteSearchParams(query);
 	params.delete("tab");
+	params.delete("source");
+	params.delete("d");
 	const search: AgentRouteSearch = defaultParseSearch(params.toString());
 	return Object.keys(search).length > 0 ? search : undefined;
 }
@@ -203,15 +204,16 @@ function subscriptionAction(value: unknown): AgentRouteSearch["subscription_acti
 
 /** Validate the shared agent-route search boundary while retaining additive query state. */
 export function validateAgentRouteSearch(search: Record<string, unknown>): AgentRouteSearch {
-	return {
+	const validated: AgentRouteSearch = {
 		...search,
-		source: optionalSearchString(search.source),
-		d: optionalSearchString(search.d),
 		tab: optionalSearchString(search.tab),
 		project: optionalSearchString(search.project),
 		vault: optionalSearchString(search.vault),
 		subscription_action: subscriptionAction(search.subscription_action),
 	};
+	delete validated.source;
+	delete validated.d;
+	return validated;
 }
 
 const LEGACY_AGENT_TAB_SECTIONS: Readonly<Record<string, AgentSectionId>> = {
@@ -249,27 +251,6 @@ export function legacyAgentRoute(
 	};
 }
 
-export function agentDeploymentSelector(query?: AgentRouteQuery): string | null {
-	const selector = agentRouteSearchParams(query).get(AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY)?.trim();
-	return selector || null;
-}
-
-export function agentRouteSource(query?: AgentRouteQuery): string | null {
-	return agentRouteSearchParams(query).get("source")?.trim() || null;
-}
-
-export function agentDeploymentRouteQuery(
-	query?: AgentRouteQuery,
-): RouteSearchParamsRecord | undefined {
-	const params = agentRouteSearchParams(query);
-	const selector = agentDeploymentSelector(params);
-	if (!selector) return undefined;
-	return {
-		source: params.get("source") || undefined,
-		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: selector,
-	};
-}
-
 export function agentRouteQueryString(query?: AgentRouteQuery): string {
 	if (query && typeof query === "object" && !(query instanceof URLSearchParams)) {
 		return defaultStringifySearch(agentRouteSearch(query) ?? {})
@@ -278,6 +259,8 @@ export function agentRouteQueryString(query?: AgentRouteQuery): string {
 	}
 	const params = agentRouteSearchParams(query);
 	params.delete("tab");
+	params.delete("source");
+	params.delete("d");
 	return params.toString().replace(/\+/g, "%20");
 }
 
@@ -311,17 +294,6 @@ export function agentSectionLink(
 		params: { id: agentId, section: agentSectionSegment(section) },
 		search,
 	});
-}
-
-export function bindAgentDeploymentSearch(
-	search: AgentRouteSearch,
-	deploymentId: string,
-): AgentRouteSearch {
-	return {
-		...search,
-		source: "on-clawdi",
-		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: deploymentId,
-	};
 }
 
 function agentDetailHref(path: string, query?: AgentRouteQuery): string {
@@ -502,4 +474,10 @@ function safeDecodeURIComponent(value: string): string {
 	} catch {
 		return value;
 	}
+}
+
+const AGENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isAgentRouteId(value: string): boolean {
+	return AGENT_ID_RE.test(value);
 }

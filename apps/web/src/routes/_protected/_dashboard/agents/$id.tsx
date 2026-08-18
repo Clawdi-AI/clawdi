@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { createFileRoute, notFound, Outlet, redirect } from "@tanstack/react-router";
 import {
 	agentConnectorDetailLink,
 	agentMemoryDetailLink,
@@ -9,6 +9,7 @@ import {
 	agentSessionDetailLink,
 	agentSkillDetailLink,
 	agentVaultDetailLink,
+	isAgentRouteId,
 	legacyAgentRoute,
 	parseAgentPathname,
 	validateAgentRouteSearch,
@@ -17,6 +18,7 @@ import {
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 	validateSearch: validateAgentRouteSearch,
 	beforeLoad: ({ params, search, location }) => {
+		if (!isAgentRouteId(params.id)) throw notFound();
 		const currentRoute = parseAgentPathname(location.pathname);
 		const fallbackSection =
 			currentRoute && agentRouteIdsEqual(currentRoute.agentId, params.id)

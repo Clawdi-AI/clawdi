@@ -33,7 +33,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { agentDeploymentRouteQuery, agentSectionHref } from "@/lib/agent-routes";
+import { agentRouteSearch, agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
@@ -72,7 +72,7 @@ export function SessionDetailContent({
 	// the context the user is still looking at.
 	const { search: routeSearch } = useCommittedLocation();
 	const sessionsHref = agentId
-		? agentSectionHref(agentId, "sessions", agentDeploymentRouteQuery(routeSearch))
+		? agentSectionHref(agentId, "sessions", agentRouteSearch(routeSearch))
 		: "/sessions";
 	const deleteSession = $api.useMutation("delete", "/v1/sessions/{session_id}", {
 		onSuccess: () => {
