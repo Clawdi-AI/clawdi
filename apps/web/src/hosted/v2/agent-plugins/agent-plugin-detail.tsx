@@ -266,20 +266,21 @@ function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }
 			</DetailPanel>
 		);
 	}
-	const servers = Object.entries(entry.components.mcpServers).sort(([left], [right]) =>
+	const skills = entry.components.skills;
+	const servers = Object.keys(entry.components.mcpServers).sort((left, right) =>
 		left.localeCompare(right),
 	);
 	return (
 		<DetailPanel className="space-y-4">
 			<PanelHeading />
-			<div className="divide-y">
-				{entry.components.skills.map((skill) => (
-					<ComponentRow key={`skill:${skill}`} icon={BookOpen} label="Skill" name={skill} />
-				))}
-				{servers.map(([name]) => (
-					<ComponentRow key={`mcp:${name}`} icon={Server} label="MCP server" name={name} />
-				))}
-			</div>
+			{skills.length === 0 && servers.length === 0 ? (
+				<p className="text-sm text-muted-foreground">This plugin has no listed components.</p>
+			) : (
+				<>
+					<ComponentGroup icon={BookOpen} label="Skills" names={skills} />
+					<ComponentGroup icon={Server} label="MCP servers" names={servers} />
+				</>
+			)}
 		</DetailPanel>
 	);
 }
@@ -293,21 +294,28 @@ function PanelHeading() {
 	);
 }
 
-function ComponentRow({
+function ComponentGroup({
 	icon: Icon,
 	label,
-	name,
+	names,
 }: {
 	icon: typeof BookOpen;
 	label: string;
-	name: string;
+	names: readonly string[];
 }) {
+	if (names.length === 0) return null;
 	return (
-		<div className="flex min-w-0 items-start gap-3 py-3 first:pt-0 last:pb-0">
-			<Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-			<div className="min-w-0 flex-1">
-				<div className="text-xs text-muted-foreground">{label}</div>
-				<code className="mt-0.5 block break-all text-sm">{name}</code>
+		<div className="space-y-2">
+			<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+				<Icon className="size-3.5" />
+				{label}
+			</div>
+			<div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+				{names.map((name) => (
+					<code key={name} className="min-w-0 break-all text-sm">
+						{name}
+					</code>
+				))}
 			</div>
 		</div>
 	);
