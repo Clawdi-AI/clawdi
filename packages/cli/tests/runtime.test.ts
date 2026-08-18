@@ -4033,7 +4033,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(readFileSync(configPath, "utf-8")).not.toMatch(/managed/i);
 	});
 
-	it("bootstraps Codex through the user npm prefix when managed config is projected", () => {
+	it("migrates the legacy Codex shim before bootstrapping the user npm prefix", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4043,6 +4043,15 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const legacyCodexMarker = join(home, ".local", "share", "clawdi", "codex", "user-data");
 		const legacyCodexCommand = join(home, ".local", "bin", "codex");
 		const legacyCodexRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
+		const partialPackageJson = join(
+			home,
+			".local",
+			"lib",
+			"node_modules",
+			"@openai",
+			"codex",
+			"package.json",
+		);
 		const userConfigBytes = Buffer.from('# user config\nmodel = "user-model"\n');
 		const previousPath = process.env.PATH;
 		const previousUmask = process.umask(0o077);
@@ -4050,8 +4059,10 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		mkdirSync(dirname(userCodexConfig), { recursive: true });
 		mkdirSync(dirname(legacyCodexMarker), { recursive: true });
 		mkdirSync(dirname(legacyCodexCommand), { recursive: true });
+		mkdirSync(dirname(partialPackageJson), { recursive: true });
 		writeFileSync(userCodexConfig, userConfigBytes);
 		writeFileSync(legacyCodexMarker, "preserve\n");
+		writeFileSync(partialPackageJson, '{"version":"0.147.0"}\n');
 		writeFileSync(
 			legacyCodexCommand,
 			[
@@ -4080,6 +4091,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				"      ;;",
 				"  esac",
 				"done",
+				'test ! -e "$prefix/bin/codex"',
 				'mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@openai/codex"',
 				`printf '%s\\n' '{"version":"0.146.0"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
 				"cat > \"$prefix/bin/codex\" <<'SH'",
@@ -4157,7 +4169,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const npmArgs = readFileSync(npmArgsPath, "utf-8");
 		expect(npmArgs).toContain("@openai/codex@0.146.0");
 		expect(npmArgs).toContain(`${paths.userNpmPrefix}\n`);
-		expect(npmArgs).toContain("--force\n");
+		expect(npmArgs).not.toContain("--force\n");
 		expect(npmArgs).not.toContain("--cache\n");
 		const realBin = join(paths.userNpmPrefix, "bin", "codex");
 		const packageJson = join(paths.userNpmPrefix, "lib/node_modules/@openai/codex/package.json");

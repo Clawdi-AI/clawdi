@@ -564,6 +564,49 @@ async function expectSidebarNavigationGroups(
 	await expect(groups.locator('[data-slot="sidebar-group-label"]:empty')).toHaveCount(0);
 }
 
+test("sidebar shortcut preserves the desktop focus rail and the mobile trigger closes the drawer", async ({
+	page,
+}) => {
+	await stubDashboardApi(page);
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await page.goto("/");
+
+	const trigger = page.getByRole("button", { name: "Toggle Sidebar" });
+	const separator = page.locator('header [data-slot="separator"]');
+	const focusRail = page.getByTestId("app-sidebar-agent-rail");
+	const navigationPane = page.getByTestId("app-sidebar");
+	const desktopSidebar = page.locator('[data-slot="sidebar"][data-state]');
+	await expect(trigger).toBeHidden();
+	await expect(separator).toBeHidden();
+	await expect(focusRail).toBeVisible();
+	await expect(desktopSidebar).toHaveAttribute("data-state", "expanded");
+	await expect(page.getByTestId("app-sidebar-agent-tile")).toHaveCount(2);
+	await page.keyboard.press("ControlOrMeta+b");
+	await expect(desktopSidebar).toHaveAttribute("data-state", "collapsed");
+	await expect
+		.poll(async () => {
+			const [railBox, paneBox] = await Promise.all([
+				focusRail.boundingBox(),
+				navigationPane.boundingBox(),
+			]);
+			if (!railBox || !paneBox) return false;
+			return paneBox.x + paneBox.width <= railBox.x + 1;
+		})
+		.toBe(true);
+	await expect(focusRail).toBeVisible();
+
+	await page.setViewportSize({ width: 320, height: 568 });
+	await expect(trigger).toBeVisible();
+	await expect(separator).toBeVisible();
+	await expect(separator).toHaveCSS("width", "1px");
+	await expect(separator).toHaveCSS("height", "16px");
+	await trigger.click();
+	const drawer = page.getByRole("dialog", { name: "Sidebar" });
+	await expect(drawer).toBeVisible();
+	await drawer.getByRole("button", { name: "Close" }).click();
+	await expect(drawer).toBeHidden();
+});
+
 test("Console and connected agents use the scoped navigation grammar", async ({ page }) => {
 	await stubDashboardApi(page);
 	await page.goto("/");

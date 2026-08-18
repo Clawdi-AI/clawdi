@@ -61,15 +61,11 @@ if [[ "${MODE}" == "--fetch-only" ]]; then
 fi
 
 if [[ "${MODE}" != "--run-only" ]]; then
-	for runtime in "${RUNTIMES[@]}"; do
-		docker buildx build \
-			--file "${FIXTURE_ROOT}/Dockerfile" \
-			--target "${runtime}" \
-			--tag "${IMAGE_PREFIX}:${runtime}-local" \
-			--build-context "e2e_artifacts=${artifact_root}" \
-			--load \
-			"${REPO_ROOT}"
-	done
+	(
+		cd "${REPO_ROOT}"
+		E2E_ARTIFACT_DIR="${artifact_root}" E2E_IMAGE_PREFIX="${IMAGE_PREFIX}" \
+			docker buildx bake --file "${FIXTURE_ROOT}/docker-bake.hcl" --load
+	)
 fi
 
 if [[ "${MODE}" == "--build-only" ]]; then
