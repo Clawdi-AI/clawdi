@@ -1,7 +1,6 @@
 import type { components } from "@clawdi/shared/api";
 import type { StatusTone } from "@/components/ui/status-badge";
 import type { HostedRuntime } from "@/hosted/runtimes";
-import { runtimeDisplayName } from "@/hosted/runtimes";
 
 export type AgentPluginCatalogEntry = components["schemas"]["PluginCatalogEntryResponse"];
 export type AgentPluginDesiredState = components["schemas"]["AgentPluginDesiredStateResponse"];
@@ -18,36 +17,21 @@ export type AgentPluginInstallability = {
 	reason: string | null;
 };
 
-const CONVERGENCE_ORDER: Record<AgentPluginDesiredState["convergence"], number> = {
-	failed: 0,
-	not_observed: 1,
-	installed: 2,
-};
-
 export function buildAgentPluginInventory(
 	catalog: readonly AgentPluginCatalogEntry[],
 	desired: readonly AgentPluginDesiredState[],
-): { installed: AgentPluginInventoryItem[]; available: AgentPluginInventoryItem[] } {
+): AgentPluginInventoryItem[] {
 	const catalogByName = new Map(catalog.map((entry) => [entry.name, entry]));
-	const installedNames = new Set(desired.map((entry) => entry.plugin_name));
-	const installed = desired
-		.map((entry) => ({
-			name: entry.plugin_name,
-			catalog: catalogByName.get(entry.plugin_name) ?? null,
-			desired: entry,
-		}))
-		.sort(
-			(left, right) =>
-				CONVERGENCE_ORDER[left.desired.convergence] -
-					CONVERGENCE_ORDER[right.desired.convergence] ||
-				pluginDisplayName(left).localeCompare(pluginDisplayName(right)),
-		);
-	const available = catalog
-		.filter((entry) => !installedNames.has(entry.name))
-		.map((entry) => ({ name: entry.name, catalog: entry, desired: null }))
-		.sort((left, right) => pluginDisplayName(left).localeCompare(pluginDisplayName(right)));
+	const desiredByName = new Map(desired.map((entry) => [entry.plugin_name, entry]));
+	const names = new Set([...catalogByName.keys(), ...desiredByName.keys()]);
 
-	return { installed, available };
+	return [...names]
+		.map((name) => ({
+			name,
+			catalog: catalogByName.get(name) ?? null,
+			desired: desiredByName.get(name) ?? null,
+		}))
+		.sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export function pluginDisplayName(item: AgentPluginInventoryItem): string {
@@ -91,8 +75,8 @@ export function agentPluginInstallability(
 	if (!entry.runtimes.includes(runtime)) {
 		return {
 			installable: false,
-			label: "Incompatible",
-			reason: `This plugin does not support ${runtimeDisplayName(runtime)}.`,
+			label: "Unavailable",
+			reason: "This plugin is not available for this agent.",
 		};
 	}
 	return { installable: true, label: "Install", reason: null };
@@ -108,19 +92,19 @@ export function agentPluginStatusPresentation(desired: AgentPluginDesiredState):
 			return {
 				label: "Installed",
 				tone: "success",
-				description: "The agent confirmed this installation.",
+				description: "This plugin is ready to use.",
 			};
 		case "failed":
 			return {
-				label: "Failed",
+				label: "Install failed",
 				tone: "destructive",
 				description: observationErrorDescription(desired.observation_error_code),
 			};
 		case "not_observed":
 			return {
-				label: "Not observed",
+				label: "Installing",
 				tone: "warning",
-				description: "The agent has not confirmed this installation.",
+				description: "This plugin is being installed. You can leave this page while it finishes.",
 			};
 	}
 }
@@ -163,12 +147,12 @@ function observationErrorDescription(
 		case "reconcile_failed":
 			return "The agent could not apply this plugin.";
 		case "receipt_missing":
-			return "The agent did not report an installation receipt.";
+			return "The plugin could not be verified after setup.";
 		case "receipt_unreadable":
-			return "The agent could not read the installation receipt.";
+			return "The plugin installation could not be verified.";
 		case "receipt_mismatch":
-			return "The installed package does not match the requested plugin.";
+			return "The installed plugin does not match the requested version.";
 		default:
-			return "The agent could not confirm this installation.";
+			return "The plugin could not be set up. Remove it and try again.";
 	}
 }

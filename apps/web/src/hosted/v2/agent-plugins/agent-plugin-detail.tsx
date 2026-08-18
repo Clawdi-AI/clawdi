@@ -17,15 +17,12 @@ import { IconChip } from "@/components/icon-chip";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { HostedRuntime } from "@/hosted/runtimes";
-import { runtimeDisplayName } from "@/hosted/runtimes";
 import { identityFor } from "@/lib/identity";
-import { relativeTime } from "@/lib/utils";
 import type { AgentPluginPendingAction } from "./agent-plugin-card";
 import {
 	type AgentPluginCatalogEntry,
@@ -66,7 +63,7 @@ export function AgentPluginDetail({
 	const showCompatibilityWarning = Boolean(installability?.reason && (!item.desired || hasUpdate));
 
 	return (
-		<div data-hosted="true" data-v2="true" className="contents">
+		<div data-hosted="true" data-v2="true" className="space-y-6">
 			<Button variant="ghost" size="sm" className="w-fit" onClick={onBack}>
 				<ArrowLeft />
 				Back to Plugins
@@ -86,31 +83,17 @@ export function AgentPluginDetail({
 					</IconChip>
 				}
 				description={
-					item.catalog?.description ?? "This installed version is no longer listed in the Store."
+					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
 				titleAdornment={
-					status ? (
+					status && item.desired?.convergence === "installed" ? (
 						<StatusBadge status={status.tone} withDot>
 							{status.label}
 						</StatusBadge>
 					) : undefined
 				}
 				status={
-					<DetailMeta>
-						<span>v{pluginVersion(item)}</span>
-						{item.catalog?.publisher ? (
-							<>
-								<span>·</span>
-								<span>{item.catalog.publisher}</span>
-							</>
-						) : null}
-						{item.desired?.observed_at ? (
-							<>
-								<span>·</span>
-								<span>Observed {relativeTime(item.desired.observed_at)}</span>
-							</>
-						) : null}
-					</DetailMeta>
+					item.catalog?.publisher ? <DetailMeta>{item.catalog.publisher}</DetailMeta> : undefined
 				}
 				actions={
 					<PluginDetailActions
@@ -198,7 +181,7 @@ function PluginDetailActions({
 			{item.desired ? (
 				<ConfirmAction
 					title={`Remove ${pluginDisplayName(item)}?`}
-					description={<p>The agent will remove this plugin during reconciliation.</p>}
+					description={<p>The agent will remove the Skills and MCP servers from this plugin.</p>}
 					confirmLabel="Remove plugin"
 					destructive
 					onConfirm={() => onRemove(item)}
@@ -224,7 +207,7 @@ function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }
 			<DetailPanel className="space-y-3">
 				<PanelHeading />
 				<p className="text-sm text-muted-foreground">
-					Component details are unavailable for this historical installation.
+					Details are no longer available for this plugin.
 				</p>
 			</DetailPanel>
 		);
@@ -239,22 +222,10 @@ function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }
 				{entry.components.skills.map((skill) => (
 					<ComponentRow key={`skill:${skill}`} icon={BookOpen} label="Skill" name={skill} />
 				))}
-				{servers.map(([name, transport]) => (
-					<ComponentRow
-						key={`mcp:${name}`}
-						icon={Server}
-						label="MCP server"
-						name={name}
-						meta={transportLabel(transport)}
-					/>
+				{servers.map(([name]) => (
+					<ComponentRow key={`mcp:${name}`} icon={Server} label="MCP server" name={name} />
 				))}
 			</div>
-			<dl className="grid gap-x-6 gap-y-4 border-t pt-4 text-sm sm:grid-cols-2">
-				<DetailValue label="Package" value={entry.name} mono />
-				<DetailValue label="Category" value={entry.category} />
-				<DetailValue label="Runtimes" value={entry.runtimes.map(runtimeDisplayName).join(", ")} />
-				<DetailValue label="Languages" value={entry.languages.join(", ") || "Not specified"} />
-			</dl>
 		</DetailPanel>
 	);
 }
@@ -263,7 +234,7 @@ function PanelHeading() {
 	return (
 		<div className="flex items-center gap-2">
 			<Box className="size-4 text-muted-foreground" />
-			<h2 className="text-sm font-semibold">Components</h2>
+			<h2 className="text-sm font-semibold">Includes</h2>
 		</div>
 	);
 }
@@ -272,12 +243,10 @@ function ComponentRow({
 	icon: Icon,
 	label,
 	name,
-	meta,
 }: {
 	icon: typeof BookOpen;
 	label: string;
 	name: string;
-	meta?: string;
 }) {
 	return (
 		<div className="flex min-w-0 items-start gap-3 py-3 first:pt-0 last:pb-0">
@@ -286,29 +255,6 @@ function ComponentRow({
 				<div className="text-xs text-muted-foreground">{label}</div>
 				<code className="mt-0.5 block break-all text-sm">{name}</code>
 			</div>
-			{meta ? <Badge variant="outline">{meta}</Badge> : null}
 		</div>
 	);
-}
-
-function DetailValue({
-	label,
-	value,
-	mono = false,
-}: {
-	label: string;
-	value: string;
-	mono?: boolean;
-}) {
-	return (
-		<div className="min-w-0">
-			<dt className="text-xs text-muted-foreground">{label}</dt>
-			<dd className={mono ? "mt-1 break-all font-mono text-xs" : "mt-1 break-words"}>{value}</dd>
-		</div>
-	);
-}
-
-function transportLabel(transport: "stdio" | "streamable-http" | "sse"): string {
-	if (transport === "streamable-http") return "Streamable HTTP";
-	return transport === "sse" ? "SSE" : "stdio";
 }
