@@ -5,7 +5,7 @@ import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
-import { entityCardChassisClass } from "@/components/entity-card";
+import { ENTITY_CARD_GRID_CLASS, entityCardChassisClass } from "@/components/entity-card";
 import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -138,8 +138,14 @@ function SubscriptionRow({
 		label: lifecycle.badgeLabel,
 		tone: lifecycle.badgeTone,
 	});
-	const agentHref = subscriptionAgentHref(subscription);
-	const startNewHref = subscriptionStartNewHref(subscription);
+	const assignment = computeSubscriptionAssignment(subscription, reusableSubscriptionIds);
+	const deploymentBound = assignment === "assigned";
+	const agentHref = deploymentBound ? subscriptionAgentHref(subscription) : null;
+	const startNewHref = deploymentBound ? subscriptionStartNewHref(subscription) : null;
+	const recoveryTarget =
+		assignment === "available" && recovery.recoveryTarget?.kind === "start_new"
+			? null
+			: recovery.recoveryTarget;
 	const pendingPlanSlug = pendingComputePlanSlug(subscription);
 	const actions = resolveComputeSubscriptionActions({
 		entitlement: {
@@ -151,11 +157,11 @@ function SubscriptionRow({
 			paymentState: subscription.payment_state,
 			cancelAtPeriodEnd: subscription.cancel_at_period_end,
 			pendingPlanSlug,
-			isOrphan: subscription.is_orphan,
+			isOrphan: !deploymentBound,
 		},
 		management,
-		recoveryTarget: recovery.recoveryTarget,
-		hasPendingOperation: management.target?.projectedOperationName != null,
+		recoveryTarget,
+		hasPendingOperation: deploymentBound && management.target?.projectedOperationName != null,
 	});
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
@@ -165,7 +171,7 @@ function SubscriptionRow({
 			)
 		: null;
 	const recoveryNotice = (() => {
-		switch (recovery.recoveryTarget?.kind) {
+		switch (recoveryTarget?.kind) {
 			case "top_up":
 				return "Top up Wallet to settle the outstanding balance. Payment source changes apply to future renewals.";
 			case "invoice":
@@ -200,7 +206,6 @@ function SubscriptionRow({
 		scheduleFallback: recovery.schedule?.fallback ?? undefined,
 		includeSchedule: !isHistoricalAccountSubscription(subscription),
 	});
-	const assignment = computeSubscriptionAssignment(subscription, reusableSubscriptionIds);
 	const identity: ComputeSubscriptionIdentity =
 		assignment === "available"
 			? { kind: "available", label: "Available for a new agent" }
@@ -315,7 +320,7 @@ export function reusableInventoryState(
 
 function SubscriptionListSkeleton({ label = "Loading subscriptions" }: { label?: string }) {
 	return (
-		<div className="grid gap-3 lg:grid-cols-2" role="status">
+		<div className={ENTITY_CARD_GRID_CLASS.compact} role="status">
 			<span className="sr-only">{label}</span>
 			{Array.from({ length: 3 }, (_, index) => `subscription-skeleton-${index}`).map((key) => (
 				<div key={key} className={entityCardChassisClass({ variant: "compact" })}>
@@ -451,7 +456,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 							</div>
 						) : null}
 						{visibleRows.length ? (
-							<ul className="grid gap-3 lg:grid-cols-2">
+							<ul className={ENTITY_CARD_GRID_CLASS.compact}>
 								{visibleRows.map((subscription) => (
 									<SubscriptionRow
 										key={subscription.subscription_id}
