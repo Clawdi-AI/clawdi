@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse } from "yaml";
+
+interface WorkflowStep {
+	uses?: string;
+	with?: Record<string, unknown>;
+}
+
+interface WorkflowDocument {
+	permissions?: Record<string, string>;
+	jobs?: Record<string, { steps?: WorkflowStep[] }>;
+}
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const repoPath = (path: string): string => resolve(repoRoot, path);
@@ -9,6 +20,7 @@ const readPackageScripts = (path: string): Record<string, string> =>
 	JSON.parse(readRepoFile(path)).scripts;
 
 const clientWorkflow = readRepoFile(".github/workflows/client-ci.yml");
+const clientWorkflowDocument = parse(clientWorkflow) as WorkflowDocument;
 const cleanRunnerWorkflow = readRepoFile(".github/workflows/clean-test-runner-ci.yml");
 const setupBunAction = readRepoFile(".github/actions/setup-bun-ci/action.yml");
 const runner = readRepoFile("scripts/test.sh");
@@ -75,6 +87,16 @@ describe("client workflow contract", () => {
 		expect(clientWorkflow).toContain(
 			`cancel-in-progress: \${{ github.event_name == 'pull_request' }}`,
 		);
+		const changeSteps = clientWorkflowDocument.jobs?.changes?.steps ?? [];
+		expect(clientWorkflowDocument.permissions).toEqual({ contents: "read" });
+		expect(changeSteps.find((step) => step.uses === "actions/checkout@v7")?.with).toEqual({
+			"fetch-depth": 1,
+		});
+		expect(changeSteps.find((step) => step.uses === "dorny/paths-filter@v4")?.with).toMatchObject({
+			token: "",
+			base: `\${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}`,
+			ref: `\${{ github.event_name == 'push' && github.sha || '' }}`,
+		});
 
 		const typecheckTask = section(turboConfig, '\t\t"typecheck": {\n', '\t\t"lint": {\n');
 		expect(typecheckTask).toContain('"outputs": []');

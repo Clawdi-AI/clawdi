@@ -1119,9 +1119,13 @@ and the official [`config patch --stdin` contract](https://github.com/openclaw/o
 
 The local config patch also sets official shared-token auth, disables insecure
 and Host-header fallback modes, derives `gateway.controlUi.basePath` from the
-clean public URL, and includes that URL's origin in `allowedOrigins`. Device
-authentication remains on its official default; Clawdi does not project the
-retired `dangerouslyDisableDeviceAuth` setting.
+clean public URL, and includes that URL's origin in `allowedOrigins`. Clawdi
+probes the installed official `device-bootstrap` export before applying the
+patch. Legacy OpenClaw receives `dangerouslyDisableDeviceAuth: true` so its
+shared-token launch does not require device pairing. A version that supports
+the owner browser-bootstrap profile receives a JSON merge-patch `null` for that
+legacy field and keeps device authentication enabled for the official
+single-use bootstrap flow. A failed capability probe aborts convergence.
 The managed backend value, transient installer environment, and
 `openclaw.json` token must remain identical. The gateway unit does not receive
 an `OPENCLAW_GATEWAY_TOKEN` environment entry because runtime auth resolves the
@@ -1140,10 +1144,11 @@ single-use, ten-minute `browserUrl` after binding it to the deployment's clean
 HTTPS endpoint. The browser consumes the official `bootstrapToken` and
 `bootstrapProfile=owner` fragment, creates its signed device identity, and
 receives the durable owner credential without a manual pairing step. If the
-installed binary cannot issue that handoff, Hosted preserves the existing exact
-`#token=` launch for older deployments; OpenClaw then enforces that deployment's
-own device-auth policy. This fallback neither disables device auth nor approves
-pending devices, and Clawdi implements no parallel device-auth protocol.
+installed binary explicitly lacks `dashboard --json`, or returns the validated
+legacy JSON shape, Hosted preserves the exact `#token=` launch while the CLI's
+legacy patch disables device authentication. Other command, JSON, and handoff
+errors fail closed with no bare-URL fallback. Clawdi implements no parallel
+device-auth or device-approval protocol.
 
 OpenClaw persists the issued device credential in its own browser origin and
 reuses it when that browser later opens the clean dashboard URL. Clawdi records

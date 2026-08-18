@@ -1436,7 +1436,7 @@ function ConsoleTab({
 	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${isRunning}`;
 
 	const loadCredentials = useCallback(
-		async ({ allowDirectOpenOnFailure = false } = {}): Promise<RuntimeUiCredentials | null> => {
+		async (): Promise<RuntimeUiCredentials | null> => {
 			const requestVersion = requestVersionRef.current + 1;
 			requestVersionRef.current = requestVersion;
 			setIsCredentialLoading(true);
@@ -1453,17 +1453,15 @@ function ConsoleTab({
 					setCredentialError(
 						error instanceof Error ? error : new Error("Runtime UI credential request failed"),
 					);
-					setCredentialLoadState(
-						runtime === "openclaw" && allowDirectOpenOnFailure ? "ready" : "error",
-					);
-					if (!allowDirectOpenOnFailure) setIsOpenClawBootstrapPending(false);
+					setCredentialLoadState("error");
+					setIsOpenClawBootstrapPending(false);
 				}
 				return null;
 			} finally {
 				if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
 			}
 		},
-		[requestCredentials, runtime],
+		[requestCredentials],
 	);
 
 	const clearCredentials = useCallback(() => {
@@ -1491,7 +1489,7 @@ function ConsoleTab({
 			return;
 		}
 		setIsOpenClawBootstrapPending(true);
-		void loadCredentials({ allowDirectOpenOnFailure: true });
+		void loadCredentials();
 	}, [
 		clearCredentials,
 		credentialIdentity,
@@ -1835,6 +1833,7 @@ function RuntimeUiAccessDialog({
 	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
 	const accessHintStorageKey = hermesAccessHintStorageKey(deployment.resource.id);
 	const isOpenClawOpening = runtime === "openclaw" && isOpenClawBootstrapPending;
+	const isOpenClawUnavailable = runtime === "openclaw" && credentialError !== null;
 
 	const dismissAccessHint = useCallback(() => {
 		setAccessHintOpen(false);
@@ -1972,7 +1971,7 @@ function RuntimeUiAccessDialog({
 					type="button"
 					variant="outline"
 					size="sm"
-					disabled={isOpenClawOpening}
+					disabled={isOpenClawOpening || isOpenClawUnavailable}
 					onClick={openRuntime}
 					aria-label={`Open ${label} in new window`}
 				>
