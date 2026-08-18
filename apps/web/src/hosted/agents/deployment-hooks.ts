@@ -55,6 +55,7 @@ export function invalidateDeploymentSnapshots(qc: QueryClient) {
 
 export function invalidateDeploymentDeleteSnapshots(qc: QueryClient) {
 	invalidateDeploymentSnapshots(qc);
+	void qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
 	void qc.invalidateQueries({ queryKey: billingKeys.reusableSubscriptions });
 }
 

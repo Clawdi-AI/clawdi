@@ -176,6 +176,7 @@ export function EntityCardLink({
 }
 
 type EntityChoiceCardVariant = "card" | "compact";
+type EntityChoiceDetailsPlacement = "stacked" | "trailing" | "responsive";
 
 export function entityChoiceCardClass({
 	variant = "card",
@@ -579,7 +580,7 @@ export function EntityChoiceCard({
 	/** Optional detail block below the description (for example, pricing). */
 	details?: ReactNode;
 	/** Keep dense, comparable details beside the main copy when space allows. */
-	detailsPlacement?: "stacked" | "trailing";
+	detailsPlacement?: EntityChoiceDetailsPlacement;
 	/** Trailing badge in the title row (e.g. "Default", an auth chip). */
 	badge?: ReactNode;
 	selected?: boolean;
@@ -599,6 +600,9 @@ export function EntityChoiceCard({
 				className={cn(
 					"min-w-0 flex-1",
 					details && detailsPlacement === "trailing" && "flex items-start gap-3",
+					details &&
+						detailsPlacement === "responsive" &&
+						"flex flex-col gap-2 @md/choice:flex-row @md/choice:items-start @md/choice:gap-3",
 				)}
 			>
 				<div className="min-w-0 flex-1">
@@ -628,7 +632,11 @@ export function EntityChoiceCard({
 					<div
 						className={cn(
 							"min-w-0",
-							detailsPlacement === "trailing" ? "max-w-[45%] shrink-0" : "mt-2",
+							detailsPlacement === "trailing"
+								? "max-w-[45%] shrink-0"
+								: detailsPlacement === "responsive"
+									? "w-full @md/choice:w-auto @md/choice:max-w-[52%] @md/choice:shrink-0"
+									: "mt-2",
 						)}
 					>
 						{details}
@@ -636,9 +644,17 @@ export function EntityChoiceCard({
 				) : null}
 			</div>
 			{selected ? (
-				<Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+				<Check
+					className={cn(
+						"mt-0.5 size-4 shrink-0 text-primary",
+						detailsPlacement === "responsive" && "hidden @md/choice:block",
+					)}
+					aria-hidden
+				/>
 			) : detailsPlacement === "trailing" ? (
 				<span className="size-4 shrink-0" aria-hidden />
+			) : detailsPlacement === "responsive" ? (
+				<span className="hidden size-4 shrink-0 @md/choice:block" aria-hidden />
 			) : null}
 		</>
 	);
@@ -647,7 +663,7 @@ export function EntityChoiceCard({
 		selected,
 		interactive: Boolean(onClick || href),
 		disabled,
-		className,
+		className: cn(detailsPlacement === "responsive" && "@container/choice", className),
 	});
 	if (href) {
 		return (

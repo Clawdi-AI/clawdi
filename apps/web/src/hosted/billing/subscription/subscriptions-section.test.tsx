@@ -5,6 +5,10 @@ type SubscriptionsSectionModule =
 	typeof import("@/hosted/billing/subscription/subscriptions-section");
 
 let sortLoadedSubscriptions: SubscriptionsSectionModule["sortLoadedSubscriptions"] | null = null;
+let computeSubscriptionAssignment:
+	| SubscriptionsSectionModule["computeSubscriptionAssignment"]
+	| null = null;
+let reusableInventoryState: SubscriptionsSectionModule["reusableInventoryState"] | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -12,6 +16,8 @@ beforeAll(async () => {
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/billing/subscription/subscriptions-section");
 	sortLoadedSubscriptions = module.sortLoadedSubscriptions;
+	computeSubscriptionAssignment = module.computeSubscriptionAssignment;
+	reusableInventoryState = module.reusableInventoryState;
 });
 
 function subscription(
@@ -38,6 +44,35 @@ function subscription(
 }
 
 describe("SubscriptionsSection", () => {
+	test("waits for canonical availability and only blocks errors without cached data", () => {
+		if (!reusableInventoryState) throw new Error("Subscriptions helpers were not loaded");
+		expect([
+			reusableInventoryState(null, undefined),
+			reusableInventoryState(new Error("offline"), undefined),
+			reusableInventoryState(null, []),
+			reusableInventoryState(new Error("background refresh failed"), []),
+		]).toEqual(["loading", "error", "ready", "ready"]);
+	});
+
+	test("lets canonical reusable inventory override stale deployment and orphan projections", () => {
+		if (!computeSubscriptionAssignment) throw new Error("Subscriptions helpers were not loaded");
+		const staleAssigned = subscription("reusable", "active");
+		const staleOrphan = {
+			...subscription("orphan", "active"),
+			deployment_id: null,
+			is_orphan: true,
+		};
+
+		expect(
+			computeSubscriptionAssignment(staleAssigned, new Set([staleAssigned.subscription_id])),
+		).toBe("available");
+		expect(computeSubscriptionAssignment(staleOrphan, new Set([staleOrphan.subscription_id]))).toBe(
+			"available",
+		);
+		expect(computeSubscriptionAssignment(staleAssigned, new Set())).toBe("assigned");
+		expect(computeSubscriptionAssignment(staleOrphan, new Set())).toBe("unavailable");
+	});
+
 	test("stably prioritizes loaded current subscriptions without mutating query data", () => {
 		if (!sortLoadedSubscriptions) throw new Error("Subscriptions helpers were not loaded");
 		const loaded = [
