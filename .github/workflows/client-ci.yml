@@ -206,6 +206,7 @@ jobs:
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: astral-sh/setup-uv@v9.0.0
       - name: Install Chromium for Playwright
         # Run from apps/web so bunx resolves the workspace-pinned playwright.
         # At the repo root the bin is absent and bunx silently downloads the
@@ -215,6 +216,8 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - name: OSS web e2e
         run: bun run --cwd apps/web e2e
+      - name: Hosted route contract e2e
+        run: bun run --cwd apps/web e2e:hosted-routes
 
   whatsapp-native-e2e:
     needs: changes

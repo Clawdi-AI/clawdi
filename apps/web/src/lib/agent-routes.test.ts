@@ -96,7 +96,7 @@ describe("agent routes", () => {
 		);
 	});
 
-	it("preserves only deployment identity while navigating agent sections", () => {
+	it("canonicalizes Hosted sections while preserving additive query state", () => {
 		const query = "source=on-clawdi&d=dep_older&checkout=success";
 
 		expect(agentDeploymentSelector(query)).toBe("dep_older");
@@ -104,8 +104,8 @@ describe("agent routes", () => {
 			source: "on-clawdi",
 			d: "dep_older",
 		});
-		expect(agentSectionHref("agent 1", "settings", agentDeploymentRouteQuery(query))).toBe(
-			"/agents/agent%201/settings?source=on-clawdi&d=dep_older",
+		expect(agentSectionHref("agent 1", "settings", query)).toBe(
+			"/agents/dep_older/settings?checkout=success",
 		);
 	});
 
@@ -198,20 +198,26 @@ describe("agent routes", () => {
 	});
 
 	it("owns canonical section navigation with typed Router options", () => {
-		expect(agentSectionLink("agent 1", "overview", { d: "hdep_1" })).toEqual({
+		expect(
+			agentSectionLink("agent 1", "overview", {
+				source: "on-clawdi",
+				d: "hdep_1",
+				confirmed: true,
+			}),
+		).toEqual({
 			to: "/agents/$id",
-			params: { id: "agent 1" },
-			search: { d: "hdep_1" },
+			params: { id: "hdep_1" },
+			search: { confirmed: true },
 		});
 		expect(agentSectionLink("agent 1", "skills", { d: "hdep_1" })).toEqual({
 			to: "/agents/$id/skills",
-			params: { id: "agent 1" },
-			search: { d: "hdep_1" },
+			params: { id: "hdep_1" },
+			search: undefined,
 		});
 		expect(agentSectionLink("agent 1", "channels", { d: "hdep_1" })).toEqual({
 			to: "/agents/$id/$section",
-			params: { id: "agent 1", section: "channel-links" },
-			search: { d: "hdep_1" },
+			params: { id: "hdep_1", section: "channel-links" },
+			search: undefined,
 		});
 	});
 

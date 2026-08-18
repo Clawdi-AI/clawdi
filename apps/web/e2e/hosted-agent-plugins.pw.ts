@@ -13,7 +13,35 @@ const deployment = {
 	},
 };
 
-test("Agent Plugins stays closed without the per-user capability", async ({ page }) => {
+test("Agent Plugins waits for a Cloud Agent projection", { tag: "@hosted-route-contract" }, async ({
+	page,
+}) => {
+	const invalidCloudAgentRequests: string[] = [];
+	page.on("request", (request) => {
+		const path = new URL(request.url()).pathname;
+		if (path.startsWith(`/v1/agents/${DEPLOYMENT_ID}`)) invalidCloudAgentRequests.push(path);
+	});
+	await stubHostedApi(page, {
+		canUseAgentPluginsUI: true,
+		deployments: [
+			{
+				...deployment,
+				config_info: {
+					...deployment.config_info,
+					clawdi_cloud_environments: {},
+				},
+			},
+		],
+	});
+
+	await page.goto(`/agents/${DEPLOYMENT_ID}/plugins`);
+	await expect(page.getByText("Plugins unavailable", { exact: true })).toBeVisible();
+	expect(invalidCloudAgentRequests).toEqual([]);
+});
+
+test("Agent Plugins stays closed without the per-user capability", {
+	tag: "@hosted-route-contract",
+}, async ({ page }) => {
 	await stubHostedApi(page, {
 		deployments: [deployment],
 	});
@@ -22,11 +50,13 @@ test("Agent Plugins stays closed without the per-user capability", async ({ page
 	await expect(page.getByRole("link", { name: "Plugins", exact: true })).toHaveCount(0);
 
 	await page.goto(`/agents/${AGENT_ID}/plugins?source=on-clawdi&d=${DEPLOYMENT_ID}`);
-	await expect(page).toHaveURL(new RegExp(`/agents/${AGENT_ID}\\?`));
+	await expect(page).toHaveURL(new RegExp(`/agents/${DEPLOYMENT_ID}$`));
 	await expect(page.getByRole("link", { name: "Plugins", exact: true })).toHaveCount(0);
 });
 
-test("Agent Plugins opens and installs with the per-user capability", async ({ page }) => {
+test("Agent Plugins opens and installs with the per-user capability", {
+	tag: "@hosted-route-contract",
+}, async ({ page }) => {
 	let installed = false;
 	const desired = {
 		installation_id: "22222222-2222-4222-8222-222222222222",
@@ -89,6 +119,7 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 
 	await page.goto(`/agents/${AGENT_ID}?source=on-clawdi&d=${DEPLOYMENT_ID}`);
 	await page.getByRole("link", { name: "Plugins", exact: true }).click();
+	await expect(page).toHaveURL(`/agents/${DEPLOYMENT_ID}/plugins`);
 	await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
 	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();
 

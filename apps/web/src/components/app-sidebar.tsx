@@ -1752,7 +1752,9 @@ export function AppSidebar({
 		activeAgentTile?.name ??
 		(activeAgentKind === "connected" && activeAgent ? agentDisplayName(activeAgent) : null);
 	useSetBreadcrumbSegmentTitle(
-		activeAgentId ? agentSectionHref(activeAgentId) : null,
+		activeAgentId
+			? agentSectionHref(activeAgentId, "overview", agentDeploymentRouteQuery(routeSearch))
+			: null,
 		activeAgentName,
 	);
 	const activeSection = agentRoute?.section ?? "overview";

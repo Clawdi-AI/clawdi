@@ -1,4 +1,5 @@
 import { cleanWalletStripeReturnUrl } from "@/hosted/billing/wallet/stripe-return";
+import { agentSectionHref } from "@/lib/agent-routes";
 
 export type PaymentOutcome = "succeeded" | "processing";
 
@@ -13,6 +14,9 @@ export function buildSubscriptionPaymentReturnUrl(
 	deploymentId: string,
 ): string {
 	const url = new URL(cleanWalletStripeReturnUrl(currentHref));
+	url.pathname = agentSectionHref(deploymentId, "settings");
+	url.searchParams.delete("source");
+	url.searchParams.delete("d");
 	for (const key of [
 		"checkout",
 		"checkout_session_id",

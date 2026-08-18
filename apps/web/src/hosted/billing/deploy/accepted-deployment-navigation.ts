@@ -55,7 +55,7 @@ export async function navigateToAcceptedDeployment({
 	void queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 
 	await navigate({
-		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+		href: agentSectionHref(deploymentId),
 		replace,
 	});
 }

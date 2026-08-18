@@ -258,6 +258,14 @@ export function agentRouteSource(query?: AgentRouteQuery): string | null {
 	return agentRouteSearchParams(query).get("source")?.trim() || null;
 }
 
+/** Remove legacy Hosted selectors once the deployment id owns the route. */
+export function canonicalAgentSectionSearch(search: AgentRouteSearch): AgentRouteSearch {
+	const canonical = { ...search };
+	delete canonical.source;
+	delete canonical.d;
+	return canonical;
+}
+
 export function agentDeploymentRouteQuery(
 	query?: AgentRouteQuery,
 ): RouteSearchParamsRecord | undefined {
@@ -286,10 +294,11 @@ export function agentSectionHref(
 	section: AgentSectionId = "overview",
 	query?: AgentRouteQuery,
 ): string {
-	const encodedAgentId = encodeURIComponent(agentId);
+	const target = agentSectionTarget(agentId, query);
+	const encodedAgentId = encodeURIComponent(target.agentId);
 	const segment = agentSectionSegment(section);
 	const path = segment ? `/agents/${encodedAgentId}/${segment}` : `/agents/${encodedAgentId}`;
-	const queryString = agentRouteQueryString(query);
+	const queryString = agentRouteQueryString(target.search);
 	return queryString ? `${path}?${queryString}` : path;
 }
 
@@ -299,18 +308,40 @@ export function agentSectionLink(
 	section: AgentSectionId = "overview",
 	query?: AgentRouteQuery,
 ) {
-	const search = agentRouteSearch(query);
+	const target = agentSectionTarget(agentId, query);
 	if (section === "overview") {
-		return linkOptions({ to: "/agents/$id", params: { id: agentId }, search });
+		return linkOptions({
+			to: "/agents/$id",
+			params: { id: target.agentId },
+			search: target.search,
+		});
 	}
 	if (section === "skills") {
-		return linkOptions({ to: "/agents/$id/skills", params: { id: agentId }, search });
+		return linkOptions({
+			to: "/agents/$id/skills",
+			params: { id: target.agentId },
+			search: target.search,
+		});
 	}
 	return linkOptions({
 		to: "/agents/$id/$section",
-		params: { id: agentId, section: agentSectionSegment(section) },
-		search,
+		params: { id: target.agentId, section: agentSectionSegment(section) },
+		search: target.search,
 	});
+}
+
+function agentSectionTarget(
+	agentId: string,
+	query?: AgentRouteQuery,
+): { agentId: string; search: AgentRouteSearch | undefined } {
+	const search = agentRouteSearch(query);
+	const deploymentId = agentDeploymentSelector(query);
+	if (!deploymentId) return { agentId, search };
+	const canonical = canonicalAgentSectionSearch(search ?? {});
+	return {
+		agentId: deploymentId,
+		search: Object.keys(canonical).length > 0 ? canonical : undefined,
+	};
 }
 
 export function bindAgentDeploymentSearch(

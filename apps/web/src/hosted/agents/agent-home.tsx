@@ -22,10 +22,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import {
-	agentRouteTargetsHostedDeployment,
-	canonicalHostedAgentSearch,
-} from "@/hosted/agent-route";
+import { agentRouteTargetsHostedDeployment } from "@/hosted/agent-route";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -43,6 +40,7 @@ import {
 	agentRouteSource,
 	agentSectionLink,
 	CONNECTED_AGENT_SECTION_IDS,
+	canonicalAgentSectionSearch,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
@@ -136,7 +134,7 @@ export function AgentHome({
 					...agentSectionLink(
 						deploymentId,
 						hostedSection ? section : "overview",
-						canonicalHostedAgentSearch(routeSearch),
+						canonicalAgentSectionSearch(routeSearch),
 					),
 					hash: true,
 					replace: true,
@@ -279,7 +277,7 @@ export function AgentHome({
 			matchedRuntime && isHostedRuntime(matchedRuntime)
 				? matchedRuntime
 				: defaultDeploymentRuntime(deployment);
-		const deploymentRouteSearch = canonicalHostedAgentSearch(routeSearch);
+		const deploymentRouteSearch = canonicalAgentSectionSearch(routeSearch);
 		return (
 			<HostedAgentDetail
 				environmentId={resolvedEnvId}
@@ -388,7 +386,7 @@ function DeploymentChooser({
 							{...agentSectionLink(
 								deployment.resource.id,
 								section,
-								canonicalHostedAgentSearch(routeSearch),
+								canonicalAgentSectionSearch(routeSearch),
 							)}
 							aria-label={`Open ${name}`}
 							className={cn(

@@ -1,5 +1,5 @@
 import type { DeployComponents } from "@clawdi/shared/api";
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import {
 	basicPlan,
 	cancelPendingBasicDeployment,
@@ -19,6 +19,13 @@ import {
 
 type Subscription = DeployComponents["schemas"]["V2ComputeSubscriptionListItem"];
 type ReusableSubscription = DeployComponents["schemas"]["V2ComputeReusableSubscriptionItem"];
+
+function route(
+	title: string,
+	body: (args: { page: Page }, testInfo: TestInfo) => Promise<void> | void,
+) {
+	test(title, { tag: "@hosted-route-contract" }, body);
+}
 
 const longAgentName =
 	"Production research agent with an intentionally long name for compact subscription layouts";
@@ -293,9 +300,7 @@ async function expectSourceDialogGeometry(
 	}
 }
 
-test("subscription cards preserve pagination and reveal loaded history", async ({
-	page,
-}, testInfo) => {
+route("subscription cards use canonical Hosted links", async ({ page }, testInfo) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
 	const fixPaymentRequests: string[] = [];
@@ -416,7 +421,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(activeCard.locator("img")).toHaveCount(1);
 	await expect(activeCard.locator('[data-slot="compute-subscription-identity"] a')).toHaveAttribute(
 		"href",
-		/\/agents\/hdep_active\/settings\?.*settings=billing-plan/,
+		"/agents/hdep_active/settings?settings=billing-plan",
 	);
 	await expect(activeCard.getByText("Card", { exact: true })).toBeVisible();
 	await expect(activeCard.getByText("$190.00/yr", { exact: true })).toBeVisible();

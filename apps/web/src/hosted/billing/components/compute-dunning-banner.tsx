@@ -9,7 +9,7 @@ import { ComputeSubscriptionActionList } from "@/hosted/billing/subscription/com
 import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
 import { activePlanChangeOperationName } from "@/hosted/billing/subscription/plan-change.logic";
 import { pendingComputePlanSlug } from "@/hosted/billing/subscription/subscription-utils";
-import { agentSectionHref } from "@/lib/agent-routes";
+import { agentSectionHref, canonicalAgentSectionSearch } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { useProductAccess } from "@/lib/product-access";
 import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
@@ -37,17 +37,16 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	const primaryAction = actions[0] ?? null;
 	const hostedAccess = useProductAccess();
 	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
+	const canonicalRouteSearch = canonicalAgentSectionSearch(routeSearch);
 	const transactionsLink = (
 		<Link to="." search={{ ...routeSearch, settings: "billing-wallet" }} hash="transactions" />
 	);
 	const startNewHref = agentSectionHref(deployment.resource.id, "settings", {
-		...routeSearch,
-		source: "on-clawdi",
+		...canonicalRouteSearch,
 		subscription_action: "start_new",
 	});
 	const checkChangeHref = agentSectionHref(deployment.resource.id, "settings", {
-		...routeSearch,
-		source: "on-clawdi",
+		...canonicalRouteSearch,
 		settings: "billing-plan",
 		subscription_action: undefined,
 	});

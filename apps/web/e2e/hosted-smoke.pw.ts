@@ -1,5 +1,5 @@
 import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
-import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
+import { expect, type Locator, type Page, type Route, type TestInfo, test } from "@playwright/test";
 import type { ManagedModelCatalogItem, WalletState } from "../src/hosted/billing/contracts";
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
 import {
@@ -14,6 +14,13 @@ type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress
 type PlanChangeKind = PlanChangeProgress["changeKind"];
 type PlanChangeBillingEffect = PlanChangeProgress["billingEffect"];
 type PlanChangeQuote = DeployComponents["schemas"]["V2ComputePlanChangeQuoteResponse"];
+
+function route(
+	title: string,
+	body: (args: { page: Page }, testInfo: TestInfo) => Promise<void> | void,
+) {
+	test(title, { tag: "@hosted-route-contract" }, body);
+}
 
 function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingEffect {
 	switch (changeKind) {
@@ -1400,7 +1407,7 @@ async function stubCompletedStripeCheckout(page: Page) {
 					getSession: () => session,
 					confirm: async () => ({
 						type: "success",
-						session: { status: { type: "complete" } },
+						session: { status: { type: "complete", paymentStatus: "paid" } },
 					}),
 				};
 				return {
@@ -2938,7 +2945,7 @@ test("Help opens the hosted Mava live chat", async ({ page }) => {
 	await expect.poll(() => page.evaluate(() => window.__mavaLiveChatToggleCalls)).toBe(1);
 });
 
-test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
+route("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
 	const sessionRequests: string[] = [];
 	const aiProviderRequests: string[] = [];
 	const managedModelRequests: string[] = [];
@@ -3096,6 +3103,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
 	await expect(recentSessions.locator("article")).toHaveCount(3);
 	await expect(recentSessions).not.toContainText("Review risks");
+	await expect(recentSessions.getByRole("link").first()).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/sessions/hosted-overview-session-1?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
 	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
 		cards.map((card) => {
 			const rect = card.getBoundingClientRect();
@@ -3224,6 +3235,24 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expectInlineSidebarStatus(sidebar, "hosted");
 	await expect(sidebar.getByText("Paused", { exact: true })).toHaveCount(0);
 	await expect(sidebar.getByText(/last seen/i)).toHaveCount(0);
+	const hostedSectionPaths = {
+		Overview: "",
+		Sessions: "/sessions",
+		Projects: "/project-access",
+		Memories: "/memories",
+		Connectors: "/connectors",
+		"Agent Interface": "/console",
+		Terminal: "/terminal",
+		Channels: "/channel-links",
+		"AI Providers": "/model-provider",
+		Settings: "/settings",
+	};
+	for (const [label, path] of Object.entries(hostedSectionPaths)) {
+		await expect(sidebar.getByRole("link", { name: label, exact: true })).toHaveAttribute(
+			"href",
+			`/agents/${railHostedDeployment.id}${path}`,
+		);
+	}
 	for (const section of ["Projects", "Memories", "Connectors", "Skills", "Vaults"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
 	}
@@ -3350,7 +3379,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	});
 	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 1280, height: 1600 });
-	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview.png"),
+		fullPage: true,
+	});
 	await page.locator("html").evaluate((element) => element.classList.add("dark"));
 	await expect(page.locator("html")).toHaveClass(/dark/);
 	await page.waitForTimeout(250);
@@ -3741,11 +3773,9 @@ test("header Wallet slot stays stable from unresolved access through a long bala
 	}
 });
 
-test("hosted mixed agent rail uses whole semantic buttons for context switching", async ({
-	page,
-	browser,
-	baseURL,
-}) => {
+test("hosted mixed agent rail uses whole semantic buttons for context switching", {
+	tag: "@hosted-route-contract",
+}, async ({ page, browser, baseURL }) => {
 	if (!baseURL) throw new Error("Playwright baseURL is required for the hosted rail test.");
 	const agentOrderRequests: string[] = [];
 	await stubHostedApi(page, {
@@ -3806,9 +3836,7 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	await consoleLink.click();
 	await expect(page).toHaveURL("/");
 	await cloudButton.click();
-	await expect(page).toHaveURL(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-	);
+	await expect(page).toHaveURL("/agents/hdep_rail_cloud");
 	await connectedButton.click();
 	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
 	await consoleLink.click();
@@ -4012,9 +4040,9 @@ test("Wallet auto-reload authorizes and replaces its dedicated card responsively
 	);
 });
 
-test("paid checkout navigates on deployment acceptance without LRO convergence", async ({
-	page,
-}) => {
+test("paid checkout navigates on deployment acceptance without LRO convergence", {
+	tag: "@hosted-route-contract",
+}, async ({ page }) => {
 	const checkoutRequests: string[] = [];
 	const deploymentRequestReads: string[] = [];
 	const operationPollRequests: string[] = [];
@@ -4057,7 +4085,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await expect(checkoutDialog.getByText("Mock secure payment form", { exact: true })).toBeVisible();
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
 
-	await expect(page).toHaveURL(/\/agents\/hdep_created/);
+	await expect(page).toHaveURL("/agents/hdep_created");
 	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("Setup usually takes about 7–10 minutes.", { exact: false }),
@@ -4157,9 +4185,7 @@ test("hosted locale settings submit canonical deployment PATCH", async ({ page }
 	});
 });
 
-test("env-keyed failed overview is action-free while Settings keeps management", async ({
-	page,
-}, testInfo) => {
+route("legacy Hosted UUID canonicalizes before management", async ({ page }, testInfo) => {
 	const restartRequests: string[] = [];
 	const deleteRequests: string[] = [];
 	const failedRestartRead = mutationDeploymentReadFixture(failedMissingProjectionDeployment);
@@ -4183,7 +4209,8 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe("hdep_failed_projection");
+	await expect.poll(() => new URL(page.url()).pathname).toBe("/agents/hdep_failed_projection");
+	expect(new URL(page.url()).search).toBe("");
 	// The overview renders from deployment authority even while the agent
 	// projection 404s; internal failure details never reach the page.
 	await expect(main.getByText("Recent sessions", { exact: true })).toBeVisible();
@@ -4597,7 +4624,7 @@ for (const firstTimeViewport of [
 		);
 		await expect(agentInterfaceHint.getByRole("link", { name: "Agent Interface" })).toHaveAttribute(
 			"href",
-			`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+			`/agents/${runningMissingProjectionDeployment.id}/console`,
 		);
 		await expect(agentInterfaceHint.locator('[data-slot="alert"]')).toHaveCount(0);
 		await expect(connectDialog.locator("[data-agent-link-warning]")).toHaveCount(0);

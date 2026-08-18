@@ -14,10 +14,9 @@ async function clearFreeDeployments(request: APIRequestContext) {
 			.map((deployment) => request.delete(`${DEPLOY_API}/v2/deployments/${deployment.id}`)),
 	);
 }
-test("deploy wizard creates one selected runtime and renders mock status transitions", async ({
-	page,
-	request,
-}) => {
+test("deploy wizard creates one selected runtime and renders mock status transitions", {
+	tag: "@hosted-route-contract",
+}, async ({ page, request }) => {
 	await clearFreeDeployments(request);
 	const errors = collectBrowserErrors(page);
 	await stubCloudApi(page);
@@ -76,7 +75,7 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 	const createBody = (await createdResponse).request().postDataJSON() as { runtime?: string };
 	expect(createBody.runtime).toBe("openclaw");
 
-	await expect(page).toHaveURL(/\/agents\/hdep_dev_/);
+	await expect(page).toHaveURL(/\/agents\/hdep_dev_[^/?#]+$/);
 	await expect(page.getByText("Starting").first()).toBeVisible();
 
 	await page.goto("/deploy");

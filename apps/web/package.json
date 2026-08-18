@@ -14,6 +14,7 @@
 		"test:internal": "bun test",
 		"e2e": "playwright test",
 		"e2e:hosted": "playwright test --config=playwright.hosted.config.ts",
+		"e2e:hosted-routes": "playwright test --config=playwright.hosted.config.ts --grep @hosted-route-contract",
 		"generate-api": "../../scripts/openapi-typescript.sh http://localhost:8000/openapi.json -o ../../packages/shared/src/api/api.generated.ts",
 		"generate-deploy-api": "../../scripts/generate-deploy-api.sh",
 		"generate-deploy-api:live": "DEPLOY_OPENAPI_SOURCE=https://api.clawdi.ai/openapi.json ../../scripts/generate-deploy-api.sh"

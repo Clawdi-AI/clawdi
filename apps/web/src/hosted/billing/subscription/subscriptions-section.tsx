@@ -42,7 +42,6 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 function subscriptionAgentHref(subscription: ComputeSubscriptionListItem): string | null {
 	if (subscription.is_orphan || !subscription.deployment_id) return null;
 	return agentSectionHref(subscription.deployment_id, "settings", {
-		source: "on-clawdi",
 		settings: "billing-plan",
 	});
 }
@@ -50,7 +49,6 @@ function subscriptionAgentHref(subscription: ComputeSubscriptionListItem): strin
 function subscriptionStartNewHref(subscription: ComputeSubscriptionListItem): string | null {
 	if (subscription.is_orphan || !subscription.deployment_id) return null;
 	return agentSectionHref(subscription.deployment_id, "settings", {
-		source: "on-clawdi",
 		settings: "billing-plan",
 		subscription_action: "start_new",
 	});

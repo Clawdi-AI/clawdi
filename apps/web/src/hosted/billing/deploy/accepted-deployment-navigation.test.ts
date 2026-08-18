@@ -79,7 +79,7 @@ describe("accepted deployment navigation", () => {
 			existing,
 			authoritative,
 		]);
-		expect(navigations).toEqual([{ href: "/agents/hdep_created?source=on-clawdi", replace: true }]);
+		expect(navigations).toEqual([{ href: "/agents/hdep_created", replace: true }]);
 		expect(queryClient.getQueryData<typeof agentsProjection>(["get", "/v1/agents"])).toBe(
 			agentsProjection,
 		);

@@ -70,7 +70,7 @@ describe("resource navigation scopes", () => {
 		);
 
 		expect(resourceCollectionTarget(scope, "projects")).toEqual({
-			href: "/agents/agent%201/project-access?source=on-clawdi&d=deployment%201",
+			href: "/agents/deployment%201/project-access",
 			label: "Projects",
 		});
 		expect(projectDetailHrefForScope(scope, "project 1")).toBe(
@@ -84,11 +84,11 @@ describe("resource navigation scopes", () => {
 			label: "Vaults",
 		});
 		expect(resourceCollectionTarget(scope, "memories")).toEqual({
-			href: "/agents/agent%201/memories?source=on-clawdi&d=deployment%201",
+			href: "/agents/deployment%201/memories",
 			label: "Memories",
 		});
 		expect(resourceCollectionTarget(scope, "connectors")).toEqual({
-			href: "/agents/agent%201/connectors?source=on-clawdi&d=deployment%201",
+			href: "/agents/deployment%201/connectors",
 			label: "Connectors",
 		});
 		expect(memoryDetailHrefForScope(scope, "memory 1")).toBe(

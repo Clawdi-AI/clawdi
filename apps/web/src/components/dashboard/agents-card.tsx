@@ -66,10 +66,9 @@ export interface AgentTile {
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** Primary click target. Points at the in-app env detail page
-	 * (`/agents/{env_id}`). Hosted tiles derive this identity from deployment
-	 * config even while the cloud-api projection is absent. A hosted deployment
-	 * with no minted env id remains non-navigable. */
+	/** Primary click target. Connected and legacy tiles use Agent identity;
+	 * Hosted tiles use deployment identity and remain navigable while their
+	 * cloud-api projection is absent. */
 	href: string | null;
 	external?: boolean;
 	/** Optional remediation target for legacy status dialogs. */

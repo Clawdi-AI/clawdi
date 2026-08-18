@@ -458,16 +458,17 @@ export function HostedAgentDetail({
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
-	const cloudEnvironmentId = isCloudEnvId(environmentId);
-	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
+	const cloudEnvironmentId = isCloudEnvId(environmentId) ? environmentId : null;
+	const cloudEnvironmentQueryId = cloudEnvironmentId ?? "";
+	const sessionsQueryable = canQueryHostedAgentSessions(cloudEnvironmentQueryId);
 	const agentQuery = $api.useQuery(
 		"get",
 		"/v1/agents/{agent_id}",
 		{
-			params: { path: { agent_id: environmentId } },
+			params: { path: { agent_id: cloudEnvironmentQueryId } },
 		},
 		{
-			enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+			enabled: cloudEnvironmentId !== null && deploymentProjectionQueryable,
 			refetchInterval: (query) =>
 				missingProjectionRefetchInterval(
 					query.state.error,
@@ -478,7 +479,7 @@ export function HostedAgentDetail({
 		},
 	);
 	const projection = resolveHostedAgentProjection({
-		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+		enabled: cloudEnvironmentId !== null && deploymentProjectionQueryable,
 		data: agentQuery.data,
 		error: agentQuery.error,
 		isPending: agentQuery.isPending,
@@ -508,18 +509,23 @@ export function HostedAgentDetail({
 	const contentRouteSearch = bindAgentDeploymentSearch(routeSearch, deployment.resource.id);
 	const terminalHref = agentSectionHref(routeAgentId, "terminal", routeSearch);
 	const scopedSessionLink = (sessionId: string) => ({
-		...agentSessionDetailLink(environmentId, sessionId, contentRouteSearch),
+		...agentSessionDetailLink(cloudEnvironmentQueryId, sessionId, contentRouteSearch),
 	});
 
 	const sessions = useQuery({
-		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 3 }),
+		...sessionListQueryOptions($api, {
+			environment_id: cloudEnvironmentQueryId,
+			page_size: 3,
+		}),
 		enabled: activeTab === "overview" && sessionsQueryable,
 	});
 
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
-	const resourceScope = agentResourceScope(environmentId, contentRouteSearch);
+	const resourceScope = cloudEnvironmentId
+		? agentResourceScope(cloudEnvironmentId, contentRouteSearch)
+		: null;
 	const showInitialDeploymentPage =
 		activeTab === "overview" &&
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
@@ -602,12 +608,12 @@ export function HostedAgentDetail({
 						/>
 					) : activeTab === "overview" ? (
 						<OverviewTab
-							agentId={environmentId}
+							agentId={cloudEnvironmentId}
 							routeAgentId={routeAgentId}
 							routeSearch={routeSearch}
 							contentRouteSearch={contentRouteSearch}
 							deployment={deployment}
-							agent={isCloudEnvId(environmentId) ? agent : null}
+							agent={agent}
 							projectionStatus={projection.status}
 							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
@@ -640,16 +646,28 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "sessions" ? (
 						<HostedAgentSessionsTab
-							environmentId={environmentId}
+							environmentId={cloudEnvironmentQueryId}
 							routeSearch={contentRouteSearch}
 						/>
 					) : null}
-					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
-					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
+					{activeTab === "memories" ? (
+						resourceScope ? (
+							<MemoriesSurface scope={resourceScope} />
+						) : (
+							<ProjectionDependentUnavailable label="Memories" />
+						)
+					) : null}
+					{activeTab === "connectors" ? (
+						resourceScope ? (
+							<ConnectorsSurface embedded scope={resourceScope} />
+						) : (
+							<ProjectionDependentUnavailable label="Connectors" />
+						)
+					) : null}
 					{activeTab === "projects" ? (
-						projection.status === "resolved" ? (
+						projection.status === "resolved" && cloudEnvironmentId ? (
 							<AgentProjectsTab
-								agentId={environmentId}
+								agentId={cloudEnvironmentId}
 								routeSearch={contentRouteSearch}
 								headerAdornment={<AgentSourceBadge source="hosted" compact />}
 								headerIcon={
@@ -661,21 +679,25 @@ export function HostedAgentDetail({
 						)
 					) : null}
 					{activeTab === "plugins" ? (
-						<AgentPluginsSurface agentId={environmentId} runtime={runtime} />
+						cloudEnvironmentId ? (
+							<AgentPluginsSurface agentId={cloudEnvironmentId} runtime={runtime} />
+						) : (
+							<ProjectionDependentUnavailable label="Plugins" />
+						)
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
 						<AiProviderTab
 							deployment={deployment}
 							runtime={runtime}
-							environmentId={environmentId}
+							environmentId={cloudEnvironmentId}
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "channels" ? (
 						!deploymentProjectionQueryable ? (
 							<StoppedAgentState deployment={deployment} />
-						) : projection.status === "resolved" ? (
+						) : projection.status === "resolved" && cloudEnvironmentId ? (
 							<ChannelsTab
-								environmentId={environmentId}
+								environmentId={cloudEnvironmentId}
 								agentType={runtime}
 								agentName={availableAgentTitle}
 								routeSearch={contentRouteSearch}
@@ -685,14 +707,14 @@ export function HostedAgentDetail({
 								isChecking={isCheckingDeployment || isCheckingProjection}
 								onCheckAgain={() => {
 									onCheckDeploymentAgain();
-									if (cloudEnvironmentId) void checkProjectionAgain();
+									if (cloudEnvironmentId !== null) void checkProjectionAgain();
 								}}
 							/>
 						)
 					) : null}
 					{deploymentStatus.known && activeTab === "settings" ? (
 						<HostedAgentSettingsTab
-							environmentId={environmentId}
+							environmentId={cloudEnvironmentId}
 							deployment={deployment}
 							agent={agent}
 							routeSearch={routeSearch}
@@ -1176,7 +1198,7 @@ function OverviewTab({
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
 }: {
-	agentId: string;
+	agentId: string | null;
 	routeAgentId: string;
 	routeSearch: AgentRouteSearch;
 	contentRouteSearch: AgentRouteSearch;
@@ -1223,7 +1245,7 @@ function OverviewTab({
 	};
 	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
-	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
+	const channelLinks = useAgentChannelLinks(agentId ?? "", Boolean(agentId && agent));
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
@@ -1345,16 +1367,28 @@ function OverviewTab({
 					}),
 					skills: {
 						...skillsModule,
-						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "skills", contentRouteSearch)
-							: null,
+						link:
+							agentId && workspaceProjectId
+								? agentProjectResourceLink(
+										agentId,
+										workspaceProjectId,
+										"skills",
+										contentRouteSearch,
+									)
+								: null,
 					},
 					memories: memoriesModule,
 					vaults: {
 						...vaultsModule,
-						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults", contentRouteSearch)
-							: null,
+						link:
+							agentId && workspaceProjectId
+								? agentProjectResourceLink(
+										agentId,
+										workspaceProjectId,
+										"vaults",
+										contentRouteSearch,
+									)
+								: null,
 					},
 					connectors: connectorsModule,
 					"model-provider": {
@@ -2324,7 +2358,7 @@ function AiProviderTab({
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
-	environmentId: string;
+	environmentId: string | null;
 }) {
 	const providers = useUserAiProviders();
 	const managedModelCatalog = useManagedModelCatalog();
@@ -3522,7 +3556,7 @@ function HostedAgentSettingsTab({
 	routeSearch,
 	onDeleteAccepted,
 }: {
-	environmentId: string;
+	environmentId: string | null;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null;
 	routeSearch: AgentRouteSearch;
@@ -3531,7 +3565,7 @@ function HostedAgentSettingsTab({
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
 			<div className="flex w-full flex-col gap-8">
-				{agent ? (
+				{agent && environmentId ? (
 					<AgentSettingsPanel environmentId={environmentId} />
 				) : (
 					<ProjectionDependentUnavailable label="Profile settings" />

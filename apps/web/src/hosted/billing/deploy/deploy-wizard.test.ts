@@ -223,9 +223,7 @@ describe("first Basic agent copy", () => {
 	});
 
 	test("routes accepted creates directly by canonical deployment selector", () => {
-		expect(acceptedNavigationSource).toContain(
-			'agentSectionHref(deploymentId, "overview", "source=on-clawdi")',
-		);
+		expect(acceptedNavigationSource).toContain("agentSectionHref(deploymentId)");
 		expect(wizardSource).not.toContain("setup=accepted");
 		expect(wizardSource).not.toContain("waitForRuntime");
 		expect(wizardSource).not.toContain("Agent deployment started");

@@ -70,6 +70,7 @@ describe("AppBreadcrumb semantic trail", () => {
 
 	test("shows real Skill and Vault names in their selected Project context", () => {
 		const segmentTitles = {
+			"/agents/deployment-1": { title: "e2e-2" },
 			[`/agents/${agentId}/project-access/${workspaceId}`]: {
 				title: "Workspace",
 				context: "workspace" as const,
@@ -113,7 +114,7 @@ describe("AppBreadcrumb semantic trail", () => {
 			search: { ...deploymentSearch, project: workspaceId },
 			overrideTitle: "GitHub Issues",
 			segmentTitles: {
-				[`/agents/${agentId}`]: { title: "e2e-2" },
+				"/agents/deployment-1": { title: "e2e-2" },
 				[`/agents/${agentId}/project-access/${workspaceId}`]: {
 					title: "Workspace",
 					context: "workspace",
@@ -121,7 +122,7 @@ describe("AppBreadcrumb semantic trail", () => {
 			},
 		});
 		expect(trail.filter((item) => item.href).map((item) => item.href)).toEqual([
-			`/agents/${agentId}?source=on-clawdi&d=deployment-1`,
+			"/agents/deployment-1",
 			`/agents/${agentId}/project-access/${workspaceId}/skills?source=on-clawdi&d=deployment-1`,
 		]);
 	});
